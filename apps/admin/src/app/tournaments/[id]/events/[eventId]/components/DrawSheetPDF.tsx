@@ -209,6 +209,7 @@ export function DrawSheetPDF({
 
         for (let i = 0; i < roundMatches.length; i++) {
           const m = roundMatches[i];
+          if (!m) continue;
           const y = count > 1 ? startY + i * spacing + (spacing - matchBoxHeight) / 2 : startY;
 
           matchPositions.set(`${m.round_number}-${m.bracket_position}`, {
