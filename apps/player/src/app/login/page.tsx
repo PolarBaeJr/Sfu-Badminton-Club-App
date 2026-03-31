@@ -1,0 +1,319 @@
+'use client';
+
+import { useState } from 'react';
+import { createClient } from '@/lib/supabase-browser';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent } from '@/components/ui/card';
+import { Separator } from '@/components/ui/separator';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  Trophy,
+  Zap,
+  Target,
+  Mail,
+  CheckCircle2,
+  ChevronRight,
+  Loader2,
+} from 'lucide-react';
+
+const fadeUp = {
+  hidden: { opacity: 0, y: 20 },
+  visible: (i: number) => ({
+    opacity: 1,
+    y: 0,
+    transition: { delay: i * 0.1, duration: 0.5, ease: 'easeOut' as const },
+  }),
+};
+
+const features = [
+  { icon: Trophy, label: 'Climb the Ranks', color: 'text-[#FFD700]' },
+  { icon: Zap, label: 'Challenge Players', color: 'text-[#EF4444]' },
+  { icon: Target, label: 'Track Your Stats', color: 'text-[#F8FAFC]' },
+];
+
+export default function LoginPage() {
+  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [email, setEmail] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleGoogleLogin() {
+    setGoogleLoading(true);
+    setError('');
+    const supabase = createClient();
+    const { error: authError } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: `${window.location.origin}/auth/callback` },
+    });
+    if (authError) {
+      setError(authError.message);
+      setGoogleLoading(false);
+    }
+  }
+
+  async function handleMagicLink(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    const supabase = createClient();
+    const { error: authError } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+    });
+
+    if (authError) {
+      if (authError.message.includes('rate')) {
+        setError('Too many attempts — please wait before trying again');
+      } else {
+        setError(authError.message);
+      }
+    } else {
+      setSent(true);
+    }
+    setLoading(false);
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center px-4 py-12 relative overflow-hidden">
+      {/* Background glow effects */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-[#EF4444]/5 rounded-full blur-3xl" />
+        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-[#FFD700]/5 rounded-full blur-3xl" />
+      </div>
+
+      <motion.div
+        initial="hidden"
+        animate="visible"
+        className="w-full max-w-md relative z-10"
+      >
+        {/* Logo & Branding */}
+        <motion.div variants={fadeUp} custom={0} className="text-center mb-8">
+          {/* Shuttlecock icon */}
+          <motion.div
+            className="w-16 h-16 mx-auto mb-5 rounded-2xl bg-gradient-to-br from-[#EF4444] to-[#DC2626] flex items-center justify-center glow-red"
+            animate={{ y: [0, -6, 0] }}
+            transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+          >
+            <span className="text-2xl font-black text-white font-display">SB</span>
+          </motion.div>
+
+          <h1 className="text-4xl font-black text-shuttle-white font-display tracking-wider uppercase">
+            SFU Badminton
+          </h1>
+          <p className="text-[#94A3B8] mt-2 text-sm tracking-wide">
+            Challenge. Compete. Climb.
+          </p>
+
+          {/* Feature pills */}
+          <div className="flex justify-center gap-3 mt-5">
+            {features.map((feat, i) => (
+              <motion.div
+                key={feat.label}
+                variants={fadeUp}
+                custom={i + 1}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/5 border border-white/5"
+              >
+                <feat.icon className={`w-3.5 h-3.5 ${feat.color}`} />
+                <span className="text-xs text-[#94A3B8] font-medium">{feat.label}</span>
+              </motion.div>
+            ))}
+          </div>
+        </motion.div>
+
+        {/* Auth Card */}
+        <motion.div variants={fadeUp} custom={4}>
+          <Card className="bg-[#161B2E]/80 border-white/[0.06] backdrop-blur-xl shadow-2xl shadow-black/20">
+            <CardContent className="p-6">
+              {/* Sign In / Sign Up Toggle */}
+              <div className="flex mb-6 bg-white/[0.04] rounded-xl p-1 border border-white/[0.04]">
+                {(['signin', 'signup'] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => { setMode(m); setError(''); setSent(false); }}
+                    className={`relative flex-1 py-2.5 text-sm font-semibold rounded-lg transition-all duration-300 ${
+                      mode === m
+                        ? 'text-white'
+                        : 'text-[#64748B] hover:text-[#94A3B8]'
+                    }`}
+                  >
+                    {mode === m && (
+                      <motion.div
+                        layoutId="activeTab"
+                        className="absolute inset-0 bg-gradient-to-r from-[#EF4444] to-[#DC2626] rounded-lg"
+                        transition={{ type: 'spring', bounce: 0.2, duration: 0.5 }}
+                      />
+                    )}
+                    <span className="relative z-10">
+                      {m === 'signin' ? 'Sign In' : 'Sign Up'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              <AnimatePresence mode="wait">
+                {sent ? (
+                  <motion.div
+                    key="sent"
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="text-center py-6"
+                  >
+                    <motion.div
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      transition={{ type: 'spring', bounce: 0.5, delay: 0.1 }}
+                      className="w-14 h-14 rounded-full bg-[#EF4444]/15 flex items-center justify-center mx-auto mb-4"
+                    >
+                      <CheckCircle2 className="w-7 h-7 text-[#EF4444]" />
+                    </motion.div>
+                    <p className="text-[#EF4444] font-bold text-lg">Check your email!</p>
+                    <p className="text-[#94A3B8] text-sm mt-2">
+                      We sent a magic link to{' '}
+                      <strong className="text-shuttle-white">{email}</strong>
+                    </p>
+                    <button
+                      onClick={() => setSent(false)}
+                      className="mt-4 text-xs text-[#64748B] hover:text-[#94A3B8] transition-colors"
+                    >
+                      Use a different email
+                    </button>
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="form"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="space-y-5"
+                  >
+                    <p className="text-center text-sm text-[#94A3B8]">
+                      {mode === 'signin'
+                        ? 'Welcome back, player'
+                        : 'Join the club and start competing'}
+                    </p>
+
+                    {/* Google OAuth */}
+                    <Button
+                      onClick={handleGoogleLogin}
+                      disabled={googleLoading}
+                      variant="outline"
+                      size="lg"
+                      className="w-full h-12 bg-white/[0.04] border-white/[0.08] hover:bg-white/[0.08] hover:border-white/[0.12] text-shuttle-white font-semibold transition-all duration-300"
+                    >
+                      {googleLoading ? (
+                        <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                      ) : (
+                        <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
+                          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
+                          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                          <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+                          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+                        </svg>
+                      )}
+                      Continue with Google
+                    </Button>
+
+                    <div className="relative">
+                      <Separator className="bg-white/[0.06]" />
+                      <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 px-3 bg-[#161B2E] text-xs text-[#64748B]">
+                        or use email
+                      </span>
+                    </div>
+
+                    {/* Magic Link Form */}
+                    <form onSubmit={handleMagicLink} className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="email" className="text-[#94A3B8] text-sm font-medium">
+                          Email
+                        </Label>
+                        <div className="relative">
+                          <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#64748B]" />
+                          <Input
+                            id="email"
+                            type="email"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            placeholder="your.email@sfu.ca"
+                            required
+                            className="h-12 pl-10 bg-white/[0.04] border-white/[0.08] text-shuttle-white placeholder:text-[#475569] focus:border-[#EF4444]/50 focus:ring-[#EF4444]/20 transition-all duration-300"
+                          />
+                        </div>
+                      </div>
+
+                      <AnimatePresence>
+                        {error && (
+                          <motion.p
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="text-sm text-[#EF4444] bg-[#EF4444]/10 px-3 py-2 rounded-lg"
+                          >
+                            {error}
+                          </motion.p>
+                        )}
+                      </AnimatePresence>
+
+                      <Button
+                        type="submit"
+                        disabled={loading}
+                        size="lg"
+                        className="w-full h-12 bg-gradient-to-r from-[#EF4444] to-[#DC2626] hover:from-[#DC2626] hover:to-[#B91C1C] text-white font-bold tracking-wide transition-all duration-300 shadow-lg shadow-[#EF4444]/20 hover:shadow-[#EF4444]/30"
+                      >
+                        {loading ? (
+                          <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                        ) : (
+                          <Mail className="w-4 h-4 mr-2" />
+                        )}
+                        Send Magic Link
+                        {!loading && <ChevronRight className="w-4 h-4 ml-1" />}
+                      </Button>
+                    </form>
+
+                    <p className="text-center text-xs text-[#64748B]">
+                      {mode === 'signin' ? (
+                        <>
+                          Don&apos;t have an account?{' '}
+                          <button
+                            onClick={() => { setMode('signup'); setError(''); }}
+                            className="text-[#EF4444] hover:text-[#F87171] font-semibold transition-colors"
+                          >
+                            Sign up
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          Already have an account?{' '}
+                          <button
+                            onClick={() => { setMode('signin'); setError(''); }}
+                            className="text-[#EF4444] hover:text-[#F87171] font-semibold transition-colors"
+                          >
+                            Sign in
+                          </button>
+                        </>
+                      )}
+                    </p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* Footer */}
+        <motion.p
+          variants={fadeUp}
+          custom={5}
+          className="text-center text-xs text-[#475569] mt-6"
+        >
+          SFU Badminton Club &middot; Powered by passion
+        </motion.p>
+      </motion.div>
+    </div>
+  );
+}

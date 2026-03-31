@@ -1,0 +1,229 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { createClient } from '@/lib/supabase-browser';
+import { Avatar, Badge } from '@badminton/ui';
+import Link from 'next/link';
+import { getPostHogClient } from '@/lib/posthog';
+import { Trophy, Medal, Crown, ChevronRight, Loader2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+
+type LeaderboardEntry = {
+  id: string;
+  full_name: string;
+  avatar_url: string | null;
+  status: string;
+  eligibility_flag: boolean;
+  ratings: {
+    singles_elo: number;
+    doubles_elo: number;
+    singles_wins: number;
+    singles_losses: number;
+    doubles_wins: number;
+    doubles_losses: number;
+    singles_provisional: boolean;
+    doubles_provisional: boolean;
+  } | null;
+};
+
+const tabs = [
+  { id: 'open_singles', label: 'Open Singles' },
+  { id: 'open_doubles', label: 'Open Doubles' },
+  { id: 'comp_singles', label: 'Comp Singles' },
+  { id: 'comp_doubles', label: 'Comp Doubles' },
+];
+
+const rankIcons = [Crown, Medal, Trophy];
+const rankColors = ['text-[#FFD700]', 'text-[#C0C0C0]', 'text-[#CD7F32]'];
+const rankBg = ['bg-[#FFD700]/10 border-[#FFD700]/20', 'bg-[#C0C0C0]/10 border-[#C0C0C0]/20', 'bg-[#CD7F32]/10 border-[#CD7F32]/20'];
+
+export default function LeaderboardPage() {
+  const [activeTab, setActiveTab] = useState('open_singles');
+  const [players, setPlayers] = useState<LeaderboardEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const ph = getPostHogClient();
+    if (ph) ph.capture('leaderboard_viewed');
+  }, []);
+
+  useEffect(() => {
+    const supabase = createClient();
+
+    async function load() {
+      setLoading(true);
+
+      let query = supabase
+        .from('players')
+        .select('id, full_name, avatar_url, status, eligibility_flag, ratings(*)')
+        .eq('active_flag', true)
+        .not('status', 'in', '("pending_approval","suspended","inactive")');
+
+      if (activeTab.startsWith('comp_')) {
+        query = query.eq('eligibility_flag', true);
+      }
+
+      const { data } = await query;
+
+      const sorted = (data || [])
+        .filter((p) => {
+          const r = Array.isArray(p.ratings) ? p.ratings[0] : p.ratings;
+          return r !== null;
+        })
+        .sort((a, b) => {
+          const ra = Array.isArray(a.ratings) ? a.ratings[0] : a.ratings;
+          const rb = Array.isArray(b.ratings) ? b.ratings[0] : b.ratings;
+          const isDoubles = activeTab.includes('doubles');
+          return isDoubles
+            ? (rb?.doubles_elo ?? 0) - (ra?.doubles_elo ?? 0)
+            : (rb?.singles_elo ?? 0) - (ra?.singles_elo ?? 0);
+        })
+        .map((p) => ({
+          ...p,
+          ratings: Array.isArray(p.ratings) ? p.ratings[0] : p.ratings,
+        }));
+
+      setPlayers(sorted as LeaderboardEntry[]);
+      setLoading(false);
+    }
+    load();
+
+    const channel = supabase
+      .channel('ratings-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ratings' }, () => {
+        load();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [activeTab]);
+
+  const isDoubles = activeTab.includes('doubles');
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 rounded-xl bg-[#FFD700]/10 flex items-center justify-center">
+          <Trophy className="w-5 h-5 text-[#FFD700]" />
+        </div>
+        <h1 className="text-3xl font-black font-display text-shuttle-white tracking-wider uppercase">
+          Leaderboard
+        </h1>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 bg-white/[0.03] rounded-xl p-1 border border-white/[0.04] overflow-x-auto">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`relative flex-1 py-2.5 px-3 text-sm font-semibold rounded-lg transition-all duration-300 whitespace-nowrap ${
+              activeTab === tab.id
+                ? 'text-white'
+                : 'text-[#64748B] hover:text-[#94A3B8]'
+            }`}
+          >
+            {activeTab === tab.id && (
+              <motion.div
+                layoutId="leaderboardTab"
+                className="absolute inset-0 bg-gradient-to-r from-[#FFD700]/20 to-[#FFA000]/20 border border-[#FFD700]/20 rounded-lg"
+                transition={{ type: 'spring', bounce: 0.2, duration: 0.5 }}
+              />
+            )}
+            <span className="relative z-10">{tab.label}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Table */}
+      <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl overflow-hidden">
+        {loading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-8 h-8 text-[#FFD700] animate-spin" />
+          </div>
+        ) : (
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={activeTab}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+            >
+              {/* Header */}
+              <div className="grid grid-cols-[3rem_1fr_5rem_4rem_3.5rem] md:grid-cols-[3rem_1fr_5rem_5rem_4rem] px-4 py-3 border-b border-white/[0.06] text-xs font-semibold text-[#475569] uppercase tracking-wider">
+                <span>#</span>
+                <span>Player</span>
+                <span className="text-right">Elo</span>
+                <span className="text-right">W/L</span>
+                <span className="text-right">Win%</span>
+              </div>
+
+              {/* Rows */}
+              <div className="divide-y divide-white/[0.04]">
+                {players.map((p, i) => {
+                  const elo = isDoubles ? p.ratings?.doubles_elo : p.ratings?.singles_elo;
+                  const wins = isDoubles ? p.ratings?.doubles_wins : p.ratings?.singles_wins;
+                  const losses = isDoubles ? p.ratings?.doubles_losses : p.ratings?.singles_losses;
+                  const prov = isDoubles ? p.ratings?.doubles_provisional : p.ratings?.singles_provisional;
+                  const total = (wins ?? 0) + (losses ?? 0);
+                  const winPct = total > 0 ? Math.round(((wins ?? 0) / total) * 100) : 0;
+                  const RankIcon = i < 3 ? rankIcons[i] : null;
+
+                  return (
+                    <motion.div
+                      key={p.id}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: Math.min(i * 0.03, 0.5), duration: 0.3 }}
+                    >
+                      <Link
+                        href={`/leaderboard/${p.id}`}
+                        className={`grid grid-cols-[3rem_1fr_5rem_4rem_3.5rem] md:grid-cols-[3rem_1fr_5rem_5rem_4rem] px-4 py-3 items-center hover:bg-white/[0.03] transition-colors group ${
+                          i < 3 ? rankBg[i] + ' border-l-2' : ''
+                        }`}
+                      >
+                        <span className="flex items-center">
+                          {RankIcon ? (
+                            <RankIcon className={`w-5 h-5 ${rankColors[i]}`} />
+                          ) : (
+                            <span className="text-sm font-mono text-[#475569] font-bold">{i + 1}</span>
+                          )}
+                        </span>
+                        <span className="flex items-center gap-2.5 min-w-0">
+                          <Avatar name={p.full_name} src={p.avatar_url} size="sm" />
+                          <span className="truncate text-sm text-shuttle-white font-medium group-hover:text-[#EF4444] transition-colors">
+                            {p.full_name}
+                          </span>
+                          {prov && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-[#64748B] font-medium shrink-0">P</span>
+                          )}
+                        </span>
+                        <span className="text-right font-mono text-base font-bold text-shuttle-white">{elo ?? '-'}</span>
+                        <span className="text-right text-sm text-[#94A3B8]">
+                          <span className="text-[#EF4444]">{wins ?? 0}</span>
+                          <span className="text-[#475569]">-</span>
+                          <span className="text-[#EF4444]">{losses ?? 0}</span>
+                        </span>
+                        <span className="text-right text-sm text-[#94A3B8] font-medium">{winPct}%</span>
+                      </Link>
+                    </motion.div>
+                  );
+                })}
+              </div>
+
+              {players.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-16">
+                  <Trophy className="w-10 h-10 text-[#1E293B] mb-3" />
+                  <p className="text-[#64748B]">No players ranked yet</p>
+                </div>
+              )}
+            </motion.div>
+          </AnimatePresence>
+        )}
+      </div>
+    </div>
+  );
+}

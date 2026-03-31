@@ -1,0 +1,21 @@
+{
+  "name": "badminton-platform",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:player": "npm run dev --workspace=apps/player",
+    "dev:admin": "npm run dev --workspace=apps/admin",
+    "dev": "npx turbo run dev",
+    "build": "npx turbo run build",
+    "lint": "npx turbo run lint",
+    "type-check": "npx turbo run type-check"
+  },
+  "packageManager": "npm@10.9.3",
+  "devDependencies": {
+    "turbo": "^2.1.0",
+    "typescript": "^5.5.0"
+  }
+}

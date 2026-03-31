@@ -1,0 +1,33 @@
+# dependencies
+node_modules/
+**/node_modules/
+.pnpm-store/
+
+# builds / caches
+.next/
+**/.next/
+.turbo/
+dist/
+build/
+
+# env files
+.env
+.env.*
+**/.env
+**/.env.*
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# TypeScript
+*.tsbuildinfo
+
+.turbo/
+**/.turbo/
+.next/
+**/.next/
+node_modules/
+**/node_modules/

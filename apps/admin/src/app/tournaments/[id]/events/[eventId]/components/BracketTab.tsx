@@ -1,0 +1,193 @@
+'use client';
+
+import { useState } from 'react';
+import { Button, Badge } from '@badminton/ui';
+import { getRoundName } from '@badminton/shared';
+import { ScoreEntryDialog } from './ScoreEntryDialog';
+import { Trophy, ChevronRight } from 'lucide-react';
+
+interface Props {
+  event: Record<string, unknown>;
+  matches: unknown[];
+  participants: unknown[];
+  pairs: unknown[];
+  isDoubles: boolean;
+}
+
+export function BracketTab({ event, matches, participants, pairs, isDoubles }: Props) {
+  const [scoreMatch, setScoreMatch] = useState<any>(null);
+  const allMatches = matches as any[];
+  const isLive = event.status === 'live' || event.status === 'bracket_generated';
+
+  if (allMatches.length === 0) {
+    return (
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-8 text-center">
+        <Trophy className="w-8 h-8 mx-auto mb-3 text-[var(--text-muted)] opacity-50" />
+        <p className="text-sm text-[var(--text-muted)]">Bracket not generated yet.</p>
+      </div>
+    );
+  }
+
+  // Group matches by round
+  const rounds: Record<number, any[]> = {};
+  for (const m of allMatches) {
+    if (!rounds[m.round_number]) rounds[m.round_number] = [];
+    rounds[m.round_number]!.push(m);
+  }
+  const roundNumbers = Object.keys(rounds).map(Number).sort((a, b) => a - b);
+  const totalRounds = Math.max(...roundNumbers);
+
+  // Build name lookup
+  const nameMap: Record<string, string> = {};
+  if (isDoubles) {
+    for (const p of pairs as any[]) {
+      nameMap[p.id] = p.pair_name ?? `${p.player1?.full_name ?? '?'} / ${p.player2?.full_name ?? '?'}`;
+    }
+  } else {
+    for (const p of participants as any[]) {
+      nameMap[p.id] = p.player?.full_name ?? 'Unknown';
+    }
+  }
+
+  // Seed lookup
+  const seedMap: Record<string, number> = {};
+  for (const p of (isDoubles ? pairs : participants) as any[]) {
+    if (p.seed_number) seedMap[p.id] = p.seed_number;
+  }
+
+  function getEntryName(id: string | null) {
+    if (!id) return 'TBD';
+    return nameMap[id] ?? 'TBD';
+  }
+
+  function getSeed(id: string | null) {
+    if (!id) return null;
+    return seedMap[id] ?? null;
+  }
+
+  return (
+    <>
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4 overflow-x-auto">
+        <div className="flex gap-6 min-w-fit">
+          {roundNumbers.map((roundNum) => {
+            const roundMatches = rounds[roundNum]!.sort((a: any, b: any) => a.bracket_position - b.bracket_position);
+            const roundName = roundMatches[0]?.round_name ?? getRoundName(roundNum, totalRounds);
+
+            return (
+              <div key={roundNum} className="flex flex-col min-w-[260px]" style={{ gap: `${Math.pow(2, roundNum - 1) * 0.5}rem` }}>
+                <h3 className="text-xs font-bold text-[var(--text-muted)] text-center uppercase tracking-wider mb-2">
+                  {roundName}
+                </h3>
+                {roundMatches.map((m: any) => {
+                  const aId = isDoubles ? m.pair_a_id : m.participant_a_id;
+                  const bId = isDoubles ? m.pair_b_id : m.participant_b_id;
+                  const winnerId = isDoubles ? m.winner_pair_id : m.winner_participant_id;
+                  const isCompleted = m.status === 'completed' || m.status === 'walkover';
+                  const isBye = m.is_bye;
+                  const isReady = m.status === 'ready' && aId && bId;
+                  const canEnterScore = isLive && (isReady || m.status === 'live' || m.status === 'pending') && aId && bId && !isCompleted && !isBye;
+
+                  return (
+                    <div
+                      key={m.id}
+                      className={`rounded-lg border overflow-hidden transition-all ${
+                        isReady && isLive
+                          ? 'border-[var(--color-accent)]/40 shadow-[0_0_8px_rgba(233,69,96,0.15)]'
+                          : isBye
+                          ? 'border-[var(--border)] opacity-50'
+                          : 'border-[var(--border)]'
+                      }`}
+                    >
+                      {/* Match number */}
+                      {m.match_number && (
+                        <div className="text-[10px] text-[var(--text-muted)] text-center py-0.5 bg-[var(--bg-elevated)] border-b border-[var(--border)] font-mono">
+                          M{m.match_number}{m.court ? ` · Court ${m.court}` : ''}
+                        </div>
+                      )}
+
+                      {/* Side A */}
+                      <div className={`px-3 py-2 flex items-center justify-between text-sm ${
+                        isCompleted && winnerId === aId ? 'bg-[var(--color-success)]/10' : 'bg-[var(--bg-card)]'
+                      }`}>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          {getSeed(aId) && <span className="text-[10px] font-mono text-[var(--text-muted)]">[{getSeed(aId)}]</span>}
+                          <span className={`truncate ${
+                            isCompleted && winnerId === aId
+                              ? 'text-[var(--color-success)] font-semibold'
+                              : isCompleted && winnerId === bId
+                              ? 'text-[var(--text-muted)] line-through'
+                              : 'text-[var(--text-secondary)]'
+                          }`}>
+                            {isBye && !aId ? 'BYE' : getEntryName(aId)}
+                          </span>
+                        </div>
+                        {m.scores && (
+                          <span className="font-mono text-xs text-[var(--text-muted)] ml-2">
+                            {(m.scores as any[]).map((g: any) => g.a).join(' ')}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="border-t border-[var(--border)]" />
+
+                      {/* Side B */}
+                      <div className={`px-3 py-2 flex items-center justify-between text-sm ${
+                        isCompleted && winnerId === bId ? 'bg-[var(--color-success)]/10' : 'bg-[var(--bg-card)]'
+                      }`}>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          {getSeed(bId) && <span className="text-[10px] font-mono text-[var(--text-muted)]">[{getSeed(bId)}]</span>}
+                          <span className={`truncate ${
+                            isCompleted && winnerId === bId
+                              ? 'text-[var(--color-success)] font-semibold'
+                              : isCompleted && winnerId === aId
+                              ? 'text-[var(--text-muted)] line-through'
+                              : 'text-[var(--text-secondary)]'
+                          }`}>
+                            {isBye && !bId ? 'BYE' : getEntryName(bId)}
+                          </span>
+                        </div>
+                        {m.scores && (
+                          <span className="font-mono text-xs text-[var(--text-muted)] ml-2">
+                            {(m.scores as any[]).map((g: any) => g.b).join(' ')}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Enter Score button */}
+                      {canEnterScore && (
+                        <button
+                          onClick={() => setScoreMatch(m)}
+                          className="w-full text-center text-xs text-[var(--color-accent)] py-1.5 bg-[var(--bg-elevated)] hover:bg-[var(--color-accent)]/10 transition-colors border-t border-[var(--border)] font-medium"
+                        >
+                          Enter Score
+                        </button>
+                      )}
+
+                      {/* Status badges */}
+                      {m.status === 'walkover' && (
+                        <div className="text-center py-1 border-t border-[var(--border)]">
+                          <span className="text-[10px] text-[var(--color-warning)] font-medium">WALKOVER</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {scoreMatch && (
+        <ScoreEntryDialog
+          match={scoreMatch}
+          event={event}
+          nameMap={nameMap}
+          seedMap={seedMap}
+          isDoubles={isDoubles}
+          onClose={() => setScoreMatch(null)}
+        />
+      )}
+    </>
+  );
+}
