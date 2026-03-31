@@ -63,6 +63,59 @@ export async function approvePlayer(playerId: string, status: string, eligibilit
   revalidatePath('/dashboard');
 }
 
+export async function createPlayer(data: {
+  full_name: string;
+  email: string;
+  status: string;
+  role?: string;
+  eligibility_flag?: boolean;
+}) {
+  const admin = await getAdminPlayer();
+  const adminClient = createAdminClient();
+
+  const { data: existing } = await adminClient.from('players').select('id').eq('email', data.email).single();
+  if (existing) throw new Error('A player with this email already exists');
+
+  const { data: player, error } = await adminClient.from('players').insert({
+    full_name: data.full_name,
+    email: data.email,
+    display_name: data.full_name,
+    status: data.status || 'recreational',
+    role: data.role || 'player',
+    eligibility_flag: data.eligibility_flag ?? false,
+    active_flag: true,
+    onboarding_completed: false,
+  }).select().single();
+
+  if (error) {
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+
+  // Create initial ratings row
+  await adminClient.from('ratings').insert({
+    player_id: player.id,
+    singles_elo: 1200,
+    doubles_elo: 1200,
+    singles_provisional: true,
+    doubles_provisional: true,
+    singles_k_factor: 40,
+    doubles_k_factor: 40,
+  });
+
+  await adminClient.from('audit_logs').insert({
+    actor_id: admin.id,
+    action_type: 'player_created',
+    target_type: 'player',
+    target_id: player.id,
+    new_value: { full_name: data.full_name, email: data.email, status: data.status },
+    reason: 'Manual admin creation',
+  });
+
+  revalidatePath('/players');
+  return player;
+}
+
 export async function updatePlayer(playerId: string, data: AdminPlayerUpdateInput) {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();

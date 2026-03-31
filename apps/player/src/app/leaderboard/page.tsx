@@ -31,6 +31,7 @@ const tabs = [
   { id: 'open_doubles', label: 'Open Doubles' },
   { id: 'comp_singles', label: 'Comp Singles' },
   { id: 'comp_doubles', label: 'Comp Doubles' },
+  { id: 'tournament_points', label: 'Tournament Pts' },
 ];
 
 const rankIcons = [Crown, Medal, Trophy];
@@ -52,6 +53,41 @@ export default function LeaderboardPage() {
 
     async function load() {
       setLoading(true);
+
+      if (activeTab === 'tournament_points') {
+        // Aggregate tournament points per player
+        const { data: parts } = await supabase
+          .from('tournament_participants')
+          .select('player_id, points, player:players(id, full_name, avatar_url, status, eligibility_flag)')
+          .not('status', 'in', '("withdrawn","disqualified")')
+          .gt('points', 0);
+
+        const pointsMap: Record<string, { player: any; total: number }> = {};
+        for (const p of parts ?? []) {
+          const player = p.player as any;
+          if (!player) continue;
+          if (!pointsMap[p.player_id]) {
+            pointsMap[p.player_id] = { player, total: 0 };
+          }
+          pointsMap[p.player_id]!.total += p.points ?? 0;
+        }
+
+        const sorted = Object.values(pointsMap)
+          .sort((a, b) => b.total - a.total)
+          .map((entry) => ({
+            id: entry.player.id,
+            full_name: entry.player.full_name,
+            avatar_url: entry.player.avatar_url,
+            status: entry.player.status,
+            eligibility_flag: entry.player.eligibility_flag,
+            ratings: null,
+            _tournamentPoints: entry.total,
+          }));
+
+        setPlayers(sorted as any[]);
+        setLoading(false);
+        return;
+      }
 
       let query = supabase
         .from('players')
@@ -153,12 +189,18 @@ export default function LeaderboardPage() {
               transition={{ duration: 0.2 }}
             >
               {/* Header */}
-              <div className="grid grid-cols-[3rem_1fr_5rem_4rem_3.5rem] md:grid-cols-[3rem_1fr_5rem_5rem_4rem] px-4 py-3 border-b border-white/[0.06] text-xs font-semibold text-[#475569] uppercase tracking-wider">
+              <div className={`grid ${activeTab === 'tournament_points' ? 'grid-cols-[3rem_1fr_5rem]' : 'grid-cols-[3rem_1fr_5rem_4rem_3.5rem] md:grid-cols-[3rem_1fr_5rem_5rem_4rem]'} px-4 py-3 border-b border-white/[0.06] text-xs font-semibold text-[#475569] uppercase tracking-wider`}>
                 <span>#</span>
                 <span>Player</span>
-                <span className="text-right">Elo</span>
-                <span className="text-right">W/L</span>
-                <span className="text-right">Win%</span>
+                {activeTab === 'tournament_points' ? (
+                  <span className="text-right">Points</span>
+                ) : (
+                  <>
+                    <span className="text-right">Elo</span>
+                    <span className="text-right">W/L</span>
+                    <span className="text-right">Win%</span>
+                  </>
+                )}
               </div>
 
               {/* Rows */}
@@ -181,7 +223,7 @@ export default function LeaderboardPage() {
                     >
                       <Link
                         href={`/leaderboard/${p.id}`}
-                        className={`grid grid-cols-[3rem_1fr_5rem_4rem_3.5rem] md:grid-cols-[3rem_1fr_5rem_5rem_4rem] px-4 py-3 items-center hover:bg-white/[0.03] transition-colors group ${
+                        className={`grid ${activeTab === 'tournament_points' ? 'grid-cols-[3rem_1fr_5rem]' : 'grid-cols-[3rem_1fr_5rem_4rem_3.5rem] md:grid-cols-[3rem_1fr_5rem_5rem_4rem]'} px-4 py-3 items-center hover:bg-white/[0.03] transition-colors group ${
                           i < 3 ? rankBg[i] + ' border-l-2' : ''
                         }`}
                       >
@@ -197,17 +239,23 @@ export default function LeaderboardPage() {
                           <span className="truncate text-sm text-shuttle-white font-medium group-hover:text-[#EF4444] transition-colors">
                             {p.full_name}
                           </span>
-                          {prov && (
+                          {prov && activeTab !== 'tournament_points' && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-[#64748B] font-medium shrink-0">P</span>
                           )}
                         </span>
-                        <span className="text-right font-mono text-base font-bold text-shuttle-white">{elo ?? '-'}</span>
-                        <span className="text-right text-sm text-[#94A3B8]">
-                          <span className="text-[#EF4444]">{wins ?? 0}</span>
-                          <span className="text-[#475569]">-</span>
-                          <span className="text-[#EF4444]">{losses ?? 0}</span>
-                        </span>
-                        <span className="text-right text-sm text-[#94A3B8] font-medium">{winPct}%</span>
+                        {activeTab === 'tournament_points' ? (
+                          <span className="text-right font-mono text-base font-bold text-[#FFD700]">{(p as any)._tournamentPoints ?? 0}</span>
+                        ) : (
+                          <>
+                            <span className="text-right font-mono text-base font-bold text-shuttle-white">{elo ?? '-'}</span>
+                            <span className="text-right text-sm text-[#94A3B8]">
+                              <span className="text-[#EF4444]">{wins ?? 0}</span>
+                              <span className="text-[#475569]">-</span>
+                              <span className="text-[#EF4444]">{losses ?? 0}</span>
+                            </span>
+                            <span className="text-right text-sm text-[#94A3B8] font-medium">{winPct}%</span>
+                          </>
+                        )}
                       </Link>
                     </motion.div>
                   );

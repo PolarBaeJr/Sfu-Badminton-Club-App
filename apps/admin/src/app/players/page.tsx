@@ -3,6 +3,7 @@ import { Badge, Card, Avatar } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS } from '@badminton/shared';
 import Link from 'next/link';
 import { PlayerActions } from './player-actions';
+import { AddPlayerButton } from './add-player-button';
 
 const statusBadgeVariant = (status: string) => {
   switch (status) {
@@ -67,6 +68,7 @@ export default async function PlayersPage({
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">PLAYERS</h1>
+        <AddPlayerButton />
       </div>
 
       {/* Tabs */}

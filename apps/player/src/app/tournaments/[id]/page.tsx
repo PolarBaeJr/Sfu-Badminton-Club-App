@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
 import { Badge } from '@badminton/ui';
 import {
   formatDate,
@@ -12,6 +12,7 @@ import { notFound } from 'next/navigation';
 import { Award, Users, ChevronRight, Trophy, Zap } from 'lucide-react';
 import Link from 'next/link';
 import { FadeIn, StaggerContainer, StaggerItem } from '@/components/motion-wrapper';
+import { EventRegistrationButton } from './EventRegistrationButton';
 
 export default async function TournamentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -26,6 +27,23 @@ export default async function TournamentDetailPage({ params }: { params: Promise
     .select('*, tournament_participants(count), tournament_pairs(count)')
     .eq('tournament_id', id)
     .order('event_type');
+
+  // Get current player's registrations for all events
+  const currentPlayer = await getCurrentPlayer();
+  const registrationMap: Record<string, { status: string }> = {};
+  if (currentPlayer && events) {
+    const eventIds = events.map(e => e.id);
+    if (eventIds.length > 0) {
+      const { data: regs } = await supabase
+        .from('tournament_participants')
+        .select('event_id, status')
+        .eq('player_id', currentPlayer.id)
+        .in('event_id', eventIds);
+      for (const r of regs ?? []) {
+        registrationMap[r.event_id] = { status: r.status };
+      }
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -116,13 +134,21 @@ export default async function TournamentDetailPage({ params }: { params: Promise
                     <ChevronRight className="w-5 h-5 text-[#64748B] group-hover:text-[#94A3B8] transition-colors mt-1" />
                   </div>
 
-                  <div className="flex items-center gap-1.5 mt-4 text-[#64748B]">
-                    <Users className="w-3.5 h-3.5" />
-                    <span className="text-xs">
-                      {participantCount} {doubles ? 'pair' : 'player'}
-                      {participantCount !== 1 ? 's' : ''}
-                      {event.max_participants ? ` / ${event.max_participants} max` : ''}
-                    </span>
+                  <div className="flex items-center justify-between mt-4">
+                    <div className="flex items-center gap-1.5 text-[#64748B]">
+                      <Users className="w-3.5 h-3.5" />
+                      <span className="text-xs">
+                        {participantCount} {doubles ? 'pair' : 'player'}
+                        {participantCount !== 1 ? 's' : ''}
+                        {event.max_participants ? ` / ${event.max_participants} max` : ''}
+                      </span>
+                    </div>
+                    <EventRegistrationButton
+                      eventId={event.id}
+                      eventStatus={eventStatus}
+                      registration={registrationMap[event.id] ?? null}
+                      isDoubles={doubles}
+                    />
                   </div>
                 </div>
               </Link>

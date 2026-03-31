@@ -1,0 +1,114 @@
+'use client';
+
+import { useState, useTransition } from 'react';
+import { Button, Dialog, Input, Select } from '@badminton/ui';
+import { useToast } from '@/components/toast-provider';
+import { useRouter } from 'next/navigation';
+import { createPlayer } from '@/lib/actions';
+import { Plus } from 'lucide-react';
+
+const STATUS_OPTIONS = [
+  { value: 'eligible_competitive', label: 'Eligible Competitive' },
+  { value: 'competitive_associate', label: 'Competitive Associate' },
+  { value: 'recreational', label: 'Recreational' },
+  { value: 'alumni_external', label: 'Alumni / External' },
+];
+
+const ROLE_OPTIONS = [
+  { value: 'player', label: 'Player' },
+  { value: 'moderator', label: 'Moderator' },
+  { value: 'admin', label: 'Admin' },
+  { value: 'coach_executive', label: 'Coach / Executive' },
+];
+
+export function AddPlayerButton() {
+  const [open, setOpen] = useState(false);
+  const [isPending, startTransition] = useTransition();
+  const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
+  const [status, setStatus] = useState('recreational');
+  const [role, setRole] = useState('player');
+  const [eligible, setEligible] = useState(false);
+  const { toast } = useToast();
+  const router = useRouter();
+
+  function handleSubmit() {
+    if (!fullName.trim() || !email.trim()) {
+      toast('Name and email are required', 'error');
+      return;
+    }
+    startTransition(async () => {
+      try {
+        await createPlayer({
+          full_name: fullName.trim(),
+          email: email.trim().toLowerCase(),
+          status,
+          role,
+          eligibility_flag: eligible,
+        });
+        toast('Player created', 'success');
+        setOpen(false);
+        setFullName('');
+        setEmail('');
+        setStatus('recreational');
+        setRole('player');
+        setEligible(false);
+        router.refresh();
+      } catch (err) {
+        toast(err instanceof Error ? err.message : 'Failed to create player', 'error');
+      }
+    });
+  }
+
+  return (
+    <>
+      <Button onClick={() => setOpen(true)}>
+        <Plus className="w-4 h-4 mr-1.5" /> Add Player
+      </Button>
+      <Dialog open={open} onClose={() => setOpen(false)} title="Add New Player">
+        <div className="space-y-4">
+          <Input
+            label="Full Name"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            placeholder="John Doe"
+          />
+          <Input
+            label="Email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="john@sfu.ca"
+          />
+          <Select
+            label="Status"
+            options={STATUS_OPTIONS}
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+          />
+          <Select
+            label="Role"
+            options={ROLE_OPTIONS}
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+          />
+          <div className="flex items-center gap-2">
+            <label className="text-sm text-[var(--text-secondary)]">Eligible for Competition</label>
+            <input type="checkbox" checked={eligible} onChange={(e) => setEligible(e.target.checked)} />
+          </div>
+          <div className="flex gap-2 pt-2">
+            <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button
+              onClick={handleSubmit}
+              loading={isPending}
+              className="flex-1"
+              disabled={!fullName.trim() || !email.trim()}
+            >
+              Create Player
+            </Button>
+          </div>
+        </div>
+      </Dialog>
+    </>
+  );
+}
