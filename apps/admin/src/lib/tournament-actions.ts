@@ -60,12 +60,13 @@ async function notifyPlayers(
   playerIds: string[],
   title: string,
   body: string,
-  metadata?: Record<string, unknown>
+  metadata?: Record<string, unknown>,
+  notificationType: 'general' | 'tournament_bracket_published' | 'tournament_match_ready' | 'tournament_match_result' | 'tournament_event_completed' | 'tournament_checkin_open' = 'general'
 ) {
   if (playerIds.length === 0) return;
   const rows = playerIds.map(pid => ({
     player_id: pid,
-    type: 'general' as const,
+    type: notificationType,
     title,
     body,
     metadata: metadata ?? {},
@@ -833,7 +834,8 @@ export async function generateSingleEliminationBracket(eventId: string) {
   await notifyPlayers(adminClient, bracketPlayerIds,
     'Bracket Published',
     `The bracket for ${tournamentInfo?.name ?? 'your tournament'} has been published. Check your matches!`,
-    { event_id: eventId, tournament_id: event.tournament_id }
+    { event_id: eventId, tournament_id: event.tournament_id },
+    'tournament_bracket_published'
   );
 
   revalidatePath(`/tournaments/${event.tournament_id}`);
@@ -1067,7 +1069,8 @@ export async function enterMatchResult(
   await notifyPlayers(adminClient, matchPlayerIds,
     'Match Result Confirmed',
     `Your match result has been recorded. Score: ${scores.map((s: { a: number; b: number }) => `${s.a}-${s.b}`).join(', ')}`,
-    { match_id: matchId, event_id: match.event_id }
+    { match_id: matchId, event_id: match.event_id },
+    'tournament_match_result'
   );
 
   revalidatePath(`/tournaments/${event.tournament_id}`);
@@ -1637,7 +1640,8 @@ export async function finalizeEvent(eventId: string) {
   await notifyPlayers(adminClient, finalPlayerIds,
     'Tournament Completed',
     `${tInfo?.name ?? 'Tournament'} has been finalized. Check the results and your updated Elo rating!`,
-    { event_id: eventId, tournament_id: event.tournament_id }
+    { event_id: eventId, tournament_id: event.tournament_id },
+    'tournament_event_completed'
   );
 
   revalidatePath(`/tournaments/${event.tournament_id}`);

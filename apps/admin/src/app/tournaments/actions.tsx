@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Button, Dialog, Input, Select, Switch } from '@badminton/ui';
 import { createTournament } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
@@ -18,6 +19,7 @@ export function CreateTournamentForm() {
   const [eventMultiplier, setEventMultiplier] = useState(1.15);
   const [placementBonus, setPlacementBonus] = useState(true);
   const { toast } = useToast();
+  const router = useRouter();
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -37,6 +39,7 @@ export function CreateTournamentForm() {
       toast('Tournament created', 'success');
       setOpen(false);
       setName(''); setStartDate(''); setEndDate('');
+      router.refresh();
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
