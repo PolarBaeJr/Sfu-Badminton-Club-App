@@ -1,14 +1,13 @@
 'use server';
 
 import * as Sentry from '@sentry/nextjs';
-import { createServerSupabaseClient, createAdminClient } from './supabase-server';
+import { createAdminClient } from './supabase-server';
 import { revalidatePath } from 'next/cache';
 import {
   calculateEloUpdate,
   getKFactor,
   getFormatWeight,
   calculateTeamRating,
-  previewEloChange,
   PLACEMENT_BONUSES,
   isDoublesEvent,
   nextPowerOf2,
@@ -50,6 +49,28 @@ function toEloFormat(mf: TournamentMatchFormat): MatchFormat {
     case 'one_game_15': return 'single_15';
     case 'one_game_11': return 'single_11';
   }
+}
+
+// ============================================================
+// Notification helper
+// ============================================================
+
+async function notifyPlayers(
+  adminClient: ReturnType<typeof createAdminClient>,
+  playerIds: string[],
+  title: string,
+  body: string,
+  metadata?: Record<string, unknown>
+) {
+  if (playerIds.length === 0) return;
+  const rows = playerIds.map(pid => ({
+    player_id: pid,
+    type: 'general' as const,
+    title,
+    body,
+    metadata: metadata ?? {},
+  }));
+  await adminClient.from('notifications').insert(rows);
 }
 
 // ============================================================
@@ -236,6 +257,7 @@ export async function addParticipantToEvent(eventId: string, playerId: string) {
   if (event.status !== 'registration' && event.status !== 'checkin') {
     throw new Error('Cannot add participants in current status');
   }
+  if (event.draw_locked) throw new Error('Draw is locked. Unlock it before making changes.');
 
   if (isDoublesEvent(event.event_type)) {
     throw new Error('Use addPairToEvent for doubles events');
@@ -294,6 +316,7 @@ export async function removeParticipantFromEvent(participantId: string) {
   if (event.status !== 'registration') {
     throw new Error('Cannot remove participants after registration closes');
   }
+  if (event.draw_locked) throw new Error('Draw is locked. Unlock it before making changes.');
 
   const { error } = await adminClient.from('tournament_participants').delete().eq('id', participantId);
   if (error) {
@@ -313,7 +336,7 @@ export async function removeParticipantFromEvent(participantId: string) {
 }
 
 export async function updateParticipantSeed(participantId: string, seedNumber: number | null) {
-  const admin = await getAdminPlayer();
+  await getAdminPlayer();
   const adminClient = createAdminClient();
 
   const { error } = await adminClient.from('tournament_participants')
@@ -332,6 +355,8 @@ export async function autoSeedEventByElo(eventId: string) {
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
+
+  if (event.draw_locked) throw new Error('Draw is locked. Unlock it before making changes.');
 
   const doubles = isDoublesEvent(event.event_type);
 
@@ -394,7 +419,7 @@ export async function checkInParticipant(participantId: string) {
 }
 
 export async function markParticipantNoShow(participantId: string) {
-  const admin = await getAdminPlayer();
+  await getAdminPlayer();
   const adminClient = createAdminClient();
 
   const { error } = await adminClient.from('tournament_participants')
@@ -408,7 +433,7 @@ export async function markParticipantNoShow(participantId: string) {
 }
 
 export async function withdrawParticipant(participantId: string, reason?: string) {
-  const admin = await getAdminPlayer();
+  await getAdminPlayer();
   const adminClient = createAdminClient();
 
   const { error } = await adminClient.from('tournament_participants')
@@ -422,7 +447,7 @@ export async function withdrawParticipant(participantId: string, reason?: string
 }
 
 export async function disqualifyParticipant(participantId: string, reason?: string) {
-  const admin = await getAdminPlayer();
+  await getAdminPlayer();
   const adminClient = createAdminClient();
 
   const { error } = await adminClient.from('tournament_participants')
@@ -448,6 +473,8 @@ export async function addPairToEvent(eventId: string, player1Id: string, player2
   if (event.status !== 'registration' && event.status !== 'checkin') {
     throw new Error('Cannot add pairs in current status');
   }
+
+  if (event.draw_locked) throw new Error('Draw is locked. Unlock it before making changes.');
 
   if (!isDoublesEvent(event.event_type)) {
     throw new Error('Use addParticipantToEvent for singles events');
@@ -520,6 +547,7 @@ export async function removePairFromEvent(pairId: string) {
   if (event.status !== 'registration') {
     throw new Error('Cannot remove pairs after registration closes');
   }
+  if (event.draw_locked) throw new Error('Draw is locked. Unlock it before making changes.');
 
   const { error } = await adminClient.from('tournament_pairs').delete().eq('id', pairId);
   if (error) {
@@ -549,7 +577,7 @@ export async function checkInPair(pairId: string) {
 }
 
 export async function markPairNoShow(pairId: string) {
-  const admin = await getAdminPlayer();
+  await getAdminPlayer();
   const adminClient = createAdminClient();
 
   const { error } = await adminClient.from('tournament_pairs')
@@ -597,6 +625,7 @@ export async function generateSingleEliminationBracket(eventId: string) {
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
+  if (event.draw_locked) throw new Error('Draw is locked. Unlock it before generating bracket.');
 
   const doubles = isDoublesEvent(event.event_type);
 
@@ -789,6 +818,24 @@ export async function generateSingleEliminationBracket(eventId: string) {
     details: { bracket_size: bracketSize, participants: N, byes: numByes },
   });
 
+  // Notify all participants that bracket is published
+  const bracketPlayerIds: string[] = [];
+  if (doubles) {
+    const { data: allPairs } = await adminClient.from('tournament_pairs')
+      .select('player1_id, player2_id').eq('event_id', eventId).in('status', ['registered', 'checked_in']);
+    for (const p of allPairs ?? []) { bracketPlayerIds.push(p.player1_id, p.player2_id); }
+  } else {
+    const { data: allParts } = await adminClient.from('tournament_participants')
+      .select('player_id').eq('event_id', eventId).in('status', ['registered', 'checked_in']);
+    for (const p of allParts ?? []) { bracketPlayerIds.push(p.player_id); }
+  }
+  const { data: tournamentInfo } = await adminClient.from('tournaments').select('name').eq('id', event.tournament_id).single();
+  await notifyPlayers(adminClient, bracketPlayerIds,
+    'Bracket Published',
+    `The bracket for ${tournamentInfo?.name ?? 'your tournament'} has been published. Check your matches!`,
+    { event_id: eventId, tournament_id: event.tournament_id }
+  );
+
   revalidatePath(`/tournaments/${event.tournament_id}`);
 }
 
@@ -802,6 +849,7 @@ export async function generateRoundRobinMatches(eventId: string) {
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
+  if (event.draw_locked) throw new Error('Draw is locked. Unlock it before generating matches.');
 
   const doubles = isDoublesEvent(event.event_type);
 
@@ -1002,6 +1050,25 @@ export async function enterMatchResult(
     performed_by: admin.id,
     details: { scores, winner_side: winnerSide },
   });
+
+  // Notify both players of match result
+  const matchPlayerIds: string[] = [];
+  if (doubles) {
+    for (const pairId of [match.pair_a_id, match.pair_b_id].filter(Boolean)) {
+      const { data: pair } = await adminClient.from('tournament_pairs').select('player1_id, player2_id').eq('id', pairId).single();
+      if (pair) { matchPlayerIds.push(pair.player1_id, pair.player2_id); }
+    }
+  } else {
+    for (const pid of [match.participant_a_id, match.participant_b_id].filter(Boolean)) {
+      const { data: p } = await adminClient.from('tournament_participants').select('player_id').eq('id', pid).single();
+      if (p) matchPlayerIds.push(p.player_id);
+    }
+  }
+  await notifyPlayers(adminClient, matchPlayerIds,
+    'Match Result Confirmed',
+    `Your match result has been recorded. Score: ${scores.map((s: { a: number; b: number }) => `${s.a}-${s.b}`).join(', ')}`,
+    { match_id: matchId, event_id: match.event_id }
+  );
 
   revalidatePath(`/tournaments/${event.tournament_id}`);
 }
@@ -1491,6 +1558,45 @@ export async function finalizeEvent(eventId: string) {
     }
   }
 
+  // Assign points based on format
+  const table = doubles ? 'tournament_pairs' : 'tournament_participants';
+  if (event.format === 'single_elimination') {
+    // Position-based points: 1st=100, 2nd=75, 3rd-4th=50, 5th-8th=25
+    const positionToPoints: Record<number, number> = { 1: 100, 2: 75 };
+    const { data: allEntries } = await adminClient.from(table)
+      .select('id, final_position')
+      .eq('event_id', eventId)
+      .not('final_position', 'is', null);
+    for (const entry of allEntries ?? []) {
+      let pts = positionToPoints[entry.final_position!] ?? 0;
+      if (!pts && entry.final_position! <= 4) pts = 50;
+      else if (!pts && entry.final_position! <= 8) pts = 25;
+      else if (!pts) pts = 10;
+      await adminClient.from(table).update({ points: pts }).eq('id', entry.id);
+    }
+  } else {
+    // Round Robin: 3 points per win, 1 point for participation
+    const { data: rrMatches } = await adminClient.from('tournament_matches')
+      .select('*')
+      .eq('event_id', eventId)
+      .in('status', ['completed', 'walkover']);
+    const pointsMap: Record<string, number> = {};
+    const { data: allEntries } = await adminClient.from(table)
+      .select('id')
+      .eq('event_id', eventId)
+      .not('status', 'in', '("withdrawn","disqualified")');
+    for (const e of allEntries ?? []) { pointsMap[e.id] = 1; } // 1 participation point
+    for (const m of rrMatches ?? []) {
+      const winnerId = doubles ? m.winner_pair_id : m.winner_participant_id;
+      if (winnerId && pointsMap[winnerId] !== undefined) {
+        pointsMap[winnerId] += 3;
+      }
+    }
+    for (const [id, pts] of Object.entries(pointsMap)) {
+      await adminClient.from(table).update({ points: pts }).eq('id', id);
+    }
+  }
+
   // Set event to completed
   await adminClient.from('tournament_events')
     .update({ status: 'completed', updated_at: new Date().toISOString() })
@@ -1507,6 +1613,32 @@ export async function finalizeEvent(eventId: string) {
     action: 'event_finalized',
     performed_by: admin.id,
   });
+
+  // Notify all participants that event is completed
+  const finalPlayerIds: string[] = [];
+  if (doubles) {
+    const { data: allPairs } = await adminClient.from('tournament_pairs')
+      .select('player1_id, player2_id')
+      .eq('event_id', eventId)
+      .not('status', 'in', '("withdrawn","disqualified")');
+    for (const pair of allPairs ?? []) {
+      finalPlayerIds.push(pair.player1_id, pair.player2_id);
+    }
+  } else {
+    const { data: allParts } = await adminClient.from('tournament_participants')
+      .select('player_id')
+      .eq('event_id', eventId)
+      .not('status', 'in', '("withdrawn","disqualified")');
+    for (const p of allParts ?? []) {
+      finalPlayerIds.push(p.player_id);
+    }
+  }
+  const { data: tInfo } = await adminClient.from('tournaments').select('name').eq('id', event.tournament_id).single();
+  await notifyPlayers(adminClient, finalPlayerIds,
+    'Tournament Completed',
+    `${tInfo?.name ?? 'Tournament'} has been finalized. Check the results and your updated Elo rating!`,
+    { event_id: eventId, tournament_id: event.tournament_id }
+  );
 
   revalidatePath(`/tournaments/${event.tournament_id}`);
 }
@@ -1632,4 +1764,212 @@ export async function bulkCheckIn(eventId: string, type: 'participants' | 'pairs
 
   const { data: event } = await adminClient.from('tournament_events').select('tournament_id').eq('id', eventId).single();
   if (event) revalidatePath(`/tournaments/${event.tournament_id}`);
+}
+
+// ============================================================
+// Draw Lock/Unlock
+// ============================================================
+
+export async function lockDraw(eventId: string) {
+  const admin = await getAdminPlayer();
+  const adminClient = createAdminClient();
+
+  const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
+  if (!event) throw new Error('Event not found');
+
+  const { error } = await adminClient.from('tournament_events')
+    .update({ draw_locked: true, updated_at: new Date().toISOString() })
+    .eq('id', eventId);
+
+  if (error) {
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+
+  await logAudit(adminClient, {
+    tournament_id: event.tournament_id,
+    event_id: eventId,
+    action: 'draw_locked',
+    performed_by: admin.id,
+  });
+
+  revalidatePath(`/tournaments/${event.tournament_id}`);
+}
+
+export async function unlockDraw(eventId: string) {
+  const admin = await getAdminPlayer();
+  const adminClient = createAdminClient();
+
+  const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
+  if (!event) throw new Error('Event not found');
+
+  const { error } = await adminClient.from('tournament_events')
+    .update({ draw_locked: false, updated_at: new Date().toISOString() })
+    .eq('id', eventId);
+
+  if (error) {
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+
+  await logAudit(adminClient, {
+    tournament_id: event.tournament_id,
+    event_id: eventId,
+    action: 'draw_unlocked',
+    performed_by: admin.id,
+  });
+
+  revalidatePath(`/tournaments/${event.tournament_id}`);
+}
+
+// ============================================================
+// Clear Seeds
+// ============================================================
+
+export async function clearSeeds(eventId: string) {
+  const admin = await getAdminPlayer();
+  const adminClient = createAdminClient();
+
+  const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
+  if (!event) throw new Error('Event not found');
+  if (event.draw_locked) throw new Error('Draw is locked. Unlock it before clearing seeds.');
+
+  const doubles = isDoublesEvent(event.event_type);
+  const table = doubles ? 'tournament_pairs' : 'tournament_participants';
+
+  const { error } = await adminClient.from(table)
+    .update({ seed_number: null })
+    .eq('event_id', eventId);
+
+  if (error) {
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+
+  await logAudit(adminClient, {
+    tournament_id: event.tournament_id,
+    event_id: eventId,
+    action: 'seeds_cleared',
+    performed_by: admin.id,
+  });
+
+  revalidatePath(`/tournaments/${event.tournament_id}`);
+}
+
+// ============================================================
+// Undo Match Result
+// ============================================================
+
+export async function undoMatchResult(matchId: string) {
+  const admin = await getAdminPlayer();
+  const adminClient = createAdminClient();
+
+  const { data: match } = await adminClient.from('tournament_matches')
+    .select('*, event:tournament_events(*)')
+    .eq('id', matchId)
+    .single();
+
+  if (!match) throw new Error('Match not found');
+  if (match.status !== 'completed' && match.status !== 'walkover') {
+    throw new Error('Match has no result to undo');
+  }
+
+  const event = match.event as Record<string, unknown>;
+  const doubles = isDoublesEvent(event.event_type as TournamentEventType);
+
+  // Check no downstream matches have results
+  if (match.winner_to_match_id) {
+    const { data: nextMatch } = await adminClient.from('tournament_matches')
+      .select('status')
+      .eq('id', match.winner_to_match_id)
+      .single();
+
+    if (nextMatch && (nextMatch.status === 'completed' || nextMatch.status === 'walkover')) {
+      throw new Error('Cannot undo — downstream match already has a result. Undo that match first.');
+    }
+  }
+
+  // Reverse Elo changes for singles participants
+  if (!doubles) {
+    const winnerId = match.winner_participant_id;
+    const loserId = match.loser_participant_id;
+
+    if (winnerId) {
+      const { data: winnerP } = await adminClient.from('tournament_participants')
+        .select('player_id, elo_before')
+        .eq('id', winnerId).single();
+      if (winnerP?.elo_before != null) {
+        await adminClient.from('ratings')
+          .update({ singles_elo: winnerP.elo_before, updated_at: new Date().toISOString() })
+          .eq('player_id', winnerP.player_id);
+        await adminClient.from('tournament_participants')
+          .update({ elo_after: null, elo_change: null })
+          .eq('id', winnerId);
+      }
+    }
+
+    if (loserId) {
+      const { data: loserP } = await adminClient.from('tournament_participants')
+        .select('player_id, elo_before')
+        .eq('id', loserId).single();
+      if (loserP?.elo_before != null) {
+        await adminClient.from('ratings')
+          .update({ singles_elo: loserP.elo_before, updated_at: new Date().toISOString() })
+          .eq('player_id', loserP.player_id);
+        await adminClient.from('tournament_participants')
+          .update({ elo_after: null, elo_change: null })
+          .eq('id', loserId);
+      }
+    }
+  }
+
+  // Remove winner from next match if single elimination
+  if (match.winner_to_match_id) {
+    const advanceField = doubles
+      ? (match.winner_to_position === 'a' ? 'pair_a_id' : 'pair_b_id')
+      : (match.winner_to_position === 'a' ? 'participant_a_id' : 'participant_b_id');
+
+    await adminClient.from('tournament_matches')
+      .update({ [advanceField]: null, status: 'pending' })
+      .eq('id', match.winner_to_match_id);
+  }
+
+  // Reset match itself
+  const resetData: Record<string, unknown> = {
+    scores: null,
+    status: 'ready',
+    walkover_winner: null,
+    walkover_reason: null,
+    result_entered_by: null,
+    result_entered_at: null,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (doubles) {
+    resetData.winner_pair_id = null;
+    resetData.loser_pair_id = null;
+  } else {
+    resetData.winner_participant_id = null;
+    resetData.loser_participant_id = null;
+  }
+
+  const { error } = await adminClient.from('tournament_matches')
+    .update(resetData)
+    .eq('id', matchId);
+
+  if (error) {
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+
+  await logAudit(adminClient, {
+    tournament_id: event.tournament_id as string,
+    event_id: match.event_id,
+    match_id: matchId,
+    action: 'result_undone',
+    performed_by: admin.id,
+    details: { previous_scores: match.scores },
+  });
+
+  revalidatePath(`/tournaments/${event.tournament_id}`);
 }

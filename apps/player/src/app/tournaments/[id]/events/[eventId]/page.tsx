@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
 import { Badge, Avatar } from '@badminton/ui';
 import {
   formatDate,
@@ -16,9 +16,10 @@ import type {
   TournamentMatchStatus,
 } from '@badminton/shared';
 import { notFound } from 'next/navigation';
-import { Trophy, Users, ArrowLeft, Crown, Swords } from 'lucide-react';
+import { Trophy, Users, ArrowLeft, Crown, Swords, Medal, Star } from 'lucide-react';
 import Link from 'next/link';
 import { FadeIn } from '@/components/motion-wrapper';
+import { EventActions } from './EventActions';
 
 export default async function EventDetailPage({
   params,
@@ -79,6 +80,24 @@ export default async function EventDetailPage({
     .order('bracket_position');
 
   const allMatches = (matches as Array<Record<string, unknown>>) ?? [];
+
+  // Get current player's registration
+  const currentPlayer = await getCurrentPlayer();
+  let playerRegistration: { status: string } | null = null;
+  let playerParticipantId: string | null = null;
+
+  if (currentPlayer && !doubles) {
+    const { data: reg } = await supabase
+      .from('tournament_participants')
+      .select('id, status')
+      .eq('event_id', eventId)
+      .eq('player_id', currentPlayer.id)
+      .single();
+    if (reg) {
+      playerRegistration = { status: reg.status };
+      playerParticipantId = reg.id;
+    }
+  }
 
   // Build name/seed lookup maps
   const participantNameMap: Record<string, string> = {};
@@ -184,6 +203,19 @@ export default async function EventDetailPage({
             <Badge variant="neutral">
               {TOURNAMENT_MATCH_FORMAT_LABELS[matchFormat]}
             </Badge>
+            {playerRegistration && (
+              <Badge variant={playerRegistration.status === 'checked_in' ? 'success' : 'info'}>
+                {playerRegistration.status === 'checked_in' ? 'Checked In' : 'Registered'}
+              </Badge>
+            )}
+          </div>
+          <div className="mt-4">
+            <EventActions
+              eventId={eventId}
+              eventStatus={eventStatus}
+              playerRegistration={playerRegistration}
+              isDoubles={doubles}
+            />
           </div>
         </div>
       </FadeIn>
@@ -463,6 +495,126 @@ export default async function EventDetailPage({
           </div>
         </div>
       </FadeIn>
+
+      {/* Your Matches */}
+      {playerParticipantId && allMatches.length > 0 && (
+        <FadeIn delay={0.15}>
+          <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-4">
+              <Star className="w-4 h-4 text-[#FFD700]" />
+              <h2 className="text-sm font-bold text-shuttle-white uppercase tracking-wider font-display">
+                Your Matches
+              </h2>
+            </div>
+            <div className="space-y-2">
+              {allMatches
+                .filter((m) => {
+                  const aId = doubles ? m.pair_a_id : m.participant_a_id;
+                  const bId = doubles ? m.pair_b_id : m.participant_b_id;
+                  return aId === playerParticipantId || bId === playerParticipantId;
+                })
+                .map((m) => {
+                  const matchStatus = m.status as TournamentMatchStatus;
+                  const scores = m.scores as Array<{ a: number; b: number }> | null;
+                  const scoreStr = formatScores(scores);
+                  const playerSide = (doubles ? m.pair_a_id : m.participant_a_id) === playerParticipantId ? 'a' : 'b';
+                  const opponentSide = playerSide === 'a' ? 'b' : 'a';
+                  const won = isWinner(m, playerSide as 'a' | 'b');
+                  const opponentName = getEntryName(m, opponentSide as 'a' | 'b');
+
+                  return (
+                    <div
+                      key={m.id as string}
+                      className={`flex items-center justify-between p-3 rounded-lg border ${
+                        matchStatus === 'completed' || matchStatus === 'walkover'
+                          ? won
+                            ? 'border-[#22C55E]/20 bg-[#22C55E]/5'
+                            : 'border-[#EF4444]/20 bg-[#EF4444]/5'
+                          : 'border-white/[0.06] bg-white/[0.02]'
+                      }`}
+                    >
+                      <div>
+                        <p className="text-sm text-shuttle-white font-medium">
+                          vs {opponentName}
+                        </p>
+                        <p className="text-xs text-[#64748B] mt-0.5">
+                          {(m.round_name as string) || `Round ${m.round_number}`}
+                          {m.court ? ` - Court ${m.court as string}` : ''}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        {(matchStatus === 'completed' || matchStatus === 'walkover') ? (
+                          <>
+                            <span className={`text-sm font-bold ${won ? 'text-[#22C55E]' : 'text-[#EF4444]'}`}>
+                              {won ? 'WIN' : 'LOSS'}
+                            </span>
+                            {scoreStr && (
+                              <p className="text-xs text-[#64748B] font-mono mt-0.5">{scoreStr}</p>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-xs text-[#64748B] uppercase">{matchStatus}</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+        </FadeIn>
+      )}
+
+      {/* Leaderboard (when completed) */}
+      {eventStatus === 'completed' && (
+        <FadeIn delay={0.2}>
+          <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-4">
+              <Medal className="w-4 h-4 text-[#FFD700]" />
+              <h2 className="text-sm font-bold text-shuttle-white uppercase tracking-wider font-display">
+                Final Standings
+              </h2>
+            </div>
+            <div className="space-y-1">
+              {(doubles ? pairs : participants)
+                .filter((e: any) => e.final_position != null)
+                .sort((a: any, b: any) => a.final_position - b.final_position)
+                .map((e: any) => {
+                  const pos = e.final_position as number;
+                  const name = doubles
+                    ? e.pair_name ?? `${(e.player1 as any)?.full_name} & ${(e.player2 as any)?.full_name}`
+                    : (e.player as any)?.full_name ?? 'Unknown';
+                  const points = e.points ?? 0;
+                  const posColors: Record<number, string> = { 1: '#FFD700', 2: '#C0C0C0', 3: '#CD7F32' };
+
+                  return (
+                    <div
+                      key={e.id}
+                      className="flex items-center justify-between p-2.5 rounded-lg bg-white/[0.02]"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <span
+                          className="text-sm font-mono font-bold w-6 text-center"
+                          style={{ color: posColors[pos] ?? '#64748B' }}
+                        >
+                          {pos}
+                        </span>
+                        <span className="text-sm text-shuttle-white font-medium">{name}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs font-mono text-[#EF4444] font-bold">{points} pts</span>
+                        {!doubles && e.elo_change != null && (
+                          <span className={`text-xs font-mono ${e.elo_change > 0 ? 'text-[#22C55E]' : e.elo_change < 0 ? 'text-[#EF4444]' : 'text-[#64748B]'}`}>
+                            {e.elo_change > 0 ? '+' : ''}{e.elo_change} elo
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+        </FadeIn>
+      )}
     </div>
   );
 }

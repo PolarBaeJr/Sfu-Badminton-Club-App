@@ -8,10 +8,33 @@ import { FadeIn, StaggerContainer, StaggerItem } from '@/components/motion-wrapp
 export default async function TournamentsPage() {
   const supabase = await createServerSupabaseClient();
 
-  const { data: tournaments } = await supabase
+  // Try new schema (legacy_tournament_participants), fall back to old
+  let tournaments: any[] | null = null;
+  const { data: tournamentsNew } = await supabase
     .from('tournaments')
     .select('*, legacy_tournament_participants(count)')
     .order('start_date', { ascending: false });
+
+  if (tournamentsNew) {
+    tournaments = tournamentsNew;
+  } else {
+    const { data: tournamentsOld } = await supabase
+      .from('tournaments')
+      .select('*, tournament_participants(count)')
+      .order('start_date', { ascending: false });
+    if (tournamentsOld) {
+      tournaments = tournamentsOld.map(t => ({
+        ...t,
+        legacy_tournament_participants: t.tournament_participants,
+      }));
+    } else {
+      const { data: fallback } = await supabase
+        .from('tournaments')
+        .select('*')
+        .order('start_date', { ascending: false });
+      tournaments = fallback;
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -27,7 +50,8 @@ export default async function TournamentsPage() {
       <FadeIn delay={0.05}>
         <StaggerContainer className="grid gap-3">
           {tournaments?.map((t) => {
-            const count = Array.isArray(t.legacy_tournament_participants) ? t.legacy_tournament_participants[0]?.count ?? 0 : 0;
+            const lpArr = t.legacy_tournament_participants ?? t.tournament_participants;
+            const count = Array.isArray(lpArr) ? lpArr[0]?.count ?? 0 : 0;
             return (
               <StaggerItem key={t.id}>
                 <Link href={`/tournaments/${t.id}`} className="block group">

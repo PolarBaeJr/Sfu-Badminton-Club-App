@@ -8,10 +8,23 @@ import { Trophy, Users, Calendar, Zap } from 'lucide-react';
 export default async function TournamentsPage() {
   const supabase = await createServerSupabaseClient();
 
-  const { data: tournaments } = await supabase
+  // Try new schema first (tournament_events), fall back to old schema
+  let tournaments: any[] | null = null;
+  const { data: tournamentsWithEvents } = await supabase
     .from('tournaments')
     .select('*, tournament_events(count)')
     .order('start_date', { ascending: false });
+
+  if (tournamentsWithEvents) {
+    tournaments = tournamentsWithEvents;
+  } else {
+    // Fallback: migration not yet run, query without join
+    const { data: fallback } = await supabase
+      .from('tournaments')
+      .select('*')
+      .order('start_date', { ascending: false });
+    tournaments = fallback;
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
@@ -53,7 +66,7 @@ export default async function TournamentsPage() {
       {/* Tournament List */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
         {tournaments?.map((t) => {
-          const eventCount = Array.isArray(t.tournament_events) ? t.tournament_events[0]?.count ?? 0 : 0;
+          const eventCount = Array.isArray(t.tournament_events) ? t.tournament_events[0]?.count ?? 0 : (t.tournament_events as any)?.count ?? 0;
           return (
             <Link key={t.id} href={`/tournaments/${t.id}`} style={{ textDecoration: 'none' }}>
               <Card>

@@ -1,9 +1,13 @@
 'use client';
 
-import { Badge, Avatar } from '@badminton/ui';
+import { useState } from 'react';
+import { Badge, Avatar, Button, Dialog } from '@badminton/ui';
 import { PLACEMENT_BONUSES, isDoublesEvent } from '@badminton/shared';
 import type { TournamentEventType } from '@badminton/shared';
-import { Crown, TrendingUp, TrendingDown, Medal } from 'lucide-react';
+import { undoMatchResult } from '@/lib/tournament-actions';
+import { useToast } from '@/components/toast-provider';
+import { useRouter } from 'next/navigation';
+import { Crown, TrendingUp, TrendingDown, Medal, Undo2 } from 'lucide-react';
 
 interface Props {
   event: Record<string, unknown>;
@@ -23,9 +27,29 @@ const POSITION_COLORS: Record<number, string> = {
 };
 
 export function ResultsTab({ event, participants, pairs, matches, isDoubles }: Props) {
+  const [undoConfirmId, setUndoConfirmId] = useState<string | null>(null);
+  const [undoLoading, setUndoLoading] = useState(false);
+  const { toast } = useToast();
+  const router = useRouter();
+
   const entries = (isDoubles ? pairs : participants) as any[];
   const eventType = event.event_type as TournamentEventType;
   const bonuses = isDoubles ? PLACEMENT_BONUSES.doubles : PLACEMENT_BONUSES.singles;
+  const completedMatchList = (matches as any[]).filter((m: any) => m.status === 'completed' || m.status === 'walkover');
+
+  async function handleUndo() {
+    if (!undoConfirmId) return;
+    setUndoLoading(true);
+    try {
+      await undoMatchResult(undoConfirmId);
+      toast('Match result undone', 'success');
+      router.refresh();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed to undo', 'error');
+    }
+    setUndoLoading(false);
+    setUndoConfirmId(null);
+  }
 
   // Sort by final position
   const ranked = entries
@@ -127,6 +151,45 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
           </tbody>
         </table>
       </div>
+
+      {/* Match Results with Undo */}
+      {event.status !== 'completed' && completedMatchList.length > 0 && (
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+          <div className="px-4 py-3 border-b border-[var(--border)]">
+            <h3 className="text-sm font-semibold text-[var(--text-primary)]">Completed Matches</h3>
+          </div>
+          <div className="divide-y divide-[var(--border)]">
+            {completedMatchList.map((m: any) => {
+              const scores = (m.scores as Array<{ a: number; b: number }>) ?? [];
+              const scoreStr = scores.map((s: { a: number; b: number }) => `${s.a}-${s.b}`).join(', ');
+              return (
+                <div key={m.id} className="px-4 py-2.5 flex items-center justify-between">
+                  <div className="text-sm text-[var(--text-primary)]">
+                    Match #{m.match_number ?? '?'} — {m.round_name ?? `Round ${m.round_number}`}
+                    {scoreStr && <span className="text-[var(--text-muted)] ml-2">({scoreStr})</span>}
+                  </div>
+                  <Button size="sm" variant="ghost" onClick={() => setUndoConfirmId(m.id)}>
+                    <Undo2 className="w-3.5 h-3.5 mr-1" /> Undo
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Undo confirmation dialog */}
+      <Dialog open={!!undoConfirmId} onClose={() => setUndoConfirmId(null)} title="Undo Match Result">
+        <p className="text-sm text-[var(--text-muted)] mb-4">
+          This will reset the match, reverse Elo changes, and remove the winner from the next match. Are you sure?
+        </p>
+        <div className="flex gap-2">
+          <Button onClick={handleUndo} loading={undoLoading} className="flex-1">
+            Confirm Undo
+          </Button>
+          <Button variant="ghost" onClick={() => setUndoConfirmId(null)}>Cancel</Button>
+        </div>
+      </Dialog>
     </div>
   );
 }

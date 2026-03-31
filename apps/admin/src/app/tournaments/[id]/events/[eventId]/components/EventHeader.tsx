@@ -14,10 +14,12 @@ import {
   generateSingleEliminationBracket,
   generateRoundRobinMatches,
   finalizeEvent,
+  lockDraw,
+  unlockDraw,
 } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { Trophy, Users, CheckCircle, Swords, BarChart3, ChevronRight } from 'lucide-react';
+import { Trophy, Users, CheckCircle, Swords, BarChart3, ChevronRight, Lock, Unlock } from 'lucide-react';
 
 interface Props {
   tournament: Record<string, unknown>;
@@ -33,8 +35,10 @@ const STATUS_STEPS: TournamentEventStatus[] = ['registration', 'checkin', 'brack
 
 export function EventHeader({ tournament, event, isDoubles, totalEntries, checkedIn, totalMatches, completedMatches }: Props) {
   const [loading, setLoading] = useState(false);
+  const [lockLoading, setLockLoading] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
+  const drawLocked = event.draw_locked as boolean;
 
   const status = event.status as TournamentEventStatus;
   const eventType = event.event_type as TournamentEventType;
@@ -109,18 +113,47 @@ export function EventHeader({ tournament, event, isDoubles, totalEntries, checke
             </span>
             <Badge variant="default">{format === 'round_robin' ? 'Round Robin' : 'Single Elimination'}</Badge>
             <Badge variant="default">{(event.match_format as string).replace(/_/g, ' ')}</Badge>
+            {drawLocked && <Badge variant="default">Draw Locked</Badge>}
           </div>
         </div>
 
-        {status !== 'completed' && (
-          <Button
-            onClick={handleAction}
-            loading={loading}
-            disabled={actionDisabled}
-          >
-            {actionLabel[status] ?? 'Next Step'}
-          </Button>
-        )}
+        <div className="flex gap-2">
+          {['bracket_generated', 'live'].includes(status) && (
+            <Button
+              variant="ghost"
+              size="sm"
+              loading={lockLoading}
+              onClick={async () => {
+                setLockLoading(true);
+                try {
+                  if (drawLocked) {
+                    await unlockDraw(event.id as string);
+                    toast('Draw unlocked', 'success');
+                  } else {
+                    await lockDraw(event.id as string);
+                    toast('Draw locked', 'success');
+                  }
+                  router.refresh();
+                } catch (err) {
+                  toast(err instanceof Error ? err.message : 'Failed', 'error');
+                }
+                setLockLoading(false);
+              }}
+            >
+              {drawLocked ? <Unlock className="w-4 h-4 mr-1" /> : <Lock className="w-4 h-4 mr-1" />}
+              {drawLocked ? 'Unlock Draw' : 'Lock Draw'}
+            </Button>
+          )}
+          {status !== 'completed' && (
+            <Button
+              onClick={handleAction}
+              loading={loading}
+              disabled={actionDisabled}
+            >
+              {actionLabel[status] ?? 'Next Step'}
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Status Stepper */}

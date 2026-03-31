@@ -8,15 +8,16 @@ import {
   TOURNAMENT_EVENT_STATUS_COLORS,
 } from '@badminton/shared';
 import type { TournamentEventType, TournamentEventStatus } from '@badminton/shared';
-import { Trophy, Users, CheckCircle, BarChart3, Settings, Swords } from 'lucide-react';
+import { Trophy, Users, CheckCircle, BarChart3, Settings, Swords, ListOrdered } from 'lucide-react';
 import { EventHeader } from './EventHeader';
 import { ParticipantsTab } from './ParticipantsTab';
 import { CheckInTab } from './CheckInTab';
 import { BracketTab } from './BracketTab';
 import { RoundRobinTab } from './RoundRobinTab';
 import { ResultsTab } from './ResultsTab';
+import { LeaderboardTab } from './LeaderboardTab';
 
-type TabId = 'participants' | 'checkin' | 'bracket' | 'results';
+type TabId = 'participants' | 'checkin' | 'bracket' | 'results' | 'leaderboard';
 
 interface Props {
   tournament: Record<string, unknown>;
@@ -48,6 +49,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
 
   if (status === 'completed') {
     tabs.push({ id: 'results', label: 'Results', icon: <BarChart3 className="w-4 h-4" /> });
+    tabs.push({ id: 'leaderboard', label: 'Leaderboard', icon: <ListOrdered className="w-4 h-4" /> });
   }
 
   // Default to the most relevant tab
@@ -141,6 +143,14 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             participants={participants}
             pairs={pairs}
             matches={matches}
+            isDoubles={isDoubles}
+          />
+        )}
+        {activeTab === 'leaderboard' && (
+          <LeaderboardTab
+            event={event}
+            participants={participants}
+            pairs={pairs}
             isDoubles={isDoubles}
           />
         )}

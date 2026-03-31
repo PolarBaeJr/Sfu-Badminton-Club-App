@@ -286,9 +286,8 @@ export function DrawSheetPDF({
           .sort((a, b) => a.bracket_position - b.bracket_position);
 
         for (let i = 0; i < roundMatches.length; i += 2) {
-          const m1 = roundMatches[i];
+          const m1 = roundMatches[i]!;
           const m2 = roundMatches[i + 1];
-          if (!m1) continue;
 
           const pos1 = matchPositions.get(`${m1.round_number}-${m1.bracket_position}`);
           if (!pos1) continue;
@@ -510,14 +509,14 @@ export function DrawSheetPDF({
       const headers = ['#', 'Player', 'W', 'L', 'PF', 'PA', '+/-'];
       let cx = tableX;
       for (let i = 0; i < headers.length; i++) {
-        doc.text(headers[i], cx + 2, thY + 5);
-        cx += colWidths[i];
+        doc.text(headers[i]!, cx + 2, thY + 5);
+        cx += colWidths[i]!;
       }
 
       // Table rows
       doc.setFont('helvetica', 'normal');
       for (let i = 0; i < standings.length; i++) {
-        const s = standings[i];
+        const s = standings[i]!;
         const ry = thY + rowHeight + i * rowHeight;
 
         if (i % 2 === 0) {
@@ -533,8 +532,8 @@ export function DrawSheetPDF({
         const rowData = [`${i + 1}`, s.name, `${s.wins}`, `${s.losses}`, `${s.pointsFor}`, `${s.pointsAgainst}`, diffStr];
 
         for (let j = 0; j < rowData.length; j++) {
-          const text = rowData[j];
-          const maxWidth = colWidths[j] - 4;
+          const text = rowData[j]!;
+          const maxWidth = colWidths[j]! - 4;
           // Truncate long names
           let displayText = text;
           if (j === 1 && doc.getTextWidth(text) > maxWidth) {
@@ -544,7 +543,7 @@ export function DrawSheetPDF({
             displayText += '...';
           }
           doc.text(displayText, rx + 2, ry + 5);
-          rx += colWidths[j];
+          rx += colWidths[j]!;
         }
 
         // Highlight rank 1
@@ -575,15 +574,15 @@ export function DrawSheetPDF({
         doc.setFont('helvetica', 'bold');
         let mx = tableX;
         for (let i = 0; i < mHeaders.length; i++) {
-          doc.text(mHeaders[i], mx + 2, mThY + 5);
-          mx += mColWidths[i];
+          doc.text(mHeaders[i]!, mx + 2, mThY + 5);
+          mx += mColWidths[i]!;
         }
 
         const sortedSchedule = [...matches].sort((a, b) => a.match_number - b.match_number);
 
         doc.setFont('helvetica', 'normal');
         for (let i = 0; i < sortedSchedule.length; i++) {
-          const m = sortedSchedule[i];
+          const m = sortedSchedule[i]!;
           const ry = mThY + rowHeight + i * rowHeight;
           if (ry + rowHeight > pageHeight - 8) break; // Don't overflow page
 
@@ -603,8 +602,8 @@ export function DrawSheetPDF({
           const rowData = [`M${m.match_number}`, nameA, 'vs', nameB, score || '-', statusLabel];
           let rx2 = tableX;
           for (let j = 0; j < rowData.length; j++) {
-            let displayText = rowData[j];
-            const maxW = mColWidths[j] - 4;
+            let displayText = rowData[j]!;
+            const maxW = mColWidths[j]! - 4;
             if ((j === 1 || j === 3) && doc.getTextWidth(displayText) > maxW) {
               while (doc.getTextWidth(displayText + '...') > maxW && displayText.length > 3) {
                 displayText = displayText.slice(0, -1);
@@ -612,7 +611,7 @@ export function DrawSheetPDF({
               displayText += '...';
             }
             doc.text(displayText, rx2 + 2, ry + 5);
-            rx2 += mColWidths[j];
+            rx2 += mColWidths[j]!;
           }
         }
       }

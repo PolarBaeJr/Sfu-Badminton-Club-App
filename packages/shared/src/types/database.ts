@@ -82,7 +82,12 @@ export type NotificationType =
   | 'walkover_confirmed'
   | 'opponent_withdrew'
   | 'admin_alert'
-  | 'general';
+  | 'general'
+  | 'tournament_bracket_published'
+  | 'tournament_match_ready'
+  | 'tournament_match_result'
+  | 'tournament_event_completed'
+  | 'tournament_checkin_open';
 
 // Table row types
 export type AnnouncementType = 'info' | 'warning' | 'urgent' | 'event';
@@ -500,6 +505,7 @@ export interface TournamentEvent {
   seeding_method: TournamentSeedingMethod;
   elo_multiplier: number;
   placement_bonus_enabled: boolean;
+  draw_locked: boolean;
   status: TournamentEventStatus;
   created_at: string;
   updated_at: string;
@@ -517,6 +523,7 @@ export interface TournamentEventParticipant {
   elo_before: number | null;
   elo_after: number | null;
   elo_change: number | null;
+  points: number;
   added_by: string | null;
   notes: string | null;
   created_at: string;
@@ -534,6 +541,7 @@ export interface TournamentPair {
   checked_in_by: string | null;
   final_position: number | null;
   combined_elo: number | null;
+  points: number;
   added_by: string | null;
   notes: string | null;
   created_at: string;

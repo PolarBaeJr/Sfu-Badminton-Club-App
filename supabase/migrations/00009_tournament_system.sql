@@ -28,6 +28,7 @@ CREATE TABLE tournament_events (
     CHECK (seeding_method IN ('elo', 'manual', 'random')),
   elo_multiplier DECIMAL(4,2) DEFAULT 1.25,
   placement_bonus_enabled BOOLEAN DEFAULT true,
+  draw_locked BOOLEAN DEFAULT false,
   status TEXT NOT NULL DEFAULT 'registration'
     CHECK (status IN ('registration', 'checkin', 'bracket_generated', 'live', 'completed')),
   created_at TIMESTAMPTZ DEFAULT now(),
@@ -51,6 +52,7 @@ CREATE TABLE tournament_participants (
   elo_before INT,
   elo_after INT,
   elo_change INT,
+  points INT DEFAULT 0,
   added_by UUID REFERENCES players(id),
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT now(),
@@ -74,6 +76,7 @@ CREATE TABLE tournament_pairs (
   checked_in_by UUID REFERENCES players(id),
   final_position INT,
   combined_elo INT,
+  points INT DEFAULT 0,
   added_by UUID REFERENCES players(id),
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT now(),

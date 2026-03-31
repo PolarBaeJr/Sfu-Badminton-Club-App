@@ -20,6 +20,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
   const { data: tournament } = await supabase.from('tournaments').select('*').eq('id', id).single();
   if (!tournament) notFound();
 
+  // Try fetching events (new schema) — returns null if migration hasn't run
   const { data: events } = await supabase
     .from('tournament_events')
     .select('*, tournament_participants(count), tournament_pairs(count)')

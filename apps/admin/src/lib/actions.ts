@@ -511,12 +511,22 @@ export async function addTournamentParticipant(tournamentId: string, playerId: s
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
-  const { error } = await adminClient.from('legacy_tournament_participants').insert({
+  // Try new table name first, fall back to old if migration hasn't run
+  let error;
+  const insertData = {
     tournament_id: tournamentId,
     player_id: playerId,
     partner_id: partnerId || null,
     seed,
-  });
+  };
+  const result = await adminClient.from('legacy_tournament_participants').insert(insertData);
+  if (result.error) {
+    // Fallback: migration not yet run
+    const fallback = await adminClient.from('tournament_participants').insert(insertData);
+    error = fallback.error;
+  } else {
+    error = result.error;
+  }
 
   if (error) {
     if (error.code === '23505') throw new Error('Player already in tournament');
@@ -543,8 +553,12 @@ export async function removeTournamentParticipant(participantId: string, tournam
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
-  const { error } = await adminClient.from('legacy_tournament_participants').delete().eq('id', participantId);
-  if (error) throw new Error(error.message);
+  // Try new table name first, fall back to old if migration hasn't run
+  const { error: err1 } = await adminClient.from('legacy_tournament_participants').delete().eq('id', participantId);
+  if (err1) {
+    const { error: err2 } = await adminClient.from('tournament_participants').delete().eq('id', participantId);
+    if (err2) throw new Error(err2.message);
+  }
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,

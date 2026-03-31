@@ -9,11 +9,12 @@ import {
   removePairFromEvent,
   autoSeedEventByElo,
   updateParticipantSeed,
+  clearSeeds,
 } from '@/lib/tournament-actions';
 import { nextPowerOf2 } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { Plus, Trash2, ArrowUpDown, Hash, AlertTriangle } from 'lucide-react';
+import { Plus, Trash2, ArrowUpDown, Hash, AlertTriangle, XCircle } from 'lucide-react';
 
 interface Props {
   event: Record<string, unknown>;
@@ -122,6 +123,19 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
         <div className="flex gap-2">
           {canModify && (
             <>
+              <Button size="sm" variant="ghost" onClick={async () => {
+                setLoading(true);
+                try {
+                  await clearSeeds(event.id as string);
+                  toast('Seeds cleared', 'success');
+                  router.refresh();
+                } catch (err) {
+                  toast(err instanceof Error ? err.message : 'Failed', 'error');
+                }
+                setLoading(false);
+              }} loading={loading}>
+                <XCircle className="w-3.5 h-3.5 mr-1" /> Clear Seeds
+              </Button>
               <Button size="sm" variant="ghost" onClick={handleAutoSeed} loading={loading}>
                 <ArrowUpDown className="w-3.5 h-3.5 mr-1" /> Auto-Seed
               </Button>
