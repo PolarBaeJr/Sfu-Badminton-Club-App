@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-server';
 import { notFound } from 'next/navigation';
 import { TOURNAMENT_EVENT_TYPE_LABELS, isDoublesEvent } from '@badminton/shared';
 import { ArrowLeft } from 'lucide-react';
@@ -11,7 +11,7 @@ export default async function EventPage({
   params: Promise<{ id: string; eventId: string }>;
 }) {
   const { id: tournamentId, eventId } = await params;
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminClient();
 
   const { data: tournament } = await supabase.from('tournaments').select('*').eq('id', tournamentId).single();
   if (!tournament) notFound();

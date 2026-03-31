@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge } from '@badminton/ui';
 import { formatDateTime } from '@badminton/shared';
 import { ScrollText, User, Inbox } from 'lucide-react';
@@ -12,7 +12,7 @@ const actionCategory = (action: string): 'success' | 'danger' | 'warning' | 'inf
 };
 
 export default async function AuditPage() {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminClient();
 
   const { data: logs } = await supabase
     .from('audit_logs')

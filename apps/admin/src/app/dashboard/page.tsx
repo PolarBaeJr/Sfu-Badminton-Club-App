@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-server';
 import { StatCard, Card, Badge } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS } from '@badminton/shared';
 import Link from 'next/link';
@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 
 export default async function DashboardPage() {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminClient();
 
   const [
     { count: totalPlayers },

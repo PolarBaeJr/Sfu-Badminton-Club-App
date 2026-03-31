@@ -3,7 +3,6 @@ import './globals.css';
 import { Sidebar } from '@/components/sidebar';
 import { ToastProvider } from '@/components/toast-provider';
 import { SentryUserInit } from '@/components/sentry-user-init';
-import { createServerSupabaseClient } from '@/lib/supabase-server';
 
 export const metadata: Metadata = {
   title: 'SFU Badminton - Admin',
@@ -11,22 +10,7 @@ export const metadata: Metadata = {
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  let playerId: string | null = null;
-
-  try {
-    const supabase = await createServerSupabaseClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      const { data: player } = await supabase
-        .from('players')
-        .select('id')
-        .eq('user_id', user.id)
-        .single();
-      playerId = player?.id ?? null;
-    }
-  } catch {
-    // Not authenticated
-  }
+  const playerId: string | null = null;
 
   return (
     <html lang="en" suppressHydrationWarning>

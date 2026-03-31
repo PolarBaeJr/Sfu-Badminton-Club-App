@@ -1,10 +1,10 @@
-import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-server';
 import { Card } from '@badminton/ui';
 import { SettingsForm } from './settings-form';
 import { Settings, User, Mail, Shield, Sliders, Info, ExternalLink } from 'lucide-react';
 
 export default async function SettingsPage() {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminClient();
 
   const { data: { user } } = await supabase.auth.getUser();
   const { data: player } = await supabase

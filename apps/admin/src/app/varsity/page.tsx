@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge, Avatar } from '@badminton/ui';
 import { getWinRate } from '@badminton/shared';
 import { VarsityNoteButton } from './notes';
@@ -19,7 +19,7 @@ const rankBg = (rank: number) => {
 };
 
 export default async function VarsityPage() {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminClient();
 
   const { data: eligible } = await supabase
     .from('players')

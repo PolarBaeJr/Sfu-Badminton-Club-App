@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge } from '@badminton/ui';
 import { formatRelativeTime } from '@badminton/shared';
 import { AnnouncementComposer } from './composer';
@@ -42,7 +42,7 @@ const typeConfig: Record<string, { icon: typeof Info; color: string; borderColor
 };
 
 export default async function AnnouncementsPage() {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminClient();
 
   const { data: announcements } = await supabase
     .from('announcements')

@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge } from '@badminton/ui';
 import { MATCH_FORMAT_LABELS, formatDateTime } from '@badminton/shared';
 import { MatchActions } from './actions';
@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 
 export default async function MatchesPage() {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminClient();
 
   const { data: matches } = await supabase
     .from('matches')

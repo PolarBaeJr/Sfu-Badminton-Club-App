@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge } from '@badminton/ui';
 import { formatDate } from '@badminton/shared';
 import { CreateTournamentForm } from './actions';
@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { Trophy, Users, Calendar, Zap } from 'lucide-react';
 
 export default async function TournamentsPage() {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminClient();
 
   // Try new schema first (tournament_events), fall back to old schema
   let tournaments: any[] | null = null;

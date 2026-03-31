@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-server';
 import { Badge, Card, Avatar } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS } from '@badminton/shared';
 import Link from 'next/link';
@@ -32,7 +32,7 @@ export default async function PlayersPage({
 }) {
   const params = await searchParams;
   const tab = params.tab || 'competitive';
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminClient();
 
   let query = supabase
     .from('players')

@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge } from '@badminton/ui';
 import { MATCH_FORMAT_LABELS, formatRelativeTime } from '@badminton/shared';
 import { ChallengeActions } from './actions';
@@ -6,7 +6,7 @@ import { CreateChallengeForm } from './create-challenge';
 import { Swords, Plus, Clock, CheckCircle2, XCircle, Users, Trophy } from 'lucide-react';
 
 export default async function ChallengesPage() {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminClient();
 
   const { data: challenges } = await supabase
     .from('challenges')

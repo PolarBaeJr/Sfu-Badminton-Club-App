@@ -1,11 +1,11 @@
-import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge, Button } from '@badminton/ui';
 import { formatDate } from '@badminton/shared';
 import { SessionActions, CreateSessionForm } from './actions';
 import { CalendarDays, MapPin, Users, Clock } from 'lucide-react';
 
 export default async function SessionsPage() {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminClient();
 
   const { data: sessions } = await supabase
     .from('sessions')

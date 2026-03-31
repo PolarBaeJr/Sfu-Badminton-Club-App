@@ -1,11 +1,11 @@
-import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge } from '@badminton/ui';
 import { formatRelativeTime } from '@badminton/shared';
 import { DisputeActions } from './actions';
 import { AlertTriangle, User, MessageSquare, CheckCircle2, Scale } from 'lucide-react';
 
 export default async function DisputesPage() {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminClient();
 
   const { data: disputes } = await supabase
     .from('disputes')

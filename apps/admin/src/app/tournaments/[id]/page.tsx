@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge } from '@badminton/ui';
 import { formatDate, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS } from '@badminton/shared';
 import { notFound } from 'next/navigation';
@@ -8,7 +8,7 @@ import { CreateEventButton } from './create-event';
 
 export default async function TournamentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminClient();
 
   const { data: tournament } = await supabase.from('tournaments').select('*').eq('id', id).single();
   if (!tournament) notFound();

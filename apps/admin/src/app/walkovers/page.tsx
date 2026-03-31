@@ -1,11 +1,11 @@
-import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge } from '@badminton/ui';
 import { formatRelativeTime } from '@badminton/shared';
 import { WalkoverActions } from './actions';
 import { Clock, User, AlertTriangle, MessageSquare, CheckCircle2 } from 'lucide-react';
 
 export default async function WalkoversPage() {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminClient();
 
   const { data: walkovers } = await supabase
     .from('walkovers')

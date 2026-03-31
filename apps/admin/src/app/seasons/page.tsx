@@ -1,11 +1,11 @@
-import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge } from '@badminton/ui';
 import { formatDate } from '@badminton/shared';
 import { CreateSeasonForm, SeasonActions } from './actions';
 import { Medal, Calendar, CheckCircle2, XCircle, Clock } from 'lucide-react';
 
 export default async function SeasonsPage() {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminClient();
 
   const { data: seasons } = await supabase
     .from('seasons')
