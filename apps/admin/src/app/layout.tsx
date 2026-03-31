@@ -13,7 +13,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const playerId: string | null = null;
 
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" data-theme="dark" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: `
           try {
