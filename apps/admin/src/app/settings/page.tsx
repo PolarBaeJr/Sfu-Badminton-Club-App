@@ -6,11 +6,11 @@ import { Settings, User, Mail, Shield, Sliders, Info, ExternalLink } from 'lucid
 export default async function SettingsPage() {
   const supabase = createAdminClient();
 
-  const { data: { user } } = await supabase.auth.getUser();
+  // DEV MODE: grab first player as admin (no auth flow)
   const { data: player } = await supabase
     .from('players')
     .select('*')
-    .eq('user_id', user?.id ?? '')
+    .limit(1)
     .single();
 
   const { data: settings } = await supabase
