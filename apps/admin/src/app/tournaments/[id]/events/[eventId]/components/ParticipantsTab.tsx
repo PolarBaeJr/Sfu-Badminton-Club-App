@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { Button, Dialog, Select, Input, Badge, Avatar } from '@badminton/ui';
+import { useState, useRef } from 'react';
+import { Button, Dialog, Select, Avatar } from '@badminton/ui';
 import {
   addParticipantToEvent,
   removeParticipantFromEvent,
@@ -9,12 +9,13 @@ import {
   removePairFromEvent,
   autoSeedEventByElo,
   updateParticipantSeed,
+  updatePairSeed,
   clearSeeds,
 } from '@/lib/tournament-actions';
 import { nextPowerOf2 } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { Plus, Trash2, ArrowUpDown, Hash, AlertTriangle, XCircle } from 'lucide-react';
+import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil } from 'lucide-react';
 
 interface Props {
   event: Record<string, unknown>;
@@ -32,6 +33,82 @@ const STATUS_COLORS: Record<string, string> = {
   no_show: 'var(--color-warning)',
 };
 
+function SeedCell({
+  entryId,
+  seedNumber,
+  canEdit,
+  onSave,
+}: {
+  entryId: string;
+  seedNumber: number | null;
+  canEdit: boolean;
+  onSave: (id: string, seed: number | null) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(seedNumber != null ? String(seedNumber) : '');
+  const [saving, setSaving] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function startEdit() {
+    if (!canEdit) return;
+    setValue(seedNumber != null ? String(seedNumber) : '');
+    setEditing(true);
+    setTimeout(() => inputRef.current?.select(), 0);
+  }
+
+  async function commit() {
+    const parsed = value.trim() === '' ? null : parseInt(value, 10);
+    if (parsed !== null && (isNaN(parsed) || parsed < 1)) {
+      setEditing(false);
+      return;
+    }
+    if (parsed === seedNumber) { setEditing(false); return; }
+    setSaving(true);
+    await onSave(entryId, parsed);
+    setSaving(false);
+    setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        type="number"
+        min={1}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+          if (e.key === 'Escape') setEditing(false);
+        }}
+        className="w-12 text-center text-sm font-mono bg-[var(--bg-elevated)] border border-[var(--color-accent)] rounded px-1 py-0.5 outline-none"
+        autoFocus
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={startEdit}
+      disabled={!canEdit || saving}
+      className={`group flex items-center gap-1 text-sm font-mono text-[var(--text-muted)] ${canEdit ? 'hover:text-[var(--text-primary)] cursor-pointer' : ''}`}
+    >
+      {saving ? (
+        <span className="opacity-50">…</span>
+      ) : (
+        <>
+          <span>{seedNumber != null ? `#${seedNumber}` : '—'}</span>
+          {canEdit && (
+            <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-50 transition-opacity" />
+          )}
+        </>
+      )}
+    </button>
+  );
+}
+
 export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoubles }: Props) {
   const [addOpen, setAddOpen] = useState(false);
   const [playerId, setPlayerId] = useState('');
@@ -46,6 +123,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   const bracketSize = nextPowerOf2(activeEntries.length);
   const byes = bracketSize - activeEntries.length;
   const canModify = event.status === 'registration';
+  const drawLocked = event.draw_locked as boolean;
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -97,7 +175,19 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     setLoading(false);
   }
 
-  // Registered player IDs for filtering
+  async function handleSeedSave(id: string, seed: number | null) {
+    try {
+      if (isDoubles) {
+        await updatePairSeed(id, seed);
+      } else {
+        await updateParticipantSeed(id, seed);
+      }
+      router.refresh();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed to update seed', 'error');
+    }
+  }
+
   const registeredPlayerIds = new Set(
     isDoubles
       ? (pairs as any[]).flatMap((p: any) => [p.player1_id, p.player2_id])
@@ -119,9 +209,14 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               <span className="text-[var(--color-warning)]"> ({byes} byes)</span>
             )}
           </span>
+          {drawLocked && (
+            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-[var(--color-warning)]/15 text-[var(--color-warning)]">
+              Draw Locked
+            </span>
+          )}
         </div>
         <div className="flex gap-2">
-          {canModify && (
+          {canModify && !drawLocked && (
             <>
               <Button size="sm" variant="ghost" onClick={async () => {
                 setLoading(true);
@@ -147,12 +242,12 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
         </div>
       </div>
 
-      {/* Bracket size warning */}
+      {/* Bye preview */}
       {byes > 0 && event.format !== 'round_robin' && (
         <div className="flex items-center gap-2 p-3 rounded-lg bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/20">
           <AlertTriangle className="w-4 h-4 text-[var(--color-warning)] flex-shrink-0" />
           <span className="text-sm text-[var(--color-warning)]">
-            {activeEntries.length} {isDoubles ? 'pairs' : 'players'} will create a {bracketSize}-slot bracket with {byes} bye{byes > 1 ? 's' : ''}. Top seeds get free passes.
+            {activeEntries.length} {isDoubles ? 'pairs' : 'players'} → {bracketSize}-slot bracket with {byes} bye{byes > 1 ? 's' : ''}. Seeds #1–{byes} get first-round byes.
           </span>
         </div>
       )}
@@ -162,13 +257,18 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
         <table className="w-full">
           <thead>
             <tr className="border-b border-[var(--border)]">
-              <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-16">Seed</th>
+              <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-20">
+                Seed
+                {canModify && !drawLocked && (
+                  <span className="ml-1 text-[10px] text-[var(--text-muted)] normal-case font-normal">(click to edit)</span>
+                )}
+              </th>
               <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3">
                 {isDoubles ? 'Pair' : 'Player'}
               </th>
               <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-24">Elo</th>
               <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-28">Status</th>
-              {canModify && (
+              {canModify && !drawLocked && (
                 <th className="text-right text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-24">Actions</th>
               )}
             </tr>
@@ -178,9 +278,12 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               (pairs as any[]).map((pair: any) => (
                 <tr key={pair.id} className="border-b border-[var(--border)] last:border-b-0 hover:bg-[var(--bg-elevated)] transition-colors">
                   <td className="px-4 py-3">
-                    <span className="text-sm font-mono text-[var(--text-muted)]">
-                      {pair.seed_number ? `#${pair.seed_number}` : '-'}
-                    </span>
+                    <SeedCell
+                      entryId={pair.id}
+                      seedNumber={pair.seed_number}
+                      canEdit={canModify && !drawLocked}
+                      onSave={handleSeedSave}
+                    />
                   </td>
                   <td className="px-4 py-3">
                     <span className="text-sm font-medium text-[var(--text-primary)]">
@@ -195,7 +298,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                       {pair.status}
                     </span>
                   </td>
-                  {canModify && (
+                  {canModify && !drawLocked && (
                     <td className="px-4 py-3 text-right">
                       <Button size="sm" variant="ghost" onClick={() => handleRemove(pair.id)} loading={actionLoading === pair.id}>
                         <Trash2 className="w-3.5 h-3.5 text-[var(--color-danger)]" />
@@ -212,9 +315,12 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                 return (
                   <tr key={p.id} className="border-b border-[var(--border)] last:border-b-0 hover:bg-[var(--bg-elevated)] transition-colors">
                     <td className="px-4 py-3">
-                      <span className="text-sm font-mono text-[var(--text-muted)]">
-                        {p.seed_number ? `#${p.seed_number}` : '-'}
-                      </span>
+                      <SeedCell
+                        entryId={p.id}
+                        seedNumber={p.seed_number}
+                        canEdit={canModify && !drawLocked}
+                        onSave={handleSeedSave}
+                      />
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2.5">
@@ -230,7 +336,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                         {p.status}
                       </span>
                     </td>
-                    {canModify && (
+                    {canModify && !drawLocked && (
                       <td className="px-4 py-3 text-right">
                         <Button size="sm" variant="ghost" onClick={() => handleRemove(p.id)} loading={actionLoading === p.id}>
                           <Trash2 className="w-3.5 h-3.5 text-[var(--color-danger)]" />

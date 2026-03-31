@@ -350,6 +350,20 @@ export async function updateParticipantSeed(participantId: string, seedNumber: n
   }
 }
 
+export async function updatePairSeed(pairId: string, seedNumber: number | null) {
+  await getAdminPlayer();
+  const adminClient = createAdminClient();
+
+  const { error } = await adminClient.from('tournament_pairs')
+    .update({ seed_number: seedNumber })
+    .eq('id', pairId);
+
+  if (error) {
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+}
+
 export async function autoSeedEventByElo(eventId: string) {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
