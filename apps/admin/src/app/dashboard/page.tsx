@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
 import { StatCard, Card, Badge } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS } from '@badminton/shared';
