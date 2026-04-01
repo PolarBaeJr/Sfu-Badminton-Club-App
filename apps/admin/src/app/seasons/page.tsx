@@ -17,8 +17,8 @@ export default async function SeasonsPage() {
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--accent)]/10">
-            <Medal className="w-5 h-5 text-[var(--accent)]" />
+          <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--color-accent)]/10">
+            <Medal className="w-5 h-5 text-[var(--color-accent)]" />
           </div>
           <div>
             <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">SEASONS</h1>
@@ -36,7 +36,7 @@ export default async function SeasonsPage() {
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b-2 border-[var(--border)] bg-[var(--bg-secondary)]/50">
+                <tr className="border-b-2 border-[var(--border)] bg-[var(--bg-surface)]/50">
                   <th className="px-5 py-3.5 text-left text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
                     Name
                   </th>
@@ -59,7 +59,7 @@ export default async function SeasonsPage() {
                   <tr
                     key={s.id}
                     className={`
-                      group transition-colors duration-150 hover:bg-[var(--accent)]/5
+                      group transition-colors duration-150 hover:bg-[var(--color-accent)]/5
                       ${index !== seasons.length - 1 ? 'border-b border-[var(--border)]' : ''}
                     `}
                   >
@@ -119,7 +119,7 @@ export default async function SeasonsPage() {
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-16 px-4">
-            <div className="flex items-center justify-center w-14 h-14 rounded-full bg-[var(--bg-secondary)] mb-4">
+            <div className="flex items-center justify-center w-14 h-14 rounded-full bg-[var(--bg-surface)] mb-4">
               <Medal className="w-7 h-7 text-[var(--text-muted)]" />
             </div>
             <p className="text-[var(--text-primary)] font-medium mb-1">No seasons yet</p>
