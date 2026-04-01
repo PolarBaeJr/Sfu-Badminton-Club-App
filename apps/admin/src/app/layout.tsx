@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
+
+export const dynamic = 'force-dynamic';
 import { Sidebar } from '@/components/sidebar';
 import { ToastProvider } from '@/components/toast-provider';
 import { SentryUserInit } from '@/components/sentry-user-init';

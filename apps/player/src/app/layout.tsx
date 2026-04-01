@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
+
+export const dynamic = 'force-dynamic';
 import { BottomNav } from '@/components/bottom-nav';
 import { TopBar } from '@/components/top-bar';
 import { ToastProvider } from '@/components/toast-provider';

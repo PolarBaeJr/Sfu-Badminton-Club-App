@@ -1,5 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: 'standalone',
+  basePath: '/admin',
   transpilePackages: ['@badminton/shared', '@badminton/ui'],
 };
 
