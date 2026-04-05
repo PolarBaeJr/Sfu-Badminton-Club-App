@@ -1,7 +1,7 @@
 'use server';
 
 import * as Sentry from '@sentry/nextjs';
-import { createAdminClient } from './supabase-server';
+import { createAdminClient, getAuthenticatedAdmin } from './supabase-server';
 import { revalidatePath } from 'next/cache';
 import {
   calculateEloUpdate,
@@ -23,22 +23,8 @@ import type {
   MatchFormat,
 } from '@badminton/shared';
 
-// ============================================================
-// Auth helper (same pattern as actions.ts)
-// ============================================================
-
 async function getAdminPlayer() {
-  // DEV MODE: Everyone is admin — grab first player
-  const adminClient = createAdminClient();
-  const { data: player } = await adminClient
-    .from('players')
-    .select('*')
-    .limit(1)
-    .single();
-
-  if (!player) throw new Error('No players found in database');
-  Sentry.setUser({ id: player.id });
-  return { ...player, role: 'admin' };
+  return getAuthenticatedAdmin();
 }
 
 // Map tournament match format to the shared elo engine's MatchFormat

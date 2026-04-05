@@ -172,7 +172,7 @@ export default async function EventDetailPage({
     <div className="space-y-6">
       <Link
         href={`/tournaments/${tournamentId}`}
-        className="inline-flex items-center gap-1.5 text-sm text-[#64748B] hover:text-[#94A3B8] transition-colors"
+        className="inline-flex items-center gap-1.5 text-sm text-[#64748B] hover:text-[#94A3B8] transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none rounded"
       >
         <ArrowLeft className="w-4 h-4" />
         Back to {tournament.name}
@@ -190,12 +190,13 @@ export default async function EventDetailPage({
           <div className="flex items-center gap-3 mt-3 flex-wrap">
             <span
               className="inline-flex items-center text-xs font-semibold px-2.5 py-1 rounded-full"
+              role="status"
               style={{
                 backgroundColor: `${statusColor}20`,
                 color: statusColor,
               }}
             >
-              {TOURNAMENT_EVENT_STATUS_LABELS[eventStatus]}
+              <span className="sr-only">Event status: </span>{TOURNAMENT_EVENT_STATUS_LABELS[eventStatus]}
             </span>
             <Badge variant="neutral">
               {isSingleElim ? 'Single Elimination' : 'Round Robin'}
@@ -205,7 +206,7 @@ export default async function EventDetailPage({
             </Badge>
             {playerRegistration && (
               <Badge variant={playerRegistration.status === 'checked_in' ? 'success' : 'info'}>
-                {playerRegistration.status === 'checked_in' ? 'Checked In' : 'Registered'}
+                <span className="sr-only">Your status: </span>{playerRegistration.status === 'checked_in' ? 'Checked In' : 'Registered'}
               </Badge>
             )}
           </div>
@@ -230,73 +231,105 @@ export default async function EventDetailPage({
                 Bracket
               </h2>
             </div>
-            <div className="overflow-x-auto">
-              <div className="flex gap-6 min-w-fit">
-                {sortedRounds.map(([roundNum, roundMatches]) => (
-                  <div key={roundNum} className="flex flex-col gap-4 min-w-[240px]">
-                    <h3 className="text-xs font-bold text-[#64748B] text-center uppercase tracking-wider">
-                      {getRoundName(roundNum, totalRounds)}
-                    </h3>
-                    {roundMatches.map((m) => {
-                      const matchStatus = m.status as TournamentMatchStatus;
-                      const scores = m.scores as Array<{ a: number; b: number }> | null;
-                      const scoreStr = formatScores(scores);
+            <div className="overflow-x-auto" role="region" aria-label="Tournament bracket">
+              <div className="flex min-w-fit" role="table" aria-label="Bracket rounds" style={{ gap: '40px' }}>
+                {sortedRounds.map(([roundNum, roundMatches], roundIdx) => {
+                  const isFirstRound = roundIdx === 0;
+                  const isLastRound = roundIdx === sortedRounds.length - 1;
+                  const MATCH_H = 68;
+                  const BASE_GAP = 12;
+                  const roundMultiplier = Math.pow(2, roundIdx);
+                  const gap = isFirstRound ? BASE_GAP : (MATCH_H + BASE_GAP) * roundMultiplier - MATCH_H;
+                  const topPadding = isFirstRound ? 0 : ((MATCH_H + BASE_GAP) * (roundMultiplier - 1)) / 2;
 
-                      if (m.is_bye) {
+                  return (
+                    <div
+                      key={roundNum}
+                      className="relative flex flex-col min-w-[230px]"
+                      role="rowgroup"
+                      aria-label={getRoundName(roundNum, totalRounds)}
+                      style={{ gap: `${gap}px`, paddingTop: `${topPadding}px` }}
+                    >
+                      <h3
+                        className="text-xs font-bold text-[#64748B] text-center uppercase tracking-wider pb-2"
+                        role="columnheader"
+                        style={{
+                          marginTop: topPadding > 0 ? `-${topPadding}px` : undefined,
+                          paddingTop: topPadding > 0 ? `${topPadding}px` : undefined,
+                        }}
+                      >
+                        {getRoundName(roundNum, totalRounds)}
+                      </h3>
+                      {roundMatches.map((m, matchIdx) => {
+                        const matchStatus = m.status as TournamentMatchStatus;
+                        const scores = m.scores as Array<{ a: number; b: number }> | null;
+                        const scoreStr = formatScores(scores);
+
+                        if (m.is_bye) {
+                          return (
+                            <div key={m.id as string} className="relative">
+                              {!isLastRound && <div className="absolute top-1/2 -right-[20px] w-[20px] border-t-2 border-white/[0.08]" />}
+                              {!isFirstRound && <div className="absolute top-1/2 -left-[20px] w-[20px] border-t-2 border-white/[0.08]" />}
+                              {!isLastRound && matchIdx % 2 === 0 && matchIdx + 1 < roundMatches.length && (
+                                <div className="absolute border-r-2 border-white/[0.08]" style={{ right: '-20px', top: '50%', height: `${MATCH_H + gap}px` }} />
+                              )}
+                              <div className="border border-white/[0.04] rounded-xl overflow-hidden opacity-50">
+                                <div className="p-2.5 text-sm text-[#64748B] bg-white/[0.02]">
+                                  {getEntryName(m, 'a')} (BYE)
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }
+
                         return (
-                          <div
-                            key={m.id as string}
-                            className="border border-white/[0.04] rounded-xl overflow-hidden opacity-50"
-                          >
-                            <div className="p-2.5 text-sm text-[#64748B] bg-white/[0.02]">
-                              {getEntryName(m, 'a')} (BYE)
+                          <div key={m.id as string} className="relative">
+                            {!isLastRound && <div className="absolute top-1/2 -right-[20px] w-[20px] border-t-2 border-white/[0.08]" />}
+                            {!isFirstRound && <div className="absolute top-1/2 -left-[20px] w-[20px] border-t-2 border-white/[0.08]" />}
+                            {!isLastRound && matchIdx % 2 === 0 && matchIdx + 1 < roundMatches.length && (
+                              <div className="absolute border-r-2 border-white/[0.08]" style={{ right: '-20px', top: '50%', height: `${MATCH_H + gap}px` }} />
+                            )}
+                            <div className="border border-white/[0.06] rounded-xl overflow-hidden">
+                              {(['a', 'b'] as const).map((side) => {
+                                const name = getEntryName(m, side);
+                                const seed = getEntrySeed(m, side);
+                                const won = isWinner(m, side);
+                                return (
+                                  <div
+                                    key={side}
+                                    className={`p-2.5 text-sm flex items-center gap-2 ${
+                                      side === 'b' ? 'border-t border-white/[0.04]' : ''
+                                    } ${
+                                      won
+                                        ? 'bg-[#EF4444]/10 text-[#EF4444] font-semibold'
+                                        : 'bg-white/[0.02] text-[#94A3B8]'
+                                    }`}
+                                  >
+                                    {seed && (
+                                      <span className="text-[10px] font-mono text-[#64748B] w-4 text-right shrink-0">
+                                        [{seed}]
+                                      </span>
+                                    )}
+                                    <span className="truncate">{name}</span>
+                                    {won && <span className="sr-only">(Winner)</span>}
+                                    {won && matchStatus === 'completed' && (
+                                      <Crown className="w-3 h-3 text-[#FFD700] shrink-0 ml-auto" aria-hidden="true" />
+                                    )}
+                                  </div>
+                                );
+                              })}
+                              {scoreStr && (
+                                <div className="text-center text-xs text-[#475569] py-1.5 border-t border-white/[0.04] font-mono">
+                                  {scoreStr}
+                                </div>
+                              )}
                             </div>
                           </div>
                         );
-                      }
-
-                      return (
-                        <div
-                          key={m.id as string}
-                          className="border border-white/[0.06] rounded-xl overflow-hidden"
-                        >
-                          {(['a', 'b'] as const).map((side) => {
-                            const name = getEntryName(m, side);
-                            const seed = getEntrySeed(m, side);
-                            const won = isWinner(m, side);
-                            return (
-                              <div
-                                key={side}
-                                className={`p-2.5 text-sm flex items-center gap-2 ${
-                                  side === 'b' ? 'border-t border-white/[0.04]' : ''
-                                } ${
-                                  won
-                                    ? 'bg-[#EF4444]/10 text-[#EF4444] font-semibold'
-                                    : 'bg-white/[0.02] text-[#94A3B8]'
-                                }`}
-                              >
-                                {seed && (
-                                  <span className="text-[10px] font-mono text-[#64748B] w-4 text-right shrink-0">
-                                    [{seed}]
-                                  </span>
-                                )}
-                                <span className="truncate">{name}</span>
-                                {won && matchStatus === 'completed' && (
-                                  <Crown className="w-3 h-3 text-[#FFD700] shrink-0 ml-auto" />
-                                )}
-                              </div>
-                            );
-                          })}
-                          {scoreStr && (
-                            <div className="text-center text-xs text-[#475569] py-1.5 border-t border-white/[0.04] font-mono">
-                              {scoreStr}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ))}
+                      })}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -338,7 +371,7 @@ export default async function EventDetailPage({
                                   : 'bg-white/[0.02] text-[#94A3B8]'
                               }`}
                             >
-                              {getEntryName(m, 'a')}
+                              {getEntryName(m, 'a')}{isWinner(m, 'a') && <span className="sr-only"> (Winner)</span>}
                             </div>
                             <div className="px-3 text-xs text-[#475569] font-mono bg-white/[0.02] py-2.5 border-x border-white/[0.04]">
                               {matchStatus === 'completed' ? scoreStr || 'W/O' : 'vs'}
@@ -350,7 +383,7 @@ export default async function EventDetailPage({
                                   : 'bg-white/[0.02] text-[#94A3B8]'
                               }`}
                             >
-                              {getEntryName(m, 'b')}
+                              {getEntryName(m, 'b')}{isWinner(m, 'b') && <span className="sr-only"> (Winner)</span>}
                             </div>
                           </div>
                         </div>
@@ -412,7 +445,7 @@ export default async function EventDetailPage({
                       </div>
                       <div className="flex items-center gap-2">
                         {finalPos === 1 && (
-                          <Crown className="w-3.5 h-3.5 text-[#FFD700]" />
+                          <Crown className="w-3.5 h-3.5 text-[#FFD700]" aria-hidden="true" />
                         )}
                         {finalPos && (
                           <span
@@ -422,7 +455,7 @@ export default async function EventDetailPage({
                                 : 'bg-white/[0.06] text-[#94A3B8]'
                             }`}
                           >
-                            #{finalPos}
+                            <span className="sr-only">Position </span>#{finalPos}
                           </span>
                         )}
                         {status === 'withdrawn' && (
@@ -463,7 +496,7 @@ export default async function EventDetailPage({
                       </div>
                       <div className="flex items-center gap-2">
                         {finalPos === 1 && (
-                          <Crown className="w-3.5 h-3.5 text-[#FFD700]" />
+                          <Crown className="w-3.5 h-3.5 text-[#FFD700]" aria-hidden="true" />
                         )}
                         {finalPos && (
                           <span
@@ -473,7 +506,7 @@ export default async function EventDetailPage({
                                 : 'bg-white/[0.06] text-[#94A3B8]'
                             }`}
                           >
-                            #{finalPos}
+                            <span className="sr-only">Position </span>#{finalPos}
                           </span>
                         )}
                         {status === 'withdrawn' && (
@@ -545,7 +578,7 @@ export default async function EventDetailPage({
                       <div className="text-right">
                         {(matchStatus === 'completed' || matchStatus === 'walkover') ? (
                           <>
-                            <span className={`text-sm font-bold ${won ? 'text-[#22C55E]' : 'text-[#EF4444]'}`}>
+                            <span className={`text-sm font-bold ${won ? 'text-[#22C55E]' : 'text-[#EF4444]'}`} role="status">
                               {won ? 'WIN' : 'LOSS'}
                             </span>
                             {scoreStr && (
@@ -604,7 +637,7 @@ export default async function EventDetailPage({
                         <span className="text-xs font-mono text-[#EF4444] font-bold">{points} pts</span>
                         {!doubles && e.elo_change != null && (
                           <span className={`text-xs font-mono ${e.elo_change > 0 ? 'text-[#22C55E]' : e.elo_change < 0 ? 'text-[#EF4444]' : 'text-[#64748B]'}`}>
-                            {e.elo_change > 0 ? '+' : ''}{e.elo_change} elo
+                            <span className="sr-only">{e.elo_change > 0 ? 'Gained' : e.elo_change < 0 ? 'Lost' : 'No change'}: </span>{e.elo_change > 0 ? '+' : ''}{e.elo_change} elo
                           </span>
                         )}
                       </div>

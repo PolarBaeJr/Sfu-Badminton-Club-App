@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { StatCard, Card, Badge } from '@badminton/ui';
+import { Badge, Avatar } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS } from '@badminton/shared';
 import Link from 'next/link';
 import {
@@ -11,8 +11,8 @@ import {
   Swords,
   ArrowUpRight,
   Trophy,
-  CalendarDays,
 } from 'lucide-react';
+import { ApproveButtons } from './approve-buttons';
 
 export default async function DashboardPage() {
   const supabase = createAdminClient();
@@ -23,7 +23,7 @@ export default async function DashboardPage() {
     { count: openDisputes },
     { count: pendingWalkovers },
     { data: recentMatches },
-    { data: todaySession },
+    { count: activeTournaments },
     { count: activeChalls },
   ] = await Promise.all([
     supabase.from('players').select('*', { count: 'exact', head: true }).neq('status', 'pending_approval'),
@@ -31,9 +31,16 @@ export default async function DashboardPage() {
     supabase.from('disputes').select('*', { count: 'exact', head: true }).eq('status', 'open'),
     supabase.from('walkovers').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
     supabase.from('matches').select('*, match_participants(*, player:players(full_name))').order('created_at', { ascending: false }).limit(5),
-    supabase.from('sessions').select('*').eq('status', 'open').limit(1).maybeSingle(),
+    supabase.from('tournaments').select('*', { count: 'exact', head: true }).eq('status', 'active'),
     supabase.from('challenges').select('*', { count: 'exact', head: true }).in('status', ['proposed', 'partially_confirmed', 'accepted']),
   ]);
+
+  const { data: pendingPlayersList } = await supabase
+    .from('players')
+    .select('id, full_name, email, avatar_url, created_at')
+    .eq('status', 'pending_approval')
+    .order('created_at', { ascending: false })
+    .limit(10);
 
   const hasAlerts = (pendingPlayers ?? 0) > 0 || (openDisputes ?? 0) > 0 || (pendingWalkovers ?? 0) > 0;
 
@@ -60,6 +67,36 @@ export default async function DashboardPage() {
                 pendingWalkovers && pendingWalkovers > 0 ? `${pendingWalkovers} pending walkover${pendingWalkovers > 1 ? 's' : ''}` : null,
               ].filter(Boolean).join(' · ')}
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* Pending Players */}
+      {pendingPlayersList && pendingPlayersList.length > 0 && (
+        <div className="rounded-xl border border-[var(--color-warning)]/20 bg-[var(--bg-card)] overflow-hidden">
+          <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <UserCheck className="w-4 h-4 text-[var(--color-warning)]" />
+              <h2 className="text-sm font-semibold text-[var(--text-primary)] uppercase tracking-wide">Pending Approvals</h2>
+              <span className="text-xs bg-[var(--color-warning)]/10 text-[var(--color-warning)] px-2 py-0.5 rounded-full font-medium">{pendingPlayersList.length}</span>
+            </div>
+            <Link href="/players?tab=attention" className="text-xs text-[var(--color-accent)] hover:underline flex items-center gap-1">
+              View All <ArrowUpRight className="w-3 h-3" />
+            </Link>
+          </div>
+          <div className="divide-y divide-[var(--border)]">
+            {pendingPlayersList.map((player) => (
+              <div key={player.id} className="px-5 py-3 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3 min-w-0">
+                  <Avatar src={player.avatar_url} name={player.full_name} size="sm" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-[var(--text-primary)] truncate">{player.full_name}</p>
+                    <p className="text-xs text-[var(--text-muted)] truncate">{player.email}</p>
+                  </div>
+                </div>
+                <ApproveButtons playerId={player.id} playerName={player.full_name} />
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -133,32 +170,21 @@ export default async function DashboardPage() {
 
       {/* Two Column Section */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Current Session */}
+        {/* Active Tournaments */}
         <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <CalendarDays className="w-4 h-4 text-[var(--text-muted)]" />
-              <h2 className="text-sm font-semibold text-[var(--text-primary)] uppercase tracking-wide">Current Session</h2>
+              <Trophy className="w-4 h-4 text-[var(--text-muted)]" />
+              <h2 className="text-sm font-semibold text-[var(--text-primary)] uppercase tracking-wide">Tournaments</h2>
             </div>
-            <Link href="/sessions" className="text-xs text-[var(--color-accent)] hover:underline flex items-center gap-1">
+            <Link href="/tournaments" className="text-xs text-[var(--color-accent)] hover:underline flex items-center gap-1">
               Manage <ArrowUpRight className="w-3 h-3" />
             </Link>
           </div>
-          {todaySession ? (
-            <div className="space-y-3">
-              <p className="text-lg font-semibold text-[var(--text-primary)]">{todaySession.name || 'Session'}</p>
-              <p className="text-sm text-[var(--text-secondary)]">{todaySession.location} &middot; {todaySession.date}</p>
-              <Badge variant="success">Open</Badge>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <CalendarDays className="w-8 h-8 text-[var(--text-muted)]/50 mb-2" />
-              <p className="text-sm text-[var(--text-muted)]">No open session</p>
-              <Link href="/sessions" className="text-xs text-[var(--color-accent)] hover:underline mt-2">
-                Create one
-              </Link>
-            </div>
-          )}
+          <div className="flex items-end gap-2">
+            <p className="text-4xl font-bold font-mono text-[var(--text-primary)]">{activeTournaments ?? 0}</p>
+            <p className="text-sm text-[var(--text-muted)] mb-1">active</p>
+          </div>
         </div>
 
         {/* Active Challenges */}

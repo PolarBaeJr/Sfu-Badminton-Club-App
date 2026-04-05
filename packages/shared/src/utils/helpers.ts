@@ -37,14 +37,6 @@ export function isAdmin(role: UserRole): boolean {
   return role === 'admin';
 }
 
-export function isAdminOrCoach(role: UserRole): boolean {
-  return role === 'admin' || role === 'coach_executive';
-}
-
-export function canModerate(role: UserRole): boolean {
-  return role === 'admin' || role === 'moderator';
-}
-
 export function getWinRate(wins: number, losses: number): string {
   const total = wins + losses;
   if (total === 0) return '0%';

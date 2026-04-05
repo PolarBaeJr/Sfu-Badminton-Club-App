@@ -14,15 +14,15 @@ Deno.serve(async (_req) => {
     .from('players')
     .select('id, ratings(singles_elo, singles_matches_played, singles_provisional)')
     .eq('active_flag', true)
-    .not('status', 'in', '("pending_approval","suspended","inactive")');
+    .not('status', 'in', '("pending_approval","suspended")');
 
-  // Fetch and rank Eligible Competitive Singles
+  // Fetch and rank Competitive Singles
   const { data: compSingles } = await supabase
     .from('players')
     .select('id, ratings(singles_elo)')
     .eq('active_flag', true)
-    .eq('eligibility_flag', true)
-    .not('status', 'in', '("pending_approval","suspended","inactive")');
+    .eq('status', 'competitive')
+    .not('status', 'in', '("pending_approval","suspended")');
 
   // The leaderboard pages do client-side sorting, but this function
   // can update a cached_leaderboard_positions table if needed for performance.

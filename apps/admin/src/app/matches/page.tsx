@@ -222,8 +222,8 @@ export default async function MatchesPage() {
                         {m.played_at ? formatDateTime(m.played_at) : '-'}
                       </td>
                       <td className="px-5 py-4 text-right">
-                        {m.result_status === 'confirmed' && (
-                          <MatchActions matchId={m.id} />
+                        {m.result_status !== 'voided' && (
+                          <MatchActions matchId={m.id} resultStatus={m.result_status} />
                         )}
                       </td>
                     </tr>

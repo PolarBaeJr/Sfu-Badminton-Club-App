@@ -5,6 +5,7 @@ import { notFound } from 'next/navigation';
 import { ArrowLeft, Trophy, Users, Calendar, Zap, Crown, Plus, Swords } from 'lucide-react';
 import Link from 'next/link';
 import { CreateEventButton } from './create-event';
+import { TournamentStatusControls } from './tournament-status-controls';
 
 export default async function TournamentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -20,23 +21,26 @@ export default async function TournamentDetailPage({ params }: { params: Promise
     .eq('tournament_id', id)
     .order('created_at');
 
-  // Get participant counts per event
+  // Get participant counts per event (batch queries instead of N+1)
   const eventCounts: Record<string, number> = {};
-  if (events) {
+  if (events && events.length > 0) {
+    const eventIds = events.map(ev => ev.id);
+    const [{ data: participantRows }, { data: pairRows }] = await Promise.all([
+      supabase.from('tournament_participants')
+        .select('event_id')
+        .in('event_id', eventIds)
+        .not('status', 'eq', 'withdrawn'),
+      supabase.from('tournament_pairs')
+        .select('event_id')
+        .in('event_id', eventIds)
+        .not('status', 'eq', 'withdrawn'),
+    ]);
     for (const ev of events) {
       const isDoubles = ['mens_doubles', 'womens_doubles', 'mixed_doubles', 'open_doubles'].includes(ev.event_type);
       if (isDoubles) {
-        const { count } = await supabase.from('tournament_pairs')
-          .select('*', { count: 'exact', head: true })
-          .eq('event_id', ev.id)
-          .not('status', 'eq', 'withdrawn');
-        eventCounts[ev.id] = count ?? 0;
+        eventCounts[ev.id] = pairRows?.filter(r => r.event_id === ev.id).length ?? 0;
       } else {
-        const { count } = await supabase.from('tournament_participants')
-          .select('*', { count: 'exact', head: true })
-          .eq('event_id', ev.id)
-          .not('status', 'eq', 'withdrawn');
-        eventCounts[ev.id] = count ?? 0;
+        eventCounts[ev.id] = participantRows?.filter(r => r.event_id === ev.id).length ?? 0;
       }
     }
   }
@@ -44,13 +48,13 @@ export default async function TournamentDetailPage({ params }: { params: Promise
   return (
     <div className="space-y-6">
       {/* Back link */}
-      <Link href="/tournaments" className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--color-accent)] transition-colors">
+      <Link href="/tournaments" className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--color-accent)] transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none rounded">
         <ArrowLeft className="w-4 h-4" />
         Back to Tournaments
       </Link>
 
       {/* Header */}
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg bg-[var(--color-accent)]/10 flex items-center justify-center">
@@ -67,12 +71,13 @@ export default async function TournamentDetailPage({ params }: { params: Promise
           </div>
           <div className="flex gap-2 mt-3 ml-[52px]">
             <Badge variant={tournament.status === 'active' ? 'success' : tournament.status === 'completed' ? 'neutral' : 'warning'}>
-              {tournament.status}
+              <span className="sr-only">Tournament status: </span>{tournament.status}
             </Badge>
             {tournament.scope === 'eligible_only' && <Badge variant="info">Eligible Only</Badge>}
             {tournament.placement_bonus_enabled && <Badge variant="default">Placement Bonuses</Badge>}
           </div>
         </div>
+        <TournamentStatusControls tournamentId={id} status={tournament.status} />
       </div>
 
       {/* Events Section */}
@@ -82,7 +87,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
             <Swords className="w-4 h-4 text-[var(--text-muted)]" />
             <h2 className="text-lg font-semibold text-[var(--text-primary)]">Events ({events?.length ?? 0})</h2>
           </div>
-          {tournament.status === 'draft' && (
+          {(tournament.status === 'draft' || tournament.status === 'active') && (
             <CreateEventButton tournamentId={id} />
           )}
         </div>
@@ -91,7 +96,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
           {events?.map((ev) => {
             const statusColor = TOURNAMENT_EVENT_STATUS_COLORS[ev.status as keyof typeof TOURNAMENT_EVENT_STATUS_COLORS] ?? '#6B7280';
             return (
-              <Link key={ev.id} href={`/tournaments/${id}/events/${ev.id}`} className="block group">
+              <Link key={ev.id} href={`/tournaments/${id}/events/${ev.id}`} className="block group focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none rounded-xl">
                 <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-5 hover:border-[var(--color-accent)]/30 transition-all">
                   <div className="flex items-start justify-between mb-3">
                     <h3 className="text-base font-semibold text-[var(--text-primary)] group-hover:text-[var(--color-accent)] transition-colors">
@@ -99,9 +104,10 @@ export default async function TournamentDetailPage({ params }: { params: Promise
                     </h3>
                     <span
                       className="text-xs font-medium px-2 py-0.5 rounded-full"
+                      role="status"
                       style={{ color: statusColor, backgroundColor: `${statusColor}15` }}
                     >
-                      {TOURNAMENT_EVENT_STATUS_LABELS[ev.status as keyof typeof TOURNAMENT_EVENT_STATUS_LABELS] ?? ev.status}
+                      <span className="sr-only">Event status: </span>{TOURNAMENT_EVENT_STATUS_LABELS[ev.status as keyof typeof TOURNAMENT_EVENT_STATUS_LABELS] ?? ev.status}
                     </span>
                   </div>
                   <div className="flex items-center gap-3 text-sm text-[var(--text-muted)]">

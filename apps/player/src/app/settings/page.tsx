@@ -103,8 +103,6 @@ export default function SettingsPage() {
         setDisplayName(data.display_name || '');
         setPhone(data.phone || '');
         setBio(data.bio || '');
-        setShowOnLeaderboard(data.hide_from_leaderboard !== true);
-        setShowActivity(data.show_activity_status !== false);
         setLoaded(true);
       }
     }

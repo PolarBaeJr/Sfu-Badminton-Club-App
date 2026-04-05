@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase-browser';
 import { Avatar, Badge } from '@badminton/ui';
 import Link from 'next/link';
 import { getPostHogClient } from '@/lib/posthog';
-import { Trophy, Medal, Crown, ChevronRight, Loader2 } from 'lucide-react';
+import { Trophy, Medal, Crown, ChevronRight, Loader2, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 type LeaderboardEntry = {
@@ -13,7 +13,6 @@ type LeaderboardEntry = {
   full_name: string;
   avatar_url: string | null;
   status: string;
-  eligibility_flag: boolean;
   ratings: {
     singles_elo: number;
     doubles_elo: number;
@@ -42,6 +41,7 @@ export default function LeaderboardPage() {
   const [activeTab, setActiveTab] = useState('open_singles');
   const [players, setPlayers] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     const ph = getPostHogClient();
@@ -58,7 +58,7 @@ export default function LeaderboardPage() {
         // Aggregate tournament points per player
         const { data: parts } = await supabase
           .from('tournament_participants')
-          .select('player_id, points, player:players(id, full_name, avatar_url, status, eligibility_flag)')
+          .select('player_id, points, player:players(id, full_name, avatar_url, status)')
           .not('status', 'in', '("withdrawn","disqualified")')
           .gt('points', 0);
 
@@ -79,7 +79,6 @@ export default function LeaderboardPage() {
             full_name: entry.player.full_name,
             avatar_url: entry.player.avatar_url,
             status: entry.player.status,
-            eligibility_flag: entry.player.eligibility_flag,
             ratings: null,
             _tournamentPoints: entry.total,
           }));
@@ -91,12 +90,12 @@ export default function LeaderboardPage() {
 
       let query = supabase
         .from('players')
-        .select('id, full_name, avatar_url, status, eligibility_flag, ratings(*)')
+        .select('id, full_name, avatar_url, status, ratings(*)')
         .eq('active_flag', true)
-        .not('status', 'in', '("pending_approval","suspended","inactive")');
+        .not('status', 'in', '("pending_approval","suspended")');
 
       if (activeTab.startsWith('comp_')) {
-        query = query.eq('eligibility_flag', true);
+        query = query.eq('status', 'competitive');
       }
 
       const { data } = await query;
@@ -138,6 +137,12 @@ export default function LeaderboardPage() {
 
   const isDoubles = activeTab.includes('doubles');
 
+  const filteredPlayers = searchQuery
+    ? players.filter((p) =>
+        p.full_name.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : players;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
@@ -173,6 +178,18 @@ export default function LeaderboardPage() {
         ))}
       </div>
 
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#64748B] pointer-events-none" />
+        <input
+          type="text"
+          placeholder="Search players..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full bg-[var(--bg-secondary)] border border-white/[0.06] rounded-lg pl-9 pr-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[#64748B] focus:outline-none focus:ring-2 focus:ring-[#FFD700]/40 focus:border-transparent transition-colors"
+        />
+      </div>
+
       {/* Table */}
       <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl overflow-hidden">
         {loading ? (
@@ -205,7 +222,7 @@ export default function LeaderboardPage() {
 
               {/* Rows */}
               <div className="divide-y divide-white/[0.04]">
-                {players.map((p, i) => {
+                {filteredPlayers.map((p, i) => {
                   const elo = isDoubles ? p.ratings?.doubles_elo : p.ratings?.singles_elo;
                   const wins = isDoubles ? p.ratings?.doubles_wins : p.ratings?.singles_wins;
                   const losses = isDoubles ? p.ratings?.doubles_losses : p.ratings?.singles_losses;
@@ -262,10 +279,19 @@ export default function LeaderboardPage() {
                 })}
               </div>
 
-              {players.length === 0 && (
+              {filteredPlayers.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-16">
-                  <Trophy className="w-10 h-10 text-[#1E293B] mb-3" />
-                  <p className="text-[#64748B]">No players ranked yet</p>
+                  {searchQuery ? (
+                    <>
+                      <Search className="w-10 h-10 text-[#1E293B] mb-3" />
+                      <p className="text-[#64748B]">No players found matching &ldquo;{searchQuery}&rdquo;</p>
+                    </>
+                  ) : (
+                    <>
+                      <Trophy className="w-10 h-10 text-[#1E293B] mb-3" />
+                      <p className="text-[#64748B]">No players ranked yet</p>
+                    </>
+                  )}
                 </div>
               )}
             </motion.div>

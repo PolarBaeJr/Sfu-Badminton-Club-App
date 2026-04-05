@@ -8,33 +8,10 @@ import { FadeIn, StaggerContainer, StaggerItem } from '@/components/motion-wrapp
 export default async function TournamentsPage() {
   const supabase = await createServerSupabaseClient();
 
-  // Try new schema (legacy_tournament_participants), fall back to old
-  let tournaments: any[] | null = null;
-  const { data: tournamentsNew } = await supabase
+  const { data: tournaments } = await supabase
     .from('tournaments')
-    .select('*, legacy_tournament_participants(count)')
+    .select('*, tournament_events(count)')
     .order('start_date', { ascending: false });
-
-  if (tournamentsNew) {
-    tournaments = tournamentsNew;
-  } else {
-    const { data: tournamentsOld } = await supabase
-      .from('tournaments')
-      .select('*, tournament_participants(count)')
-      .order('start_date', { ascending: false });
-    if (tournamentsOld) {
-      tournaments = tournamentsOld.map(t => ({
-        ...t,
-        legacy_tournament_participants: t.tournament_participants,
-      }));
-    } else {
-      const { data: fallback } = await supabase
-        .from('tournaments')
-        .select('*')
-        .order('start_date', { ascending: false });
-      tournaments = fallback;
-    }
-  }
 
   return (
     <div className="space-y-6">
@@ -50,8 +27,8 @@ export default async function TournamentsPage() {
       <FadeIn delay={0.05}>
         <StaggerContainer className="grid gap-3">
           {tournaments?.map((t) => {
-            const lpArr = t.legacy_tournament_participants ?? t.tournament_participants;
-            const count = Array.isArray(lpArr) ? lpArr[0]?.count ?? 0 : 0;
+            const eventsArr = t.tournament_events;
+            const eventCount = Array.isArray(eventsArr) ? eventsArr[0]?.count ?? 0 : 0;
             return (
               <StaggerItem key={t.id}>
                 <Link href={`/tournaments/${t.id}`} className="block group">
@@ -64,7 +41,7 @@ export default async function TournamentsPage() {
                         <p className="text-xs text-[#64748B] mt-1">{formatDate(t.start_date)} &middot; {t.format} &middot; {t.scope}</p>
                         <div className="flex items-center gap-2 mt-2">
                           <Badge variant={t.status === 'active' ? 'success' : t.status === 'completed' ? 'neutral' : 'warning'}>{t.status}</Badge>
-                          <span className="flex items-center gap-1 text-xs text-[#64748B]"><Users className="w-3 h-3" />{count}</span>
+                          <span className="flex items-center gap-1 text-xs text-[#64748B]"><Users className="w-3 h-3" />{eventCount} event{eventCount !== 1 ? 's' : ''}</span>
                         </div>
                       </div>
                       <ChevronRight className="w-5 h-5 text-[#475569] group-hover:text-[#FFD700] transition-colors shrink-0" />

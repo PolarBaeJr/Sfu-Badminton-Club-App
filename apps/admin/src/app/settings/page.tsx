@@ -1,18 +1,12 @@
 export const dynamic = 'force-dynamic';
-import { createAdminClient } from '@/lib/supabase-server';
+import { createAdminClient, getAuthenticatedAdmin } from '@/lib/supabase-server';
 import { Card } from '@badminton/ui';
 import { SettingsForm } from './settings-form';
 import { Settings, User, Mail, Shield, Sliders, Info, ExternalLink } from 'lucide-react';
 
 export default async function SettingsPage() {
+  const player = await getAuthenticatedAdmin();
   const supabase = createAdminClient();
-
-  // DEV MODE: grab first player as admin (no auth flow)
-  const { data: player } = await supabase
-    .from('players')
-    .select('*')
-    .limit(1)
-    .single();
 
   const { data: settings } = await supabase
     .from('platform_settings')

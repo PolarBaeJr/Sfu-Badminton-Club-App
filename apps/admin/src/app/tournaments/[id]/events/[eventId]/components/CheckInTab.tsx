@@ -93,14 +93,14 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
             </p>
           </div>
           {canCheckIn && notCheckedIn.length > 0 && (
-            <Button onClick={handleBulkCheckIn} loading={bulkLoading} variant="ghost">
+            <Button onClick={handleBulkCheckIn} loading={bulkLoading} variant="ghost" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
               Check In All Present
             </Button>
           )}
         </div>
 
         {/* Progress bar */}
-        <div className="h-3 rounded-full bg-[var(--bg-elevated)] overflow-hidden">
+        <div className="h-3 rounded-full bg-[var(--bg-elevated)] overflow-hidden" role="progressbar" aria-valuenow={Math.round(progress)} aria-valuemin={0} aria-valuemax={100} aria-label={`Check-in progress: ${checkedIn.length} of ${entries.length}`}>
           <div
             className="h-full rounded-full transition-all duration-500"
             style={{
@@ -112,7 +112,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
         <div className="flex justify-between mt-2 text-xs text-[var(--text-muted)]">
           <span>{checkedIn.length} checked in</span>
           <span>{notCheckedIn.length} waiting</span>
-          {noShows.length > 0 && <span className="text-[var(--color-warning)]">{noShows.length} no-shows</span>}
+          {noShows.length > 0 && <span className="text-[var(--color-warning)]"><span className="sr-only">Warning: </span>{noShows.length} no-shows</span>}
         </div>
       </div>
 
@@ -136,7 +136,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
                       size="sm"
                       onClick={() => handleCheckIn(entry.id)}
                       loading={loading === entry.id}
-                      className="bg-[var(--color-success)] hover:bg-[var(--color-success)]/80"
+                      className="bg-[var(--color-success)] hover:bg-[var(--color-success)]/80 focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
                     >
                       <CheckCircle className="w-3.5 h-3.5 mr-1" /> Check In
                     </Button>
@@ -145,6 +145,8 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
                       variant="ghost"
                       onClick={() => handleNoShow(entry.id)}
                       loading={loading === `noshow-${entry.id}`}
+                      aria-label="Mark as no-show"
+                      className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
                     >
                       <XCircle className="w-3.5 h-3.5 text-[var(--color-danger)]" />
                     </Button>

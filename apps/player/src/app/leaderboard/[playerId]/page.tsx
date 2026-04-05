@@ -58,10 +58,9 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
             <div>
               <h1 className="text-2xl font-black text-shuttle-white font-display tracking-wide">{player.full_name}</h1>
               <div className="flex gap-2 mt-2">
-                <Badge variant={player.status === 'eligible_competitive' ? 'success' : 'default'}>
+                <Badge variant={player.status === 'competitive' ? 'success' : 'default'}>
                   {PLAYER_STATUS_LABELS[player.status as keyof typeof PLAYER_STATUS_LABELS]}
                 </Badge>
-                {player.eligibility_flag && <Badge variant="info">Eligible</Badge>}
               </div>
             </div>
           </div>

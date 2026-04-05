@@ -10,8 +10,6 @@ export const metadata: Metadata = {
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const playerId: string | null = null;
-
   return (
     <html lang="en" data-theme="dark" suppressHydrationWarning>
       <head>
@@ -27,9 +25,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       </head>
       <body className="antialiased">
         <ToastProvider>
-          <SentryUserInit playerId={playerId} />
+          <SentryUserInit playerId={null} />
           <Sidebar />
-          <main className="ml-64 min-h-screen p-6 lg:p-8 transition-all duration-300">
+          <main className="md:ml-64 min-h-screen p-6 pt-16 md:pt-6 lg:p-8 transition-all duration-300">
             <div className="max-w-7xl mx-auto">
               {children}
             </div>

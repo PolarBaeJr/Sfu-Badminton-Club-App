@@ -65,11 +65,9 @@ export const tournamentCreateSchema = z.object({
 
 export const adminPlayerUpdateSchema = z.object({
   status: z.enum([
-    'eligible_competitive', 'competitive_associate', 'recreational',
-    'alumni_external', 'suspended', 'inactive', 'pending_approval',
+    'competitive', 'recreational', 'suspended', 'pending_approval',
   ]).optional(),
-  role: z.enum(['player', 'moderator', 'admin', 'coach_executive']).optional(),
-  eligibility_flag: z.boolean().optional(),
+  role: z.enum(['player', 'admin']).optional(),
   singles_elo: z.number().int().min(800).max(2400).optional(),
   doubles_elo: z.number().int().min(800).max(2400).optional(),
   reason: z.string().min(2, 'Reason is required'),

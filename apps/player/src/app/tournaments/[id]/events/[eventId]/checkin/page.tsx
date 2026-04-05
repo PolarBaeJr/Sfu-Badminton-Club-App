@@ -10,12 +10,12 @@ export default async function CheckInPage({
   const { id: tournamentId, eventId } = await params;
   const supabase = await createServerSupabaseClient();
 
-  const { data: event } = await supabase
+  const { data: event, error: eventError } = await supabase
     .from('tournament_events')
     .select('status')
     .eq('id', eventId)
     .single();
-  if (!event) notFound();
+  if (eventError || !event) notFound();
 
   const player = await getCurrentPlayer();
   if (!player) redirect('/login');
@@ -25,7 +25,7 @@ export default async function CheckInPage({
     .select('id, status')
     .eq('event_id', eventId)
     .eq('player_id', player.id)
-    .single();
+    .maybeSingle();
 
   return (
     <SelfCheckInClient

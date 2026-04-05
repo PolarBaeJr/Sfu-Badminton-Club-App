@@ -1,33 +1,22 @@
 'use server';
 
 import * as Sentry from '@sentry/nextjs';
-import { createServerSupabaseClient, createAdminClient } from './supabase-server';
+import { createAdminClient, getAuthenticatedAdmin } from './supabase-server';
 import { revalidatePath } from 'next/cache';
 import type {
   AdminPlayerUpdateInput,
-  SessionCreateInput,
   DisputeResolveInput,
 } from '@badminton/shared';
 
 async function getAdminPlayer() {
-  // DEV MODE: Everyone is admin — grab first player
-  const adminClient = createAdminClient();
-  const { data: player } = await adminClient
-    .from('players')
-    .select('*')
-    .limit(1)
-    .single();
-
-  if (!player) throw new Error('No players found in database');
-  Sentry.setUser({ id: player.id });
-  return { ...player, role: 'admin' };
+  return getAuthenticatedAdmin();
 }
 
 // ============================================================
 // Player Management
 // ============================================================
 
-export async function approvePlayer(playerId: string, status: string, eligibility: boolean, reason: string) {
+export async function approvePlayer(playerId: string, status: 'competitive' | 'recreational', reason: string) {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
@@ -37,7 +26,6 @@ export async function approvePlayer(playerId: string, status: string, eligibilit
     .from('players')
     .update({
       status,
-      eligibility_flag: eligibility,
       active_flag: true,
     })
     .eq('id', playerId);
@@ -50,7 +38,7 @@ export async function approvePlayer(playerId: string, status: string, eligibilit
     target_type: 'player',
     target_id: playerId,
     old_value: oldPlayer,
-    new_value: { status, eligibility_flag: eligibility },
+    new_value: { status },
     reason,
   });
   if (auditError) {
@@ -68,7 +56,6 @@ export async function createPlayer(data: {
   email: string;
   status: string;
   role?: string;
-  eligibility_flag?: boolean;
 }) {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
@@ -82,7 +69,6 @@ export async function createPlayer(data: {
     display_name: data.full_name,
     status: data.status || 'recreational',
     role: data.role || 'player',
-    eligibility_flag: data.eligibility_flag ?? false,
     active_flag: true,
     onboarding_completed: false,
   }).select().single();
@@ -126,8 +112,6 @@ export async function updatePlayer(playerId: string, data: AdminPlayerUpdateInpu
   const playerUpdate: Record<string, unknown> = {};
   if (data.status) playerUpdate.status = data.status;
   if (data.role) playerUpdate.role = data.role;
-  if (data.eligibility_flag !== undefined) playerUpdate.eligibility_flag = data.eligibility_flag;
-
   if (Object.keys(playerUpdate).length > 0) {
     const { error } = await adminClient.from('players').update(playerUpdate).eq('id', playerId);
     if (error) throw new Error(error.message);
@@ -169,7 +153,7 @@ export async function removePlayer(playerId: string, reason: string) {
 
   const { error } = await adminClient
     .from('players')
-    .update({ status: 'inactive', active_flag: false })
+    .update({ status: 'suspended', active_flag: false })
     .eq('id', playerId);
 
   if (error) throw new Error(error.message);
@@ -190,68 +174,6 @@ export async function removePlayer(playerId: string, reason: string) {
 
   revalidatePath('/players');
   revalidatePath('/dashboard');
-}
-
-// ============================================================
-// Session Management
-// ============================================================
-
-export async function createSession(data: SessionCreateInput) {
-  const admin = await getAdminPlayer();
-  const adminClient = createAdminClient();
-
-  const activeSeason = await adminClient.from('seasons').select('id').eq('active_flag', true).single();
-
-  const { error } = await adminClient.from('sessions').insert({
-    name: data.name,
-    date: data.date,
-    location: data.location,
-    season_id: data.season_id || activeSeason.data?.id,
-    host_player_id: admin.id,
-    status: 'open',
-  });
-
-  if (error) throw new Error(error.message);
-
-  const { error: auditError } = await adminClient.from('audit_logs').insert({
-    actor_id: admin.id,
-    action_type: 'session_created',
-    target_type: 'session',
-    new_value: data,
-  });
-  if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'session_created' },
-    });
-  }
-
-  revalidatePath('/sessions');
-}
-
-export async function closeSession(sessionId: string) {
-  const admin = await getAdminPlayer();
-  const adminClient = createAdminClient();
-
-  const { error } = await adminClient
-    .from('sessions')
-    .update({ status: 'closed' })
-    .eq('id', sessionId);
-
-  if (error) throw new Error(error.message);
-
-  const { error: auditError2 } = await adminClient.from('audit_logs').insert({
-    actor_id: admin.id,
-    action_type: 'session_closed',
-    target_type: 'session',
-    target_id: sessionId,
-  });
-  if (auditError2) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError2.message}`), {
-      extra: { action: 'session_closed', sessionId },
-    });
-  }
-
-  revalidatePath('/sessions');
 }
 
 // ============================================================
@@ -558,6 +480,109 @@ export async function updateTournamentStatus(tournamentId: string, status: strin
 
   revalidatePath('/tournaments');
   revalidatePath(`/tournaments/${tournamentId}`);
+}
+
+export async function updateTournament(tournamentId: string, data: {
+  name: string;
+  scope: string;
+  type: string;
+  format: string;
+  start_date: string;
+  end_date?: string;
+  bracket_size: number;
+  event_multiplier: number;
+  placement_bonus_enabled: boolean;
+}) {
+  const admin = await getAdminPlayer();
+  const adminClient = createAdminClient();
+
+  const { data: old } = await adminClient.from('tournaments').select('*').eq('id', tournamentId).single();
+
+  const { error } = await adminClient.from('tournaments').update({
+    name: data.name,
+    scope: data.scope,
+    type: data.type,
+    format: data.format,
+    start_date: data.start_date,
+    end_date: data.end_date || null,
+    bracket_size: data.bracket_size,
+    event_multiplier: data.event_multiplier,
+    placement_bonus_enabled: data.placement_bonus_enabled,
+  }).eq('id', tournamentId);
+
+  if (error) throw new Error(error.message);
+
+  const { error: auditError } = await adminClient.from('audit_logs').insert({
+    actor_id: admin.id,
+    action_type: 'tournament_updated',
+    target_type: 'tournament',
+    target_id: tournamentId,
+    old_value: old,
+    new_value: data,
+  });
+  if (auditError) {
+    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
+      extra: { action: 'tournament_updated', tournamentId },
+    });
+  }
+
+  revalidatePath('/tournaments');
+  revalidatePath(`/tournaments/${tournamentId}`);
+}
+
+export async function archiveTournament(tournamentId: string) {
+  const admin = await getAdminPlayer();
+  const adminClient = createAdminClient();
+
+  const { data: old } = await adminClient.from('tournaments').select('status').eq('id', tournamentId).single();
+
+  const { error } = await adminClient.from('tournaments').update({ status: 'archived' }).eq('id', tournamentId);
+  if (error) throw new Error(error.message);
+
+  const { error: auditError } = await adminClient.from('audit_logs').insert({
+    actor_id: admin.id,
+    action_type: 'tournament_archived',
+    target_type: 'tournament',
+    target_id: tournamentId,
+    old_value: { status: old?.status },
+    new_value: { status: 'archived' },
+  });
+  if (auditError) {
+    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
+      extra: { action: 'tournament_archived', tournamentId },
+    });
+  }
+
+  revalidatePath('/tournaments');
+}
+
+export async function deleteTournament(tournamentId: string) {
+  const admin = await getAdminPlayer();
+  const adminClient = createAdminClient();
+
+  const { data: old } = await adminClient.from('tournaments').select('*').eq('id', tournamentId).single();
+
+  // Delete related data first
+  await adminClient.from('tournament_participants').delete().eq('tournament_id', tournamentId);
+  await adminClient.from('tournament_events').delete().eq('tournament_id', tournamentId);
+
+  const { error } = await adminClient.from('tournaments').delete().eq('id', tournamentId);
+  if (error) throw new Error(error.message);
+
+  const { error: auditError } = await adminClient.from('audit_logs').insert({
+    actor_id: admin.id,
+    action_type: 'tournament_deleted',
+    target_type: 'tournament',
+    target_id: tournamentId,
+    old_value: old,
+  });
+  if (auditError) {
+    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
+      extra: { action: 'tournament_deleted', tournamentId },
+    });
+  }
+
+  revalidatePath('/tournaments');
 }
 
 export async function addTournamentParticipant(tournamentId: string, playerId: string, seed: number | null, partnerId?: string) {
@@ -907,48 +932,6 @@ export async function adminCreateChallenge(data: {
 
   revalidatePath('/challenges');
   return challenge.id;
-}
-
-// ============================================================
-// Varsity Notes
-// ============================================================
-
-export async function createVarsityNote(playerId: string, note: string) {
-  const admin = await getAdminPlayer();
-  const adminClient = createAdminClient();
-
-  const { error } = await adminClient.from('varsity_notes').insert({
-    player_id: playerId,
-    author_id: admin.id,
-    note,
-  });
-
-  if (error) throw new Error(error.message);
-
-  const { error: auditError } = await adminClient.from('audit_logs').insert({
-    actor_id: admin.id,
-    action_type: 'varsity_note_added',
-    target_type: 'player',
-    target_id: playerId,
-    new_value: { note },
-  });
-  if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'varsity_note_added', playerId },
-    });
-  }
-
-  revalidatePath('/varsity');
-}
-
-export async function deleteVarsityNote(noteId: string) {
-  const admin = await getAdminPlayer();
-  const adminClient = createAdminClient();
-
-  const { error } = await adminClient.from('varsity_notes').delete().eq('id', noteId);
-  if (error) throw new Error(error.message);
-
-  revalidatePath('/varsity');
 }
 
 // ============================================================

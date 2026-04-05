@@ -8,17 +8,13 @@ import { createPlayer } from '@/lib/actions';
 import { Plus } from 'lucide-react';
 
 const STATUS_OPTIONS = [
-  { value: 'eligible_competitive', label: 'Eligible Competitive' },
-  { value: 'competitive_associate', label: 'Competitive Associate' },
+  { value: 'competitive', label: 'Competitive' },
   { value: 'recreational', label: 'Recreational' },
-  { value: 'alumni_external', label: 'Alumni / External' },
 ];
 
 const ROLE_OPTIONS = [
   { value: 'player', label: 'Player' },
-  { value: 'moderator', label: 'Moderator' },
   { value: 'admin', label: 'Admin' },
-  { value: 'coach_executive', label: 'Coach / Executive' },
 ];
 
 export function AddPlayerButton() {
@@ -28,7 +24,6 @@ export function AddPlayerButton() {
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState('recreational');
   const [role, setRole] = useState('player');
-  const [eligible, setEligible] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
 
@@ -44,7 +39,6 @@ export function AddPlayerButton() {
           email: email.trim().toLowerCase(),
           status,
           role,
-          eligibility_flag: eligible,
         });
         toast('Player created', 'success');
         setOpen(false);
@@ -52,7 +46,6 @@ export function AddPlayerButton() {
         setEmail('');
         setStatus('recreational');
         setRole('player');
-        setEligible(false);
         router.refresh();
       } catch (err) {
         toast(err instanceof Error ? err.message : 'Failed to create player', 'error');
@@ -92,10 +85,6 @@ export function AddPlayerButton() {
             value={role}
             onChange={(e) => setRole(e.target.value)}
           />
-          <div className="flex items-center gap-2">
-            <label className="text-sm text-[var(--text-secondary)]">Eligible for Competition</label>
-            <input type="checkbox" checked={eligible} onChange={(e) => setEligible(e.target.checked)} />
-          </div>
           <div className="flex gap-2 pt-2">
             <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
             <Button

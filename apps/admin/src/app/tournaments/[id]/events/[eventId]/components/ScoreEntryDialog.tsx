@@ -161,12 +161,12 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, on
             ))}
 
             {games.length < maxGames && (
-              <Button variant="ghost" size="sm" onClick={addGame}>+ Add Game</Button>
+              <Button variant="ghost" size="sm" onClick={addGame} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">+ Add Game</Button>
             )}
 
             {/* Winner indicator */}
             {autoWinner && (
-              <div className="text-center text-sm">
+              <div className="text-center text-sm" role="status" aria-live="polite">
                 <span className="text-[var(--color-success)] font-medium">
                   Winner: {autoWinner === 'a' ? nameA : nameB}
                 </span>
@@ -174,10 +174,10 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, on
             )}
 
             <div className="flex gap-2 pt-2">
-              <Button onClick={handleSubmit} loading={loading} disabled={!autoWinner} className="flex-1">
+              <Button onClick={handleSubmit} loading={loading} disabled={!autoWinner} className="flex-1 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
                 Submit Score
               </Button>
-              <Button variant="ghost" onClick={() => setShowWalkover(true)}>
+              <Button variant="ghost" onClick={() => setShowWalkover(true)} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
                 Walkover / Void
               </Button>
             </div>
@@ -194,17 +194,17 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, on
               placeholder="Reason for walkover or void..."
             />
             <div className="flex gap-2">
-              <Button size="sm" onClick={() => handleWalkover('a')} loading={walkoverLoading}>
+              <Button size="sm" onClick={() => handleWalkover('a')} loading={walkoverLoading} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
                 Walkover → {nameA}
               </Button>
-              <Button size="sm" onClick={() => handleWalkover('b')} loading={walkoverLoading}>
+              <Button size="sm" onClick={() => handleWalkover('b')} loading={walkoverLoading} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
                 Walkover → {nameB}
               </Button>
             </div>
-            <Button size="sm" variant="ghost" onClick={handleVoid} loading={walkoverLoading} className="w-full text-[var(--color-danger)]">
+            <Button size="sm" variant="ghost" onClick={handleVoid} loading={walkoverLoading} className="w-full text-[var(--color-danger)] focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
               Void Match
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => setShowWalkover(false)} className="w-full">
+            <Button variant="ghost" size="sm" onClick={() => setShowWalkover(false)} className="w-full focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
               Back to Score Entry
             </Button>
           </>

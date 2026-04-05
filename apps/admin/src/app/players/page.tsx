@@ -7,12 +7,9 @@ import { AddPlayerButton } from './add-player-button';
 
 const statusBadgeVariant = (status: string) => {
   switch (status) {
-    case 'eligible_competitive': return 'success' as const;
-    case 'competitive_associate': return 'info' as const;
+    case 'competitive': return 'success' as const;
     case 'recreational': return 'default' as const;
-    case 'alumni_external': return 'neutral' as const;
     case 'suspended': return 'danger' as const;
-    case 'inactive': return 'warning' as const;
     case 'pending_approval': return 'warning' as const;
     default: return 'neutral' as const;
   }
@@ -20,7 +17,6 @@ const statusBadgeVariant = (status: string) => {
 
 const attentionDot = (status: string) => {
   if (status === 'suspended') return 'bg-[var(--color-danger)]';
-  if (status === 'inactive') return 'bg-[var(--text-muted)]';
   if (status === 'pending_approval') return 'bg-[var(--color-warning)]';
   return '';
 };
@@ -40,11 +36,11 @@ export default async function PlayersPage({
     .order('created_at', { ascending: false });
 
   if (tab === 'competitive') {
-    query = query.in('status', ['eligible_competitive', 'competitive_associate']);
+    query = query.eq('status', 'competitive');
   } else if (tab === 'recreational') {
     query = query.eq('status', 'recreational');
   } else if (tab === 'attention') {
-    query = query.in('status', ['suspended', 'inactive', 'pending_approval']);
+    query = query.in('status', ['suspended', 'pending_approval']);
   }
 
   if (params.search) {
@@ -54,9 +50,9 @@ export default async function PlayersPage({
   const { data: players } = await query;
 
   // Count for tabs
-  const { count: compCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).in('status', ['eligible_competitive', 'competitive_associate']);
+  const { count: compCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).eq('status', 'competitive');
   const { count: recCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).eq('status', 'recreational');
-  const { count: attCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).in('status', ['suspended', 'inactive', 'pending_approval']);
+  const { count: attCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).in('status', ['suspended', 'pending_approval']);
 
   const tabs = [
     { id: 'competitive', label: 'Competitive', count: compCount ?? 0 },
@@ -101,7 +97,6 @@ export default async function PlayersPage({
               <tr className="border-b border-[var(--border)]">
                 <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Player</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Status</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Eligible</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase">Singles Elo</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase">Doubles Elo</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase">S W/L</th>
@@ -133,13 +128,6 @@ export default async function PlayersPage({
                       <Badge variant={statusBadgeVariant(player.status)}>
                         {PLAYER_STATUS_LABELS[player.status as keyof typeof PLAYER_STATUS_LABELS] || player.status}
                       </Badge>
-                    </td>
-                    <td className="px-4 py-3">
-                      {player.eligibility_flag ? (
-                        <Badge variant="success">Yes</Badge>
-                      ) : (
-                        <Badge variant="neutral">No</Badge>
-                      )}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <span className="font-mono text-[var(--text-primary)]">{r?.singles_elo ?? '-'}</span>
