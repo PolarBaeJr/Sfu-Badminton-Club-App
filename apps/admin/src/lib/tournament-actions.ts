@@ -57,14 +57,20 @@ async function notifyPlayers(
   notificationType: 'general' | 'tournament_bracket_published' | 'tournament_match_ready' | 'tournament_match_result' | 'tournament_event_completed' | 'tournament_checkin_open' = 'general'
 ) {
   if (playerIds.length === 0) return;
-  const rows = playerIds.map(pid => ({
-    player_id: pid,
-    type: notificationType,
-    title,
-    body,
-    metadata: metadata ?? {},
-  }));
-  await adminClient.from('notifications').insert(rows);
+  try {
+    const rows = playerIds.map(pid => ({
+      player_id: pid,
+      type: notificationType,
+      title,
+      body,
+      metadata: metadata ?? {},
+    }));
+    const { error } = await adminClient.from('notifications').insert(rows);
+    if (error) throw error;
+  } catch (err) {
+    // Notifications are best-effort — never let a failure break the parent action.
+    Sentry.captureException(err);
+  }
 }
 
 // ============================================================
@@ -173,7 +179,7 @@ export async function updateTournamentEvent(
     details: updates as Record<string, unknown>,
   });
 
-  revalidatePath(`/tournaments/${event.tournament_id}`);
+  revalidateEventPaths(event.tournament_id, eventId);
 }
 
 export async function deleteTournamentEvent(eventId: string) {
@@ -217,6 +223,16 @@ export async function setEventStatus(eventId: string, status: TournamentEventSta
 
   if (!validTransitions[event.status]?.includes(status)) {
     throw new Error(`Invalid transition from ${event.status} to ${status}`);
+  }
+
+  // Guard: do not go live unless a bracket exists.
+  if (status === 'live') {
+    const { count: matchCount } = await adminClient.from('tournament_matches')
+      .select('*', { count: 'exact', head: true })
+      .eq('event_id', eventId);
+    if (!matchCount || matchCount === 0) {
+      throw new Error('Cannot go live — no bracket has been generated for this event');
+    }
   }
 
   const { error } = await adminClient.from('tournament_events')
@@ -346,6 +362,13 @@ export async function updateParticipantSeed(participantId: string, seedNumber: n
   await getAdminPlayer();
   const adminClient = createAdminClient();
 
+  const { data: participant } = await adminClient.from('tournament_participants')
+    .select('event_id, event:tournament_events(tournament_id, draw_locked)')
+    .eq('id', participantId)
+    .single();
+  const ev = (participant?.event as unknown as { tournament_id: string; draw_locked: boolean } | null);
+  if (ev?.draw_locked) throw new Error('Draw is locked. Unlock it before changing seeds.');
+
   const { error } = await adminClient.from('tournament_participants')
     .update({ seed_number: seedNumber })
     .eq('id', participantId);
@@ -354,11 +377,22 @@ export async function updateParticipantSeed(participantId: string, seedNumber: n
     Sentry.captureException(error);
     throw new Error(error.message);
   }
+
+  if (ev?.tournament_id && participant?.event_id) {
+    revalidateEventPaths(ev.tournament_id, participant.event_id as string);
+  }
 }
 
 export async function updatePairSeed(pairId: string, seedNumber: number | null) {
   await getAdminPlayer();
   const adminClient = createAdminClient();
+
+  const { data: pair } = await adminClient.from('tournament_pairs')
+    .select('event_id, event:tournament_events(tournament_id, draw_locked)')
+    .eq('id', pairId)
+    .single();
+  const ev = (pair?.event as unknown as { tournament_id: string; draw_locked: boolean } | null);
+  if (ev?.draw_locked) throw new Error('Draw is locked. Unlock it before changing seeds.');
 
   const { error } = await adminClient.from('tournament_pairs')
     .update({ seed_number: seedNumber })
@@ -367,6 +401,10 @@ export async function updatePairSeed(pairId: string, seedNumber: number | null) 
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
+  }
+
+  if (ev?.tournament_id && pair?.event_id) {
+    revalidateEventPaths(ev.tournament_id, pair.event_id as string);
   }
 }
 
@@ -449,46 +487,72 @@ export async function checkInParticipant(participantId: string) {
   }
 }
 
+// Pull the event/tournament context from a joined select on the UPDATE itself
+// so participant/pair status mutations don't need a second round-trip just to
+// figure out which paths to revalidate.
+const participantContextSelect = 'event_id, event:tournament_events(tournament_id)' as const;
+const pairContextSelect = 'event_id, event:tournament_events(tournament_id)' as const;
+
+function extractEventContext(row: { event_id?: unknown; event?: unknown } | null): { tid: string; eventId: string } | null {
+  if (!row) return null;
+  const eventId = row.event_id as string | undefined;
+  const tid = (row.event as { tournament_id?: string } | null)?.tournament_id;
+  if (!eventId || !tid) return null;
+  return { tid, eventId };
+}
+
 export async function markParticipantNoShow(participantId: string) {
   await getAdminPlayer();
   const adminClient = createAdminClient();
 
-  const { error } = await adminClient.from('tournament_participants')
+  const { data, error } = await adminClient.from('tournament_participants')
     .update({ status: 'no_show' })
-    .eq('id', participantId);
+    .eq('id', participantId)
+    .select(participantContextSelect)
+    .single();
 
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
   }
+  const ctx = extractEventContext(data);
+  if (ctx) revalidateEventPaths(ctx.tid, ctx.eventId);
 }
 
 export async function withdrawParticipant(participantId: string, reason?: string) {
   await getAdminPlayer();
   const adminClient = createAdminClient();
 
-  const { error } = await adminClient.from('tournament_participants')
+  const { data, error } = await adminClient.from('tournament_participants')
     .update({ status: 'withdrawn', notes: reason ?? null })
-    .eq('id', participantId);
+    .eq('id', participantId)
+    .select(participantContextSelect)
+    .single();
 
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
   }
+  const ctx = extractEventContext(data);
+  if (ctx) revalidateEventPaths(ctx.tid, ctx.eventId);
 }
 
 export async function disqualifyParticipant(participantId: string, reason?: string) {
   await getAdminPlayer();
   const adminClient = createAdminClient();
 
-  const { error } = await adminClient.from('tournament_participants')
+  const { data, error } = await adminClient.from('tournament_participants')
     .update({ status: 'disqualified', notes: reason ?? null })
-    .eq('id', participantId);
+    .eq('id', participantId)
+    .select(participantContextSelect)
+    .single();
 
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
   }
+  const ctx = extractEventContext(data);
+  if (ctx) revalidateEventPaths(ctx.tid, ctx.eventId);
 }
 
 // ============================================================
@@ -593,42 +657,41 @@ export async function checkInPair(pairId: string) {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
-  const { data: pair } = await adminClient.from('tournament_pairs')
-    .select('event_id, event:tournament_events(tournament_id)')
-    .eq('id', pairId)
-    .single();
-
-  const { error } = await adminClient.from('tournament_pairs')
+  const { data, error } = await adminClient.from('tournament_pairs')
     .update({
       status: 'checked_in',
       checked_in_at: new Date().toISOString(),
       checked_in_by: admin.id,
     })
-    .eq('id', pairId);
+    .eq('id', pairId)
+    .select(pairContextSelect)
+    .single();
 
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
   }
 
-  if (pair) {
-    const tournamentId = (pair.event as unknown as { tournament_id: string } | null)?.tournament_id;
-    if (tournamentId) revalidateEventPaths(tournamentId, pair.event_id as string);
-  }
+  const ctx = extractEventContext(data);
+  if (ctx) revalidateEventPaths(ctx.tid, ctx.eventId);
 }
 
 export async function markPairNoShow(pairId: string) {
   await getAdminPlayer();
   const adminClient = createAdminClient();
 
-  const { error } = await adminClient.from('tournament_pairs')
+  const { data, error } = await adminClient.from('tournament_pairs')
     .update({ status: 'no_show' })
-    .eq('id', pairId);
+    .eq('id', pairId)
+    .select(pairContextSelect)
+    .single();
 
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
   }
+  const ctx = extractEventContext(data);
+  if (ctx) revalidateEventPaths(ctx.tid, ctx.eventId);
 }
 
 // ============================================================
@@ -697,10 +760,15 @@ export async function generateSingleEliminationBracket(eventId: string) {
   if (needsSeeding) {
     entries.sort((a, b) => b.elo - a.elo);
     entries.forEach((e, i) => { e.seed = i + 1; });
-    // Persist the seeds
-    for (const e of entries) {
-      const table = doubles ? 'tournament_pairs' : 'tournament_participants';
-      await adminClient.from(table).update({ seed_number: e.seed }).eq('id', e.id);
+    // Persist seeds in parallel — independent rows, no contention.
+    const seedTable = doubles ? 'tournament_pairs' : 'tournament_participants';
+    const seedResults = await Promise.allSettled(
+      entries.map(e => Promise.resolve(
+        adminClient.from(seedTable).update({ seed_number: e.seed }).eq('id', e.id)
+      ))
+    );
+    for (const r of seedResults) {
+      if (r.status === 'rejected') Sentry.captureException(r.reason);
     }
   } else {
     entries.sort((a, b) => (a.seed ?? 999) - (b.seed ?? 999));
@@ -836,13 +904,22 @@ export async function generateSingleEliminationBracket(eventId: string) {
     }
   }
 
-  // Assign match numbers for remaining rounds
+  // Assign match numbers for remaining rounds — collect all (id, number) pairs
+  // and issue UPDATEs in parallel.
+  const matchNumberAssignments: Array<{ id: string; number: number }> = [];
   for (let round = 2; round <= totalRounds; round++) {
-    const roundMatchIds = matchesByRound[round] ?? [];
-    for (const mId of roundMatchIds) {
-      await adminClient.from('tournament_matches')
-        .update({ match_number: matchNumber++ })
-        .eq('id', mId);
+    for (const mId of matchesByRound[round] ?? []) {
+      matchNumberAssignments.push({ id: mId, number: matchNumber++ });
+    }
+  }
+  if (matchNumberAssignments.length > 0) {
+    const numberResults = await Promise.allSettled(
+      matchNumberAssignments.map(a => Promise.resolve(
+        adminClient.from('tournament_matches').update({ match_number: a.number }).eq('id', a.id)
+      ))
+    );
+    for (const r of numberResults) {
+      if (r.status === 'rejected') Sentry.captureException(r.reason);
     }
   }
 
@@ -1273,6 +1350,11 @@ export async function editMatchResult(
   const winnerField = doubles ? 'winner_pair_id' : 'winner_participant_id';
   const loserField = doubles ? 'loser_pair_id' : 'loser_participant_id';
 
+  // Reverse any prior Elo changes so we can recompute with the corrected winner.
+  if (match.elo_snapshot) {
+    await reverseEloSnapshot(adminClient, match);
+  }
+
   await adminClient.from('tournament_matches').update({
     scores: newScores,
     [winnerField]: winnerId,
@@ -1293,6 +1375,12 @@ export async function editMatchResult(
       .eq('id', match.winner_to_match_id);
   }
 
+  // Reapply Elo with corrected winner. Skipped for walkovers (no Elo impact)
+  // and voided matches.
+  if (match.status === 'completed') {
+    await applyTournamentMatchElo(matchId);
+  }
+
   await logAudit(adminClient, {
     tournament_id: event.tournament_id as string,
     event_id: match.event_id,
@@ -1302,7 +1390,7 @@ export async function editMatchResult(
     details: { old_scores: match.scores, new_scores: newScores, new_winner_side: newWinnerSide },
   });
 
-  revalidatePath(`/tournaments/${event.tournament_id}`);
+  revalidateEventPaths(event.tournament_id as string, match.event_id as string);
 }
 
 // ============================================================
@@ -1326,60 +1414,77 @@ async function applyTournamentMatchElo(matchId: string) {
   const eloFormat = toEloFormat(matchFormat);
   const formatWeight = getFormatWeight(eloFormat);
 
+  // Per-player snapshot of this match's Elo change, persisted on the match row.
+  // Enables perfect reversal in undoMatchResult / editMatchResult for both singles
+  // and doubles regardless of how much state has drifted since.
+  const snapshotEntries: Array<{
+    player_id: string;
+    before: number;
+    after: number;
+    delta: number;
+  }> = [];
+  const snapshotDiscipline: 'singles' | 'doubles' = doubles ? 'doubles' : 'singles';
+
+  const nowIso = new Date().toISOString();
+
   if (doubles) {
     // For doubles, update both players in winning and losing pairs
     const winnerId = match.winner_pair_id;
     const loserId = match.loser_pair_id;
     if (!winnerId || !loserId) return;
 
-    const { data: winnerPair } = await adminClient.from('tournament_pairs')
-      .select('player1_id, player2_id, combined_elo')
-      .eq('id', winnerId).single();
-    const { data: loserPair } = await adminClient.from('tournament_pairs')
-      .select('player1_id, player2_id, combined_elo')
-      .eq('id', loserId).single();
+    // Fetch both pairs in parallel.
+    const [{ data: winnerPair }, { data: loserPair }] = await Promise.all([
+      adminClient.from('tournament_pairs')
+        .select('player1_id, player2_id, combined_elo')
+        .eq('id', winnerId).single(),
+      adminClient.from('tournament_pairs')
+        .select('player1_id, player2_id, combined_elo')
+        .eq('id', loserId).single(),
+    ]);
 
     if (!winnerPair || !loserPair) return;
 
     const winnerElo = winnerPair.combined_elo ?? 1200;
     const loserElo = loserPair.combined_elo ?? 1200;
 
-    // Get K-factor for each player
+    // Single batched ratings fetch for all 4 players
     const allPlayerIds = [winnerPair.player1_id, winnerPair.player2_id, loserPair.player1_id, loserPair.player2_id];
     const { data: ratings } = await adminClient.from('ratings')
       .select('player_id, doubles_elo, doubles_provisional, doubles_matches_played')
       .in('player_id', allPlayerIds);
 
-    for (const playerId of [winnerPair.player1_id, winnerPair.player2_id]) {
+    const computeFor = (playerId: string, opponentElo: number, won: boolean) => {
       const rating = ratings?.find(r => r.player_id === playerId);
+      const before = rating?.doubles_elo ?? 1200;
       const k = getKFactor('doubles', rating?.doubles_provisional ?? true, rating?.doubles_matches_played);
       const result = calculateEloUpdate({
-        playerRating: rating?.doubles_elo ?? 1200,
-        opponentRating: loserElo,
+        playerRating: before,
+        opponentRating: opponentElo,
         kFactor: k,
         formatWeight,
         eventMultiplier: eloMultiplier,
-        won: true,
+        won,
       });
-      await adminClient.from('ratings')
-        .update({ doubles_elo: result.newRating, updated_at: new Date().toISOString() })
-        .eq('player_id', playerId);
-    }
+      snapshotEntries.push({ player_id: playerId, before, after: result.newRating, delta: result.delta });
+      return { playerId, newRating: result.newRating };
+    };
 
-    for (const playerId of [loserPair.player1_id, loserPair.player2_id]) {
-      const rating = ratings?.find(r => r.player_id === playerId);
-      const k = getKFactor('doubles', rating?.doubles_provisional ?? true, rating?.doubles_matches_played);
-      const result = calculateEloUpdate({
-        playerRating: rating?.doubles_elo ?? 1200,
-        opponentRating: winnerElo,
-        kFactor: k,
-        formatWeight,
-        eventMultiplier: eloMultiplier,
-        won: false,
-      });
-      await adminClient.from('ratings')
-        .update({ doubles_elo: result.newRating, updated_at: new Date().toISOString() })
-        .eq('player_id', playerId);
+    const computed = [
+      computeFor(winnerPair.player1_id, loserElo, true),
+      computeFor(winnerPair.player2_id, loserElo, true),
+      computeFor(loserPair.player1_id, winnerElo, false),
+      computeFor(loserPair.player2_id, winnerElo, false),
+    ];
+
+    // Issue all 4 rating UPDATEs in parallel
+    const updateResults = await Promise.allSettled(
+      computed.map(c => adminClient.from('ratings')
+        .update({ doubles_elo: c.newRating, updated_at: nowIso })
+        .eq('player_id', c.playerId))
+    );
+    for (const r of updateResults) {
+      if (r.status === 'rejected') Sentry.captureException(r.reason);
     }
   } else {
     // Singles
@@ -1387,21 +1492,25 @@ async function applyTournamentMatchElo(matchId: string) {
     const loserId = match.loser_participant_id;
     if (!winnerId || !loserId) return;
 
-    const { data: winnerP } = await adminClient.from('tournament_participants')
-      .select('player_id, elo_before')
-      .eq('id', winnerId).single();
-    const { data: loserP } = await adminClient.from('tournament_participants')
-      .select('player_id, elo_before')
-      .eq('id', loserId).single();
+    // Fetch both participants in parallel
+    const [{ data: winnerP }, { data: loserP }] = await Promise.all([
+      adminClient.from('tournament_participants')
+        .select('player_id, elo_before')
+        .eq('id', winnerId).single(),
+      adminClient.from('tournament_participants')
+        .select('player_id, elo_before')
+        .eq('id', loserId).single(),
+    ]);
 
     if (!winnerP || !loserP) return;
 
-    const { data: winnerRating } = await adminClient.from('ratings')
-      .select('singles_elo, singles_provisional, singles_matches_played')
-      .eq('player_id', winnerP.player_id).single();
-    const { data: loserRating } = await adminClient.from('ratings')
-      .select('singles_elo, singles_provisional, singles_matches_played')
-      .eq('player_id', loserP.player_id).single();
+    // Single batched ratings fetch
+    const { data: ratings } = await adminClient.from('ratings')
+      .select('player_id, singles_elo, singles_provisional, singles_matches_played')
+      .in('player_id', [winnerP.player_id, loserP.player_id]);
+
+    const winnerRating = ratings?.find(r => r.player_id === winnerP.player_id);
+    const loserRating = ratings?.find(r => r.player_id === loserP.player_id);
 
     const winnerElo = winnerRating?.singles_elo ?? winnerP.elo_before ?? 1200;
     const loserElo = loserRating?.singles_elo ?? loserP.elo_before ?? 1200;
@@ -1427,23 +1536,96 @@ async function applyTournamentMatchElo(matchId: string) {
       won: false,
     });
 
-    // Update ratings table
-    await adminClient.from('ratings')
-      .update({ singles_elo: winResult.newRating, updated_at: new Date().toISOString() })
-      .eq('player_id', winnerP.player_id);
+    // Issue all 4 UPDATEs in parallel (2 ratings + 2 participants)
+    const updateResults = await Promise.allSettled([
+      adminClient.from('ratings')
+        .update({ singles_elo: winResult.newRating, updated_at: nowIso })
+        .eq('player_id', winnerP.player_id),
+      adminClient.from('ratings')
+        .update({ singles_elo: loseResult.newRating, updated_at: nowIso })
+        .eq('player_id', loserP.player_id),
+      adminClient.from('tournament_participants')
+        .update({ elo_after: winResult.newRating, elo_change: winResult.delta })
+        .eq('id', winnerId),
+      adminClient.from('tournament_participants')
+        .update({ elo_after: loseResult.newRating, elo_change: loseResult.delta })
+        .eq('id', loserId),
+    ]);
+    for (const r of updateResults) {
+      if (r.status === 'rejected') Sentry.captureException(r.reason);
+    }
 
-    await adminClient.from('ratings')
-      .update({ singles_elo: loseResult.newRating, updated_at: new Date().toISOString() })
-      .eq('player_id', loserP.player_id);
+    snapshotEntries.push({ player_id: winnerP.player_id, before: winnerElo, after: winResult.newRating, delta: winResult.delta });
+    snapshotEntries.push({ player_id: loserP.player_id, before: loserElo, after: loseResult.newRating, delta: loseResult.delta });
+  }
 
-    // Update participants
-    await adminClient.from('tournament_participants')
-      .update({ elo_after: winResult.newRating, elo_change: winResult.delta })
-      .eq('id', winnerId);
+  // Persist snapshot on the match row so undo/edit can reverse it perfectly.
+  await adminClient.from('tournament_matches')
+    .update({ elo_snapshot: { discipline: snapshotDiscipline, entries: snapshotEntries } })
+    .eq('id', matchId);
+}
 
-    await adminClient.from('tournament_participants')
-      .update({ elo_after: loseResult.newRating, elo_change: loseResult.delta })
-      .eq('id', loserId);
+// Reverse a previously applied Elo snapshot for a match. Resets ratings to their
+// pre-match values and clears participant elo_after/elo_change for singles.
+async function reverseEloSnapshot(
+  adminClient: ReturnType<typeof createAdminClient>,
+  match: Record<string, unknown>
+) {
+  const snapshot = match.elo_snapshot as {
+    discipline: 'singles' | 'doubles';
+    entries: Array<{ player_id: string; before: number; after: number; delta: number }>;
+  } | null;
+  if (!snapshot || !snapshot.entries?.length) return;
+
+  const ratingColumn = snapshot.discipline === 'doubles' ? 'doubles_elo' : 'singles_elo';
+  const playerIds = snapshot.entries.map(e => e.player_id);
+
+  // Single batched fetch for all current ratings.
+  const { data: currentRows, error: fetchErr } = await adminClient.from('ratings')
+    .select(`player_id, ${ratingColumn}`)
+    .in('player_id', playerIds);
+  if (fetchErr) {
+    Sentry.captureException(fetchErr);
+    return;
+  }
+
+  const currentMap = new Map<string, number>();
+  for (const row of currentRows ?? []) {
+    const r = row as Record<string, unknown>;
+    const elo = r[ratingColumn] as number | undefined;
+    if (elo !== undefined) currentMap.set(r.player_id as string, elo);
+  }
+
+  const nowIso = new Date().toISOString();
+
+  // Issue all reversal UPDATEs in parallel — independent rows, no contention.
+  // Apply inverse delta regardless of drift so net effect is zero even if
+  // intermediate matches moved the rating.
+  const updatePromises = snapshot.entries
+    .filter(e => currentMap.has(e.player_id))
+    .map(e => adminClient.from('ratings')
+      .update({ [ratingColumn]: (currentMap.get(e.player_id) as number) - e.delta, updated_at: nowIso })
+      .eq('player_id', e.player_id));
+
+  // Clear singles participant snapshots in the same parallel batch.
+  if (snapshot.discipline === 'singles') {
+    const participantIds = [match.winner_participant_id, match.loser_participant_id]
+      .filter((x): x is string => typeof x === 'string' && x.length > 0);
+    if (participantIds.length > 0) {
+      updatePromises.push(adminClient.from('tournament_participants')
+        .update({ elo_after: null, elo_change: null })
+        .in('id', participantIds));
+    }
+  }
+
+  // Clear the snapshot on the match row in the same batch.
+  updatePromises.push(adminClient.from('tournament_matches')
+    .update({ elo_snapshot: null })
+    .eq('id', match.id as string));
+
+  const results = await Promise.allSettled(updatePromises);
+  for (const r of results) {
+    if (r.status === 'rejected') Sentry.captureException(r.reason);
   }
 }
 
@@ -1463,56 +1645,88 @@ export async function applyPlacementBonuses(eventId: string) {
   const doubles = isDoublesEvent(event.event_type);
   const bonuses = doubles ? PLACEMENT_BONUSES.doubles : PLACEMENT_BONUSES.singles;
 
+  // Pure helper — pull bonus from final_position so the batched paths below stay tidy.
+  const bonusFor = (pos: number | null | undefined): number => {
+    if (!pos) return 0;
+    if (pos === 1) return bonuses.champion;
+    if (pos === 2) return bonuses.finalist;
+    if (pos <= 4) return bonuses.semifinalist;
+    if (pos <= 8) return bonuses.quarterfinalist;
+    return 0;
+  };
+
+  const nowIso = new Date().toISOString();
+
   if (doubles) {
     const { data: pairs } = await adminClient.from('tournament_pairs')
       .select('id, player1_id, player2_id, final_position')
       .eq('event_id', eventId)
       .not('final_position', 'is', null);
 
+    // Build playerId → bonus map (a player may appear in multiple pairs, sum bonuses).
+    const playerBonus = new Map<string, number>();
     for (const pair of pairs ?? []) {
-      let bonus = 0;
-      if (pair.final_position === 1) bonus = bonuses.champion;
-      else if (pair.final_position === 2) bonus = bonuses.finalist;
-      else if (pair.final_position && pair.final_position <= 4) bonus = bonuses.semifinalist;
-      else if (pair.final_position && pair.final_position <= 8) bonus = bonuses.quarterfinalist;
+      const bonus = bonusFor(pair.final_position);
+      if (bonus <= 0) continue;
+      for (const pid of [pair.player1_id, pair.player2_id]) {
+        playerBonus.set(pid, (playerBonus.get(pid) ?? 0) + bonus);
+      }
+    }
 
-      if (bonus > 0) {
-        for (const playerId of [pair.player1_id, pair.player2_id]) {
-          const { data: rating } = await adminClient.from('ratings')
-            .select('doubles_elo')
-            .eq('player_id', playerId).single();
+    if (playerBonus.size > 0) {
+      // Single batched fetch for all affected ratings.
+      const playerIds = [...playerBonus.keys()];
+      const { data: ratings } = await adminClient.from('ratings')
+        .select('player_id, doubles_elo')
+        .in('player_id', playerIds);
+      const ratingMap = new Map<string, number>();
+      for (const r of ratings ?? []) ratingMap.set(r.player_id, r.doubles_elo ?? 1200);
 
-          await adminClient.from('ratings')
-            .update({ doubles_elo: (rating?.doubles_elo ?? 1200) + bonus, updated_at: new Date().toISOString() })
-            .eq('player_id', playerId);
-        }
+      // Parallel UPDATEs — one row per player, no contention.
+      const results = await Promise.allSettled(
+        [...playerBonus.entries()].map(([pid, bonus]) =>
+          adminClient.from('ratings')
+            .update({ doubles_elo: (ratingMap.get(pid) ?? 1200) + bonus, updated_at: nowIso })
+            .eq('player_id', pid)
+        )
+      );
+      for (const r of results) {
+        if (r.status === 'rejected') Sentry.captureException(r.reason);
       }
     }
   } else {
     const { data: participants } = await adminClient.from('tournament_participants')
-      .select('id, player_id, final_position')
+      .select('id, player_id, final_position, elo_change')
       .eq('event_id', eventId)
       .not('final_position', 'is', null);
 
-    for (const p of participants ?? []) {
-      let bonus = 0;
-      if (p.final_position === 1) bonus = bonuses.champion;
-      else if (p.final_position === 2) bonus = bonuses.finalist;
-      else if (p.final_position && p.final_position <= 4) bonus = bonuses.semifinalist;
-      else if (p.final_position && p.final_position <= 8) bonus = bonuses.quarterfinalist;
+    const eligible = (participants ?? [])
+      .map(p => ({ ...p, bonus: bonusFor(p.final_position) }))
+      .filter(p => p.bonus > 0);
 
-      if (bonus > 0) {
-        const { data: rating } = await adminClient.from('ratings')
-          .select('singles_elo')
-          .eq('player_id', p.player_id).single();
+    if (eligible.length > 0) {
+      const playerIds = eligible.map(p => p.player_id);
+      const { data: ratings } = await adminClient.from('ratings')
+        .select('player_id, singles_elo')
+        .in('player_id', playerIds);
+      const ratingMap = new Map<string, number>();
+      for (const r of ratings ?? []) ratingMap.set(r.player_id, r.singles_elo ?? 1200);
 
-        await adminClient.from('ratings')
-          .update({ singles_elo: (rating?.singles_elo ?? 1200) + bonus, updated_at: new Date().toISOString() })
-          .eq('player_id', p.player_id);
-
-        await adminClient.from('tournament_participants')
-          .update({ elo_change: (p as Record<string, unknown>).elo_change as number ?? 0 + bonus })
-          .eq('id', p.id);
+      // Parallel: rating UPDATE + participant elo_change UPDATE for each row.
+      // Wrap in Promise.resolve so the Supabase thenable plays nicely with allSettled typing.
+      const promises: PromiseLike<unknown>[] = [];
+      for (const p of eligible) {
+        promises.push(Promise.resolve(adminClient.from('ratings')
+          .update({ singles_elo: (ratingMap.get(p.player_id) ?? 1200) + p.bonus, updated_at: nowIso })
+          .eq('player_id', p.player_id)));
+        const prevChange = (p.elo_change as number | null) ?? 0;
+        promises.push(Promise.resolve(adminClient.from('tournament_participants')
+          .update({ elo_change: prevChange + p.bonus })
+          .eq('id', p.id)));
+      }
+      const results = await Promise.allSettled(promises);
+      for (const r of results) {
+        if (r.status === 'rejected') Sentry.captureException(r.reason);
       }
     }
   }
@@ -1524,7 +1738,7 @@ export async function applyPlacementBonuses(eventId: string) {
     performed_by: admin.id,
   });
 
-  revalidatePath(`/tournaments/${event.tournament_id}`);
+  revalidateEventPaths(event.tournament_id, eventId);
 }
 
 export async function finalizeEvent(eventId: string) {
@@ -1537,36 +1751,32 @@ export async function finalizeEvent(eventId: string) {
 
   const doubles = isDoublesEvent(event.event_type);
 
-  // Check all matches are complete
+  // Check all matches are complete — single query selects all incomplete rows
+  // with the participant fields we need to filter unused bracket slots in memory.
   const { data: incompleteMatches } = await adminClient.from('tournament_matches')
-    .select('id')
+    .select('id, participant_a_id, participant_b_id, pair_a_id, pair_b_id')
     .eq('event_id', eventId)
     .not('status', 'in', '("completed","walkover","voided","bye")')
     .not('is_bye', 'eq', true);
 
-  // Filter out pending matches that have no participants (unused bracket slots)
-  const realIncomplete = [];
-  for (const m of incompleteMatches ?? []) {
-    const { data: match } = await adminClient.from('tournament_matches')
-      .select('participant_a_id, participant_b_id, pair_a_id, pair_b_id')
-      .eq('id', m.id).single();
-    if (match) {
-      const hasSomeone = doubles
-        ? (match.pair_a_id || match.pair_b_id)
-        : (match.participant_a_id || match.participant_b_id);
-      if (hasSomeone) realIncomplete.push(m);
-    }
-  }
+  const realIncomplete = (incompleteMatches ?? []).filter(m => {
+    return doubles
+      ? (m.pair_a_id || m.pair_b_id)
+      : (m.participant_a_id || m.participant_b_id);
+  });
 
   if (realIncomplete.length > 0) {
     throw new Error(`${realIncomplete.length} match(es) still incomplete`);
   }
 
-  // Assign final positions based on tournament format
+  // Assign final positions based on tournament format. We compute the full
+  // (id → position) map in memory then issue one parallel batch of UPDATEs.
+  const table = doubles ? 'tournament_pairs' : 'tournament_participants';
+  const positionMap = new Map<string, number>();
+
   if (event.format === 'single_elimination') {
-    // Get all completed matches with round info
     const { data: matches } = await adminClient.from('tournament_matches')
-      .select('*')
+      .select('round_number, winner_pair_id, loser_pair_id, winner_participant_id, loser_participant_id')
       .eq('event_id', eventId)
       .in('status', ['completed', 'walkover'])
       .order('round_number', { ascending: false });
@@ -1576,70 +1786,81 @@ export async function finalizeEvent(eventId: string) {
 
       for (const m of matches) {
         const roundsFromFinal = totalRounds - m.round_number;
-        // Position for loser: 2^roundsFromFinal + 1 (e.g., final loser=2, SF loser=3, QF loser=5)
-        let loserPosition: number;
-        if (roundsFromFinal === 0) loserPosition = 2; // Final loser = 2nd place
-        else loserPosition = Math.pow(2, roundsFromFinal) + 1;
+        const loserPosition = roundsFromFinal === 0 ? 2 : Math.pow(2, roundsFromFinal) + 1;
 
-        const loserId = doubles ? m.loser_pair_id : m.loser_participant_id;
-        const winnerId = doubles ? m.winner_pair_id : m.winner_participant_id;
-        const table = doubles ? 'tournament_pairs' : 'tournament_participants';
+        const loserId = (doubles ? m.loser_pair_id : m.loser_participant_id) as string | null;
+        const winnerId = (doubles ? m.winner_pair_id : m.winner_participant_id) as string | null;
 
-        if (loserId) {
-          await adminClient.from(table).update({ final_position: loserPosition }).eq('id', loserId);
-        }
-
-        // Final winner = champion
-        if (m.round_number === totalRounds && winnerId) {
-          await adminClient.from(table).update({ final_position: 1 }).eq('id', winnerId);
-        }
+        // First-write-wins for losers (later rounds set position before earlier ones).
+        if (loserId && !positionMap.has(loserId)) positionMap.set(loserId, loserPosition);
+        if (m.round_number === totalRounds && winnerId) positionMap.set(winnerId, 1);
       }
     }
   } else {
     // Round robin: compute standings and assign positions
     const standings = await computeRoundRobinStandings(eventId);
-    const table = doubles ? 'tournament_pairs' : 'tournament_participants';
-    for (let i = 0; i < standings.length; i++) {
-      await adminClient.from(table).update({ final_position: i + 1 }).eq('id', standings[i]!.id);
+    standings.forEach((s, i) => positionMap.set(s!.id, i + 1));
+  }
+
+  if (positionMap.size > 0) {
+    const positionResults = await Promise.allSettled(
+      [...positionMap.entries()].map(([id, pos]) =>
+        Promise.resolve(adminClient.from(table).update({ final_position: pos }).eq('id', id))
+      )
+    );
+    for (const r of positionResults) {
+      if (r.status === 'rejected') Sentry.captureException(r.reason);
     }
   }
 
-  // Assign points based on format
-  const table = doubles ? 'tournament_pairs' : 'tournament_participants';
+  // Assign points based on format. Compute (id → points) in memory then issue
+  // one parallel batch of UPDATEs.
+  const pointsMap = new Map<string, number>();
   if (event.format === 'single_elimination') {
-    // Position-based points: 1st=100, 2nd=75, 3rd-4th=50, 5th-8th=25
-    const positionToPoints: Record<number, number> = { 1: 100, 2: 75 };
+    // Position-based points: 1st=100, 2nd=75, 3rd-4th=50, 5th-8th=25, else 10
     const { data: allEntries } = await adminClient.from(table)
       .select('id, final_position')
       .eq('event_id', eventId)
       .not('final_position', 'is', null);
     for (const entry of allEntries ?? []) {
-      let pts = positionToPoints[entry.final_position!] ?? 0;
-      if (!pts && entry.final_position! <= 4) pts = 50;
-      else if (!pts && entry.final_position! <= 8) pts = 25;
-      else if (!pts) pts = 10;
-      await adminClient.from(table).update({ points: pts }).eq('id', entry.id);
+      const pos = entry.final_position!;
+      let pts: number;
+      if (pos === 1) pts = 100;
+      else if (pos === 2) pts = 75;
+      else if (pos <= 4) pts = 50;
+      else if (pos <= 8) pts = 25;
+      else pts = 10;
+      pointsMap.set(entry.id, pts);
     }
   } else {
     // Round Robin: 3 points per win, 1 point for participation
-    const { data: rrMatches } = await adminClient.from('tournament_matches')
-      .select('*')
-      .eq('event_id', eventId)
-      .in('status', ['completed', 'walkover']);
-    const pointsMap: Record<string, number> = {};
-    const { data: allEntries } = await adminClient.from(table)
-      .select('id')
-      .eq('event_id', eventId)
-      .not('status', 'in', '("withdrawn","disqualified")');
-    for (const e of allEntries ?? []) { pointsMap[e.id] = 1; } // 1 participation point
-    for (const m of rrMatches ?? []) {
-      const winnerId = doubles ? m.winner_pair_id : m.winner_participant_id;
-      if (winnerId && pointsMap[winnerId] !== undefined) {
-        pointsMap[winnerId] += 3;
+    const [rrMatchesRes, allEntriesRes] = await Promise.all([
+      adminClient.from('tournament_matches')
+        .select('winner_pair_id, winner_participant_id')
+        .eq('event_id', eventId)
+        .in('status', ['completed', 'walkover']),
+      adminClient.from(table)
+        .select('id')
+        .eq('event_id', eventId)
+        .not('status', 'in', '("withdrawn","disqualified")'),
+    ]);
+    for (const e of allEntriesRes.data ?? []) pointsMap.set(e.id, 1); // 1 participation point
+    for (const m of rrMatchesRes.data ?? []) {
+      const winnerId = (doubles ? m.winner_pair_id : m.winner_participant_id) as string | null;
+      if (winnerId && pointsMap.has(winnerId)) {
+        pointsMap.set(winnerId, (pointsMap.get(winnerId) ?? 0) + 3);
       }
     }
-    for (const [id, pts] of Object.entries(pointsMap)) {
-      await adminClient.from(table).update({ points: pts }).eq('id', id);
+  }
+
+  if (pointsMap.size > 0) {
+    const pointsResults = await Promise.allSettled(
+      [...pointsMap.entries()].map(([id, pts]) =>
+        Promise.resolve(adminClient.from(table).update({ points: pts }).eq('id', id))
+      )
+    );
+    for (const r of pointsResults) {
+      if (r.status === 'rejected') Sentry.captureException(r.reason);
     }
   }
 
@@ -1687,7 +1908,7 @@ export async function finalizeEvent(eventId: string) {
     'tournament_event_completed'
   );
 
-  revalidatePath(`/tournaments/${event.tournament_id}`);
+  revalidateEventPaths(event.tournament_id, eventId);
 }
 
 // ============================================================
@@ -1737,10 +1958,13 @@ export async function computeRoundRobinStandings(eventId: string) {
     pointsAgainst: number;
     gamesFor: number;
     gamesAgainst: number;
+    // Head-to-head wins against every other entry — used as a tiebreaker
+    // before resorting to point differentials.
+    h2h: Record<string, number>;
   }> = {};
 
   for (const e of entries) {
-    stats[e.id] = { id: e.id, name: e.name, wins: 0, losses: 0, pointsFor: 0, pointsAgainst: 0, gamesFor: 0, gamesAgainst: 0 };
+    stats[e.id] = { id: e.id, name: e.name, wins: 0, losses: 0, pointsFor: 0, pointsAgainst: 0, gamesFor: 0, gamesAgainst: 0, h2h: {} };
   }
 
   for (const m of matches ?? []) {
@@ -1752,9 +1976,11 @@ export async function computeRoundRobinStandings(eventId: string) {
     if (winnerId === aId) {
       stats[aId].wins++;
       stats[bId].losses++;
+      stats[aId].h2h[bId] = (stats[aId].h2h[bId] ?? 0) + 1;
     } else if (winnerId === bId) {
       stats[bId].wins++;
       stats[aId].losses++;
+      stats[bId].h2h[aId] = (stats[bId].h2h[aId] ?? 0) + 1;
     }
 
     // Sum points from scores
@@ -1775,9 +2001,17 @@ export async function computeRoundRobinStandings(eventId: string) {
     }
   }
 
-  // Sort: wins desc, point differential desc, points for desc
+  // Sort: wins desc, head-to-head wins desc (pairwise), games differential desc,
+  // point differential desc, points for desc. Head-to-head only breaks ties
+  // between the two entries being compared — it's not transitive, so multi-way
+  // ties fall through to the differential tiebreakers.
   return Object.values(stats).sort((a, b) => {
     if (b.wins !== a.wins) return b.wins - a.wins;
+    const h2h = (b.h2h[a.id] ?? 0) - (a.h2h[b.id] ?? 0);
+    if (h2h !== 0) return h2h;
+    const aGameDiff = a.gamesFor - a.gamesAgainst;
+    const bGameDiff = b.gamesFor - b.gamesAgainst;
+    if (bGameDiff !== aGameDiff) return bGameDiff - aGameDiff;
     const aDiff = a.pointsFor - a.pointsAgainst;
     const bDiff = b.pointsFor - b.pointsAgainst;
     if (bDiff !== aDiff) return bDiff - aDiff;
@@ -1810,7 +2044,7 @@ export async function bulkCheckIn(eventId: string, type: 'participants' | 'pairs
   }
 
   const { data: event } = await adminClient.from('tournament_events').select('tournament_id').eq('id', eventId).single();
-  if (event) revalidatePath(`/tournaments/${event.tournament_id}`);
+  if (event) revalidateEventPaths(event.tournament_id, eventId);
 }
 
 // ============================================================
@@ -1840,7 +2074,7 @@ export async function lockDraw(eventId: string) {
     performed_by: admin.id,
   });
 
-  revalidatePath(`/tournaments/${event.tournament_id}`);
+  revalidateEventPaths(event.tournament_id, eventId);
 }
 
 export async function unlockDraw(eventId: string) {
@@ -1866,7 +2100,7 @@ export async function unlockDraw(eventId: string) {
     performed_by: admin.id,
   });
 
-  revalidatePath(`/tournaments/${event.tournament_id}`);
+  revalidateEventPaths(event.tournament_id, eventId);
 }
 
 // ============================================================
@@ -1900,7 +2134,7 @@ export async function clearSeeds(eventId: string) {
     performed_by: admin.id,
   });
 
-  revalidatePath(`/tournaments/${event.tournament_id}`);
+  revalidateEventPaths(event.tournament_id, eventId);
 }
 
 // ============================================================
@@ -1936,8 +2170,11 @@ export async function undoMatchResult(matchId: string) {
     }
   }
 
-  // Reverse Elo changes for singles participants
-  if (!doubles) {
+  // Reverse Elo changes (both singles and doubles) using snapshot persisted at apply time.
+  // Falls back to legacy elo_before behaviour for singles matches that pre-date the snapshot column.
+  if (match.elo_snapshot) {
+    await reverseEloSnapshot(adminClient, match);
+  } else if (!doubles) {
     const winnerId = match.winner_participant_id;
     const loserId = match.loser_participant_id;
 
@@ -2018,5 +2255,5 @@ export async function undoMatchResult(matchId: string) {
     details: { previous_scores: match.scores },
   });
 
-  revalidatePath(`/tournaments/${event.tournament_id}`);
+  revalidateEventPaths(event.tournament_id as string, match.event_id as string);
 }

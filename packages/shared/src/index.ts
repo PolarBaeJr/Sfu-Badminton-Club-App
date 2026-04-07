@@ -3,6 +3,7 @@ export * from './elo/engine';
 export * from './utils/constants';
 export * from './utils/helpers';
 export * from './utils/theme';
+export * from './utils/rate-limit';
 export * from './validators/schemas';
 export * from './email/templates';
 export * from './email/sender';

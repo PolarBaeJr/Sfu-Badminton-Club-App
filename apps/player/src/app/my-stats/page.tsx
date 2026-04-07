@@ -23,33 +23,39 @@ export default async function MyStatsPage() {
   const supabase = await createServerSupabaseClient();
   const r = Array.isArray(player.ratings) ? player.ratings[0] : player.ratings;
 
-  const { data: reliability } = await supabase
-    .from('reliability_metrics')
-    .select('*')
-    .eq('player_id', player.id)
-    .single();
+  // Fan out the four independent stat queries in parallel — they used to chain
+  // sequentially, blocking the page on ~4× round-trip latency.
+  const [reliabilityRes, recentMatchesRes, h2hRes, partnersRes] = await Promise.all([
+    supabase
+      .from('reliability_metrics')
+      .select('no_shows')
+      .eq('player_id', player.id)
+      .maybeSingle(),
+    supabase
+      .from('match_participants')
+      .select('id, win_flag, rating_delta, match:matches(score_summary, played_at, match_type, format)')
+      .eq('player_id', player.id)
+      .order('created_at', { ascending: false, referencedTable: 'matches' })
+      .limit(20),
+    supabase
+      .from('head_to_head_stats')
+      .select('id, player_a_id, player_b_id, player_a_wins, player_b_wins, total_matches, match_type, a:players!head_to_head_stats_player_a_id_fkey(full_name), b:players!head_to_head_stats_player_b_id_fkey(full_name)')
+      .or(`player_a_id.eq.${player.id},player_b_id.eq.${player.id}`)
+      .order('total_matches', { ascending: false })
+      .limit(10),
+    supabase
+      .from('partnership_stats')
+      .select('id, wins, losses, win_rate, total_matches, partner:players!partnership_stats_partner_id_fkey(full_name)')
+      .eq('player_id', player.id)
+      .gte('total_matches', 3)
+      .order('win_rate', { ascending: false })
+      .limit(5),
+  ]);
 
-  const { data: recentMatches } = await supabase
-    .from('match_participants')
-    .select('*, match:matches(score_summary, played_at, match_type, format)')
-    .eq('player_id', player.id)
-    .order('created_at', { ascending: false, referencedTable: 'matches' })
-    .limit(20);
-
-  const { data: h2h } = await supabase
-    .from('head_to_head_stats')
-    .select('*, a:players!head_to_head_stats_player_a_id_fkey(full_name), b:players!head_to_head_stats_player_b_id_fkey(full_name)')
-    .or(`player_a_id.eq.${player.id},player_b_id.eq.${player.id}`)
-    .order('total_matches', { ascending: false })
-    .limit(10);
-
-  const { data: partners } = await supabase
-    .from('partnership_stats')
-    .select('*, partner:players!partnership_stats_partner_id_fkey(full_name)')
-    .eq('player_id', player.id)
-    .gte('total_matches', 3)
-    .order('win_rate', { ascending: false })
-    .limit(5);
+  const reliability = reliabilityRes.data;
+  const recentMatches = recentMatchesRes.data;
+  const h2h = h2hRes.data;
+  const partners = partnersRes.data;
 
   return (
     <div className="space-y-6">

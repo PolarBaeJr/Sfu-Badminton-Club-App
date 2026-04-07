@@ -17,6 +17,10 @@ import { ApproveButtons } from './approve-buttons';
 export default async function DashboardPage() {
   const supabase = createAdminClient();
 
+  // Fold pendingPlayersList into the same parallel batch — it used to chain
+  // sequentially after Promise.all, costing an extra round-trip on every load.
+  // Use head:true counts everywhere instead of select('*') to avoid streaming
+  // every row just to get a count.
   const [
     { count: totalPlayers },
     { count: pendingPlayers },
@@ -25,22 +29,22 @@ export default async function DashboardPage() {
     { data: recentMatches },
     { count: activeTournaments },
     { count: activeChalls },
+    { data: pendingPlayersList },
   ] = await Promise.all([
-    supabase.from('players').select('*', { count: 'exact', head: true }).neq('status', 'pending_approval'),
-    supabase.from('players').select('*', { count: 'exact', head: true }).eq('status', 'pending_approval'),
-    supabase.from('disputes').select('*', { count: 'exact', head: true }).eq('status', 'open'),
-    supabase.from('walkovers').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-    supabase.from('matches').select('*, match_participants(*, player:players(full_name))').order('created_at', { ascending: false }).limit(5),
-    supabase.from('tournaments').select('*', { count: 'exact', head: true }).eq('status', 'active'),
-    supabase.from('challenges').select('*', { count: 'exact', head: true }).in('status', ['proposed', 'partially_confirmed', 'accepted']),
+    supabase.from('players').select('id', { count: 'exact', head: true }).neq('status', 'pending_approval'),
+    supabase.from('players').select('id', { count: 'exact', head: true }).eq('status', 'pending_approval'),
+    supabase.from('disputes').select('id', { count: 'exact', head: true }).eq('status', 'open'),
+    supabase.from('walkovers').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+    supabase.from('matches').select('id, score_summary, played_at, match_type, format, created_at, match_participants(player_id, win_flag, rating_delta, player:players(full_name))').order('created_at', { ascending: false }).limit(5),
+    supabase.from('tournaments').select('id', { count: 'exact', head: true }).eq('status', 'active'),
+    supabase.from('challenges').select('id', { count: 'exact', head: true }).in('status', ['proposed', 'partially_confirmed', 'accepted']),
+    supabase
+      .from('players')
+      .select('id, full_name, email, avatar_url, created_at')
+      .eq('status', 'pending_approval')
+      .order('created_at', { ascending: false })
+      .limit(10),
   ]);
-
-  const { data: pendingPlayersList } = await supabase
-    .from('players')
-    .select('id, full_name, email, avatar_url, created_at')
-    .eq('status', 'pending_approval')
-    .order('created_at', { ascending: false })
-    .limit(10);
 
   const hasAlerts = (pendingPlayers ?? 0) > 0 || (openDisputes ?? 0) > 0 || (pendingWalkovers ?? 0) > 0;
 
