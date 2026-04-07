@@ -256,3 +256,412 @@ Vitest configured across monorepo. 218 tests passing: validator schemas, Elo eng
 - TypeScript: both apps pass `tsc --noEmit` cleanly
 - Build: `turbo build` succeeds (both apps, ~15s)
 - Next.js: 14.2.35 in both apps
+
+---
+
+## Session: Tournament Bug Investigation & Fixes (2026-04-06)
+
+### Context
+
+A deep audit of the tournament system was performed. Three categories of issues were found and partially fixed:
+1. **UI-visible bugs** (player added but doesn't appear, Open Check-In causes server render error, player check-in not reflected in admin)
+2. **Critical Elo correctness bugs** (placement bonus formula wrong, edit result doesn't recalculate Elo, undo doesn't handle doubles)
+3. **Missing workflow** (no player-facing tournament registration/check-in flow)
+
+---
+
+### Root Cause: Stale Revalidation
+
+Every mutation in `apps/admin/src/lib/tournament-actions.ts` calls `revalidatePath()` to tell Next.js to re-fetch the page. The bug was that most called:
+
+```typescript
+revalidatePath(`/tournaments/${tournamentId}`);
+```
+
+…which revalidates the **tournament list page**, not the **event detail page** the admin is actually viewing. The admin event detail page lives at:
+
+```
+/tournaments/[id]/events/[eventId]
+```
+
+So the UI never refreshed after mutations — player added but list stays empty, check-in count stays 0, status bar doesn't update.
+
+Additionally, `checkInParticipant` and `checkInPair` had **zero** `revalidatePath` calls at all.
+
+---
+
+### Fixes Applied (Commit `e2bebf6`)
+
+**File:** `apps/admin/src/lib/tournament-actions.ts`
+
+Added a helper at the top of the file (after `getAdminPlayer`):
+
+```typescript
+function revalidateEventPaths(tournamentId: string, eventId?: string) {
+  revalidatePath(`/tournaments/${tournamentId}`);
+  if (eventId) revalidatePath(`/tournaments/${tournamentId}/events/${eventId}`);
+}
+```
+
+Replaced all `revalidatePath(...)` calls with `revalidateEventPaths(...)` in:
+
+| Function | What was wrong | Fix |
+|---|---|---|
+| `setEventStatus` | Only revalidated tournament page | Now revalidates event detail page too — fixes "Open Check-In" stale UI |
+| `addParticipantToEvent` | Had event path but not tournament parent | Now revalidates both |
+| `removeParticipantFromEvent` | Wrong path | Fixed |
+| `autoSeedEventByElo` | Wrong path | Fixed |
+| `checkInParticipant` | No revalidation at all | Added — now fetches `event.tournament_id` from participant join and revalidates both paths |
+| `addPairToEvent` | Was revalidating `/tournaments/${id}` not the event page | Fixed |
+| `removePairFromEvent` | Wrong path | Fixed |
+| `checkInPair` | No revalidation at all | Added — same join pattern as checkInParticipant |
+| `generateSingleEliminationBracket` | Wrong path | Fixed |
+| `generateRoundRobinMatches` | Wrong path | Fixed |
+| `enterMatchResult` | Wrong path | Fixed |
+| `enterWalkover` | Wrong path + **Elo never applied** | Fixed path + added `applyTournamentMatchElo(matchId)` call |
+| `voidMatch` | Wrong path | Fixed |
+
+**Note:** `enterWalkover` was missing an `applyTournamentMatchElo` call entirely — walkovers were not applying any Elo changes. This was also fixed in this commit.
+
+---
+
+### Bugs NOT Yet Fixed
+
+The following bugs are confirmed in the code and need to be fixed. They are organized by priority.
+
+---
+
+#### CRITICAL: Remaining Admin Revalidation Fixes
+
+**File:** `apps/admin/src/lib/tournament-actions.ts`
+
+The following functions still call the old `revalidatePath(...)` directly instead of `revalidateEventPaths(...)`. They need to be updated the same way as the functions above.
+
+| Function | Approx. line | Fix needed |
+|---|---|---|
+| `editMatchResult` | ~1275 | Replace `revalidatePath(...)` with `revalidateEventPaths(event.tournament_id, match.event_id)` |
+| `applyPlacementBonuses` | ~1497 | Same fix |
+| `finalizeEvent` | ~1660 | Same fix |
+| `bulkCheckIn` | ~1783 | Same fix |
+| `lockDraw` | ~1813 | Same fix |
+| `unlockDraw` | ~1839 | Same fix |
+| `clearSeeds` | ~1873 | Same fix |
+| `undoMatchResult` | ~1991 | Same fix |
+
+Pattern to apply everywhere:
+```typescript
+// OLD
+revalidatePath(`/tournaments/${event.tournament_id}`);
+
+// NEW
+revalidateEventPaths(event.tournament_id, eventId); // or match.event_id, pair.event_id depending on what's in scope
+```
+
+---
+
+#### CRITICAL: Player App Revalidation Fixes
+
+**File:** `apps/player/src/lib/tournament-actions.ts`
+
+All three player actions revalidate the wrong path:
+
+```typescript
+// CURRENT (wrong — revalidates the player's tournament LIST, not the event page)
+revalidatePath('/tournaments');
+
+// NEEDED — revalidate the specific event detail page
+revalidatePath(`/tournaments/${tournamentId}`);
+revalidatePath(`/tournaments/${tournamentId}/events/${eventId}`);
+```
+
+Functions affected:
+- `registerForEvent(eventId)` — line 47
+- `withdrawFromEvent(eventId)` — line 65
+- `selfCheckIn(eventId)` — line 84
+
+To fix: fetch `tournament_id` from the event at the start of each function (it already fetches the event), then call both revalidatePath calls.
+
+Example for `selfCheckIn`:
+```typescript
+// Already fetches the event:
+const { data: event } = await service.from('tournament_events').select('status, tournament_id').eq('id', eventId).single();
+
+// After update, add:
+revalidatePath(`/tournaments/${event.tournament_id}`);
+revalidatePath(`/tournaments/${event.tournament_id}/events/${eventId}`);
+```
+
+---
+
+#### CRITICAL: Placement Bonus Operator Precedence Bug
+
+**File:** `apps/admin/src/lib/tournament-actions.ts`, line ~1484
+
+```typescript
+// BUG — JavaScript evaluates `0 + bonus` before `??` due to precedence
+// So `elo_change` is ALWAYS set to just `bonus`, never including the existing elo_change
+await adminClient.from('tournament_participants')
+  .update({ elo_change: (p as Record<string, unknown>).elo_change as number ?? 0 + bonus })
+  .eq('id', p.id);
+
+// FIX — add parentheses
+await adminClient.from('tournament_participants')
+  .update({ elo_change: (((p as Record<string, unknown>).elo_change as number) ?? 0) + bonus })
+  .eq('id', p.id);
+```
+
+This means every tournament that applied placement bonuses has incorrect `elo_change` values in `tournament_participants`. The `ratings` table Elo is correct (bonus is added correctly there), but the tracking column is wrong.
+
+---
+
+#### CRITICAL: editMatchResult Does Not Recalculate Elo
+
+**File:** `apps/admin/src/lib/tournament-actions.ts`, function `editMatchResult` (~line 1206)
+
+When an admin edits a match result (changes who won), the function updates the winner/loser IDs and scores but **never touches Elo**. The old Elo from the original result remains. If player A beat player B and Elo was applied (+12/-12), then an admin edits it so B won, Elo still shows A gained +12.
+
+**Fix needed:**
+
+Before updating the match, reverse the old Elo. After updating, apply the new Elo.
+
+Add a `reverseTournamentMatchElo(matchId)` helper (or inline the logic):
+
+```typescript
+// Step 1: reverse old Elo before editing
+// For singles — use elo_before stored in tournament_participants:
+const { data: winnerP } = await adminClient.from('tournament_participants')
+  .select('player_id, elo_before').eq('id', match.winner_participant_id).single();
+const { data: loserP } = await adminClient.from('tournament_participants')
+  .select('player_id, elo_before').eq('id', match.loser_participant_id).single();
+// Reset ratings to elo_before
+await adminClient.from('ratings').update({ singles_elo: winnerP.elo_before }).eq('player_id', winnerP.player_id);
+await adminClient.from('ratings').update({ singles_elo: loserP.elo_before }).eq('player_id', loserP.player_id);
+await adminClient.from('tournament_participants').update({ elo_after: null, elo_change: null }).eq('id', match.winner_participant_id);
+await adminClient.from('tournament_participants').update({ elo_after: null, elo_change: null }).eq('id', match.loser_participant_id);
+
+// Step 2: update match with new scores/winner (existing code)
+
+// Step 3: re-apply Elo using new winner
+await applyTournamentMatchElo(matchId);
+```
+
+For doubles, `elo_before` is not stored per-player on the pair. The workaround is to recompute the delta from match parameters and subtract it. See the undoMatchResult doubles fix below — same approach applies.
+
+---
+
+#### CRITICAL: undoMatchResult Does Not Reverse Elo for Doubles
+
+**File:** `apps/admin/src/lib/tournament-actions.ts`, function `undoMatchResult` (~line 1880)
+
+The function correctly reverses Elo for singles (uses `elo_before` stored in `tournament_participants`). But for doubles it skips Elo reversal entirely — there's an `if (!doubles)` block with no `else`.
+
+**Why it's hard:** Doubles doesn't store `elo_before` per-player on `tournament_pairs`. The only stored value is `combined_elo` on the pair (which is the average of both players' doubles_elo at registration time, and doesn't change).
+
+**Fix approach — recompute and reverse:**
+
+```typescript
+if (doubles) {
+  const winnerId = match.winner_pair_id;
+  const loserId = match.loser_pair_id;
+  if (winnerId && loserId) {
+    const { data: winnerPair } = await adminClient.from('tournament_pairs')
+      .select('player1_id, player2_id, combined_elo').eq('id', winnerId).single();
+    const { data: loserPair } = await adminClient.from('tournament_pairs')
+      .select('player1_id, player2_id, combined_elo').eq('id', loserId).single();
+
+    const allPlayerIds = [winnerPair.player1_id, winnerPair.player2_id, loserPair.player1_id, loserPair.player2_id];
+    const { data: ratings } = await adminClient.from('ratings')
+      .select('player_id, doubles_elo, doubles_provisional, doubles_matches_played')
+      .in('player_id', allPlayerIds);
+
+    const matchFormat = (match.event as Record<string,unknown>).match_format as TournamentMatchFormat;
+    const eloMultiplier = Number((match.event as Record<string,unknown>).elo_multiplier) || 1.25;
+    const formatWeight = getFormatWeight(toEloFormat(matchFormat));
+
+    // For each winner player: re-derive the delta using their current rating and reverse it
+    for (const playerId of [winnerPair.player1_id, winnerPair.player2_id]) {
+      const rating = ratings?.find(r => r.player_id === playerId);
+      const k = getKFactor('doubles', rating?.doubles_provisional ?? true, rating?.doubles_matches_played);
+      const delta = calculateEloUpdate({
+        playerRating: rating?.doubles_elo ?? 1200,
+        opponentRating: loserPair.combined_elo ?? 1200,
+        kFactor: k, formatWeight, eventMultiplier: eloMultiplier, won: true,
+      }).delta;
+      await adminClient.from('ratings')
+        .update({ doubles_elo: (rating?.doubles_elo ?? 1200) - delta })
+        .eq('player_id', playerId);
+    }
+
+    // Same for loser players (they lost, so delta is negative — subtract it to restore)
+    for (const playerId of [loserPair.player1_id, loserPair.player2_id]) {
+      const rating = ratings?.find(r => r.player_id === playerId);
+      const k = getKFactor('doubles', rating?.doubles_provisional ?? true, rating?.doubles_matches_played);
+      const delta = calculateEloUpdate({
+        playerRating: rating?.doubles_elo ?? 1200,
+        opponentRating: winnerPair.combined_elo ?? 1200,
+        kFactor: k, formatWeight, eventMultiplier: eloMultiplier, won: false,
+      }).delta;
+      await adminClient.from('ratings')
+        .update({ doubles_elo: (rating?.doubles_elo ?? 1200) - delta })
+        .eq('player_id', playerId);
+    }
+  }
+}
+```
+
+Note: `toEloFormat` and `getFormatWeight` are already defined in the file. `calculateEloUpdate` is imported from `@badminton/shared`.
+
+---
+
+#### HIGH: Missing Player-Facing Tournament Registration & Check-In Flow
+
+This is a full UI feature gap, not a bug in existing code. Currently:
+
+1. **Players cannot discover which tournaments are open for registration** — `apps/player/src/app/tournaments/page.tsx` shows all tournaments but doesn't highlight which events are accepting registrations
+2. **The Register button disappears** when status moves from `registration` to `checkin` — players who didn't register during registration phase can't register late
+3. **There is no in-app check-in UI visible to players** — `selfCheckIn()` server action exists but is only accessible via `/tournaments/[id]/events/[eventId]/checkin` (a URL players have to know)
+4. **Player check-in on player app is not reflected on admin app** — fixed partially via revalidation changes above, but the player needs a clear UI button
+
+**Files to modify/create:**
+
+- `apps/player/src/app/tournaments/[id]/page.tsx` — add "Open for Registration" / "Check-In Open" banners per event
+- `apps/player/src/app/tournaments/[id]/events/[eventId]/EventActions.tsx` — this file already exists; ensure the Register / Check-In buttons are always visible during the appropriate event statuses, not hidden
+- `apps/player/src/app/tournaments/[id]/events/[eventId]/checkin/page.tsx` — already exists; ensure it's linked from the event detail page clearly
+- `apps/player/src/lib/tournament-actions.ts` — fix revalidation paths (see above)
+
+**The `EventActions.tsx` component needs to show:**
+- When status = `registration`: "Register" button (if not registered), "Withdraw" button (if registered)
+- When status = `checkin`: "Check In" button (if registered but not checked in), "Checked In ✓" badge (if checked in)
+- When status = `bracket_generated` / `live` / `completed`: read-only status
+
+---
+
+#### MEDIUM: markParticipantNoShow, markPairNoShow, withdrawParticipant, disqualifyParticipant Missing Revalidation
+
+**File:** `apps/admin/src/lib/tournament-actions.ts`
+
+These four functions have no `revalidatePath` at all. They update the DB but the UI won't refresh.
+
+```typescript
+export async function markParticipantNoShow(participantId: string) { ... /* no revalidation */ }
+export async function markPairNoShow(pairId: string) { ... /* no revalidation */ }
+export async function withdrawParticipant(participantId: string, reason?: string) { ... /* no revalidation */ }
+export async function disqualifyParticipant(participantId: string, reason?: string) { ... /* no revalidation */ }
+```
+
+Fix: same pattern as `checkInParticipant` — fetch `event_id` and `tournament_id` from the participant/pair, then call `revalidateEventPaths`.
+
+---
+
+#### MEDIUM: updateParticipantSeed and updatePairSeed Missing Revalidation
+
+**File:** `apps/admin/src/lib/tournament-actions.ts`, ~lines 338–364
+
+Both seed update functions have no `revalidatePath` call. Inline seed editing in the admin ParticipantsTab will appear to silently succeed.
+
+Fix: fetch the participant's `event_id` and the event's `tournament_id`, then call `revalidateEventPaths`.
+
+---
+
+#### MEDIUM: setEventStatus Does Not Validate Bracket Exists Before Allowing `bracket_generated`
+
+**File:** `apps/admin/src/lib/tournament-actions.ts`, function `setEventStatus`
+
+The function allows direct status jump to `bracket_generated` without checking if bracket matches exist. Admin can set status to `bracket_generated` without calling the bracket generation function. When the event page then renders the BracketTab, it will find zero matches and may render incorrectly.
+
+```typescript
+// Add this check before the status update when transitioning to bracket_generated:
+if (status === 'bracket_generated') {
+  const { count } = await adminClient.from('tournament_matches')
+    .select('*', { count: 'exact', head: true })
+    .eq('event_id', eventId);
+  if (!count || count === 0) {
+    throw new Error('Generate the bracket before changing status to bracket_generated');
+  }
+}
+```
+
+---
+
+#### LOW: Notifications Missing Error Handling
+
+**File:** `apps/admin/src/lib/tournament-actions.ts`
+
+All `await notifyPlayers(...)` calls have no try/catch. If the notifications insert fails (e.g. RLS issue, table full), it crashes the entire action (bracket generation, finalization, etc.).
+
+Fix: wrap each call:
+```typescript
+try {
+  await notifyPlayers(adminClient, playerIds, title, body, metadata, type);
+} catch (err) {
+  Sentry.captureException(err);
+  // Don't rethrow — notification failure should not block the main action
+}
+```
+
+Affected call sites: inside `generateSingleEliminationBracket`, `enterMatchResult`, `finalizeEvent`.
+
+---
+
+#### LOW: Round Robin Tiebreaker Incomplete
+
+**File:** `apps/admin/src/lib/tournament-actions.ts`, function `computeRoundRobinStandings` (~line 1749)
+
+When two players have equal wins AND equal point differential AND equal points-for, they are considered tied with no further resolution. The sort is:
+1. Wins (desc)
+2. Point differential (desc)
+3. Points-for (desc)
+4. **Nothing** — effectively random if all three are equal
+
+Should add head-to-head result as the final tiebreaker. Head-to-head can be computed from the `matches` array already available in the function.
+
+---
+
+#### LOW: Elo_before Never Set for Admin-Added Singles Participants
+
+**File:** `apps/admin/src/lib/tournament-actions.ts`, function `addParticipantToEvent`
+
+The code already sets `elo_before` for admin-added participants (line ~283):
+```typescript
+elo_before: rating?.singles_elo ?? 1200,
+```
+
+✅ This is actually **already correct**. The earlier gap analysis flagged this but on re-reading the code, `addParticipantToEvent` does set `elo_before`. Only the player self-registration path (`apps/player/src/lib/tournament-actions.ts`) sets it too. No fix needed here.
+
+---
+
+### Summary: What To Do First in the Next Session
+
+**Priority order:**
+
+1. **Apply remaining revalidation fixes** in `tournament-actions.ts` (admin) — `editMatchResult`, `applyPlacementBonuses`, `finalizeEvent`, `bulkCheckIn`, `lockDraw`, `unlockDraw`, `clearSeeds`, `undoMatchResult`, `markParticipantNoShow`, `markPairNoShow`, `withdrawParticipant`, `disqualifyParticipant`, `updateParticipantSeed`, `updatePairSeed` — just replace `revalidatePath(...)` with `revalidateEventPaths(...)` and add the event detail revalidation
+
+2. **Fix player app revalidation** in `apps/player/src/lib/tournament-actions.ts` — `registerForEvent`, `withdrawFromEvent`, `selfCheckIn` — fetch tournament_id and revalidate the event page
+
+3. **Fix placement bonus operator precedence** — 2-line fix at line ~1484 in tournament-actions.ts (admin)
+
+4. **Fix undoMatchResult for doubles Elo** — code snippet provided above
+
+5. **Fix editMatchResult to reverse+reapply Elo** — code snippet provided above
+
+6. **Wrap notifyPlayers in try/catch** across the file
+
+7. **Build player registration/check-in UI** — update `EventActions.tsx` in player app to surface correct buttons per status, link to the check-in page, fix the player app revalidation so admin sees player check-ins in real time
+
+8. **setEventStatus bracket validation** — add guard before allowing `bracket_generated` transition without matches
+
+---
+
+### Key File Locations
+
+| Purpose | File |
+|---|---|
+| Admin tournament server actions (~2000 lines) | `apps/admin/src/lib/tournament-actions.ts` |
+| Player tournament server actions | `apps/player/src/lib/tournament-actions.ts` |
+| Admin event detail page | `apps/admin/src/app/tournaments/[id]/events/[eventId]/page.tsx` |
+| Admin event components | `apps/admin/src/app/tournaments/[id]/events/[eventId]/components/` |
+| Player tournament detail | `apps/player/src/app/tournaments/[id]/page.tsx` |
+| Player event actions component | `apps/player/src/app/tournaments/[id]/events/[eventId]/EventActions.tsx` |
+| Player self check-in page | `apps/player/src/app/tournaments/[id]/events/[eventId]/checkin/page.tsx` |
+| Shared Elo engine | `packages/shared/src/elo/engine.ts` |
+| Shared types | `packages/shared/src/types/database.ts` |
