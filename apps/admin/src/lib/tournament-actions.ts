@@ -27,6 +27,13 @@ async function getAdminPlayer() {
   return getAuthenticatedAdmin();
 }
 
+// Revalidate both the tournament page and the event detail page so admin UIs
+// reflect mutations immediately. Pass eventId whenever it is in scope.
+function revalidateEventPaths(tournamentId: string, eventId?: string) {
+  revalidatePath(`/tournaments/${tournamentId}`);
+  if (eventId) revalidatePath(`/tournaments/${tournamentId}/events/${eventId}`);
+}
+
 // Map tournament match format to the shared elo engine's MatchFormat
 function toEloFormat(mf: TournamentMatchFormat): MatchFormat {
   switch (mf) {
@@ -228,7 +235,7 @@ export async function setEventStatus(eventId: string, status: TournamentEventSta
     performed_by: admin.id,
   });
 
-  revalidatePath(`/tournaments/${event.tournament_id}`);
+  revalidateEventPaths(event.tournament_id, eventId);
 }
 
 // ============================================================
@@ -298,7 +305,7 @@ export async function addParticipantToEvent(eventId: string, playerId: string) {
     details: { player_id: playerId },
   });
 
-  revalidatePath(`/tournaments/${event.tournament_id}/events/${eventId}`);
+  revalidateEventPaths(event.tournament_id, eventId);
   return data;
 }
 
@@ -332,7 +339,7 @@ export async function removeParticipantFromEvent(participantId: string) {
     details: { player_id: participant.player_id },
   });
 
-  revalidatePath(`/tournaments/${event.tournament_id}`);
+  revalidateEventPaths(event.tournament_id as string, participant.event_id as string);
 }
 
 export async function updateParticipantSeed(participantId: string, seedNumber: number | null) {
@@ -411,12 +418,17 @@ export async function autoSeedEventByElo(eventId: string) {
     performed_by: admin.id,
   });
 
-  revalidatePath(`/tournaments/${event.tournament_id}`);
+  revalidateEventPaths(event.tournament_id, eventId);
 }
 
 export async function checkInParticipant(participantId: string) {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
+
+  const { data: participant } = await adminClient.from('tournament_participants')
+    .select('event_id, event:tournament_events(tournament_id)')
+    .eq('id', participantId)
+    .single();
 
   const { error } = await adminClient.from('tournament_participants')
     .update({
@@ -429,6 +441,11 @@ export async function checkInParticipant(participantId: string) {
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
+  }
+
+  if (participant) {
+    const tournamentId = (participant.event as unknown as { tournament_id: string } | null)?.tournament_id;
+    if (tournamentId) revalidateEventPaths(tournamentId, participant.event_id as string);
   }
 }
 
@@ -543,7 +560,7 @@ export async function addPairToEvent(eventId: string, player1Id: string, player2
     details: { player1_id: player1Id, player2_id: player2Id },
   });
 
-  revalidatePath(`/tournaments/${event.tournament_id}`);
+  revalidateEventPaths(event.tournament_id, eventId);
   return data;
 }
 
@@ -569,12 +586,17 @@ export async function removePairFromEvent(pairId: string) {
     throw new Error(error.message);
   }
 
-  revalidatePath(`/tournaments/${event.tournament_id}`);
+  revalidateEventPaths(event.tournament_id as string, pair.event_id as string);
 }
 
 export async function checkInPair(pairId: string) {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
+
+  const { data: pair } = await adminClient.from('tournament_pairs')
+    .select('event_id, event:tournament_events(tournament_id)')
+    .eq('id', pairId)
+    .single();
 
   const { error } = await adminClient.from('tournament_pairs')
     .update({
@@ -587,6 +609,11 @@ export async function checkInPair(pairId: string) {
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
+  }
+
+  if (pair) {
+    const tournamentId = (pair.event as unknown as { tournament_id: string } | null)?.tournament_id;
+    if (tournamentId) revalidateEventPaths(tournamentId, pair.event_id as string);
   }
 }
 
@@ -851,7 +878,7 @@ export async function generateSingleEliminationBracket(eventId: string) {
     'tournament_bracket_published'
   );
 
-  revalidatePath(`/tournaments/${event.tournament_id}`);
+  revalidateEventPaths(event.tournament_id, eventId);
 }
 
 // ============================================================
@@ -958,7 +985,7 @@ export async function generateRoundRobinMatches(eventId: string) {
     details: { participants: N, rounds: numRounds },
   });
 
-  revalidatePath(`/tournaments/${event.tournament_id}`);
+  revalidateEventPaths(event.tournament_id, eventId);
 }
 
 // ============================================================
@@ -1086,7 +1113,7 @@ export async function enterMatchResult(
     'tournament_match_result'
   );
 
-  revalidatePath(`/tournaments/${event.tournament_id}`);
+  revalidateEventPaths(event.tournament_id as string, match.event_id as string);
 }
 
 export async function enterWalkover(
@@ -1169,7 +1196,10 @@ export async function enterWalkover(
     details: { winner_position: winnerPosition, reason },
   });
 
-  revalidatePath(`/tournaments/${event.tournament_id}`);
+  // Apply Elo for walkovers too — losing party still gets penalised, winner still gains.
+  await applyTournamentMatchElo(matchId);
+
+  revalidateEventPaths(event.tournament_id as string, match.event_id as string);
 }
 
 export async function voidMatch(matchId: string, reason: string) {
@@ -1200,7 +1230,7 @@ export async function voidMatch(matchId: string, reason: string) {
     details: { reason },
   });
 
-  revalidatePath(`/tournaments/${event.tournament_id}`);
+  revalidateEventPaths(event.tournament_id as string, match.event_id as string);
 }
 
 export async function editMatchResult(
