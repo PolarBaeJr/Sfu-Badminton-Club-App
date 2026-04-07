@@ -103,6 +103,8 @@ export default function SettingsPage() {
         setDisplayName(data.display_name || '');
         setPhone(data.phone || '');
         setBio(data.bio || '');
+        setShowOnLeaderboard(!data.hide_from_leaderboard);
+        setShowActivity(data.show_activity_status !== false); // default true
         setLoaded(true);
       }
     }
@@ -128,7 +130,14 @@ export default function SettingsPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      await updateProfile({ full_name: name, phone: phone || undefined, bio: bio || undefined });
+      await updateProfile({
+        full_name: name,
+        display_name: displayName || undefined,
+        phone: phone || undefined,
+        bio: bio || undefined,
+        hide_from_leaderboard: !showOnLeaderboard,
+        show_activity_status: showActivity,
+      });
       setSaved(true);
       toast('Profile updated', 'success');
       setTimeout(() => setSaved(false), 2000);
@@ -353,6 +362,7 @@ export default function SettingsPage() {
       >
         <Card className="!bg-[#161B2E] !border-white/[0.06]">
           <SectionHeader icon={Shield} title="Privacy" />
+          <p className="text-xs text-[var(--text-muted)] mb-3">Saved when you tap Save Profile above.</p>
           <div className="space-y-1">
             <Switch
               checked={showOnLeaderboard}

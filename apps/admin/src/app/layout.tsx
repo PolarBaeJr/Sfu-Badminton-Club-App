@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { Sidebar } from '@/components/sidebar';
+import { MainContent } from '@/components/main-content';
 import { ToastProvider } from '@/components/toast-provider';
 import { SentryUserInit } from '@/components/sentry-user-init';
 
@@ -27,11 +28,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <ToastProvider>
           <SentryUserInit playerId={null} />
           <Sidebar />
-          <main className="md:ml-64 min-h-screen p-6 pt-16 md:pt-6 lg:p-8 transition-all duration-300">
-            <div className="max-w-7xl mx-auto">
-              {children}
-            </div>
-          </main>
+          <MainContent>
+            {children}
+          </MainContent>
         </ToastProvider>
       </body>
     </html>

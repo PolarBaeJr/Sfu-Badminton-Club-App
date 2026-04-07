@@ -99,8 +99,10 @@
 
 ## What Still Needs to Be Done
 
-### CRITICAL: Database Migration
-The TypeScript types were changed but the **Supabase database enum values have NOT been migrated**. Run this SQL:
+### ~~CRITICAL: Database Migration~~ DONE
+Migrated via `supabase db query --linked` on 2026-04-06. Added `'competitive'` to `player_status` enum, then ran the UPDATEs below. Current state: statuses `recreational` (4), `suspended` (1); roles `player` (2), `admin` (3). Legacy values cleared.
+
+<details><summary>SQL run</summary>
 ```sql
 -- Migrate player statuses
 UPDATE players SET status = 'competitive' WHERE status IN ('eligible_competitive', 'competitive_associate');
@@ -115,11 +117,14 @@ UPDATE players SET role = 'admin' WHERE email = 'virajveer@gmail.com';
 -- Add 'archived' to tournament status enum if using a Postgres enum
 -- (If using text column, no migration needed)
 ```
+</details>
 
-### CRITICAL: Vercel Deployment
-- Configure Vercel projects for both `apps/admin` and `apps/player`
-- Set environment variables in Vercel dashboard (Supabase URL, anon key, service role key, Sentry DSN)
-- Verify builds pass on Vercel
+### ~~CRITICAL: Vercel Deployment~~ DONE
+Both apps live on production (2026-04-06):
+- Admin: https://admin-snowy-theta.vercel.app
+- Player: https://player-jade-one.vercel.app
+
+Projects configured via Vercel REST API (`installCommand: npm install`, `buildCommand: npx turbo run build --filter=<app>`, `outputDirectory: apps/<app>/.next`, `rootDirectory: null`). Env vars set: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`. Sentry DSN not yet set.
 
 ### ~~HIGH: Missing Error/Loading Boundaries~~ DONE
 All missing error/loading boundaries added.
@@ -148,19 +153,18 @@ Player 2 dropdown filters out the player already selected as Player 1.
 ### ~~LOW: CSV Export Polish~~ DONE
 CSV filename now includes event type (e.g., `leaderboard-mens_singles.csv`).
 
-### LOW: Accessibility
-- Missing `aria-label` on icon-only buttons throughout tournament UI
-- Bracket display has no semantic structure (`role="table"` or equivalent)
-- Status badges rely on color only — not colorblind friendly
-- No visible `:focus-visible` indicators on interactive elements
+### ~~LOW: Accessibility~~ MOSTLY DONE
+- ~~Missing `aria-label` on icon-only buttons~~ Added across admin players, matches, BracketTab, ScoreEntryDialog
+- ~~Bracket display has no semantic structure~~ BracketTab now uses `role="grid"` / `role="row"` / `role="gridcell"` with round-name aria-labels
+- ~~Status badges rely on color only~~ BracketTab adds visible winner glyphs and walkover/voided text markers
+- ~~No visible `:focus-visible` indicators~~ Added `focus-visible:ring-2` on custom buttons in BracketTab and ScoreEntryDialog
+- Remaining: deeper sweep of less-trafficked admin pages
 
-### LOW: Leaderboard Search/Filter
-- Tournament points and Elo leaderboard have no search by player name
-- Could be needed once player count grows
+### ~~LOW: Leaderboard Search/Filter~~ DONE
+Search by player name already implemented in `apps/player/src/app/leaderboard/page.tsx`.
 
-### NOT STARTED: Testing Foundation
-- No test setup exists
-- Key integration tests needed: tournament creation flow, bracket generation, score entry, Elo calculation
+### ~~NOT STARTED: Testing Foundation~~ DONE
+Vitest configured across monorepo. 218 tests passing: validator schemas, Elo engine, helpers, constants, `getAuthenticatedAdmin()`. Run with `npx turbo run test`.
 
 ---
 

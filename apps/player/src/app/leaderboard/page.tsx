@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase-browser';
 import { Avatar, Badge } from '@badminton/ui';
 import Link from 'next/link';
 import { getPostHogClient } from '@/lib/posthog';
+import { getSeasonTier } from '@badminton/shared';
 import { Trophy, Medal, Crown, ChevronRight, Loader2, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -264,9 +265,22 @@ export default function LeaderboardPage() {
                           <span className="text-right font-mono text-base font-bold text-[#FFD700]">{(p as any)._tournamentPoints ?? 0}</span>
                         ) : (
                           <>
-                            <span className="text-right font-mono text-base font-bold text-shuttle-white">{elo ?? '-'}</span>
+                            <span className="text-right font-mono text-base font-bold text-shuttle-white">
+                              {elo ?? '-'}
+                              {(() => {
+                                if (!elo || activeTab === 'tournament_points') return null;
+                                const t = getSeasonTier(elo);
+                                return (
+                                  <span
+                                    className="inline-block w-2 h-2 rounded-full ml-1"
+                                    style={{ backgroundColor: t.color }}
+                                    title={t.tier}
+                                  />
+                                );
+                              })()}
+                            </span>
                             <span className="text-right text-sm text-[#94A3B8]">
-                              <span className="text-[#EF4444]">{wins ?? 0}</span>
+                              <span className="text-emerald-400">{wins ?? 0}</span>
                               <span className="text-[#475569]">-</span>
                               <span className="text-[#EF4444]">{losses ?? 0}</span>
                             </span>

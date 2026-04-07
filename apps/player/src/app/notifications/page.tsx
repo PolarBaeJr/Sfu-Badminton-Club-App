@@ -2,21 +2,50 @@ import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-ser
 import { Badge } from '@badminton/ui';
 import { formatRelativeTime } from '@badminton/shared';
 import { redirect } from 'next/navigation';
-import { NotificationActions } from './actions';
-import { Bell, BellOff, Swords, Megaphone, Calendar, Trophy, UserPlus, Info, CheckCheck } from 'lucide-react';
+import { NotificationActions, NotificationLink } from './actions';
+import { Bell, BellOff, Swords, Megaphone, Calendar, Trophy, UserPlus, Info, CheckCheck, TrendingUp } from 'lucide-react';
 import { FadeIn, StaggerContainer, StaggerItem } from '@/components/motion-wrapper';
 
 const NOTIFICATION_ICON_MAP: Record<string, { icon: typeof Bell; color: string; bg: string }> = {
-  challenge: { icon: Swords, color: 'text-[#EF4444]', bg: 'bg-[#EF4444]/10' },
+  // Challenge types
+  challenge_received: { icon: Swords, color: 'text-[#EF4444]', bg: 'bg-[#EF4444]/10' },
+  challenge_accepted: { icon: Swords, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+  challenge_rejected: { icon: Swords, color: 'text-[#64748B]', bg: 'bg-white/[0.06]' },
+  challenge_cancelled: { icon: Swords, color: 'text-[#64748B]', bg: 'bg-white/[0.06]' },
+  // Result types
+  result_pending: { icon: Trophy, color: 'text-[#FFD700]', bg: 'bg-[#FFD700]/10' },
+  result_confirmed: { icon: Trophy, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+  // Dispute types
+  dispute_opened: { icon: Swords, color: 'text-orange-400', bg: 'bg-orange-500/10' },
+  dispute_resolved: { icon: Swords, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+  // Other types
+  rank_changed: { icon: TrendingUp, color: 'text-[#FFD700]', bg: 'bg-[#FFD700]/10' },
+  session_reminder: { icon: Calendar, color: 'text-blue-400', bg: 'bg-blue-500/10' },
   announcement: { icon: Megaphone, color: 'text-[#FFD700]', bg: 'bg-[#FFD700]/10' },
-  session: { icon: Calendar, color: 'text-blue-400', bg: 'bg-blue-500/10' },
-  tournament: { icon: Trophy, color: 'text-[#FFD700]', bg: 'bg-[#FFD700]/10' },
-  team: { icon: UserPlus, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+  tournament_update: { icon: Trophy, color: 'text-[#FFD700]', bg: 'bg-[#FFD700]/10' },
+  team_invite: { icon: UserPlus, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
   system: { icon: Info, color: 'text-[#64748B]', bg: 'bg-white/[0.06]' },
 };
 
 function getNotificationMeta(type: string) {
-  return NOTIFICATION_ICON_MAP[type] || { icon: Bell, color: 'text-[#64748B]', bg: 'bg-white/[0.06]' };
+  // Try exact match first, then prefix match
+  if (NOTIFICATION_ICON_MAP[type]) return NOTIFICATION_ICON_MAP[type];
+  const prefix = type.split('_')[0] ?? '';
+  const prefixMatch = Object.entries(NOTIFICATION_ICON_MAP).find(([key]) => key.startsWith(prefix));
+  return prefixMatch ? prefixMatch[1] : { icon: Bell, color: 'text-[#64748B]', bg: 'bg-white/[0.06]' };
+}
+
+function getNotificationHref(type: string, metadata: Record<string, unknown> | null): string | null {
+  const challengeId = metadata?.challenge_id as string | undefined;
+  const matchId = metadata?.match_id as string | undefined;
+
+  if (challengeId && (type.startsWith('challenge') || type.startsWith('result') || type.startsWith('dispute'))) {
+    return `/challenges/${challengeId}`;
+  }
+  if (type === 'rank_changed') return '/my-stats';
+  if (type === 'session_reminder' && metadata?.session_id) return `/sessions/${metadata.session_id}`;
+  if (type === 'tournament_update' && metadata?.tournament_id) return `/tournaments/${metadata.tournament_id}`;
+  return null;
 }
 
 export default async function NotificationsPage() {
@@ -85,28 +114,30 @@ export default async function NotificationsPage() {
                 const Icon = meta.icon;
                 return (
                   <StaggerItem key={n.id}>
-                    <div className="flex items-start gap-3 p-4 bg-white/[0.03] rounded-xl border border-white/[0.04] border-l-2 border-l-[#EF4444] hover:bg-white/[0.05] transition-all duration-200">
-                      <div className={`w-9 h-9 rounded-lg ${meta.bg} flex items-center justify-center shrink-0 mt-0.5`}>
-                        <Icon className={`w-4 h-4 ${meta.color}`} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <div className="w-2 h-2 rounded-full bg-[#EF4444] shrink-0" />
-                              <p className="text-sm font-semibold text-shuttle-white truncate">{n.title}</p>
+                    <NotificationLink notificationId={n.id} href={getNotificationHref(n.type, n.metadata)} isRead={n.read_flag}>
+                      <div className="flex items-start gap-3 p-4 bg-white/[0.03] rounded-xl border border-white/[0.04] border-l-2 border-l-[#EF4444] hover:bg-white/[0.05] transition-all duration-200">
+                        <div className={`w-9 h-9 rounded-lg ${meta.bg} flex items-center justify-center shrink-0 mt-0.5`}>
+                          <Icon className={`w-4 h-4 ${meta.color}`} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <div className="w-2 h-2 rounded-full bg-[#EF4444] shrink-0" />
+                                <p className="text-sm font-semibold text-shuttle-white truncate">{n.title}</p>
+                              </div>
+                              {n.body && (
+                                <p className="text-sm text-[#94A3B8] mt-1 line-clamp-2">{n.body}</p>
+                              )}
+                              <p className="text-xs text-[#64748B] mt-1.5">{formatRelativeTime(n.created_at)}</p>
                             </div>
-                            {n.body && (
-                              <p className="text-sm text-[#94A3B8] mt-1 line-clamp-2">{n.body}</p>
-                            )}
-                            <p className="text-xs text-[#64748B] mt-1.5">{formatRelativeTime(n.created_at)}</p>
+                            <span className={`text-[10px] px-2 py-1 rounded-full font-semibold shrink-0 ${meta.bg} ${meta.color}`}>
+                              {n.type}
+                            </span>
                           </div>
-                          <span className={`text-[10px] px-2 py-1 rounded-full font-semibold shrink-0 ${meta.bg} ${meta.color}`}>
-                            {n.type}
-                          </span>
                         </div>
                       </div>
-                    </div>
+                    </NotificationLink>
                   </StaggerItem>
                 );
               })}
@@ -131,25 +162,27 @@ export default async function NotificationsPage() {
                 const Icon = meta.icon;
                 return (
                   <StaggerItem key={n.id}>
-                    <div className="flex items-start gap-3 p-4 bg-white/[0.02] rounded-xl border border-white/[0.03] opacity-60 hover:opacity-80 transition-all duration-200">
-                      <div className={`w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center shrink-0 mt-0.5`}>
-                        <Icon className="w-4 h-4 text-[#475569]" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-[#94A3B8] truncate">{n.title}</p>
-                            {n.body && (
-                              <p className="text-sm text-[#64748B] mt-1 line-clamp-2">{n.body}</p>
-                            )}
-                            <p className="text-xs text-[#475569] mt-1.5">{formatRelativeTime(n.created_at)}</p>
+                    <NotificationLink notificationId={n.id} href={getNotificationHref(n.type, n.metadata)} isRead={n.read_flag}>
+                      <div className="flex items-start gap-3 p-4 bg-white/[0.02] rounded-xl border border-white/[0.03] opacity-60 hover:opacity-80 transition-all duration-200">
+                        <div className={`w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center shrink-0 mt-0.5`}>
+                          <Icon className="w-4 h-4 text-[#475569]" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-[#94A3B8] truncate">{n.title}</p>
+                              {n.body && (
+                                <p className="text-sm text-[#64748B] mt-1 line-clamp-2">{n.body}</p>
+                              )}
+                              <p className="text-xs text-[#475569] mt-1.5">{formatRelativeTime(n.created_at)}</p>
+                            </div>
+                            <span className="text-[10px] px-2 py-1 rounded-full font-semibold shrink-0 bg-white/[0.04] text-[#475569]">
+                              {n.type}
+                            </span>
                           </div>
-                          <span className="text-[10px] px-2 py-1 rounded-full font-semibold shrink-0 bg-white/[0.04] text-[#475569]">
-                            {n.type}
-                          </span>
                         </div>
                       </div>
-                    </div>
+                    </NotificationLink>
                   </StaggerItem>
                 );
               })}

@@ -47,8 +47,12 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
     proposed: 'bg-[#FFD700]/10 text-[#FFD700] border-[#FFD700]/20',
     partially_confirmed: 'bg-[#FFD700]/10 text-[#FFD700] border-[#FFD700]/20',
     accepted: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-    completed: 'bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/20',
+    completed: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
     disputed: 'bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/20',
+    cancelled: 'bg-white/[0.06] text-[#64748B] border-white/[0.06]',
+    expired: 'bg-white/[0.06] text-[#64748B] border-white/[0.06]',
+    walkover_pending: 'bg-[#FFD700]/10 text-[#FFD700] border-[#FFD700]/20',
+    walkover_confirmed: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
   };
 
   return (
@@ -113,7 +117,7 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
                   {team.players.map((cp: Record<string, unknown>) => {
                     const p = cp.player as Record<string, unknown>;
                     const confirmColors: Record<string, string> = {
-                      accepted: 'bg-[#EF4444]/15 text-[#EF4444]',
+                      accepted: 'bg-emerald-500/15 text-emerald-400',
                       rejected: 'bg-[#EF4444]/15 text-[#EF4444]',
                       pending: 'bg-[#FFD700]/15 text-[#FFD700]',
                     };
@@ -143,7 +147,7 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
               </div>
               <p className="text-2xl font-mono font-bold text-shuttle-white mb-2">{match.score_summary || 'Pending'}</p>
               <span className={`text-[10px] px-2 py-1 rounded-full font-bold ${
-                match.result_status === 'confirmed' ? 'bg-[#EF4444]/15 text-[#EF4444]' :
+                match.result_status === 'confirmed' ? 'bg-emerald-500/15 text-emerald-400' :
                 match.result_status === 'disputed' ? 'bg-[#EF4444]/15 text-[#EF4444]' :
                 'bg-[#FFD700]/15 text-[#FFD700]'
               }`}>
@@ -158,7 +162,7 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
                 {match.match_participants?.map((mp: Record<string, unknown>) => (
                   <div key={mp.id as string} className="flex items-center justify-between">
                     <span className="text-sm text-[#94A3B8]">{(mp.player as Record<string, unknown>)?.full_name as string}</span>
-                    <span className={`font-mono text-sm font-bold ${(mp.rating_delta as number ?? 0) >= 0 ? 'text-[#EF4444]' : 'text-[#EF4444]'}`}>
+                    <span className={`font-mono text-sm font-bold ${(mp.rating_delta as number ?? 0) >= 0 ? 'text-emerald-400' : 'text-[#EF4444]'}`}>
                       {mp.rating_delta !== null ? `${(mp.rating_delta as number) >= 0 ? '+' : ''}${mp.rating_delta}` : 'pending'}
                     </span>
                   </div>

@@ -8,8 +8,7 @@ export async function GET(request: Request) {
   const type = searchParams.get('type');
 
   // Create the redirect response upfront so cookies are set directly on it
-  const redirectTo = `${origin}/dashboard`;
-  const response = NextResponse.redirect(redirectTo);
+  const response = NextResponse.redirect(`${origin}/dashboard`);
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -32,9 +31,28 @@ export async function GET(request: Request) {
   );
 
   if (code) {
-    await supabase.auth.exchangeCodeForSession(code);
+    const { error } = await supabase.auth.exchangeCodeForSession(code);
+    if (error) {
+      return NextResponse.redirect(`${origin}/login`);
+    }
   } else if (token_hash && type) {
-    await supabase.auth.verifyOtp({ token_hash, type: type as 'magiclink' | 'email' });
+    const { error } = await supabase.auth.verifyOtp({ token_hash, type: type as 'magiclink' | 'email' });
+    if (error) {
+      return NextResponse.redirect(`${origin}/login`);
+    }
+  } else {
+    return NextResponse.redirect(`${origin}/login`);
+  }
+
+  // Check if user has admin role
+  const { data: { user } } = await supabase.auth.getUser();
+  if (user) {
+    const { data: isAdmin } = await supabase.rpc('is_admin', { p_user_id: user.id });
+    if (!isAdmin) {
+      // Sign them out and redirect to unauthorized
+      await supabase.auth.signOut();
+      return NextResponse.redirect(`${origin}/unauthorized`);
+    }
   }
 
   return response;

@@ -11,6 +11,8 @@ import {
   ScrollText,
   Settings,
   Target,
+  Calendar,
+  Megaphone,
   LogOut,
   Menu,
   X,
@@ -26,6 +28,8 @@ const navSections = [
       { href: '/players', label: 'Players', icon: Users },
       { href: '/matches', label: 'Matches', icon: Target },
       { href: '/tournaments', label: 'Tournaments', icon: Trophy },
+      { href: '/sessions', label: 'Sessions', icon: Calendar },
+      { href: '/announcements', label: 'Announcements', icon: Megaphone },
     ],
   },
   {
@@ -42,6 +46,12 @@ export function Sidebar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  // Don't render sidebar on public routes
+  const isPublicRoute =
+    pathname === '/login' ||
+    pathname.startsWith('/auth') ||
+    pathname === '/unauthorized';
 
   // Close mobile menu on navigation
   useEffect(() => {
@@ -128,6 +138,8 @@ export function Sidebar() {
       </div>
     </>
   );
+
+  if (isPublicRoute) return null;
 
   return (
     <>

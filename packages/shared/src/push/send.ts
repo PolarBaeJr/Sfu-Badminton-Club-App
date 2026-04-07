@@ -17,8 +17,9 @@ export async function sendPushNotification(
   payload: PushPayload,
   supabaseAdmin: SupabaseAdminLike
 ): Promise<void> {
-  const { data: subscriptions } = await (supabaseAdmin as Record<string, unknown> as { from: (t: string) => Record<string, unknown> })
-    .from('push_subscriptions') as unknown as { data: Array<{ id: string; endpoint: string; p256dh_key: string; auth_key: string }> | null };
+  const { data: subscriptions } = (await (supabaseAdmin.from('push_subscriptions') as unknown as Promise<{
+    data: Array<{ id: string; endpoint: string; p256dh_key: string; auth_key: string }> | null;
+  }>));
 
   if (!subscriptions || subscriptions.length === 0) return;
 

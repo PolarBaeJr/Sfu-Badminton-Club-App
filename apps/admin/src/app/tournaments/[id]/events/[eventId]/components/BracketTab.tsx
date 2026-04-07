@@ -112,6 +112,9 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                         isCompleted && winnerId === aId ? 'bg-[var(--color-success)]/10' : 'bg-[var(--bg-card)]'
                       }`}>
                         <div className="flex items-center gap-1.5 min-w-0">
+                          {isCompleted && winnerId === aId && (
+                            <span aria-hidden="true" className="text-[var(--color-success)] font-bold">✓</span>
+                          )}
                           {getSeed(aId) && <span className="text-[10px] font-mono text-[var(--text-muted)]">[{getSeed(aId)}]</span>}
                           <span className={`truncate ${
                             isCompleted && winnerId === aId
@@ -138,6 +141,9 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                         isCompleted && winnerId === bId ? 'bg-[var(--color-success)]/10' : 'bg-[var(--bg-card)]'
                       }`}>
                         <div className="flex items-center gap-1.5 min-w-0">
+                          {isCompleted && winnerId === bId && (
+                            <span aria-hidden="true" className="text-[var(--color-success)] font-bold">✓</span>
+                          )}
                           {getSeed(bId) && <span className="text-[10px] font-mono text-[var(--text-muted)]">[{getSeed(bId)}]</span>}
                           <span className={`truncate ${
                             isCompleted && winnerId === bId
@@ -171,7 +177,12 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                       {/* Status badges */}
                       {m.status === 'walkover' && (
                         <div className="text-center py-1 border-t border-[var(--border)]">
-                          <span className="text-[10px] text-[var(--color-warning)] font-medium" role="status">W/O WALKOVER</span>
+                          <span className="text-[10px] text-[var(--color-warning)] font-medium" role="status">⚠ W/O WALKOVER</span>
+                        </div>
+                      )}
+                      {m.status === 'voided' && (
+                        <div className="text-center py-1 border-t border-[var(--border)]">
+                          <span className="text-[10px] text-[var(--color-danger)] font-medium" role="status">✕ VOIDED</span>
                         </div>
                       )}
                     </div>

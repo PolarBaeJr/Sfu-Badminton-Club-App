@@ -1,7 +1,7 @@
 # Badminton Platform - Comprehensive Project Status
 
-**Last Updated:** April 4, 2026
-**Project Status:** Pre-Production (Auth fixed, Mobile done, Testing setup in progress)
+**Last Updated:** April 6, 2026
+**Project Status:** Pre-Production (Auth fixed, Mobile done, Player app features largely complete, a few UI color bugs remain)
 **Live Deployment:** `admin.badminton.polardev.org:3010`
 
 ---
@@ -246,8 +246,11 @@
 - ✅ `id` (UUID primary key)
 - ✅ `full_name` (string)
 - ✅ `email` (unique string)
-- ✅ `status` (enum: eligible_competitive, competitive_associate, recreational, alumni_external, suspended, inactive, pending_approval)
-- ✅ `role` (enum: player, admin, moderator)
+- ✅ `display_name` (string, optional — shown instead of full_name if set)
+- ✅ `status` (enum: **competitive, recreational, pending_approval, suspended** — simplified from 7 in Phase 2)
+- ✅ `role` (enum: **player, admin** — simplified from 4 in Phase 2)
+- ✅ `hide_from_leaderboard` (boolean)
+- ✅ `show_activity_status` (boolean)
 - ✅ `eligibility_flag` (boolean)
 - ✅ `active_flag` (boolean)
 - ✅ `avatar_url` (string, optional)
@@ -724,30 +727,40 @@
 
 ## Features Needing Work
 
+### Player App — Known UI Color Bugs (small, easy fixes)
+- ❌ `challenges/[id]/page.tsx:116-117` — `accepted` confirmation status shows red, should be green
+- ❌ `challenges/[id]/page.tsx:161` — positive `rating_delta` shows red instead of green (both ternary branches identical)
+- ❌ `challenges/[id]/page.tsx:146-148` — `confirmed` match result shows same red as `disputed`
+- ❌ `challenges/new/page.tsx:232` — Win Elo preview delta shows red instead of green
+- ❌ `challenges/[id]/page.tsx:50` — `completed` challenge status badge is red (should be neutral gray)
+- ❌ `challenges/[id]/page.tsx:46-52` — `cancelled`, `expired`, `walkover_confirmed`, `walkover_pending` have no style entries
+
+### Admin — Disputes Page Style Inconsistency
+- ❌ `disputes/page.tsx` uses `style={{...}}` inline props throughout; every other admin page uses Tailwind `className`
+
+### Admin — Dispute "Edited" Resolution Not Implemented
+- ✅ Schema supports `resolution_type = 'edited'`
+- ❌ `resolveDispute()` has no branch for it — edited scores never applied or re-Elo'd
+
 ### Tournament Bracket
 - ✅ Bracket data stored and fetched
-- ❌ Bracket UI visualization could be improved
+- ✅ Visual bracket with CSS connecting lines (admin + player apps)
 - ❌ Drag-and-drop seed editing not implemented
 - ❌ Auto-bracket generation may need refinement
-- ✅ PDF draw sheet export works but may be slow
 
 ### Leaderboards
-- ✅ Code exists for rankings
-- ❌ Real-time updates missing
-- ❌ Performance not tested with large player counts
-- ❌ Filter/sort options missing
+- ✅ Real-time updates via Supabase channel subscription (player app)
+- ✅ Season tier colored dots per player
+- ❌ No pagination (all players fetched client-side — will slow down at scale)
+- ❌ No filter/sort on admin leaderboard
 
 ### Push Notifications
 - ✅ Vapid keys configured
 - ❌ Push sending not implemented
 - ❌ Service worker setup incomplete
-- ❌ Notification UI not tested
 
-### Real-Time Notifications
-- ✅ Toast system built
-- ❌ No Supabase realtime subscriptions active
-- ❌ No server-sent events
-- ❌ Manual refresh required for updates
+### Elo History
+- ❌ No `ratings_history` table — current Elo snapshot only, chart not possible yet
 
 ### Responsive Design
 - ✅ Grid system responsive (sm:, lg: breakpoints)
@@ -907,12 +920,15 @@ pm2 restart badminton-admin
 
 1. ~~**🔴 FIX AUTHENTICATION**~~ ✅ DONE (Phase 1)
 2. ~~**🟠 IMPLEMENT MOBILE SUPPORT**~~ ✅ DONE (Phases 4, 12)
-3. **🔴 RUN DATABASE MIGRATION** — SQL prepared, needs to be run against Supabase
-4. **🔴 DEPLOY TO VERCEL** — Configure Vercel projects for admin + player apps, set env vars
-5. **🟠 ADD TESTS** — Vitest foundation being set up, need integration + E2E tests
-6. **🟠 IMPROVE ACCESSIBILITY** — aria-labels, semantic structure, focus indicators (in progress)
-7. **🟡 OPTIMIZE PERFORMANCE** — Pagination for large lists, caching/SWR
-8. **🟡 ADD MONITORING** — Configure Sentry DSN, performance monitoring
+3. ~~**Player app core features**~~ ✅ DONE (cancel challenge, notifications, tier badges, best partners, scheduled date/time, security guards)
+4. **🔴 FIX UI COLOR BUGS** — 5 small fixes in `challenges/[id]/page.tsx` and `challenges/new/page.tsx` (see PARTIALLY IMPLEMENTED above)
+5. **🔴 RUN DATABASE MIGRATION** — `supabase/migrations/00012_reliability_helpers.sql` prepared, needs to run against Supabase
+6. **🔴 DEPLOY TO VERCEL** — Configure Vercel projects for admin + player apps, set env vars
+7. **🟠 REFACTOR DISPUTES PAGE** — Convert inline styles to Tailwind for consistency
+8. **🟠 IMPLEMENT DISPUTE "EDITED" FLOW** — Add branch in `resolveDispute()` to apply edited scores + re-Elo
+9. **🟠 ADD TESTS** — Vitest foundation, need integration + E2E tests
+10. **🟡 OPTIMIZE PERFORMANCE** — Pagination for leaderboard + large lists
+11. **🟡 ADD MONITORING** — Configure Sentry DSN, performance monitoring
 
 ---
 
@@ -982,6 +998,6 @@ SENTRY_DSN=                            # Empty (optional)
 
 ---
 
-**Last Updated:** April 4, 2026
+**Last Updated:** April 6, 2026
 **Test Status:** 🟡 Testing foundation being set up (Vitest)
-**Production Ready:** 🟡 NEARLY (auth fixed, mobile done, DB migration pending, Vercel deploy pending)
+**Production Ready:** 🟡 NEARLY (auth fixed, mobile done, player features done, 5 UI color bugs remaining, DB migration + Vercel deploy pending)

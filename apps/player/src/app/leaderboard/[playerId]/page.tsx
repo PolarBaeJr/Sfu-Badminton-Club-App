@@ -1,6 +1,6 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server';
 import { Badge, Avatar } from '@badminton/ui';
-import { PLAYER_STATUS_LABELS, getWinRate, getStreakDisplay, getPointDifferential, formatDate } from '@badminton/shared';
+import { PLAYER_STATUS_LABELS, getWinRate, getStreakDisplay, getPointDifferential, formatDate, getSeasonTier } from '@badminton/shared';
 import { notFound } from 'next/navigation';
 import {
   Target,
@@ -55,14 +55,32 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
         <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-6">
           <div className="flex items-center gap-4">
             <Avatar name={player.full_name} size="lg" />
-            <div>
+            <div className="flex-1">
               <h1 className="text-2xl font-black text-shuttle-white font-display tracking-wide">{player.full_name}</h1>
               <div className="flex gap-2 mt-2">
                 <Badge variant={player.status === 'competitive' ? 'success' : 'default'}>
                   {PLAYER_STATUS_LABELS[player.status as keyof typeof PLAYER_STATUS_LABELS]}
                 </Badge>
+                {r && (() => {
+                  const t = getSeasonTier(r.singles_elo);
+                  return (
+                    <span
+                      className="text-xs font-bold px-2 py-0.5 rounded-full"
+                      style={{ backgroundColor: `${t.color}20`, color: t.color }}
+                    >
+                      {t.tier}
+                    </span>
+                  );
+                })()}
               </div>
             </div>
+            <Link
+              href={`/challenges/new?opponent=${playerId}`}
+              className="ml-auto px-4 py-2 bg-[#EF4444]/15 text-[#EF4444] text-sm font-bold rounded-xl border border-[#EF4444]/20 hover:bg-[#EF4444]/25 transition-colors flex items-center gap-2"
+            >
+              <Swords className="w-4 h-4" />
+              Challenge
+            </Link>
           </div>
         </div>
       </FadeIn>
@@ -164,7 +182,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
                 <div key={mp.id} className="flex items-center justify-between p-3 bg-white/[0.03] rounded-lg border border-white/[0.04]">
                   <div className="flex items-center gap-3">
                     <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black ${
-                      isWin ? 'bg-[#EF4444]/15 text-[#EF4444]' : isLoss ? 'bg-[#EF4444]/15 text-[#EF4444]' : 'bg-white/[0.06] text-[#64748B]'
+                      isWin ? 'bg-emerald-500/15 text-emerald-400' : isLoss ? 'bg-[#EF4444]/15 text-[#EF4444]' : 'bg-white/[0.06] text-[#64748B]'
                     }`}>
                       {isWin ? 'W' : isLoss ? 'L' : '?'}
                     </div>
@@ -172,7 +190,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-[#64748B] font-medium">{m.match_type as string}</span>
                   </div>
                   <div className="text-right flex items-center gap-3">
-                    <span className={`font-mono text-sm font-bold ${(mp.rating_delta ?? 0) >= 0 ? 'text-[#EF4444]' : 'text-[#EF4444]'}`}>
+                    <span className={`font-mono text-sm font-bold ${(mp.rating_delta ?? 0) >= 0 ? 'text-emerald-400' : 'text-[#EF4444]'}`}>
                       {mp.rating_delta !== null ? `${(mp.rating_delta ?? 0) >= 0 ? '+' : ''}${mp.rating_delta}` : ''}
                     </span>
                     <span className="text-xs text-[#475569]">{m.played_at ? formatDate(m.played_at as string) : ''}</span>
@@ -210,7 +228,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
                       <span className="text-xs text-[#475569]">&middot; {h.total_matches} matches</span>
                     </div>
                     <span className="font-mono text-sm font-bold">
-                      <span className="text-[#EF4444]">{wins}W</span>
+                      <span className="text-emerald-400">{wins}W</span>
                       <span className="text-[#475569] mx-1">-</span>
                       <span className="text-[#EF4444]">{losses}L</span>
                     </span>

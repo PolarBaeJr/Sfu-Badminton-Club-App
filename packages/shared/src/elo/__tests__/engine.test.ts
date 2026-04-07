@@ -372,8 +372,9 @@ describe('previewEloChange', () => {
 
   it('produces zero deltas for casual events', () => {
     const preview = previewEloChange(1200, 1400, 'single_21', 'casual', 'singles', false);
-    expect(preview.winDelta).toBe(0);
-    expect(preview.lossDelta).toBe(0);
+    // Use === to treat -0 and +0 as equal (Object.is, used by toBe, distinguishes them).
+    expect(preview.winDelta === 0).toBe(true);
+    expect(preview.lossDelta === 0).toBe(true);
   });
 
   it('applies eloWeightOverride', () => {

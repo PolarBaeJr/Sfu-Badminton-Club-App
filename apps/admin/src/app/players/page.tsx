@@ -36,7 +36,8 @@ export default async function PlayersPage({
     .order('created_at', { ascending: false });
 
   if (tab === 'competitive') {
-    query = query.eq('status', 'competitive');
+    // Show all active players (not recreational, suspended, or pending)
+    query = query.not('status', 'in', '("recreational","suspended","pending_approval")');
   } else if (tab === 'recreational') {
     query = query.eq('status', 'recreational');
   } else if (tab === 'attention') {
@@ -49,8 +50,8 @@ export default async function PlayersPage({
 
   const { data: players } = await query;
 
-  // Count for tabs
-  const { count: compCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).eq('status', 'competitive');
+  // Count for tabs — competitive catches all active players not in other tabs
+  const { count: compCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).not('status', 'in', '("recreational","suspended","pending_approval")');
   const { count: recCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).eq('status', 'recreational');
   const { count: attCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).in('status', ['suspended', 'pending_approval']);
 

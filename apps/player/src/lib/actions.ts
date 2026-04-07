@@ -135,10 +135,8 @@ export async function createChallenge(input: ChallengeCreateInput) {
     sendChallengeReceivedEmail(opponent.email, player.full_name, formatLabel, input.type, challenge.id).catch(() => {});
   }
 
-  // Update reliability
-  await supabase.from('reliability_metrics')
-    .update({ challenges_issued: (await supabase.from('reliability_metrics').select('challenges_issued').eq('player_id', player.id).single()).data?.challenges_issued + 1 || 1 })
-    .eq('player_id', player.id);
+  // Update reliability (atomic via RPC)
+  await supabase.rpc('increment_challenges_issued', { p_player_id: player.id });
 
   const props = getPlayerProps(player);
   trackServerEvent(player.id, 'challenge_created', {
@@ -157,6 +155,10 @@ export async function createChallenge(input: ChallengeCreateInput) {
 export async function acceptChallenge(challengeId: string) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
+
+  const { data: existing } = await supabase.from('challenges').select('created_by').eq('id', challengeId).single();
+  if (!existing) throw new Error('Challenge not found');
+  if (existing.created_by === player.id) throw new Error('Cannot accept your own challenge');
 
   const { error } = await supabase
     .from('challenge_participants')
@@ -208,6 +210,10 @@ export async function rejectChallenge(challengeId: string) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 
+  const { data: existing } = await supabase.from('challenges').select('created_by').eq('id', challengeId).single();
+  if (!existing) throw new Error('Challenge not found');
+  if (existing.created_by === player.id) throw new Error('Cannot reject your own challenge');
+
   await supabase
     .from('challenge_participants')
     .update({ confirmation_status: 'rejected', responded_at: new Date().toISOString() })
@@ -239,6 +245,49 @@ export async function rejectChallenge(challengeId: string) {
   revalidatePath('/challenges');
 }
 
+export async function cancelChallenge(challengeId: string) {
+  const player = await requirePlayer();
+  const supabase = await createServerSupabaseClient();
+
+  const { data: challenge } = await supabase
+    .from('challenges')
+    .select('*, challenge_participants(player_id)')
+    .eq('id', challengeId)
+    .single();
+
+  if (!challenge) throw new Error('Challenge not found');
+  if (challenge.created_by !== player.id) throw new Error('Only the creator can cancel');
+  if (!['proposed', 'partially_confirmed'].includes(challenge.status)) {
+    throw new Error('Challenge cannot be cancelled in its current state');
+  }
+
+  await supabase.from('challenges').update({ status: 'cancelled' }).eq('id', challengeId);
+
+  const otherParticipants = (challenge.challenge_participants as { player_id: string }[] | null)?.filter(
+    (cp) => cp.player_id !== player.id
+  ) || [];
+
+  if (otherParticipants.length > 0) {
+    await supabase.from('notifications').insert(
+      otherParticipants.map((cp) => ({
+        player_id: cp.player_id,
+        type: 'challenge_cancelled',
+        title: 'Challenge Cancelled',
+        body: `${player.full_name} cancelled the challenge.`,
+        metadata: { challenge_id: challengeId },
+      }))
+    );
+  }
+
+  trackServerEvent(player.id, 'challenge_cancelled', {
+    ...getPlayerProps(player),
+    challenge_id: challengeId,
+  });
+
+  revalidatePath('/challenges');
+  revalidatePath(`/challenges/${challengeId}`);
+}
+
 // ============================================================
 // Match Results
 // ============================================================
@@ -255,6 +304,11 @@ export async function submitMatchResult(challengeId: string, input: MatchResultI
 
   if (!challenge) throw new Error('Challenge not found');
   if (challenge.status !== 'accepted') throw new Error('Challenge not accepted');
+
+  const isParticipant = (challenge.challenge_participants as { player_id: string }[] | null)?.some(
+    (cp) => cp.player_id === player.id
+  );
+  if (!isParticipant) throw new Error('Not a participant');
 
   // Check session caps if session-based
   if (challenge.session_id) {
@@ -388,6 +442,12 @@ export async function confirmMatchResult(matchId: string) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 
+  const { data: mp } = await supabase
+    .from('match_participants')
+    .select('player_id')
+    .eq('match_id', matchId);
+  if (!mp?.some((row) => row.player_id === player.id)) throw new Error('Not a participant');
+
   // Call the DB function for atomic Elo update
   const { error } = await supabase.rpc('apply_match_result', {
     p_match_id: matchId,
@@ -412,6 +472,12 @@ export async function confirmMatchResult(matchId: string) {
 export async function disputeMatchResult(matchId: string, reason: string, category: string) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
+
+  const { data: mp } = await supabase
+    .from('match_participants')
+    .select('player_id')
+    .eq('match_id', matchId);
+  if (!mp?.some((row) => row.player_id === player.id)) throw new Error('Not a participant');
 
   await supabase.from('matches').update({ result_status: 'disputed' }).eq('id', matchId);
 
@@ -498,13 +564,30 @@ export async function reportWalkover(input: WalkoverReportInput) {
 // Profile
 // ============================================================
 
-export async function updateProfile(data: { full_name: string; phone?: string; bio?: string }) {
+export async function updateProfile(data: {
+  full_name: string;
+  display_name?: string;
+  phone?: string;
+  bio?: string;
+  hide_from_leaderboard?: boolean;
+  show_activity_status?: boolean;
+}) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 
+  const update: Record<string, unknown> = { full_name: data.full_name };
+  if (data.display_name !== undefined) {
+    // Empty string -> null so the column isn't stuck with ''
+    update.display_name = data.display_name === '' ? null : data.display_name;
+  }
+  if (data.phone !== undefined) update.phone = data.phone;
+  if (data.bio !== undefined) update.bio = data.bio;
+  if (data.hide_from_leaderboard !== undefined) update.hide_from_leaderboard = data.hide_from_leaderboard;
+  if (data.show_activity_status !== undefined) update.show_activity_status = data.show_activity_status;
+
   const { error } = await supabase
     .from('players')
-    .update(data)
+    .update(update)
     .eq('id', player.id);
 
   if (error) throw new Error(error.message);
@@ -547,11 +630,26 @@ export async function completeOnboarding(data: { full_name: string; display_name
     if (data.display_name) insert.display_name = data.display_name;
     if (data.phone) insert.phone = data.phone;
 
-    const { error } = await adminClient
+    const { data: newPlayer, error } = await adminClient
       .from('players')
-      .insert(insert);
+      .insert(insert)
+      .select('id')
+      .single();
 
     if (error) throw new Error(error.message);
+
+    // Create initial ratings record
+    if (newPlayer) {
+      await adminClient.from('ratings').insert({
+        player_id: newPlayer.id,
+        singles_elo: 1200,
+        doubles_elo: 1200,
+        singles_provisional: true,
+        doubles_provisional: true,
+        singles_k_factor: 40,
+        doubles_k_factor: 40,
+      });
+    }
   }
 
   revalidatePath('/');
@@ -562,8 +660,13 @@ export async function completeOnboarding(data: { full_name: string; display_name
 // ============================================================
 
 export async function markNotificationRead(notificationId: string) {
+  const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
-  await supabase.from('notifications').update({ read_flag: true }).eq('id', notificationId);
+  await supabase
+    .from('notifications')
+    .update({ read_flag: true })
+    .eq('id', notificationId)
+    .eq('player_id', player.id);
   revalidatePath('/notifications');
 }
 
@@ -572,4 +675,29 @@ export async function markAllNotificationsRead() {
   const supabase = await createServerSupabaseClient();
   await supabase.from('notifications').update({ read_flag: true }).eq('player_id', player.id).eq('read_flag', false);
   revalidatePath('/notifications');
+}
+
+// ============================================================
+// Announcement Read Tracking
+// ============================================================
+
+export async function markAnnouncementRead(announcementId: string) {
+  const player = await requirePlayer();
+  const supabase = await createServerSupabaseClient();
+
+  const { data: existing } = await supabase
+    .from('announcement_reads')
+    .select('id')
+    .eq('announcement_id', announcementId)
+    .eq('player_id', player.id)
+    .single();
+
+  if (existing) return;
+
+  await supabase.from('announcement_reads').insert({
+    announcement_id: announcementId,
+    player_id: player.id,
+  });
+
+  revalidatePath('/announcements');
 }

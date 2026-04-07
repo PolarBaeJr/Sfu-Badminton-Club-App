@@ -7,14 +7,11 @@ import {
   Swords,
   TrendingUp,
   TrendingDown,
-  Calendar,
   ChevronRight,
   Zap,
   Trophy,
   Target,
-  Clock,
   Flame,
-  MapPin,
 } from 'lucide-react';
 import { FadeIn, StaggerContainer, StaggerItem } from '@/components/motion-wrapper';
 
@@ -27,7 +24,6 @@ export default async function FeedPage() {
 
   const [
     { data: pendingChallenges },
-    { data: openSessions },
     { data: recentMatches },
     { count: unreadNotifs },
   ] = await Promise.all([
@@ -37,7 +33,6 @@ export default async function FeedPage() {
       .eq('player_id', player.id)
       .eq('confirmation_status', 'pending')
       .limit(5),
-    supabase.from('sessions').select('*').eq('status', 'open').limit(3),
     supabase
       .from('match_participants')
       .select('*, match:matches(score_summary, played_at, match_type, result_status)')
@@ -195,109 +190,61 @@ export default async function FeedPage() {
         </FadeIn>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Open Sessions */}
-        <FadeIn delay={0.15}>
-          <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4 h-full">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-[#EF4444]" />
-                <h2 className="text-sm font-bold text-shuttle-white uppercase tracking-wider font-display">
-                  Open Sessions
-                </h2>
-              </div>
-              <Link href="/sessions" className="text-xs text-[#EF4444] hover:text-[#F87171] font-medium transition-colors">
-                View all
-              </Link>
+      {/* Recent Matches */}
+      <FadeIn delay={0.2}>
+        <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4 w-full">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Trophy className="w-4 h-4 text-[#FFD700]" />
+              <h2 className="text-sm font-bold text-shuttle-white uppercase tracking-wider font-display">
+                Recent Matches
+              </h2>
             </div>
-            {openSessions && openSessions.length > 0 ? (
-              <div className="space-y-2">
-                {openSessions.map((s) => (
-                  <Link key={s.id} href={`/sessions/${s.id}`} className="block group">
-                    <div className="p-3 bg-white/[0.03] rounded-lg border border-white/[0.04] hover:border-[#EF4444]/20 hover:bg-white/[0.05] transition-all duration-200">
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm font-semibold text-shuttle-white">{s.name || 'Session'}</p>
-                        <ChevronRight className="w-4 h-4 text-[#64748B] group-hover:text-[#EF4444] transition-colors" />
-                      </div>
-                      <div className="flex items-center gap-3 mt-1.5">
-                        <span className="flex items-center gap-1 text-xs text-[#64748B]">
-                          <MapPin className="w-3 h-3" />
-                          {s.location}
-                        </span>
-                        <span className="flex items-center gap-1 text-xs text-[#64748B]">
-                          <Clock className="w-3 h-3" />
-                          {s.date}
-                        </span>
-                      </div>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center py-6 text-center">
-                <Calendar className="w-8 h-8 text-[#1E293B] mb-2" />
-                <p className="text-sm text-[#64748B]">No open sessions</p>
-              </div>
-            )}
+            <Link href="/my-stats" className="text-xs text-[#EF4444] hover:text-[#F87171] font-medium transition-colors">
+              All stats
+            </Link>
           </div>
-        </FadeIn>
-
-        {/* Recent Matches */}
-        <FadeIn delay={0.2}>
-          <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4 h-full">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Trophy className="w-4 h-4 text-[#FFD700]" />
-                <h2 className="text-sm font-bold text-shuttle-white uppercase tracking-wider font-display">
-                  Recent Matches
-                </h2>
-              </div>
-              <Link href="/my-stats" className="text-xs text-[#EF4444] hover:text-[#F87171] font-medium transition-colors">
-                All stats
-              </Link>
-            </div>
-            {recentMatches && recentMatches.length > 0 ? (
-              <div className="space-y-2">
-                {recentMatches.map((mp) => {
-                  const m = mp.match as Record<string, unknown> | null;
-                  if (!m) return null;
-                  const isWin = mp.win_flag === true;
-                  const isLoss = mp.win_flag === false;
-                  return (
-                    <div
-                      key={mp.id}
-                      className="flex items-center justify-between p-3 bg-white/[0.03] rounded-lg border border-white/[0.04]"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black ${
-                          isWin
+          {recentMatches && recentMatches.length > 0 ? (
+            <div className="space-y-2">
+              {recentMatches.map((mp) => {
+                const m = mp.match as Record<string, unknown> | null;
+                if (!m) return null;
+                const isWin = mp.win_flag === true;
+                const isLoss = mp.win_flag === false;
+                return (
+                  <div
+                    key={mp.id}
+                    className="flex items-center justify-between p-3 bg-white/[0.03] rounded-lg border border-white/[0.04]"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black ${
+                        isWin
+                          ? 'bg-emerald-500/15 text-emerald-400'
+                          : isLoss
                             ? 'bg-[#EF4444]/15 text-[#EF4444]'
-                            : isLoss
-                              ? 'bg-[#EF4444]/15 text-[#EF4444]'
-                              : 'bg-white/[0.06] text-[#64748B]'
-                        }`}>
-                          {isWin ? 'W' : isLoss ? 'L' : '?'}
-                        </div>
-                        <span className="text-sm font-mono text-shuttle-white font-medium">
-                          {m.score_summary as string || '-'}
-                        </span>
+                            : 'bg-white/[0.06] text-[#64748B]'
+                      }`}>
+                        {isWin ? 'W' : isLoss ? 'L' : '?'}
                       </div>
-                      <span className="text-xs text-[#475569]">
-                        {m.played_at ? formatRelativeTime(m.played_at as string) : ''}
+                      <span className="text-sm font-mono text-shuttle-white font-medium">
+                        {m.score_summary as string || '-'}
                       </span>
                     </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center py-6 text-center">
-                <Trophy className="w-8 h-8 text-[#1E293B] mb-2" />
-                <p className="text-sm text-[#64748B]">No matches yet</p>
-              </div>
-            )}
-          </div>
-        </FadeIn>
-      </div>
+                    <span className="text-xs text-[#475569]">
+                      {m.played_at ? formatRelativeTime(m.played_at as string) : ''}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-6 text-center">
+              <Trophy className="w-8 h-8 text-[#1E293B] mb-2" />
+              <p className="text-sm text-[#64748B]">No matches yet</p>
+            </div>
+          )}
+        </div>
+      </FadeIn>
 
       {/* Quick Actions */}
       <FadeIn delay={0.25}>

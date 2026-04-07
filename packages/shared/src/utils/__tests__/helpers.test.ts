@@ -25,7 +25,8 @@ describe('formatDate', () => {
   });
 
   it('handles a date-only string', () => {
-    const result = formatDate('2023-01-01');
+    // Use a midday timestamp so the formatted local-time date is stable across timezones.
+    const result = formatDate('2023-01-01T12:00:00Z');
     expect(result).toContain('2023');
     expect(result).toContain('Jan');
   });

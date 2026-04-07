@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Card, Input, Select, Dialog, Textarea } from '@badminton/ui';
-import { acceptChallenge, rejectChallenge, submitMatchResult, confirmMatchResult, disputeMatchResult, reportWalkover } from '@/lib/actions';
+import { acceptChallenge, rejectChallenge, submitMatchResult, confirmMatchResult, disputeMatchResult, reportWalkover, cancelChallenge } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 
@@ -42,6 +42,24 @@ export function ChallengeDetailActions({
   const [disputeReason, setDisputeReason] = useState('');
   const [disputeCategory, setDisputeCategory] = useState('score_wrong');
 
+  // Derived team labels from participants
+  const teamA = participants.filter((p) => p.team_side === 'a');
+  const teamB = participants.filter((p) => p.team_side === 'b');
+  const myTeamSide = participants.find((p) => p.player_id === playerId)?.team_side as 'a' | 'b' | undefined;
+
+  const formatTeam = (team: Record<string, unknown>[]) =>
+    team
+      .map((p) => (p.player as Record<string, unknown> | null)?.full_name as string | undefined)
+      .filter(Boolean)
+      .join(' + ') || 'Unknown';
+
+  const teamALabel = formatTeam(teamA);
+  const teamBLabel = formatTeam(teamB);
+  const labelA = myTeamSide === 'a' ? `Your team (${teamALabel})` : teamALabel;
+  const labelB = myTeamSide === 'b' ? `Your team (${teamBLabel})` : teamBLabel;
+  const compactA = teamALabel.length > 20 ? 'Team A' : teamALabel;
+  const compactB = teamBLabel.length > 20 ? 'Team B' : teamBLabel;
+
   async function handleAction(action: string) {
     setLoading(action);
     try {
@@ -54,6 +72,10 @@ export function ChallengeDetailActions({
       } else if (action === 'confirm') {
         await confirmMatchResult(matchId!);
         toast('Result confirmed! Elo updated.', 'success');
+      } else if (action === 'cancel') {
+        if (!confirm('Cancel this challenge? The opponent will be notified.')) { setLoading(''); return; }
+        await cancelChallenge(challengeId);
+        toast('Challenge cancelled', 'info');
       }
       router.refresh();
     } catch (err) {
@@ -115,6 +137,18 @@ export function ChallengeDetailActions({
 
   return (
     <div className="space-y-3">
+      {/* Cancel Challenge for creator while still pending */}
+      {isCreator && ['proposed', 'partially_confirmed'].includes(challengeStatus) && (
+        <Button
+          onClick={() => handleAction('cancel')}
+          loading={loading === 'cancel'}
+          variant="ghost"
+          className="w-full"
+        >
+          Cancel Challenge
+        </Button>
+      )}
+
       {/* Accept/Reject for pending participants */}
       {myParticipantStatus === 'pending' && ['proposed', 'partially_confirmed'].includes(challengeStatus) && (
         <div className="flex gap-3">
@@ -155,14 +189,14 @@ export function ChallengeDetailActions({
             value={winnerSide}
             onChange={(e) => setWinnerSide(e.target.value as 'a' | 'b')}
             options={[
-              { value: 'a', label: 'Team A' },
-              { value: 'b', label: 'Team B' },
+              { value: 'a', label: labelA },
+              { value: 'b', label: labelB },
             ]}
           />
           {games.map((g, i) => (
             <div key={i} className="grid grid-cols-2 gap-3">
               <Input
-                label={`Game ${g.game_number} - Side A`}
+                label={`Game ${g.game_number} — ${compactA}`}
                 type="number"
                 min={0}
                 value={g.side_a_score}
@@ -173,7 +207,7 @@ export function ChallengeDetailActions({
                 }}
               />
               <Input
-                label={`Game ${g.game_number} - Side B`}
+                label={`Game ${g.game_number} — ${compactB}`}
                 type="number"
                 min={0}
                 value={g.side_b_score}

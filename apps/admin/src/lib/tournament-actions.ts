@@ -261,8 +261,21 @@ export async function addParticipantToEvent(eventId: string, playerId: string) {
     }
   }
 
-  // Get player's current Elo
-  const { data: rating } = await adminClient.from('ratings').select('singles_elo').eq('player_id', playerId).single();
+  // Get or create player's ratings record
+  let { data: rating } = await adminClient.from('ratings').select('singles_elo').eq('player_id', playerId).single();
+  if (!rating) {
+    // Player has no ratings record — create one with defaults
+    const { data: newRating } = await adminClient.from('ratings').insert({
+      player_id: playerId,
+      singles_elo: 1200,
+      doubles_elo: 1200,
+      singles_provisional: true,
+      doubles_provisional: true,
+      singles_k_factor: 40,
+      doubles_k_factor: 40,
+    }).select('singles_elo').single();
+    rating = newRating;
+  }
 
   const { data, error } = await adminClient.from('tournament_participants').insert({
     event_id: eventId,
@@ -285,7 +298,7 @@ export async function addParticipantToEvent(eventId: string, playerId: string) {
     details: { player_id: playerId },
   });
 
-  revalidatePath(`/tournaments/${event.tournament_id}`);
+  revalidatePath(`/tournaments/${event.tournament_id}/events/${eventId}`);
   return data;
 }
 

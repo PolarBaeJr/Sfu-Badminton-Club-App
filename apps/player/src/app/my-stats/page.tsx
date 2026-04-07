@@ -43,6 +43,14 @@ export default async function MyStatsPage() {
     .order('total_matches', { ascending: false })
     .limit(10);
 
+  const { data: partners } = await supabase
+    .from('partnership_stats')
+    .select('*, partner:players!partnership_stats_partner_id_fkey(full_name)')
+    .eq('player_id', player.id)
+    .gte('total_matches', 3)
+    .order('win_rate', { ascending: false })
+    .limit(5);
+
   return (
     <div className="space-y-6">
       <FadeIn>
@@ -133,13 +141,40 @@ export default async function MyStatsPage() {
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-[#64748B] font-medium">{h.match_type}</span>
                     </div>
                     <span className="font-mono text-sm font-bold">
-                      <span className="text-[#EF4444]">{wins}W</span>
+                      <span className="text-emerald-400">{wins}W</span>
                       <span className="text-[#475569] mx-1">-</span>
                       <span className="text-[#EF4444]">{losses}L</span>
                     </span>
                   </div>
                 );
               })}
+            </div>
+          </div>
+        </FadeIn>
+      )}
+
+      {/* Best Partners */}
+      {partners && partners.length > 0 && (
+        <FadeIn delay={0.17}>
+          <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-4">
+              <Users className="w-4 h-4 text-[#FFD700]" />
+              <h2 className="text-sm font-bold text-shuttle-white uppercase tracking-wider font-display">Best Partners</h2>
+            </div>
+            <div className="space-y-2">
+              {partners.map((p) => (
+                <div key={p.id} className="flex items-center justify-between p-3 bg-white/[0.03] rounded-lg border border-white/[0.04]">
+                  <span className="text-sm text-shuttle-white font-medium">{(p.partner as Record<string, unknown>)?.full_name as string}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="font-mono text-sm">
+                      <span className="text-emerald-400">{p.wins}W</span>
+                      <span className="text-[#475569] mx-1">-</span>
+                      <span className="text-[#EF4444]">{p.losses}L</span>
+                    </span>
+                    <span className="text-xs font-bold text-[#FFD700]">{Math.round(p.win_rate * 100)}%</span>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </FadeIn>
@@ -162,7 +197,7 @@ export default async function MyStatsPage() {
                 <div key={mp.id} className="flex items-center justify-between p-3 bg-white/[0.03] rounded-lg border border-white/[0.04]">
                   <div className="flex items-center gap-3">
                     <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black ${
-                      isWin ? 'bg-[#EF4444]/15 text-[#EF4444]' : isLoss ? 'bg-[#EF4444]/15 text-[#EF4444]' : 'bg-white/[0.06] text-[#64748B]'
+                      isWin ? 'bg-emerald-500/15 text-emerald-400' : isLoss ? 'bg-[#EF4444]/15 text-[#EF4444]' : 'bg-white/[0.06] text-[#64748B]'
                     }`}>
                       {isWin ? 'W' : isLoss ? 'L' : '?'}
                     </div>
@@ -170,7 +205,7 @@ export default async function MyStatsPage() {
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-[#64748B] font-medium">{m.match_type as string}</span>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className={`font-mono text-sm font-bold ${(mp.rating_delta ?? 0) >= 0 ? 'text-[#EF4444]' : 'text-[#EF4444]'}`}>
+                    <span className={`font-mono text-sm font-bold ${(mp.rating_delta ?? 0) >= 0 ? 'text-emerald-400' : 'text-[#EF4444]'}`}>
                       {mp.rating_delta !== null ? `${(mp.rating_delta ?? 0) >= 0 ? '+' : ''}${mp.rating_delta}` : ''}
                     </span>
                     <span className="text-xs text-[#475569]">{m.played_at ? formatDate(m.played_at as string) : ''}</span>

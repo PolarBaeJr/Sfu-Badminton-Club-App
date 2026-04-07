@@ -5,7 +5,12 @@ import { SettingsForm } from './settings-form';
 import { Settings, User, Mail, Shield, Sliders, Info, ExternalLink } from 'lucide-react';
 
 export default async function SettingsPage() {
-  const player = await getAuthenticatedAdmin();
+  let player: Awaited<ReturnType<typeof getAuthenticatedAdmin>> | null = null;
+  try {
+    player = await getAuthenticatedAdmin();
+  } catch {
+    // Not authenticated or not admin — show limited settings
+  }
   const supabase = createAdminClient();
 
   const { data: settings } = await supabase

@@ -18,6 +18,8 @@ import {
   Loader2,
   Zap,
   Info,
+  Calendar,
+  Clock,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -36,6 +38,8 @@ export default function NewChallengePage() {
   const [partnerId, setPartnerId] = useState('');
   const [opponentPartnerId, setOpponentPartnerId] = useState('');
   const [note, setNote] = useState('');
+  const [scheduledDate, setScheduledDate] = useState('');
+  const [scheduledTime, setScheduledTime] = useState('');
   const [loading, setLoading] = useState(false);
   const [players, setPlayers] = useState<PlayerOption[]>([]);
   const [myElo, setMyElo] = useState({ singles: 1200, doubles: 1200 });
@@ -103,6 +107,8 @@ export default function NewChallengePage() {
         partner_id: type === 'doubles' && partnerId ? partnerId : undefined,
         opponent_partner_id: type === 'doubles' && opponentPartnerId ? opponentPartnerId : undefined,
         note: note || undefined,
+        scheduled_date: scheduledDate || undefined,
+        scheduled_time: scheduledTime || undefined,
       });
       toast('Challenge sent!', 'success');
       router.push('/challenges');
@@ -222,8 +228,8 @@ export default function NewChallengePage() {
                 </div>
                 <div className="flex justify-between">
                   <div className="flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-[#EF4444]" />
-                    <span className="text-sm font-bold text-[#EF4444]">Win: +{eloPreview.winDelta}</span>
+                    <TrendingUp className="w-4 h-4 text-emerald-400" />
+                    <span className="text-sm font-bold text-emerald-400">Win: +{eloPreview.winDelta}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <TrendingDown className="w-4 h-4 text-[#EF4444]" />
@@ -232,6 +238,31 @@ export default function NewChallengePage() {
                 </div>
               </motion.div>
             )}
+
+            {/* Scheduled Date/Time */}
+            <div>
+              <label className="block text-sm text-[#94A3B8] font-medium mb-2">
+                <span className="flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5" />
+                  When to Play (optional)
+                </span>
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <input
+                  type="date"
+                  value={scheduledDate}
+                  onChange={(e) => setScheduledDate(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                  className="bg-[var(--bg-secondary)] border border-white/[0.06] rounded-xl px-3 py-3 text-sm text-[var(--text-primary)] placeholder:text-[#64748B] focus:outline-none focus:ring-2 focus:ring-[#EF4444]/40 focus:border-transparent transition-colors"
+                />
+                <input
+                  type="time"
+                  value={scheduledTime}
+                  onChange={(e) => setScheduledTime(e.target.value)}
+                  className="bg-[var(--bg-secondary)] border border-white/[0.06] rounded-xl px-3 py-3 text-sm text-[var(--text-primary)] placeholder:text-[#64748B] focus:outline-none focus:ring-2 focus:ring-[#EF4444]/40 focus:border-transparent transition-colors"
+                />
+              </div>
+            </div>
 
             <Textarea
               label="Note (optional)"
