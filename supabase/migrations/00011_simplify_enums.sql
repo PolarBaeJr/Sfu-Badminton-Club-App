@@ -14,6 +14,8 @@ BEGIN;
 -- ============================================================
 -- STEP 1: Recreate player_status with simplified values
 -- ============================================================
+DROP TRIGGER IF EXISTS init_player_records ON players;
+
 ALTER TABLE players ALTER COLUMN status DROP DEFAULT;
 
 ALTER TYPE player_status RENAME TO player_status_old;
@@ -31,6 +33,11 @@ ALTER TABLE players
 ALTER TABLE players ALTER COLUMN status SET DEFAULT 'pending_approval';
 
 DROP TYPE player_status_old;
+
+CREATE TRIGGER init_player_records
+  AFTER UPDATE OF status ON players
+  FOR EACH ROW
+  EXECUTE FUNCTION trigger_init_player_records();
 
 -- ============================================================
 -- STEP 2: Recreate user_role with simplified values
