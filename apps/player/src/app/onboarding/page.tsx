@@ -61,8 +61,8 @@ export default function OnboardingPage() {
     <div className="min-h-screen flex items-center justify-center px-4 py-12 relative overflow-hidden">
       {/* Background effects */}
       <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-1/3 left-1/3 w-80 h-80 bg-[#EF4444]/5 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/3 right-1/4 w-64 h-64 bg-[#FFD700]/5 rounded-full blur-3xl" />
+        <div className="absolute top-1/3 left-1/3 w-80 h-80 bg-[var(--color-accent)]/5 rounded-full blur-3xl" />
+        <div className="absolute bottom-1/3 right-1/4 w-64 h-64 bg-[var(--color-gold)]/5 rounded-full blur-3xl" />
       </div>
 
       <motion.div
@@ -260,11 +260,11 @@ export default function OnboardingPage() {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ delay: 0.5 }}
-                    className="bg-[#FFD700]/5 border border-[#FFD700]/10 rounded-xl p-3 flex items-start gap-2.5"
+                    className="bg-[var(--color-gold)]/5 border border-[var(--color-gold)]/10 rounded-xl p-3 flex items-start gap-2.5"
                   >
-                    <Trophy className="w-4 h-4 text-[#FFD700] mt-0.5 shrink-0" />
-                    <p className="text-xs text-[#94A3B8]">
-                      <span className="text-[#FFD700] font-semibold">Pro tip:</span>{' '}
+                    <Trophy className="w-4 h-4 text-[var(--color-gold)] mt-0.5 shrink-0" />
+                    <p className="text-xs text-[var(--text-secondary)]">
+                      <span className="text-[var(--color-gold)] font-semibold">Pro tip:</span>{' '}
                       Challenge players near your Elo to climb the leaderboard faster!
                     </p>
                   </motion.div>

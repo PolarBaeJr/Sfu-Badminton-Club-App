@@ -78,29 +78,29 @@ export function AddToCalendarButton({ name, date, location, notes }: AddToCalend
     <div className="relative" ref={menuRef}>
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.06] border border-white/[0.08] text-xs font-medium text-[#64748B] hover:text-shuttle-white hover:bg-white/[0.1] transition-all duration-200"
+        className="press flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--bg-card)] border border-white/[0.08] text-xs font-medium text-[var(--text-muted)] hover:text-shuttle-white hover:bg-[var(--bg-elevated)] transition-all duration-200"
       >
         <Calendar className="w-3.5 h-3.5" />
         Add to Calendar
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1 w-48 bg-[#1E2340] border border-white/[0.1] rounded-lg shadow-xl z-50 overflow-hidden">
+        <div className="absolute right-0 top-full mt-1 w-48 bg-[var(--bg-elevated)] border border-white/[0.1] rounded-lg shadow-xl z-50 overflow-hidden">
           <a
             href={getGoogleCalendarUrl({ name, date, location, notes })}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-2 px-3 py-2.5 text-sm text-shuttle-white hover:bg-white/[0.06] transition-colors"
+            className="press flex items-center gap-2 px-3 py-2.5 min-h-[44px] text-sm text-shuttle-white hover:bg-[var(--bg-card)] transition-colors"
             onClick={() => setOpen(false)}
           >
-            <ExternalLink className="w-4 h-4 text-[#64748B]" />
+            <ExternalLink className="w-4 h-4 text-[var(--text-muted)]" />
             Google Calendar
           </a>
           <button
             onClick={handleDownloadICS}
-            className="flex items-center gap-2 px-3 py-2.5 text-sm text-shuttle-white hover:bg-white/[0.06] transition-colors w-full text-left"
+            className="press flex items-center gap-2 px-3 py-2.5 min-h-[44px] text-sm text-shuttle-white hover:bg-[var(--bg-card)] transition-colors w-full text-left"
           >
-            <Download className="w-4 h-4 text-[#64748B]" />
+            <Download className="w-4 h-4 text-[var(--text-muted)]" />
             Download .ics
           </button>
         </div>

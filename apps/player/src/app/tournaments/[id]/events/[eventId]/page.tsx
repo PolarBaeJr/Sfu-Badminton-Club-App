@@ -1,5 +1,5 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { Badge, Avatar } from '@badminton/ui';
+import { Avatar } from '@badminton/ui';
 import {
   formatDate,
   isDoublesEvent,
@@ -43,22 +43,19 @@ export default async function EventDetailPage({
     .single();
   if (!event) notFound();
 
-  const eventType = event.event_type as TournamentEventType;
+  const eventType   = event.event_type as TournamentEventType;
   const eventStatus = event.status as TournamentEventStatus;
   const matchFormat = event.match_format as TournamentMatchFormat;
-  const doubles = isDoublesEvent(eventType);
+  const doubles     = isDoublesEvent(eventType);
   const statusColor = TOURNAMENT_EVENT_STATUS_COLORS[eventStatus];
 
-  // Fetch participants or pairs
   let participants: Array<Record<string, unknown>> = [];
   let pairs: Array<Record<string, unknown>> = [];
 
   if (doubles) {
     const { data } = await supabase
       .from('tournament_pairs')
-      .select(
-        '*, player1:players!tournament_pairs_player1_id_fkey(full_name, avatar_url), player2:players!tournament_pairs_player2_id_fkey(full_name, avatar_url)'
-      )
+      .select('*, player1:players!tournament_pairs_player1_id_fkey(full_name, avatar_url), player2:players!tournament_pairs_player2_id_fkey(full_name, avatar_url)')
       .eq('event_id', eventId)
       .order('seed_number');
     pairs = (data as Array<Record<string, unknown>>) ?? [];
@@ -71,7 +68,6 @@ export default async function EventDetailPage({
     participants = (data as Array<Record<string, unknown>>) ?? [];
   }
 
-  // Fetch matches
   const { data: matches } = await supabase
     .from('tournament_matches')
     .select('*')
@@ -81,7 +77,6 @@ export default async function EventDetailPage({
 
   const allMatches = (matches as Array<Record<string, unknown>>) ?? [];
 
-  // Get current player's registration
   const currentPlayer = await getCurrentPlayer();
   let playerRegistration: { status: string } | null = null;
   let playerParticipantId: string | null = null;
@@ -99,7 +94,6 @@ export default async function EventDetailPage({
     }
   }
 
-  // Build name/seed lookup maps
   const participantNameMap: Record<string, string> = {};
   const participantSeedMap: Record<string, number | null> = {};
 
@@ -119,7 +113,6 @@ export default async function EventDetailPage({
     }
   }
 
-  // Group matches by round for bracket display
   const roundsMap = new Map<number, Array<Record<string, unknown>>>();
   let maxRound = 0;
   for (const m of allMatches) {
@@ -152,65 +145,67 @@ export default async function EventDetailPage({
   }
 
   function isWinner(match: Record<string, unknown>, side: 'a' | 'b'): boolean {
-    const key = doubles
-      ? side === 'a' ? 'pair_a_id' : 'pair_b_id'
-      : side === 'a' ? 'participant_a_id' : 'participant_b_id';
-    const winnerKey = doubles ? 'winner_pair_id' : 'winner_participant_id';
-    const pid = match[key] as string | null;
+    const key      = doubles ? (side === 'a' ? 'pair_a_id' : 'pair_b_id') : (side === 'a' ? 'participant_a_id' : 'participant_b_id');
+    const winnerKey= doubles ? 'winner_pair_id' : 'winner_participant_id';
+    const pid      = match[key] as string | null;
     const winnerId = match[winnerKey] as string | null;
     return !!pid && !!winnerId && pid === winnerId;
   }
 
   function formatScores(scores: Array<{ a: number; b: number }> | null): string {
     if (!scores || scores.length === 0) return '';
-    return scores.map((s) => `${s.a}-${s.b}`).join(', ');
+    return scores.map((s) => `${s.a}–${s.b}`).join(', ');
   }
 
   const isSingleElim = event.format === 'single_elimination';
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 pb-28 px-4 sm:px-0">
       <Link
         href={`/tournaments/${tournamentId}`}
-        className="inline-flex items-center gap-1.5 text-sm text-[#64748B] hover:text-[#94A3B8] transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none rounded"
+        aria-label="Back to tournament"
+        className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors duration-150 group min-h-[44px] py-2 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
       >
-        <ArrowLeft className="w-4 h-4" />
+        <ArrowLeft className="w-4 h-4 transition-transform duration-150 group-hover:-translate-x-0.5" />
         Back to {tournament.name}
       </Link>
 
       {/* Event Header */}
       <FadeIn>
-        <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-6">
-          <h1 className="text-2xl font-black text-shuttle-white font-display tracking-wide">
-            {TOURNAMENT_EVENT_TYPE_LABELS[eventType]}
-          </h1>
-          <p className="text-sm text-[#64748B] mt-1">
-            {tournament.name} &middot; {formatDate(tournament.start_date)}
-          </p>
-          <div className="flex items-center gap-3 mt-3 flex-wrap">
-            <span
-              className="inline-flex items-center text-xs font-semibold px-2.5 py-1 rounded-full"
-              role="status"
-              style={{
-                backgroundColor: `${statusColor}20`,
-                color: statusColor,
-              }}
-            >
-              <span className="sr-only">Event status: </span>{TOURNAMENT_EVENT_STATUS_LABELS[eventStatus]}
-            </span>
-            <Badge variant="neutral">
-              {isSingleElim ? 'Single Elimination' : 'Round Robin'}
-            </Badge>
-            <Badge variant="neutral">
-              {TOURNAMENT_MATCH_FORMAT_LABELS[matchFormat]}
-            </Badge>
-            {playerRegistration && (
-              <Badge variant={playerRegistration.status === 'checked_in' ? 'success' : 'info'}>
-                <span className="sr-only">Your status: </span>{playerRegistration.status === 'checked_in' ? 'Checked In' : 'Registered'}
-              </Badge>
-            )}
-          </div>
-          <div className="mt-4">
+        <div className="card-elevated rounded-2xl overflow-hidden">
+          <div className="h-1.5" style={{ background: statusColor }} />
+          <div className="p-5">
+            <p className="eyebrow mb-1">Event</p>
+            <h1 className="display-lg leading-none mb-1 min-w-0 truncate">
+              {TOURNAMENT_EVENT_TYPE_LABELS[eventType]}
+            </h1>
+            <p className="text-sm text-[var(--text-muted)] mb-3">
+              {tournament.name} &middot; {formatDate(tournament.start_date)}
+            </p>
+
+            <div className="flex flex-wrap items-center gap-2 mb-4">
+              <span
+                className="chip"
+                role="status"
+                style={{ borderColor: `${statusColor}50`, background: `${statusColor}18`, color: statusColor }}
+              >
+                <span className="sr-only">Event status: </span>
+                {TOURNAMENT_EVENT_STATUS_LABELS[eventStatus]}
+              </span>
+              <span className="chip">
+                {isSingleElim ? 'Single Elim' : 'Round Robin'}
+              </span>
+              <span className="chip">
+                {TOURNAMENT_MATCH_FORMAT_LABELS[matchFormat]}
+              </span>
+              {playerRegistration && (
+                <span className={`chip ${playerRegistration.status === 'checked_in' ? 'chip-success' : 'chip-info'}`}>
+                  <span className="sr-only">Your status: </span>
+                  {playerRegistration.status === 'checked_in' ? 'Checked In' : 'Registered'}
+                </span>
+              )}
+            </div>
+
             <EventActions
               eventId={eventId}
               eventStatus={eventStatus}
@@ -224,37 +219,36 @@ export default async function EventDetailPage({
       {/* Bracket View (Single Elimination) */}
       {isSingleElim && allMatches.length > 0 && (
         <FadeIn delay={0.05}>
-          <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4">
-            <div className="flex items-center gap-2 mb-4">
-              <Trophy className="w-4 h-4 text-[#FFD700]" />
-              <h2 className="text-sm font-bold text-shuttle-white uppercase tracking-wider font-display">
-                Bracket
-              </h2>
+          <div className="card-elevated rounded-2xl overflow-hidden">
+            <div className="flex items-center gap-2 p-4 pb-0 mb-3">
+              <Trophy className="w-4 h-4 text-[var(--color-gold)]" />
+              <h2 className="display-md">Bracket</h2>
             </div>
-            <div className="overflow-x-auto" role="region" aria-label="Tournament bracket">
-              <div className="flex min-w-fit" role="table" aria-label="Bracket rounds" style={{ gap: '40px' }}>
+            {/* Horizontal scroll wrapper with fade mask */}
+            <div className="overflow-x-auto scroll-fade-x pb-4 px-4" role="region" aria-label="Tournament bracket">
+              <div className="flex min-w-fit" role="table" aria-label="Bracket rounds" style={{ gap: '32px' }}>
                 {sortedRounds.map(([roundNum, roundMatches], roundIdx) => {
                   const isFirstRound = roundIdx === 0;
-                  const isLastRound = roundIdx === sortedRounds.length - 1;
-                  const MATCH_H = 68;
-                  const BASE_GAP = 12;
-                  const roundMultiplier = Math.pow(2, roundIdx);
-                  const gap = isFirstRound ? BASE_GAP : (MATCH_H + BASE_GAP) * roundMultiplier - MATCH_H;
-                  const topPadding = isFirstRound ? 0 : ((MATCH_H + BASE_GAP) * (roundMultiplier - 1)) / 2;
+                  const isLastRound  = roundIdx === sortedRounds.length - 1;
+                  const MATCH_H      = 68;
+                  const BASE_GAP     = 10;
+                  const roundMult    = Math.pow(2, roundIdx);
+                  const gap          = isFirstRound ? BASE_GAP : (MATCH_H + BASE_GAP) * roundMult - MATCH_H;
+                  const topPadding   = isFirstRound ? 0 : ((MATCH_H + BASE_GAP) * (roundMult - 1)) / 2;
 
                   return (
                     <div
                       key={roundNum}
-                      className="relative flex flex-col min-w-[230px]"
+                      className="relative flex flex-col min-w-[200px]"
                       role="rowgroup"
                       aria-label={getRoundName(roundNum, totalRounds)}
                       style={{ gap: `${gap}px`, paddingTop: `${topPadding}px` }}
                     >
                       <h3
-                        className="text-xs font-bold text-[#64748B] text-center uppercase tracking-wider pb-2"
+                        className="eyebrow text-center pb-2"
                         role="columnheader"
                         style={{
-                          marginTop: topPadding > 0 ? `-${topPadding}px` : undefined,
+                          marginTop:  topPadding > 0 ? `-${topPadding}px` : undefined,
                           paddingTop: topPadding > 0 ? `${topPadding}px` : undefined,
                         }}
                       >
@@ -262,19 +256,19 @@ export default async function EventDetailPage({
                       </h3>
                       {roundMatches.map((m, matchIdx) => {
                         const matchStatus = m.status as TournamentMatchStatus;
-                        const scores = m.scores as Array<{ a: number; b: number }> | null;
-                        const scoreStr = formatScores(scores);
+                        const scores      = m.scores as Array<{ a: number; b: number }> | null;
+                        const scoreStr    = formatScores(scores);
 
                         if (m.is_bye) {
                           return (
                             <div key={m.id as string} className="relative">
-                              {!isLastRound && <div className="absolute top-1/2 -right-[20px] w-[20px] border-t-2 border-white/[0.08]" />}
-                              {!isFirstRound && <div className="absolute top-1/2 -left-[20px] w-[20px] border-t-2 border-white/[0.08]" />}
+                              {!isLastRound && <div className="absolute top-1/2 -right-[16px] w-[16px] border-t border-[var(--border)]" />}
+                              {!isFirstRound && <div className="absolute top-1/2 -left-[16px] w-[16px] border-t border-[var(--border)]" />}
                               {!isLastRound && matchIdx % 2 === 0 && matchIdx + 1 < roundMatches.length && (
-                                <div className="absolute border-r-2 border-white/[0.08]" style={{ right: '-20px', top: '50%', height: `${MATCH_H + gap}px` }} />
+                                <div className="absolute border-r border-[var(--border)]" style={{ right: '-16px', top: '50%', height: `${MATCH_H + gap}px` }} />
                               )}
-                              <div className="border border-white/[0.04] rounded-xl overflow-hidden opacity-50">
-                                <div className="p-2.5 text-sm text-[#64748B] bg-white/[0.02]">
+                              <div className="border border-[var(--border)] rounded-xl overflow-hidden opacity-40">
+                                <div className="p-2.5 text-sm text-[var(--text-muted)] bg-white/[0.02]">
                                   {getEntryName(m, 'a')} (BYE)
                                 </div>
                               </div>
@@ -284,42 +278,42 @@ export default async function EventDetailPage({
 
                         return (
                           <div key={m.id as string} className="relative">
-                            {!isLastRound && <div className="absolute top-1/2 -right-[20px] w-[20px] border-t-2 border-white/[0.08]" />}
-                            {!isFirstRound && <div className="absolute top-1/2 -left-[20px] w-[20px] border-t-2 border-white/[0.08]" />}
+                            {!isLastRound && <div className="absolute top-1/2 -right-[16px] w-[16px] border-t border-[var(--border)]" />}
+                            {!isFirstRound && <div className="absolute top-1/2 -left-[16px] w-[16px] border-t border-[var(--border)]" />}
                             {!isLastRound && matchIdx % 2 === 0 && matchIdx + 1 < roundMatches.length && (
-                              <div className="absolute border-r-2 border-white/[0.08]" style={{ right: '-20px', top: '50%', height: `${MATCH_H + gap}px` }} />
+                              <div className="absolute border-r border-[var(--border)]" style={{ right: '-16px', top: '50%', height: `${MATCH_H + gap}px` }} />
                             )}
-                            <div className="border border-white/[0.06] rounded-xl overflow-hidden">
+                            <div className="border border-[var(--border)] rounded-xl overflow-hidden card-surface card-interactive">
                               {(['a', 'b'] as const).map((side) => {
                                 const name = getEntryName(m, side);
                                 const seed = getEntrySeed(m, side);
-                                const won = isWinner(m, side);
+                                const won  = isWinner(m, side);
                                 return (
                                   <div
                                     key={side}
                                     className={`p-2.5 text-sm flex items-center gap-2 ${
-                                      side === 'b' ? 'border-t border-white/[0.04]' : ''
+                                      side === 'b' ? 'border-t border-[var(--border)]' : ''
                                     } ${
                                       won
-                                        ? 'bg-[#EF4444]/10 text-[#EF4444] font-semibold'
-                                        : 'bg-white/[0.02] text-[#94A3B8]'
+                                        ? 'match-winner'
+                                        : 'bg-white/[0.02] text-[var(--text-secondary)]'
                                     }`}
                                   >
                                     {seed && (
-                                      <span className="text-[10px] font-mono text-[#64748B] w-4 text-right shrink-0">
+                                      <span className="nums text-[10px] text-[var(--text-dim)] w-4 text-right shrink-0">
                                         [{seed}]
                                       </span>
                                     )}
-                                    <span className="truncate">{name}</span>
+                                    <span className="truncate flex-1">{name}</span>
                                     {won && <span className="sr-only">(Winner)</span>}
                                     {won && matchStatus === 'completed' && (
-                                      <Crown className="w-3 h-3 text-[#FFD700] shrink-0 ml-auto" aria-hidden="true" />
+                                      <Crown className="w-3 h-3 text-[var(--color-gold)] shrink-0 ml-auto" aria-hidden="true" />
                                     )}
                                   </div>
                                 );
                               })}
                               {scoreStr && (
-                                <div className="text-center text-xs text-[#475569] py-1.5 border-t border-white/[0.04] font-mono">
+                                <div className="nums text-center text-xs text-[var(--text-dim)] py-1.5 border-t border-[var(--border)]">
                                   {scoreStr}
                                 </div>
                               )}
@@ -339,51 +333,37 @@ export default async function EventDetailPage({
       {/* Round Robin View */}
       {!isSingleElim && allMatches.length > 0 && (
         <FadeIn delay={0.05}>
-          <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4">
-            <div className="flex items-center gap-2 mb-4">
-              <Swords className="w-4 h-4 text-[#EF4444]" />
-              <h2 className="text-sm font-bold text-shuttle-white uppercase tracking-wider font-display">
-                Match Results
-              </h2>
+          <div className="card-elevated rounded-2xl overflow-hidden">
+            <div className="flex items-center gap-2 p-4 pb-0 mb-3">
+              <Swords className="w-4 h-4 text-[var(--color-accent)]" />
+              <h2 className="display-md">Match Results</h2>
             </div>
-            <div className="space-y-3">
+            <div className="px-4 pb-4 space-y-4">
               {sortedRounds.map(([roundNum, roundMatches]) => (
                 <div key={roundNum}>
-                  <h3 className="text-xs font-bold text-[#64748B] uppercase tracking-wider mb-2">
-                    Round {roundNum}
-                  </h3>
+                  <h3 className="eyebrow mb-2">Round {roundNum}</h3>
                   <div className="space-y-2">
                     {roundMatches.map((m) => {
-                      const scores = m.scores as Array<{ a: number; b: number }> | null;
-                      const scoreStr = formatScores(scores);
+                      const scores      = m.scores as Array<{ a: number; b: number }> | null;
+                      const scoreStr    = formatScores(scores);
                       const matchStatus = m.status as TournamentMatchStatus;
+                      const winA        = isWinner(m, 'a');
+                      const winB        = isWinner(m, 'b');
 
                       return (
                         <div
                           key={m.id as string}
-                          className="border border-white/[0.06] rounded-lg overflow-hidden"
+                          className="border border-[var(--border)] rounded-xl overflow-hidden"
                         >
                           <div className="flex items-center">
-                            <div
-                              className={`flex-1 p-2.5 text-sm ${
-                                isWinner(m, 'a')
-                                  ? 'bg-[#EF4444]/10 text-[#EF4444] font-semibold'
-                                  : 'bg-white/[0.02] text-[#94A3B8]'
-                              }`}
-                            >
-                              {getEntryName(m, 'a')}{isWinner(m, 'a') && <span className="sr-only"> (Winner)</span>}
+                            <div className={`flex-1 p-2.5 text-sm truncate ${winA ? 'match-winner' : 'bg-white/[0.02] text-[var(--text-secondary)]'}`}>
+                              {getEntryName(m, 'a')}{winA && <span className="sr-only"> (Winner)</span>}
                             </div>
-                            <div className="px-3 text-xs text-[#475569] font-mono bg-white/[0.02] py-2.5 border-x border-white/[0.04]">
+                            <div className="nums px-3 text-xs text-[var(--text-dim)] bg-white/[0.02] py-2.5 border-x border-[var(--border)] shrink-0">
                               {matchStatus === 'completed' ? scoreStr || 'W/O' : 'vs'}
                             </div>
-                            <div
-                              className={`flex-1 p-2.5 text-sm text-right ${
-                                isWinner(m, 'b')
-                                  ? 'bg-[#EF4444]/10 text-[#EF4444] font-semibold'
-                                  : 'bg-white/[0.02] text-[#94A3B8]'
-                              }`}
-                            >
-                              {getEntryName(m, 'b')}{isWinner(m, 'b') && <span className="sr-only"> (Winner)</span>}
+                            <div className={`flex-1 p-2.5 text-sm text-right truncate ${winB ? 'match-winner' : 'bg-white/[0.02] text-[var(--text-secondary)]'}`}>
+                              {getEntryName(m, 'b')}{winB && <span className="sr-only"> (Winner)</span>}
                             </div>
                           </div>
                         </div>
@@ -397,131 +377,82 @@ export default async function EventDetailPage({
         </FadeIn>
       )}
 
-      {/* Participants List */}
+      {/* Participants / Pairs List */}
       <FadeIn delay={0.1}>
-        <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4">
-          <div className="flex items-center gap-2 mb-4">
-            <Users className="w-4 h-4 text-[#EF4444]" />
-            <h2 className="text-sm font-bold text-shuttle-white uppercase tracking-wider font-display">
-              {doubles ? 'Pairs' : 'Participants'}
-            </h2>
+        <div className="card-elevated rounded-2xl overflow-hidden">
+          <div className="flex items-center gap-2 p-4 pb-0 mb-3">
+            <Users className="w-4 h-4 text-[var(--color-accent)]" />
+            <h2 className="display-md">{doubles ? 'Pairs' : 'Participants'}</h2>
           </div>
-
-          <div className="space-y-2">
+          <div className="px-4 pb-4 space-y-2">
             {doubles
-              ? pairs.map((p) => {
-                  const p1 = p.player1 as Record<string, unknown> | null;
-                  const p2 = p.player2 as Record<string, unknown> | null;
-                  const seed = p.seed_number as number | null;
-                  const status = p.status as string;
-                  const finalPos = p.final_position as number | null;
+              ? pairs.map((p, pi) => {
+                  const p1      = p.player1 as Record<string, unknown> | null;
+                  const p2      = p.player2 as Record<string, unknown> | null;
+                  const seed    = p.seed_number as number | null;
+                  const status  = p.status as string;
+                  const finalPos= p.final_position as number | null;
+                  const revealIdx = pi < 3 ? `reveal-${pi + 1}` : '';
 
                   return (
-                    <div
-                      key={p.id as string}
-                      className="flex items-center justify-between p-2.5 bg-white/[0.03] rounded-lg border border-white/[0.04]"
-                    >
-                      <div className="flex items-center gap-2.5">
+                    <div key={p.id as string} className={`reveal ${revealIdx} flex items-center justify-between p-2.5 bg-white/[0.02] rounded-xl border border-[var(--border)] gap-2`}>
+                      <div className="flex items-center gap-2.5 min-w-0">
                         {seed && (
-                          <span className="text-xs font-mono text-[#64748B] w-5 text-center">
-                            #{seed}
-                          </span>
+                          <span className="nums text-xs text-[var(--text-muted)] w-5 text-center shrink-0">#{seed}</span>
                         )}
                         <div className="flex -space-x-2">
-                          <Avatar
-                            name={(p1?.full_name as string) || ''}
-                            src={p1?.avatar_url as string | null}
-                            size="sm"
-                          />
-                          <Avatar
-                            name={(p2?.full_name as string) || ''}
-                            src={p2?.avatar_url as string | null}
-                            size="sm"
-                          />
+                          <Avatar name={(p1?.full_name as string) || ''} src={p1?.avatar_url as string | null} size="sm" />
+                          <Avatar name={(p2?.full_name as string) || ''} src={p2?.avatar_url as string | null} size="sm" />
                         </div>
-                        <span className="text-sm text-shuttle-white font-medium">
-                          {p1?.full_name as string} & {p2?.full_name as string}
+                        <span className="text-sm text-[var(--text-primary)] font-medium truncate">
+                          {p1?.full_name as string} &amp; {p2?.full_name as string}
                         </span>
                       </div>
-                      <div className="flex items-center gap-2">
-                        {finalPos === 1 && (
-                          <Crown className="w-3.5 h-3.5 text-[#FFD700]" aria-hidden="true" />
-                        )}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {finalPos === 1 && <Crown className="w-3.5 h-3.5 text-[var(--color-gold)]" aria-hidden />}
                         {finalPos && (
-                          <span
-                            className={`text-xs px-2 py-0.5 rounded-full font-bold ${
-                              finalPos === 1
-                                ? 'bg-[#FFD700]/15 text-[#FFD700]'
-                                : 'bg-white/[0.06] text-[#94A3B8]'
-                            }`}
-                          >
+                          <span className={`chip ${finalPos === 1 ? 'chip-gold' : ''}`}>
                             <span className="sr-only">Position </span>#{finalPos}
                           </span>
                         )}
-                        {status === 'withdrawn' && (
-                          <Badge variant="neutral">Withdrawn</Badge>
-                        )}
-                        {status === 'disqualified' && (
-                          <Badge variant="danger">DQ</Badge>
-                        )}
+                        {status === 'withdrawn'    && <span className="chip">Withdrawn</span>}
+                        {status === 'disqualified' && <span className="chip chip-red">DQ</span>}
                       </div>
                     </div>
                   );
                 })
-              : participants.map((p) => {
-                  const player = p.player as Record<string, unknown> | null;
-                  const seed = p.seed_number as number | null;
-                  const status = p.status as string;
-                  const finalPos = p.final_position as number | null;
+              : participants.map((p, pi) => {
+                  const player  = p.player as Record<string, unknown> | null;
+                  const seed    = p.seed_number as number | null;
+                  const status  = p.status as string;
+                  const finalPos= p.final_position as number | null;
+                  const revealIdx = pi < 3 ? `reveal-${pi + 1}` : '';
 
                   return (
-                    <div
-                      key={p.id as string}
-                      className="flex items-center justify-between p-2.5 bg-white/[0.03] rounded-lg border border-white/[0.04]"
-                    >
-                      <div className="flex items-center gap-2.5">
+                    <div key={p.id as string} className={`reveal ${revealIdx} flex items-center justify-between p-2.5 bg-white/[0.02] rounded-xl border border-[var(--border)] gap-2`}>
+                      <div className="flex items-center gap-2.5 min-w-0">
                         {seed && (
-                          <span className="text-xs font-mono text-[#64748B] w-5 text-center">
-                            #{seed}
-                          </span>
+                          <span className="nums text-xs text-[var(--text-muted)] w-5 text-center shrink-0">#{seed}</span>
                         )}
-                        <Avatar
-                          name={(player?.full_name as string) || ''}
-                          src={player?.avatar_url as string | null}
-                          size="sm"
-                        />
-                        <span className="text-sm text-shuttle-white font-medium">
-                          {player?.full_name as string}
-                        </span>
+                        <Avatar name={(player?.full_name as string) || ''} src={player?.avatar_url as string | null} size="sm" />
+                        <span className="text-sm text-[var(--text-primary)] font-medium truncate">{player?.full_name as string}</span>
                       </div>
-                      <div className="flex items-center gap-2">
-                        {finalPos === 1 && (
-                          <Crown className="w-3.5 h-3.5 text-[#FFD700]" aria-hidden="true" />
-                        )}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {finalPos === 1 && <Crown className="w-3.5 h-3.5 text-[var(--color-gold)]" aria-hidden />}
                         {finalPos && (
-                          <span
-                            className={`text-xs px-2 py-0.5 rounded-full font-bold ${
-                              finalPos === 1
-                                ? 'bg-[#FFD700]/15 text-[#FFD700]'
-                                : 'bg-white/[0.06] text-[#94A3B8]'
-                            }`}
-                          >
+                          <span className={`chip ${finalPos === 1 ? 'chip-gold' : ''}`}>
                             <span className="sr-only">Position </span>#{finalPos}
                           </span>
                         )}
-                        {status === 'withdrawn' && (
-                          <Badge variant="neutral">Withdrawn</Badge>
-                        )}
-                        {status === 'disqualified' && (
-                          <Badge variant="danger">DQ</Badge>
-                        )}
+                        {status === 'withdrawn'    && <span className="chip">Withdrawn</span>}
+                        {status === 'disqualified' && <span className="chip chip-red">DQ</span>}
                       </div>
                     </div>
                   );
                 })}
 
             {participants.length === 0 && pairs.length === 0 && (
-              <p className="text-[#64748B] text-sm text-center py-6">
+              <p className="text-[var(--text-muted)] text-sm text-center py-6">
                 No {doubles ? 'pairs' : 'participants'} yet
               </p>
             )}
@@ -532,14 +463,12 @@ export default async function EventDetailPage({
       {/* Your Matches */}
       {playerParticipantId && allMatches.length > 0 && (
         <FadeIn delay={0.15}>
-          <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4">
-            <div className="flex items-center gap-2 mb-4">
-              <Star className="w-4 h-4 text-[#FFD700]" />
-              <h2 className="text-sm font-bold text-shuttle-white uppercase tracking-wider font-display">
-                Your Matches
-              </h2>
+          <div className="card-elevated rounded-2xl overflow-hidden">
+            <div className="flex items-center gap-2 p-4 pb-0 mb-3">
+              <Star className="w-4 h-4 text-[var(--color-gold)]" />
+              <h2 className="display-md">Your Matches</h2>
             </div>
-            <div className="space-y-2">
+            <div className="px-4 pb-4 space-y-2">
               {allMatches
                 .filter((m) => {
                   const aId = doubles ? m.pair_a_id : m.participant_a_id;
@@ -547,46 +476,47 @@ export default async function EventDetailPage({
                   return aId === playerParticipantId || bId === playerParticipantId;
                 })
                 .map((m) => {
-                  const matchStatus = m.status as TournamentMatchStatus;
-                  const scores = m.scores as Array<{ a: number; b: number }> | null;
-                  const scoreStr = formatScores(scores);
-                  const playerSide = (doubles ? m.pair_a_id : m.participant_a_id) === playerParticipantId ? 'a' : 'b';
+                  const matchStatus  = m.status as TournamentMatchStatus;
+                  const scores       = m.scores as Array<{ a: number; b: number }> | null;
+                  const scoreStr     = formatScores(scores);
+                  const playerSide   = (doubles ? m.pair_a_id : m.participant_a_id) === playerParticipantId ? 'a' : 'b';
                   const opponentSide = playerSide === 'a' ? 'b' : 'a';
-                  const won = isWinner(m, playerSide as 'a' | 'b');
+                  const won          = isWinner(m, playerSide as 'a' | 'b');
                   const opponentName = getEntryName(m, opponentSide as 'a' | 'b');
+                  const done         = matchStatus === 'completed' || matchStatus === 'walkover';
 
                   return (
                     <div
                       key={m.id as string}
-                      className={`flex items-center justify-between p-3 rounded-lg border ${
-                        matchStatus === 'completed' || matchStatus === 'walkover'
+                      className={`flex items-center justify-between p-3 rounded-xl border gap-3 ${
+                        done
                           ? won
-                            ? 'border-[#22C55E]/20 bg-[#22C55E]/5'
-                            : 'border-[#EF4444]/20 bg-[#EF4444]/5'
-                          : 'border-white/[0.06] bg-white/[0.02]'
+                            ? 'border-[var(--color-success)]/20 bg-[var(--color-success)]/5'
+                            : 'border-[var(--color-accent)]/20 bg-[var(--color-accent)]/5'
+                          : 'border-[var(--border)] bg-white/[0.02]'
                       }`}
                     >
-                      <div>
-                        <p className="text-sm text-shuttle-white font-medium">
+                      <div className="min-w-0">
+                        <p className="text-sm text-[var(--text-primary)] font-medium truncate">
                           vs {opponentName}
                         </p>
-                        <p className="text-xs text-[#64748B] mt-0.5">
+                        <p className="text-xs text-[var(--text-muted)] mt-0.5">
                           {(m.round_name as string) || `Round ${m.round_number}`}
-                          {m.court ? ` - Court ${m.court as string}` : ''}
+                          {m.court ? ` — Court ${m.court as string}` : ''}
                         </p>
                       </div>
-                      <div className="text-right">
-                        {(matchStatus === 'completed' || matchStatus === 'walkover') ? (
+                      <div className="text-right shrink-0">
+                        {done ? (
                           <>
-                            <span className={`text-sm font-bold ${won ? 'text-[#22C55E]' : 'text-[#EF4444]'}`} role="status">
+                            <span className={`text-sm font-bold ${won ? 'text-[var(--color-success)]' : 'text-[var(--color-accent)]'}`} role="status">
                               {won ? 'WIN' : 'LOSS'}
                             </span>
                             {scoreStr && (
-                              <p className="text-xs text-[#64748B] font-mono mt-0.5">{scoreStr}</p>
+                              <p className="nums text-xs text-[var(--text-muted)] mt-0.5">{scoreStr}</p>
                             )}
                           </>
                         ) : (
-                          <span className="text-xs text-[#64748B] uppercase">{matchStatus}</span>
+                          <span className="chip capitalize">{matchStatus}</span>
                         )}
                       </div>
                     </div>
@@ -597,47 +527,55 @@ export default async function EventDetailPage({
         </FadeIn>
       )}
 
-      {/* Leaderboard (when completed) */}
+      {/* Final Standings */}
       {eventStatus === 'completed' && (
         <FadeIn delay={0.2}>
-          <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4">
-            <div className="flex items-center gap-2 mb-4">
-              <Medal className="w-4 h-4 text-[#FFD700]" />
-              <h2 className="text-sm font-bold text-shuttle-white uppercase tracking-wider font-display">
-                Final Standings
-              </h2>
+          <div className="card-elevated rounded-2xl overflow-hidden">
+            <div className="flex items-center gap-2 p-4 pb-0 mb-3">
+              <Medal className="w-4 h-4 text-[var(--color-gold)]" />
+              <h2 className="display-md">Final Standings</h2>
             </div>
-            <div className="space-y-1">
+            <div className="px-4 pb-4 space-y-1.5">
               {(doubles ? pairs : participants)
                 .filter((e: any) => e.final_position != null)
                 .sort((a: any, b: any) => a.final_position - b.final_position)
                 .map((e: any) => {
-                  const pos = e.final_position as number;
-                  const name = doubles
+                  const pos    = e.final_position as number;
+                  const name   = doubles
                     ? e.pair_name ?? `${(e.player1 as any)?.full_name} & ${(e.player2 as any)?.full_name}`
                     : (e.player as any)?.full_name ?? 'Unknown';
                   const points = e.points ?? 0;
-                  const posColors: Record<number, string> = { 1: '#FFD700', 2: '#C0C0C0', 3: '#CD7F32' };
+                  const posColors: Record<number, string> = { 1: 'var(--color-gold)', 2: 'var(--color-silver)', 3: 'var(--color-bronze)' };
+                  const isTop3 = pos <= 3;
 
                   return (
                     <div
                       key={e.id}
-                      className="flex items-center justify-between p-2.5 rounded-lg bg-white/[0.02]"
+                      className={`flex items-center justify-between p-2.5 rounded-xl ${
+                        pos === 1 ? 'bg-[var(--color-gold)]/5 border border-[var(--color-gold)]/20' :
+                        pos === 2 ? 'bg-white/[0.03] border border-white/[0.06]' :
+                        pos === 3 ? 'bg-white/[0.02] border border-white/[0.04]' :
+                        'bg-transparent border border-transparent'
+                      }`}
                     >
-                      <div className="flex items-center gap-2.5">
+                      <div className="flex items-center gap-2.5 min-w-0">
                         <span
-                          className="text-sm font-mono font-bold w-6 text-center"
-                          style={{ color: posColors[pos] ?? '#64748B' }}
+                          className="nums text-sm font-black w-6 text-center shrink-0"
+                          style={{ color: posColors[pos] ?? 'var(--text-muted)' }}
                         >
                           {pos}
                         </span>
-                        <span className="text-sm text-shuttle-white font-medium">{name}</span>
+                        {pos === 1 && <Crown className="w-3.5 h-3.5 text-[var(--color-gold)] shrink-0" aria-hidden />}
+                        <span className={`text-sm font-medium truncate ${isTop3 ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'}`}>
+                          {name}
+                        </span>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <span className="text-xs font-mono text-[#EF4444] font-bold">{points} pts</span>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="nums text-xs font-bold text-[var(--color-accent)]">{points} pts</span>
                         {!doubles && e.elo_change != null && (
-                          <span className={`text-xs font-mono ${e.elo_change > 0 ? 'text-[#22C55E]' : e.elo_change < 0 ? 'text-[#EF4444]' : 'text-[#64748B]'}`}>
-                            <span className="sr-only">{e.elo_change > 0 ? 'Gained' : e.elo_change < 0 ? 'Lost' : 'No change'}: </span>{e.elo_change > 0 ? '+' : ''}{e.elo_change} elo
+                          <span className={`nums text-xs font-bold ${e.elo_change > 0 ? 'text-[var(--color-success)]' : e.elo_change < 0 ? 'text-[var(--color-accent)]' : 'text-[var(--text-muted)]'}`}>
+                            <span className="sr-only">{e.elo_change > 0 ? 'Gained' : e.elo_change < 0 ? 'Lost' : 'No change'}: </span>
+                            {e.elo_change > 0 ? '+' : ''}{e.elo_change} elo
                           </span>
                         )}
                       </div>

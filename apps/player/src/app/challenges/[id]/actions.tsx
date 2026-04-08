@@ -70,7 +70,8 @@ export function ChallengeDetailActions({
         await rejectChallenge(challengeId);
         toast('Challenge rejected', 'info');
       } else if (action === 'confirm') {
-        await confirmMatchResult(matchId!);
+        if (!matchId) return;
+        await confirmMatchResult(matchId);
         toast('Result confirmed! Elo updated.', 'success');
       } else if (action === 'cancel') {
         if (!confirm('Cancel this challenge? The opponent will be notified.')) { setLoading(''); return; }
@@ -89,7 +90,7 @@ export function ChallengeDetailActions({
     try {
       const validGames = isBO3 ? games.filter((g, i) => i < 2 || (g.side_a_score > 0 || g.side_b_score > 0)) : games;
       await submitMatchResult(challengeId, {
-        match_id: '', // Will be created
+        match_id: '', // TODO: wire actual matchId — match is created server-side from challengeId
         winner_side: winnerSide,
         games: validGames,
         completed: true,
@@ -105,9 +106,10 @@ export function ChallengeDetailActions({
 
   async function handleDispute() {
     if (!disputeReason.trim()) { toast('Reason required', 'error'); return; }
+    if (!matchId) return;
     setLoading('dispute');
     try {
-      await disputeMatchResult(matchId!, disputeReason, disputeCategory);
+      await disputeMatchResult(matchId, disputeReason, disputeCategory);
       toast('Dispute opened', 'info');
       setShowDispute(false);
       router.refresh();
@@ -219,7 +221,7 @@ export function ChallengeDetailActions({
               />
             </div>
           ))}
-          <Button onClick={handleSubmitResult} loading={loading === 'submit'} className="w-full">
+          <Button onClick={handleSubmitResult} loading={loading === 'submit'} className="w-full press">
             Submit
           </Button>
         </div>
@@ -247,7 +249,7 @@ export function ChallengeDetailActions({
             onChange={(e) => setDisputeReason(e.target.value)}
             placeholder="Describe the issue..."
           />
-          <Button onClick={handleDispute} loading={loading === 'dispute'} variant="danger" className="w-full">
+          <Button onClick={handleDispute} loading={loading === 'dispute'} variant="danger" className="w-full press">
             Open Dispute
           </Button>
         </div>
@@ -256,11 +258,11 @@ export function ChallengeDetailActions({
       {/* Walkover Dialog */}
       <Dialog open={showWalkover} onClose={() => setShowWalkover(false)} title="Report Issue">
         <div className="space-y-4">
-          <p className="text-sm text-gray-400">What happened?</p>
-          <Button onClick={() => handleWalkover('no_show')} loading={loading === 'walkover'} variant="danger" className="w-full">
+          <p className="text-sm text-[var(--text-muted)]">What happened?</p>
+          <Button onClick={() => handleWalkover('no_show')} loading={loading === 'walkover'} variant="danger" className="w-full press">
             Opponent No-Show
           </Button>
-          <Button onClick={() => handleWalkover('withdrawal')} loading={loading === 'walkover'} variant="ghost" className="w-full">
+          <Button onClick={() => handleWalkover('withdrawal')} loading={loading === 'walkover'} variant="ghost" className="w-full press">
             I Need to Withdraw
           </Button>
         </div>

@@ -58,7 +58,7 @@ export default async function ChallengesPage() {
         <Link href={`/challenges/${c.id}`} className="block group">
           <div className="card-surface card-interactive flex items-center justify-between p-4">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-xl bg-[#EF4444]/10 flex items-center justify-center shrink-0">
+              <div className="w-10 h-10 rounded-xl bg-[var(--color-accent)]/10 flex items-center justify-center shrink-0">
                 <Swords className="w-5 h-5 text-court-red" />
               </div>
               <div className="min-w-0">
@@ -67,10 +67,10 @@ export default async function ChallengesPage() {
                   <span className="chip">{c.type as string}</span>
                   {Boolean(c.rated_flag) && <span className="chip chip-gold">Rated</span>}
                 </div>
-                <p className="text-xs text-[#64748B] mt-0.5">
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">
                   {MATCH_FORMAT_LABELS[(c.format as string) as keyof typeof MATCH_FORMAT_LABELS]} &middot; {formatRelativeTime(c.created_at as string)}
                 </p>
-                <p className="text-xs text-[#475569] mt-0.5 truncate">
+                <p className="text-xs text-[var(--text-dim)] mt-0.5 truncate">
                   {parts.map((p) => (p.player as Record<string, unknown>)?.full_name as string).join(' vs ')}
                 </p>
               </div>
@@ -79,7 +79,7 @@ export default async function ChallengesPage() {
               <span className={statusChip[c.status as string] || 'chip'}>
                 {c.status as string}
               </span>
-              <ChevronRight className="w-4 h-4 text-[#475569] group-hover:text-court-red transition-colors" />
+              <ChevronRight className="w-4 h-4 text-[var(--text-dim)] group-hover:text-court-red transition-colors" />
             </div>
           </div>
         </Link>
@@ -92,7 +92,7 @@ export default async function ChallengesPage() {
       <FadeIn>
         <div className="flex items-center justify-between reveal reveal-1">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[#EF4444]/10 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-xl bg-[var(--color-accent)]/10 flex items-center justify-center">
               <Swords className="w-5 h-5 text-court-red" />
             </div>
             <div>
@@ -112,10 +112,10 @@ export default async function ChallengesPage() {
 
       {incoming.length > 0 && (
         <FadeIn delay={0.05}>
-          <div className="card-elevated p-4" style={{ borderColor: 'rgba(252,211,77,0.12)' }}>
+          <div className="card-elevated p-4 border-[var(--color-gold)]/12">
             <div className="flex items-center gap-2 mb-3">
               <Zap className="w-4 h-4 text-gold" />
-              <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>Incoming</h2>
+              <h2 className="eyebrow text-[var(--text-primary)]">Incoming</h2>
               <span className="ml-auto chip chip-gold">{incoming.length}</span>
             </div>
             <StaggerContainer className="space-y-2">
@@ -130,7 +130,7 @@ export default async function ChallengesPage() {
           <div className="card-elevated p-4">
             <div className="flex items-center gap-2 mb-3">
               <Clock className="w-4 h-4 text-blue-400" />
-              <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>Active</h2>
+              <h2 className="eyebrow text-[var(--text-primary)]">Active</h2>
               <span className="ml-auto chip chip-success">{active.length}</span>
             </div>
             <StaggerContainer className="space-y-2">
@@ -145,7 +145,7 @@ export default async function ChallengesPage() {
           <div className="card-elevated p-4">
             <div className="flex items-center gap-2 mb-3">
               <Swords className="w-4 h-4 text-court-red" />
-              <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>My Challenges</h2>
+              <h2 className="eyebrow text-[var(--text-primary)]">My Challenges</h2>
               <span className="ml-auto chip chip-red">{outgoing.length}</span>
             </div>
             <StaggerContainer className="space-y-2">
@@ -159,8 +159,8 @@ export default async function ChallengesPage() {
         <FadeIn delay={0.2}>
           <div className="card-elevated p-4">
             <div className="flex items-center gap-2 mb-3">
-              <CheckCircle2 className="w-4 h-4 text-[#64748B]" />
-              <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>Completed</h2>
+              <CheckCircle2 className="w-4 h-4 text-[var(--text-muted)]" />
+              <h2 className="eyebrow text-[var(--text-primary)]">Completed</h2>
             </div>
             <StaggerContainer className="space-y-2">
               {completed.map((cp) => <ChallengeRow key={cp.id} cp={cp as Record<string, unknown>} />)}
@@ -172,8 +172,8 @@ export default async function ChallengesPage() {
       {(!myChallenges || myChallenges.length === 0) && (
         <FadeIn delay={0.05}>
           <div className="card-elevated p-12 text-center">
-            <Inbox className="w-12 h-12 text-[#1E293B] mx-auto mb-3" />
-            <p className="text-[#64748B] mb-3 font-medium">No challenges yet</p>
+            <Inbox className="w-12 h-12 text-[var(--text-dim)] mx-auto mb-3" />
+            <p className="text-[var(--text-muted)] mb-3 font-medium">No challenges yet</p>
             <Link href="/challenges/new" className="press chip chip-red">
               Create your first challenge
             </Link>

@@ -29,7 +29,7 @@ export function OfflineBanner() {
   if (!offline) return null;
 
   return (
-    <div className="fixed top-0 left-0 right-0 z-[100] bg-[var(--color-warning)] text-black text-center text-sm py-2 px-4 font-medium">
+    <div role="alert" aria-live="assertive" className="fixed top-0 left-0 right-0 z-[100] bg-[var(--color-warning)] text-black text-center text-sm py-2 px-4 font-medium safe-top">
       You&apos;re offline — changes will sync when reconnected
     </div>
   );

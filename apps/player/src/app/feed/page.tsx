@@ -55,7 +55,7 @@ export default async function FeedPage() {
             <h1 className="display-lg text-shuttle-white">
               Hey, {player.full_name.split(' ')[0]}!
             </h1>
-            <p className="text-[#64748B] text-sm mt-1">Here&apos;s what&apos;s happening</p>
+            <p className="text-[var(--text-muted)] text-sm mt-1">Here&apos;s what&apos;s happening</p>
           </div>
           {unreadNotifs && unreadNotifs > 0 ? (
             <Link
@@ -77,7 +77,7 @@ export default async function FeedPage() {
             <div className="card-surface card-interactive p-4 group reveal reveal-1">
               <p className="eyebrow mb-2">Singles ELO</p>
               <p className="display-md gradient-text-red nums">{r.singles_elo}</p>
-              <p className="text-xs text-[#64748B] mt-1.5">
+              <p className="text-xs text-[var(--text-muted)] mt-1.5">
                 {r.singles_provisional ? (
                   <span className="chip chip-gold">Provisional</span>
                 ) : (
@@ -90,7 +90,7 @@ export default async function FeedPage() {
             <div className="card-surface card-interactive p-4 group reveal reveal-2">
               <p className="eyebrow mb-2">Doubles ELO</p>
               <p className="display-md gradient-text-gold nums">{r.doubles_elo}</p>
-              <p className="text-xs text-[#64748B] mt-1.5">
+              <p className="text-xs text-[var(--text-muted)] mt-1.5">
                 {r.doubles_provisional ? (
                   <span className="chip chip-gold">Provisional</span>
                 ) : (
@@ -104,8 +104,8 @@ export default async function FeedPage() {
               <p className="eyebrow mb-2">Singles W/L</p>
               <p className="display-md text-shuttle-white nums">
                 <span className="text-emerald-400">{r.singles_wins ?? 0}</span>
-                <span className="text-[#475569] font-normal mx-1">/</span>
-                <span className="text-[#EF4444]">{r.singles_losses ?? 0}</span>
+                <span className="text-[var(--text-dim)] font-normal mx-1">/</span>
+                <span className="text-[var(--color-accent)]">{r.singles_losses ?? 0}</span>
               </p>
             </div>
 
@@ -114,8 +114,8 @@ export default async function FeedPage() {
               <p className="eyebrow mb-2">Doubles W/L</p>
               <p className="display-md text-shuttle-white nums">
                 <span className="text-emerald-400">{r.doubles_wins ?? 0}</span>
-                <span className="text-[#475569] font-normal mx-1">/</span>
-                <span className="text-[#EF4444]">{r.doubles_losses ?? 0}</span>
+                <span className="text-[var(--text-dim)] font-normal mx-1">/</span>
+                <span className="text-[var(--color-accent)]">{r.doubles_losses ?? 0}</span>
               </p>
             </div>
           </div>
@@ -143,21 +143,21 @@ export default async function FeedPage() {
                     <Link href={`/challenges/${c.id}`} className="block group">
                       <div className="card-surface card-interactive flex items-center justify-between p-3">
                         <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-full bg-[#FFD700]/10 flex items-center justify-center shrink-0">
+                          <div className="w-9 h-9 rounded-full bg-[var(--color-gold)]/10 flex items-center justify-center shrink-0">
                             <Swords className="w-4 h-4 text-gold" />
                           </div>
                           <div>
                             <p className="text-sm font-semibold text-shuttle-white">
                               {creator?.full_name as string} challenged you
                             </p>
-                            <p className="text-xs text-[#64748B] mt-0.5">
+                            <p className="text-xs text-[var(--text-muted)] mt-0.5">
                               {c.type as string} &middot; {MATCH_FORMAT_LABELS[(c.format as string) as keyof typeof MATCH_FORMAT_LABELS]}
                             </p>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="chip chip-gold">Respond</span>
-                          <ChevronRight className="w-4 h-4 text-[#64748B] group-hover:text-gold transition-colors" />
+                          <ChevronRight className="w-4 h-4 text-[var(--text-muted)] group-hover:text-gold transition-colors" />
                         </div>
                       </div>
                     </Link>
@@ -191,15 +191,15 @@ export default async function FeedPage() {
                 return (
                   <div
                     key={mp.id}
-                    className="flex items-center justify-between p-3 bg-white/[0.03] rounded-lg border border-white/[0.04]"
+                    className="flex items-center justify-between p-3 bg-[var(--bg-card)] rounded-lg border border-white/[0.04]"
                   >
                     <div className="flex items-center gap-3">
                       <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black ${
                         isWin
                           ? 'bg-emerald-500/15 text-emerald-400'
                           : isLoss
-                            ? 'bg-[#EF4444]/15 text-[#EF4444]'
-                            : 'bg-white/[0.06] text-[#64748B]'
+                            ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]'
+                            : 'bg-white/[0.06] text-[var(--text-muted)]'
                       }`}>
                         {isWin ? 'W' : isLoss ? 'L' : '?'}
                       </div>
@@ -207,7 +207,7 @@ export default async function FeedPage() {
                         {m.score_summary as string || '-'}
                       </span>
                     </div>
-                    <span className="text-xs text-[#475569]">
+                    <span className="text-xs text-[var(--text-dim)]">
                       {m.played_at ? formatRelativeTime(m.played_at as string) : ''}
                     </span>
                   </div>
@@ -216,8 +216,8 @@ export default async function FeedPage() {
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center py-8 text-center">
-              <Trophy className="w-8 h-8 text-[#1E293B] mb-2" />
-              <p className="text-sm text-[#64748B]">No matches yet</p>
+              <Trophy className="w-8 h-8 text-[var(--text-dim)] mb-2" />
+              <p className="text-sm text-[var(--text-muted)]">No matches yet</p>
             </div>
           )}
         </div>
@@ -227,13 +227,13 @@ export default async function FeedPage() {
       <FadeIn delay={0.25}>
         <div className="flex gap-3">
           <Link href="/challenges/new" className="flex-1 press">
-            <button className="w-full h-12 rounded-xl gradient-court text-white font-bold text-sm tracking-wide flex items-center justify-center gap-2 glow-red hover:opacity-90 transition-opacity">
+            <button type="button" className="w-full h-12 rounded-xl gradient-court text-white font-bold text-sm tracking-wide flex items-center justify-center gap-2 glow-red hover:opacity-90 transition-opacity">
               <Swords className="w-4 h-4" />
               Create Challenge
             </button>
           </Link>
           <Link href="/leaderboard" className="flex-1 press">
-            <button className="w-full h-12 rounded-xl bg-white/[0.04] border border-white/[0.08] text-shuttle-white font-bold text-sm tracking-wide flex items-center justify-center gap-2 hover:bg-white/[0.08] hover:border-white/[0.12] transition-all duration-300">
+            <button type="button" className="w-full h-12 rounded-xl bg-white/[0.04] border border-white/[0.08] text-shuttle-white font-bold text-sm tracking-wide flex items-center justify-center gap-2 hover:bg-white/[0.08] hover:border-white/[0.12] transition-all duration-300">
               <Trophy className="w-4 h-4 text-gold" />
               Leaderboard
             </button>

@@ -1,6 +1,7 @@
 import type { Config } from 'tailwindcss';
 
 const config: Config = {
+  darkMode: ['class', '[data-theme="dark"]'],
   content: [
     './src/**/*.{js,ts,jsx,tsx,mdx}',
     '../../packages/ui/src/**/*.{js,ts,jsx,tsx}',
@@ -42,13 +43,13 @@ const config: Config = {
           DEFAULT: 'var(--card)',
           foreground: 'var(--card-foreground)',
         },
-        // App-specific colors
-        'court-red': '#EF4444',
-        gold: '#FFD700',
-        'shuttle-white': '#F8FAFC',
-        'deep-navy': '#0D1220',
-        'card-dark': '#161B2E',
-        surface: '#111827',
+        // App-specific brand colors — themed via CSS vars
+        'court-red': 'var(--color-accent)',
+        gold: 'var(--color-gold)',
+        'shuttle-white': 'var(--text-primary)',
+        'deep-navy': 'var(--bg-primary)',
+        'card-dark': 'var(--bg-card)',
+        surface: 'var(--bg-surface)',
       },
       borderRadius: {
         lg: 'var(--radius)',

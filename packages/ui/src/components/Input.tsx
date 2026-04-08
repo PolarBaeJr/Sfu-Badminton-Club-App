@@ -11,6 +11,7 @@ interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
 export const Input = React.forwardRef<HTMLInputElement, InputProps>(
   ({ label, error, className, id, ...props }, ref) => {
     const inputId = id || (label ? label.toLowerCase().replace(/\s+/g, '-') : undefined);
+    const errorId = inputId ? `${inputId}-error` : undefined;
 
     return (
       <div className="space-y-1">
@@ -22,6 +23,8 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
         <input
           ref={ref}
           id={inputId}
+          aria-invalid={!!error}
+          aria-describedby={error && errorId ? errorId : undefined}
           className={cn(
             'w-full px-3 min-h-[48px] bg-[var(--bg-surface)] border border-[var(--border)] rounded-lg text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
             error && 'border-[var(--color-danger)] focus:ring-[var(--color-danger)]',
@@ -29,7 +32,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
           )}
           {...props}
         />
-        {error && <p className="text-sm text-[var(--color-danger)]">{error}</p>}
+        {error && <p id={errorId} className="text-sm text-[var(--color-danger)]">{error}</p>}
       </div>
     );
   }

@@ -35,8 +35,8 @@ const tabs = [
 ];
 
 const rankIcons = [Crown, Medal, Trophy];
-const rankColors = ['text-[#FFD700]', 'text-[#C0C0C0]', 'text-[#CD7F32]'];
-const rankBg = ['bg-[#FFD700]/10 border-[#FFD700]/20', 'bg-[#C0C0C0]/10 border-[#C0C0C0]/20', 'bg-[#CD7F32]/10 border-[#CD7F32]/20'];
+const rankColors = ['text-[var(--color-gold)]', 'text-[var(--text-secondary)]', 'text-[var(--color-gold-deep)]'];
+const rankBg = ['bg-[var(--color-gold)]/10 border-[var(--color-gold)]/20', 'bg-[var(--text-secondary)]/10 border-[var(--text-secondary)]/20', 'bg-[var(--color-gold-deep)]/10 border-[var(--color-gold-deep)]/20'];
 
 export default function LeaderboardPage() {
   const [activeTab, setActiveTab] = useState('open_singles');
@@ -147,7 +147,7 @@ export default function LeaderboardPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3 reveal reveal-1">
-        <div className="w-10 h-10 rounded-xl bg-[#FFD700]/10 flex items-center justify-center glow-gold">
+        <div className="w-10 h-10 rounded-xl bg-[var(--color-gold)]/10 flex items-center justify-center glow-gold">
           <Trophy className="w-5 h-5 text-gold" />
         </div>
         <div>
@@ -165,13 +165,13 @@ export default function LeaderboardPage() {
             className={`relative flex-1 py-2.5 px-3 text-sm font-semibold rounded-lg transition-all duration-300 whitespace-nowrap ${
               activeTab === tab.id
                 ? 'text-white'
-                : 'text-[#64748B] hover:text-[#94A3B8]'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
             }`}
           >
             {activeTab === tab.id && (
               <motion.div
                 layoutId="leaderboardTab"
-                className="absolute inset-0 bg-gradient-to-r from-[#FFD700]/20 to-[#FFA000]/20 border border-[#FFD700]/20 rounded-lg"
+                className="absolute inset-0 bg-gradient-to-r from-[var(--color-gold)]/20 to-[var(--color-gold-deep)]/20 border border-[var(--color-gold)]/20 rounded-lg"
                 transition={{ type: 'spring', bounce: 0.2, duration: 0.5 }}
               />
             )}
@@ -182,13 +182,14 @@ export default function LeaderboardPage() {
 
       {/* Search */}
       <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#64748B] pointer-events-none" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)] pointer-events-none" />
         <input
           type="text"
           placeholder="Search players..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full bg-[var(--bg-secondary)] border border-white/[0.06] rounded-lg pl-9 pr-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[#64748B] focus:outline-none focus:ring-2 focus:ring-[#FFD700]/40 focus:border-transparent transition-colors"
+          aria-label="Search leaderboard"
+          className="w-full bg-[var(--bg-surface)] border border-white/[0.06] rounded-lg pl-9 pr-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-gold)]/40 focus:border-transparent transition-colors"
         />
       </div>
 
@@ -251,12 +252,12 @@ export default function LeaderboardPage() {
                           {RankIcon ? (
                             <RankIcon className={`w-5 h-5 ${rankColors[i]}`} />
                           ) : (
-                            <span className="text-sm font-mono text-[#475569] font-bold">{i + 1}</span>
+                            <span className="text-sm font-mono text-[var(--text-dim)] font-bold nums">{i + 1}</span>
                           )}
                         </span>
                         <span className="flex items-center gap-2.5 min-w-0">
                           <Avatar name={p.full_name} src={p.avatar_url} size="sm" />
-                          <span className="truncate text-sm text-shuttle-white font-medium group-hover:text-[#EF4444] transition-colors">
+                          <span className="truncate text-sm text-shuttle-white font-medium group-hover:text-[var(--color-accent)] transition-colors">
                             {p.full_name}
                           </span>
                           {prov && activeTab !== 'tournament_points' && (
@@ -281,12 +282,12 @@ export default function LeaderboardPage() {
                                 );
                               })()}
                             </span>
-                            <span className="text-right text-sm text-[#94A3B8] nums">
+                            <span className="text-right text-sm text-[var(--text-secondary)] nums">
                               <span className="text-emerald-400">{wins ?? 0}</span>
-                              <span className="text-[#475569]">-</span>
-                              <span className="text-[#EF4444]">{losses ?? 0}</span>
+                              <span className="text-[var(--text-dim)]">-</span>
+                              <span className="text-[var(--color-accent)]">{losses ?? 0}</span>
                             </span>
-                            <span className="text-right text-sm text-[#94A3B8] font-medium nums">{winPct}%</span>
+                            <span className="text-right text-sm text-[var(--text-secondary)] font-medium nums">{winPct}%</span>
                           </>
                         )}
                       </Link>
@@ -299,13 +300,13 @@ export default function LeaderboardPage() {
                 <div className="flex flex-col items-center justify-center py-16">
                   {searchQuery ? (
                     <>
-                      <Search className="w-10 h-10 text-[#1E293B] mb-3" />
-                      <p className="text-[#64748B]">No players found matching &ldquo;{searchQuery}&rdquo;</p>
+                      <Search className="w-10 h-10 text-[var(--text-dim)] mb-3" />
+                      <p className="text-[var(--text-muted)]">No players found matching &ldquo;{searchQuery}&rdquo;</p>
                     </>
                   ) : (
                     <>
-                      <Trophy className="w-10 h-10 text-[#1E293B] mb-3" />
-                      <p className="text-[#64748B]">No players ranked yet</p>
+                      <Trophy className="w-10 h-10 text-[var(--text-dim)] mb-3" />
+                      <p className="text-[var(--text-muted)]">No players ranked yet</p>
                     </>
                   )}
                 </div>

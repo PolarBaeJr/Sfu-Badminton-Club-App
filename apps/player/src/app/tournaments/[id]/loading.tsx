@@ -1,20 +1,40 @@
 export default function TournamentLoading() {
   return (
-    <div className="space-y-6 animate-pulse">
-      {/* Hero skeleton */}
-      <div className="h-40 bg-[var(--bg-secondary)] rounded-xl" />
+    <div className="space-y-5 px-4 sm:px-0">
+      {/* Back link skeleton */}
+      <div className="skeleton h-4 w-32 rounded-full" />
 
-      {/* Info cards skeleton */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="h-20 bg-[var(--bg-secondary)] rounded-lg" />
-        <div className="h-20 bg-[var(--bg-secondary)] rounded-lg" />
+      {/* Hero card skeleton */}
+      <div className="card-elevated rounded-2xl overflow-hidden">
+        <div className="h-1.5 skeleton" />
+        <div className="p-5 space-y-3">
+          <div className="skeleton h-3 w-20 rounded-full" />
+          <div className="skeleton h-8 w-56 rounded-lg" />
+          <div className="skeleton h-4 w-40 rounded-full" />
+          <div className="flex gap-2">
+            <div className="skeleton h-5 w-16 rounded-full" />
+            <div className="skeleton h-5 w-24 rounded-full" />
+          </div>
+        </div>
       </div>
 
-      {/* Events list skeleton */}
-      <div className="space-y-3">
-        <div className="h-6 w-32 bg-[var(--bg-secondary)] rounded" />
+      {/* Events heading */}
+      <div className="skeleton h-5 w-20 rounded-lg" />
+
+      {/* Event cards skeleton */}
+      <div className="grid gap-4 sm:grid-cols-2">
         {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="h-24 bg-[var(--bg-secondary)] rounded-lg" />
+          <div key={i} className="card-surface rounded-2xl p-5 space-y-3">
+            <div className="skeleton h-5 w-32 rounded-lg" />
+            <div className="flex gap-2">
+              <div className="skeleton h-4 w-16 rounded-full" />
+              <div className="skeleton h-4 w-12 rounded-full" />
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="skeleton h-3 w-20 rounded-full" />
+              <div className="skeleton h-7 w-20 rounded-lg" />
+            </div>
+          </div>
         ))}
       </div>
     </div>

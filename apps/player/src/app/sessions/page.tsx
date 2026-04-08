@@ -51,11 +51,11 @@ export default async function SessionsPage() {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-28">
       {/* Header */}
       <FadeIn>
         <div className="flex items-center gap-3 reveal reveal-1">
-          <div className="w-9 h-9 rounded-xl bg-[#EF4444]/10 flex items-center justify-center">
+          <div className="w-9 h-9 rounded-xl bg-[var(--color-accent)]/10 flex items-center justify-center">
             <Calendar className="w-4 h-4 text-court-red" />
           </div>
           <div>
@@ -69,7 +69,7 @@ export default async function SessionsPage() {
       <FadeIn delay={0.05}>
         <div>
           <div className="flex items-center gap-2 mb-3">
-            <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>Upcoming Sessions</h2>
+            <h2 className="eyebrow text-[var(--text-primary)]">Upcoming Sessions</h2>
             {openSessions && openSessions.length > 0 && (
               <span className="chip chip-success">{openSessions.length}</span>
             )}
@@ -90,28 +90,28 @@ export default async function SessionsPage() {
                           </p>
                           <div className="mt-2 space-y-1.5">
                             <div className="flex items-center gap-1.5">
-                              <Calendar className="w-3.5 h-3.5 text-[#64748B] shrink-0" />
-                              <span className="text-xs text-[#64748B]">
+                              <Calendar className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
+                              <span className="text-xs text-[var(--text-muted)]">
                                 {formatDate(session.date)}
                               </span>
                             </div>
                             <div className="flex items-center gap-1.5">
-                              <MapPin className="w-3.5 h-3.5 text-[#64748B] shrink-0" />
-                              <span className="text-xs text-[#64748B] truncate">
+                              <MapPin className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
+                              <span className="text-xs text-[var(--text-muted)] truncate">
                                 {session.location}
                               </span>
                             </div>
                             {session.notes && (
                               <div className="flex items-start gap-1.5">
-                                <FileText className="w-3.5 h-3.5 text-[#64748B] shrink-0 mt-0.5" />
-                                <span className="text-xs text-[#64748B] line-clamp-2">
+                                <FileText className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0 mt-0.5" />
+                                <span className="text-xs text-[var(--text-muted)] line-clamp-2">
                                   {session.notes}
                                 </span>
                               </div>
                             )}
                             <div className="flex items-center gap-1.5">
-                              <Users className="w-3.5 h-3.5 text-[#64748B] shrink-0" />
-                              <span className="text-xs text-[#64748B]">
+                              <Users className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
+                              <span className="nums text-xs text-[var(--text-muted)]">
                                 {attendeeCount} attending
                               </span>
                             </div>
@@ -135,9 +135,9 @@ export default async function SessionsPage() {
             </StaggerContainer>
           ) : (
             <div className="card-elevated p-8 flex flex-col items-center justify-center text-center">
-              <Calendar className="w-9 h-9 text-[#1E293B] mb-3" />
+              <Calendar className="w-9 h-9 text-[var(--text-dim)] mb-3" />
               <p className="text-sm font-semibold text-shuttle-white mb-1">No upcoming sessions</p>
-              <p className="text-xs text-[#64748B]">Check back later for new sessions.</p>
+              <p className="text-xs text-[var(--text-muted)]">Check back later for new sessions.</p>
             </div>
           )}
         </div>
@@ -151,7 +151,7 @@ export default async function SessionsPage() {
             <StaggerContainer className="space-y-2">
               {closedSessions.map((session) => (
                 <StaggerItem key={session.id}>
-                  <div className="bg-[#161B2E]/60 border border-white/[0.04] rounded-xl p-3 opacity-60">
+                  <div className="bg-[var(--bg-card)]/60 border border-white/[0.04] rounded-xl p-3 opacity-60">
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-semibold text-shuttle-white truncate">
@@ -159,14 +159,14 @@ export default async function SessionsPage() {
                         </p>
                         <div className="mt-1 flex items-center gap-3">
                           <div className="flex items-center gap-1">
-                            <Calendar className="w-3 h-3 text-[#64748B] shrink-0" />
-                            <span className="text-xs text-[#64748B]">
+                            <Calendar className="w-3 h-3 text-[var(--text-muted)] shrink-0" />
+                            <span className="text-xs text-[var(--text-muted)]">
                               {formatDate(session.date)}
                             </span>
                           </div>
                           <div className="flex items-center gap-1">
-                            <MapPin className="w-3 h-3 text-[#64748B] shrink-0" />
-                            <span className="text-xs text-[#64748B] truncate">
+                            <MapPin className="w-3 h-3 text-[var(--text-muted)] shrink-0" />
+                            <span className="text-xs text-[var(--text-muted)] truncate">
                               {session.location}
                             </span>
                           </div>

@@ -51,8 +51,8 @@ export function NotificationLink({
   }
 
   return (
-    <div onClick={handleClick} className={href ? 'cursor-pointer' : ''}>
+    <button type="button" onClick={handleClick} className="cursor-pointer text-left w-full">
       {children}
-    </div>
+    </button>
   );
 }
