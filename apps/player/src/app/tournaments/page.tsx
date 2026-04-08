@@ -8,66 +8,42 @@ import { FadeIn, StaggerContainer, StaggerItem } from '@/components/motion-wrapp
 export default async function TournamentsPage() {
   const supabase = await createServerSupabaseClient();
 
-  // Try new schema (legacy_tournament_participants), fall back to old
-  let tournaments: any[] | null = null;
-  const { data: tournamentsNew } = await supabase
+  const { data: tournaments } = await supabase
     .from('tournaments')
-    .select('*, legacy_tournament_participants(count)')
+    .select('*, tournament_events(count)')
     .order('start_date', { ascending: false });
-
-  if (tournamentsNew) {
-    tournaments = tournamentsNew;
-  } else {
-    const { data: tournamentsOld } = await supabase
-      .from('tournaments')
-      .select('*, tournament_participants(count)')
-      .order('start_date', { ascending: false });
-    if (tournamentsOld) {
-      tournaments = tournamentsOld.map(t => ({
-        ...t,
-        legacy_tournament_participants: t.tournament_participants,
-      }));
-    } else {
-      const { data: fallback } = await supabase
-        .from('tournaments')
-        .select('*')
-        .order('start_date', { ascending: false });
-      tournaments = fallback;
-    }
-  }
 
   return (
     <div className="space-y-6">
-      <FadeIn>
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[#FFD700]/10 flex items-center justify-center">
-            <Award className="w-5 h-5 text-[#FFD700]" />
+      <div className="flex items-center gap-3 reveal reveal-1">
+          <div className="w-10 h-10 rounded-xl bg-[var(--color-gold)]/10 flex items-center justify-center">
+            <Award className="w-5 h-5 text-gold" />
           </div>
-          <h1 className="text-3xl font-black font-display text-shuttle-white tracking-wider uppercase">Tournaments</h1>
+          <div>
+            <p className="eyebrow">Competition</p>
+            <h1 className="display-lg text-shuttle-white">Tournaments</h1>
+          </div>
         </div>
-      </FadeIn>
 
       <FadeIn delay={0.05}>
         <StaggerContainer className="grid gap-3">
           {tournaments?.map((t) => {
-            const lpArr = t.legacy_tournament_participants ?? t.tournament_participants;
-            const count = Array.isArray(lpArr) ? lpArr[0]?.count ?? 0 : 0;
+            const eventsArr = t.tournament_events;
+            const eventCount = Array.isArray(eventsArr) ? eventsArr[0]?.count ?? 0 : 0;
             return (
               <StaggerItem key={t.id}>
                 <Link href={`/tournaments/${t.id}`} className="block group">
-                  <div className={`bg-[#161B2E] border rounded-xl p-4 hover:bg-white/[0.02] transition-all duration-200 ${
-                    t.status === 'active' ? 'border-[#FFD700]/10 hover:border-[#FFD700]/25' : 'border-white/[0.06] hover:border-white/[0.1]'
-                  }`}>
+                  <div className="card-surface card-interactive p-4">
                     <div className="flex items-center justify-between">
                       <div>
                         <h3 className="text-shuttle-white font-semibold">{t.name}</h3>
-                        <p className="text-xs text-[#64748B] mt-1">{formatDate(t.start_date)} &middot; {t.format} &middot; {t.scope}</p>
+                        <p className="text-xs text-[var(--text-muted)] mt-1 nums">{formatDate(t.start_date)} &middot; {t.format} &middot; {t.scope}</p>
                         <div className="flex items-center gap-2 mt-2">
-                          <Badge variant={t.status === 'active' ? 'success' : t.status === 'completed' ? 'neutral' : 'warning'}>{t.status}</Badge>
-                          <span className="flex items-center gap-1 text-xs text-[#64748B]"><Users className="w-3 h-3" />{count}</span>
+                          <span className={t.status === 'active' ? 'chip chip-success' : t.status === 'completed' ? 'chip' : 'chip chip-gold'}>{t.status}</span>
+                          <span className="flex items-center gap-1 text-xs text-[var(--text-muted)] nums"><Users className="w-3 h-3" />{eventCount} event{eventCount !== 1 ? 's' : ''}</span>
                         </div>
                       </div>
-                      <ChevronRight className="w-5 h-5 text-[#475569] group-hover:text-[#FFD700] transition-colors shrink-0" />
+                      <ChevronRight className="w-5 h-5 text-[#475569] group-hover:text-gold transition-colors shrink-0" />
                     </div>
                   </div>
                 </Link>
@@ -75,9 +51,9 @@ export default async function TournamentsPage() {
             );
           })}
           {(!tournaments || tournaments.length === 0) && (
-            <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-12 text-center">
-              <Award className="w-10 h-10 text-[#1E293B] mx-auto mb-3" />
-              <p className="text-[#64748B]">No tournaments yet</p>
+            <div className="card-elevated p-12 text-center">
+              <Award className="w-10 h-10 text-[var(--text-dim)] mx-auto mb-3" />
+              <p className="text-[var(--text-muted)]">No tournaments yet</p>
             </div>
           )}
         </StaggerContainer>

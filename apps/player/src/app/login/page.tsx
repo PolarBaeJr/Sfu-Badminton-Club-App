@@ -82,8 +82,8 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center px-4 py-12 relative overflow-hidden">
       {/* Background glow effects */}
       <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-[#EF4444]/5 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-[#FFD700]/5 rounded-full blur-3xl" />
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-[var(--color-accent)]/5 rounded-full blur-3xl" />
+        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-[var(--color-gold)]/5 rounded-full blur-3xl" />
       </div>
 
       <motion.div
@@ -93,33 +93,33 @@ export default function LoginPage() {
       >
         {/* Logo & Branding */}
         <motion.div variants={fadeUp} custom={0} className="text-center mb-8">
-          {/* Shuttlecock icon */}
+          {/* Logo icon */}
           <motion.div
-            className="w-16 h-16 mx-auto mb-5 rounded-2xl bg-gradient-to-br from-[#EF4444] to-[#DC2626] flex items-center justify-center glow-red"
+            className="w-16 h-16 mx-auto mb-5 rounded-2xl gradient-court flex items-center justify-center glow-red"
             animate={{ y: [0, -6, 0] }}
             transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
           >
-            <span className="text-2xl font-black text-white font-display">SB</span>
+            <span className="text-2xl font-black text-white" style={{ fontFamily: "'Barlow Condensed', sans-serif" }}>SB</span>
           </motion.div>
 
-          <h1 className="text-4xl font-black text-shuttle-white font-display tracking-wider uppercase">
+          <h1 className="display-xl text-shuttle-white">
             SFU Badminton
           </h1>
-          <p className="text-[#94A3B8] mt-2 text-sm tracking-wide">
+          <p className="text-[#94A3B8] mt-2 text-sm tracking-wide eyebrow" style={{ textTransform: 'none', letterSpacing: '0.08em' }}>
             Challenge. Compete. Climb.
           </p>
 
-          {/* Feature pills */}
-          <div className="flex justify-center gap-3 mt-5">
+          {/* Feature chips */}
+          <div className="flex justify-center gap-2 mt-5 flex-wrap">
             {features.map((feat, i) => (
               <motion.div
                 key={feat.label}
                 variants={fadeUp}
                 custom={i + 1}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/5 border border-white/5"
+                className="chip"
               >
-                <feat.icon className={`w-3.5 h-3.5 ${feat.color}`} />
-                <span className="text-xs text-[#94A3B8] font-medium">{feat.label}</span>
+                <feat.icon className={`w-3 h-3 ${feat.color}`} />
+                <span>{feat.label}</span>
               </motion.div>
             ))}
           </div>
@@ -144,7 +144,7 @@ export default function LoginPage() {
                     {mode === m && (
                       <motion.div
                         layoutId="activeTab"
-                        className="absolute inset-0 bg-gradient-to-r from-[#EF4444] to-[#DC2626] rounded-lg"
+                        className="absolute inset-0 gradient-court rounded-lg"
                         transition={{ type: 'spring', bounce: 0.2, duration: 0.5 }}
                       />
                     )}
@@ -168,11 +168,11 @@ export default function LoginPage() {
                       initial={{ scale: 0 }}
                       animate={{ scale: 1 }}
                       transition={{ type: 'spring', bounce: 0.5, delay: 0.1 }}
-                      className="w-14 h-14 rounded-full bg-[#EF4444]/15 flex items-center justify-center mx-auto mb-4"
+                      className="w-14 h-14 rounded-full bg-[var(--color-accent)]/15 flex items-center justify-center mx-auto mb-4"
                     >
-                      <CheckCircle2 className="w-7 h-7 text-[#EF4444]" />
+                      <CheckCircle2 className="w-7 h-7 text-[var(--color-accent)]" />
                     </motion.div>
-                    <p className="text-[#EF4444] font-bold text-lg">Check your email!</p>
+                    <p className="text-[var(--color-accent)] font-bold text-lg">Check your email!</p>
                     <p className="text-[#94A3B8] text-sm mt-2">
                       We sent a magic link to{' '}
                       <strong className="text-shuttle-white">{email}</strong>
@@ -204,7 +204,7 @@ export default function LoginPage() {
                       disabled={googleLoading}
                       variant="outline"
                       size="lg"
-                      className="w-full h-12 bg-white/[0.04] border-white/[0.08] hover:bg-white/[0.08] hover:border-white/[0.12] text-shuttle-white font-semibold transition-all duration-300"
+                      className="w-full h-12 bg-[var(--bg-card)] border-white/[0.08] hover:bg-white/[0.08] hover:border-white/[0.12] text-shuttle-white font-semibold transition-all duration-300"
                     >
                       {googleLoading ? (
                         <Loader2 className="w-5 h-5 animate-spin mr-2" />
@@ -241,7 +241,7 @@ export default function LoginPage() {
                             onChange={(e) => setEmail(e.target.value)}
                             placeholder="your.email@sfu.ca"
                             required
-                            className="h-12 pl-10 bg-white/[0.04] border-white/[0.08] text-shuttle-white placeholder:text-[#475569] focus:border-[#EF4444]/50 focus:ring-[#EF4444]/20 transition-all duration-300"
+                            className="h-12 pl-10 bg-[var(--bg-card)] border-white/[0.08] text-shuttle-white placeholder:text-[#475569] focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20 transition-all duration-300"
                           />
                         </div>
                       </div>
@@ -252,7 +252,7 @@ export default function LoginPage() {
                             initial={{ opacity: 0, height: 0 }}
                             animate={{ opacity: 1, height: 'auto' }}
                             exit={{ opacity: 0, height: 0 }}
-                            className="text-sm text-[#EF4444] bg-[#EF4444]/10 px-3 py-2 rounded-lg"
+                            className="text-sm text-[var(--color-accent)] bg-[var(--color-accent)]/10 px-3 py-2 rounded-lg"
                           >
                             {error}
                           </motion.p>
@@ -263,7 +263,7 @@ export default function LoginPage() {
                         type="submit"
                         disabled={loading}
                         size="lg"
-                        className="w-full h-12 bg-gradient-to-r from-[#EF4444] to-[#DC2626] hover:from-[#DC2626] hover:to-[#B91C1C] text-white font-bold tracking-wide transition-all duration-300 shadow-lg shadow-[#EF4444]/20 hover:shadow-[#EF4444]/30"
+                        className="w-full h-12 gradient-court text-white font-bold tracking-wide transition-all duration-300 shadow-lg shadow-[var(--color-accent)]/20 hover:shadow-[var(--color-accent)]/30"
                       >
                         {loading ? (
                           <Loader2 className="w-5 h-5 animate-spin mr-2" />

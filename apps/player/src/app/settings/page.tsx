@@ -47,8 +47,8 @@ const saveConfirmVariants: any = {
 function SectionHeader({ icon: Icon, title }: { icon: React.ElementType; title: string }) {
   return (
     <div className="flex items-center gap-2.5 mb-4">
-      <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-[#EF4444]/10">
-        <Icon className="w-4 h-4 text-[#EF4444]" />
+      <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-[var(--color-accent)]/10">
+        <Icon className="w-4 h-4 text-[var(--color-accent)]" />
       </div>
       <h2 className="text-lg font-semibold text-[var(--text-primary)]">{title}</h2>
     </div>
@@ -103,8 +103,8 @@ export default function SettingsPage() {
         setDisplayName(data.display_name || '');
         setPhone(data.phone || '');
         setBio(data.bio || '');
-        setShowOnLeaderboard(data.hide_from_leaderboard !== true);
-        setShowActivity(data.show_activity_status !== false);
+        setShowOnLeaderboard(!data.hide_from_leaderboard);
+        setShowActivity(data.show_activity_status !== false); // default true
         setLoaded(true);
       }
     }
@@ -130,7 +130,14 @@ export default function SettingsPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      await updateProfile({ full_name: name, phone: phone || undefined, bio: bio || undefined });
+      await updateProfile({
+        full_name: name,
+        display_name: displayName || undefined,
+        phone: phone || undefined,
+        bio: bio || undefined,
+        hide_from_leaderboard: !showOnLeaderboard,
+        show_activity_status: showActivity,
+      });
       setSaved(true);
       toast('Profile updated', 'success');
       setTimeout(() => setSaved(false), 2000);
@@ -169,8 +176,22 @@ export default function SettingsPage() {
   }
 
   if (!loaded) return (
-    <div className="flex justify-center py-12">
-      <div className="animate-spin h-8 w-8 border-2 border-[var(--color-accent)] border-t-transparent rounded-full" />
+    <div className="max-w-lg mx-auto space-y-5 pt-4">
+      <div className="card-elevated p-6 reveal reveal-1">
+        <div className="skeleton h-4 w-24 mb-4" />
+        <div className="skeleton h-12 w-full mb-3" />
+        <div className="skeleton h-12 w-full" />
+      </div>
+      <div className="card-elevated p-6 reveal reveal-2">
+        <div className="skeleton h-4 w-24 mb-4" />
+        <div className="skeleton h-12 w-full mb-3" />
+        <div className="skeleton h-12 w-full" />
+      </div>
+      <div className="card-elevated p-6 reveal reveal-3">
+        <div className="skeleton h-4 w-24 mb-4" />
+        <div className="skeleton h-12 w-full mb-3" />
+        <div className="skeleton h-12 w-full" />
+      </div>
     </div>
   );
 
@@ -182,8 +203,8 @@ export default function SettingsPage() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4 }}
       >
-        <h1 className="text-2xl font-bold text-[var(--text-primary)]">Settings</h1>
-        <p className="text-sm text-[var(--text-muted)] mt-1">Manage your profile and preferences</p>
+        <p className="eyebrow mb-1">Account</p>
+        <h1 className="display-lg text-[var(--text-primary)]">Settings</h1>
       </motion.div>
 
       {/* Profile Section */}
@@ -193,7 +214,7 @@ export default function SettingsPage() {
         initial="hidden"
         animate="visible"
       >
-        <Card className="!bg-[#161B2E] !border-white/[0.06]">
+        <Card className="bg-[var(--bg-card)] border-[var(--border)]">
           <SectionHeader icon={User} title="Profile" />
           {playerId && (
             <div className="mb-6 flex justify-center">
@@ -275,7 +296,7 @@ export default function SettingsPage() {
         initial="hidden"
         animate="visible"
       >
-        <Card className="!bg-[#161B2E] !border-white/[0.06]">
+        <Card className="bg-[var(--bg-card)] border-[var(--border)]">
           <SectionHeader icon={Palette} title="Appearance" />
           <p className="text-sm text-[var(--text-muted)] mb-4">Choose your preferred theme</p>
           <div className="grid grid-cols-3 gap-3">
@@ -286,8 +307,8 @@ export default function SettingsPage() {
                 onClick={() => handleThemeChange(value)}
                 className={`relative flex flex-col items-center gap-2 px-4 py-4 rounded-xl border text-sm font-medium transition-all duration-200 ${
                   theme === value
-                    ? 'border-[#EF4444] bg-[#EF4444]/10 text-[#EF4444] shadow-[0_0_12px_rgba(239,68,68,0.15)]'
-                    : 'border-white/[0.06] text-[var(--text-muted)] hover:border-white/[0.12] hover:bg-white/[0.03]'
+                    ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/10 text-[var(--color-accent)] glow-red'
+                    : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-hover)] hover:bg-white/[0.03]'
                 }`}
               >
                 <Icon className="w-5 h-5" />
@@ -295,7 +316,7 @@ export default function SettingsPage() {
                 {theme === value && (
                   <motion.div
                     layoutId="theme-indicator"
-                    className="absolute -top-px -right-px w-5 h-5 bg-[#EF4444] rounded-bl-lg rounded-tr-[11px] flex items-center justify-center"
+                    className="absolute -top-px -right-px w-5 h-5 bg-[var(--color-accent)] rounded-bl-lg rounded-tr-[11px] flex items-center justify-center"
                     transition={{ type: 'spring', stiffness: 400, damping: 30 }}
                   >
                     <Check className="w-3 h-3 text-white" />
@@ -314,14 +335,14 @@ export default function SettingsPage() {
         initial="hidden"
         animate="visible"
       >
-        <Card className="!bg-[#161B2E] !border-white/[0.06]">
+        <Card className="bg-[var(--bg-card)] border-[var(--border)]">
           <SectionHeader icon={Bell} title="Notifications" />
           <div className="space-y-2">
             {pushSupported ? (
               <div className="flex items-start gap-3">
                 <div className="mt-0.5">
                   {pushEnabled ? (
-                    <Bell className="w-4 h-4 text-[#EF4444]" />
+                    <Bell className="w-4 h-4 text-[var(--color-accent)]" />
                   ) : (
                     <BellOff className="w-4 h-4 text-[var(--text-muted)]" />
                   )}
@@ -353,8 +374,9 @@ export default function SettingsPage() {
         initial="hidden"
         animate="visible"
       >
-        <Card className="!bg-[#161B2E] !border-white/[0.06]">
+        <Card className="bg-[var(--bg-card)] border-[var(--border)]">
           <SectionHeader icon={Shield} title="Privacy" />
+          <p className="text-xs text-[var(--text-muted)] mb-3">Saved when you tap Save Profile above.</p>
           <div className="space-y-1">
             <Switch
               checked={showOnLeaderboard}
@@ -380,7 +402,7 @@ export default function SettingsPage() {
         initial="hidden"
         animate="visible"
       >
-        <Card className="!bg-[#161B2E] !border-white/[0.06]">
+        <Card className="bg-[var(--bg-card)] border-[var(--border)]">
           <SectionHeader icon={Info} title="About" />
           <div className="space-y-3 text-sm">
             <div className="flex justify-between items-center p-3 rounded-lg bg-white/[0.03]">

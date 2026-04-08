@@ -3,6 +3,7 @@ import './globals.css';
 
 export const dynamic = 'force-dynamic';
 import { Sidebar } from '@/components/sidebar';
+import { MainContent } from '@/components/main-content';
 import { ToastProvider } from '@/components/toast-provider';
 import { SentryUserInit } from '@/components/sentry-user-init';
 
@@ -12,8 +13,6 @@ export const metadata: Metadata = {
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const playerId: string | null = null;
-
   return (
     <html lang="en" data-theme="dark" suppressHydrationWarning>
       <head>
@@ -29,13 +28,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       </head>
       <body className="antialiased">
         <ToastProvider>
-          <SentryUserInit playerId={playerId} />
+          <SentryUserInit playerId={null} />
           <Sidebar />
-          <main className="ml-64 min-h-screen p-6 lg:p-8 transition-all duration-300">
-            <div className="max-w-7xl mx-auto">
-              {children}
-            </div>
-          </main>
+          <MainContent>
+            {children}
+          </MainContent>
         </ToastProvider>
       </body>
     </html>

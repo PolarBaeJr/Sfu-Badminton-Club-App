@@ -49,12 +49,11 @@ export default async function EventPage({
     .order('round_number')
     .order('bracket_position');
 
-  // Fetch all active players for participant add
+  // Fetch all eligible players for participant add (includes admins)
   const { data: allPlayers } = await supabase
     .from('players')
     .select('id, full_name')
-    .eq('active_flag', true)
-    .neq('status', 'pending_approval')
+    .not('status', 'in', '("suspended","pending_approval")')
     .order('full_name');
 
   return (

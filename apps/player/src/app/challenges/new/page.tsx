@@ -18,6 +18,7 @@ import {
   Loader2,
   Zap,
   Info,
+  Calendar,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -36,6 +37,8 @@ export default function NewChallengePage() {
   const [partnerId, setPartnerId] = useState('');
   const [opponentPartnerId, setOpponentPartnerId] = useState('');
   const [note, setNote] = useState('');
+  const [scheduledDate, setScheduledDate] = useState('');
+  const [scheduledTime, setScheduledTime] = useState('');
   const [loading, setLoading] = useState(false);
   const [players, setPlayers] = useState<PlayerOption[]>([]);
   const [myElo, setMyElo] = useState({ singles: 1200, doubles: 1200 });
@@ -103,6 +106,8 @@ export default function NewChallengePage() {
         partner_id: type === 'doubles' && partnerId ? partnerId : undefined,
         opponent_partner_id: type === 'doubles' && opponentPartnerId ? opponentPartnerId : undefined,
         note: note || undefined,
+        scheduled_date: scheduledDate || undefined,
+        scheduled_time: scheduledTime || undefined,
       });
       toast('Challenge sent!', 'success');
       router.push('/challenges');
@@ -118,44 +123,59 @@ export default function NewChallengePage() {
   }));
 
   return (
-    <div className="max-w-lg mx-auto space-y-6">
-      <Link href="/challenges" className="inline-flex items-center gap-1.5 text-sm text-[#64748B] hover:text-[#94A3B8] transition-colors">
-        <ArrowLeft className="w-4 h-4" />
+    <div className="max-w-lg mx-auto space-y-5 pb-28 px-4 sm:px-0">
+      {/* Back link */}
+      <Link
+        href="/challenges"
+        className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors duration-150 group min-h-[44px] py-2"
+      >
+        <ArrowLeft className="w-4 h-4 transition-transform duration-150 group-hover:-translate-x-0.5" />
         Back to Challenges
       </Link>
 
       <motion.div
-        initial={{ opacity: 0, y: 12 }}
+        initial={{ opacity: 0, y: 14 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
+        transition={{ duration: 0.38, ease: [0.16, 1, 0.3, 1] }}
       >
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 rounded-xl bg-[#EF4444]/10 flex items-center justify-center">
-            <Swords className="w-5 h-5 text-[#EF4444]" />
+        {/* Page header */}
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-11 h-11 rounded-xl bg-[var(--color-accent)]/10 flex items-center justify-center glow-red shrink-0">
+            <Swords className="w-5 h-5 text-[var(--color-accent)]" />
           </div>
-          <h1 className="text-3xl font-black font-display text-shuttle-white tracking-wider uppercase">
-            New Challenge
-          </h1>
+          <div>
+            <p className="eyebrow">Create</p>
+            <h1 className="display-lg">New Challenge</h1>
+          </div>
         </div>
 
-        <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-6">
+        <div className="card-elevated rounded-xl p-5 bg-court-lines">
           <form onSubmit={handleSubmit} className="space-y-5">
-            {/* Type Toggle */}
+
+            {/* Match Type Toggle */}
             <div>
-              <label className="block text-sm text-[#94A3B8] font-medium mb-2">Match Type</label>
+              <label className="eyebrow block mb-2">Match Type</label>
               <div className="flex gap-2">
                 {(['singles', 'doubles'] as const).map((t) => (
                   <button
                     key={t}
                     type="button"
                     onClick={() => setType(t)}
-                    className={`flex-1 py-3 rounded-xl text-sm font-bold capitalize transition-all duration-200 ${
+                    className={`flex-1 min-h-[44px] py-2.5 rounded-xl text-sm font-bold capitalize transition-all duration-200 press border ${
                       type === t
-                        ? 'bg-[#EF4444]/15 border border-[#EF4444]/30 text-[#EF4444]'
-                        : 'bg-white/[0.03] border border-white/[0.06] text-[#64748B] hover:text-[#94A3B8]'
+                        ? 'bg-[var(--color-accent)]/15 border-[var(--color-accent)]/30 text-[var(--color-accent)] glow-red'
+                        : 'bg-white/[0.03] border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:border-[var(--border-hover)]'
                     }`}
                   >
-                    {t}
+                    {t === 'singles' ? (
+                      <span className="flex items-center justify-center gap-1.5">
+                        <Swords className="w-3.5 h-3.5" /> Singles
+                      </span>
+                    ) : (
+                      <span className="flex items-center justify-center gap-1.5">
+                        <Swords className="w-3.5 h-3.5" /> Doubles
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -194,17 +214,17 @@ export default function NewChallengePage() {
 
             {/* Rated Toggle */}
             <div>
-              <label className="block text-sm text-[#94A3B8] font-medium mb-2">Rating Impact</label>
+              <label className="eyebrow block mb-2">Rating Impact</label>
               <button
                 type="button"
                 onClick={() => setRated(!rated)}
-                className={`w-full py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all duration-200 ${
+                className={`w-full min-h-[44px] py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all duration-200 press border ${
                   rated
-                    ? 'bg-[#FFD700]/10 border border-[#FFD700]/20 text-[#FFD700]'
-                    : 'bg-white/[0.03] border border-white/[0.06] text-[#64748B]'
+                    ? 'bg-[var(--color-gold)]/10 border-[var(--color-gold)]/25 text-[var(--color-gold)] glow-gold'
+                    : 'bg-white/[0.03] border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-hover)]'
                 }`}
               >
-                <Zap className="w-4 h-4" />
+                <Zap className={`w-4 h-4 transition-transform duration-200 ${rated ? 'scale-110' : ''}`} />
                 {rated ? 'Rated Match' : 'Casual (No Elo change)'}
               </button>
             </div>
@@ -214,24 +234,61 @@ export default function NewChallengePage() {
               <motion.div
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: 'auto' }}
-                className="bg-white/[0.03] border border-white/[0.06] rounded-xl p-4"
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.25 }}
+                className="card-surface rounded-xl p-4 overflow-hidden"
               >
                 <div className="flex items-center gap-2 mb-3">
-                  <Info className="w-3.5 h-3.5 text-[#94A3B8]" />
-                  <span className="text-xs text-[#94A3B8] font-medium uppercase tracking-wider">Elo Preview</span>
+                  <Info className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                  <span className="eyebrow">Elo Preview</span>
                 </div>
-                <div className="flex justify-between">
-                  <div className="flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-[#EF4444]" />
-                    <span className="text-sm font-bold text-[#EF4444]">Win: +{eloPreview.winDelta}</span>
+                <div className="flex justify-between gap-3">
+                  <div className="flex items-center gap-2 bg-[var(--color-success)]/5 rounded-lg px-3 py-2 flex-1">
+                    <TrendingUp className="w-4 h-4 text-[var(--color-success)] shrink-0" />
+                    <div>
+                      <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wide">Win</p>
+                      <p className="nums text-base font-black text-[var(--color-success)]">+{eloPreview.winDelta}</p>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <TrendingDown className="w-4 h-4 text-[#EF4444]" />
-                    <span className="text-sm font-bold text-[#EF4444]">Loss: {eloPreview.lossDelta}</span>
+                  <div className="flex items-center gap-2 bg-[var(--color-accent)]/5 rounded-lg px-3 py-2 flex-1">
+                    <TrendingDown className="w-4 h-4 text-[var(--color-accent)] shrink-0" />
+                    <div>
+                      <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wide">Loss</p>
+                      <p className="nums text-base font-black text-[var(--color-accent)]">{eloPreview.lossDelta}</p>
+                    </div>
                   </div>
                 </div>
               </motion.div>
             )}
+
+            {/* Scheduled Date/Time */}
+            <div>
+              <label className="eyebrow block mb-2">
+                <span className="flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5" />
+                  When to Play (optional)
+                </span>
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <input
+                  id="scheduled_date"
+                  name="scheduled_date"
+                  type="date"
+                  value={scheduledDate}
+                  onChange={(e) => setScheduledDate(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                  className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl px-3 py-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40 focus:border-transparent transition-colors min-h-[44px] w-full"
+                />
+                <input
+                  id="scheduled_time"
+                  name="scheduled_time"
+                  type="time"
+                  value={scheduledTime}
+                  onChange={(e) => setScheduledTime(e.target.value)}
+                  className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl px-3 py-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40 focus:border-transparent transition-colors min-h-[44px] w-full"
+                />
+              </div>
+            </div>
 
             <Textarea
               label="Note (optional)"
@@ -244,12 +301,12 @@ export default function NewChallengePage() {
               type="submit"
               disabled={loading}
               size="lg"
-              className="w-full h-12 bg-gradient-to-r from-[#EF4444] to-[#DC2626] hover:from-[#DC2626] hover:to-[#B91C1C] text-white font-bold tracking-wide shadow-lg shadow-[#EF4444]/20 hover:shadow-[#EF4444]/30 transition-all duration-300"
+              className="w-full min-h-[52px] btn-primary-cta press"
             >
               {loading ? (
                 <Loader2 className="w-5 h-5 animate-spin mr-2" />
               ) : (
-                <Send className="w-4 h-4 mr-2" />
+                <Send className="w-4 h-4 mr-2 transition-transform duration-150 group-hover:translate-x-0.5" />
               )}
               Send Challenge
             </Button>

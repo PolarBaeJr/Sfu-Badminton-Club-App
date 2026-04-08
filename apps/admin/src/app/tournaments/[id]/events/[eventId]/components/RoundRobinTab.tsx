@@ -77,11 +77,11 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles }
     <>
       <div className="space-y-6">
         {/* Standings Table */}
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden" role="region" aria-label="Round robin standings">
           <div className="px-4 py-3 border-b border-[var(--border)]">
             <h3 className="text-sm font-semibold text-[var(--text-primary)]">Standings</h3>
           </div>
-          <table className="w-full">
+          <table className="w-full" aria-label="Standings table">
             <thead>
               <tr className="border-b border-[var(--border)]">
                 <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase px-4 py-2 w-10">#</th>
@@ -130,11 +130,11 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles }
                     <div className="flex items-center gap-2 flex-1 min-w-0">
                       <span className="text-[10px] font-mono text-[var(--text-muted)]">M{m.match_number}</span>
                       <span className={`text-sm truncate ${isCompleted && winnerId === aId ? 'text-[var(--color-success)] font-semibold' : 'text-[var(--text-primary)]'}`}>
-                        {nameMap[aId] ?? 'TBD'}
+                        {nameMap[aId] ?? 'TBD'}{isCompleted && winnerId === aId && <span className="sr-only"> (Winner)</span>}
                       </span>
                       <span className="text-xs text-[var(--text-muted)]">vs</span>
                       <span className={`text-sm truncate ${isCompleted && winnerId === bId ? 'text-[var(--color-success)] font-semibold' : 'text-[var(--text-primary)]'}`}>
-                        {nameMap[bId] ?? 'TBD'}
+                        {nameMap[bId] ?? 'TBD'}{isCompleted && winnerId === bId && <span className="sr-only"> (Winner)</span>}
                       </span>
                     </div>
                     {isCompleted && m.scores && (
@@ -145,7 +145,8 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles }
                     {canScore && (
                       <button
                         onClick={() => setScoreMatch(m)}
-                        className="text-xs text-[var(--color-accent)] font-medium ml-2 hover:underline"
+                        aria-label={`Enter score for match ${m.match_number ?? ''}`}
+                        className="text-xs text-[var(--color-accent)] font-medium ml-2 hover:underline focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none rounded"
                       >
                         Score
                       </button>

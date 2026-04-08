@@ -1,15 +1,12 @@
 // Generated types matching the SQL schema
 
 export type PlayerStatus =
-  | 'eligible_competitive'
-  | 'competitive_associate'
+  | 'competitive'
   | 'recreational'
-  | 'alumni_external'
-  | 'suspended'
-  | 'inactive'
-  | 'pending_approval';
+  | 'pending_approval'
+  | 'suspended';
 
-export type UserRole = 'player' | 'moderator' | 'admin' | 'coach_executive';
+export type UserRole = 'player' | 'admin';
 
 export type MatchFormat = 'bo3_21' | 'single_21' | 'single_15' | 'single_11';
 
@@ -49,7 +46,7 @@ export type SessionStatus = 'open' | 'closed';
 export type TournamentScope = 'open' | 'eligible_only';
 export type TournamentType = 'internal' | 'open_official' | 'invitational';
 export type TournamentFormat = 'singles' | 'doubles' | 'mixed_event';
-export type TournamentStatus = 'draft' | 'active' | 'completed';
+export type TournamentStatus = 'draft' | 'active' | 'completed' | 'archived';
 
 export type DisputeReason =
   | 'score_wrong'
@@ -103,15 +100,10 @@ export interface Player {
   phone: string | null;
   status: PlayerStatus;
   role: UserRole;
-  eligibility_flag: boolean;
   active_flag: boolean;
   onboarding_completed: boolean;
   avatar_url: string | null;
   bio: string | null;
-  profile_visibility: string;
-  hide_from_leaderboard: boolean;
-  show_activity_status: boolean;
-  notification_preferences: Record<string, unknown>;
   joined_at: string;
   last_active_at: string;
   created_at: string;

@@ -78,15 +78,20 @@ export function LeaderboardTab({ event, participants, pairs, isDoubles }: Props)
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `leaderboard-${event.id}.csv`;
+    const eventName = (event.event_type as string || 'event').replace(/[^a-z0-9]/gi, '-');
+    a.download = `leaderboard-${eventName}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
 
   const SortHeader = ({ field, label, className }: { field: SortField; label: string; className?: string }) => (
     <th
-      className={`text-xs font-medium text-[var(--text-muted)] uppercase px-3 py-2 cursor-pointer select-none hover:text-[var(--text-primary)] ${className ?? ''}`}
+      className={`text-xs font-medium text-[var(--text-muted)] uppercase px-3 py-2 cursor-pointer select-none hover:text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none ${className ?? ''}`}
       onClick={() => toggleSort(field)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSort(field); } }}
+      tabIndex={0}
+      role="button"
+      aria-label={`Sort by ${label}${sortField === field ? (sortDir === 'asc' ? ', ascending' : ', descending') : ''}`}
     >
       <span className="flex items-center gap-1">
         {label}
@@ -101,7 +106,7 @@ export function LeaderboardTab({ event, participants, pairs, isDoubles }: Props)
         <h3 className="text-sm font-semibold text-[var(--text-primary)]">
           Leaderboard ({ranked.length} entries)
         </h3>
-        <Button size="sm" variant="ghost" onClick={exportCSV}>
+        <Button size="sm" variant="ghost" onClick={exportCSV} aria-label="Export leaderboard as CSV" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
           <Download className="w-3.5 h-3.5 mr-1" /> Export CSV
         </Button>
       </div>
@@ -130,7 +135,7 @@ export function LeaderboardTab({ event, participants, pairs, isDoubles }: Props)
                   <td className="px-3 py-2.5 text-center text-sm font-mono">
                     {r.elo_change != null ? (
                       <span className={r.elo_change > 0 ? 'text-[var(--color-success)]' : r.elo_change < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--text-muted)]'}>
-                        {r.elo_change > 0 ? '+' : ''}{r.elo_change}
+                        <span className="sr-only">{r.elo_change > 0 ? 'Gained' : r.elo_change < 0 ? 'Lost' : 'No change'}: </span>{r.elo_change > 0 ? '+' : ''}{r.elo_change}
                       </span>
                     ) : '-'}
                   </td>

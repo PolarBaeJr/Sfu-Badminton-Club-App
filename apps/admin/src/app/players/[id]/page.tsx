@@ -47,10 +47,9 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
           <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">{player.full_name}</h1>
           <p className="text-sm text-[var(--text-muted)]">{player.email}</p>
           <div className="flex gap-2 mt-2">
-            <Badge variant={player.status === 'eligible_competitive' ? 'success' : player.status === 'suspended' ? 'danger' : 'default'}>
+            <Badge variant={player.status === 'competitive' ? 'success' : player.status === 'suspended' ? 'danger' : 'default'}>
               {PLAYER_STATUS_LABELS[player.status as keyof typeof PLAYER_STATUS_LABELS]}
             </Badge>
-            {player.eligibility_flag && <Badge variant="info">Eligible</Badge>}
             <Badge variant="neutral">
               <Shield className="w-3 h-3 inline mr-1" />
               {player.role}

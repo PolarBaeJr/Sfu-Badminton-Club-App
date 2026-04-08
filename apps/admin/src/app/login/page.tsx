@@ -42,7 +42,7 @@ export default function LoginPage() {
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center -ml-64 relative overflow-hidden"
+      className="min-h-screen flex items-center justify-center relative overflow-hidden"
       style={{
         background: 'radial-gradient(ellipse at top, rgba(233,69,96,0.08) 0%, transparent 50%), radial-gradient(ellipse at bottom right, rgba(15,52,96,0.3) 0%, transparent 50%), var(--bg-card)',
       }}

@@ -131,7 +131,7 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
                       <td className="px-3 py-2.5 text-sm text-center font-mono">
                         {e.elo_change !== null && e.elo_change !== undefined ? (
                           <span className={e.elo_change > 0 ? 'text-[var(--color-success)]' : e.elo_change < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--text-muted)]'}>
-                            {e.elo_change > 0 ? '+' : ''}{e.elo_change}
+                            <span className="sr-only">{e.elo_change > 0 ? 'Gained' : e.elo_change < 0 ? 'Lost' : 'No change'}: </span>{e.elo_change > 0 ? '+' : ''}{e.elo_change}
                           </span>
                         ) : '-'}
                       </td>
@@ -141,8 +141,8 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
                     {bonus > 0 ? `+${bonus}` : '-'}
                   </td>
                   <td className="px-3 py-2.5">
-                    <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ color, backgroundColor: `${color}15` }}>
-                      {label}
+                    <span className="text-xs font-medium px-2 py-0.5 rounded-full" role="status" style={{ color, backgroundColor: `${color}15` }}>
+                      <span className="sr-only">Finish: </span>{label}
                     </span>
                   </td>
                 </tr>
@@ -168,7 +168,7 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
                     Match #{m.match_number ?? '?'} — {m.round_name ?? `Round ${m.round_number}`}
                     {scoreStr && <span className="text-[var(--text-muted)] ml-2">({scoreStr})</span>}
                   </div>
-                  <Button size="sm" variant="ghost" onClick={() => setUndoConfirmId(m.id)}>
+                  <Button size="sm" variant="ghost" onClick={() => setUndoConfirmId(m.id)} aria-label={`Undo match ${m.match_number ?? ''} result`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
                     <Undo2 className="w-3.5 h-3.5 mr-1" /> Undo
                   </Button>
                 </div>
@@ -184,10 +184,10 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
           This will reset the match, reverse Elo changes, and remove the winner from the next match. Are you sure?
         </p>
         <div className="flex gap-2">
-          <Button onClick={handleUndo} loading={undoLoading} className="flex-1">
+          <Button onClick={handleUndo} loading={undoLoading} className="flex-1 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
             Confirm Undo
           </Button>
-          <Button variant="ghost" onClick={() => setUndoConfirmId(null)}>Cancel</Button>
+          <Button variant="ghost" onClick={() => setUndoConfirmId(null)} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">Cancel</Button>
         </div>
       </Dialog>
     </div>

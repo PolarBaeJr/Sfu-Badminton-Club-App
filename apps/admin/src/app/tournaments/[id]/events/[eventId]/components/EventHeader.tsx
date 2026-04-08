@@ -86,7 +86,7 @@ export function EventHeader({ tournament, event, isDoubles, totalEntries, checke
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6 space-y-5">
       {/* Title + Badges */}
-      <div className="flex items-start justify-between">
+      <div className="flex flex-col sm:flex-row items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg bg-[var(--color-accent)]/10 flex items-center justify-center">
@@ -104,12 +104,13 @@ export function EventHeader({ tournament, event, isDoubles, totalEntries, checke
           <div className="flex gap-2 mt-3 ml-[52px]">
             <span
               className="text-xs font-semibold px-2.5 py-1 rounded-full"
+              role="status"
               style={{
                 color: TOURNAMENT_EVENT_STATUS_COLORS[status],
                 backgroundColor: `${TOURNAMENT_EVENT_STATUS_COLORS[status]}15`,
               }}
             >
-              {TOURNAMENT_EVENT_STATUS_LABELS[status]}
+              <span className="sr-only">Event status: </span>{TOURNAMENT_EVENT_STATUS_LABELS[status]}
             </span>
             <Badge variant="default">{format === 'round_robin' ? 'Round Robin' : 'Single Elimination'}</Badge>
             <Badge variant="default">{(event.match_format as string).replace(/_/g, ' ')}</Badge>
@@ -123,6 +124,8 @@ export function EventHeader({ tournament, event, isDoubles, totalEntries, checke
               variant="ghost"
               size="sm"
               loading={lockLoading}
+              aria-label={drawLocked ? 'Unlock draw' : 'Lock draw'}
+              className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
               onClick={async () => {
                 setLockLoading(true);
                 try {
@@ -149,6 +152,7 @@ export function EventHeader({ tournament, event, isDoubles, totalEntries, checke
               onClick={handleAction}
               loading={loading}
               disabled={actionDisabled}
+              className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
             >
               {actionLabel[status] ?? 'Next Step'}
             </Button>
@@ -157,7 +161,7 @@ export function EventHeader({ tournament, event, isDoubles, totalEntries, checke
       </div>
 
       {/* Status Stepper */}
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1" role="progressbar" aria-label={`Event progress: ${TOURNAMENT_EVENT_STATUS_LABELS[status]}`} aria-valuenow={currentStepIdx + 1} aria-valuemin={1} aria-valuemax={STATUS_STEPS.length}>
         {STATUS_STEPS.map((step, i) => {
           const isActive = i === currentStepIdx;
           const isPast = i < currentStepIdx;
@@ -186,7 +190,7 @@ export function EventHeader({ tournament, event, isDoubles, totalEntries, checke
       </div>
 
       {/* Stats Row */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard
           icon={<Users className="w-4 h-4" />}
           label="Registered"

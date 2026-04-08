@@ -23,7 +23,7 @@ Deno.serve(async (_req) => {
   const { data: toMark, error } = await supabase
     .from('players')
     .update({ active_flag: false, updated_at: new Date().toISOString() })
-    .in('status', ['eligible_competitive', 'competitive_associate', 'recreational', 'alumni_external'])
+    .in('status', ['competitive', 'recreational'])
     .eq('active_flag', true)
     .lt('last_active_at', cutoff)
     .select('id, full_name');

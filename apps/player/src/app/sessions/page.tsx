@@ -1,10 +1,11 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
 import { Badge } from '@badminton/ui';
 import { formatDate } from '@badminton/shared';
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { Calendar, MapPin, Users, ChevronRight, CheckCircle2 } from 'lucide-react';
+import { Calendar, MapPin, FileText, Users } from 'lucide-react';
 import { FadeIn, StaggerContainer, StaggerItem } from '@/components/motion-wrapper';
+import { CheckInButton } from './check-in-button';
+import { AddToCalendarButton } from './add-to-calendar';
 
 export default async function SessionsPage() {
   const player = await getCurrentPlayer();
@@ -12,76 +13,174 @@ export default async function SessionsPage() {
 
   const supabase = await createServerSupabaseClient();
 
-  const { data: sessions } = await supabase
-    .from('sessions')
-    .select('*, session_attendance(count)')
-    .order('date', { ascending: false })
-    .limit(20);
+  const [{ data: openSessions }, { data: closedSessions }, { data: myAttendance }, { data: attendanceCounts }] = await Promise.all([
+    supabase
+      .from('sessions')
+      .select('*')
+      .eq('status', 'open')
+      .order('date', { ascending: false }),
+    supabase
+      .from('sessions')
+      .select('*')
+      .eq('status', 'closed')
+      .order('date', { ascending: false })
+      .limit(10),
+    supabase
+      .from('session_attendance')
+      .select('session_id')
+      .eq('player_id', player.id),
+    supabase
+      .from('session_attendance')
+      .select('session_id')
+      .then(({ data, error }) => ({
+        data: data
+          ? Object.entries(
+              data.reduce<Record<string, number>>((acc, row) => {
+                acc[row.session_id] = (acc[row.session_id] ?? 0) + 1;
+                return acc;
+              }, {})
+            ).map(([session_id, count]) => ({ session_id, count }))
+          : null,
+        error,
+      })),
+  ]);
 
-  const { data: myAttendance } = await supabase
-    .from('session_attendance')
-    .select('session_id')
-    .eq('player_id', player.id);
-
-  const checkedInSessions = new Set(myAttendance?.map((a) => a.session_id) || []);
+  const checkedInSessionIds = new Set((myAttendance ?? []).map((r) => r.session_id));
+  const countBySession = Object.fromEntries(
+    (attendanceCounts ?? []).map((r) => [r.session_id, r.count])
+  );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-28">
+      {/* Header */}
       <FadeIn>
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[#EF4444]/10 flex items-center justify-center">
-            <Calendar className="w-5 h-5 text-[#EF4444]" />
+        <div className="flex items-center gap-3 reveal reveal-1">
+          <div className="w-9 h-9 rounded-xl bg-[var(--color-accent)]/10 flex items-center justify-center">
+            <Calendar className="w-4 h-4 text-court-red" />
           </div>
-          <h1 className="text-3xl font-black font-display text-shuttle-white tracking-wider uppercase">Sessions</h1>
+          <div>
+            <p className="eyebrow">Practice</p>
+            <h1 className="display-lg text-shuttle-white">Sessions</h1>
+          </div>
         </div>
       </FadeIn>
 
+      {/* Upcoming Sessions */}
       <FadeIn delay={0.05}>
-        <StaggerContainer className="grid gap-3">
-          {sessions?.map((s) => {
-            const count = Array.isArray(s.session_attendance) ? s.session_attendance[0]?.count ?? 0 : 0;
-            const checkedIn = checkedInSessions.has(s.id);
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <h2 className="eyebrow text-[var(--text-primary)]">Upcoming Sessions</h2>
+            {openSessions && openSessions.length > 0 && (
+              <span className="chip chip-success">{openSessions.length}</span>
+            )}
+          </div>
 
-            return (
-              <StaggerItem key={s.id}>
-                <Link href={`/sessions/${s.id}`} className="block group">
-                  <div className={`bg-[#161B2E] border rounded-xl p-4 hover:bg-white/[0.02] transition-all duration-200 ${
-                    s.status === 'open' ? 'border-[#EF4444]/10 hover:border-[#EF4444]/25' : 'border-white/[0.06] hover:border-white/[0.1]'
-                  }`}>
-                    <div className="flex items-center justify-between">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 mb-1.5">
-                          <h3 className="text-shuttle-white font-semibold truncate">{s.name || 'Session'}</h3>
-                          {checkedIn && (
-                            <span className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-[#EF4444]/15 text-[#EF4444] font-medium shrink-0">
-                              <CheckCircle2 className="w-3 h-3" /> Checked In
-                            </span>
-                          )}
+          {openSessions && openSessions.length > 0 ? (
+            <StaggerContainer className="space-y-3">
+              {openSessions.map((session) => {
+                const isCheckedIn = checkedInSessionIds.has(session.id);
+                const attendeeCount = countBySession[session.id] ?? 0;
+                return (
+                  <StaggerItem key={session.id}>
+                    <div className="card-surface card-interactive p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-shuttle-white truncate">
+                            {session.name ?? 'Practice Session'}
+                          </p>
+                          <div className="mt-2 space-y-1.5">
+                            <div className="flex items-center gap-1.5">
+                              <Calendar className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
+                              <span className="text-xs text-[var(--text-muted)]">
+                                {formatDate(session.date)}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <MapPin className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
+                              <span className="text-xs text-[var(--text-muted)] truncate">
+                                {session.location}
+                              </span>
+                            </div>
+                            {session.notes && (
+                              <div className="flex items-start gap-1.5">
+                                <FileText className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0 mt-0.5" />
+                                <span className="text-xs text-[var(--text-muted)] line-clamp-2">
+                                  {session.notes}
+                                </span>
+                              </div>
+                            )}
+                            <div className="flex items-center gap-1.5">
+                              <Users className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
+                              <span className="nums text-xs text-[var(--text-muted)]">
+                                {attendeeCount} attending
+                              </span>
+                            </div>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-3 text-xs text-[#64748B]">
-                          <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{formatDate(s.date)}</span>
-                          <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{s.location}</span>
-                          <span className="flex items-center gap-1"><Users className="w-3 h-3" />{count}</span>
-                        </div>
-                        <div className="mt-2">
-                          <Badge variant={s.status === 'open' ? 'success' : 'neutral'}>{s.status}</Badge>
+                        <div className="flex flex-col items-end gap-2 shrink-0">
+                          <Badge variant="success">Open</Badge>
+                          <CheckInButton sessionId={session.id} isCheckedIn={isCheckedIn} />
+                          <AddToCalendarButton
+                            name={session.name ?? 'Practice Session'}
+                            date={session.date}
+                            location={session.location}
+                            notes={session.notes}
+                          />
                         </div>
                       </div>
-                      <ChevronRight className="w-5 h-5 text-[#475569] group-hover:text-[#EF4444] transition-colors shrink-0 ml-3" />
                     </div>
-                  </div>
-                </Link>
-              </StaggerItem>
-            );
-          })}
-          {(!sessions || sessions.length === 0) && (
-            <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-12 text-center">
-              <Calendar className="w-10 h-10 text-[#1E293B] mx-auto mb-3" />
-              <p className="text-[#64748B]">No sessions</p>
+                  </StaggerItem>
+                );
+              })}
+            </StaggerContainer>
+          ) : (
+            <div className="card-elevated p-8 flex flex-col items-center justify-center text-center">
+              <Calendar className="w-9 h-9 text-[var(--text-dim)] mb-3" />
+              <p className="text-sm font-semibold text-shuttle-white mb-1">No upcoming sessions</p>
+              <p className="text-xs text-[var(--text-muted)]">Check back later for new sessions.</p>
             </div>
           )}
-        </StaggerContainer>
+        </div>
       </FadeIn>
+
+      {/* Past Sessions */}
+      {closedSessions && closedSessions.length > 0 && (
+        <FadeIn delay={0.15}>
+          <div>
+            <h2 className="eyebrow mb-3">Past Sessions</h2>
+            <StaggerContainer className="space-y-2">
+              {closedSessions.map((session) => (
+                <StaggerItem key={session.id}>
+                  <div className="bg-[var(--bg-card)]/60 border border-white/[0.04] rounded-xl p-3 opacity-60">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold text-shuttle-white truncate">
+                          {session.name ?? 'Practice Session'}
+                        </p>
+                        <div className="mt-1 flex items-center gap-3">
+                          <div className="flex items-center gap-1">
+                            <Calendar className="w-3 h-3 text-[var(--text-muted)] shrink-0" />
+                            <span className="text-xs text-[var(--text-muted)]">
+                              {formatDate(session.date)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <MapPin className="w-3 h-3 text-[var(--text-muted)] shrink-0" />
+                            <span className="text-xs text-[var(--text-muted)] truncate">
+                              {session.location}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <Badge variant="neutral">Closed</Badge>
+                    </div>
+                  </div>
+                </StaggerItem>
+              ))}
+            </StaggerContainer>
+          </div>
+        </FadeIn>
+      )}
     </div>
   );
 }

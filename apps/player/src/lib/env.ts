@@ -17,6 +17,7 @@ const envSchema = z.object({
   SENTRY_AUTH_TOKEN: z.string().optional(),
   NEXT_PUBLIC_POSTHOG_KEY: z.string().optional(),
   NEXT_PUBLIC_POSTHOG_HOST: z.string().url().optional(),
+  RESEND_API_KEY: z.string().min(1).optional(),
 });
 
 export function validateEnv() {

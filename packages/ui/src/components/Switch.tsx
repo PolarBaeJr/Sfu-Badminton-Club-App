@@ -37,8 +37,8 @@ export function Switch({ checked, onChange, label, description, disabled, classN
       >
         <span
           className={cn(
-            'inline-block h-4 w-4 rounded-full bg-white transition-transform',
-            checked ? 'translate-x-5' : 'translate-x-0'
+            'inline-block h-4 w-4 rounded-full shadow-sm transition-transform',
+            checked ? 'bg-white translate-x-5' : 'bg-[var(--text-muted)] translate-x-0'
           )}
         />
       </button>

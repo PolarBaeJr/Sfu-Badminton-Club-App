@@ -15,7 +15,7 @@ export function Badge({ variant = 'default', children, className }: BadgeProps) 
     success: 'bg-[var(--color-success)]/20 text-[var(--color-success)]',
     warning: 'bg-[var(--color-warning)]/20 text-[var(--color-warning)]',
     danger: 'bg-[var(--color-danger)]/20 text-[var(--color-danger)]',
-    info: 'bg-blue-500/20 text-blue-400',
+    info: 'bg-[rgba(59,130,246,0.12)] text-[var(--color-info)] border border-[rgba(59,130,246,0.3)]',
     neutral: 'bg-[var(--border-hover)] text-[var(--text-muted)]',
   };
 

@@ -1,18 +1,10 @@
 'use server';
 
-import { createAdminClient } from '@/lib/supabase-server';
+import { createAdminClient, getAuthenticatedAdmin } from '@/lib/supabase-server';
 import { revalidatePath } from 'next/cache';
 
 async function getAdminPlayer() {
-  // DEV MODE: grab first player as admin (no auth flow)
-  const adminClient = createAdminClient();
-  const { data: player } = await adminClient
-    .from('players')
-    .select('*')
-    .limit(1)
-    .single();
-  if (!player) throw new Error('No players found in database');
-  return { ...player, role: 'admin' };
+  return getAuthenticatedAdmin();
 }
 
 export async function updatePlatformSettings(

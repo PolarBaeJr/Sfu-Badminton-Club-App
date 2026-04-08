@@ -1,13 +1,10 @@
 import type { MatchFormat, PlayerStatus, EventType, TournamentEventType, TournamentMatchFormat, TournamentEventStatus } from '../types/database';
 
 export const PLAYER_STATUS_LABELS: Record<PlayerStatus, string> = {
-  eligible_competitive: 'Eligible Competitive',
-  competitive_associate: 'Competitive Associate',
+  competitive: 'Competitive',
   recreational: 'Recreational',
-  alumni_external: 'Alumni / External',
-  suspended: 'Suspended',
-  inactive: 'Inactive',
   pending_approval: 'Pending Approval',
+  suspended: 'Suspended',
 };
 
 export const MATCH_FORMAT_LABELS: Record<MatchFormat, string> = {

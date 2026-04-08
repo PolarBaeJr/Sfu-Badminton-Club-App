@@ -7,14 +7,11 @@ import {
   Swords,
   TrendingUp,
   TrendingDown,
-  Calendar,
   ChevronRight,
   Zap,
   Trophy,
   Target,
-  Clock,
   Flame,
-  MapPin,
 } from 'lucide-react';
 import { FadeIn, StaggerContainer, StaggerItem } from '@/components/motion-wrapper';
 
@@ -27,7 +24,6 @@ export default async function FeedPage() {
 
   const [
     { data: pendingChallenges },
-    { data: openSessions },
     { data: recentMatches },
     { count: unreadNotifs },
   ] = await Promise.all([
@@ -37,7 +33,6 @@ export default async function FeedPage() {
       .eq('player_id', player.id)
       .eq('confirmation_status', 'pending')
       .limit(5),
-    supabase.from('sessions').select('*').eq('status', 'open').limit(3),
     supabase
       .from('match_participants')
       .select('*, match:matches(score_summary, played_at, match_type, result_status)')
@@ -56,17 +51,18 @@ export default async function FeedPage() {
       <FadeIn>
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-black text-shuttle-white font-display tracking-wide">
+            <p className="eyebrow mb-1">Dashboard</p>
+            <h1 className="display-lg text-shuttle-white">
               Hey, {player.full_name.split(' ')[0]}!
             </h1>
-            <p className="text-[#64748B] text-sm mt-0.5">Here&apos;s what&apos;s happening</p>
+            <p className="text-[var(--text-muted)] text-sm mt-1">Here&apos;s what&apos;s happening</p>
           </div>
           {unreadNotifs && unreadNotifs > 0 ? (
             <Link
               href="/notifications"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#EF4444]/10 text-[#EF4444] text-xs font-semibold hover:bg-[#EF4444]/15 transition-colors"
+              className="chip chip-red press"
             >
-              <Flame className="w-3.5 h-3.5" />
+              <Flame className="w-3 h-3" />
               {unreadNotifs} new
             </Link>
           ) : null}
@@ -78,17 +74,12 @@ export default async function FeedPage() {
         <FadeIn delay={0.05}>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {/* Singles Elo */}
-            <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4 group hover:border-[#EF4444]/20 transition-all duration-300">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-7 h-7 rounded-lg bg-[#EF4444]/10 flex items-center justify-center">
-                  <Target className="w-3.5 h-3.5 text-[#EF4444]" />
-                </div>
-                <span className="text-xs text-[#64748B] font-medium">Singles</span>
-              </div>
-              <p className="text-2xl font-black text-shuttle-white font-display">{r.singles_elo}</p>
-              <p className="text-xs text-[#64748B] mt-1">
+            <div className="card-surface card-interactive p-4 group reveal reveal-1">
+              <p className="eyebrow mb-2">Singles ELO</p>
+              <p className="display-md gradient-text-red nums">{r.singles_elo}</p>
+              <p className="text-xs text-[var(--text-muted)] mt-1.5">
                 {r.singles_provisional ? (
-                  <span className="text-[#FFD700]">Provisional</span>
+                  <span className="chip chip-gold">Provisional</span>
                 ) : (
                   <>Win rate: {singlesWinRate}</>
                 )}
@@ -96,17 +87,12 @@ export default async function FeedPage() {
             </div>
 
             {/* Doubles Elo */}
-            <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4 group hover:border-[#FFD700]/20 transition-all duration-300">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-7 h-7 rounded-lg bg-[#FFD700]/10 flex items-center justify-center">
-                  <Swords className="w-3.5 h-3.5 text-[#FFD700]" />
-                </div>
-                <span className="text-xs text-[#64748B] font-medium">Doubles</span>
-              </div>
-              <p className="text-2xl font-black text-shuttle-white font-display">{r.doubles_elo}</p>
-              <p className="text-xs text-[#64748B] mt-1">
+            <div className="card-surface card-interactive p-4 group reveal reveal-2">
+              <p className="eyebrow mb-2">Doubles ELO</p>
+              <p className="display-md gradient-text-gold nums">{r.doubles_elo}</p>
+              <p className="text-xs text-[var(--text-muted)] mt-1.5">
                 {r.doubles_provisional ? (
-                  <span className="text-[#FFD700]">Provisional</span>
+                  <span className="chip chip-gold">Provisional</span>
                 ) : (
                   <>Win rate: {doublesWinRate}</>
                 )}
@@ -114,32 +100,22 @@ export default async function FeedPage() {
             </div>
 
             {/* Singles Record */}
-            <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-7 h-7 rounded-lg bg-[#EF4444]/10 flex items-center justify-center">
-                  <TrendingUp className="w-3.5 h-3.5 text-[#EF4444]" />
-                </div>
-                <span className="text-xs text-[#64748B] font-medium">Singles W/L</span>
-              </div>
-              <p className="text-2xl font-black text-shuttle-white font-display">
-                {r.singles_wins ?? 0}
-                <span className="text-[#64748B] font-normal text-lg mx-1">/</span>
-                {r.singles_losses ?? 0}
+            <div className="card-surface p-4 reveal reveal-3">
+              <p className="eyebrow mb-2">Singles W/L</p>
+              <p className="display-md text-shuttle-white nums">
+                <span className="text-emerald-400">{r.singles_wins ?? 0}</span>
+                <span className="text-[var(--text-dim)] font-normal mx-1">/</span>
+                <span className="text-[var(--color-accent)]">{r.singles_losses ?? 0}</span>
               </p>
             </div>
 
             {/* Doubles Record */}
-            <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-7 h-7 rounded-lg bg-[#FFD700]/10 flex items-center justify-center">
-                  <TrendingDown className="w-3.5 h-3.5 text-[#FFD700]" />
-                </div>
-                <span className="text-xs text-[#64748B] font-medium">Doubles W/L</span>
-              </div>
-              <p className="text-2xl font-black text-shuttle-white font-display">
-                {r.doubles_wins ?? 0}
-                <span className="text-[#64748B] font-normal text-lg mx-1">/</span>
-                {r.doubles_losses ?? 0}
+            <div className="card-surface p-4 reveal reveal-4">
+              <p className="eyebrow mb-2">Doubles W/L</p>
+              <p className="display-md text-shuttle-white nums">
+                <span className="text-emerald-400">{r.doubles_wins ?? 0}</span>
+                <span className="text-[var(--text-dim)] font-normal mx-1">/</span>
+                <span className="text-[var(--color-accent)]">{r.doubles_losses ?? 0}</span>
               </p>
             </div>
           </div>
@@ -149,15 +125,13 @@ export default async function FeedPage() {
       {/* Pending Challenges */}
       {pendingChallenges && pendingChallenges.length > 0 && (
         <FadeIn delay={0.1}>
-          <div className="bg-[#161B2E] border border-[#FFD700]/10 rounded-xl p-4">
+          <div className="card-elevated p-4" style={{ borderColor: 'rgba(252,211,77,0.12)' }}>
             <div className="flex items-center gap-2 mb-3">
-              <Zap className="w-4 h-4 text-[#FFD700]" />
-              <h2 className="text-sm font-bold text-shuttle-white uppercase tracking-wider font-display">
+              <Zap className="w-4 h-4 text-gold" />
+              <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>
                 Pending Challenges
               </h2>
-              <span className="ml-auto bg-[#FFD700]/10 text-[#FFD700] text-xs font-bold px-2 py-0.5 rounded-full">
-                {pendingChallenges.length}
-              </span>
+              <span className="ml-auto chip chip-gold">{pendingChallenges.length}</span>
             </div>
             <StaggerContainer className="space-y-2">
               {pendingChallenges.map((pc) => {
@@ -167,23 +141,23 @@ export default async function FeedPage() {
                 return (
                   <StaggerItem key={pc.id}>
                     <Link href={`/challenges/${c.id}`} className="block group">
-                      <div className="flex items-center justify-between p-3 bg-white/[0.03] rounded-lg border border-white/[0.04] hover:border-[#FFD700]/20 hover:bg-white/[0.05] transition-all duration-200">
+                      <div className="card-surface card-interactive flex items-center justify-between p-3">
                         <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-full bg-[#FFD700]/10 flex items-center justify-center">
-                            <Swords className="w-4 h-4 text-[#FFD700]" />
+                          <div className="w-9 h-9 rounded-full bg-[var(--color-gold)]/10 flex items-center justify-center shrink-0">
+                            <Swords className="w-4 h-4 text-gold" />
                           </div>
                           <div>
                             <p className="text-sm font-semibold text-shuttle-white">
                               {creator?.full_name as string} challenged you
                             </p>
-                            <p className="text-xs text-[#64748B]">
+                            <p className="text-xs text-[var(--text-muted)] mt-0.5">
                               {c.type as string} &middot; {MATCH_FORMAT_LABELS[(c.format as string) as keyof typeof MATCH_FORMAT_LABELS]}
                             </p>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <Badge variant="warning">Respond</Badge>
-                          <ChevronRight className="w-4 h-4 text-[#64748B] group-hover:text-[#FFD700] transition-colors" />
+                          <span className="chip chip-gold">Respond</span>
+                          <ChevronRight className="w-4 h-4 text-[var(--text-muted)] group-hover:text-gold transition-colors" />
                         </div>
                       </div>
                     </Link>
@@ -195,122 +169,72 @@ export default async function FeedPage() {
         </FadeIn>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Open Sessions */}
-        <FadeIn delay={0.15}>
-          <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4 h-full">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-[#EF4444]" />
-                <h2 className="text-sm font-bold text-shuttle-white uppercase tracking-wider font-display">
-                  Open Sessions
-                </h2>
-              </div>
-              <Link href="/sessions" className="text-xs text-[#EF4444] hover:text-[#F87171] font-medium transition-colors">
-                View all
-              </Link>
+      {/* Recent Matches */}
+      <FadeIn delay={0.2}>
+        <div className="card-elevated p-4 w-full">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Trophy className="w-4 h-4 text-gold" />
+              <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>Recent Matches</h2>
             </div>
-            {openSessions && openSessions.length > 0 ? (
-              <div className="space-y-2">
-                {openSessions.map((s) => (
-                  <Link key={s.id} href={`/sessions/${s.id}`} className="block group">
-                    <div className="p-3 bg-white/[0.03] rounded-lg border border-white/[0.04] hover:border-[#EF4444]/20 hover:bg-white/[0.05] transition-all duration-200">
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm font-semibold text-shuttle-white">{s.name || 'Session'}</p>
-                        <ChevronRight className="w-4 h-4 text-[#64748B] group-hover:text-[#EF4444] transition-colors" />
-                      </div>
-                      <div className="flex items-center gap-3 mt-1.5">
-                        <span className="flex items-center gap-1 text-xs text-[#64748B]">
-                          <MapPin className="w-3 h-3" />
-                          {s.location}
-                        </span>
-                        <span className="flex items-center gap-1 text-xs text-[#64748B]">
-                          <Clock className="w-3 h-3" />
-                          {s.date}
-                        </span>
-                      </div>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center py-6 text-center">
-                <Calendar className="w-8 h-8 text-[#1E293B] mb-2" />
-                <p className="text-sm text-[#64748B]">No open sessions</p>
-              </div>
-            )}
+            <Link href="/my-stats" className="text-xs text-court-red hover:text-[#F87171] font-semibold transition-colors">
+              All stats →
+            </Link>
           </div>
-        </FadeIn>
-
-        {/* Recent Matches */}
-        <FadeIn delay={0.2}>
-          <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4 h-full">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Trophy className="w-4 h-4 text-[#FFD700]" />
-                <h2 className="text-sm font-bold text-shuttle-white uppercase tracking-wider font-display">
-                  Recent Matches
-                </h2>
-              </div>
-              <Link href="/my-stats" className="text-xs text-[#EF4444] hover:text-[#F87171] font-medium transition-colors">
-                All stats
-              </Link>
-            </div>
-            {recentMatches && recentMatches.length > 0 ? (
-              <div className="space-y-2">
-                {recentMatches.map((mp) => {
-                  const m = mp.match as Record<string, unknown> | null;
-                  if (!m) return null;
-                  const isWin = mp.win_flag === true;
-                  const isLoss = mp.win_flag === false;
-                  return (
-                    <div
-                      key={mp.id}
-                      className="flex items-center justify-between p-3 bg-white/[0.03] rounded-lg border border-white/[0.04]"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black ${
-                          isWin
-                            ? 'bg-[#EF4444]/15 text-[#EF4444]'
-                            : isLoss
-                              ? 'bg-[#EF4444]/15 text-[#EF4444]'
-                              : 'bg-white/[0.06] text-[#64748B]'
-                        }`}>
-                          {isWin ? 'W' : isLoss ? 'L' : '?'}
-                        </div>
-                        <span className="text-sm font-mono text-shuttle-white font-medium">
-                          {m.score_summary as string || '-'}
-                        </span>
+          {recentMatches && recentMatches.length > 0 ? (
+            <div className="space-y-2">
+              {recentMatches.map((mp) => {
+                const m = mp.match as Record<string, unknown> | null;
+                if (!m) return null;
+                const isWin = mp.win_flag === true;
+                const isLoss = mp.win_flag === false;
+                return (
+                  <div
+                    key={mp.id}
+                    className="flex items-center justify-between p-3 bg-[var(--bg-card)] rounded-lg border border-white/[0.04]"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black ${
+                        isWin
+                          ? 'bg-emerald-500/15 text-emerald-400'
+                          : isLoss
+                            ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]'
+                            : 'bg-white/[0.06] text-[var(--text-muted)]'
+                      }`}>
+                        {isWin ? 'W' : isLoss ? 'L' : '?'}
                       </div>
-                      <span className="text-xs text-[#475569]">
-                        {m.played_at ? formatRelativeTime(m.played_at as string) : ''}
+                      <span className="text-sm font-mono text-shuttle-white font-medium nums">
+                        {m.score_summary as string || '-'}
                       </span>
                     </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center py-6 text-center">
-                <Trophy className="w-8 h-8 text-[#1E293B] mb-2" />
-                <p className="text-sm text-[#64748B]">No matches yet</p>
-              </div>
-            )}
-          </div>
-        </FadeIn>
-      </div>
+                    <span className="text-xs text-[var(--text-dim)]">
+                      {m.played_at ? formatRelativeTime(m.played_at as string) : ''}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-8 text-center">
+              <Trophy className="w-8 h-8 text-[var(--text-dim)] mb-2" />
+              <p className="text-sm text-[var(--text-muted)]">No matches yet</p>
+            </div>
+          )}
+        </div>
+      </FadeIn>
 
       {/* Quick Actions */}
       <FadeIn delay={0.25}>
         <div className="flex gap-3">
-          <Link href="/challenges/new" className="flex-1">
-            <button className="w-full h-12 rounded-xl bg-gradient-to-r from-[#EF4444] to-[#DC2626] text-white font-bold text-sm tracking-wide flex items-center justify-center gap-2 shadow-lg shadow-[#EF4444]/20 hover:shadow-[#EF4444]/30 hover:from-[#DC2626] hover:to-[#B91C1C] transition-all duration-300">
+          <Link href="/challenges/new" className="flex-1 press">
+            <button type="button" className="w-full h-12 rounded-xl gradient-court text-white font-bold text-sm tracking-wide flex items-center justify-center gap-2 glow-red hover:opacity-90 transition-opacity">
               <Swords className="w-4 h-4" />
               Create Challenge
             </button>
           </Link>
-          <Link href="/leaderboard" className="flex-1">
-            <button className="w-full h-12 rounded-xl bg-white/[0.04] border border-white/[0.08] text-shuttle-white font-bold text-sm tracking-wide flex items-center justify-center gap-2 hover:bg-white/[0.08] hover:border-white/[0.12] transition-all duration-300">
-              <Trophy className="w-4 h-4 text-[#FFD700]" />
+          <Link href="/leaderboard" className="flex-1 press">
+            <button type="button" className="w-full h-12 rounded-xl bg-white/[0.04] border border-white/[0.08] text-shuttle-white font-bold text-sm tracking-wide flex items-center justify-center gap-2 hover:bg-white/[0.08] hover:border-white/[0.12] transition-all duration-300">
+              <Trophy className="w-4 h-4 text-gold" />
               Leaderboard
             </button>
           </Link>

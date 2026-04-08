@@ -1,85 +1,118 @@
+export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge, Button } from '@badminton/ui';
+import { Card, Badge } from '@badminton/ui';
 import { formatDate } from '@badminton/shared';
-import { SessionActions, CreateSessionForm } from './actions';
-import { CalendarDays, MapPin, Users, Clock } from 'lucide-react';
+import { CreateSessionForm, SessionCardMenu, AttendanceDialog } from './actions';
+import { Calendar, MapPin, FileText } from 'lucide-react';
 
 export default async function SessionsPage() {
   const supabase = createAdminClient();
 
   const { data: sessions } = await supabase
     .from('sessions')
-    .select('*, host:players!sessions_host_player_id_fkey(full_name), session_attendance(count)')
-    .order('date', { ascending: false })
-    .limit(30);
+    .select('*')
+    .order('date', { ascending: false });
+
+  const { data: attendanceRows } = await supabase
+    .from('session_attendance')
+    .select('session_id, player_id, checked_in_at, players(full_name)');
+
+  // Group attendance records by session_id
+  type AttendeeEntry = { player_id: string; full_name: string; checked_in_at: string };
+  const attendanceMap: Record<string, AttendeeEntry[]> = {};
+  for (const row of attendanceRows ?? []) {
+    const name =
+      Array.isArray(row.players)
+        ? (row.players[0]?.full_name ?? 'Unknown')
+        : ((row.players as { full_name: string } | null)?.full_name ?? 'Unknown');
+    const sid = row.session_id as string;
+    if (!attendanceMap[sid]) attendanceMap[sid] = [];
+    attendanceMap[sid].push({ player_id: row.player_id as string, full_name: name, checked_in_at: row.checked_in_at as string });
+  }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--color-accent)]/10">
-            <CalendarDays className="w-5 h-5 text-[var(--color-accent)]" />
+            <Calendar className="w-5 h-5 text-[var(--color-accent)]" />
           </div>
           <div>
             <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">SESSIONS</h1>
-            <p className="text-sm text-[var(--text-muted)]">Manage and track club sessions</p>
+            <p className="text-sm text-[var(--text-muted)] mt-0.5">
+              Schedule and manage club practice sessions
+            </p>
           </div>
         </div>
         <CreateSessionForm />
       </div>
 
-      {/* Session Cards */}
-      <div className="grid gap-4">
-        {sessions?.map((s) => {
-          const attendanceCount = Array.isArray(s.session_attendance) ? s.session_attendance[0]?.count ?? 0 : 0;
-          return (
-            <div key={s.id} className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-5 hover:border-[var(--border-hover)] transition-colors">
-              <div className="flex items-center justify-between">
-                <div className="space-y-3">
-                  {/* Title + Status */}
-                  <div className="flex items-center gap-3">
-                    <h3 className="text-lg text-[var(--text-primary)] font-semibold">{s.name || 'Session'}</h3>
-                    <Badge variant={s.status === 'open' ? 'success' : 'neutral'}>{s.status}</Badge>
+      {/* Sessions List */}
+      {sessions && sessions.length > 0 ? (
+        <div className="space-y-3">
+          {sessions.map((session) => (
+            <Card key={session.id}>
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1 min-w-0 space-y-2">
+                  {/* Name + Status */}
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <h2 className="text-base font-semibold text-[var(--text-primary)]">
+                      {session.name || 'Untitled Session'}
+                    </h2>
+                    <Badge variant={session.status === 'open' ? 'success' : 'neutral'}>
+                      {session.status === 'open' ? 'Open' : 'Closed'}
+                    </Badge>
                   </div>
 
-                  {/* Metadata row */}
-                  <div className="flex flex-wrap items-center gap-4 text-sm text-[var(--text-muted)]">
-                    <span className="inline-flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5" />
-                      {formatDate(s.date)}
-                    </span>
-                    <span className="inline-flex items-center gap-1.5">
-                      <MapPin className="w-3.5 h-3.5" />
-                      {s.location}
-                    </span>
-                    <span className="inline-flex items-center gap-1.5">
-                      <Users className="w-3.5 h-3.5" />
-                      {attendanceCount} checked in
-                    </span>
-                    <span className="text-xs opacity-70">
-                      Host: {(s.host as Record<string, unknown>)?.full_name as string || 'N/A'}
-                    </span>
+                  {/* Date + Location */}
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <div className="flex items-center gap-1.5 text-sm text-[var(--text-secondary)]">
+                      <Calendar className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                      {formatDate(session.date)}
+                    </div>
+                    <div className="flex items-center gap-1.5 text-sm text-[var(--text-secondary)]">
+                      <MapPin className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                      {session.location}
+                    </div>
                   </div>
+
+                  {/* Notes preview */}
+                  {session.notes && (
+                    <div className="flex items-start gap-1.5 text-sm text-[var(--text-muted)]">
+                      <FileText className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                      <span className="line-clamp-1">{session.notes}</span>
+                    </div>
+                  )}
+
+                  {/* Attendance count + view dialog */}
+                  <AttendanceDialog
+                    sessionId={session.id}
+                    attendees={attendanceMap[session.id] ?? []}
+                  />
                 </div>
 
-                {s.status === 'open' && <SessionActions sessionId={s.id} />}
+                {/* Three-dot menu */}
+                <div className="flex-shrink-0">
+                  <SessionCardMenu session={session} />
+                </div>
               </div>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <Card>
+          <div className="flex flex-col items-center justify-center py-12 px-4">
+            <div className="flex items-center justify-center w-14 h-14 rounded-full bg-[var(--bg-surface)] mb-4">
+              <Calendar className="w-7 h-7 text-[var(--text-muted)]" />
             </div>
-          );
-        })}
-
-        {/* Empty State */}
-        {(!sessions || sessions.length === 0) && (
-          <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--bg-card)] p-12 flex flex-col items-center gap-3">
-            <div className="w-14 h-14 rounded-full bg-[var(--border-hover)] flex items-center justify-center">
-              <CalendarDays className="w-7 h-7 text-[var(--text-muted)]" />
-            </div>
-            <p className="text-[var(--text-primary)] font-medium">No sessions yet</p>
-            <p className="text-sm text-[var(--text-muted)]">Create your first session to get started.</p>
+            <p className="text-[var(--text-primary)] font-medium mb-1">No sessions yet</p>
+            <p className="text-sm text-[var(--text-muted)]">
+              Create your first session to get started
+            </p>
           </div>
-        )}
-      </div>
+        </Card>
+      )}
     </div>
   );
 }

@@ -37,21 +37,27 @@ function SeedCell({
   entryId,
   seedNumber,
   canEdit,
+  maxSeed,
+  usedSeeds,
   onSave,
 }: {
   entryId: string;
   seedNumber: number | null;
   canEdit: boolean;
+  maxSeed: number;
+  usedSeeds: Set<number>;
   onSave: (id: string, seed: number | null) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(seedNumber != null ? String(seedNumber) : '');
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
   function startEdit() {
     if (!canEdit) return;
     setValue(seedNumber != null ? String(seedNumber) : '');
+    setError('');
     setEditing(true);
     setTimeout(() => inputRef.current?.select(), 0);
   }
@@ -59,7 +65,15 @@ function SeedCell({
   async function commit() {
     const parsed = value.trim() === '' ? null : parseInt(value, 10);
     if (parsed !== null && (isNaN(parsed) || parsed < 1)) {
-      setEditing(false);
+      setError('Min 1');
+      return;
+    }
+    if (parsed !== null && parsed > maxSeed) {
+      setError(`Max ${maxSeed}`);
+      return;
+    }
+    if (parsed !== null && parsed !== seedNumber && usedSeeds.has(parsed)) {
+      setError('Taken');
       return;
     }
     if (parsed === seedNumber) { setEditing(false); return; }
@@ -71,20 +85,25 @@ function SeedCell({
 
   if (editing) {
     return (
-      <input
-        ref={inputRef}
-        type="number"
-        min={1}
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') commit();
-          if (e.key === 'Escape') setEditing(false);
-        }}
-        className="w-12 text-center text-sm font-mono bg-[var(--bg-elevated)] border border-[var(--color-accent)] rounded px-1 py-0.5 outline-none"
-        autoFocus
-      />
+      <div className="flex items-center gap-1">
+        <input
+          ref={inputRef}
+          type="number"
+          min={1}
+          max={maxSeed}
+          value={value}
+          onChange={(e) => { setValue(e.target.value); setError(''); }}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit();
+            if (e.key === 'Escape') setEditing(false);
+          }}
+          aria-label="Seed number"
+          className={`w-12 text-center text-sm font-mono bg-[var(--bg-elevated)] border rounded px-1 py-0.5 outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 ${error ? 'border-[var(--color-danger)]' : 'border-[var(--color-accent)]'}`}
+          autoFocus
+        />
+        {error && <span className="text-[10px] text-[var(--color-danger)]">{error}</span>}
+      </div>
     );
   }
 
@@ -93,7 +112,8 @@ function SeedCell({
       type="button"
       onClick={startEdit}
       disabled={!canEdit || saving}
-      className={`group flex items-center gap-1 text-sm font-mono text-[var(--text-muted)] ${canEdit ? 'hover:text-[var(--text-primary)] cursor-pointer' : ''}`}
+      aria-label={`Edit seed${seedNumber != null ? ` ${seedNumber}` : ''}`}
+      className={`group flex items-center gap-1 text-sm font-mono text-[var(--text-muted)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none rounded ${canEdit ? 'hover:text-[var(--text-primary)] cursor-pointer' : ''}`}
     >
       {saving ? (
         <span className="opacity-50">…</span>
@@ -188,6 +208,10 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     }
   }
 
+  const usedSeeds = new Set(
+    (entries as any[]).map((e: any) => e.seed_number).filter((s: number | null) => s != null) as number[]
+  );
+
   const registeredPlayerIds = new Set(
     isDoubles
       ? (pairs as any[]).flatMap((p: any) => [p.player1_id, p.player2_id])
@@ -210,7 +234,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
             )}
           </span>
           {drawLocked && (
-            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-[var(--color-warning)]/15 text-[var(--color-warning)]">
+            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-[var(--color-warning)]/15 text-[var(--color-warning)]" role="status">
               Draw Locked
             </span>
           )}
@@ -218,7 +242,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
         <div className="flex gap-2">
           {canModify && !drawLocked && (
             <>
-              <Button size="sm" variant="ghost" onClick={async () => {
+              <Button size="sm" variant="ghost" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={async () => {
                 setLoading(true);
                 try {
                   await clearSeeds(event.id as string);
@@ -231,10 +255,10 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               }} loading={loading}>
                 <XCircle className="w-3.5 h-3.5 mr-1" /> Clear Seeds
               </Button>
-              <Button size="sm" variant="ghost" onClick={handleAutoSeed} loading={loading}>
+              <Button size="sm" variant="ghost" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={handleAutoSeed} loading={loading}>
                 <ArrowUpDown className="w-3.5 h-3.5 mr-1" /> Auto-Seed
               </Button>
-              <Button size="sm" onClick={() => setAddOpen(true)}>
+              <Button size="sm" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={() => setAddOpen(true)}>
                 <Plus className="w-3.5 h-3.5 mr-1" /> Add {isDoubles ? 'Pair' : 'Player'}
               </Button>
             </>
@@ -282,6 +306,8 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                       entryId={pair.id}
                       seedNumber={pair.seed_number}
                       canEdit={canModify && !drawLocked}
+                      maxSeed={activeEntries.length}
+                      usedSeeds={usedSeeds}
                       onSave={handleSeedSave}
                     />
                   </td>
@@ -294,13 +320,13 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                     <span className="text-sm font-mono text-[var(--text-muted)]">{pair.combined_elo ?? '-'}</span>
                   </td>
                   <td className="px-4 py-3">
-                    <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ color: STATUS_COLORS[pair.status], backgroundColor: `${STATUS_COLORS[pair.status]}15` }}>
-                      {pair.status}
+                    <span className="text-xs font-medium px-2 py-0.5 rounded-full" role="status" style={{ color: STATUS_COLORS[pair.status], backgroundColor: `${STATUS_COLORS[pair.status]}15` }}>
+                      <span className="sr-only">Status: </span>{pair.status}
                     </span>
                   </td>
                   {canModify && !drawLocked && (
                     <td className="px-4 py-3 text-right">
-                      <Button size="sm" variant="ghost" onClick={() => handleRemove(pair.id)} loading={actionLoading === pair.id}>
+                      <Button size="sm" variant="ghost" onClick={() => handleRemove(pair.id)} loading={actionLoading === pair.id} aria-label={`Remove pair ${pair.pair_name ?? ''}`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
                         <Trash2 className="w-3.5 h-3.5 text-[var(--color-danger)]" />
                       </Button>
                     </td>
@@ -319,6 +345,8 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                         entryId={p.id}
                         seedNumber={p.seed_number}
                         canEdit={canModify && !drawLocked}
+                        maxSeed={activeEntries.length}
+                        usedSeeds={usedSeeds}
                         onSave={handleSeedSave}
                       />
                     </td>
@@ -332,13 +360,13 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                       <span className="text-sm font-mono text-[var(--text-muted)]">{elo}</span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ color: STATUS_COLORS[p.status], backgroundColor: `${STATUS_COLORS[p.status]}15` }}>
-                        {p.status}
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-full" role="status" style={{ color: STATUS_COLORS[p.status], backgroundColor: `${STATUS_COLORS[p.status]}15` }}>
+                        <span className="sr-only">Status: </span>{p.status}
                       </span>
                     </td>
                     {canModify && !drawLocked && (
                       <td className="px-4 py-3 text-right">
-                        <Button size="sm" variant="ghost" onClick={() => handleRemove(p.id)} loading={actionLoading === p.id}>
+                        <Button size="sm" variant="ghost" onClick={() => handleRemove(p.id)} loading={actionLoading === p.id} aria-label={`Remove participant ${player?.full_name ?? ''}`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
                           <Trash2 className="w-3.5 h-3.5 text-[var(--color-danger)]" />
                         </Button>
                       </td>
@@ -371,7 +399,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               label="Player 2"
               value={player2Id}
               onChange={(e) => setPlayer2Id(e.target.value)}
-              options={playerOptions}
+              options={playerOptions.filter(p => p.value !== playerId)}
             />
           )}
           <div className="flex gap-2 pt-2">

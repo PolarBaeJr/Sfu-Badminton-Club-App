@@ -11,11 +11,13 @@
     "dev": "npx turbo run dev",
     "build": "npx turbo run build",
     "lint": "npx turbo run lint",
-    "type-check": "npx turbo run type-check"
+    "type-check": "npx turbo run type-check",
+    "test": "npx turbo run test"
   },
   "packageManager": "npm@10.9.3",
   "devDependencies": {
     "turbo": "^2.1.0",
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "vitest": "^4.1.2"
   }
 }

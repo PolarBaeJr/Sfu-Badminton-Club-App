@@ -1,9 +1,10 @@
 'use client';
 
 import { Button } from '@badminton/ui';
-import { markAllNotificationsRead } from '@/lib/actions';
+import { markAllNotificationsRead, markNotificationRead } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 export function NotificationActions() {
   const [loading, setLoading] = useState(false);
@@ -24,5 +25,34 @@ export function NotificationActions() {
     <Button size="sm" variant="ghost" onClick={handleMarkAll} loading={loading}>
       Mark All Read
     </Button>
+  );
+}
+
+export function NotificationLink({
+  notificationId,
+  href,
+  isRead,
+  children,
+}: {
+  notificationId: string;
+  href: string | null;
+  isRead: boolean;
+  children: React.ReactNode;
+}) {
+  const router = useRouter();
+
+  async function handleClick() {
+    if (!isRead) {
+      await markNotificationRead(notificationId);
+    }
+    if (href) {
+      router.push(href);
+    }
+  }
+
+  return (
+    <button type="button" onClick={handleClick} className="cursor-pointer text-left w-full">
+      {children}
+    </button>
   );
 }

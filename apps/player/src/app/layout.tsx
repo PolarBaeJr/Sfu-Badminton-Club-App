@@ -58,7 +58,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   }
 
   return (
-    <html lang="en" suppressHydrationWarning className={cn("font-sans", dmSans.variable)}>
+    <html lang="en" suppressHydrationWarning data-theme="dark" className={cn("font-sans", dmSans.variable)}>
       <head>
         <meta name="theme-color" content="#0A0E1A" />
         <meta name="apple-mobile-web-app-capable" content="yes" />

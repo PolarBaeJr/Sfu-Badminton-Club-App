@@ -22,8 +22,25 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
   const router = useRouter();
 
   if (isDoubles) {
-    // Doubles registration requires admin for now
-    return null;
+    if (playerRegistration) {
+      return (
+        <div className="flex items-center gap-2">
+          <span
+            className={`chip ${playerRegistration.status === 'checked_in' ? 'chip-success' : ''}`}
+            style={playerRegistration.status !== 'checked_in' ? { borderColor: 'rgba(59,130,246,0.35)', background: 'rgba(59,130,246,0.1)', color: '#93C5FD' } : undefined}
+            role="status"
+          >
+            <span className="sr-only">Registration status: </span>
+            {playerRegistration.status === 'checked_in' ? '✓ Checked In' : 'Registered (Doubles)'}
+          </span>
+        </div>
+      );
+    }
+    return (
+      <p className="text-xs text-[var(--text-secondary)] italic">
+        Doubles registration is managed by the tournament admin.
+      </p>
+    );
   }
 
   async function handleRegister() {
@@ -39,6 +56,7 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
   }
 
   async function handleWithdraw() {
+    if (!confirm('Are you sure you want to withdraw from this event?')) return;
     setLoading(true);
     try {
       await withdrawFromEvent(eventId);
@@ -63,11 +81,16 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
   }
 
   if (!playerRegistration) {
-    // Not registered
     if (eventStatus === 'registration') {
       return (
-        <Button onClick={handleRegister} loading={loading} size="sm">
-          <UserPlus className="w-3.5 h-3.5 mr-1.5" /> Register
+        <Button
+          onClick={handleRegister}
+          loading={loading}
+          size="sm"
+          className="press min-h-[44px] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+        >
+          <UserPlus className="w-3.5 h-3.5 mr-1.5" />
+          Register
         </Button>
       );
     }
@@ -77,15 +100,28 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
   const regStatus = playerRegistration.status;
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 flex-wrap">
       {regStatus === 'registered' && eventStatus === 'checkin' && (
-        <Button onClick={handleCheckIn} loading={loading} size="sm">
-          <CheckCircle className="w-3.5 h-3.5 mr-1.5" /> Check In
+        <Button
+          onClick={handleCheckIn}
+          loading={loading}
+          size="sm"
+          className="press min-h-[44px] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+        >
+          <CheckCircle className="w-3.5 h-3.5 mr-1.5" />
+          Check In
         </Button>
       )}
       {(regStatus === 'registered' || regStatus === 'checked_in') && eventStatus !== 'completed' && (
-        <Button onClick={handleWithdraw} loading={loading} size="sm" variant="ghost">
-          <UserMinus className="w-3.5 h-3.5 mr-1.5" /> Withdraw
+        <Button
+          onClick={handleWithdraw}
+          loading={loading}
+          size="sm"
+          variant="ghost"
+          className="press min-h-[44px] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+        >
+          <UserMinus className="w-3.5 h-3.5 mr-1.5" />
+          Withdraw
         </Button>
       )}
     </div>

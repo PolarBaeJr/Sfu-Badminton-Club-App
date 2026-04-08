@@ -5,7 +5,8 @@ import { createClient } from '@/lib/supabase-browser';
 import { Avatar, Badge } from '@badminton/ui';
 import Link from 'next/link';
 import { getPostHogClient } from '@/lib/posthog';
-import { Trophy, Medal, Crown, ChevronRight, Loader2 } from 'lucide-react';
+import { getSeasonTier } from '@badminton/shared';
+import { Trophy, Medal, Crown, ChevronRight, Loader2, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 type LeaderboardEntry = {
@@ -13,7 +14,6 @@ type LeaderboardEntry = {
   full_name: string;
   avatar_url: string | null;
   status: string;
-  eligibility_flag: boolean;
   ratings: {
     singles_elo: number;
     doubles_elo: number;
@@ -35,13 +35,14 @@ const tabs = [
 ];
 
 const rankIcons = [Crown, Medal, Trophy];
-const rankColors = ['text-[#FFD700]', 'text-[#C0C0C0]', 'text-[#CD7F32]'];
-const rankBg = ['bg-[#FFD700]/10 border-[#FFD700]/20', 'bg-[#C0C0C0]/10 border-[#C0C0C0]/20', 'bg-[#CD7F32]/10 border-[#CD7F32]/20'];
+const rankColors = ['text-[var(--color-gold)]', 'text-[var(--text-secondary)]', 'text-[var(--color-gold-deep)]'];
+const rankBg = ['bg-[var(--color-gold)]/10 border-[var(--color-gold)]/20', 'bg-[var(--text-secondary)]/10 border-[var(--text-secondary)]/20', 'bg-[var(--color-gold-deep)]/10 border-[var(--color-gold-deep)]/20'];
 
 export default function LeaderboardPage() {
   const [activeTab, setActiveTab] = useState('open_singles');
   const [players, setPlayers] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     const ph = getPostHogClient();
@@ -58,7 +59,7 @@ export default function LeaderboardPage() {
         // Aggregate tournament points per player
         const { data: parts } = await supabase
           .from('tournament_participants')
-          .select('player_id, points, player:players(id, full_name, avatar_url, status, eligibility_flag)')
+          .select('player_id, points, player:players(id, full_name, avatar_url, status)')
           .not('status', 'in', '("withdrawn","disqualified")')
           .gt('points', 0);
 
@@ -79,7 +80,6 @@ export default function LeaderboardPage() {
             full_name: entry.player.full_name,
             avatar_url: entry.player.avatar_url,
             status: entry.player.status,
-            eligibility_flag: entry.player.eligibility_flag,
             ratings: null,
             _tournamentPoints: entry.total,
           }));
@@ -91,12 +91,12 @@ export default function LeaderboardPage() {
 
       let query = supabase
         .from('players')
-        .select('id, full_name, avatar_url, status, eligibility_flag, ratings(*)')
+        .select('id, full_name, avatar_url, status, ratings(*)')
         .eq('active_flag', true)
-        .not('status', 'in', '("pending_approval","suspended","inactive")');
+        .not('status', 'in', '("pending_approval","suspended")');
 
       if (activeTab.startsWith('comp_')) {
-        query = query.eq('eligibility_flag', true);
+        query = query.eq('status', 'competitive');
       }
 
       const { data } = await query;
@@ -138,19 +138,26 @@ export default function LeaderboardPage() {
 
   const isDoubles = activeTab.includes('doubles');
 
+  const filteredPlayers = searchQuery
+    ? players.filter((p) =>
+        p.full_name.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : players;
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl bg-[#FFD700]/10 flex items-center justify-center">
-          <Trophy className="w-5 h-5 text-[#FFD700]" />
+      <div className="flex items-center gap-3 reveal reveal-1">
+        <div className="w-10 h-10 rounded-xl bg-[var(--color-gold)]/10 flex items-center justify-center glow-gold">
+          <Trophy className="w-5 h-5 text-gold" />
         </div>
-        <h1 className="text-3xl font-black font-display text-shuttle-white tracking-wider uppercase">
-          Leaderboard
-        </h1>
+        <div>
+          <p className="eyebrow">Rankings</p>
+          <h1 className="display-lg text-shuttle-white">Leaderboard</h1>
+        </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-white/[0.03] rounded-xl p-1 border border-white/[0.04] overflow-x-auto">
+      <div className="flex gap-1 bg-white/[0.03] rounded-xl p-1 border border-white/[0.04] overflow-x-auto scroll-fade-x">
         {tabs.map((tab) => (
           <button
             key={tab.id}
@@ -158,13 +165,13 @@ export default function LeaderboardPage() {
             className={`relative flex-1 py-2.5 px-3 text-sm font-semibold rounded-lg transition-all duration-300 whitespace-nowrap ${
               activeTab === tab.id
                 ? 'text-white'
-                : 'text-[#64748B] hover:text-[#94A3B8]'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
             }`}
           >
             {activeTab === tab.id && (
               <motion.div
                 layoutId="leaderboardTab"
-                className="absolute inset-0 bg-gradient-to-r from-[#FFD700]/20 to-[#FFA000]/20 border border-[#FFD700]/20 rounded-lg"
+                className="absolute inset-0 bg-gradient-to-r from-[var(--color-gold)]/20 to-[var(--color-gold-deep)]/20 border border-[var(--color-gold)]/20 rounded-lg"
                 transition={{ type: 'spring', bounce: 0.2, duration: 0.5 }}
               />
             )}
@@ -173,11 +180,25 @@ export default function LeaderboardPage() {
         ))}
       </div>
 
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)] pointer-events-none" />
+        <input
+          type="text"
+          placeholder="Search players..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          aria-label="Search leaderboard"
+          className="w-full bg-[var(--bg-surface)] border border-white/[0.06] rounded-lg pl-9 pr-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-gold)]/40 focus:border-transparent transition-colors"
+        />
+      </div>
+
       {/* Table */}
-      <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl overflow-hidden">
+      <div className="card-elevated overflow-hidden">
         {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <Loader2 className="w-8 h-8 text-[#FFD700] animate-spin" />
+          <div className="flex flex-col items-center justify-center py-16 gap-3">
+            <Loader2 className="w-7 h-7 text-gold animate-spin" />
+            <div className="skeleton h-4 w-32" />
           </div>
         ) : (
           <AnimatePresence mode="wait">
@@ -189,7 +210,7 @@ export default function LeaderboardPage() {
               transition={{ duration: 0.2 }}
             >
               {/* Header */}
-              <div className={`grid ${activeTab === 'tournament_points' ? 'grid-cols-[3rem_1fr_5rem]' : 'grid-cols-[3rem_1fr_5rem_4rem_3.5rem] md:grid-cols-[3rem_1fr_5rem_5rem_4rem]'} px-4 py-3 border-b border-white/[0.06] text-xs font-semibold text-[#475569] uppercase tracking-wider`}>
+              <div className={`grid ${activeTab === 'tournament_points' ? 'grid-cols-[3rem_1fr_5rem]' : 'grid-cols-[3rem_1fr_5rem_4rem_3.5rem] md:grid-cols-[3rem_1fr_5rem_5rem_4rem]'} px-4 py-3 border-b border-white/[0.06] eyebrow`}>
                 <span>#</span>
                 <span>Player</span>
                 {activeTab === 'tournament_points' ? (
@@ -205,7 +226,7 @@ export default function LeaderboardPage() {
 
               {/* Rows */}
               <div className="divide-y divide-white/[0.04]">
-                {players.map((p, i) => {
+                {filteredPlayers.map((p, i) => {
                   const elo = isDoubles ? p.ratings?.doubles_elo : p.ratings?.singles_elo;
                   const wins = isDoubles ? p.ratings?.doubles_wins : p.ratings?.singles_wins;
                   const losses = isDoubles ? p.ratings?.doubles_losses : p.ratings?.singles_losses;
@@ -231,29 +252,42 @@ export default function LeaderboardPage() {
                           {RankIcon ? (
                             <RankIcon className={`w-5 h-5 ${rankColors[i]}`} />
                           ) : (
-                            <span className="text-sm font-mono text-[#475569] font-bold">{i + 1}</span>
+                            <span className="text-sm font-mono text-[var(--text-dim)] font-bold nums">{i + 1}</span>
                           )}
                         </span>
                         <span className="flex items-center gap-2.5 min-w-0">
                           <Avatar name={p.full_name} src={p.avatar_url} size="sm" />
-                          <span className="truncate text-sm text-shuttle-white font-medium group-hover:text-[#EF4444] transition-colors">
+                          <span className="truncate text-sm text-shuttle-white font-medium group-hover:text-[var(--color-accent)] transition-colors">
                             {p.full_name}
                           </span>
                           {prov && activeTab !== 'tournament_points' && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-[#64748B] font-medium shrink-0">P</span>
+                            <span className="chip shrink-0" style={{ fontSize: '0.6rem', padding: '0.125rem 0.4rem' }}>P</span>
                           )}
                         </span>
                         {activeTab === 'tournament_points' ? (
-                          <span className="text-right font-mono text-base font-bold text-[#FFD700]">{(p as any)._tournamentPoints ?? 0}</span>
+                          <span className="text-right font-mono text-base font-bold gradient-text-gold nums">{(p as any)._tournamentPoints ?? 0}</span>
                         ) : (
                           <>
-                            <span className="text-right font-mono text-base font-bold text-shuttle-white">{elo ?? '-'}</span>
-                            <span className="text-right text-sm text-[#94A3B8]">
-                              <span className="text-[#EF4444]">{wins ?? 0}</span>
-                              <span className="text-[#475569]">-</span>
-                              <span className="text-[#EF4444]">{losses ?? 0}</span>
+                            <span className="text-right font-mono text-base font-bold text-shuttle-white nums">
+                              {elo ?? '-'}
+                              {(() => {
+                                if (!elo || activeTab === 'tournament_points') return null;
+                                const t = getSeasonTier(elo);
+                                return (
+                                  <span
+                                    className="inline-block w-2 h-2 rounded-full ml-1"
+                                    style={{ backgroundColor: t.color }}
+                                    title={t.tier}
+                                  />
+                                );
+                              })()}
                             </span>
-                            <span className="text-right text-sm text-[#94A3B8] font-medium">{winPct}%</span>
+                            <span className="text-right text-sm text-[var(--text-secondary)] nums">
+                              <span className="text-emerald-400">{wins ?? 0}</span>
+                              <span className="text-[var(--text-dim)]">-</span>
+                              <span className="text-[var(--color-accent)]">{losses ?? 0}</span>
+                            </span>
+                            <span className="text-right text-sm text-[var(--text-secondary)] font-medium nums">{winPct}%</span>
                           </>
                         )}
                       </Link>
@@ -262,10 +296,19 @@ export default function LeaderboardPage() {
                 })}
               </div>
 
-              {players.length === 0 && (
+              {filteredPlayers.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-16">
-                  <Trophy className="w-10 h-10 text-[#1E293B] mb-3" />
-                  <p className="text-[#64748B]">No players ranked yet</p>
+                  {searchQuery ? (
+                    <>
+                      <Search className="w-10 h-10 text-[var(--text-dim)] mb-3" />
+                      <p className="text-[var(--text-muted)]">No players found matching &ldquo;{searchQuery}&rdquo;</p>
+                    </>
+                  ) : (
+                    <>
+                      <Trophy className="w-10 h-10 text-[var(--text-dim)] mb-3" />
+                      <p className="text-[var(--text-muted)]">No players ranked yet</p>
+                    </>
+                  )}
                 </div>
               )}
             </motion.div>

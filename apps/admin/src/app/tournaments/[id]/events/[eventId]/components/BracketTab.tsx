@@ -67,15 +67,15 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
 
   return (
     <>
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4 overflow-x-auto">
-        <div className="flex gap-6 min-w-fit">
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4 overflow-x-auto" role="region" aria-label="Tournament bracket">
+        <div className="flex gap-6 min-w-fit" role="table" aria-label="Bracket rounds">
           {roundNumbers.map((roundNum) => {
             const roundMatches = rounds[roundNum]!.sort((a: any, b: any) => a.bracket_position - b.bracket_position);
             const roundName = roundMatches[0]?.round_name ?? getRoundName(roundNum, totalRounds);
 
             return (
-              <div key={roundNum} className="flex flex-col min-w-[260px]" style={{ gap: `${Math.pow(2, roundNum - 1) * 0.5}rem` }}>
-                <h3 className="text-xs font-bold text-[var(--text-muted)] text-center uppercase tracking-wider mb-2">
+              <div key={roundNum} className="flex flex-col min-w-[260px]" role="rowgroup" aria-label={roundName} style={{ gap: `${Math.pow(2, roundNum - 1) * 0.5}rem` }}>
+                <h3 className="text-xs font-bold text-[var(--text-muted)] text-center uppercase tracking-wider mb-2" role="columnheader">
                   {roundName}
                 </h3>
                 {roundMatches.map((m: any) => {
@@ -90,6 +90,8 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                   return (
                     <div
                       key={m.id}
+                      role="row"
+                      aria-label={`Match ${m.match_number ?? ''}: ${getEntryName(aId)} vs ${getEntryName(bId)}${isCompleted ? `, winner: ${getEntryName(winnerId)}` : ''}`}
                       className={`rounded-lg border overflow-hidden transition-all ${
                         isReady && isLive
                           ? 'border-[var(--color-accent)]/40 shadow-[0_0_8px_rgba(233,69,96,0.15)]'
@@ -110,6 +112,9 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                         isCompleted && winnerId === aId ? 'bg-[var(--color-success)]/10' : 'bg-[var(--bg-card)]'
                       }`}>
                         <div className="flex items-center gap-1.5 min-w-0">
+                          {isCompleted && winnerId === aId && (
+                            <span aria-hidden="true" className="text-[var(--color-success)] font-bold">✓</span>
+                          )}
                           {getSeed(aId) && <span className="text-[10px] font-mono text-[var(--text-muted)]">[{getSeed(aId)}]</span>}
                           <span className={`truncate ${
                             isCompleted && winnerId === aId
@@ -120,10 +125,11 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                           }`}>
                             {isBye && !aId ? 'BYE' : getEntryName(aId)}
                           </span>
+                          {isCompleted && winnerId === aId && <span className="sr-only">(Winner)</span>}
                         </div>
                         {m.scores && (
                           <span className="font-mono text-xs text-[var(--text-muted)] ml-2">
-                            {(m.scores as any[]).map((g: any) => g.a).join(' ')}
+                            {(m.scores as any[]).map((g: any) => `${g.a}-${g.b}`).join(', ')}
                           </span>
                         )}
                       </div>
@@ -135,6 +141,9 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                         isCompleted && winnerId === bId ? 'bg-[var(--color-success)]/10' : 'bg-[var(--bg-card)]'
                       }`}>
                         <div className="flex items-center gap-1.5 min-w-0">
+                          {isCompleted && winnerId === bId && (
+                            <span aria-hidden="true" className="text-[var(--color-success)] font-bold">✓</span>
+                          )}
                           {getSeed(bId) && <span className="text-[10px] font-mono text-[var(--text-muted)]">[{getSeed(bId)}]</span>}
                           <span className={`truncate ${
                             isCompleted && winnerId === bId
@@ -145,10 +154,11 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                           }`}>
                             {isBye && !bId ? 'BYE' : getEntryName(bId)}
                           </span>
+                          {isCompleted && winnerId === bId && <span className="sr-only">(Winner)</span>}
                         </div>
                         {m.scores && (
                           <span className="font-mono text-xs text-[var(--text-muted)] ml-2">
-                            {(m.scores as any[]).map((g: any) => g.b).join(' ')}
+                            {(m.scores as any[]).map((g: any) => `${g.b}-${g.a}`).join(', ')}
                           </span>
                         )}
                       </div>
@@ -157,7 +167,8 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                       {canEnterScore && (
                         <button
                           onClick={() => setScoreMatch(m)}
-                          className="w-full text-center text-xs text-[var(--color-accent)] py-1.5 bg-[var(--bg-elevated)] hover:bg-[var(--color-accent)]/10 transition-colors border-t border-[var(--border)] font-medium"
+                          aria-label={`Enter score for match ${m.match_number ?? ''}`}
+                          className="w-full text-center text-xs text-[var(--color-accent)] py-1.5 bg-[var(--bg-elevated)] hover:bg-[var(--color-accent)]/10 transition-colors border-t border-[var(--border)] font-medium focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
                         >
                           Enter Score
                         </button>
@@ -166,7 +177,12 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                       {/* Status badges */}
                       {m.status === 'walkover' && (
                         <div className="text-center py-1 border-t border-[var(--border)]">
-                          <span className="text-[10px] text-[var(--color-warning)] font-medium">WALKOVER</span>
+                          <span className="text-[10px] text-[var(--color-warning)] font-medium" role="status">⚠ W/O WALKOVER</span>
+                        </div>
+                      )}
+                      {m.status === 'voided' && (
+                        <div className="text-center py-1 border-t border-[var(--border)]">
+                          <span className="text-[10px] text-[var(--color-danger)] font-medium" role="status">✕ VOIDED</span>
                         </div>
                       )}
                     </div>

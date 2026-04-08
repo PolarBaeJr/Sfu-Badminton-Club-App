@@ -6,43 +6,36 @@ import { cn } from '@badminton/ui';
 import {
   LayoutDashboard,
   Users,
-  Swords,
   Trophy,
-  CalendarDays,
   Medal,
-  Megaphone,
-  GraduationCap,
   ScrollText,
   Settings,
   Target,
-  ChevronLeft,
+  Calendar,
+  Megaphone,
   LogOut,
+  Menu,
+  X,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { createClient } from '@/lib/supabase-browser';
 
 const navSections = [
   {
-    title: 'Overview',
+    title: 'Manage',
     items: [
       { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    ],
-  },
-  {
-    title: 'Management',
-    items: [
       { href: '/players', label: 'Players', icon: Users },
-      { href: '/challenges', label: 'Challenges', icon: Swords },
       { href: '/matches', label: 'Matches', icon: Target },
-      { href: '/sessions', label: 'Sessions', icon: CalendarDays },
       { href: '/tournaments', label: 'Tournaments', icon: Trophy },
-      { href: '/seasons', label: 'Seasons', icon: Medal },
+      { href: '/sessions', label: 'Sessions', icon: Calendar },
+      { href: '/announcements', label: 'Announcements', icon: Megaphone },
     ],
   },
   {
-    title: 'Other',
+    title: 'System',
     items: [
-      { href: '/announcements', label: 'Announcements', icon: Megaphone },
-      { href: '/varsity', label: 'Varsity', icon: GraduationCap },
+      { href: '/seasons', label: 'Seasons', icon: Medal },
       { href: '/audit', label: 'Audit Log', icon: ScrollText },
       { href: '/settings', label: 'Settings', icon: Settings },
     ],
@@ -51,36 +44,47 @@ const navSections = [
 
 export function Sidebar() {
   const pathname = usePathname();
-  const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
-  return (
-    <aside
-      className={cn(
-        'fixed left-0 top-0 bottom-0 bg-[var(--bg-elevated)] border-r border-[var(--border)] flex flex-col z-40 transition-all duration-300',
-        collapsed ? 'w-[72px]' : 'w-64'
-      )}
-    >
+  // Don't render sidebar on public routes
+  const isPublicRoute =
+    pathname === '/login' ||
+    pathname.startsWith('/auth') ||
+    pathname === '/unauthorized';
+
+  // Close mobile menu on navigation
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname]);
+
+  // Load user email
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user) setUserEmail(user.email ?? null);
+    });
+  }, []);
+
+  async function handleSignOut() {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    window.location.href = '/login';
+  }
+
+  const sidebarContent = (
+    <>
       {/* Header */}
-      <div className={cn('p-4 border-b border-[var(--border)] flex items-center', collapsed ? 'justify-center' : 'justify-between')}>
-        {!collapsed && (
-          <div>
-            <h1 className="text-lg font-bold text-[var(--color-accent)] font-display tracking-wider">SFU BADMINTON</h1>
-            <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-widest mt-0.5">Admin Panel</p>
-          </div>
-        )}
-        {collapsed && (
-          <div className="w-9 h-9 rounded-lg bg-[var(--color-accent)] flex items-center justify-center">
-            <span className="text-white font-bold font-display text-sm">SB</span>
-          </div>
-        )}
+      <div className="p-4 border-b border-[var(--border)] flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-bold text-[var(--color-accent)] font-display tracking-wider">SFU BADMINTON</h1>
+          <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-widest mt-0.5">Admin Panel</p>
+        </div>
         <button
-          onClick={() => setCollapsed(!collapsed)}
-          className={cn(
-            'p-1.5 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-hover)] transition-colors',
-            collapsed && 'hidden'
-          )}
+          onClick={() => setMobileOpen(false)}
+          className="md:hidden p-1.5 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-hover)] transition-colors"
         >
-          <ChevronLeft className="w-4 h-4" />
+          <X className="w-5 h-5" />
         </button>
       </div>
 
@@ -88,11 +92,9 @@ export function Sidebar() {
       <nav className="flex-1 py-3 overflow-y-auto space-y-4">
         {navSections.map((section) => (
           <div key={section.title}>
-            {!collapsed && (
-              <p className="px-5 mb-1.5 text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-widest">
-                {section.title}
-              </p>
-            )}
+            <p className="px-5 mb-1.5 text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-widest">
+              {section.title}
+            </p>
             <div className="space-y-0.5 px-2">
               {section.items.map((item) => {
                 const isActive = pathname.startsWith(item.href);
@@ -101,10 +103,8 @@ export function Sidebar() {
                   <Link
                     key={item.href}
                     href={item.href}
-                    title={collapsed ? item.label : undefined}
                     className={cn(
-                      'flex items-center gap-3 rounded-lg text-sm transition-all duration-200 group relative',
-                      collapsed ? 'justify-center px-2 py-2.5' : 'px-3 py-2.5',
+                      'flex items-center gap-3 rounded-lg text-sm transition-all duration-200 group relative px-3 py-2.5',
                       isActive
                         ? 'bg-[var(--color-accent)]/10 text-[var(--color-accent)]'
                         : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/[0.04]'
@@ -114,9 +114,7 @@ export function Sidebar() {
                       <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-[var(--color-accent)]" />
                     )}
                     <Icon className={cn('w-[18px] h-[18px] flex-shrink-0', isActive && 'text-[var(--color-accent)]')} />
-                    {!collapsed && (
-                      <span className="font-medium">{item.label}</span>
-                    )}
+                    <span className="font-medium">{item.label}</span>
                   </Link>
                 );
               })}
@@ -125,27 +123,51 @@ export function Sidebar() {
         ))}
       </nav>
 
-      {/* Footer */}
-      {!collapsed && (
-        <div className="p-4 border-t border-[var(--border)]">
-          <div className="flex items-center gap-2 text-[10px] text-[var(--text-muted)]">
-            <div className="w-2 h-2 rounded-full bg-[var(--color-success)] animate-pulse" />
-            <span>System Online</span>
-          </div>
-        </div>
+      {/* Footer — user info + logout */}
+      <div className="p-4 border-t border-[var(--border)] space-y-3">
+        {userEmail && (
+          <p className="text-xs text-[var(--text-muted)] truncate">{userEmail}</p>
+        )}
+        <button
+          onClick={handleSignOut}
+          className="flex items-center gap-2 text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors w-full"
+        >
+          <LogOut className="w-4 h-4" />
+          Sign out
+        </button>
+      </div>
+    </>
+  );
+
+  if (isPublicRoute) return null;
+
+  return (
+    <>
+      {/* Mobile hamburger button */}
+      <button
+        onClick={() => setMobileOpen(true)}
+        className="md:hidden fixed top-4 left-4 z-50 p-2 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+      >
+        <Menu className="w-5 h-5" />
+      </button>
+
+      {/* Mobile overlay */}
+      {mobileOpen && (
+        <div
+          className="md:hidden fixed inset-0 bg-black/50 z-40"
+          onClick={() => setMobileOpen(false)}
+        />
       )}
 
-      {/* Expand button when collapsed */}
-      {collapsed && (
-        <div className="p-3 border-t border-[var(--border)] flex justify-center">
-          <button
-            onClick={() => setCollapsed(false)}
-            className="p-1.5 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-hover)] transition-colors"
-          >
-            <ChevronLeft className="w-4 h-4 rotate-180" />
-          </button>
-        </div>
-      )}
-    </aside>
+      {/* Sidebar — hidden on mobile unless mobileOpen */}
+      <aside
+        className={cn(
+          'fixed left-0 top-0 bottom-0 bg-[var(--bg-elevated)] border-r border-[var(--border)] flex flex-col z-50 w-64 transition-transform duration-300',
+          mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+        )}
+      >
+        {sidebarContent}
+      </aside>
+    </>
   );
 }
