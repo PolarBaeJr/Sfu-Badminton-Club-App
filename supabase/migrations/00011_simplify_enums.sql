@@ -16,6 +16,10 @@ BEGIN;
 -- ============================================================
 DROP TRIGGER IF EXISTS init_player_records ON players;
 
+DROP POLICY IF EXISTS players_select ON players;
+DROP POLICY IF EXISTS players_update_own ON players;
+DROP POLICY IF EXISTS players_admin ON players;
+
 ALTER TABLE players ALTER COLUMN status DROP DEFAULT;
 
 ALTER TYPE player_status RENAME TO player_status_old;
@@ -33,6 +37,16 @@ ALTER TABLE players
 ALTER TABLE players ALTER COLUMN status SET DEFAULT 'pending_approval';
 
 DROP TYPE player_status_old;
+
+CREATE POLICY players_select ON players FOR SELECT TO authenticated
+  USING (status != 'pending_approval' OR user_id = auth.uid() OR is_admin(auth.uid()));
+
+CREATE POLICY players_update_own ON players FOR UPDATE TO authenticated
+  USING (user_id = auth.uid())
+  WITH CHECK (user_id = auth.uid());
+
+CREATE POLICY players_admin ON players FOR ALL TO authenticated
+  USING (is_admin(auth.uid()));
 
 CREATE TRIGGER init_player_records
   AFTER UPDATE OF status ON players
