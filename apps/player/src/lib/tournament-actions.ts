@@ -2,7 +2,7 @@
 
 import { createServiceRoleClient, getCurrentPlayer } from './supabase-server';
 import { revalidatePath } from 'next/cache';
-import { isDoublesEvent } from '@badminton/shared';
+import { isDoublesEvent, rateLimit, toClientError } from '@badminton/shared';
 
 async function requirePlayer() {
   const player = await getCurrentPlayer();
@@ -10,6 +10,11 @@ async function requirePlayer() {
   if (player.status === 'pending_approval') throw new Error('Account pending approval');
   if (player.status === 'suspended') throw new Error('Account suspended');
   return player;
+}
+
+function enforceLimit(playerId: string, action: string, limit: number, windowMs: number) {
+  const res = rateLimit(`player:${playerId}:${action}`, limit, windowMs);
+  if (!res.success) throw new Error('Too many requests — please slow down and try again.');
 }
 
 // Revalidate the surfaces that actually need to flip immediately after a
@@ -22,6 +27,7 @@ function revalidateTournamentPaths(tournamentId: string, _eventId: string) {
 
 export async function registerForEvent(eventId: string) {
   const player = await requirePlayer();
+  enforceLimit(player.id, 'tournament.register', 10, 60 * 60_000);
   const service = createServiceRoleClient();
 
   // Parallelize the three independent reads needed before we can validate.
@@ -57,7 +63,7 @@ export async function registerForEvent(eventId: string) {
     elo_before: ratingRes.data?.singles_elo ?? 1200,
     status: 'registered',
   });
-  if (insertErr) throw new Error(insertErr.message);
+  if (insertErr) throw toClientError(insertErr, 'tournament.register');
 
   revalidateTournamentPaths(event.tournament_id, eventId);
 }
@@ -77,7 +83,7 @@ export async function withdrawFromEvent(eventId: string) {
   const { error } = await service.from('tournament_participants')
     .update({ status: 'withdrawn' })
     .eq('id', participant.id);
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'tournament.withdraw');
 
   const tid = (participant.event as unknown as { tournament_id: string } | null)?.tournament_id;
   if (tid) revalidateTournamentPaths(tid, eventId);
@@ -86,6 +92,7 @@ export async function withdrawFromEvent(eventId: string) {
 
 export async function selfCheckIn(eventId: string) {
   const player = await requirePlayer();
+  enforceLimit(player.id, 'tournament.checkin', 10, 60 * 60_000);
   const service = createServiceRoleClient();
 
   // Parallel reads — event status and player participation row are independent.
@@ -105,7 +112,7 @@ export async function selfCheckIn(eventId: string) {
   const { error } = await service.from('tournament_participants')
     .update({ status: 'checked_in', checked_in_at: new Date().toISOString() })
     .eq('id', participant.id);
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'tournament.checkin');
 
   revalidateTournamentPaths(event.tournament_id, eventId);
 }

@@ -18,7 +18,8 @@ export default async function SessionsPage() {
       .from('sessions')
       .select('*')
       .eq('status', 'open')
-      .order('date', { ascending: false }),
+      .order('date', { ascending: false })
+      .limit(50),
     supabase
       .from('sessions')
       .select('*')
@@ -32,6 +33,7 @@ export default async function SessionsPage() {
     supabase
       .from('session_attendance')
       .select('session_id')
+      .limit(5000)
       .then(({ data, error }) => ({
         data: data
           ? Object.entries(

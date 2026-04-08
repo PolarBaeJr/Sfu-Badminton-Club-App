@@ -1,8 +1,12 @@
+import 'server-only';
 import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 
-// Service role client — bypasses RLS, use only for trusted server-side operations
+// Service role client — bypasses RLS. Hard-guarded by `server-only` above so
+// any accidental import from a client bundle fails the build. Use sparingly
+// and only for operations that genuinely require bypassing RLS (onboarding
+// insert, tournament participation writes that cross player boundaries).
 export function createServiceRoleClient() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

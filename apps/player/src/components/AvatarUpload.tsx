@@ -3,6 +3,7 @@
 import { useState, useRef } from 'react';
 import { Avatar } from '@badminton/ui';
 import { createClient } from '@/lib/supabase-browser';
+import { updateAvatarUrl } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 
 interface AvatarUploadProps {
@@ -51,13 +52,9 @@ export function AvatarUpload({ playerId, playerName, currentUrl, onUploaded }: A
       // Add cache buster
       const url = `${publicUrl}?t=${Date.now()}`;
 
-      // Update player
-      const { error: updateError } = await supabase
-        .from('players')
-        .update({ avatar_url: url })
-        .eq('id', playerId);
-
-      if (updateError) throw updateError;
+      // Update player via server action — server validates the URL, enforces
+      // per-user ownership via session, and refuses arbitrary field writes.
+      await updateAvatarUrl(url);
 
       setAvatarUrl(url);
       onUploaded?.(url);

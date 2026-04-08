@@ -7,6 +7,7 @@ import type {
   AdminPlayerUpdateInput,
   DisputeResolveInput,
 } from '@badminton/shared';
+import { toClientError } from '@badminton/shared';
 
 async function getAdminPlayer() {
   return getAuthenticatedAdmin();
@@ -30,7 +31,7 @@ export async function approvePlayer(playerId: string, status: 'competitive' | 'r
     })
     .eq('id', playerId);
 
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
@@ -75,7 +76,7 @@ export async function createPlayer(data: {
 
   if (error) {
     Sentry.captureException(error);
-    throw new Error(error.message);
+    throw toClientError(error, 'admin.action');
   }
 
   // Create initial ratings row
@@ -114,7 +115,7 @@ export async function updatePlayer(playerId: string, data: AdminPlayerUpdateInpu
   if (data.role) playerUpdate.role = data.role;
   if (Object.keys(playerUpdate).length > 0) {
     const { error } = await adminClient.from('players').update(playerUpdate).eq('id', playerId);
-    if (error) throw new Error(error.message);
+    if (error) throw toClientError(error, 'admin.action');
   }
 
   const ratingUpdate: Record<string, unknown> = {};
@@ -123,7 +124,7 @@ export async function updatePlayer(playerId: string, data: AdminPlayerUpdateInpu
 
   if (Object.keys(ratingUpdate).length > 0) {
     const { error } = await adminClient.from('ratings').update(ratingUpdate).eq('player_id', playerId);
-    if (error) throw new Error(error.message);
+    if (error) throw toClientError(error, 'admin.action');
   }
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
@@ -156,7 +157,7 @@ export async function removePlayer(playerId: string, reason: string) {
     .update({ status: 'suspended', active_flag: false })
     .eq('id', playerId);
 
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
@@ -198,7 +199,7 @@ export async function voidMatch(matchId: string, reason: string) {
     .update({ result_status: 'voided', admin_note: reason })
     .eq('id', matchId);
 
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
@@ -233,7 +234,7 @@ export async function convertMatchToCasual(matchId: string, reason: string) {
     .update({ rated_flag: false, event_type: 'casual', admin_note: reason })
     .eq('id', matchId);
 
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
@@ -282,7 +283,7 @@ export async function resolveDispute(data: DisputeResolveInput) {
       Sentry.captureException(new Error(`Match confirmation failed during dispute resolution: ${error.message}`), {
         extra: { disputeId: data.dispute_id, matchId: dispute.match_id },
       });
-      throw new Error(error.message);
+      throw toClientError(error, 'admin.action');
     }
   }
 
@@ -297,7 +298,7 @@ export async function resolveDispute(data: DisputeResolveInput) {
     })
     .eq('id', data.dispute_id);
 
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
@@ -335,7 +336,7 @@ export async function confirmWalkover(walkoverId: string, notes: string) {
     Sentry.captureException(new Error(`Walkover confirmation failed: ${error.message}`), {
       extra: { walkoverId },
     });
-    throw new Error(error.message);
+    throw toClientError(error, 'admin.action');
   }
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
@@ -371,7 +372,7 @@ export async function rejectWalkover(walkoverId: string, notes: string) {
     })
     .eq('id', walkoverId);
 
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   // Restore challenge status
   if (walkover) {
@@ -436,7 +437,7 @@ export async function createTournament(data: {
     created_by: admin.id,
   }).select().single();
 
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
@@ -462,7 +463,7 @@ export async function updateTournamentStatus(tournamentId: string, status: strin
   const { data: old } = await adminClient.from('tournaments').select('status').eq('id', tournamentId).single();
 
   const { error } = await adminClient.from('tournaments').update({ status }).eq('id', tournamentId);
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
@@ -510,7 +511,7 @@ export async function updateTournament(tournamentId: string, data: {
     placement_bonus_enabled: data.placement_bonus_enabled,
   }).eq('id', tournamentId);
 
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
@@ -537,7 +538,7 @@ export async function archiveTournament(tournamentId: string) {
   const { data: old } = await adminClient.from('tournaments').select('status').eq('id', tournamentId).single();
 
   const { error } = await adminClient.from('tournaments').update({ status: 'archived' }).eq('id', tournamentId);
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
@@ -567,7 +568,7 @@ export async function deleteTournament(tournamentId: string) {
   await adminClient.from('tournament_events').delete().eq('tournament_id', tournamentId);
 
   const { error } = await adminClient.from('tournaments').delete().eq('id', tournamentId);
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
@@ -608,7 +609,7 @@ export async function addTournamentParticipant(tournamentId: string, playerId: s
 
   if (error) {
     if (error.code === '23505') throw new Error('Player already in tournament');
-    throw new Error(error.message);
+    throw toClientError(error, 'admin.action');
   }
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
@@ -669,7 +670,7 @@ export async function createSeason(data: { name: string; start_date: string; end
     active_flag: false,
   }).select().single();
 
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
@@ -695,7 +696,7 @@ export async function setActiveSeason(seasonId: string) {
   await adminClient.from('seasons').update({ active_flag: false }).neq('id', '00000000-0000-0000-0000-000000000000');
 
   const { error } = await adminClient.from('seasons').update({ active_flag: true }).eq('id', seasonId);
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
@@ -721,7 +722,7 @@ export async function endSeason(seasonId: string) {
     end_date: new Date().toISOString().split('T')[0],
   }).eq('id', seasonId);
 
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
@@ -889,7 +890,7 @@ export async function adminCreateChallenge(data: {
     note: data.note || `Created by admin`,
   }).select().single();
 
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   // All participants auto-accepted since admin created
   const participants: { challenge_id: string; player_id: string; role: string; team_side: string; confirmation_status: string }[] = [];
@@ -966,7 +967,7 @@ export async function createSession(data: {
     host_player_id: admin.id,
   }).select().single();
 
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
@@ -1006,7 +1007,7 @@ export async function updateSession(sessionId: string, data: {
     notes: data.notes || null,
   }).eq('id', sessionId);
 
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
@@ -1032,7 +1033,7 @@ export async function archiveSession(sessionId: string) {
   const { data: old } = await adminClient.from('sessions').select('status').eq('id', sessionId).single();
 
   const { error } = await adminClient.from('sessions').update({ status: 'closed' }).eq('id', sessionId);
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
@@ -1061,7 +1062,7 @@ export async function deleteSession(sessionId: string) {
   await adminClient.from('session_attendance').delete().eq('session_id', sessionId);
 
   const { error } = await adminClient.from('sessions').delete().eq('id', sessionId);
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
@@ -1108,7 +1109,7 @@ export async function createAnnouncement(data: {
     author_id: admin.id,
   }).select().single();
 
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
@@ -1153,7 +1154,7 @@ export async function updateAnnouncement(announcementId: string, data: {
     expires_at: data.expires_at || null,
   }).eq('id', announcementId);
 
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
@@ -1181,7 +1182,7 @@ export async function deleteAnnouncement(announcementId: string) {
   await adminClient.from('announcement_reads').delete().eq('announcement_id', announcementId);
 
   const { error } = await adminClient.from('announcements').delete().eq('id', announcementId);
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
@@ -1208,7 +1209,7 @@ export async function forceExpireChallenge(challengeId: string, reason: string) 
     .update({ status: 'expired' })
     .eq('id', challengeId);
 
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,

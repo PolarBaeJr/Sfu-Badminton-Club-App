@@ -4,7 +4,17 @@ import * as Sentry from '@sentry/nextjs';
 import { createServerSupabaseClient, createServiceRoleClient, getCurrentPlayer } from './supabase-server';
 import { revalidatePath } from 'next/cache';
 import type { ChallengeCreateInput, MatchResultInput, WalkoverReportInput } from '@badminton/shared';
-import { getFormatWeight, getEventMultiplier, MATCH_FORMAT_LABELS } from '@badminton/shared';
+import { getFormatWeight, getEventMultiplier, MATCH_FORMAT_LABELS, rateLimit, toClientError } from '@badminton/shared';
+
+// Small helper: throttle sensitive actions per player. Uses the in-memory
+// limiter from @badminton/shared (best-effort on serverless — swap for Upstash
+// when multi-region guarantees are needed).
+function enforceLimit(playerId: string, action: string, limit: number, windowMs: number) {
+  const res = rateLimit(`player:${playerId}:${action}`, limit, windowMs);
+  if (!res.success) {
+    throw new Error('Too many requests — please slow down and try again in a moment.');
+  }
+}
 import {
   sendChallengeReceivedEmail,
   sendChallengeAcceptedEmail,
@@ -54,11 +64,56 @@ function getPlayerProps(player: Record<string, unknown>) {
 }
 
 // ============================================================
+// Profile — avatar
+// ============================================================
+
+// URL must be an HTTPS link under the configured Supabase project host and
+// under the `avatars/` bucket path. Anything else is rejected.
+function isAllowedAvatarUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:') return false;
+    const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    if (!base) return false;
+    const baseHost = new URL(base).host;
+    if (u.host !== baseHost) return false;
+    // Public storage URLs look like /storage/v1/object/public/avatars/<id>.<ext>
+    return u.pathname.includes('/storage/v1/object/public/avatars/');
+  } catch {
+    return false;
+  }
+}
+
+export async function updateAvatarUrl(rawUrl: string) {
+  const player = await requirePlayer();
+  enforceLimit(player.id, 'avatar', 10, 60_000);
+
+  // Trim cache-buster query string before validating the URL itself, then
+  // persist the original (with ?t=...) so the browser refreshes properly.
+  const toValidate = rawUrl.split('?')[0] ?? rawUrl;
+  if (!isAllowedAvatarUrl(toValidate) || rawUrl.length > 1024) {
+    throw new Error('Invalid avatar URL.');
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase
+    .from('players')
+    .update({ avatar_url: rawUrl })
+    .eq('id', player.id); // server-enforced ownership — never trust client id
+
+  if (error) throw toClientError(error, 'player.avatar.update');
+
+  revalidatePath('/settings');
+  revalidatePath('/');
+}
+
+// ============================================================
 // Challenges
 // ============================================================
 
 export async function createChallenge(input: ChallengeCreateInput) {
   const player = await requirePlayer();
+  enforceLimit(player.id, 'challenge.create', 20, 60 * 60_000);
   const supabase = await createServerSupabaseClient();
 
   // Validate via DB function
@@ -95,7 +150,7 @@ export async function createChallenge(input: ChallengeCreateInput) {
     .select()
     .single();
 
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'player.action');
 
   // Add participants
   const participants: { challenge_id: string; player_id: string; role: string; team_side: string; confirmation_status: string }[] = [
@@ -117,7 +172,7 @@ export async function createChallenge(input: ChallengeCreateInput) {
   }
 
   const { error: partError } = await supabase.from('challenge_participants').insert(participants);
-  if (partError) throw new Error(partError.message);
+  if (partError) throw toClientError(partError, 'player.action');
 
   // Create notification for opponent
   await supabase.from('notifications').insert({
@@ -166,7 +221,7 @@ export async function acceptChallenge(challengeId: string) {
     .eq('challenge_id', challengeId)
     .eq('player_id', player.id);
 
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'player.action');
 
   // Check if all participants accepted
   const { data: participants } = await supabase
@@ -294,6 +349,11 @@ export async function cancelChallenge(challengeId: string) {
 
 export async function submitMatchResult(challengeId: string, input: MatchResultInput) {
   const player = await requirePlayer();
+  enforceLimit(player.id, 'match.submit', 15, 60 * 60_000);
+  // Defensive input bounds — schemas already validate, but fail-closed here too.
+  if (!Array.isArray(input.games) || input.games.length === 0 || input.games.length > 5) {
+    throw new Error('Invalid match result.');
+  }
   const supabase = await createServerSupabaseClient();
 
   const { data: challenge } = await supabase
@@ -349,7 +409,7 @@ export async function submitMatchResult(challengeId: string, input: MatchResultI
     .select()
     .single();
 
-  if (matchError) throw new Error(matchError.message);
+  if (matchError) throw toClientError(matchError, 'player.action');
 
   // Add match participants with pre-ratings
   const isDoubles = challenge.type === 'doubles';
@@ -458,7 +518,7 @@ export async function confirmMatchResult(matchId: string) {
     Sentry.captureException(new Error(`Match confirmation failed: ${error.message}`), {
       extra: { matchId, playerId: player.id },
     });
-    throw new Error(error.message);
+    throw toClientError(error, 'player.action');
   }
 
   const cProps = getPlayerProps(player);
@@ -507,6 +567,7 @@ export async function disputeMatchResult(matchId: string, reason: string, catego
 
 export async function checkInToSession(sessionId: string) {
   const player = await requirePlayer();
+  enforceLimit(player.id, 'session.checkin', 5, 60 * 60_000);
   const supabase = await createServerSupabaseClient();
 
   const { error } = await supabase.from('session_attendance').insert({
@@ -516,7 +577,7 @@ export async function checkInToSession(sessionId: string) {
 
   if (error) {
     if (error.code === '23505') throw new Error('Already checked in');
-    throw new Error(error.message);
+    throw toClientError(error, 'player.action');
   }
 
   await supabase.from('players').update({ last_active_at: new Date().toISOString() }).eq('id', player.id);
@@ -534,6 +595,7 @@ export async function checkInToSession(sessionId: string) {
 
 export async function reportWalkover(input: WalkoverReportInput) {
   const player = await requirePlayer();
+  enforceLimit(player.id, 'walkover.report', 5, 60 * 60_000);
   const supabase = await createServerSupabaseClient();
 
   const { error } = await supabase.from('walkovers').insert({
@@ -544,7 +606,7 @@ export async function reportWalkover(input: WalkoverReportInput) {
     notice_hours: input.notice_hours,
   });
 
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'player.action');
 
   await supabase.from('challenges').update({ status: 'walkover_pending' }).eq('id', input.challenge_id);
 
@@ -590,7 +652,7 @@ export async function updateProfile(data: {
     .update(update)
     .eq('id', player.id);
 
-  if (error) throw new Error(error.message);
+  if (error) throw toClientError(error, 'player.action');
   revalidatePath('/settings');
 }
 
@@ -616,7 +678,7 @@ export async function completeOnboarding(data: { full_name: string; display_name
       .update(update)
       .eq('id', existingPlayer.id);
 
-    if (error) throw new Error(error.message);
+    if (error) throw toClientError(error, 'player.action');
   } else {
     // Create new player record using service role to bypass RLS
     const adminClient = createServiceRoleClient();
@@ -636,7 +698,7 @@ export async function completeOnboarding(data: { full_name: string; display_name
       .select('id')
       .single();
 
-    if (error) throw new Error(error.message);
+    if (error) throw toClientError(error, 'player.action');
 
     // Create initial ratings record
     if (newPlayer) {
