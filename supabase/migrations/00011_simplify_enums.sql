@@ -7,62 +7,41 @@
 --   PlayerStatus: 'competitive' | 'recreational' | 'pending_approval' | 'suspended'
 --   UserRole:     'player' | 'admin'
 --   TournamentStatus: 'draft' | 'active' | 'completed' | 'archived'
---
--- This migration:
---   1. Consolidates obsolete player statuses into the simplified set
---   2. Consolidates obsolete roles into the simplified set
---   3. Sets the admin role for the platform owner
---   4. Adds 'archived' to the tournament_status enum
 -- ============================================================
 
 BEGIN;
 
 -- ============================================================
--- STEP 1: Simplify player_status enum
+-- STEP 1: Recreate player_status with simplified values
 -- ============================================================
--- Add new value first, then migrate data, then recreate enum
--- without the obsolete values.
-
-ALTER TYPE player_status ADD VALUE IF NOT EXISTS 'competitive';
-
-COMMIT;
-
--- ALTER TYPE inside a transaction cannot be followed immediately by
--- usage of the new value in the same transaction in older PG versions,
--- so we re-open a transaction after committing the ADD VALUE.
-
-BEGIN;
-
--- 'eligible_competitive' and 'competitive_associate' both map to 'competitive'
-UPDATE players
-SET status = 'competitive'
-WHERE status IN ('eligible_competitive', 'competitive_associate');
-
--- 'alumni_external' and 'inactive' both map to 'suspended'
-UPDATE players
-SET status = 'suspended'
-WHERE status IN ('alumni_external', 'inactive');
-
--- Recreate player_status with only the simplified values
 ALTER TYPE player_status RENAME TO player_status_old;
+
 CREATE TYPE player_status AS ENUM ('competitive', 'recreational', 'pending_approval', 'suspended');
+
 ALTER TABLE players
-  ALTER COLUMN status TYPE player_status USING status::text::player_status;
+  ALTER COLUMN status TYPE player_status
+  USING CASE
+    WHEN status::text IN ('eligible_competitive', 'competitive_associate') THEN 'competitive'::player_status
+    WHEN status::text IN ('alumni_external', 'inactive')                   THEN 'suspended'::player_status
+    ELSE status::text::player_status
+  END;
+
 DROP TYPE player_status_old;
 
 -- ============================================================
--- STEP 2: Simplify user_role enum
+-- STEP 2: Recreate user_role with simplified values
 -- ============================================================
--- 'moderator' and 'coach_executive' are collapsed into 'player'.
-UPDATE players
-SET role = 'player'
-WHERE role IN ('moderator', 'coach_executive');
-
--- Recreate user_role with only player and admin
 ALTER TYPE user_role RENAME TO user_role_old;
+
 CREATE TYPE user_role AS ENUM ('player', 'admin');
+
 ALTER TABLE players
-  ALTER COLUMN role TYPE user_role USING role::text::user_role;
+  ALTER COLUMN role TYPE user_role
+  USING CASE
+    WHEN role::text IN ('moderator', 'coach_executive') THEN 'player'::user_role
+    ELSE role::text::user_role
+  END;
+
 DROP TYPE user_role_old;
 
 -- ============================================================
