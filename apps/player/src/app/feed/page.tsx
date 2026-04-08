@@ -177,7 +177,7 @@ export default async function FeedPage() {
               <Trophy className="w-4 h-4 text-gold" />
               <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>Recent Matches</h2>
             </div>
-            <Link href="/my-stats" className="text-xs text-court-red hover:text-[#F87171] font-semibold transition-colors">
+            <Link href="/my-stats" className="text-xs text-court-red hover:text-[var(--color-accent-hover)] font-semibold transition-colors">
               All stats →
             </Link>
           </div>
@@ -191,7 +191,7 @@ export default async function FeedPage() {
                 return (
                   <div
                     key={mp.id}
-                    className="flex items-center justify-between p-3 bg-[var(--bg-card)] rounded-lg border border-white/[0.04]"
+                    className="flex items-center justify-between p-3 bg-[var(--bg-card)] rounded-lg border border-[var(--border)]"
                   >
                     <div className="flex items-center gap-3">
                       <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black ${
@@ -199,7 +199,7 @@ export default async function FeedPage() {
                           ? 'bg-emerald-500/15 text-emerald-400'
                           : isLoss
                             ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]'
-                            : 'bg-white/[0.06] text-[var(--text-muted)]'
+                            : 'bg-[var(--on-surface-med)] text-[var(--text-muted)]'
                       }`}>
                         {isWin ? 'W' : isLoss ? 'L' : '?'}
                       </div>
@@ -233,7 +233,7 @@ export default async function FeedPage() {
             </button>
           </Link>
           <Link href="/leaderboard" className="flex-1 press">
-            <button type="button" className="w-full h-12 rounded-xl bg-white/[0.04] border border-white/[0.08] text-shuttle-white font-bold text-sm tracking-wide flex items-center justify-center gap-2 hover:bg-white/[0.08] hover:border-white/[0.12] transition-all duration-300">
+            <button type="button" className="w-full h-12 rounded-xl bg-[var(--on-surface-soft)] border border-[var(--border)] text-[var(--text-primary)] font-bold text-sm tracking-wide flex items-center justify-center gap-2 hover:bg-[var(--on-surface-med)] hover:border-[var(--border-hover)] transition-all duration-300">
               <Trophy className="w-4 h-4 text-gold" />
               Leaderboard
             </button>

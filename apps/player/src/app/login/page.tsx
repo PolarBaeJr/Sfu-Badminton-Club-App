@@ -28,9 +28,9 @@ const fadeUp = {
 };
 
 const features = [
-  { icon: Trophy, label: 'Climb the Ranks', color: 'text-[#FFD700]' },
-  { icon: Zap, label: 'Challenge Players', color: 'text-[#EF4444]' },
-  { icon: Target, label: 'Track Your Stats', color: 'text-[#F8FAFC]' },
+  { icon: Trophy, label: 'Climb the Ranks', color: 'text-[var(--color-gold)]' },
+  { icon: Zap, label: 'Challenge Players', color: 'text-[var(--color-accent)]' },
+  { icon: Target, label: 'Track Your Stats', color: 'text-[var(--text-primary)]' },
 ];
 
 export default function LoginPage() {
@@ -105,7 +105,7 @@ export default function LoginPage() {
           <h1 className="display-xl text-shuttle-white">
             SFU Badminton
           </h1>
-          <p className="text-[#94A3B8] mt-2 text-sm tracking-wide eyebrow" style={{ textTransform: 'none', letterSpacing: '0.08em' }}>
+          <p className="text-[var(--text-secondary)] mt-2 text-sm tracking-wide eyebrow" style={{ textTransform: 'none', letterSpacing: '0.08em' }}>
             Challenge. Compete. Climb.
           </p>
 
@@ -127,10 +127,10 @@ export default function LoginPage() {
 
         {/* Auth Card */}
         <motion.div variants={fadeUp} custom={4}>
-          <Card className="bg-[#161B2E]/80 border-white/[0.06] backdrop-blur-xl shadow-2xl shadow-black/20">
+          <Card className="bg-[var(--bg-card)]/80 border-[var(--border)] backdrop-blur-xl shadow-2xl shadow-black/20">
             <CardContent className="p-6">
               {/* Sign In / Sign Up Toggle */}
-              <div className="flex mb-6 bg-white/[0.04] rounded-xl p-1 border border-white/[0.04]">
+              <div className="flex mb-6 bg-[var(--on-surface-soft)] rounded-xl p-1 border border-white/[0.04]">
                 {(['signin', 'signup'] as const).map((m) => (
                   <button
                     key={m}
@@ -138,7 +138,7 @@ export default function LoginPage() {
                     className={`relative flex-1 py-2.5 text-sm font-semibold rounded-lg transition-all duration-300 ${
                       mode === m
                         ? 'text-white'
-                        : 'text-[#64748B] hover:text-[#94A3B8]'
+                        : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
                     }`}
                   >
                     {mode === m && (
@@ -173,13 +173,13 @@ export default function LoginPage() {
                       <CheckCircle2 className="w-7 h-7 text-[var(--color-accent)]" />
                     </motion.div>
                     <p className="text-[var(--color-accent)] font-bold text-lg">Check your email!</p>
-                    <p className="text-[#94A3B8] text-sm mt-2">
+                    <p className="text-[var(--text-secondary)] text-sm mt-2">
                       We sent a magic link to{' '}
                       <strong className="text-shuttle-white">{email}</strong>
                     </p>
                     <button
                       onClick={() => setSent(false)}
-                      className="mt-4 text-xs text-[#64748B] hover:text-[#94A3B8] transition-colors"
+                      className="mt-4 text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors"
                     >
                       Use a different email
                     </button>
@@ -192,7 +192,7 @@ export default function LoginPage() {
                     exit={{ opacity: 0 }}
                     className="space-y-5"
                   >
-                    <p className="text-center text-sm text-[#94A3B8]">
+                    <p className="text-center text-sm text-[var(--text-secondary)]">
                       {mode === 'signin'
                         ? 'Welcome back, player'
                         : 'Join the club and start competing'}
@@ -204,7 +204,7 @@ export default function LoginPage() {
                       disabled={googleLoading}
                       variant="outline"
                       size="lg"
-                      className="w-full h-12 bg-[var(--bg-card)] border-white/[0.08] hover:bg-white/[0.08] hover:border-white/[0.12] text-shuttle-white font-semibold transition-all duration-300"
+                      className="w-full h-12 bg-[var(--bg-card)] border-[var(--border-hover)] hover:bg-[var(--on-surface-med)] hover:border-[var(--border-strong)] text-shuttle-white font-semibold transition-all duration-300"
                     >
                       {googleLoading ? (
                         <Loader2 className="w-5 h-5 animate-spin mr-2" />
@@ -221,7 +221,7 @@ export default function LoginPage() {
 
                     <div className="relative">
                       <Separator className="bg-white/[0.06]" />
-                      <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 px-3 bg-[#161B2E] text-xs text-[#64748B]">
+                      <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 px-3 bg-[var(--bg-card)] text-xs text-[var(--text-muted)]">
                         or use email
                       </span>
                     </div>
@@ -229,11 +229,11 @@ export default function LoginPage() {
                     {/* Magic Link Form */}
                     <form onSubmit={handleMagicLink} className="space-y-4">
                       <div className="space-y-2">
-                        <Label htmlFor="email" className="text-[#94A3B8] text-sm font-medium">
+                        <Label htmlFor="email" className="text-[var(--text-secondary)] text-sm font-medium">
                           Email
                         </Label>
                         <div className="relative">
-                          <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#64748B]" />
+                          <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)]" />
                           <Input
                             id="email"
                             type="email"
@@ -241,7 +241,7 @@ export default function LoginPage() {
                             onChange={(e) => setEmail(e.target.value)}
                             placeholder="your.email@sfu.ca"
                             required
-                            className="h-12 pl-10 bg-[var(--bg-card)] border-white/[0.08] text-shuttle-white placeholder:text-[#475569] focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20 transition-all duration-300"
+                            className="h-12 pl-10 bg-[var(--bg-card)] border-[var(--border-hover)] text-shuttle-white placeholder:text-[var(--text-dim)] focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20 transition-all duration-300"
                           />
                         </div>
                       </div>
@@ -275,13 +275,13 @@ export default function LoginPage() {
                       </Button>
                     </form>
 
-                    <p className="text-center text-xs text-[#64748B]">
+                    <p className="text-center text-xs text-[var(--text-muted)]">
                       {mode === 'signin' ? (
                         <>
                           Don&apos;t have an account?{' '}
                           <button
                             onClick={() => { setMode('signup'); setError(''); }}
-                            className="text-[#EF4444] hover:text-[#F87171] font-semibold transition-colors"
+                            className="text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] font-semibold transition-colors"
                           >
                             Sign up
                           </button>
@@ -291,7 +291,7 @@ export default function LoginPage() {
                           Already have an account?{' '}
                           <button
                             onClick={() => { setMode('signin'); setError(''); }}
-                            className="text-[#EF4444] hover:text-[#F87171] font-semibold transition-colors"
+                            className="text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] font-semibold transition-colors"
                           >
                             Sign in
                           </button>
@@ -309,7 +309,7 @@ export default function LoginPage() {
         <motion.p
           variants={fadeUp}
           custom={5}
-          className="text-center text-xs text-[#475569] mt-6"
+          className="text-center text-xs text-[var(--text-dim)] mt-6"
         >
           SFU Badminton Club &middot; Powered by passion
         </motion.p>

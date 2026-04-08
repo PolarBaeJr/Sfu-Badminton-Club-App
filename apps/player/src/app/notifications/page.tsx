@@ -150,7 +150,7 @@ export default async function NotificationsPage() {
                   <StaggerItem key={n.id}>
                     <NotificationLink notificationId={n.id} href={getNotificationHref(n.type, n.metadata)} isRead={n.read_flag}>
                       <div className="card-surface flex items-start gap-3 p-4 rounded-xl opacity-60 hover:opacity-80 transition-all duration-200">
-                        <div className={`w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center shrink-0 mt-0.5`}>
+                        <div className={`w-9 h-9 rounded-lg bg-[var(--on-surface-soft)] flex items-center justify-center shrink-0 mt-0.5`}>
                           <Icon className="w-4 h-4 text-[var(--text-dim)]" />
                         </div>
                         <div className="min-w-0 flex-1">
@@ -181,7 +181,7 @@ export default async function NotificationsPage() {
       {(!notifications || notifications.length === 0) && (
         <FadeIn delay={0.05}>
           <div className="card-elevated p-12 text-center">
-            <BellOff className="w-12 h-12 text-[#1E293B] mx-auto mb-3" />
+            <BellOff className="w-12 h-12 text-[var(--text-dim)] mx-auto mb-3" />
             <p className="text-[var(--text-muted)] mb-1 font-medium">No notifications yet</p>
             <p className="text-[var(--text-dim)] text-sm">When you receive challenges, session updates, or announcements they will appear here.</p>
           </div>

@@ -28,9 +28,9 @@ const steps = [
 ];
 
 const statCards = [
-  { icon: Trophy, label: 'Starting Elo', value: '1200', color: '#FFD700' },
-  { icon: Swords, label: 'Singles & Doubles', value: 'Both', color: '#EF4444' },
-  { icon: TrendingUp, label: 'Rank', value: 'Unranked', color: '#94A3B8' },
+  { icon: Trophy, label: 'Starting Elo', value: '1200', color: 'var(--color-gold)' },
+  { icon: Swords, label: 'Singles & Doubles', value: 'Both', color: 'var(--color-accent)' },
+  { icon: TrendingUp, label: 'Rank', value: 'Unranked', color: 'var(--text-secondary)' },
 ];
 
 export default function OnboardingPage() {
@@ -94,18 +94,18 @@ export default function OnboardingPage() {
               <div className="flex items-center gap-2 flex-1">
                 <motion.div
                   animate={{
-                    backgroundColor: step >= s.number ? '#EF4444' : 'rgba(255,255,255,0.06)',
+                    backgroundColor: step >= s.number ? 'var(--color-accent)' : 'var(--on-surface-med)',
                     scale: step === s.number ? 1.1 : 1,
                   }}
                   transition={{ type: 'spring', bounce: 0.4 }}
                   className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0"
                 >
-                  <span className={step >= s.number ? 'text-white' : 'text-[#64748B]'}>
+                  <span className={step >= s.number ? 'text-white' : 'text-[var(--text-muted)]'}>
                     {step > s.number ? '✓' : s.number}
                   </span>
                 </motion.div>
                 <div className="min-w-0">
-                  <p className={`text-xs font-semibold truncate ${step >= s.number ? 'text-shuttle-white' : 'text-[#64748B]'}`}>
+                  <p className={`text-xs font-semibold truncate ${step >= s.number ? 'text-shuttle-white' : 'text-[var(--text-muted)]'}`}>
                     {s.title}
                   </p>
                 </div>
@@ -116,7 +116,7 @@ export default function OnboardingPage() {
                     <motion.div
                       animate={{ width: step > s.number ? '100%' : '0%' }}
                       transition={{ duration: 0.4 }}
-                      className="h-full bg-[#EF4444] rounded-full"
+                      className="h-full bg-[var(--color-accent)] rounded-full"
                     />
                   </div>
                 </div>
@@ -126,7 +126,7 @@ export default function OnboardingPage() {
         </div>
 
         {/* Card */}
-        <Card className="bg-[#161B2E]/80 border-white/[0.06] backdrop-blur-xl shadow-2xl shadow-black/20">
+        <Card className="bg-[var(--bg-card)]/80 border-[var(--border)] backdrop-blur-xl shadow-2xl shadow-black/20">
           <CardContent className="p-6">
             <AnimatePresence mode="wait">
               {step === 1 && (
@@ -140,54 +140,54 @@ export default function OnboardingPage() {
                 >
                   <div>
                     <h2 className="text-lg font-bold text-shuttle-white mb-1">Set up your profile</h2>
-                    <p className="text-sm text-[#94A3B8]">This is how other players will see you</p>
+                    <p className="text-sm text-[var(--text-secondary)]">This is how other players will see you</p>
                   </div>
 
                   <div className="space-y-4">
                     <div className="space-y-2">
-                      <Label htmlFor="name" className="text-[#94A3B8] text-sm font-medium">
-                        Full Name <span className="text-[#EF4444]">*</span>
+                      <Label htmlFor="name" className="text-[var(--text-secondary)] text-sm font-medium">
+                        Full Name <span className="text-[var(--color-accent)]">*</span>
                       </Label>
                       <div className="relative">
-                        <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#64748B]" />
+                        <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)]" />
                         <Input
                           id="name"
                           value={name}
                           onChange={(e) => setName(e.target.value)}
                           placeholder="Your full name"
-                          className="h-12 pl-10 bg-white/[0.04] border-white/[0.08] text-shuttle-white placeholder:text-[#475569] focus:border-[#EF4444]/50 focus:ring-[#EF4444]/20"
+                          className="h-12 pl-10 bg-[var(--on-surface-soft)] border-[var(--border-hover)] text-shuttle-white placeholder:text-[var(--text-dim)] focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20"
                         />
                       </div>
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="displayName" className="text-[#94A3B8] text-sm font-medium">
-                        Display Name <span className="text-[#64748B]">(optional)</span>
+                      <Label htmlFor="displayName" className="text-[var(--text-secondary)] text-sm font-medium">
+                        Display Name <span className="text-[var(--text-muted)]">(optional)</span>
                       </Label>
                       <div className="relative">
-                        <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#64748B]" />
+                        <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)]" />
                         <Input
                           id="displayName"
                           value={displayName}
                           onChange={(e) => setDisplayName(e.target.value)}
                           placeholder="Nickname or gamertag"
-                          className="h-12 pl-10 bg-white/[0.04] border-white/[0.08] text-shuttle-white placeholder:text-[#475569] focus:border-[#EF4444]/50 focus:ring-[#EF4444]/20"
+                          className="h-12 pl-10 bg-[var(--on-surface-soft)] border-[var(--border-hover)] text-shuttle-white placeholder:text-[var(--text-dim)] focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20"
                         />
                       </div>
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="phone" className="text-[#94A3B8] text-sm font-medium">
-                        Phone <span className="text-[#64748B]">(optional)</span>
+                      <Label htmlFor="phone" className="text-[var(--text-secondary)] text-sm font-medium">
+                        Phone <span className="text-[var(--text-muted)]">(optional)</span>
                       </Label>
                       <div className="relative">
-                        <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#64748B]" />
+                        <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)]" />
                         <Input
                           id="phone"
                           value={phone}
                           onChange={(e) => setPhone(e.target.value)}
                           placeholder="For session reminders"
-                          className="h-12 pl-10 bg-white/[0.04] border-white/[0.08] text-shuttle-white placeholder:text-[#475569] focus:border-[#EF4444]/50 focus:ring-[#EF4444]/20"
+                          className="h-12 pl-10 bg-[var(--on-surface-soft)] border-[var(--border-hover)] text-shuttle-white placeholder:text-[var(--text-dim)] focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20"
                         />
                       </div>
                     </div>
@@ -197,7 +197,7 @@ export default function OnboardingPage() {
                     onClick={() => { if (name.length >= 2) setStep(2); }}
                     disabled={name.length < 2}
                     size="lg"
-                    className="w-full h-12 bg-gradient-to-r from-[#EF4444] to-[#DC2626] hover:from-[#DC2626] hover:to-[#B91C1C] text-white font-bold tracking-wide shadow-lg shadow-[#EF4444]/20 hover:shadow-[#EF4444]/30 disabled:opacity-40 disabled:shadow-none transition-all duration-300"
+                    className="w-full h-12 gradient-court text-white font-bold tracking-wide shadow-lg shadow-[var(--color-accent)]/20 hover:shadow-[var(--color-accent)]/30 disabled:opacity-40 disabled:shadow-none transition-all duration-300"
                   >
                     Continue
                     <ChevronRight className="w-4 h-4 ml-1" />
@@ -219,14 +219,14 @@ export default function OnboardingPage() {
                       initial={{ scale: 0, rotate: -180 }}
                       animate={{ scale: 1, rotate: 0 }}
                       transition={{ type: 'spring', bounce: 0.5, delay: 0.15 }}
-                      className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#EF4444]/15 flex items-center justify-center"
+                      className="w-16 h-16 mx-auto mb-4 rounded-full bg-[var(--color-accent)]/15 flex items-center justify-center"
                     >
-                      <Rocket className="w-8 h-8 text-[#EF4444]" />
+                      <Rocket className="w-8 h-8 text-[var(--color-accent)]" />
                     </motion.div>
                     <h2 className="text-xl font-bold text-shuttle-white">
                       You&apos;re ready, {displayName || name.split(' ')[0]}!
                     </h2>
-                    <p className="text-sm text-[#94A3B8] mt-2">
+                    <p className="text-sm text-[var(--text-secondary)] mt-2">
                       Start exploring the club, check into sessions, and challenge other players.
                     </p>
                   </div>
@@ -273,7 +273,7 @@ export default function OnboardingPage() {
                     <Button
                       variant="outline"
                       onClick={() => setStep(1)}
-                      className="h-12 px-5 bg-white/[0.04] border-white/[0.08] hover:bg-white/[0.08] text-[#94A3B8]"
+                      className="h-12 px-5 bg-[var(--on-surface-soft)] border-[var(--border-hover)] hover:bg-[var(--on-surface-med)] text-[var(--text-secondary)]"
                     >
                       <ChevronLeft className="w-4 h-4 mr-1" />
                       Back
@@ -282,7 +282,7 @@ export default function OnboardingPage() {
                       onClick={handleComplete}
                       disabled={loading}
                       size="lg"
-                      className="flex-1 h-12 bg-gradient-to-r from-[#FFD700] to-[#FFA000] hover:from-[#FFC107] hover:to-[#FF8F00] text-[#0A0E1A] font-black tracking-wide shadow-lg shadow-[#FFD700]/20 hover:shadow-[#FFD700]/30 transition-all duration-300"
+                      className="flex-1 h-12 gradient-gold text-[var(--bg-primary)] font-black tracking-wide shadow-lg shadow-[var(--color-gold)]/20 hover:shadow-[var(--color-gold)]/30 transition-all duration-300"
                     >
                       {loading ? (
                         <Loader2 className="w-5 h-5 animate-spin mr-2" />
