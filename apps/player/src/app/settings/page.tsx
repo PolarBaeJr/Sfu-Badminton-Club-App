@@ -243,7 +243,7 @@ export default function SettingsPage() {
             <Input
               label="Phone"
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              onChange={(e) => setPhone(e.target.value.replace(/[^\d\s+\-()]/g, ''))}
               placeholder="Optional"
             />
             <Textarea

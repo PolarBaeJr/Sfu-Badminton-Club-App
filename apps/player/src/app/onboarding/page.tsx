@@ -185,7 +185,7 @@ export default function OnboardingPage() {
                         <Input
                           id="phone"
                           value={phone}
-                          onChange={(e) => setPhone(e.target.value)}
+                          onChange={(e) => setPhone(e.target.value.replace(/[^\d\s+\-()]/g, ''))}
                           placeholder="For session reminders"
                           className="h-12 pl-10 bg-white/[0.04] border-white/[0.08] text-shuttle-white placeholder:text-[#475569] focus:border-[#EF4444]/50 focus:ring-[#EF4444]/20"
                         />
