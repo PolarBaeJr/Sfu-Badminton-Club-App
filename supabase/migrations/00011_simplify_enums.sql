@@ -14,6 +14,8 @@ BEGIN;
 -- ============================================================
 -- STEP 1: Recreate player_status with simplified values
 -- ============================================================
+ALTER TABLE players ALTER COLUMN status DROP DEFAULT;
+
 ALTER TYPE player_status RENAME TO player_status_old;
 
 CREATE TYPE player_status AS ENUM ('competitive', 'recreational', 'pending_approval', 'suspended');
@@ -26,11 +28,15 @@ ALTER TABLE players
     ELSE status::text::player_status
   END;
 
+ALTER TABLE players ALTER COLUMN status SET DEFAULT 'pending_approval';
+
 DROP TYPE player_status_old;
 
 -- ============================================================
 -- STEP 2: Recreate user_role with simplified values
 -- ============================================================
+ALTER TABLE players ALTER COLUMN role DROP DEFAULT;
+
 ALTER TYPE user_role RENAME TO user_role_old;
 
 CREATE TYPE user_role AS ENUM ('player', 'admin');
@@ -41,6 +47,8 @@ ALTER TABLE players
     WHEN role::text IN ('moderator', 'coach_executive') THEN 'player'::user_role
     ELSE role::text::user_role
   END;
+
+ALTER TABLE players ALTER COLUMN role SET DEFAULT 'player';
 
 DROP TYPE user_role_old;
 
