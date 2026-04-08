@@ -3,7 +3,8 @@ import { NextResponse } from 'next/server';
 import { rateLimit, getClientIp } from '@badminton/shared';
 
 export async function GET(request: Request) {
-  const { searchParams, origin } = new URL(request.url);
+  const { searchParams } = new URL(request.url);
+  const origin = process.env.NEXT_PUBLIC_ADMIN_URL || new URL(request.url).origin;
   const code = searchParams.get('code');
   const token_hash = searchParams.get('token_hash');
   const type = searchParams.get('type');
