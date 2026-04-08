@@ -77,7 +77,7 @@ export function AnnouncementItem({ announcement, isRead }: AnnouncementItemProps
   return (
     <div
       ref={cardRef}
-      className="relative flex overflow-hidden rounded-xl border border-white/[0.06] bg-[#161B2E] transition-colors hover:border-white/[0.10]"
+      className="card-surface card-interactive relative flex overflow-hidden"
     >
       {/* Left color stripe */}
       <div
@@ -123,8 +123,8 @@ export function AnnouncementItem({ announcement, isRead }: AnnouncementItemProps
         {/* Footer: type badge + time */}
         <div className="flex items-center justify-between pl-10">
           <span
-            className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
-            style={{ color: config.color, backgroundColor: `${config.color}18` }}
+            className="chip"
+            style={{ color: config.color, borderColor: `${config.color}50`, background: `${config.color}18` }}
           >
             {config.label}
           </span>

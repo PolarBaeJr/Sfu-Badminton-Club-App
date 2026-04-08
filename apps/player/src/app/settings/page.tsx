@@ -176,8 +176,14 @@ export default function SettingsPage() {
   }
 
   if (!loaded) return (
-    <div className="flex justify-center py-12">
-      <div className="animate-spin h-8 w-8 border-2 border-[var(--color-accent)] border-t-transparent rounded-full" />
+    <div className="max-w-lg mx-auto space-y-5 pt-4">
+      {[1,2,3].map((i) => (
+        <div key={i} className="card-elevated p-6">
+          <div className="skeleton h-4 w-24 mb-4" />
+          <div className="skeleton h-12 w-full mb-3" />
+          <div className="skeleton h-12 w-full" />
+        </div>
+      ))}
     </div>
   );
 
@@ -189,8 +195,8 @@ export default function SettingsPage() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4 }}
       >
-        <h1 className="text-2xl font-bold text-[var(--text-primary)]">Settings</h1>
-        <p className="text-sm text-[var(--text-muted)] mt-1">Manage your profile and preferences</p>
+        <p className="eyebrow mb-1">Account</p>
+        <h1 className="display-lg text-[var(--text-primary)]">Settings</h1>
       </motion.div>
 
       {/* Profile Section */}

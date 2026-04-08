@@ -93,33 +93,33 @@ export default function LoginPage() {
       >
         {/* Logo & Branding */}
         <motion.div variants={fadeUp} custom={0} className="text-center mb-8">
-          {/* Shuttlecock icon */}
+          {/* Logo icon */}
           <motion.div
-            className="w-16 h-16 mx-auto mb-5 rounded-2xl bg-gradient-to-br from-[#EF4444] to-[#DC2626] flex items-center justify-center glow-red"
+            className="w-16 h-16 mx-auto mb-5 rounded-2xl gradient-court flex items-center justify-center glow-red"
             animate={{ y: [0, -6, 0] }}
             transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
           >
-            <span className="text-2xl font-black text-white font-display">SB</span>
+            <span className="text-2xl font-black text-white" style={{ fontFamily: "'Barlow Condensed', sans-serif" }}>SB</span>
           </motion.div>
 
-          <h1 className="text-4xl font-black text-shuttle-white font-display tracking-wider uppercase">
+          <h1 className="display-xl text-shuttle-white">
             SFU Badminton
           </h1>
-          <p className="text-[#94A3B8] mt-2 text-sm tracking-wide">
+          <p className="text-[#94A3B8] mt-2 text-sm tracking-wide eyebrow" style={{ textTransform: 'none', letterSpacing: '0.08em' }}>
             Challenge. Compete. Climb.
           </p>
 
-          {/* Feature pills */}
-          <div className="flex justify-center gap-3 mt-5">
+          {/* Feature chips */}
+          <div className="flex justify-center gap-2 mt-5 flex-wrap">
             {features.map((feat, i) => (
               <motion.div
                 key={feat.label}
                 variants={fadeUp}
                 custom={i + 1}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/5 border border-white/5"
+                className="chip"
               >
-                <feat.icon className={`w-3.5 h-3.5 ${feat.color}`} />
-                <span className="text-xs text-[#94A3B8] font-medium">{feat.label}</span>
+                <feat.icon className={`w-3 h-3 ${feat.color}`} />
+                <span>{feat.label}</span>
               </motion.div>
             ))}
           </div>

@@ -60,11 +60,14 @@ export default async function MyStatsPage() {
   return (
     <div className="space-y-6">
       <FadeIn>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 reveal reveal-1">
           <div className="w-10 h-10 rounded-xl bg-[#EF4444]/10 flex items-center justify-center">
-            <BarChart3 className="w-5 h-5 text-[#EF4444]" />
+            <BarChart3 className="w-5 h-5 text-court-red" />
           </div>
-          <h1 className="text-3xl font-black font-display text-shuttle-white tracking-wider uppercase">My Stats</h1>
+          <div>
+            <p className="eyebrow">Performance</p>
+            <h1 className="display-lg text-shuttle-white">My Stats</h1>
+          </div>
         </div>
       </FadeIn>
 
@@ -74,22 +77,17 @@ export default async function MyStatsPage() {
           <FadeIn delay={0.05}>
             <StaggerContainer className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {[
-                { icon: Target, color: '#EF4444', label: 'Singles Elo', value: r.singles_elo, sub: r.singles_provisional ? 'Provisional' : `K=${r.singles_k_factor}` },
-                { icon: Swords, color: '#FFD700', label: 'Doubles Elo', value: r.doubles_elo, sub: r.doubles_provisional ? 'Provisional' : `K=${r.doubles_k_factor}` },
-                { icon: TrendingUp, color: '#EF4444', label: 'Singles Record', value: `${r.singles_wins}W-${r.singles_losses}L`, sub: getWinRate(r.singles_wins, r.singles_losses) },
-                { icon: Users, color: '#FFD700', label: 'Doubles Record', value: `${r.doubles_wins}W-${r.doubles_losses}L`, sub: getWinRate(r.doubles_wins, r.doubles_losses) },
+                { icon: Target, color: '#EF4444', label: 'Singles Elo', value: r.singles_elo, sub: r.singles_provisional ? 'Provisional' : `K=${r.singles_k_factor}`, gradient: 'gradient-text-red' },
+                { icon: Swords, color: '#FFD700', label: 'Doubles Elo', value: r.doubles_elo, sub: r.doubles_provisional ? 'Provisional' : `K=${r.doubles_k_factor}`, gradient: 'gradient-text-gold' },
+                { icon: TrendingUp, color: '#EF4444', label: 'Singles Record', value: `${r.singles_wins}W-${r.singles_losses}L`, sub: getWinRate(r.singles_wins, r.singles_losses), gradient: '' },
+                { icon: Users, color: '#FFD700', label: 'Doubles Record', value: `${r.doubles_wins}W-${r.doubles_losses}L`, sub: getWinRate(r.doubles_wins, r.doubles_losses), gradient: '' },
               ].map((stat) => (
                 <StaggerItem key={stat.label}>
-                  <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4 hover:border-white/[0.1] transition-colors">
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${stat.color}15` }}>
-                        <stat.icon className="w-3.5 h-3.5" style={{ color: stat.color }} />
-                      </div>
-                      <span className="text-xs text-[#64748B] font-medium">{stat.label}</span>
-                    </div>
-                    <p className="text-2xl font-black text-shuttle-white font-display">{stat.value}</p>
-                    <p className="text-xs text-[#64748B] mt-1">
-                      {stat.sub?.includes('Provisional') ? <span className="text-[#FFD700]">{stat.sub}</span> : stat.sub}
+                  <div className="card-surface card-interactive p-4">
+                    <p className="eyebrow mb-2">{stat.label}</p>
+                    <p className={`display-md nums ${stat.gradient || 'text-shuttle-white'}`}>{stat.value}</p>
+                    <p className="text-xs text-[#64748B] mt-1.5">
+                      {stat.sub?.includes('Provisional') ? <span className="chip chip-gold">{stat.sub}</span> : stat.sub}
                     </p>
                   </div>
                 </StaggerItem>
@@ -111,12 +109,9 @@ export default async function MyStatsPage() {
                 { icon: Shield, color: reliability?.no_shows ? '#EF4444' : '#EF4444', label: 'Reliability', value: `${reliability?.no_shows ?? 0} no-shows`, sub: null },
               ].map((stat) => (
                 <StaggerItem key={stat.label}>
-                  <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <stat.icon className="w-3.5 h-3.5" style={{ color: stat.color }} />
-                      <span className="text-xs text-[#64748B] font-medium">{stat.label}</span>
-                    </div>
-                    <p className="text-xl font-bold text-shuttle-white font-display">{stat.value}</p>
+                  <div className="card-surface p-4">
+                    <p className="eyebrow mb-2">{stat.label}</p>
+                    <p className="display-md text-shuttle-white nums">{stat.value}</p>
                     {stat.sub && <p className="text-xs text-[#64748B] mt-1">{stat.sub}</p>}
                   </div>
                 </StaggerItem>
@@ -129,10 +124,10 @@ export default async function MyStatsPage() {
       {/* Head to Head */}
       {h2h && h2h.length > 0 && (
         <FadeIn delay={0.15}>
-          <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4">
+          <div className="card-elevated p-4">
             <div className="flex items-center gap-2 mb-4">
-              <Swords className="w-4 h-4 text-[#EF4444]" />
-              <h2 className="text-sm font-bold text-shuttle-white uppercase tracking-wider font-display">Head to Head</h2>
+              <Swords className="w-4 h-4 text-court-red" />
+              <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>Head to Head</h2>
             </div>
             <div className="space-y-2">
               {h2h.map((h) => {
@@ -145,9 +140,9 @@ export default async function MyStatsPage() {
                   <div key={h.id} className="flex items-center justify-between p-3 bg-white/[0.03] rounded-lg border border-white/[0.04]">
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-shuttle-white font-medium">{opponent?.full_name}</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-[#64748B] font-medium">{h.match_type}</span>
+                      <span className="chip">{h.match_type}</span>
                     </div>
-                    <span className="font-mono text-sm font-bold">
+                    <span className="font-mono text-sm font-bold nums">
                       <span className="text-emerald-400">{wins}W</span>
                       <span className="text-[#475569] mx-1">-</span>
                       <span className="text-[#EF4444]">{losses}L</span>
@@ -163,10 +158,10 @@ export default async function MyStatsPage() {
       {/* Best Partners */}
       {partners && partners.length > 0 && (
         <FadeIn delay={0.17}>
-          <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4">
+          <div className="card-elevated p-4">
             <div className="flex items-center gap-2 mb-4">
-              <Users className="w-4 h-4 text-[#FFD700]" />
-              <h2 className="text-sm font-bold text-shuttle-white uppercase tracking-wider font-display">Best Partners</h2>
+              <Users className="w-4 h-4 text-gold" />
+              <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>Best Partners</h2>
             </div>
             <div className="space-y-2">
               {partners.map((p) => {
@@ -181,7 +176,7 @@ export default async function MyStatsPage() {
                       <span className="text-[#475569] mx-1">-</span>
                       <span className="text-[#EF4444]">{p.losses}L</span>
                     </span>
-                    <span className="text-xs font-bold text-[#FFD700]">{Math.round(p.win_rate * 100)}%</span>
+                    <span className="chip chip-gold nums">{Math.round(p.win_rate * 100)}%</span>
                   </div>
                 </div>
                 );
@@ -193,10 +188,10 @@ export default async function MyStatsPage() {
 
       {/* Match History */}
       <FadeIn delay={0.2}>
-        <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4">
+        <div className="card-elevated p-4">
           <div className="flex items-center gap-2 mb-4">
-            <Trophy className="w-4 h-4 text-[#FFD700]" />
-            <h2 className="text-sm font-bold text-shuttle-white uppercase tracking-wider font-display">Match History</h2>
+            <Trophy className="w-4 h-4 text-gold" />
+            <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>Match History</h2>
           </div>
           <div className="space-y-2">
             {recentMatches?.map((mp) => {
@@ -213,11 +208,11 @@ export default async function MyStatsPage() {
                     }`}>
                       {isWin ? 'W' : isLoss ? 'L' : '?'}
                     </div>
-                    <span className="text-sm font-mono text-shuttle-white font-medium">{m.score_summary as string || '-'}</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-[#64748B] font-medium">{m.match_type as string}</span>
+                    <span className="text-sm font-mono text-shuttle-white font-medium nums">{m.score_summary as string || '-'}</span>
+                    <span className="chip">{m.match_type as string}</span>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className={`font-mono text-sm font-bold ${(mp.rating_delta ?? 0) >= 0 ? 'text-emerald-400' : 'text-[#EF4444]'}`}>
+                    <span className={`font-mono text-sm font-bold nums ${(mp.rating_delta ?? 0) >= 0 ? 'text-emerald-400' : 'text-[#EF4444]'}`}>
                       {mp.rating_delta !== null ? `${(mp.rating_delta ?? 0) >= 0 ? '+' : ''}${mp.rating_delta}` : ''}
                     </span>
                     <span className="text-xs text-[#475569]">{m.played_at ? formatDate(m.played_at as string) : ''}</span>

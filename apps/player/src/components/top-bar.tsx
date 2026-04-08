@@ -29,11 +29,11 @@ export function TopBar({ playerName, unreadCount }: { playerName: string; unread
   return (
     <header className="sticky top-0 bg-[#0A0E1A]/90 backdrop-blur-xl border-b border-white/[0.06] z-50">
       <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
-        <Link href="/feed" className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#EF4444] to-[#DC2626] flex items-center justify-center">
-            <span className="text-xs font-black text-white font-display">SB</span>
+        <Link href="/feed" className="flex items-center gap-2 press">
+          <div className="w-7 h-7 rounded-lg gradient-court flex items-center justify-center glow-red">
+            <span className="text-xs font-black text-white" style={{ fontFamily: "'Barlow Condensed', sans-serif" }}>SB</span>
           </div>
-          <span className="text-lg font-black text-shuttle-white font-display tracking-wider uppercase hidden sm:inline">
+          <span className="display-md text-shuttle-white hidden sm:inline" style={{ fontSize: '1rem' }}>
             SFU Badminton
           </span>
         </Link>

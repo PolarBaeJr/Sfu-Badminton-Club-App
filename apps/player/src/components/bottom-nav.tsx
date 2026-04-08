@@ -56,7 +56,7 @@ export function BottomNav() {
   }, []);
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 bg-[#0A0E1A]/95 backdrop-blur-xl border-t border-white/[0.06] z-50 md:hidden">
+    <nav className="fixed bottom-0 left-0 right-0 bg-[#0A0E1A]/95 backdrop-blur-xl border-t border-white/[0.06] z-50 md:hidden safe-bottom">
       <div className="flex justify-around max-w-md mx-auto">
         {navItems.map((item) => {
           const active = pathname.startsWith(item.href);
@@ -65,21 +65,19 @@ export function BottomNav() {
               key={item.href}
               href={item.href}
               className={cn(
-                'flex flex-col items-center py-2 px-3 text-[10px] min-h-[56px] min-w-[56px] justify-center relative transition-colors duration-200',
-                active
-                  ? 'text-[#EF4444]'
-                  : 'text-[#64748B]'
+                'press flex flex-col items-center py-2 px-3 text-[10px] min-h-[56px] min-w-[56px] justify-center relative',
+                active ? 'text-[#EF4444]' : 'text-[#64748B]'
               )}
             >
               <div className={cn(
                 'p-1.5 rounded-xl transition-all duration-200 mb-0.5',
-                active && 'bg-[#EF4444]/10'
+                active ? 'bg-[#EF4444]/10 glow-red' : 'hover:bg-white/[0.04]'
               )}>
-                <item.icon className={cn('w-5 h-5', active && 'stroke-[2.5]')} />
+                <item.icon className={cn('w-5 h-5 transition-all duration-200', active && 'stroke-[2.5]')} />
               </div>
-              <span className="font-semibold">{item.label}</span>
+              <span className={cn('font-semibold transition-colors', active ? 'text-[#EF4444]' : 'text-[#64748B]')}>{item.label}</span>
               {item.href === '/announcements' && unreadAnnouncements > 0 && (
-                <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-[#EF4444] text-white text-[9px] rounded-full flex items-center justify-center font-bold">
+                <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-[#EF4444] text-white text-[9px] rounded-full flex items-center justify-center font-bold shadow-lg shadow-[#EF4444]/40">
                   {unreadAnnouncements > 9 ? '9+' : unreadAnnouncements}
                 </span>
               )}

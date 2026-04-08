@@ -54,15 +54,13 @@ export default async function SessionsPage() {
     <div className="space-y-6">
       {/* Header */}
       <FadeIn>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 reveal reveal-1">
           <div className="w-9 h-9 rounded-xl bg-[#EF4444]/10 flex items-center justify-center">
-            <Calendar className="w-4 h-4 text-[#EF4444]" />
+            <Calendar className="w-4 h-4 text-court-red" />
           </div>
           <div>
-            <h1 className="text-2xl font-black text-shuttle-white font-display tracking-wide">
-              Sessions
-            </h1>
-            <p className="text-[#64748B] text-sm mt-0.5">Upcoming club practice sessions</p>
+            <p className="eyebrow">Practice</p>
+            <h1 className="display-lg text-shuttle-white">Sessions</h1>
           </div>
         </div>
       </FadeIn>
@@ -71,13 +69,9 @@ export default async function SessionsPage() {
       <FadeIn delay={0.05}>
         <div>
           <div className="flex items-center gap-2 mb-3">
-            <h2 className="text-sm font-bold text-shuttle-white uppercase tracking-wider font-display">
-              Upcoming Sessions
-            </h2>
+            <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>Upcoming Sessions</h2>
             {openSessions && openSessions.length > 0 && (
-              <span className="bg-emerald-500/10 text-emerald-400 text-xs font-bold px-2 py-0.5 rounded-full">
-                {openSessions.length}
-              </span>
+              <span className="chip chip-success">{openSessions.length}</span>
             )}
           </div>
 
@@ -88,7 +82,7 @@ export default async function SessionsPage() {
                 const attendeeCount = countBySession[session.id] ?? 0;
                 return (
                   <StaggerItem key={session.id}>
-                    <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-4 hover:border-emerald-500/20 transition-all duration-300">
+                    <div className="card-surface card-interactive p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-semibold text-shuttle-white truncate">
@@ -140,7 +134,7 @@ export default async function SessionsPage() {
               })}
             </StaggerContainer>
           ) : (
-            <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl p-8 flex flex-col items-center justify-center text-center">
+            <div className="card-elevated p-8 flex flex-col items-center justify-center text-center">
               <Calendar className="w-9 h-9 text-[#1E293B] mb-3" />
               <p className="text-sm font-semibold text-shuttle-white mb-1">No upcoming sessions</p>
               <p className="text-xs text-[#64748B]">Check back later for new sessions.</p>
@@ -153,9 +147,7 @@ export default async function SessionsPage() {
       {closedSessions && closedSessions.length > 0 && (
         <FadeIn delay={0.15}>
           <div>
-            <h2 className="text-sm font-bold text-[#64748B] uppercase tracking-wider font-display mb-3">
-              Past Sessions
-            </h2>
+            <h2 className="eyebrow mb-3">Past Sessions</h2>
             <StaggerContainer className="space-y-2">
               {closedSessions.map((session) => (
                 <StaggerItem key={session.id}>

@@ -146,17 +146,18 @@ export default function LeaderboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl bg-[#FFD700]/10 flex items-center justify-center">
-          <Trophy className="w-5 h-5 text-[#FFD700]" />
+      <div className="flex items-center gap-3 reveal reveal-1">
+        <div className="w-10 h-10 rounded-xl bg-[#FFD700]/10 flex items-center justify-center glow-gold">
+          <Trophy className="w-5 h-5 text-gold" />
         </div>
-        <h1 className="text-3xl font-black font-display text-shuttle-white tracking-wider uppercase">
-          Leaderboard
-        </h1>
+        <div>
+          <p className="eyebrow">Rankings</p>
+          <h1 className="display-lg text-shuttle-white">Leaderboard</h1>
+        </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-white/[0.03] rounded-xl p-1 border border-white/[0.04] overflow-x-auto">
+      <div className="flex gap-1 bg-white/[0.03] rounded-xl p-1 border border-white/[0.04] overflow-x-auto scroll-fade-x">
         {tabs.map((tab) => (
           <button
             key={tab.id}
@@ -192,10 +193,11 @@ export default function LeaderboardPage() {
       </div>
 
       {/* Table */}
-      <div className="bg-[#161B2E] border border-white/[0.06] rounded-xl overflow-hidden">
+      <div className="card-elevated overflow-hidden">
         {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <Loader2 className="w-8 h-8 text-[#FFD700] animate-spin" />
+          <div className="flex flex-col items-center justify-center py-16 gap-3">
+            <Loader2 className="w-7 h-7 text-gold animate-spin" />
+            <div className="skeleton h-4 w-32" />
           </div>
         ) : (
           <AnimatePresence mode="wait">
@@ -207,7 +209,7 @@ export default function LeaderboardPage() {
               transition={{ duration: 0.2 }}
             >
               {/* Header */}
-              <div className={`grid ${activeTab === 'tournament_points' ? 'grid-cols-[3rem_1fr_5rem]' : 'grid-cols-[3rem_1fr_5rem_4rem_3.5rem] md:grid-cols-[3rem_1fr_5rem_5rem_4rem]'} px-4 py-3 border-b border-white/[0.06] text-xs font-semibold text-[#475569] uppercase tracking-wider`}>
+              <div className={`grid ${activeTab === 'tournament_points' ? 'grid-cols-[3rem_1fr_5rem]' : 'grid-cols-[3rem_1fr_5rem_4rem_3.5rem] md:grid-cols-[3rem_1fr_5rem_5rem_4rem]'} px-4 py-3 border-b border-white/[0.06] eyebrow`}>
                 <span>#</span>
                 <span>Player</span>
                 {activeTab === 'tournament_points' ? (
@@ -258,14 +260,14 @@ export default function LeaderboardPage() {
                             {p.full_name}
                           </span>
                           {prov && activeTab !== 'tournament_points' && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-[#64748B] font-medium shrink-0">P</span>
+                            <span className="chip shrink-0" style={{ fontSize: '0.6rem', padding: '0.125rem 0.4rem' }}>P</span>
                           )}
                         </span>
                         {activeTab === 'tournament_points' ? (
-                          <span className="text-right font-mono text-base font-bold text-[#FFD700]">{(p as any)._tournamentPoints ?? 0}</span>
+                          <span className="text-right font-mono text-base font-bold gradient-text-gold nums">{(p as any)._tournamentPoints ?? 0}</span>
                         ) : (
                           <>
-                            <span className="text-right font-mono text-base font-bold text-shuttle-white">
+                            <span className="text-right font-mono text-base font-bold text-shuttle-white nums">
                               {elo ?? '-'}
                               {(() => {
                                 if (!elo || activeTab === 'tournament_points') return null;
@@ -279,12 +281,12 @@ export default function LeaderboardPage() {
                                 );
                               })()}
                             </span>
-                            <span className="text-right text-sm text-[#94A3B8]">
+                            <span className="text-right text-sm text-[#94A3B8] nums">
                               <span className="text-emerald-400">{wins ?? 0}</span>
                               <span className="text-[#475569]">-</span>
                               <span className="text-[#EF4444]">{losses ?? 0}</span>
                             </span>
-                            <span className="text-right text-sm text-[#94A3B8] font-medium">{winPct}%</span>
+                            <span className="text-right text-sm text-[#94A3B8] font-medium nums">{winPct}%</span>
                           </>
                         )}
                       </Link>

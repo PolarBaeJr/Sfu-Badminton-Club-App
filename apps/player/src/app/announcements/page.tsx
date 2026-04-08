@@ -50,18 +50,20 @@ export default async function AnnouncementsPage() {
   const regularAnnouncements = (announcements ?? []).filter((a) => !a.pinned);
 
   return (
-    <div className="min-h-screen bg-[#0A0E1A]">
-      <div className="max-w-2xl mx-auto px-4 py-8">
+    <div className="min-h-screen">
+      <div className="max-w-2xl mx-auto">
         {/* Header */}
         <FadeIn>
-          <div className="mb-8">
+          <div className="mb-8 reveal reveal-1">
             <div className="flex items-center gap-3 mb-1">
               <div className="w-9 h-9 rounded-lg bg-[#EF4444]/10 flex items-center justify-center">
-                <Megaphone className="w-5 h-5 text-[#EF4444]" />
+                <Megaphone className="w-5 h-5 text-court-red" />
               </div>
-              <h1 className="text-2xl font-bold text-shuttle-white">News</h1>
+              <div>
+                <p className="eyebrow">Club</p>
+                <h1 className="display-lg text-shuttle-white">News</h1>
+              </div>
             </div>
-            <p className="text-sm text-[#64748B] ml-12">Club announcements &amp; updates</p>
           </div>
         </FadeIn>
 
@@ -81,10 +83,8 @@ export default async function AnnouncementsPage() {
             {pinnedAnnouncements.length > 0 && (
               <section>
                 <div className="flex items-center gap-2 mb-3">
-                  <Pin className="w-3.5 h-3.5 text-[#FFD700]" />
-                  <span className="text-xs font-semibold text-[#FFD700] uppercase tracking-widest">
-                    Pinned
-                  </span>
+                  <Pin className="w-3.5 h-3.5 text-gold" />
+                  <span className="eyebrow text-gold">Pinned</span>
                 </div>
                 <StaggerContainer className="space-y-3">
                   {pinnedAnnouncements.map((announcement) => (
@@ -104,9 +104,7 @@ export default async function AnnouncementsPage() {
               <section>
                 {pinnedAnnouncements.length > 0 && (
                   <div className="flex items-center gap-2 mb-3">
-                    <span className="text-xs font-semibold text-[#64748B] uppercase tracking-widest">
-                      All Updates
-                    </span>
+                    <span className="eyebrow">All Updates</span>
                   </div>
                 )}
                 <StaggerContainer className="space-y-3">

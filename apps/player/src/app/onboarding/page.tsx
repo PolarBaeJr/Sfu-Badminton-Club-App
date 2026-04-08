@@ -77,11 +77,12 @@ export default function OnboardingPage() {
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
             transition={{ type: 'spring', bounce: 0.5 }}
-            className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-[#FFD700] to-[#FFA000] flex items-center justify-center glow-gold"
+            className="w-14 h-14 mx-auto mb-4 rounded-2xl gradient-gold flex items-center justify-center glow-gold"
           >
             <Sparkles className="w-7 h-7 text-[#0A0E1A]" />
           </motion.div>
-          <h1 className="text-2xl font-black text-shuttle-white font-display tracking-wider uppercase">
+          <p className="eyebrow mb-1">New Player</p>
+          <h1 className="display-lg text-shuttle-white">
             Welcome to the Club
           </h1>
         </div>
@@ -238,16 +239,16 @@ export default function OnboardingPage() {
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.2 + i * 0.1 }}
-                        className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-3 text-center"
+                        className="card-surface p-3 text-center"
                       >
                         <card.icon
                           className="w-5 h-5 mx-auto mb-1.5"
                           style={{ color: card.color }}
                         />
-                        <p className="text-lg font-bold text-shuttle-white font-display">
+                        <p className="display-md text-shuttle-white nums">
                           {card.value}
                         </p>
-                        <p className="text-[10px] text-[#64748B] font-medium mt-0.5">
+                        <p className="eyebrow mt-0.5" style={{ fontSize: '0.6rem' }}>
                           {card.label}
                         </p>
                       </motion.div>
