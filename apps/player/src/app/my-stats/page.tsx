@@ -137,13 +137,14 @@ export default async function MyStatsPage() {
             <div className="space-y-2">
               {h2h.map((h) => {
                 const isA = h.player_a_id === player.id;
-                const opponent = isA ? h.b : h.a;
+                const opponentRaw = isA ? h.b : h.a;
+                const opponent = (Array.isArray(opponentRaw) ? opponentRaw[0] : opponentRaw) as { full_name?: string } | null;
                 const wins = isA ? h.player_a_wins : h.player_b_wins;
                 const losses = isA ? h.player_b_wins : h.player_a_wins;
                 return (
                   <div key={h.id} className="flex items-center justify-between p-3 bg-white/[0.03] rounded-lg border border-white/[0.04]">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm text-shuttle-white font-medium">{(opponent as Record<string, unknown>)?.full_name as string}</span>
+                      <span className="text-sm text-shuttle-white font-medium">{opponent?.full_name}</span>
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.06] text-[#64748B] font-medium">{h.match_type}</span>
                     </div>
                     <span className="font-mono text-sm font-bold">
@@ -168,9 +169,12 @@ export default async function MyStatsPage() {
               <h2 className="text-sm font-bold text-shuttle-white uppercase tracking-wider font-display">Best Partners</h2>
             </div>
             <div className="space-y-2">
-              {partners.map((p) => (
+              {partners.map((p) => {
+                const partnerRaw = p.partner as unknown;
+                const partner = (Array.isArray(partnerRaw) ? partnerRaw[0] : partnerRaw) as { full_name?: string } | null;
+                return (
                 <div key={p.id} className="flex items-center justify-between p-3 bg-white/[0.03] rounded-lg border border-white/[0.04]">
-                  <span className="text-sm text-shuttle-white font-medium">{(p.partner as Record<string, unknown>)?.full_name as string}</span>
+                  <span className="text-sm text-shuttle-white font-medium">{partner?.full_name}</span>
                   <div className="flex items-center gap-3">
                     <span className="font-mono text-sm">
                       <span className="text-emerald-400">{p.wins}W</span>
@@ -180,7 +184,8 @@ export default async function MyStatsPage() {
                     <span className="text-xs font-bold text-[#FFD700]">{Math.round(p.win_rate * 100)}%</span>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </FadeIn>
@@ -195,7 +200,8 @@ export default async function MyStatsPage() {
           </div>
           <div className="space-y-2">
             {recentMatches?.map((mp) => {
-              const m = mp.match as Record<string, unknown> | null;
+              const matchRaw = mp.match as unknown;
+              const m = (Array.isArray(matchRaw) ? matchRaw[0] : matchRaw) as Record<string, unknown> | null;
               if (!m) return null;
               const isWin = mp.win_flag === true;
               const isLoss = mp.win_flag === false;

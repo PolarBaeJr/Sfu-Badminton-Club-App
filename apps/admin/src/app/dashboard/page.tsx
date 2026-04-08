@@ -35,7 +35,7 @@ export default async function DashboardPage() {
     supabase.from('players').select('id', { count: 'exact', head: true }).eq('status', 'pending_approval'),
     supabase.from('disputes').select('id', { count: 'exact', head: true }).eq('status', 'open'),
     supabase.from('walkovers').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-    supabase.from('matches').select('id, score_summary, played_at, match_type, format, created_at, match_participants(player_id, win_flag, rating_delta, player:players(full_name))').order('created_at', { ascending: false }).limit(5),
+    supabase.from('matches').select('id, score_summary, played_at, match_type, format, created_at, result_status, match_participants(player_id, win_flag, rating_delta, player:players(full_name))').order('created_at', { ascending: false }).limit(5),
     supabase.from('tournaments').select('id', { count: 'exact', head: true }).eq('status', 'active'),
     supabase.from('challenges').select('id', { count: 'exact', head: true }).in('status', ['proposed', 'partially_confirmed', 'accepted']),
     supabase
