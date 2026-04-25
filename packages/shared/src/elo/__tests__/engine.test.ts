@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   calculateExpected,
   calculateEloUpdate,
-  calculateDelta,
   calculateTeamRating,
   getFormatWeight,
   getEventMultiplier,
@@ -217,29 +216,6 @@ describe('calculateEloUpdate', () => {
     });
     expect(result.delta).toBe(0);
     expect(result.newRating).toBe(1200);
-  });
-});
-
-describe('calculateDelta', () => {
-  it('matches calculateEloUpdate delta for the same inputs', () => {
-    const delta = calculateDelta(1200, 1400, 24, 1.0, 1.0, true);
-    const update = calculateEloUpdate({
-      playerRating: 1200,
-      opponentRating: 1400,
-      kFactor: 24,
-      formatWeight: 1.0,
-      eventMultiplier: 1.0,
-      won: true,
-    });
-    expect(delta).toBe(update.delta);
-  });
-
-  it('returns a positive value on win', () => {
-    expect(calculateDelta(1200, 1200, 24, 1.0, 1.0, true)).toBeGreaterThan(0);
-  });
-
-  it('returns a negative value on loss', () => {
-    expect(calculateDelta(1200, 1200, 24, 1.0, 1.0, false)).toBeLessThan(0);
   });
 });
 

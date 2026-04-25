@@ -85,7 +85,6 @@ describe('matchResultSchema', () => {
   it('accepts a 1-game result', () => {
     expect(
       matchResultSchema.safeParse({
-        match_id: UUID_A,
         winner_side: 'a',
         games: [game],
         completed: true,
@@ -95,7 +94,6 @@ describe('matchResultSchema', () => {
   it('rejects 0 games', () => {
     expect(
       matchResultSchema.safeParse({
-        match_id: UUID_A,
         winner_side: 'a',
         games: [],
         completed: true,
@@ -105,7 +103,6 @@ describe('matchResultSchema', () => {
   it('rejects more than 3 games', () => {
     expect(
       matchResultSchema.safeParse({
-        match_id: UUID_A,
         winner_side: 'a',
         games: [game, game, game, game],
         completed: true,
@@ -115,7 +112,6 @@ describe('matchResultSchema', () => {
   it('rejects a negative score', () => {
     expect(
       matchResultSchema.safeParse({
-        match_id: UUID_A,
         winner_side: 'a',
         games: [{ game_number: 1, side_a_score: -1, side_b_score: 15 }],
         completed: true,

@@ -1,13 +1,32 @@
 import { z } from 'zod';
 
+// Empty optional strings come from form fields where the user left the input blank.
+// Coerce them to undefined so downstream code doesn't have to discriminate "" vs unset.
+const blankAsUndefined = (schema: z.ZodTypeAny) =>
+  z.preprocess((val) => (val === '' ? undefined : val), schema.optional());
+
+const phoneSchema = blankAsUndefined(
+  z.string().regex(/^\+?[0-9 ()-]{7,20}$/, 'Invalid phone number')
+);
+const displayNameSchema = blankAsUndefined(
+  z.string().min(2, 'Display name must be at least 2 characters').max(40)
+);
+// HTML <input type="date"> emits YYYY-MM-DD; <input type="time"> emits HH:MM (with optional :SS).
+const isoDateSchema = blankAsUndefined(
+  z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date')
+);
+const isoTimeSchema = blankAsUndefined(
+  z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, 'Invalid time')
+);
+
 export const loginSchema = z.object({
   email: z.string().email('Invalid email address'),
 });
 
 export const profileSchema = z.object({
-  full_name: z.string().min(2, 'Name must be at least 2 characters'),
-  display_name: z.string().optional(),
-  phone: z.string().optional(),
+  full_name: z.string().min(2, 'Name must be at least 2 characters').max(80),
+  display_name: displayNameSchema,
+  phone: phoneSchema,
   bio: z.string().max(500).optional(),
 });
 
@@ -20,13 +39,15 @@ export const challengeCreateSchema = z.object({
   partner_id: z.string().uuid().optional(),
   opponent_partner_id: z.string().uuid().optional(),
   session_id: z.string().uuid().optional(),
-  scheduled_date: z.string().optional(),
-  scheduled_time: z.string().optional(),
+  scheduled_date: isoDateSchema,
+  scheduled_time: isoTimeSchema,
   note: z.string().max(500).optional(),
 });
 
+// match_id is intentionally absent: submitMatchResult creates the match from challengeId,
+// so the caller cannot have a match_id at submit time. confirmMatchResult / disputeMatchResult
+// take the matchId as a separate argument.
 export const matchResultSchema = z.object({
-  match_id: z.string().uuid(),
   winner_side: z.enum(['a', 'b']),
   games: z.array(z.object({
     game_number: z.number().int().positive(),

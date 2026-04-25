@@ -71,19 +71,6 @@ export function getKFactor(
   return isProvisional ? 32 : 18;
 }
 
-export function calculateDelta(
-  playerRating: number,
-  opponentRating: number,
-  kFactor: number,
-  formatWeight: number,
-  eventMultiplier: number,
-  won: boolean
-): number {
-  const expected = calculateExpected(playerRating, opponentRating);
-  const actual = won ? 1.0 : 0.0;
-  return Math.round(kFactor * formatWeight * eventMultiplier * (actual - expected));
-}
-
 export function calculateTeamRating(ratings: number[]): number {
   return Math.round(ratings.reduce((a, b) => a + b, 0) / ratings.length);
 }
@@ -95,9 +82,10 @@ export function previewEloChange(
   eventType: EventType,
   matchType: 'singles' | 'doubles',
   provisional: boolean,
-  eloWeightOverride?: number
+  eloWeightOverride?: number,
+  matchesPlayed?: number
 ): { winDelta: number; lossDelta: number } {
-  const k = getKFactor(matchType, provisional);
+  const k = getKFactor(matchType, provisional, matchesPlayed);
   const fw = getFormatWeight(format);
   const em = getEventMultiplier(eventType);
 
