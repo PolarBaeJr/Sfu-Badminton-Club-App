@@ -1,10 +1,39 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { Badge } from '@badminton/ui';
 import { MATCH_FORMAT_LABELS, formatRelativeTime } from '@badminton/shared';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { Swords, Plus, Zap, Clock, CheckCircle2, ChevronRight, Inbox } from 'lucide-react';
-import { FadeIn, StaggerContainer, StaggerItem } from '@/components/motion-wrapper';
+import { Plus, ChevronRight, Inbox, Crosshair } from 'lucide-react';
+
+function initials(name: string) {
+  return (name || '?').split(' ').map((p) => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
+}
+function toneFor(id: string | undefined | null) {
+  if (!id) return 1;
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return ((h % 7) + 1);
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  proposed: 'Proposed',
+  partially_confirmed: 'Partial',
+  accepted: 'Accepted',
+  completed: 'Completed',
+  walkover_confirmed: 'Walkover',
+  rejected: 'Rejected',
+  cancelled: 'Cancelled',
+  walkover_pending: 'Walkover review',
+};
+const STATUS_TAG: Record<string, string> = {
+  proposed: 'tag-gold',
+  partially_confirmed: 'tag-gold',
+  accepted: 'tag-win',
+  completed: 'tag',
+  walkover_confirmed: 'tag',
+  rejected: 'tag',
+  cancelled: 'tag',
+  walkover_pending: 'tag-red',
+};
 
 export default async function ChallengesPage() {
   const player = await getCurrentPlayer();
@@ -14,171 +43,164 @@ export default async function ChallengesPage() {
 
   const { data: myChallenges } = await supabase
     .from('challenge_participants')
-    .select('*, challenge:challenges(*, creator:players!challenges_created_by_fkey(full_name), challenge_participants(*, player:players(full_name)))')
+    .select('id, confirmation_status, challenge:challenges(id, created_by, type, format, rated_flag, status, created_at, creator:players!challenges_created_by_fkey(id, full_name), challenge_participants(id, player_id, role, team_side, player:players(id, full_name)))')
     .eq('player_id', player.id)
     .order('created_at', { ascending: false, referencedTable: 'challenges' })
     .limit(20);
 
-  const incoming = myChallenges?.filter((cp) => {
-    const c = cp.challenge as Record<string, unknown>;
-    return c?.created_by !== player.id && cp.confirmation_status === 'pending';
-  }) || [];
+  type CP = NonNullable<typeof myChallenges>[number];
+  type Challenge = {
+    id: string;
+    created_by: string;
+    type: string;
+    format: string;
+    rated_flag: boolean;
+    status: string;
+    created_at: string;
+    creator: { id: string; full_name: string } | { id: string; full_name: string }[] | null;
+    challenge_participants: { id: string; player_id: string; role: string; team_side: string; player: { id: string; full_name: string } | { id: string; full_name: string }[] | null }[];
+  };
 
-  const outgoing = myChallenges?.filter((cp) => {
-    const c = cp.challenge as Record<string, unknown>;
-    return c?.created_by === player.id;
-  }) || [];
-
-  const active = myChallenges?.filter((cp) => {
-    const c = cp.challenge as Record<string, unknown>;
-    return ['accepted', 'partially_confirmed'].includes(c?.status as string);
-  }) || [];
-
-  const completed = myChallenges?.filter((cp) => {
-    const c = cp.challenge as Record<string, unknown>;
-    return ['completed', 'walkover_confirmed'].includes(c?.status as string);
-  }) || [];
-
-  function ChallengeRow({ cp }: { cp: Record<string, unknown> }) {
-    const c = cp.challenge as Record<string, unknown>;
+  function pickChallenge(cp: CP): Challenge | null {
+    const c = cp.challenge as unknown;
     if (!c) return null;
-    const parts = (c.challenge_participants as Record<string, unknown>[]) || [];
-    const creator = c.creator as Record<string, unknown>;
+    return Array.isArray(c) ? (c[0] ?? null) : (c as Challenge);
+  }
+  function pickPerson(p: { id: string; full_name: string } | { id: string; full_name: string }[] | null) {
+    if (!p) return null;
+    return Array.isArray(p) ? (p[0] ?? null) : p;
+  }
 
-    const statusChip: Record<string, string> = {
-      proposed: 'chip chip-gold',
-      partially_confirmed: 'chip chip-gold',
-      accepted: 'chip chip-success',
-      completed: 'chip',
-      disputed: 'chip chip-red',
-    };
+  const all = (myChallenges ?? []).map((cp) => ({ cp, c: pickChallenge(cp) })).filter((x): x is { cp: CP; c: Challenge } => Boolean(x.c));
+
+  const incoming = all.filter(({ cp, c }) => c.created_by !== player.id && cp.confirmation_status === 'pending');
+  const active   = all.filter(({ c }) => ['accepted', 'partially_confirmed'].includes(c.status));
+  const outgoing = all.filter(({ c }) => c.created_by === player.id && !['completed', 'walkover_confirmed', 'rejected', 'cancelled'].includes(c.status));
+  const completed = all.filter(({ c }) => ['completed', 'walkover_confirmed'].includes(c.status));
+  const archived = all.filter(({ c }) => ['rejected', 'cancelled'].includes(c.status));
+
+  function ChallengeCard({ c }: { c: Challenge }) {
+    const creator = pickPerson(c.creator);
+    const isMine = c.created_by === player.id;
+    const opponentParticipants = c.challenge_participants
+      .map((p) => ({ ...p, person: pickPerson(p.player) }))
+      .filter((p) => p.person);
+    const youSide = opponentParticipants.find((p) => p.person?.id === player.id)?.team_side;
+    const opponents = opponentParticipants.filter((p) => p.team_side !== youSide);
+    const teammates = opponentParticipants.filter((p) => p.team_side === youSide && p.person?.id !== player.id);
 
     return (
-      <StaggerItem>
-        <Link href={`/challenges/${c.id}`} className="block group">
-          <div className="card-surface card-interactive flex items-center justify-between p-4">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-xl bg-[var(--color-accent)]/10 flex items-center justify-center shrink-0">
-                <Swords className="w-5 h-5 text-court-red" />
+      <Link
+        href={`/challenges/${c.id}`}
+        className="press"
+        style={{
+          display: 'block',
+          padding: 18,
+          border: '1px solid var(--line)',
+          borderRadius: 'var(--r-lg)',
+          background: 'var(--surface)',
+        }}
+      >
+        <div className="row" style={{ marginBottom: 12, fontSize: 12, flexWrap: 'wrap', gap: 8 }}>
+          <span className="tag tag-red">{(c.type || '').toUpperCase()}</span>
+          <span className="tag">{MATCH_FORMAT_LABELS[c.format as keyof typeof MATCH_FORMAT_LABELS] || c.format}</span>
+          {c.rated_flag && <span className="tag tag-gold">RATED</span>}
+          <span className="mono muted" style={{ marginLeft: 'auto' }}>
+            {formatRelativeTime(c.created_at)}
+          </span>
+        </div>
+
+        <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div className="row" style={{ gap: 10, flex: 1, minWidth: 200 }}>
+            <span className="avatar" data-size="md" data-tone={toneFor(creator?.id)}>
+              {initials(creator?.full_name ?? '?')}
+            </span>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>
+                {isMine ? 'You' : creator?.full_name ?? 'Unknown'} {isMine ? 'challenged' : 'challenged you'}
               </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm text-shuttle-white font-semibold truncate">{creator?.full_name as string}</span>
-                  <span className="chip">{c.type as string}</span>
-                  {Boolean(c.rated_flag) && <span className="chip chip-gold">Rated</span>}
-                </div>
-                <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                  {MATCH_FORMAT_LABELS[(c.format as string) as keyof typeof MATCH_FORMAT_LABELS]} &middot; {formatRelativeTime(c.created_at as string)}
-                </p>
-                <p className="text-xs text-[var(--text-dim)] mt-0.5 truncate">
-                  {parts.map((p) => (p.player as Record<string, unknown>)?.full_name as string).join(' vs ')}
-                </p>
+              <div className="mono muted" style={{ fontSize: 11, marginTop: 2 }}>
+                {opponents.length > 0
+                  ? `vs ${opponents.map((o) => o.person?.full_name).filter(Boolean).join(' & ')}`
+                  : 'Awaiting roster'}
+                {teammates.length > 0 && ` · with ${teammates.map((t) => t.person?.full_name).filter(Boolean).join(', ')}`}
               </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0 ml-3">
-              <span className={statusChip[c.status as string] || 'chip'}>
-                {c.status as string}
-              </span>
-              <ChevronRight className="w-4 h-4 text-[var(--text-dim)] group-hover:text-court-red transition-colors" />
             </div>
           </div>
-        </Link>
-      </StaggerItem>
+          <span className={`tag ${STATUS_TAG[c.status] ?? 'tag'}`}>{STATUS_LABEL[c.status] ?? c.status}</span>
+          <ChevronRight size={16} className="text-[var(--mute)]" />
+        </div>
+      </Link>
+    );
+  }
+
+  function Section({ title, count, children }: { title: string; count?: number; children: React.ReactNode }) {
+    return (
+      <div className="card-base">
+        <div className="card-head">
+          <h3 className="card-title">{title}</h3>
+          {count !== undefined && <span className="tag">{count}</span>}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{children}</div>
+      </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <FadeIn>
-        <div className="flex items-center justify-between reveal reveal-1">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[var(--color-accent)]/10 flex items-center justify-center">
-              <Swords className="w-5 h-5 text-court-red" />
-            </div>
-            <div>
-              <p className="eyebrow">My Challenges</p>
-              <h1 className="display-lg text-shuttle-white">Challenges</h1>
-            </div>
+    <div data-screen-label="Challenges">
+      <div className="page-header">
+        <div>
+          <div className="page-eyebrow"><span className="bar" />MATCHUPS · LIVE</div>
+          <h1 className="page-title">Challenges</h1>
+          <div className="page-sub">
+            Issue, accept, and track challenges. Pending responses live at the top — answer them so the queue clears.
           </div>
-          <Link
-            href="/challenges/new"
-            className="press flex items-center gap-2 px-4 py-2.5 rounded-xl gradient-court text-white font-bold text-sm glow-red hover:opacity-90 transition-opacity"
-          >
-            <Plus className="w-4 h-4" />
-            New
+        </div>
+        <div className="row" style={{ gap: 10 }}>
+          <Link href="/challenges/new" className="btn btn-primary">
+            <Plus size={14} /> New challenge
           </Link>
         </div>
-      </FadeIn>
+      </div>
 
-      {incoming.length > 0 && (
-        <FadeIn delay={0.05}>
-          <div className="card-elevated p-4 border-[var(--color-gold)]/12">
-            <div className="flex items-center gap-2 mb-3">
-              <Zap className="w-4 h-4 text-gold" />
-              <h2 className="eyebrow text-[var(--text-primary)]">Incoming</h2>
-              <span className="ml-auto chip chip-gold">{incoming.length}</span>
-            </div>
-            <StaggerContainer className="space-y-2">
-              {incoming.map((cp) => <ChallengeRow key={cp.id} cp={cp as Record<string, unknown>} />)}
-            </StaggerContainer>
-          </div>
-        </FadeIn>
-      )}
-
-      {active.length > 0 && (
-        <FadeIn delay={0.1}>
-          <div className="card-elevated p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Clock className="w-4 h-4 text-blue-400" />
-              <h2 className="eyebrow text-[var(--text-primary)]">Active</h2>
-              <span className="ml-auto chip chip-success">{active.length}</span>
-            </div>
-            <StaggerContainer className="space-y-2">
-              {active.map((cp) => <ChallengeRow key={cp.id} cp={cp as Record<string, unknown>} />)}
-            </StaggerContainer>
-          </div>
-        </FadeIn>
-      )}
-
-      {outgoing.length > 0 && (
-        <FadeIn delay={0.15}>
-          <div className="card-elevated p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Swords className="w-4 h-4 text-court-red" />
-              <h2 className="eyebrow text-[var(--text-primary)]">My Challenges</h2>
-              <span className="ml-auto chip chip-red">{outgoing.length}</span>
-            </div>
-            <StaggerContainer className="space-y-2">
-              {outgoing.map((cp) => <ChallengeRow key={cp.id} cp={cp as Record<string, unknown>} />)}
-            </StaggerContainer>
-          </div>
-        </FadeIn>
-      )}
-
-      {completed.length > 0 && (
-        <FadeIn delay={0.2}>
-          <div className="card-elevated p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <CheckCircle2 className="w-4 h-4 text-[var(--text-muted)]" />
-              <h2 className="eyebrow text-[var(--text-primary)]">Completed</h2>
-            </div>
-            <StaggerContainer className="space-y-2">
-              {completed.map((cp) => <ChallengeRow key={cp.id} cp={cp as Record<string, unknown>} />)}
-            </StaggerContainer>
-          </div>
-        </FadeIn>
-      )}
-
-      {(!myChallenges || myChallenges.length === 0) && (
-        <FadeIn delay={0.05}>
-          <div className="card-elevated p-12 text-center">
-            <Inbox className="w-12 h-12 text-[var(--text-dim)] mx-auto mb-3" />
-            <p className="text-[var(--text-muted)] mb-3 font-medium">No challenges yet</p>
-            <Link href="/challenges/new" className="press chip chip-red">
-              Create your first challenge
+      {all.length === 0 ? (
+        <div className="card-base">
+          <div className="empty">
+            <Inbox size={40} className="text-[var(--mute)]" style={{ display: 'block', margin: '0 auto 12px' }} />
+            <div style={{ marginBottom: 12 }}>No challenges yet.</div>
+            <Link href="/challenges/new" className="btn btn-primary">
+              <Plus size={14} /> Issue your first challenge
             </Link>
           </div>
-        </FadeIn>
+        </div>
+      ) : (
+        <div className="feed-col">
+          {incoming.length > 0 && (
+            <Section title="Incoming" count={incoming.length}>
+              {incoming.map(({ cp, c }) => <ChallengeCard key={cp.id} c={c} />)}
+            </Section>
+          )}
+          {active.length > 0 && (
+            <Section title="Active" count={active.length}>
+              {active.map(({ cp, c }) => <ChallengeCard key={cp.id} c={c} />)}
+            </Section>
+          )}
+          {outgoing.length > 0 && (
+            <Section title="Your challenges" count={outgoing.length}>
+              {outgoing.map(({ cp, c }) => <ChallengeCard key={cp.id} c={c} />)}
+            </Section>
+          )}
+          {completed.length > 0 && (
+            <Section title="Completed">
+              {completed.map(({ cp, c }) => <ChallengeCard key={cp.id} c={c} />)}
+            </Section>
+          )}
+          {archived.length > 0 && (
+            <Section title="Archived">
+              {archived.map(({ cp, c }) => <ChallengeCard key={cp.id} c={c} />)}
+            </Section>
+          )}
+        </div>
       )}
     </div>
   );
