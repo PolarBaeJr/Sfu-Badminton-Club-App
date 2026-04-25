@@ -39,7 +39,12 @@ export function createAdminClient() {
 export async function getAuthenticatedAdmin() {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error('Not authenticated');
+  if (!user) {
+    // Clear any Sentry user context left over from a previous request handler
+    // sharing this Node process — avoids misattributing the next error.
+    Sentry.setUser(null);
+    throw new Error('Not authenticated');
+  }
 
   const adminClient = createAdminClient();
   const { data: player } = await adminClient
@@ -48,8 +53,14 @@ export async function getAuthenticatedAdmin() {
     .eq('user_id', user.id)
     .single();
 
-  if (!player) throw new Error('No player record found');
-  if (player.role !== 'admin') throw new Error('Admin access required');
+  if (!player) {
+    Sentry.setUser(null);
+    throw new Error('No player record found');
+  }
+  if (player.role !== 'admin') {
+    Sentry.setUser(null);
+    throw new Error('Admin access required');
+  }
 
   Sentry.setUser({ id: player.id });
   return player;

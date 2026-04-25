@@ -1,7 +1,7 @@
 'use server';
 
 import * as Sentry from '@sentry/nextjs';
-import { createServerSupabaseClient, createServiceRoleClient, getCurrentPlayer } from './supabase-server';
+import { createServerSupabaseClient, getCurrentPlayer } from './supabase-server';
 import { revalidatePath } from 'next/cache';
 import type { ChallengeCreateInput, MatchResultInput, WalkoverReportInput } from '@badminton/shared';
 import { getFormatWeight, getEventMultiplier, MATCH_FORMAT_LABELS } from '@badminton/shared';
@@ -15,30 +15,45 @@ import {
 } from '@badminton/shared';
 import { PostHog } from 'posthog-node';
 
-const posthogServer = new PostHog(process.env.NEXT_PUBLIC_POSTHOG_KEY || 'dummy', {
-  host: process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://us.i.posthog.com',
-  flushAt: 1,
-  flushInterval: 0,
-});
+let posthogServer: PostHog | null = null;
+function getPostHog(): PostHog | null {
+  if (!process.env.NEXT_PUBLIC_POSTHOG_KEY) return null;
+  if (!posthogServer) {
+    posthogServer = new PostHog(process.env.NEXT_PUBLIC_POSTHOG_KEY, {
+      host: process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://us.i.posthog.com',
+      flushAt: 1,
+      flushInterval: 0,
+    });
+  }
+  return posthogServer;
+}
 
 function trackServerEvent(
   playerId: string,
   event: string,
   properties: Record<string, unknown>
 ) {
-  if (!process.env.NEXT_PUBLIC_POSTHOG_KEY) return;
-  posthogServer.capture({
-    distinctId: playerId,
-    event,
-    properties,
-  });
+  const ph = getPostHog();
+  if (!ph) return;
+  ph.capture({ distinctId: playerId, event, properties });
 }
 
 async function requirePlayer() {
   const player = await getCurrentPlayer();
-  if (!player) throw new Error('Not authenticated');
-  if (player.status === 'pending_approval') throw new Error('Account pending approval');
-  if (player.status === 'suspended') throw new Error('Account suspended');
+  if (!player) {
+    // Clear any Sentry user context left over from a previous request handler
+    // sharing this Node process — avoids misattributing the next error.
+    Sentry.setUser(null);
+    throw new Error('Not authenticated');
+  }
+  if (player.status === 'pending_approval') {
+    Sentry.setUser(null);
+    throw new Error('Account pending approval');
+  }
+  if (player.status === 'suspended') {
+    Sentry.setUser(null);
+    throw new Error('Account suspended');
+  }
   Sentry.setUser({ id: player.id });
   return player;
 }
@@ -132,7 +147,9 @@ export async function createChallenge(input: ChallengeCreateInput) {
   const { data: opponent } = await supabase.from('players').select('email').eq('id', input.opponent_id).single();
   if (opponent?.email) {
     const formatLabel = MATCH_FORMAT_LABELS[input.format as keyof typeof MATCH_FORMAT_LABELS] || input.format;
-    sendChallengeReceivedEmail(opponent.email, player.full_name, formatLabel, input.type, challenge.id).catch(() => {});
+    sendChallengeReceivedEmail(opponent.email, player.full_name, formatLabel, input.type, challenge.id).catch((err) => {
+      Sentry.captureException(err, { extra: { email: 'challenge_received', challengeId: challenge.id } });
+    });
   }
 
   // Update reliability (atomic via RPC)
@@ -156,48 +173,50 @@ export async function acceptChallenge(challengeId: string) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 
-  const { data: existing } = await supabase.from('challenges').select('created_by').eq('id', challengeId).single();
-  if (!existing) throw new Error('Challenge not found');
-  if (existing.created_by === player.id) throw new Error('Cannot accept your own challenge');
+  const { data: challenge } = await supabase
+    .from('challenges')
+    .select('created_by, challenge_participants(player_id, confirmation_status)')
+    .eq('id', challengeId)
+    .single();
+  if (!challenge) throw new Error('Challenge not found');
+  if (challenge.created_by === player.id) throw new Error('Cannot accept your own challenge');
+
+  const cps = (challenge.challenge_participants as { player_id: string; confirmation_status: string }[] | null) ?? [];
+  const myParticipant = cps.find((cp) => cp.player_id === player.id);
+  if (!myParticipant) throw new Error('Not a participant');
+  if (myParticipant.confirmation_status !== 'pending') throw new Error('Already responded to this challenge');
 
   const { error } = await supabase
     .from('challenge_participants')
     .update({ confirmation_status: 'accepted', responded_at: new Date().toISOString() })
     .eq('challenge_id', challengeId)
     .eq('player_id', player.id);
-
   if (error) throw new Error(error.message);
 
-  // Check if all participants accepted
-  const { data: participants } = await supabase
-    .from('challenge_participants')
-    .select('*')
-    .eq('challenge_id', challengeId);
-
-  const allAccepted = participants?.every((p) => p.confirmation_status === 'accepted');
-
-  if (allAccepted) {
-    await supabase.from('challenges').update({ status: 'accepted' }).eq('id', challengeId);
-  } else {
-    await supabase.from('challenges').update({ status: 'partially_confirmed' }).eq('id', challengeId);
-  }
+  // Recompute aggregate status from latest snapshot (still racy across concurrent accepts;
+  // the canonical fix is a DB function — see TODO).
+  const allAccepted = cps.every((cp) =>
+    cp.player_id === player.id ? true : cp.confirmation_status === 'accepted'
+  );
+  await supabase
+    .from('challenges')
+    .update({ status: allAccepted ? 'accepted' : 'partially_confirmed' })
+    .eq('id', challengeId);
 
   // Notify challenger
-  const { data: challenge } = await supabase.from('challenges').select('created_by').eq('id', challengeId).single();
-  if (challenge) {
-    await supabase.from('notifications').insert({
-      player_id: challenge.created_by,
-      type: 'challenge_accepted',
-      title: 'Challenge Accepted',
-      body: `${player.full_name} accepted your challenge!`,
-      metadata: { challenge_id: challengeId },
-    });
+  await supabase.from('notifications').insert({
+    player_id: challenge.created_by,
+    type: 'challenge_accepted',
+    title: 'Challenge Accepted',
+    body: `${player.full_name} accepted your challenge!`,
+    metadata: { challenge_id: challengeId },
+  });
 
-    // Send email
-    const { data: creator } = await supabase.from('players').select('email').eq('id', challenge.created_by).single();
-    if (creator?.email) {
-      sendChallengeAcceptedEmail(creator.email, player.full_name, challengeId).catch(() => {});
-    }
+  const { data: creator } = await supabase.from('players').select('email').eq('id', challenge.created_by).single();
+  if (creator?.email) {
+    sendChallengeAcceptedEmail(creator.email, player.full_name, challengeId).catch((err) => {
+      Sentry.captureException(err, { extra: { email: 'challenge_accepted', challengeId } });
+    });
   }
 
   const props = getPlayerProps(player);
@@ -210,9 +229,18 @@ export async function rejectChallenge(challengeId: string) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 
-  const { data: existing } = await supabase.from('challenges').select('created_by').eq('id', challengeId).single();
-  if (!existing) throw new Error('Challenge not found');
-  if (existing.created_by === player.id) throw new Error('Cannot reject your own challenge');
+  const { data: challenge } = await supabase
+    .from('challenges')
+    .select('created_by, challenge_participants(player_id, confirmation_status)')
+    .eq('id', challengeId)
+    .single();
+  if (!challenge) throw new Error('Challenge not found');
+  if (challenge.created_by === player.id) throw new Error('Cannot reject your own challenge');
+
+  const cps = (challenge.challenge_participants as { player_id: string; confirmation_status: string }[] | null) ?? [];
+  const myParticipant = cps.find((cp) => cp.player_id === player.id);
+  if (!myParticipant) throw new Error('Not a participant');
+  if (myParticipant.confirmation_status !== 'pending') throw new Error('Already responded to this challenge');
 
   await supabase
     .from('challenge_participants')
@@ -220,23 +248,23 @@ export async function rejectChallenge(challengeId: string) {
     .eq('challenge_id', challengeId)
     .eq('player_id', player.id);
 
+  // Any single rejection terminates the challenge for everyone — intentional in doubles too,
+  // since a partner declining means the matchup can't go ahead as proposed.
   await supabase.from('challenges').update({ status: 'rejected' }).eq('id', challengeId);
 
-  const { data: challengeData } = await supabase.from('challenges').select('created_by').eq('id', challengeId).single();
-  if (challengeData) {
-    await supabase.from('notifications').insert({
-      player_id: challengeData.created_by,
-      type: 'challenge_rejected',
-      title: 'Challenge Rejected',
-      body: `${player.full_name} rejected your challenge.`,
-      metadata: { challenge_id: challengeId },
-    });
+  await supabase.from('notifications').insert({
+    player_id: challenge.created_by,
+    type: 'challenge_rejected',
+    title: 'Challenge Rejected',
+    body: `${player.full_name} rejected your challenge.`,
+    metadata: { challenge_id: challengeId },
+  });
 
-    // Send email
-    const { data: creator } = await supabase.from('players').select('email').eq('id', challengeData.created_by).single();
-    if (creator?.email) {
-      sendChallengeRejectedEmail(creator.email, player.full_name, challengeId).catch(() => {});
-    }
+  const { data: creator } = await supabase.from('players').select('email').eq('id', challenge.created_by).single();
+  if (creator?.email) {
+    sendChallengeRejectedEmail(creator.email, player.full_name, challengeId).catch((err) => {
+      Sentry.captureException(err, { extra: { email: 'challenge_rejected', challengeId } });
+    });
   }
 
   const props = getPlayerProps(player);
@@ -309,6 +337,15 @@ export async function submitMatchResult(challengeId: string, input: MatchResultI
     (cp) => cp.player_id === player.id
   );
   if (!isParticipant) throw new Error('Not a participant');
+
+  // Guard against double-submission. matches.challenge_id has no unique constraint yet,
+  // so we rely on this check until the migration lands.
+  const { data: existingMatch } = await supabase
+    .from('matches')
+    .select('id')
+    .eq('challenge_id', challengeId)
+    .maybeSingle();
+  if (existingMatch) throw new Error('A match has already been submitted for this challenge');
 
   // Check session caps if session-based
   if (challenge.session_id) {
@@ -392,7 +429,8 @@ export async function submitMatchResult(challengeId: string, input: MatchResultI
     };
   });
 
-  await supabase.from('match_participants').insert(matchParticipants);
+  const { error: mpError } = await supabase.from('match_participants').insert(matchParticipants);
+  if (mpError) throw new Error(mpError.message);
 
   // Add match games
   const gameRows = input.games.map((g) => ({
@@ -401,26 +439,37 @@ export async function submitMatchResult(challengeId: string, input: MatchResultI
     side_a_score: g.side_a_score,
     side_b_score: g.side_b_score,
   }));
-  await supabase.from('match_games').insert(gameRows);
+  const { error: gamesError } = await supabase.from('match_games').insert(gameRows);
+  if (gamesError) throw new Error(gamesError.message);
 
-  // Notify other participants to confirm
-  const otherPlayers = challenge.challenge_participants.filter(
-    (cp: Record<string, unknown>) => cp.player_id !== player.id
+  // Notify other participants to confirm — batched insert + parallel email lookup
+  const otherPlayers = (challenge.challenge_participants as Record<string, unknown>[]).filter(
+    (cp) => cp.player_id !== player.id
   );
-  for (const cp of otherPlayers) {
-    await supabase.from('notifications').insert({
-      player_id: cp.player_id as string,
-      type: 'result_pending',
-      title: 'Confirm Match Result',
-      body: `${player.full_name} submitted a result. Please confirm.`,
-      metadata: { match_id: match.id, challenge_id: challengeId },
-    });
+  const otherPlayerIds = otherPlayers.map((cp) => cp.player_id as string);
 
-    // Send email
-    const { data: otherPlayer } = await supabase.from('players').select('email').eq('id', cp.player_id as string).single();
-    if (otherPlayer?.email) {
-      const score = input.games.map((g) => `${g.side_a_score}-${g.side_b_score}`).join(', ');
-      sendResultPendingEmail(otherPlayer.email, player.full_name, score, match.id).catch(() => {});
+  if (otherPlayerIds.length > 0) {
+    await supabase.from('notifications').insert(
+      otherPlayerIds.map((pid) => ({
+        player_id: pid,
+        type: 'result_pending',
+        title: 'Confirm Match Result',
+        body: `${player.full_name} submitted a result. Please confirm.`,
+        metadata: { match_id: match.id, challenge_id: challengeId },
+      }))
+    );
+
+    const { data: emails } = await supabase
+      .from('players')
+      .select('id, email')
+      .in('id', otherPlayerIds);
+    const score = input.games.map((g) => `${g.side_a_score}-${g.side_b_score}`).join(', ');
+    for (const row of emails ?? []) {
+      if (row.email) {
+        sendResultPendingEmail(row.email, player.full_name, score, match.id).catch((err) => {
+          Sentry.captureException(err, { extra: { email: 'result_pending', matchId: match.id } });
+        });
+      }
     }
   }
 
@@ -489,12 +538,17 @@ export async function disputeMatchResult(matchId: string, reason: string, catego
     status: 'open',
   });
 
-  // Email admins about dispute
-  const { data: admins } = await supabase.from('players').select('email').eq('role', 'admin');
-  const { data: matchData } = await supabase.from('matches').select('score_summary').eq('id', matchId).single();
-  for (const admin of admins || []) {
+  // Email admins about dispute (admin list and match score are independent — fetch in parallel)
+  const [adminsRes, matchRes] = await Promise.all([
+    supabase.from('players').select('email').eq('role', 'admin'),
+    supabase.from('matches').select('score_summary').eq('id', matchId).single(),
+  ]);
+  const score = matchRes.data?.score_summary || 'N/A';
+  for (const admin of adminsRes.data || []) {
     if (admin.email) {
-      sendDisputeOpenedEmail(admin.email, matchData?.score_summary || 'N/A', reason, matchId).catch(() => {});
+      sendDisputeOpenedEmail(admin.email, score, reason, matchId).catch((err) => {
+        Sentry.captureException(err, { extra: { email: 'dispute_opened', matchId } });
+      });
     }
   }
 
@@ -536,6 +590,34 @@ export async function reportWalkover(input: WalkoverReportInput) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 
+  // Verify caller is a participant and the named forfeit player is on the opposing team.
+  // Without this, any authenticated user could trigger a walkover for any challenge.
+  const { data: challenge } = await supabase
+    .from('challenges')
+    .select('status, challenge_participants(player_id, team_side)')
+    .eq('id', input.challenge_id)
+    .single();
+  if (!challenge) throw new Error('Challenge not found');
+  if (!['accepted', 'partially_confirmed'].includes(challenge.status)) {
+    throw new Error('Challenge is not in a state that can be forfeited');
+  }
+  const cps = (challenge.challenge_participants as { player_id: string; team_side: string }[] | null) ?? [];
+  const reporter = cps.find((cp) => cp.player_id === player.id);
+  if (!reporter) throw new Error('Not a participant');
+  const forfeit = cps.find((cp) => cp.player_id === input.forfeit_player_id);
+  if (!forfeit) throw new Error('Forfeit player is not in this challenge');
+
+  // For withdrawal the reporter forfeits (their team); for no_show the reporter accuses
+  // the opposing team. Either way the forfeit player must be on the opposite team from
+  // whomever is staying in the match.
+  const reporterIsForfeiting = input.walkover_type === 'withdrawal';
+  if (reporterIsForfeiting && forfeit.team_side !== reporter.team_side) {
+    throw new Error('Withdrawal must name a teammate (or yourself)');
+  }
+  if (!reporterIsForfeiting && forfeit.team_side === reporter.team_side) {
+    throw new Error('No-show must name a player on the opposing team');
+  }
+
   const { error } = await supabase.from('walkovers').insert({
     challenge_id: input.challenge_id,
     reported_by: player.id,
@@ -543,17 +625,21 @@ export async function reportWalkover(input: WalkoverReportInput) {
     walkover_type: input.walkover_type,
     notice_hours: input.notice_hours,
   });
-
   if (error) throw new Error(error.message);
 
   await supabase.from('challenges').update({ status: 'walkover_pending' }).eq('id', input.challenge_id);
 
-  // Email admins about walkover
-  const { data: admins } = await supabase.from('players').select('email').eq('role', 'admin');
-  const { data: forfeitPlayer } = await supabase.from('players').select('full_name').eq('id', input.forfeit_player_id).single();
-  for (const admin of admins || []) {
+  // Admin list and forfeit-player name are independent — fetch in parallel
+  const [adminsRes, forfeitRes] = await Promise.all([
+    supabase.from('players').select('email').eq('role', 'admin'),
+    supabase.from('players').select('full_name').eq('id', input.forfeit_player_id).single(),
+  ]);
+  const forfeitName = forfeitRes.data?.full_name || 'Unknown';
+  for (const admin of adminsRes.data || []) {
     if (admin.email) {
-      sendWalkoverReportedEmail(admin.email, forfeitPlayer?.full_name || 'Unknown', input.walkover_type, input.challenge_id).catch(() => {});
+      sendWalkoverReportedEmail(admin.email, forfeitName, input.walkover_type, input.challenge_id).catch((err) => {
+        Sentry.captureException(err, { extra: { email: 'walkover_reported', challengeId: input.challenge_id } });
+      });
     }
   }
 
@@ -618,19 +704,21 @@ export async function completeOnboarding(data: { full_name: string; display_name
 
     if (error) throw new Error(error.message);
   } else {
-    // Create new player record using service role to bypass RLS
-    const adminClient = createServiceRoleClient();
+    // Create new player record. RLS policy `players_self_insert` (00018) enforces
+    // that user_id = auth.uid(), status = 'pending_approval', and role = 'player',
+    // so the regular client is sufficient — no service role bypass required.
     const insert: Record<string, unknown> = {
       user_id: user.id,
       email: user.email!,
       full_name: data.full_name,
       onboarding_completed: true,
       status: 'pending_approval',
+      role: 'player',
     };
     if (data.display_name) insert.display_name = data.display_name;
     if (data.phone) insert.phone = data.phone;
 
-    const { data: newPlayer, error } = await adminClient
+    const { data: newPlayer, error } = await supabase
       .from('players')
       .insert(insert)
       .select('id')
@@ -638,9 +726,8 @@ export async function completeOnboarding(data: { full_name: string; display_name
 
     if (error) throw new Error(error.message);
 
-    // Create initial ratings record
     if (newPlayer) {
-      await adminClient.from('ratings').insert({
+      const { error: ratingsError } = await supabase.from('ratings').insert({
         player_id: newPlayer.id,
         singles_elo: 1200,
         doubles_elo: 1200,
@@ -649,6 +736,7 @@ export async function completeOnboarding(data: { full_name: string; display_name
         singles_k_factor: 40,
         doubles_k_factor: 40,
       });
+      if (ratingsError) throw new Error(ratingsError.message);
     }
   }
 

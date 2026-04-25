@@ -23,11 +23,16 @@ function getResend(): Resend {
 const FROM = 'SFU Badminton <noreply@badminton.club>';
 
 export async function sendEmail(to: string, subject: string, html: string): Promise<void> {
-  try {
-    const r = getResend();
-    await r.emails.send({ from: FROM, to, subject, html });
-  } catch (error) {
-    console.error('Failed to send email:', error);
+  // Throws on failure so callers can decide whether to swallow + log.
+  // We deliberately don't catch internally — earlier behaviour double-swallowed
+  // errors (here and at every call site), making delivery failures invisible.
+  if (!process.env.RESEND_API_KEY) {
+    throw new Error('RESEND_API_KEY not set');
+  }
+  const r = getResend();
+  const { error } = await r.emails.send({ from: FROM, to, subject, html });
+  if (error) {
+    throw new Error(`Resend send failed: ${error.message}`);
   }
 }
 

@@ -90,7 +90,6 @@ export function ChallengeDetailActions({
     try {
       const validGames = isBO3 ? games.filter((g, i) => i < 2 || (g.side_a_score > 0 || g.side_b_score > 0)) : games;
       await submitMatchResult(challengeId, {
-        match_id: '', // TODO: wire actual matchId — match is created server-side from challengeId
         winner_side: winnerSide,
         games: validGames,
         completed: true,
