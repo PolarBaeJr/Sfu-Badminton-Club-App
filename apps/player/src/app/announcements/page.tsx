@@ -1,8 +1,6 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { formatRelativeTime } from '@badminton/shared';
 import { redirect } from 'next/navigation';
-import { Megaphone, Pin } from 'lucide-react';
-import { FadeIn, StaggerContainer, StaggerItem } from '@/components/motion-wrapper';
+import { Megaphone } from 'lucide-react';
 import { AnnouncementItem } from './announcement-item';
 
 interface Announcement {
@@ -45,83 +43,69 @@ export default async function AnnouncementsPage() {
     .returns<AnnouncementRead[]>();
 
   const readSet = new Set((reads ?? []).map((r) => r.announcement_id));
-
-  const pinnedAnnouncements = (announcements ?? []).filter((a) => a.pinned);
-  const regularAnnouncements = (announcements ?? []).filter((a) => !a.pinned);
+  const all = announcements ?? [];
+  const pinned = all.filter((a) => a.pinned);
+  const regular = all.filter((a) => !a.pinned);
 
   return (
-    <div className="min-h-screen">
-      <div className="max-w-2xl mx-auto">
-        {/* Header */}
-        <FadeIn>
-          <div className="mb-8 reveal reveal-1">
-            <div className="flex items-center gap-3 mb-1">
-              <div className="w-9 h-9 rounded-lg bg-[var(--color-accent)]/10 flex items-center justify-center">
-                <Megaphone className="w-5 h-5 text-court-red" />
-              </div>
-              <div>
-                <p className="eyebrow">Club</p>
-                <h1 className="display-lg text-shuttle-white">News</h1>
-              </div>
-            </div>
+    <div data-screen-label="News">
+      <div className="page-header">
+        <div>
+          <div className="page-eyebrow"><span className="bar" />CLUB · ANNOUNCEMENTS</div>
+          <h1 className="page-title">News</h1>
+          <div className="page-sub">
+            Updates from the executive team. Sessions, tournaments, policy changes — keep an eye on pinned posts at the top.
           </div>
-        </FadeIn>
-
-        {(announcements ?? []).length === 0 ? (
-          /* Empty state */
-          <FadeIn>
-            <div className="flex flex-col items-center justify-center py-24 gap-4">
-              <div className="w-16 h-16 rounded-2xl bg-[var(--bg-card)] border border-[var(--border)] flex items-center justify-center">
-                <Megaphone className="w-8 h-8 text-[var(--text-muted)]" />
-              </div>
-              <p className="text-[var(--text-muted)] text-sm">No announcements yet. Check back soon.</p>
-            </div>
-          </FadeIn>
-        ) : (
-          <div className="space-y-8">
-            {/* Pinned announcements */}
-            {pinnedAnnouncements.length > 0 && (
-              <section>
-                <div className="flex items-center gap-2 mb-3">
-                  <Pin className="w-3.5 h-3.5 text-gold" />
-                  <span className="eyebrow text-gold">Pinned</span>
-                </div>
-                <StaggerContainer className="space-y-3">
-                  {pinnedAnnouncements.map((announcement) => (
-                    <StaggerItem key={announcement.id}>
-                      <AnnouncementItem
-                        announcement={announcement}
-                        isRead={readSet.has(announcement.id)}
-                      />
-                    </StaggerItem>
-                  ))}
-                </StaggerContainer>
-              </section>
-            )}
-
-            {/* Regular announcements */}
-            {regularAnnouncements.length > 0 && (
-              <section>
-                {pinnedAnnouncements.length > 0 && (
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="eyebrow">All Updates</span>
-                  </div>
-                )}
-                <StaggerContainer className="space-y-3">
-                  {regularAnnouncements.map((announcement) => (
-                    <StaggerItem key={announcement.id}>
-                      <AnnouncementItem
-                        announcement={announcement}
-                        isRead={readSet.has(announcement.id)}
-                      />
-                    </StaggerItem>
-                  ))}
-                </StaggerContainer>
-              </section>
-            )}
-          </div>
-        )}
+        </div>
       </div>
+
+      {all.length === 0 ? (
+        <div className="card-base">
+          <div className="empty">
+            <Megaphone size={40} className="text-[var(--mute)]" style={{ display: 'block', margin: '0 auto 12px' }} />
+            No announcements yet. Check back soon.
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-12">
+          <div style={{ gridColumn: 'span 8' }} className="feed-col">
+            {pinned.length > 0 && (
+              <div className="card-base">
+                <div className="card-head">
+                  <h3 className="card-title">Pinned</h3>
+                  <span className="tag tag-gold">{pinned.length}</span>
+                </div>
+                {pinned.map((a) => (
+                  <AnnouncementItem key={a.id} announcement={a} isRead={readSet.has(a.id)} />
+                ))}
+              </div>
+            )}
+            <div className="card-base">
+              <div className="card-head">
+                <h3 className="card-title">All updates</h3>
+                {regular.length > 0 && <span className="tag">{regular.length}</span>}
+              </div>
+              {regular.length === 0 ? (
+                <div className="empty" style={{ padding: 24 }}>Nothing else fresh today.</div>
+              ) : (
+                regular.map((a) => (
+                  <AnnouncementItem key={a.id} announcement={a} isRead={readSet.has(a.id)} />
+                ))
+              )}
+            </div>
+          </div>
+          <div style={{ gridColumn: 'span 4' }} className="feed-col">
+            <div className="card-base">
+              <div className="card-head">
+                <h3 className="card-title">About these</h3>
+              </div>
+              <div className="page-sub" style={{ marginTop: 0, fontSize: 13 }}>
+                Announcements expire after their expiry date and are filtered to your division. Newest first; pinned posts stay on top until removed.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
