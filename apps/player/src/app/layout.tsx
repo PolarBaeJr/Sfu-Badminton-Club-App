@@ -93,7 +93,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             />
             <OfflineBanner />
             <TopBar playerName={playerName} unreadCount={unreadCount} />
-            <main className="max-w-7xl mx-auto px-4 py-6 pb-24 md:pb-6">
+            <main className="page pb-safe-nav md:pb-7">
               {children}
             </main>
             <BottomNav />
