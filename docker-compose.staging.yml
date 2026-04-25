@@ -1,0 +1,57 @@
+# Staging deployment alongside production.
+#
+# Runs a parallel pair of player + admin containers against a separate Supabase project,
+# without disturbing the prod stack on 3010/3011. Project name override (`name:` below)
+# isolates these from the default-project containers so `docker compose down` here will
+# not touch production.
+#
+# Deploy:
+#   docker compose -f docker-compose.staging.yml --env-file .env.staging up -d --build
+#
+# Tear down:
+#   docker compose -f docker-compose.staging.yml --env-file .env.staging down
+
+name: badminton-staging
+
+services:
+  player:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner-player
+      args:
+        - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+        - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
+        - NEXT_PUBLIC_PLAYER_URL=${NEXT_PUBLIC_PLAYER_URL}
+        - NEXT_PUBLIC_ADMIN_URL=${NEXT_PUBLIC_ADMIN_URL}
+        - NEXT_PUBLIC_VAPID_PUBLIC_KEY=${NEXT_PUBLIC_VAPID_PUBLIC_KEY}
+        - NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN}
+        - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY}
+        - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST}
+    env_file: .env.staging
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3013:3000"
+    restart: unless-stopped
+
+  admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner-admin
+      args:
+        - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+        - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
+        - NEXT_PUBLIC_PLAYER_URL=${NEXT_PUBLIC_PLAYER_URL}
+        - NEXT_PUBLIC_ADMIN_URL=${NEXT_PUBLIC_ADMIN_URL}
+        - NEXT_PUBLIC_VAPID_PUBLIC_KEY=${NEXT_PUBLIC_VAPID_PUBLIC_KEY}
+        - NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN}
+    env_file: .env.staging
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3014:3001"
+    restart: unless-stopped
