@@ -1,9 +1,7 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { Badge } from '@badminton/ui';
 import { formatDate } from '@badminton/shared';
 import { redirect } from 'next/navigation';
 import { Calendar, MapPin, FileText, Users } from 'lucide-react';
-import { FadeIn, StaggerContainer, StaggerItem } from '@/components/motion-wrapper';
 import { CheckInButton } from './check-in-button';
 import { AddToCalendarButton } from './add-to-calendar';
 
@@ -50,137 +48,128 @@ export default async function SessionsPage() {
     (attendanceCounts ?? []).map((r) => [r.session_id, r.count])
   );
 
+  const upcomingCount = openSessions?.length ?? 0;
+
   return (
-    <div className="space-y-6 pb-28">
-      {/* Header */}
-      <FadeIn>
-        <div className="flex items-center gap-3 reveal reveal-1">
-          <div className="w-9 h-9 rounded-xl bg-[var(--color-accent)]/10 flex items-center justify-center">
-            <Calendar className="w-4 h-4 text-court-red" />
-          </div>
-          <div>
-            <p className="eyebrow">Practice</p>
-            <h1 className="display-lg text-shuttle-white">Sessions</h1>
+    <div data-screen-label="Sessions">
+      <div className="page-header">
+        <div>
+          <div className="page-eyebrow"><span className="bar" />PRACTICE · SCHEDULE</div>
+          <h1 className="page-title">Sessions</h1>
+          <div className="page-sub">
+            Open practices, drop-ins, and ladder nights. Sign in to claim a court spot — capacity fills fast.
           </div>
         </div>
-      </FadeIn>
+      </div>
 
-      {/* Upcoming Sessions */}
-      <FadeIn delay={0.05}>
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <h2 className="eyebrow text-[var(--text-primary)]">Upcoming Sessions</h2>
-            {openSessions && openSessions.length > 0 && (
-              <span className="chip chip-success">{openSessions.length}</span>
-            )}
+      <div className="feed-col">
+        <div className="card-base">
+          <div className="card-head">
+            <div>
+              <h3 className="card-title">Upcoming</h3>
+              <div className="card-sub">{upcomingCount === 0 ? 'No sessions on the calendar.' : `${upcomingCount} session${upcomingCount === 1 ? '' : 's'} accepting check-ins.`}</div>
+            </div>
+            {upcomingCount > 0 && <span className="tag tag-win">{upcomingCount} OPEN</span>}
           </div>
-
-          {openSessions && openSessions.length > 0 ? (
-            <StaggerContainer className="space-y-3">
-              {openSessions.map((session) => {
+          {upcomingCount === 0 ? (
+            <div className="empty">No upcoming sessions. Check back later.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {(openSessions ?? []).map((session) => {
                 const isCheckedIn = checkedInSessionIds.has(session.id);
-                const attendeeCount = countBySession[session.id] ?? 0;
+                const attendees = countBySession[session.id] ?? 0;
                 return (
-                  <StaggerItem key={session.id}>
-                    <div className="card-surface card-interactive p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-shuttle-white truncate">
-                            {session.name ?? 'Practice Session'}
-                          </p>
-                          <div className="mt-2 space-y-1.5">
-                            <div className="flex items-center gap-1.5">
-                              <Calendar className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
-                              <span className="text-xs text-[var(--text-muted)]">
-                                {formatDate(session.date)}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              <MapPin className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
-                              <span className="text-xs text-[var(--text-muted)] truncate">
-                                {session.location}
-                              </span>
-                            </div>
-                            {session.notes && (
-                              <div className="flex items-start gap-1.5">
-                                <FileText className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0 mt-0.5" />
-                                <span className="text-xs text-[var(--text-muted)] line-clamp-2">
-                                  {session.notes}
-                                </span>
-                              </div>
-                            )}
-                            <div className="flex items-center gap-1.5">
-                              <Users className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
-                              <span className="nums text-xs text-[var(--text-muted)]">
-                                {attendeeCount} attending
-                              </span>
-                            </div>
+                  <div
+                    key={session.id}
+                    style={{
+                      padding: 18,
+                      border: '1px solid var(--line)',
+                      borderRadius: 'var(--r-lg)',
+                      background: 'var(--surface)',
+                    }}
+                    className="session-card"
+                  >
+                    <div
+                      className="session-grid"
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr auto',
+                        gap: 16,
+                        alignItems: 'flex-start',
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontFamily: 'var(--display)', fontSize: 20, fontWeight: 600, marginBottom: 6 }}>
+                          {session.name ?? 'Practice Session'}
+                        </div>
+                        <div className="session-meta" style={{ flexWrap: 'wrap' }}>
+                          <span className="row" style={{ gap: 6 }}>
+                            <Calendar size={14} /> <span className="mono">{formatDate(session.date).toUpperCase()}</span>
+                          </span>
+                          <span className="row" style={{ gap: 6 }}>
+                            <MapPin size={14} /> <span>{session.location}</span>
+                          </span>
+                          <span className="row" style={{ gap: 6 }}>
+                            <Users size={14} /> <span className="mono">{attendees} attending</span>
+                          </span>
+                        </div>
+                        {session.notes && (
+                          <div className="row" style={{ gap: 6, fontSize: 13, color: 'var(--ink-2)', marginTop: 10, alignItems: 'flex-start' }}>
+                            <FileText size={14} className="text-[var(--mute)]" style={{ marginTop: 2, flexShrink: 0 }} />
+                            <span>{session.notes}</span>
                           </div>
-                        </div>
-                        <div className="flex flex-col items-end gap-2 shrink-0">
-                          <Badge variant="success">Open</Badge>
-                          <CheckInButton sessionId={session.id} isCheckedIn={isCheckedIn} />
-                          <AddToCalendarButton
-                            name={session.name ?? 'Practice Session'}
-                            date={session.date}
-                            location={session.location}
-                            notes={session.notes}
-                          />
-                        </div>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+                        <span className="tag tag-win">OPEN</span>
+                        <CheckInButton sessionId={session.id} isCheckedIn={isCheckedIn} />
+                        <AddToCalendarButton
+                          name={session.name ?? 'Practice Session'}
+                          date={session.date}
+                          location={session.location}
+                          notes={session.notes}
+                        />
                       </div>
                     </div>
-                  </StaggerItem>
+                  </div>
                 );
               })}
-            </StaggerContainer>
-          ) : (
-            <div className="card-elevated p-8 flex flex-col items-center justify-center text-center">
-              <Calendar className="w-9 h-9 text-[var(--text-dim)] mb-3" />
-              <p className="text-sm font-semibold text-shuttle-white mb-1">No upcoming sessions</p>
-              <p className="text-xs text-[var(--text-muted)]">Check back later for new sessions.</p>
             </div>
           )}
         </div>
-      </FadeIn>
 
-      {/* Past Sessions */}
-      {closedSessions && closedSessions.length > 0 && (
-        <FadeIn delay={0.15}>
-          <div>
-            <h2 className="eyebrow mb-3">Past Sessions</h2>
-            <StaggerContainer className="space-y-2">
+        {closedSessions && closedSessions.length > 0 && (
+          <div className="card-base">
+            <div className="card-head">
+              <h3 className="card-title">Past sessions</h3>
+              <div className="card-sub">Last {closedSessions.length} closed.</div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {closedSessions.map((session) => (
-                <StaggerItem key={session.id}>
-                  <div className="bg-[var(--bg-card)]/60 border border-white/[0.04] rounded-xl p-3 opacity-60">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold text-shuttle-white truncate">
-                          {session.name ?? 'Practice Session'}
-                        </p>
-                        <div className="mt-1 flex items-center gap-3">
-                          <div className="flex items-center gap-1">
-                            <Calendar className="w-3 h-3 text-[var(--text-muted)] shrink-0" />
-                            <span className="text-xs text-[var(--text-muted)]">
-                              {formatDate(session.date)}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <MapPin className="w-3 h-3 text-[var(--text-muted)] shrink-0" />
-                            <span className="text-xs text-[var(--text-muted)] truncate">
-                              {session.location}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      <Badge variant="neutral">Closed</Badge>
+                <div
+                  key={session.id}
+                  style={{
+                    padding: '12px 14px',
+                    border: '1px solid var(--line)',
+                    borderRadius: 10,
+                    background: 'var(--surface)',
+                    opacity: 0.7,
+                  }}
+                  className="row"
+                >
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{session.name ?? 'Practice Session'}</div>
+                    <div className="mono muted" style={{ fontSize: 11 }}>
+                      {formatDate(session.date).toUpperCase()} · {session.location}
                     </div>
                   </div>
-                </StaggerItem>
+                  <span className="tag">CLOSED</span>
+                </div>
               ))}
-            </StaggerContainer>
+            </div>
           </div>
-        </FadeIn>
-      )}
+        )}
+      </div>
     </div>
   );
 }
