@@ -57,9 +57,10 @@ const config: Config = {
         sm: 'calc(var(--radius) - 4px)',
       },
       fontFamily: {
-        display: ['Barlow Condensed', 'sans-serif'],
-        body: ['DM Sans', 'sans-serif'],
-        mono: ['JetBrains Mono', 'monospace'],
+        display: ['var(--font-display)', 'Space Grotesk', 'sans-serif'],
+        body: ['var(--font-sans)', 'Inter', 'sans-serif'],
+        sans: ['var(--font-sans)', 'Inter', 'sans-serif'],
+        mono: ['var(--font-mono)', 'JetBrains Mono', 'monospace'],
       },
       animation: {
         'shuttle-float': 'shuttleFloat 3s ease-in-out infinite',

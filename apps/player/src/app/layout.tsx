@@ -10,10 +10,12 @@ import { PostHogProvider } from '@/components/posthog-provider';
 import { PostHogIdentify } from '@/components/posthog-identify';
 import { SentryUserInit } from '@/components/sentry-user-init';
 import { createServerSupabaseClient } from '@/lib/supabase-server';
-import { DM_Sans } from "next/font/google";
+import { Inter, Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import { cn } from "@/lib/utils";
 
-const dmSans = DM_Sans({subsets:['latin'],variable:'--font-sans',weight:['400','500','600','700']});
+const inter = Inter({ subsets: ['latin'], variable: '--font-sans', weight: ['400','500','600','700'] });
+const spaceGrotesk = Space_Grotesk({ subsets: ['latin'], variable: '--font-display', weight: ['400','500','600','700'] });
+const jetbrainsMono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono', weight: ['400','500','600','700'] });
 
 export const metadata: Metadata = {
   title: 'SFU Badminton Club',
@@ -58,19 +60,25 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   }
 
   return (
-    <html lang="en" suppressHydrationWarning data-theme="dark" className={cn("font-sans", dmSans.variable)}>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      data-theme="light"
+      className={cn("font-sans", inter.variable, spaceGrotesk.variable, jetbrainsMono.variable)}
+    >
       <head>
-        <meta name="theme-color" content="#0A0E1A" />
+        <meta name="theme-color" content="#FAF8F5" media="(prefers-color-scheme: light)" />
+        <meta name="theme-color" content="#0D0B0A" media="(prefers-color-scheme: dark)" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <script dangerouslySetInnerHTML={{ __html: `
           try {
-            var t = localStorage.getItem('theme') || 'dark';
+            var t = localStorage.getItem('theme') || 'light';
             var r = t === 'system'
               ? window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
               : t;
             document.documentElement.setAttribute('data-theme', r);
-          } catch(e) { document.documentElement.setAttribute('data-theme', 'dark'); }
+          } catch(e) { document.documentElement.setAttribute('data-theme', 'light'); }
         `}} />
       </head>
       <body>
