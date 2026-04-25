@@ -121,10 +121,24 @@ export function ChallengeDetailActions({
   async function handleWalkover(type: 'no_show' | 'withdrawal') {
     setLoading('walkover');
     try {
-      const opponent = participants.find((p) => p.player_id !== playerId && p.team_side !== participants.find((pp) => pp.player_id === playerId)?.team_side);
+      // Withdrawals: self forfeits. No-shows: an opposing-team participant didn't show.
+      // Server re-validates that forfeit_player is on the correct team for the type.
+      let forfeitPlayerId: string | undefined;
+      if (type === 'withdrawal') {
+        forfeitPlayerId = playerId;
+      } else {
+        const myTeam = participants.find((pp) => pp.player_id === playerId)?.team_side;
+        const opponent = participants.find((p) => p.player_id !== playerId && p.team_side !== myTeam);
+        forfeitPlayerId = opponent?.player_id as string | undefined;
+      }
+      if (!forfeitPlayerId) {
+        toast('Could not determine forfeit player', 'error');
+        setLoading('');
+        return;
+      }
       await reportWalkover({
         challenge_id: challengeId,
-        forfeit_player_id: opponent?.player_id as string,
+        forfeit_player_id: forfeitPlayerId,
         walkover_type: type,
       });
       toast('Walkover reported. Admin will review.', 'info');
