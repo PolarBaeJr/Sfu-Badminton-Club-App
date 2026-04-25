@@ -1,4 +1,5 @@
 import { createServerClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { rateLimit, getClientIp } from '@badminton/shared';
 
@@ -16,6 +17,8 @@ export async function GET(request: Request) {
     return new NextResponse('Too many requests', { status: 429 });
   }
 
+  const cookieStore = await cookies();
+
   // Create the redirect response upfront so cookies are set directly on it
   const response = NextResponse.redirect(`${origin}/dashboard`);
 
@@ -25,10 +28,7 @@ export async function GET(request: Request) {
     {
       cookies: {
         getAll() {
-          return request.headers.get('cookie')?.split(';').map(c => {
-            const [name, ...rest] = c.trim().split('=');
-            return { name, value: decodeURIComponent(rest.join('=')) };
-          }).filter(c => c.name) || [];
+          return cookieStore.getAll();
         },
         setAll(cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) {
           cookiesToSet.forEach(({ name, value, options }) => {
@@ -58,9 +58,25 @@ export async function GET(request: Request) {
   if (user) {
     const { data: isAdmin } = await supabase.rpc('is_admin', { p_user_id: user.id });
     if (!isAdmin) {
-      // Sign them out and redirect to unauthorized
-      await supabase.auth.signOut();
-      return NextResponse.redirect(`${origin}/unauthorized`);
+      // Build the unauthorized redirect *first* so the signOut clear-cookie headers
+      // land on the response that actually goes to the browser.
+      const unauthorized = NextResponse.redirect(`${origin}/unauthorized`);
+      const signoutSupabase = createServerClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        {
+          cookies: {
+            getAll() { return cookieStore.getAll(); },
+            setAll(cookiesToSet) {
+              cookiesToSet.forEach(({ name, value, options }) => {
+                unauthorized.cookies.set(name, value, options as any);
+              });
+            },
+          },
+        }
+      );
+      await signoutSupabase.auth.signOut();
+      return unauthorized;
     }
   }
 
