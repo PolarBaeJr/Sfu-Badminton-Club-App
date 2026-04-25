@@ -1,46 +1,56 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@/lib/supabase-browser';
-import { Avatar, Badge } from '@badminton/ui';
 import Link from 'next/link';
 import { getPostHogClient } from '@/lib/posthog';
-import { getSeasonTier } from '@badminton/shared';
-import { Trophy, Medal, Crown, ChevronRight, Loader2, Search } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { Search, Crosshair, ChevronRight } from 'lucide-react';
+
+type Ratings = {
+  singles_elo: number;
+  doubles_elo: number;
+  singles_wins: number;
+  singles_losses: number;
+  doubles_wins: number;
+  doubles_losses: number;
+  singles_provisional: boolean;
+  doubles_provisional: boolean;
+  current_singles_streak?: number;
+  current_doubles_streak?: number;
+};
 
 type LeaderboardEntry = {
   id: string;
   full_name: string;
-  avatar_url: string | null;
   status: string;
-  ratings: {
-    singles_elo: number;
-    doubles_elo: number;
-    singles_wins: number;
-    singles_losses: number;
-    doubles_wins: number;
-    doubles_losses: number;
-    singles_provisional: boolean;
-    doubles_provisional: boolean;
-  } | null;
+  ratings: Ratings | null;
+  hide_from_leaderboard?: boolean;
+  _tournamentPoints?: number;
 };
 
-const tabs = [
-  { id: 'open_singles', label: 'Open Singles' },
-  { id: 'open_doubles', label: 'Open Doubles' },
-  { id: 'comp_singles', label: 'Comp Singles' },
-  { id: 'comp_doubles', label: 'Comp Doubles' },
-  { id: 'tournament_points', label: 'Tournament Pts' },
+type CategoryId = 'open_singles' | 'open_doubles' | 'comp_singles' | 'comp_doubles' | 'tournament_points';
+
+const tabs: { id: CategoryId; label: string; short: string }[] = [
+  { id: 'open_singles',      label: 'Open Singles',     short: 'Open S.' },
+  { id: 'open_doubles',      label: 'Open Doubles',     short: 'Open D.' },
+  { id: 'comp_singles',      label: 'Comp Singles',     short: 'Comp S.' },
+  { id: 'comp_doubles',      label: 'Comp Doubles',     short: 'Comp D.' },
+  { id: 'tournament_points', label: 'Tournament Pts',   short: 'TPts' },
 ];
 
-const rankIcons = [Crown, Medal, Trophy];
-const rankColors = ['text-[var(--color-gold)]', 'text-[var(--text-secondary)]', 'text-[var(--color-gold-deep)]'];
-const rankBg = ['bg-[var(--color-gold)]/10 border-[var(--color-gold)]/20', 'bg-[var(--text-secondary)]/10 border-[var(--text-secondary)]/20', 'bg-[var(--color-gold-deep)]/10 border-[var(--color-gold-deep)]/20'];
+function initials(name: string) {
+  return name.split(' ').map((p) => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
+}
+function toneFor(id: string) {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return ((h % 7) + 1);
+}
 
 export default function LeaderboardPage() {
-  const [activeTab, setActiveTab] = useState('open_singles');
+  const [activeTab, setActiveTab] = useState<CategoryId>('open_singles');
   const [players, setPlayers] = useState<LeaderboardEntry[]>([]);
+  const [meId, setMeId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -52,72 +62,63 @@ export default function LeaderboardPage() {
   useEffect(() => {
     const supabase = createClient();
 
+    async function loadMe() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: p } = await supabase.from('players').select('id').eq('user_id', user.id).single();
+      setMeId(p?.id ?? null);
+    }
+    loadMe();
+  }, []);
+
+  useEffect(() => {
+    const supabase = createClient();
+
     async function load() {
       setLoading(true);
 
       if (activeTab === 'tournament_points') {
-        // Aggregate tournament points per player
         const { data: parts } = await supabase
           .from('tournament_participants')
-          .select('player_id, points, player:players(id, full_name, avatar_url, status)')
+          .select('player_id, points, player:players(id, full_name, status, hide_from_leaderboard)')
           .not('status', 'in', '("withdrawn","disqualified")')
           .gt('points', 0);
 
-        const pointsMap: Record<string, { player: any; total: number }> = {};
+        const totals: Record<string, { player: LeaderboardEntry; total: number }> = {};
         for (const p of parts ?? []) {
-          const player = p.player as any;
-          if (!player) continue;
-          if (!pointsMap[p.player_id]) {
-            pointsMap[p.player_id] = { player, total: 0 };
-          }
-          pointsMap[p.player_id]!.total += p.points ?? 0;
+          const player = (Array.isArray(p.player) ? p.player[0] : p.player) as LeaderboardEntry | null;
+          if (!player || player.hide_from_leaderboard) continue;
+          const entry = totals[p.player_id] ?? (totals[p.player_id] = { player, total: 0 });
+          entry.total += (p.points as number) ?? 0;
         }
-
-        const sorted = Object.values(pointsMap)
+        const sorted = Object.values(totals)
           .sort((a, b) => b.total - a.total)
-          .map((entry) => ({
-            id: entry.player.id,
-            full_name: entry.player.full_name,
-            avatar_url: entry.player.avatar_url,
-            status: entry.player.status,
-            ratings: null,
-            _tournamentPoints: entry.total,
-          }));
-
-        setPlayers(sorted as any[]);
+          .map((entry) => ({ ...entry.player, _tournamentPoints: entry.total, ratings: null }));
+        setPlayers(sorted);
         setLoading(false);
         return;
       }
 
       let query = supabase
         .from('players')
-        .select('id, full_name, avatar_url, status, ratings(*)')
+        .select('id, full_name, status, hide_from_leaderboard, ratings(*)')
         .eq('active_flag', true)
+        .eq('hide_from_leaderboard', false)
         .not('status', 'in', '("pending_approval","suspended")');
 
-      if (activeTab.startsWith('comp_')) {
-        query = query.eq('status', 'competitive');
-      }
+      if (activeTab.startsWith('comp_')) query = query.eq('status', 'competitive');
 
       const { data } = await query;
 
       const sorted = (data || [])
-        .filter((p) => {
-          const r = Array.isArray(p.ratings) ? p.ratings[0] : p.ratings;
-          return r !== null;
-        })
+        .map((p) => ({ ...p, ratings: (Array.isArray(p.ratings) ? p.ratings[0] : p.ratings) as Ratings | null }))
+        .filter((p) => p.ratings)
         .sort((a, b) => {
-          const ra = Array.isArray(a.ratings) ? a.ratings[0] : a.ratings;
-          const rb = Array.isArray(b.ratings) ? b.ratings[0] : b.ratings;
           const isDoubles = activeTab.includes('doubles');
           return isDoubles
-            ? (rb?.doubles_elo ?? 0) - (ra?.doubles_elo ?? 0)
-            : (rb?.singles_elo ?? 0) - (ra?.singles_elo ?? 0);
-        })
-        .map((p) => ({
-          ...p,
-          ratings: Array.isArray(p.ratings) ? p.ratings[0] : p.ratings,
-        }));
+            ? (b.ratings?.doubles_elo ?? 0) - (a.ratings?.doubles_elo ?? 0)
+            : (b.ratings?.singles_elo ?? 0) - (a.ratings?.singles_elo ?? 0);
+        });
 
       setPlayers(sorted as LeaderboardEntry[]);
       setLoading(false);
@@ -126,194 +127,305 @@ export default function LeaderboardPage() {
 
     const channel = supabase
       .channel('ratings-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ratings' }, () => {
-        load();
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ratings' }, () => load())
       .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [activeTab]);
 
   const isDoubles = activeTab.includes('doubles');
+  const isTpts = activeTab === 'tournament_points';
 
-  const filteredPlayers = searchQuery
-    ? players.filter((p) =>
-        p.full_name.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : players;
+  const filtered = useMemo(
+    () => searchQuery ? players.filter((p) => p.full_name.toLowerCase().includes(searchQuery.toLowerCase())) : players,
+    [players, searchQuery]
+  );
+
+  const meIndex = useMemo(
+    () => filtered.findIndex((p) => p.id === meId),
+    [filtered, meId]
+  );
+  const me = meIndex >= 0 ? filtered[meIndex] : null;
+  const myElo = me?.ratings ? (isDoubles ? me.ratings.doubles_elo : me.ratings.singles_elo) : null;
+  const aboveMe = meIndex > 0 ? filtered[meIndex - 1] : null;
+  const aboveMeElo = aboveMe?.ratings ? (isDoubles ? aboveMe.ratings.doubles_elo : aboveMe.ratings.singles_elo) : null;
+  const eloToNext = myElo !== null && aboveMeElo !== null ? aboveMeElo - myElo : null;
+
+  const top3 = filtered.slice(0, 3);
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3 reveal reveal-1">
-        <div className="w-10 h-10 rounded-xl bg-[var(--color-gold)]/10 flex items-center justify-center glow-gold">
-          <Trophy className="w-5 h-5 text-gold" />
-        </div>
+    <div data-screen-label="Leaderboard">
+      <div className="page-header">
         <div>
-          <p className="eyebrow">Rankings</p>
-          <h1 className="display-lg text-shuttle-white">Leaderboard</h1>
+          <div className="page-eyebrow"><span className="bar" />RANKINGS · LIVE</div>
+          <h1 className="page-title">Leaderboard</h1>
+          <div className="page-sub">
+            ELO updates after every confirmed match. {filtered.length} ranked players in {tabs.find((t) => t.id === activeTab)?.label}.
+          </div>
+        </div>
+        <div className="row" style={{ gap: 10 }}>
+          <div
+            className="row"
+            style={{
+              border: '1px solid var(--line)',
+              borderRadius: 999,
+              padding: '4px 6px 4px 14px',
+              gap: 6,
+              background: 'var(--surface)',
+            }}
+          >
+            <Search size={14} className="text-[var(--mute)]" />
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search player..."
+              aria-label="Search leaderboard"
+              style={{
+                border: 0,
+                background: 'transparent',
+                padding: '6px 0',
+                width: 180,
+                fontSize: 13,
+                outline: 'none',
+              }}
+            />
+          </div>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 bg-white/[0.03] rounded-xl p-1 border border-white/[0.04] overflow-x-auto scroll-fade-x">
-        {tabs.map((tab) => (
+      <div className="chips" style={{ marginBottom: 20 }}>
+        {tabs.map((t) => (
           <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`relative flex-1 py-2.5 px-3 text-sm font-semibold rounded-lg transition-all duration-300 whitespace-nowrap ${
-              activeTab === tab.id
-                ? 'text-white'
-                : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
-            }`}
+            key={t.id}
+            className={'filter-chip' + (activeTab === t.id ? ' active' : '')}
+            onClick={() => setActiveTab(t.id)}
+            type="button"
           >
-            {activeTab === tab.id && (
-              <motion.div
-                layoutId="leaderboardTab"
-                className="absolute inset-0 bg-gradient-to-r from-[var(--color-gold)]/20 to-[var(--color-gold-deep)]/20 border border-[var(--color-gold)]/20 rounded-lg"
-                transition={{ type: 'spring', bounce: 0.2, duration: 0.5 }}
-              />
-            )}
-            <span className="relative z-10">{tab.label}</span>
+            {t.label}
           </button>
         ))}
       </div>
 
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)] pointer-events-none" />
-        <input
-          type="text"
-          placeholder="Search players..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          aria-label="Search leaderboard"
-          className="w-full bg-[var(--bg-surface)] border border-white/[0.06] rounded-lg pl-9 pr-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-gold)]/40 focus:border-transparent transition-colors"
-        />
-      </div>
-
-      {/* Table */}
-      <div className="card-elevated overflow-hidden">
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-16 gap-3">
-            <Loader2 className="w-7 h-7 text-gold animate-spin" />
-            <div className="skeleton h-4 w-32" />
-          </div>
-        ) : (
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={activeTab}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
+      <div className="grid grid-12">
+        <div style={{ gridColumn: 'span 4' }} className="feed-col">
+          <div className="card-base" style={{ padding: 0, overflow: 'hidden' }}>
+            <div
+              className="card-head"
+              style={{ padding: '20px 20px 14px', borderBottom: '1px solid var(--line)', marginBottom: 0 }}
             >
-              {/* Header */}
-              <div className={`grid ${activeTab === 'tournament_points' ? 'grid-cols-[3rem_1fr_5rem]' : 'grid-cols-[3rem_1fr_5rem_4rem_3.5rem] md:grid-cols-[3rem_1fr_5rem_5rem_4rem]'} px-4 py-3 border-b border-white/[0.06] eyebrow`}>
-                <span>#</span>
-                <span>Player</span>
-                {activeTab === 'tournament_points' ? (
-                  <span className="text-right">Points</span>
-                ) : (
-                  <>
-                    <span className="text-right">Elo</span>
-                    <span className="text-right">W/L</span>
-                    <span className="text-right">Win%</span>
-                  </>
-                )}
+              <div>
+                <h3 className="card-title">Top 3</h3>
+                <div className="card-sub">The players to beat</div>
               </div>
-
-              {/* Rows */}
-              <div className="divide-y divide-white/[0.04]">
-                {filteredPlayers.map((p, i) => {
-                  const elo = isDoubles ? p.ratings?.doubles_elo : p.ratings?.singles_elo;
-                  const wins = isDoubles ? p.ratings?.doubles_wins : p.ratings?.singles_wins;
-                  const losses = isDoubles ? p.ratings?.doubles_losses : p.ratings?.singles_losses;
-                  const prov = isDoubles ? p.ratings?.doubles_provisional : p.ratings?.singles_provisional;
-                  const total = (wins ?? 0) + (losses ?? 0);
-                  const winPct = total > 0 ? Math.round(((wins ?? 0) / total) * 100) : 0;
-                  const RankIcon = i < 3 ? rankIcons[i] : null;
-
-                  return (
-                    <motion.div
-                      key={p.id}
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: Math.min(i * 0.03, 0.5), duration: 0.3 }}
-                    >
-                      <Link
-                        href={`/leaderboard/${p.id}`}
-                        className={`grid ${activeTab === 'tournament_points' ? 'grid-cols-[3rem_1fr_5rem]' : 'grid-cols-[3rem_1fr_5rem_4rem_3.5rem] md:grid-cols-[3rem_1fr_5rem_5rem_4rem]'} px-4 py-3 items-center hover:bg-white/[0.03] transition-colors group ${
-                          i < 3 ? rankBg[i] + ' border-l-2' : ''
-                        }`}
-                      >
-                        <span className="flex items-center">
-                          {RankIcon ? (
-                            <RankIcon className={`w-5 h-5 ${rankColors[i]}`} />
-                          ) : (
-                            <span className="text-sm font-mono text-[var(--text-dim)] font-bold nums">{i + 1}</span>
-                          )}
-                        </span>
-                        <span className="flex items-center gap-2.5 min-w-0">
-                          <Avatar name={p.full_name} src={p.avatar_url} size="sm" />
-                          <span className="truncate text-sm text-shuttle-white font-medium group-hover:text-[var(--color-accent)] transition-colors">
-                            {p.full_name}
-                          </span>
-                          {prov && activeTab !== 'tournament_points' && (
-                            <span className="chip shrink-0" style={{ fontSize: '0.6rem', padding: '0.125rem 0.4rem' }}>P</span>
-                          )}
-                        </span>
-                        {activeTab === 'tournament_points' ? (
-                          <span className="text-right font-mono text-base font-bold gradient-text-gold nums">{(p as any)._tournamentPoints ?? 0}</span>
-                        ) : (
-                          <>
-                            <span className="text-right font-mono text-base font-bold text-shuttle-white nums">
-                              {elo ?? '-'}
-                              {(() => {
-                                if (!elo || activeTab === 'tournament_points') return null;
-                                const t = getSeasonTier(elo);
-                                return (
-                                  <span
-                                    className="inline-block w-2 h-2 rounded-full ml-1"
-                                    style={{ backgroundColor: t.color }}
-                                    title={t.tier}
-                                  />
-                                );
-                              })()}
-                            </span>
-                            <span className="text-right text-sm text-[var(--text-secondary)] nums">
-                              <span className="text-emerald-400">{wins ?? 0}</span>
-                              <span className="text-[var(--text-dim)]">-</span>
-                              <span className="text-[var(--color-accent)]">{losses ?? 0}</span>
-                            </span>
-                            <span className="text-right text-sm text-[var(--text-secondary)] font-medium nums">{winPct}%</span>
-                          </>
-                        )}
-                      </Link>
-                    </motion.div>
-                  );
-                })}
-              </div>
-
-              {filteredPlayers.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-16">
-                  {searchQuery ? (
-                    <>
-                      <Search className="w-10 h-10 text-[var(--text-dim)] mb-3" />
-                      <p className="text-[var(--text-muted)]">No players found matching &ldquo;{searchQuery}&rdquo;</p>
-                    </>
-                  ) : (
-                    <>
-                      <Trophy className="w-10 h-10 text-[var(--text-dim)] mb-3" />
-                      <p className="text-[var(--text-muted)]">No players ranked yet</p>
-                    </>
-                  )}
-                </div>
+              <span className="tag tag-gold">PODIUM</span>
+            </div>
+            <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {top3.length === 0 && !loading && (
+                <div className="empty" style={{ padding: 16 }}>No ranked players yet.</div>
               )}
-            </motion.div>
-          </AnimatePresence>
-        )}
+              {top3.map((p, i) => {
+                const elo = p.ratings ? (isDoubles ? p.ratings.doubles_elo : p.ratings.singles_elo) : (p._tournamentPoints ?? 0);
+                const wins = p.ratings ? (isDoubles ? p.ratings.doubles_wins : p.ratings.singles_wins) : 0;
+                const losses = p.ratings ? (isDoubles ? p.ratings.doubles_losses : p.ratings.singles_losses) : 0;
+                return (
+                  <Link
+                    key={p.id}
+                    href={`/leaderboard/${p.id}`}
+                    className="row press"
+                    style={{
+                      alignItems: 'stretch',
+                      gap: 14,
+                      padding: 14,
+                      border: '1px solid var(--line)',
+                      borderRadius: 12,
+                      background: i === 0 ? 'var(--red-wash)' : 'transparent',
+                    }}
+                  >
+                    <div style={{ width: 40, display: 'grid', placeItems: 'center' }}>
+                      <div className="rank-big">
+                        <span className="hash">#</span>
+                        <span
+                          className="num"
+                          style={{ fontSize: 32, color: i === 0 ? 'var(--red)' : 'var(--ink)' }}
+                        >
+                          {i + 1}
+                        </span>
+                      </div>
+                    </div>
+                    <span
+                      className="avatar"
+                      data-size="md"
+                      data-tone={toneFor(p.id)}
+                      style={i === 0 ? { boxShadow: '0 0 0 2px var(--red)' } : undefined}
+                    >
+                      {initials(p.full_name)}
+                    </span>
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                      <div style={{ fontWeight: 600, fontSize: 15 }}>{p.full_name}</div>
+                      <div className="mono muted" style={{ fontSize: 11 }}>
+                        {isTpts ? 'Tournament points' : isDoubles ? 'Doubles' : 'Singles'}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center' }}>
+                      <div className="mono" style={{ fontWeight: 700, fontSize: 18 }}>{elo}</div>
+                      {!isTpts && (
+                        <div className="mono muted" style={{ fontSize: 11 }}>{wins}–{losses}</div>
+                      )}
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+
+          {me && !isTpts && (
+            <div className="card-base">
+              <div className="card-head">
+                <h3 className="card-title">Your position</h3>
+                <span className="tag tag-red">YOU</span>
+              </div>
+              <div className="row" style={{ gap: 20, alignItems: 'flex-end', marginBottom: 10 }}>
+                <div className="rank-big">
+                  <span className="hash">#</span>
+                  <span className="num">{meIndex + 1}</span>
+                </div>
+                <div style={{ flex: 1, textAlign: 'right' }}>
+                  <div className="mono" style={{ fontSize: 22, fontWeight: 700 }}>{myElo ?? '—'}</div>
+                  <div className="mono muted" style={{ fontSize: 11 }}>
+                    {isDoubles ? 'Doubles ELO' : 'Singles ELO'}
+                  </div>
+                </div>
+              </div>
+              {eloToNext !== null && eloToNext > 0 && aboveMe && (
+                <>
+                  <div
+                    className="capacity-bar"
+                    style={{ height: 8 }}
+                  >
+                    <div
+                      className="fill"
+                      style={{
+                        width: `${Math.min(100, ((myElo ?? 0) / (aboveMeElo ?? 1)) * 100)}%`,
+                        background: 'var(--red)',
+                      }}
+                    />
+                  </div>
+                  <div className="row" style={{ justifyContent: 'space-between', fontSize: 11, marginTop: 6 }}>
+                    <span className="mono muted">TO #{meIndex} · {eloToNext} ELO</span>
+                    <span className="mono">TARGET {aboveMeElo}</span>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div style={{ gridColumn: 'span 8' }}>
+          <div className="card-base" style={{ padding: 0, overflow: 'hidden' }}>
+            <div
+              className="card-head row"
+              style={{ padding: '20px 20px 14px', borderBottom: '1px solid var(--line)', marginBottom: 0, justifyContent: 'space-between' }}
+            >
+              <div>
+                <h3 className="card-title">{tabs.find((t) => t.id === activeTab)?.label} · Full Ladder</h3>
+                <div className="card-sub">
+                  Sorted by {isTpts ? 'points' : 'ELO'} · {filtered.length} of {players.length}
+                </div>
+              </div>
+            </div>
+            {loading ? (
+              <div className="empty">Loading rankings…</div>
+            ) : filtered.length === 0 ? (
+              <div className="empty">
+                {searchQuery ? `No players match "${searchQuery}".` : 'No ranked players yet.'}
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                <table className="data-table" style={{ minWidth: 680 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ width: 56 }}>Rank</th>
+                      <th>Player</th>
+                      <th className="num" style={{ width: 80, textAlign: 'right' }}>{isTpts ? 'Pts' : 'ELO'}</th>
+                      {!isTpts && <th className="num" style={{ width: 110, textAlign: 'right' }}>W–L</th>}
+                      {!isTpts && <th className="num" style={{ width: 90, textAlign: 'right' }}>Win %</th>}
+                      {!isTpts && <th className="num" style={{ width: 90, textAlign: 'right' }}>Streak</th>}
+                      <th style={{ width: 110 }} />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map((p, i) => {
+                      const r = p.ratings;
+                      const elo = r ? (isDoubles ? r.doubles_elo : r.singles_elo) : (p._tournamentPoints ?? 0);
+                      const wins = r ? (isDoubles ? r.doubles_wins : r.singles_wins) : 0;
+                      const losses = r ? (isDoubles ? r.doubles_losses : r.singles_losses) : 0;
+                      const total = wins + losses;
+                      const pct = total > 0 ? Math.round((wins / total) * 100) : 0;
+                      const streak = r ? (isDoubles ? r.current_doubles_streak : r.current_singles_streak) : 0;
+                      const prov = r ? (isDoubles ? r.doubles_provisional : r.singles_provisional) : false;
+                      const isMeRow = p.id === meId;
+
+                      return (
+                        <tr
+                          key={p.id}
+                          className={'row-hover' + (isMeRow ? ' me' : '')}
+                          onClick={() => { window.location.href = `/leaderboard/${p.id}`; }}
+                        >
+                          <td className="num" style={{ fontSize: 16, fontWeight: 600, color: i < 3 ? 'var(--red)' : 'var(--ink)' }}>
+                            #{i + 1}
+                          </td>
+                          <td>
+                            <div className="row" style={{ gap: 12 }}>
+                              <span
+                                className="avatar"
+                                data-size="sm"
+                                data-tone={toneFor(p.id)}
+                                style={isMeRow ? { boxShadow: '0 0 0 2px var(--red)' } : undefined}
+                              >
+                                {initials(p.full_name)}
+                              </span>
+                              <div>
+                                <div style={{ fontWeight: 600, fontSize: 14 }}>{p.full_name}</div>
+                                {prov && (
+                                  <div className="mono muted" style={{ fontSize: 11 }}>Provisional</div>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="num" style={{ fontWeight: 600, fontSize: 14, textAlign: 'right' }}>{elo}</td>
+                          {!isTpts && <td className="num muted" style={{ textAlign: 'right' }}>{wins}–{losses}</td>}
+                          {!isTpts && <td className="num" style={{ textAlign: 'right' }}>{pct}%</td>}
+                          {!isTpts && (
+                            <td className="num" style={{ textAlign: 'right' }}>
+                              {typeof streak === 'number' && streak !== 0 ? (
+                                <span style={{ color: streak > 0 ? 'var(--win)' : 'var(--loss)' }}>
+                                  {streak > 0 ? 'W' : 'L'}{Math.abs(streak)}
+                                </span>
+                              ) : (
+                                <span className="muted">—</span>
+                              )}
+                            </td>
+                          )}
+                          <td>
+                            <button
+                              className="btn btn-sm btn-ghost"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                window.location.href = `/challenges/new?opponent=${p.id}`;
+                              }}
+                              type="button"
+                            >
+                              <Crosshair size={12} /> Challenge
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
