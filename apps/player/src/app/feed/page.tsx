@@ -276,8 +276,8 @@ export default async function FeedPage() {
                 const person = pickPerson(p.player);
                 return person?.id !== player.id && p.team_side === me?.team_side;
               });
-              const opponent = pickPerson(opponents[0]?.player);
-              const opponentPartner = pickPerson(opponents[1]?.player);
+              const opponent = pickPerson(opponents[0]?.player ?? null);
+              const opponentPartner = pickPerson(opponents[1]?.player ?? null);
               const partnerPerson = pickPerson(partner?.player ?? null);
 
               const formatLabel = MATCH_FORMAT_LABELS[m.format as keyof typeof MATCH_FORMAT_LABELS] || m.format;
