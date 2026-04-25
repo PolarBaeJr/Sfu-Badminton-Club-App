@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+/* Fonts loaded via next/font in layout.tsx — don't @import them here. */
 
 @tailwind base;
 @tailwind components;
@@ -355,6 +355,39 @@ body {
 .me-chip .name { font-weight: 600; font-size: 13px; line-height: 1.2; }
 .me-chip .sub  { font-size: 11px; color: var(--mute); font-family: var(--mono); line-height: 1.2; }
 
+/* Avatar */
+.avatar {
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 999px;
+  background: var(--surface-2); color: var(--ink);
+  font-weight: 600; font-family: var(--display);
+  font-size: 12px; letter-spacing: -.01em;
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  position: relative; overflow: hidden;
+}
+.avatar.ring { box-shadow: 0 0 0 2px var(--red); }
+.avatar[data-size="xs"] { width: 24px; height: 24px; font-size: 10px; }
+.avatar[data-size="sm"] { width: 32px; height: 32px; font-size: 11px; }
+.avatar[data-size="md"] { width: 44px; height: 44px; font-size: 14px; }
+.avatar[data-size="lg"] { width: 64px; height: 64px; font-size: 20px; }
+.avatar[data-size="xl"] { width: 96px; height: 96px; font-size: 30px; }
+.avatar[data-tone="1"] { background: #EDE4DB; color: #8B5A2B; }
+.avatar[data-tone="2"] { background: #DDE7DC; color: #37604B; }
+.avatar[data-tone="3"] { background: #E4DCEA; color: #5B4680; }
+.avatar[data-tone="4"] { background: #F5D8DC; color: #8B0020; }
+.avatar[data-tone="5"] { background: #DCE3EE; color: #3B547A; }
+.avatar[data-tone="6"] { background: #EEE1D6; color: #6B4A23; }
+.avatar[data-tone="7"] { background: #E0DEDA; color: #3D3A36; }
+[data-theme="dark"] .avatar { background: var(--surface-2); }
+[data-theme="dark"] .avatar[data-tone="1"] { background: #3A2B1F; color: #E5B880; }
+[data-theme="dark"] .avatar[data-tone="2"] { background: #22362B; color: #A8D5B5; }
+[data-theme="dark"] .avatar[data-tone="3"] { background: #2E2538; color: #C6B2E3; }
+[data-theme="dark"] .avatar[data-tone="4"] { background: #3A1420; color: #F5A8B4; }
+[data-theme="dark"] .avatar[data-tone="5"] { background: #1E2A3D; color: #A8BBD8; }
+[data-theme="dark"] .avatar[data-tone="6"] { background: #32261A; color: #D8B88C; }
+[data-theme="dark"] .avatar[data-tone="7"] { background: #2A2824; color: #BFB9B0; }
+
 .mobile-tabbar {
   display: none;
   position: fixed; bottom: 0; left: 0; right: 0;
@@ -390,36 +423,38 @@ body {
 
 /* ═══════════════════════════════════════════════════════════
    DESIGN PRIMITIVES (page-level)
+   These are component classes, not utilities — they live OUTSIDE
+   @layer utilities so Tailwind's purge doesn't strip them when no
+   .tsx file references them yet (Phase 3 pages will use them).
    ═══════════════════════════════════════════════════════════ */
 
-@layer utilities {
-  .display { font-family: var(--display); letter-spacing: -.02em; }
-  .mono    { font-family: var(--mono); font-variant-numeric: tabular-nums; }
-  .tabular { font-variant-numeric: tabular-nums; }
+.display { font-family: var(--display); letter-spacing: -.02em; }
+.mono    { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.tabular { font-variant-numeric: tabular-nums; }
 
-  /* Page container */
-  .page {
-    max-width: 1440px;
-    margin: 0 auto;
-    padding: 28px;
-    width: 100%;
-  }
-  @media (max-width: 980px) {
-    .page { padding: 20px 16px; }
-  }
-  .page-header {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 24px;
-    margin-bottom: 28px;
-  }
-  @media (max-width: 980px) {
-    .page-header { flex-direction: column; align-items: flex-start; gap: 16px; margin-bottom: 20px; }
-  }
+/* Page container */
+.page {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 28px;
+  width: 100%;
+}
+@media (max-width: 980px) {
+  .page { padding: 20px 16px; }
+}
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 28px;
+}
+@media (max-width: 980px) {
+  .page-header { flex-direction: column; align-items: flex-start; gap: 16px; margin-bottom: 20px; }
+}
 
-  /* Page header inner */
-  .page-eyebrow {
+/* Page header inner */
+.page-eyebrow {
     font-family: var(--mono);
     font-size: 11px;
     color: var(--red);
@@ -526,8 +561,11 @@ body {
     font-variant-numeric: tabular-nums;
   }
 
-  /* ── Legacy utilities (kept for existing components) ── */
+/* ── Legacy utilities (kept for existing components) ──
+   These ARE referenced in current TSX files, so it's safe (and desirable
+   for bundle size) to keep them inside @layer utilities for Tailwind purge. */
 
+@layer utilities {
   .text-court-red    { color: var(--red); }
   .text-gold         { color: var(--gold); }
   .text-shuttle-white{ color: #F8FAFC; }

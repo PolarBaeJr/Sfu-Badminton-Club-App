@@ -88,25 +88,7 @@ export function TopBar({ playerName, unreadCount }: { playerName: string; unread
             )}
           </Link>
           <Link href="/settings" className="me-chip" aria-label="Profile and settings">
-            <span
-              className="avatar"
-              data-size="sm"
-              data-tone="4"
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: 999,
-                background: 'var(--surface-2)',
-                color: 'var(--ink)',
-                display: 'inline-grid',
-                placeItems: 'center',
-                fontFamily: 'var(--display)',
-                fontWeight: 600,
-                fontSize: 11,
-                border: '1px solid var(--line)',
-                flexShrink: 0,
-              }}
-            >
+            <span className="avatar" data-size="sm" data-tone="4">
               {initials}
             </span>
             <div>
