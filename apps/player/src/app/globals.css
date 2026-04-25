@@ -594,6 +594,14 @@ body {
   font-size: 14px;
 }
 
+/* Auth split-screen */
+@media (max-width: 980px) {
+  .auth { grid-template-columns: 1fr !important; }
+  .auth-panel { padding: 32px 24px !important; min-height: auto !important; }
+  .auth-hero { font-size: 40px !important; }
+  .auth-form { padding: 32px 24px !important; gap: 18px !important; }
+}
+
 /* Announcements — editorial 2-col layout */
 .ann {
   display: grid;

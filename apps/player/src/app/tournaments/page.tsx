@@ -1,9 +1,15 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server';
-import { Badge } from '@badminton/ui';
 import { formatDate } from '@badminton/shared';
 import Link from 'next/link';
 import { Award, Users, ChevronRight } from 'lucide-react';
-import { FadeIn, StaggerContainer, StaggerItem } from '@/components/motion-wrapper';
+
+const STATUS_TAG: Record<string, string> = {
+  active: 'tag tag-win',
+  registration: 'tag tag-gold',
+  completed: 'tag',
+  cancelled: 'tag',
+  upcoming: 'tag tag-gold',
+};
 
 export default async function TournamentsPage() {
   const supabase = await createServerSupabaseClient();
@@ -13,51 +19,106 @@ export default async function TournamentsPage() {
     .select('*, tournament_events(count)')
     .order('start_date', { ascending: false });
 
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3 reveal reveal-1">
-          <div className="w-10 h-10 rounded-xl bg-[var(--color-gold)]/10 flex items-center justify-center">
-            <Award className="w-5 h-5 text-gold" />
+  const now = Date.now();
+  const active = (tournaments ?? []).filter((t) => ['active', 'registration', 'live'].includes(t.status));
+  const upcoming = (tournaments ?? []).filter((t) => {
+    if (active.includes(t)) return false;
+    return t.start_date && new Date(t.start_date).getTime() > now && t.status !== 'completed' && t.status !== 'cancelled';
+  });
+  const past = (tournaments ?? []).filter(
+    (t) => !active.includes(t) && !upcoming.includes(t)
+  );
+
+  function TCard({ t }: { t: Record<string, unknown> }) {
+    const eventsArr = t.tournament_events as Array<{ count: number }> | undefined;
+    const eventCount = Array.isArray(eventsArr) ? eventsArr[0]?.count ?? 0 : 0;
+    const status = (t.status as string) || 'unknown';
+    return (
+      <Link
+        href={`/tournaments/${t.id as string}`}
+        className="press"
+        style={{
+          display: 'block',
+          padding: 18,
+          border: '1px solid var(--line)',
+          borderRadius: 'var(--r-lg)',
+          background: 'var(--surface)',
+        }}
+      >
+        <div className="row" style={{ marginBottom: 10, gap: 8, flexWrap: 'wrap', fontSize: 12 }}>
+          <span className="tag tag-red">{((t.format as string) || '').toUpperCase()}</span>
+          <span className="tag">{((t.scope as string) || '').toUpperCase()}</span>
+          <span className={STATUS_TAG[status] ?? 'tag'}>{status.toUpperCase()}</span>
+          <span className="mono muted" style={{ marginLeft: 'auto' }}>
+            {t.start_date ? formatDate(t.start_date as string).toUpperCase() : 'TBD'}
+          </span>
+        </div>
+        <div className="row" style={{ gap: 12, alignItems: 'center' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontFamily: 'var(--display)', fontSize: 18, fontWeight: 600, letterSpacing: '-.01em' }}>
+              {t.name as string}
+            </div>
+            <div className="mono muted" style={{ fontSize: 11, marginTop: 4 }}>
+              <Users size={11} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />
+              {eventCount} event{eventCount !== 1 ? 's' : ''}
+            </div>
           </div>
-          <div>
-            <p className="eyebrow">Competition</p>
-            <h1 className="display-lg text-shuttle-white">Tournaments</h1>
+          <ChevronRight size={16} className="text-[var(--mute)]" />
+        </div>
+      </Link>
+    );
+  }
+
+  function Section({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
+    return (
+      <div className="card-base">
+        <div className="card-head">
+          <h3 className="card-title">{title}</h3>
+          <span className="tag">{count}</span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{children}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div data-screen-label="Tournaments">
+      <div className="page-header">
+        <div>
+          <div className="page-eyebrow"><span className="bar" />COMPETITION · BRACKETS</div>
+          <h1 className="page-title">Tournaments</h1>
+          <div className="page-sub">
+            Internal championships, open events, invitationals. Sign up while registration is open and check brackets when matches go live.
           </div>
         </div>
+      </div>
 
-      <FadeIn delay={0.05}>
-        <StaggerContainer className="grid gap-3">
-          {tournaments?.map((t) => {
-            const eventsArr = t.tournament_events;
-            const eventCount = Array.isArray(eventsArr) ? eventsArr[0]?.count ?? 0 : 0;
-            return (
-              <StaggerItem key={t.id}>
-                <Link href={`/tournaments/${t.id}`} className="block group">
-                  <div className="card-surface card-interactive p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-shuttle-white font-semibold">{t.name}</h3>
-                        <p className="text-xs text-[var(--text-muted)] mt-1 nums">{formatDate(t.start_date)} &middot; {t.format} &middot; {t.scope}</p>
-                        <div className="flex items-center gap-2 mt-2">
-                          <span className={t.status === 'active' ? 'chip chip-success' : t.status === 'completed' ? 'chip' : 'chip chip-gold'}>{t.status}</span>
-                          <span className="flex items-center gap-1 text-xs text-[var(--text-muted)] nums"><Users className="w-3 h-3" />{eventCount} event{eventCount !== 1 ? 's' : ''}</span>
-                        </div>
-                      </div>
-                      <ChevronRight className="w-5 h-5 text-[#475569] group-hover:text-gold transition-colors shrink-0" />
-                    </div>
-                  </div>
-                </Link>
-              </StaggerItem>
-            );
-          })}
-          {(!tournaments || tournaments.length === 0) && (
-            <div className="card-elevated p-12 text-center">
-              <Award className="w-10 h-10 text-[var(--text-dim)] mx-auto mb-3" />
-              <p className="text-[var(--text-muted)]">No tournaments yet</p>
-            </div>
+      {(tournaments ?? []).length === 0 ? (
+        <div className="card-base">
+          <div className="empty">
+            <Award size={40} className="text-[var(--mute)]" style={{ display: 'block', margin: '0 auto 12px' }} />
+            No tournaments scheduled yet.
+          </div>
+        </div>
+      ) : (
+        <div className="feed-col">
+          {active.length > 0 && (
+            <Section title="Live and registration-open" count={active.length}>
+              {active.map((t) => <TCard key={t.id} t={t as unknown as Record<string, unknown>} />)}
+            </Section>
           )}
-        </StaggerContainer>
-      </FadeIn>
+          {upcoming.length > 0 && (
+            <Section title="Upcoming" count={upcoming.length}>
+              {upcoming.map((t) => <TCard key={t.id} t={t as unknown as Record<string, unknown>} />)}
+            </Section>
+          )}
+          {past.length > 0 && (
+            <Section title="Past" count={past.length}>
+              {past.map((t) => <TCard key={t.id} t={t as unknown as Record<string, unknown>} />)}
+            </Section>
+          )}
+        </div>
+      )}
     </div>
   );
 }
