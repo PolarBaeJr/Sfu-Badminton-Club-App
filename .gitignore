@@ -34,3 +34,5 @@ node_modules/
 .vercel
 .env*.local
 .env.local
+apps/admin/.env.local
+apps/player/.env.local
