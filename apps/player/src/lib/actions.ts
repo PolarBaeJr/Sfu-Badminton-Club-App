@@ -1,7 +1,7 @@
 'use server';
 
 import * as Sentry from '@sentry/nextjs';
-import { createServerSupabaseClient, getCurrentPlayer } from './supabase-server';
+import { createServerSupabaseClient, createServiceRoleClient, getCurrentPlayer } from './supabase-server';
 import { revalidatePath } from 'next/cache';
 import type { ChallengeCreateInput, MatchResultInput, WalkoverReportInput } from '@badminton/shared';
 import { getFormatWeight, getEventMultiplier, MATCH_FORMAT_LABELS } from '@badminton/shared';
@@ -194,11 +194,14 @@ export async function acceptChallenge(challengeId: string) {
   if (error) throw new Error(error.message);
 
   // Recompute aggregate status from latest snapshot (still racy across concurrent accepts;
-  // the canonical fix is a DB function — see TODO).
+  // the canonical fix is a DB function — see TODO). Use service role for the
+  // challenges.status update — challenges_update_own RLS only allows the creator
+  // to write, so a non-creator participant's accept silently no-ops without it.
   const allAccepted = cps.every((cp) =>
     cp.player_id === player.id ? true : cp.confirmation_status === 'accepted'
   );
-  await supabase
+  const adminClient = createServiceRoleClient();
+  await adminClient
     .from('challenges')
     .update({ status: allAccepted ? 'accepted' : 'partially_confirmed' })
     .eq('id', challengeId);
@@ -250,7 +253,10 @@ export async function rejectChallenge(challengeId: string) {
 
   // Any single rejection terminates the challenge for everyone — intentional in doubles too,
   // since a partner declining means the matchup can't go ahead as proposed.
-  await supabase.from('challenges').update({ status: 'rejected' }).eq('id', challengeId);
+  // Service-role client: challenges_update_own RLS only lets the creator update;
+  // a rejecting participant otherwise can't flip the aggregate status.
+  const adminClient = createServiceRoleClient();
+  await adminClient.from('challenges').update({ status: 'rejected' }).eq('id', challengeId);
 
   await supabase.from('notifications').insert({
     player_id: challenge.created_by,
@@ -627,7 +633,10 @@ export async function reportWalkover(input: WalkoverReportInput) {
   });
   if (error) throw new Error(error.message);
 
-  await supabase.from('challenges').update({ status: 'walkover_pending' }).eq('id', input.challenge_id);
+  // Service-role client: challenges_update_own RLS only lets the creator update;
+  // a walkover can be reported by either side, so the non-creator path needs the bypass.
+  const adminClient = createServiceRoleClient();
+  await adminClient.from('challenges').update({ status: 'walkover_pending' }).eq('id', input.challenge_id);
 
   // Admin list and forfeit-player name are independent — fetch in parallel
   const [adminsRes, forfeitRes] = await Promise.all([
