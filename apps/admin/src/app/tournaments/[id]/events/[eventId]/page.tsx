@@ -35,7 +35,7 @@ export default async function EventPage({
   } else {
     const { data } = await supabase
       .from('tournament_participants')
-      .select('*, player:players(id, full_name, avatar_url, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_matches_played, doubles_matches_played))')
+      .select('*, player:players!player_id(id, full_name, avatar_url, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_matches_played, doubles_matches_played))')
       .eq('event_id', eventId)
       .order('seed_number', { ascending: true, nullsFirst: false });
     participants = data ?? [];

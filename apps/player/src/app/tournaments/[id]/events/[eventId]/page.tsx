@@ -62,7 +62,7 @@ export default async function EventDetailPage({
   } else {
     const { data } = await supabase
       .from('tournament_participants')
-      .select('*, player:players(full_name, avatar_url)')
+      .select('*, player:players!player_id(full_name, avatar_url)')
       .eq('event_id', eventId)
       .order('seed_number');
     participants = (data as Array<Record<string, unknown>>) ?? [];

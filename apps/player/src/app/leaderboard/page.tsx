@@ -80,7 +80,7 @@ export default function LeaderboardPage() {
       if (activeTab === 'tournament_points') {
         const { data: parts } = await supabase
           .from('tournament_participants')
-          .select('player_id, points, player:players(id, full_name, status, hide_from_leaderboard)')
+          .select('player_id, points, player:players!player_id(id, full_name, status, hide_from_leaderboard)')
           .not('status', 'in', '("withdrawn","disqualified")')
           .gt('points', 0);
 
