@@ -163,8 +163,15 @@ export default async function FeedPage() {
                 : `Singles ELO ${r.singles_elo}. ${singlesWinRate} win rate over ${(r.singles_wins ?? 0) + (r.singles_losses ?? 0)} matches.`}
             </h2>
             <div className="lead">
-              Doubles {r.doubles_provisional ? '(provisional)' : `at ${r.doubles_elo}`} ·{' '}
-              {(r.doubles_wins ?? 0)}W–{(r.doubles_losses ?? 0)}L. Issue a challenge to keep climbing.
+              {(() => {
+                const sParts = r.singles_provisional
+                  ? `Singles provisional · ${(r.singles_wins ?? 0)}W–${(r.singles_losses ?? 0)}L of 8`
+                  : `Singles ${r.singles_elo} · ${(r.singles_wins ?? 0)}W–${(r.singles_losses ?? 0)}L`;
+                const dParts = r.doubles_provisional
+                  ? `Doubles provisional · ${(r.doubles_wins ?? 0)}W–${(r.doubles_losses ?? 0)}L of 8`
+                  : `Doubles ${r.doubles_elo} · ${(r.doubles_wins ?? 0)}W–${(r.doubles_losses ?? 0)}L`;
+                return `${sParts}. ${dParts}.`;
+              })()}
             </div>
             <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
               <Link href="/challenges/new" className="btn btn-primary">
