@@ -513,19 +513,19 @@ body {
   color: var(--bg);
 }
 .hero-banner .lead {
-  color: rgba(255,255,255,.7);
+  color: color-mix(in oklab, var(--bg) 70%, transparent);
   font-size: 14px;
   max-width: 40ch;
   margin-bottom: 20px;
 }
 .hero-stats {
   display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
-  border-left: 1px solid rgba(255,255,255,.15);
+  border-left: 1px solid color-mix(in oklab, var(--bg) 18%, transparent);
   padding-left: 28px;
   position: relative; z-index: 2;
 }
-.hero-stats .stat-label { color: rgba(255,255,255,.55); }
-.hero-stats .stat-value { color: #fff; }
+.hero-stats .stat-label { color: color-mix(in oklab, var(--bg) 55%, transparent); }
+.hero-stats .stat-value { color: var(--bg); }
 
 .feed-col   { display: flex; flex-direction: column; gap: 20px; }
 .feed-match {
