@@ -4,23 +4,13 @@ import {
   isDoublesEvent,
   TOURNAMENT_EVENT_TYPE_LABELS,
   TOURNAMENT_EVENT_STATUS_LABELS,
+  TOURNAMENT_STATUS_TAG,
 } from '@badminton/shared';
 import type { TournamentEventType, TournamentEventStatus } from '@badminton/shared';
 import { notFound } from 'next/navigation';
 import { Trophy, Users, Zap, ArrowLeft, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 import { EventRegistrationButton } from './EventRegistrationButton';
-
-const STATUS_TAG: Record<string, string> = {
-  active: 'tag tag-win',
-  registration: 'tag tag-gold',
-  live: 'tag tag-win',
-  bracket_generated: 'tag tag-gold',
-  upcoming: 'tag tag-gold',
-  checkin: 'tag tag-gold',
-  completed: 'tag',
-  cancelled: 'tag',
-};
 
 export default async function TournamentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -85,7 +75,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
               <span className="muted" style={{ textTransform: 'capitalize' }}>{tournament.scope}</span>
             </div>
           </div>
-          <span className={STATUS_TAG[tournament.status as string] ?? 'tag'}>
+          <span className={TOURNAMENT_STATUS_TAG[tournament.status as string] ?? 'tag'}>
             {(tournament.status as string)?.toUpperCase()}
           </span>
         </div>
@@ -147,7 +137,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
                         {TOURNAMENT_EVENT_TYPE_LABELS[eventType]}
                       </div>
                       <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-                        <span className={STATUS_TAG[eventStatus] ?? 'tag'}>
+                        <span className={TOURNAMENT_STATUS_TAG[eventStatus] ?? 'tag'}>
                           {TOURNAMENT_EVENT_STATUS_LABELS[eventStatus]?.toUpperCase()}
                         </span>
                         <span className="tag">

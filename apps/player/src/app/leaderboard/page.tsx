@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase-browser';
 import Link from 'next/link';
 import { getPostHogClient } from '@/lib/posthog';
 import { Search, Crosshair, ChevronRight } from 'lucide-react';
+import { AvatarChip, PageHeader } from '@badminton/ui';
 
 type Ratings = {
   singles_elo: number;
@@ -37,15 +38,6 @@ const tabs: { id: CategoryId; label: string; short: string }[] = [
   { id: 'comp_doubles',      label: 'Comp Doubles',     short: 'Comp D.' },
   { id: 'tournament_points', label: 'Tournament Pts',   short: 'TPts' },
 ];
-
-function initials(name: string) {
-  return name.split(' ').map((p) => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
-}
-function toneFor(id: string) {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return ((h % 7) + 1);
-}
 
 export default function LeaderboardPage() {
   const [activeTab, setActiveTab] = useState<CategoryId>('open_singles');
@@ -154,15 +146,11 @@ export default function LeaderboardPage() {
 
   return (
     <div data-screen-label="Leaderboard">
-      <div className="page-header">
-        <div>
-          <div className="page-eyebrow"><span className="bar" />RANKINGS · LIVE</div>
-          <h1 className="page-title">Leaderboard</h1>
-          <div className="page-sub">
-            ELO updates after every confirmed match. {filtered.length} ranked players in {tabs.find((t) => t.id === activeTab)?.label}.
-          </div>
-        </div>
-        <div className="row" style={{ gap: 10 }}>
+      <PageHeader
+        eyebrow="RANKINGS · LIVE"
+        title="Leaderboard"
+        sub={`ELO updates after every confirmed match. ${filtered.length} ranked players in ${tabs.find((t) => t.id === activeTab)?.label}.`}
+        actions={
           <div
             className="row"
             style={{
@@ -189,8 +177,8 @@ export default function LeaderboardPage() {
               }}
             />
           </div>
-        </div>
-      </div>
+        }
+      />
 
       <div className="chips" style={{ marginBottom: 20 }}>
         {tabs.map((t) => (
@@ -251,14 +239,7 @@ export default function LeaderboardPage() {
                         </span>
                       </div>
                     </div>
-                    <span
-                      className="avatar"
-                      data-size="md"
-                      data-tone={toneFor(p.id)}
-                      style={i === 0 ? { boxShadow: '0 0 0 2px var(--red)' } : undefined}
-                    >
-                      {initials(p.full_name)}
-                    </span>
+                    <AvatarChip name={p.full_name} id={p.id} size="md" ring={i === 0} />
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                       <div style={{ fontWeight: 600, fontSize: 15 }}>{p.full_name}</div>
                       <div className="mono muted" style={{ fontSize: 11 }}>
@@ -375,14 +356,7 @@ export default function LeaderboardPage() {
                           </td>
                           <td>
                             <div className="row" style={{ gap: 12 }}>
-                              <span
-                                className="avatar"
-                                data-size="sm"
-                                data-tone={toneFor(p.id)}
-                                style={isMeRow ? { boxShadow: '0 0 0 2px var(--red)' } : undefined}
-                              >
-                                {initials(p.full_name)}
-                              </span>
+                              <AvatarChip name={p.full_name} id={p.id} size="sm" ring={isMeRow} />
                               <div>
                                 <div style={{ fontWeight: 600, fontSize: 14 }}>{p.full_name}</div>
                                 {prov && (

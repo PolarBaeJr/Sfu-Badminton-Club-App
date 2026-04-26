@@ -4,33 +4,8 @@ import { notFound, redirect } from 'next/navigation';
 import { ChallengeDetailActions } from './actions';
 import { ArrowLeft, Clock, Zap, Trophy, MessageSquare, Crosshair } from 'lucide-react';
 import Link from 'next/link';
-
-const STATUS_TAG: Record<string, string> = {
-  proposed: 'tag tag-gold',
-  partially_confirmed: 'tag tag-gold',
-  accepted: 'tag tag-win',
-  completed: 'tag',
-  disputed: 'tag tag-red',
-  cancelled: 'tag',
-  expired: 'tag',
-  walkover_pending: 'tag tag-gold',
-  walkover_confirmed: 'tag',
-  rejected: 'tag',
-};
-const CONFIRM_TAG: Record<string, string> = {
-  accepted: 'tag tag-win',
-  rejected: 'tag tag-red',
-  pending: 'tag tag-gold',
-};
-
-function initials(name: string | null | undefined) {
-  return (name || '?').split(' ').map((p) => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
-}
-function toneFor(id: string) {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return ((h % 7) + 1);
-}
+import { AvatarChip } from '@badminton/ui';
+import { CHALLENGE_STATUS_TAG, PARTICIPANT_CONFIRM_TAG } from '@badminton/shared';
 
 export default async function ChallengeDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -110,7 +85,7 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
               {challenge.type === 'singles' ? 'Singles match' : 'Doubles match'}
             </h1>
           </div>
-          <span className={STATUS_TAG[challenge.status] ?? 'tag'}>
+          <span className={CHALLENGE_STATUS_TAG[challenge.status] ?? 'tag'}>
             {challenge.status.replace(/_/g, ' ')}
           </span>
         </div>
@@ -183,13 +158,11 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
                       const p = pickPerson(cp.player);
                       return (
                         <div key={cp.id} className="row" style={{ gap: 10 }}>
-                          <span className="avatar" data-size="sm" data-tone={toneFor(p?.id ?? cp.id)}>
-                            {initials(p?.full_name)}
-                          </span>
+                          <AvatarChip name={p?.full_name ?? '?'} id={p?.id ?? cp.id} size="sm" />
                           <span style={{ flex: 1, fontSize: 13, fontWeight: 500, minWidth: 0 }} className="truncate">
                             {p?.full_name ?? 'Unknown'}
                           </span>
-                          <span className={CONFIRM_TAG[cp.confirmation_status] ?? 'tag'}>
+                          <span className={PARTICIPANT_CONFIRM_TAG[cp.confirmation_status] ?? 'tag'}>
                             {cp.confirmation_status}
                           </span>
                         </div>

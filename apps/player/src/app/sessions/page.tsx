@@ -2,6 +2,7 @@ import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-ser
 import { formatDate } from '@badminton/shared';
 import { redirect } from 'next/navigation';
 import { Calendar, MapPin, FileText, Users } from 'lucide-react';
+import { PageHeader } from '@badminton/ui';
 import { CheckInButton } from './check-in-button';
 import { AddToCalendarButton } from './add-to-calendar';
 
@@ -52,15 +53,11 @@ export default async function SessionsPage() {
 
   return (
     <div data-screen-label="Sessions">
-      <div className="page-header">
-        <div>
-          <div className="page-eyebrow"><span className="bar" />PRACTICE · SCHEDULE</div>
-          <h1 className="page-title">Sessions</h1>
-          <div className="page-sub">
-            Open practices, drop-ins, and ladder nights. Sign in to claim a court spot — capacity fills fast.
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="PRACTICE · SCHEDULE"
+        title="Sessions"
+        sub="Open practices, drop-ins, and ladder nights. Sign in to claim a court spot — capacity fills fast."
+      />
 
       <div className="feed-col">
         <div className="card-base">

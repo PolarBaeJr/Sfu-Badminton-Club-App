@@ -3,15 +3,7 @@ import { PLAYER_STATUS_LABELS, getWinRate, getStreakDisplay, getPointDifferentia
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Crosshair, Trophy } from 'lucide-react';
 import Link from 'next/link';
-
-function initials(name: string | null | undefined) {
-  return (name || '?').split(' ').map((p) => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
-}
-function toneFor(id: string) {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return ((h % 7) + 1);
-}
+import { AvatarChip } from '@badminton/ui';
 
 export default async function PlayerProfilePage({ params }: { params: Promise<{ playerId: string }> }) {
   const { playerId } = await params;
@@ -53,9 +45,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
 
       <div className="card-base" style={{ padding: 24, marginBottom: 16 }}>
         <div className="row" style={{ gap: 18, flexWrap: 'wrap', alignItems: 'center' }}>
-          <span className="avatar" data-size="xl" data-tone={toneFor(player.id)} style={{ boxShadow: '0 0 0 2px var(--red)' }}>
-            {initials(player.full_name)}
-          </span>
+          <AvatarChip name={player.full_name} id={player.id} size="xl" ring />
           <div style={{ flex: 1, minWidth: 0 }}>
             <h1
               style={{

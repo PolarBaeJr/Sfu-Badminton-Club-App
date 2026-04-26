@@ -1,31 +1,15 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { formatRelativeTime } from '@badminton/shared';
+import { formatRelativeTime, NOTIFICATION_TAG } from '@badminton/shared';
 import { redirect } from 'next/navigation';
 import { NotificationActions, NotificationLink } from './actions';
 import { Bell, BellOff } from 'lucide-react';
-
-const NOTIF_TAG: Record<string, string> = {
-  challenge_received: 'tag tag-red',
-  challenge_accepted: 'tag tag-win',
-  challenge_rejected: 'tag',
-  challenge_cancelled: 'tag',
-  result_pending: 'tag tag-gold',
-  result_confirmed: 'tag tag-win',
-  dispute_opened: 'tag tag-red',
-  dispute_resolved: 'tag tag-win',
-  rank_changed: 'tag tag-gold',
-  session_reminder: 'tag',
-  announcement: 'tag tag-gold',
-  tournament_update: 'tag tag-gold',
-  team_invite: 'tag tag-win',
-  system: 'tag',
-};
+import { PageHeader } from '@badminton/ui';
 
 function tagFor(type: string) {
-  if (NOTIF_TAG[type]) return NOTIF_TAG[type];
-  const prefix = (type.split('_')[0] ?? '');
-  const match = Object.keys(NOTIF_TAG).find((k) => k.startsWith(prefix));
-  return match ? NOTIF_TAG[match] : 'tag';
+  if (NOTIFICATION_TAG[type]) return NOTIFICATION_TAG[type];
+  const prefix = type.split('_')[0] ?? '';
+  const match = Object.keys(NOTIFICATION_TAG).find((k) => k.startsWith(prefix));
+  return match ? NOTIFICATION_TAG[match] : 'tag';
 }
 
 function getNotificationHref(type: string, metadata: Record<string, unknown> | null): string | null {
@@ -89,21 +73,19 @@ export default async function NotificationsPage() {
 
   return (
     <div data-screen-label="Notifications">
-      <div className="page-header">
-        <div>
-          <div className="page-eyebrow"><span className="bar" />INBOX · ALERTS</div>
-          <h1 className="page-title">Notifications</h1>
-          <div className="page-sub">
-            Challenge updates, match confirmations, session reminders, and club announcements all land here.
-          </div>
-        </div>
-        {unread.length > 0 && (
-          <div className="row" style={{ gap: 10 }}>
-            <span className="tag tag-red">{unread.length} UNREAD</span>
-            <NotificationActions />
-          </div>
-        )}
-      </div>
+      <PageHeader
+        eyebrow="INBOX · ALERTS"
+        title="Notifications"
+        sub="Challenge updates, match confirmations, session reminders, and club announcements all land here."
+        actions={
+          unread.length > 0 ? (
+            <>
+              <span className="tag tag-red">{unread.length} UNREAD</span>
+              <NotificationActions />
+            </>
+          ) : undefined
+        }
+      />
 
       {all.length === 0 ? (
         <div className="card-base">

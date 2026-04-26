@@ -1,15 +1,8 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server';
-import { formatDate } from '@badminton/shared';
+import { formatDate, TOURNAMENT_STATUS_TAG } from '@badminton/shared';
 import Link from 'next/link';
 import { Award, Users, ChevronRight } from 'lucide-react';
-
-const STATUS_TAG: Record<string, string> = {
-  active: 'tag tag-win',
-  registration: 'tag tag-gold',
-  completed: 'tag',
-  cancelled: 'tag',
-  upcoming: 'tag tag-gold',
-};
+import { PageHeader } from '@badminton/ui';
 
 export default async function TournamentsPage() {
   const supabase = await createServerSupabaseClient();
@@ -48,7 +41,7 @@ export default async function TournamentsPage() {
         <div className="row" style={{ marginBottom: 10, gap: 8, flexWrap: 'wrap', fontSize: 12 }}>
           <span className="tag tag-red">{((t.format as string) || '').toUpperCase()}</span>
           <span className="tag">{((t.scope as string) || '').toUpperCase()}</span>
-          <span className={STATUS_TAG[status] ?? 'tag'}>{status.toUpperCase()}</span>
+          <span className={TOURNAMENT_STATUS_TAG[status] ?? 'tag'}>{status.toUpperCase()}</span>
           <span className="mono muted" style={{ marginLeft: 'auto' }}>
             {t.start_date ? formatDate(t.start_date as string).toUpperCase() : 'TBD'}
           </span>
@@ -83,15 +76,11 @@ export default async function TournamentsPage() {
 
   return (
     <div data-screen-label="Tournaments">
-      <div className="page-header">
-        <div>
-          <div className="page-eyebrow"><span className="bar" />COMPETITION · BRACKETS</div>
-          <h1 className="page-title">Tournaments</h1>
-          <div className="page-sub">
-            Internal championships, open events, invitationals. Sign up while registration is open and check brackets when matches go live.
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="COMPETITION · BRACKETS"
+        title="Tournaments"
+        sub="Internal championships, open events, invitationals. Sign up while registration is open and check brackets when matches go live."
+      />
 
       {(tournaments ?? []).length === 0 ? (
         <div className="card-base">

@@ -21,23 +21,6 @@ type MatchRow = {
   match_participants: ParticipantRow[] | null;
 };
 
-function initials(name: string | null | undefined) {
-  return (name || '?')
-    .split(' ')
-    .map((part) => part[0])
-    .filter(Boolean)
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
-}
-
-function toneFor(id: string | null | undefined) {
-  if (!id) return 1;
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return ((h % 7) + 1);
-}
-
 function pickPerson(p: Person | Person[] | null): Person | null {
   if (!p) return null;
   return Array.isArray(p) ? (p[0] ?? null) : p;

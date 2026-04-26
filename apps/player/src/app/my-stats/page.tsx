@@ -1,15 +1,7 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
 import { getWinRate, getStreakDisplay, getPointDifferential, formatDate } from '@badminton/shared';
 import { redirect } from 'next/navigation';
-
-function initials(name: string) {
-  return name.split(' ').map((p) => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
-}
-function toneFor(id: string) {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return ((h % 7) + 1);
-}
+import { AvatarChip, PageHeader } from '@badminton/ui';
 
 export default async function MyStatsPage() {
   const player = await getCurrentPlayer();
@@ -61,15 +53,11 @@ export default async function MyStatsPage() {
 
   return (
     <div data-screen-label="My Stats">
-      <div className="page-header">
-        <div>
-          <div className="page-eyebrow"><span className="bar" />PLAYER PROFILE · SEASON 26</div>
-          <h1 className="page-title">My stats</h1>
-          <div className="page-sub">
-            Your complete ledger across singles and doubles. Match history, head-to-head records, partnerships, and reliability.
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="PLAYER PROFILE · SEASON 26"
+        title="My stats"
+        sub="Your complete ledger across singles and doubles. Match history, head-to-head records, partnerships, and reliability."
+      />
 
       <div className="card-base" style={{ padding: 28, marginBottom: 24 }}>
         <div
@@ -77,14 +65,7 @@ export default async function MyStatsPage() {
           style={{ gridTemplateColumns: 'auto 1fr', gap: 32, alignItems: 'center' }}
         >
           <div className="row" style={{ gap: 20 }}>
-            <span
-              className="avatar"
-              data-size="xl"
-              data-tone={toneFor(player.id)}
-              style={{ boxShadow: '0 0 0 2px var(--red)' }}
-            >
-              {initials(player.full_name)}
-            </span>
+            <AvatarChip name={player.full_name} id={player.id} size="xl" ring />
             <div>
               <div
                 style={{
@@ -292,9 +273,7 @@ export default async function MyStatsPage() {
                         gap: 12,
                       }}
                     >
-                      <span className="avatar" data-size="sm" data-tone={toneFor(opponent.id)}>
-                        {initials(opponent.full_name)}
-                      </span>
+                      <AvatarChip name={opponent.full_name} id={opponent.id} size="sm" />
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 600, fontSize: 14 }}>{opponent.full_name}</div>
                         <div className="mono muted" style={{ fontSize: 11 }}>{(h.match_type as string)?.toUpperCase()}</div>
@@ -358,9 +337,7 @@ export default async function MyStatsPage() {
                         gap: 12,
                       }}
                     >
-                      <span className="avatar" data-size="sm" data-tone={toneFor(partner.id)}>
-                        {initials(partner.full_name)}
-                      </span>
+                      <AvatarChip name={partner.full_name} id={partner.id} size="sm" />
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 600, fontSize: 14 }}>{partner.full_name}</div>
                         <div className="mono muted" style={{ fontSize: 11 }}>

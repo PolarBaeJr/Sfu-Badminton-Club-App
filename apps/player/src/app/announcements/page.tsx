@@ -1,6 +1,7 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import { Megaphone } from 'lucide-react';
+import { PageHeader } from '@badminton/ui';
 import { AnnouncementItem } from './announcement-item';
 
 interface Announcement {
@@ -49,15 +50,11 @@ export default async function AnnouncementsPage() {
 
   return (
     <div data-screen-label="News">
-      <div className="page-header">
-        <div>
-          <div className="page-eyebrow"><span className="bar" />CLUB · ANNOUNCEMENTS</div>
-          <h1 className="page-title">News</h1>
-          <div className="page-sub">
-            Updates from the executive team. Sessions, tournaments, policy changes — keep an eye on pinned posts at the top.
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="CLUB · ANNOUNCEMENTS"
+        title="News"
+        sub="Updates from the executive team. Sessions, tournaments, policy changes — keep an eye on pinned posts at the top."
+      />
 
       {all.length === 0 ? (
         <div className="card-base">

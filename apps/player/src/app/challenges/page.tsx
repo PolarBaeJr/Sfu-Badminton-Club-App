@@ -1,39 +1,14 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { MATCH_FORMAT_LABELS, formatRelativeTime } from '@badminton/shared';
+import {
+  MATCH_FORMAT_LABELS,
+  formatRelativeTime,
+  CHALLENGE_STATUS_LABEL,
+  CHALLENGE_STATUS_TAG,
+} from '@badminton/shared';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { Plus, ChevronRight, Inbox, Crosshair } from 'lucide-react';
-
-function initials(name: string) {
-  return (name || '?').split(' ').map((p) => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
-}
-function toneFor(id: string | undefined | null) {
-  if (!id) return 1;
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return ((h % 7) + 1);
-}
-
-const STATUS_LABEL: Record<string, string> = {
-  proposed: 'Proposed',
-  partially_confirmed: 'Partial',
-  accepted: 'Accepted',
-  completed: 'Completed',
-  walkover_confirmed: 'Walkover',
-  rejected: 'Rejected',
-  cancelled: 'Cancelled',
-  walkover_pending: 'Walkover review',
-};
-const STATUS_TAG: Record<string, string> = {
-  proposed: 'tag-gold',
-  partially_confirmed: 'tag-gold',
-  accepted: 'tag-win',
-  completed: 'tag',
-  walkover_confirmed: 'tag',
-  rejected: 'tag',
-  cancelled: 'tag',
-  walkover_pending: 'tag-red',
-};
+import { PageHeader, AvatarChip } from '@badminton/ui';
 
 export default async function ChallengesPage() {
   const player = await getCurrentPlayer();
@@ -112,9 +87,7 @@ export default async function ChallengesPage() {
 
         <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <div className="row" style={{ gap: 10, flex: 1, minWidth: 200 }}>
-            <span className="avatar" data-size="md" data-tone={toneFor(creator?.id)}>
-              {initials(creator?.full_name ?? '?')}
-            </span>
+            <AvatarChip name={creator?.full_name ?? '?'} id={creator?.id} size="md" />
             <div>
               <div style={{ fontWeight: 600, fontSize: 14 }}>
                 {isMine ? 'You' : creator?.full_name ?? 'Unknown'} {isMine ? 'challenged' : 'challenged you'}
@@ -127,7 +100,7 @@ export default async function ChallengesPage() {
               </div>
             </div>
           </div>
-          <span className={`tag ${STATUS_TAG[c.status] ?? 'tag'}`}>{STATUS_LABEL[c.status] ?? c.status}</span>
+          <span className={CHALLENGE_STATUS_TAG[c.status] ?? 'tag'}>{CHALLENGE_STATUS_LABEL[c.status] ?? c.status}</span>
           <ChevronRight size={16} className="text-[var(--mute)]" />
         </div>
       </Link>
@@ -148,20 +121,16 @@ export default async function ChallengesPage() {
 
   return (
     <div data-screen-label="Challenges">
-      <div className="page-header">
-        <div>
-          <div className="page-eyebrow"><span className="bar" />MATCHUPS · LIVE</div>
-          <h1 className="page-title">Challenges</h1>
-          <div className="page-sub">
-            Issue, accept, and track challenges. Pending responses live at the top — answer them so the queue clears.
-          </div>
-        </div>
-        <div className="row" style={{ gap: 10 }}>
+      <PageHeader
+        eyebrow="MATCHUPS · LIVE"
+        title="Challenges"
+        sub="Issue, accept, and track challenges. Pending responses live at the top — answer them so the queue clears."
+        actions={
           <Link href="/challenges/new" className="btn btn-primary">
             <Plus size={14} /> New challenge
           </Link>
-        </div>
-      </div>
+        }
+      />
 
       {all.length === 0 ? (
         <div className="card-base">

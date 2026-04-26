@@ -3,6 +3,7 @@ export type { Database, Json } from './types/database.gen';
 export * from './elo/engine';
 export * from './utils/constants';
 export * from './utils/helpers';
+export * from './utils/tags';
 export * from './utils/theme';
 export * from './utils/rate-limit';
 export * from './validators/schemas';

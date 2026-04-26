@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
-import { Input, Textarea, Switch } from '@badminton/ui';
+import { Input, Textarea, Switch, PageHeader } from '@badminton/ui';
 import { updateProfile } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
@@ -158,15 +158,11 @@ export default function SettingsPage() {
 
   return (
     <div data-screen-label="Settings" style={{ maxWidth: 720, margin: '0 auto' }}>
-      <div className="page-header">
-        <div>
-          <div className="page-eyebrow"><span className="bar" />ACCOUNT · PROFILE</div>
-          <h1 className="page-title">Settings</h1>
-          <div className="page-sub">
-            Profile, theme, notifications, privacy. Changes save when you click <strong>Save profile</strong>.
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="ACCOUNT · PROFILE"
+        title="Settings"
+        sub={<>Profile, theme, notifications, privacy. Changes save when you click <strong>Save profile</strong>.</>}
+      />
 
       {!loaded ? (
         <div className="feed-col">
