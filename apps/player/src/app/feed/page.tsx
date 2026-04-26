@@ -3,6 +3,7 @@ import { MATCH_FORMAT_LABELS, formatRelativeTime, getWinRate } from '@badminton/
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { Plus, ChevronRight, Crosshair, Filter } from 'lucide-react';
+import { PageHeader, Section, AvatarChip, StatBlock } from '@badminton/ui';
 
 type Person = { id: string; full_name: string | null };
 type ParticipantRow = {
@@ -134,24 +135,22 @@ export default async function FeedPage() {
 
   return (
     <div data-screen-label="Feed">
-      <div className="page-header">
-        <div>
-          <div className="page-eyebrow">
-            <span className="bar" />
-            WEEK {wk} · {dateStr}
-          </div>
-          <h1 className="page-title">{greeting}, {firstName}.</h1>
-          <div className="page-sub">{subLine}</div>
-        </div>
-        <div className="row" style={{ gap: 10 }}>
-          <Link href="/leaderboard" className="btn btn-ghost">
-            <Filter size={14} /> Browse
-          </Link>
-          <Link href="/challenges/new" className="btn btn-primary">
-            <Plus size={14} /> Issue Challenge
-          </Link>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow={`WEEK ${wk} · ${dateStr}`}
+        title={`${greeting}, ${firstName}.`}
+        sub={subLine}
+        actions={
+          <>
+            <Link href="/leaderboard" className="btn btn-ghost">
+              <Filter size={14} /> Browse
+            </Link>
+            <Link href="/challenges/new" className="btn btn-primary">
+              <Plus size={14} /> Issue Challenge
+            </Link>
+          </>
+        }
+      />
+
 
       {r && (
         <div className="hero-banner" style={{ marginBottom: 24 }}>
@@ -288,9 +287,7 @@ export default async function FeedPage() {
                         background: 'var(--surface)',
                       }}
                     >
-                      <span className="avatar" data-size="sm" data-tone={toneFor((creator?.id as string) ?? creatorName)}>
-                        {initials(creatorName)}
-                      </span>
+                      <AvatarChip name={creatorName} id={(creator?.id as string) ?? creatorName} size="sm" />
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 600, fontSize: 14 }}>{creatorName} challenged you</div>
                         <div className="mono muted" style={{ fontSize: 11 }}>
@@ -364,9 +361,7 @@ export default async function FeedPage() {
                   </div>
                   <div className="feed-match">
                     <div className="side">
-                      <span className="avatar" data-size="md" data-tone={toneFor(player.id)}>
-                        {initials(player.full_name)}
-                      </span>
+                      <AvatarChip name={player.full_name} id={player.id} size="md" />
                       <div>
                         <div style={{ fontWeight: 600, fontSize: 15 }}>You</div>
                         {partnerPerson && (
@@ -393,9 +388,7 @@ export default async function FeedPage() {
                       )}
                     </div>
                     <div className="side right">
-                      <span className="avatar" data-size="md" data-tone={toneFor(opponent?.id ?? '')}>
-                        {initials(opponent?.full_name ?? '?')}
-                      </span>
+                      <AvatarChip name={opponent?.full_name ?? '?'} id={opponent?.id ?? ''} size="md" />
                       <div>
                         <div style={{ fontWeight: 600, fontSize: 15 }}>
                           {opponent?.full_name ?? 'Opponent'}
@@ -437,9 +430,7 @@ export default async function FeedPage() {
                     >
                       #{i + 1}
                     </div>
-                    <span className="avatar" data-size="sm" data-tone={toneFor(row.person.id)}>
-                      {initials(row.person.full_name)}
-                    </span>
+                    <AvatarChip name={row.person.full_name ?? '?'} id={row.person.id} size="sm" />
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 600, fontSize: 13 }}>{row.person.full_name}</div>
                     </div>

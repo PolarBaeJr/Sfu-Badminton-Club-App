@@ -14,3 +14,8 @@ export { EmptyState } from './EmptyState';
 export { DataTable } from './DataTable';
 export { Tabs } from './Tabs';
 export { StatCard } from './StatCard';
+export { PageHeader } from './PageHeader';
+export { Section } from './Section';
+export { StatBlock } from './StatBlock';
+export { AvatarChip } from './AvatarChip';
+export { DataRow } from './DataRow';
