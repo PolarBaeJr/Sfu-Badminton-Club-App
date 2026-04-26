@@ -66,7 +66,7 @@ export default function NewChallengePage() {
         .from('players')
         .select('id, full_name, ratings(singles_elo, doubles_elo)')
         .eq('active_flag', true)
-        .not('status', 'in', '("pending_approval","suspended","inactive")')
+        .not('status', 'in', '("pending_approval","suspended")')
         .neq('id', me?.id ?? '');
 
       setPlayers((data || []).map((p) => {
