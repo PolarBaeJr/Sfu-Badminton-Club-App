@@ -4,7 +4,7 @@ import React from 'react';
 import { cn } from '../utils';
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'danger' | 'ghost' | 'success';
+  variant?: 'primary' | 'secondary' | 'danger' | 'ghost' | 'success' | 'outline';
   size?: 'sm' | 'md' | 'lg';
   loading?: boolean;
 }
@@ -25,6 +25,7 @@ export function Button({
     danger: 'bg-[var(--color-danger)] text-white hover:brightness-110',
     ghost: 'bg-transparent text-[var(--text-secondary)] hover:text-[var(--ds-accent)] hover:bg-[var(--ds-accent-dim)]',
     success: 'bg-[var(--color-success)] text-[#0A0A0A] hover:brightness-110',
+    outline: 'bg-transparent text-[var(--text-primary)] border border-[var(--border)] hover:border-[var(--border-hover)]',
   };
   const sizes = {
     sm: 'px-3 min-h-[32px] text-sm',

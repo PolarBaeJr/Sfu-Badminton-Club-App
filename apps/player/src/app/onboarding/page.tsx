@@ -4,10 +4,7 @@ import { useState } from 'react';
 import { completeOnboarding } from '@/lib/actions';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/toast-provider';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent } from '@/components/ui/card';
+import { Button, Input, Label, Card, CardContent } from '@badminton/ui';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   User,
@@ -126,7 +123,7 @@ export default function OnboardingPage() {
         </div>
 
         {/* Card */}
-        <Card className="bg-[var(--bg-card)]/80 border-[var(--border)] backdrop-blur-xl shadow-2xl shadow-black/20">
+        <Card padding={false} className="bg-[var(--bg-card)]/80 border-[var(--border)] backdrop-blur-xl shadow-2xl shadow-black/20">
           <CardContent className="p-6">
             <AnimatePresence mode="wait">
               {step === 1 && (

@@ -2,11 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase-browser';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
+import { Button, Input, Label, Card, CardContent, Separator } from '@badminton/ui';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Trophy,
@@ -150,7 +146,7 @@ export default function LoginPage() {
 
         {/* Auth Card */}
         <motion.div variants={fadeUp} custom={4}>
-          <Card className="bg-[var(--bg-card)]/80 border-[var(--border)] backdrop-blur-xl shadow-2xl shadow-black/20">
+          <Card padding={false} className="bg-[var(--bg-card)]/80 border-[var(--border)] backdrop-blur-xl shadow-2xl shadow-black/20">
             <CardContent className="p-6">
               {/* Sign In / Sign Up Toggle */}
               <div className="flex mb-6 bg-[var(--on-surface-soft)] rounded-xl p-1 border border-white/[0.04]">
