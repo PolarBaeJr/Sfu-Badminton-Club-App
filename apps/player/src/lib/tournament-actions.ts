@@ -12,12 +12,14 @@ async function requirePlayer() {
   return player;
 }
 
-// Revalidate the surfaces that actually need to flip immediately after a
-// player action. Detail/check-in pages re-fetch on navigation anyway, so we
-// keep this minimal to avoid blocking the server action on extra ISR work.
-function revalidateTournamentPaths(tournamentId: string, _eventId: string) {
+// Revalidate every surface that surfaces tournament_participants /
+// tournament_pairs after a register/withdraw/check-in. The event detail
+// page must be in this list — that's the page where the user clicked
+// the action button, and "No participants yet" was rendering stale.
+function revalidateTournamentPaths(tournamentId: string, eventId: string) {
   revalidatePath('/tournaments');
   revalidatePath(`/tournaments/${tournamentId}`);
+  revalidatePath(`/tournaments/${tournamentId}/events/${eventId}`);
 }
 
 export async function registerForEvent(eventId: string) {
