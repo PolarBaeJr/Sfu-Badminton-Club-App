@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Select, Textarea } from '@badminton/ui';
-import { resolveDispute } from '@/lib/actions';
+import { resolveDispute } from '@/lib/actions/dispute-actions';
 import { useToast } from '@/components/toast-provider';
 
 export function DisputeActions({ disputeId, matchId }: { disputeId: string; matchId: string }) {

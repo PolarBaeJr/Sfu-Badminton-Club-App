@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Textarea } from '@badminton/ui';
-import { forceExpireChallenge } from '@/lib/actions';
+import { forceExpireChallenge } from '@/lib/actions/challenge-actions';
 import { useToast } from '@/components/toast-provider';
 
 export function ChallengeActions({ challengeId }: { challengeId: string }) {

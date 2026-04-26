@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Input } from '@badminton/ui';
-import { createSeason, setActiveSeason, endSeason } from '@/lib/actions';
+import { createSeason, setActiveSeason, endSeason } from '@/lib/actions/season-actions';
 import { useToast } from '@/components/toast-provider';
 
 export function CreateSeasonForm() {

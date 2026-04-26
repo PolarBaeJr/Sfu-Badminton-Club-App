@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button } from '@badminton/ui';
-import { updateTournamentStatus } from '@/lib/actions';
+import { updateTournamentStatus } from '@/lib/actions/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { Play, CheckCircle } from 'lucide-react';

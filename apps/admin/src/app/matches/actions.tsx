@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Textarea, Dropdown } from '@badminton/ui';
-import { voidMatch, convertMatchToCasual } from '@/lib/actions';
+import { voidMatch, convertMatchToCasual } from '@/lib/actions/match-actions';
 import { useToast } from '@/components/toast-provider';
 import { MoreVertical } from 'lucide-react';
 

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Dialog, Input, Select, Switch, Dropdown } from '@badminton/ui';
-import { createTournament, updateTournament, archiveTournament, deleteTournament } from '@/lib/actions';
+import { createTournament, updateTournament, archiveTournament, deleteTournament } from '@/lib/actions/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { MoreVertical } from 'lucide-react';
 

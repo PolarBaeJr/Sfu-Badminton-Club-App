@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { Button, Dialog, Input } from '@badminton/ui';
-import { createSession, updateSession, archiveSession, deleteSession } from '@/lib/actions';
+import { createSession, updateSession, archiveSession, deleteSession } from '@/lib/actions/session-actions';
 import { useToast } from '@/components/toast-provider';
 import { MoreVertical, Users } from 'lucide-react';
 

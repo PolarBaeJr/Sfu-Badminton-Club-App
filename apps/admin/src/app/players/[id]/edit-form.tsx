@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Button, Input, Select, Textarea } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS } from '@badminton/shared';
-import { updatePlayer, approvePlayer } from '@/lib/actions';
+import { updatePlayer, approvePlayer } from '@/lib/actions/player-actions';
 import { useToast } from '@/components/toast-provider';
 import type { Player, Rating } from '@badminton/shared';
 

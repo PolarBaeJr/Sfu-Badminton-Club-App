@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Button, Dialog } from '@badminton/ui';
-import { generateQrForChallenge, getExistingQrForChallenge, type GeneratedQr } from '@/lib/actions';
+import { generateQrForChallenge, getExistingQrForChallenge } from '@/lib/actions/challenge-actions';
+import type { GeneratedQr } from '@/lib/actions/challenge-types';
 import { useToast } from '@/components/toast-provider';
 import QRCode from 'qrcode';
 import { QrCode, Download, Printer, RotateCw } from 'lucide-react';

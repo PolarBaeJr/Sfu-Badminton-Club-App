@@ -4,7 +4,7 @@ import { useTransition } from 'react';
 import { Button } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { approvePlayer } from '@/lib/actions';
+import { approvePlayer } from '@/lib/actions/player-actions';
 
 export function ApproveButtons({ playerId, playerName }: { playerId: string; playerName: string }) {
   const [isPending, startTransition] = useTransition();

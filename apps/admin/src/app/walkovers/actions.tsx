@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Textarea } from '@badminton/ui';
-import { confirmWalkover, rejectWalkover } from '@/lib/actions';
+import { confirmWalkover, rejectWalkover } from '@/lib/actions/walkover-actions';
 import { useToast } from '@/components/toast-provider';
 
 export function WalkoverActions({ walkoverId }: { walkoverId: string }) {

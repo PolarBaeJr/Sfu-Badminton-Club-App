@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Input, Select } from '@badminton/ui';
-import { addTournamentParticipant, removeTournamentParticipant, updateTournamentStatus } from '@/lib/actions';
+import { addTournamentParticipant, removeTournamentParticipant, updateTournamentStatus } from '@/lib/actions/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 
 type Player = { id: string; full_name: string };

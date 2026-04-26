@@ -7,7 +7,7 @@ import {
   createAnnouncement,
   updateAnnouncement,
   deleteAnnouncement,
-} from '@/lib/actions';
+} from '@/lib/actions/announcement-actions';
 import { Plus, MoreVertical, Pencil, Trash2 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------

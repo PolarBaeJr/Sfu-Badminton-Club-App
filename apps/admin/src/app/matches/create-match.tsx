@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Input, Select, Switch, Textarea } from '@badminton/ui';
-import { adminCreateMatch } from '@/lib/actions';
+import { adminCreateMatch } from '@/lib/actions/match-actions';
 import { useToast } from '@/components/toast-provider';
 
 type Player = { id: string; full_name: string };

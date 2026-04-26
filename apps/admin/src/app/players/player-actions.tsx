@@ -4,7 +4,7 @@ import { useState, useTransition } from 'react';
 import { Button, Dialog, Input, Select, Textarea } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { updatePlayer, removePlayer } from '@/lib/actions';
+import { updatePlayer, removePlayer } from '@/lib/actions/player-actions';
 
 interface Props {
   mode: 'edit' | 'delete';

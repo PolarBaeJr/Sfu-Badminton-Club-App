@@ -4,7 +4,7 @@ import { useState, useTransition } from 'react';
 import { Button, Dialog, Input, Select } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { createPlayer } from '@/lib/actions';
+import { createPlayer } from '@/lib/actions/player-actions';
 import { Plus } from 'lucide-react';
 
 const STATUS_OPTIONS = [
