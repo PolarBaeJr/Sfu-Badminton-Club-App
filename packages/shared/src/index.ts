@@ -1,4 +1,5 @@
 export * from './types/database';
+export type { Database, Json } from './types/database.gen';
 export * from './elo/engine';
 export * from './utils/constants';
 export * from './utils/helpers';

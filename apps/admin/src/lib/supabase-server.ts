@@ -3,6 +3,9 @@ import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 
+// NOTE: generated `Database` type is available from '@badminton/shared' but not
+// applied here — see comments in apps/player/src/lib/supabase-server.ts.
+
 export async function createServerSupabaseClient() {
   const cookieStore = await cookies();
 

@@ -2,6 +2,11 @@ import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 
+// NOTE: generated `Database` type is available from '@badminton/shared' but not
+// applied to the clients here — typed clients flip many `select('*, foo(*)')`
+// embeddings to `never` and would cascade into a per-query rewrite. Opt in
+// per-file when narrowing a specific query.
+
 // Service role client — bypasses RLS, use only for trusted server-side operations
 export function createServiceRoleClient() {
   return createClient(
