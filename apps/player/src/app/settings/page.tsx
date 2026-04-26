@@ -2,16 +2,14 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
-import { Button, Card, Input, Textarea, Switch } from '@badminton/ui';
+import { Input, Textarea, Switch } from '@badminton/ui';
 import { updateProfile } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { isPushSupported, isPushEnabled, subscribeToPush, unsubscribeFromPush } from '@/lib/push-client';
 import { AvatarUpload } from '@/components/AvatarUpload';
-import { motion, AnimatePresence } from 'framer-motion';
 import {
   User,
-  Camera,
   Moon,
   Sun,
   Monitor,
@@ -23,47 +21,38 @@ import {
   Check,
   Save,
   Palette,
+  Loader2,
 } from 'lucide-react';
 
 type Theme = 'light' | 'dark' | 'system';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const sectionVariants: any = {
-  hidden: { opacity: 0, y: 20 },
-  visible: (i: number) => ({
-    opacity: 1,
-    y: 0,
-    transition: { delay: i * 0.08, duration: 0.4, ease: 'easeOut' },
-  }),
-};
+const themeOptions: { value: Theme; icon: React.ElementType; label: string }[] = [
+  { value: 'light',  icon: Sun,     label: 'Light' },
+  { value: 'dark',   icon: Moon,    label: 'Dark' },
+  { value: 'system', icon: Monitor, label: 'System' },
+];
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const saveConfirmVariants: any = {
-  hidden: { opacity: 0, scale: 0.8 },
-  visible: { opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 300, damping: 20 } },
-  exit: { opacity: 0, scale: 0.8, transition: { duration: 0.2 } },
-};
-
-function SectionHeader({ icon: Icon, title }: { icon: React.ElementType; title: string }) {
+function Section({
+  icon: Icon,
+  title,
+  children,
+}: {
+  icon: React.ElementType;
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="flex items-center gap-2.5 mb-4">
-      <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-[var(--color-accent)]/10">
-        <Icon className="w-4 h-4 text-[var(--color-accent)]" />
+    <div className="card-base">
+      <div className="card-head">
+        <div className="row" style={{ gap: 10 }}>
+          <Icon size={16} className="text-[var(--mute)]" />
+          <h3 className="card-title">{title}</h3>
+        </div>
       </div>
-      <h2 className="text-lg font-semibold text-[var(--text-primary)]">{title}</h2>
+      {children}
     </div>
   );
 }
-
-function Divider() {
-  return <div className="border-t border-white/[0.06] my-4" />;
-}
-
-const themeOptions: { value: Theme; icon: React.ElementType; label: string }[] = [
-  { value: 'light', icon: Sun, label: 'Light' },
-  { value: 'dark', icon: Moon, label: 'Dark' },
-  { value: 'system', icon: Monitor, label: 'System' },
-];
 
 export default function SettingsPage() {
   const [name, setName] = useState('');
@@ -72,7 +61,7 @@ export default function SettingsPage() {
   const [bio, setBio] = useState('');
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const [theme, setThemeState] = useState<Theme>('dark');
+  const [theme, setThemeState] = useState<Theme>('light');
   const [showOnLeaderboard, setShowOnLeaderboard] = useState(true);
   const [showActivity, setShowActivity] = useState(true);
   const [pushEnabled, setPushEnabled] = useState(false);
@@ -89,13 +78,7 @@ export default function SettingsPage() {
       const supabase = createClient();
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-
-      const { data } = await supabase
-        .from('players')
-        .select('*')
-        .eq('user_id', user.id)
-        .single();
-
+      const { data } = await supabase.from('players').select('*').eq('user_id', user.id).single();
       if (data) {
         setPlayerId(data.id);
         setAvatarUrl(data.avatar_url);
@@ -104,15 +87,13 @@ export default function SettingsPage() {
         setPhone(data.phone || '');
         setBio(data.bio || '');
         setShowOnLeaderboard(!data.hide_from_leaderboard);
-        setShowActivity(data.show_activity_status !== false); // default true
+        setShowActivity(data.show_activity_status !== false);
         setLoaded(true);
       }
     }
     load();
-    const saved = localStorage.getItem('theme') as Theme || 'dark';
+    const saved = (localStorage.getItem('theme') as Theme) || 'light';
     setThemeState(saved);
-
-    // Check push
     setPushSupported(isPushSupported());
     isPushEnabled().then(setPushEnabled);
   }, []);
@@ -121,7 +102,7 @@ export default function SettingsPage() {
     setThemeState(newTheme);
     localStorage.setItem('theme', newTheme);
     const resolved = newTheme === 'system'
-      ? window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+      ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
       : newTheme;
     document.documentElement.setAttribute('data-theme', resolved);
   }
@@ -175,262 +156,173 @@ export default function SettingsPage() {
     router.push('/login');
   }
 
-  if (!loaded) return (
-    <div className="max-w-lg mx-auto space-y-5 pt-4">
-      <div className="card-elevated p-6 reveal reveal-1">
-        <div className="skeleton h-4 w-24 mb-4" />
-        <div className="skeleton h-12 w-full mb-3" />
-        <div className="skeleton h-12 w-full" />
-      </div>
-      <div className="card-elevated p-6 reveal reveal-2">
-        <div className="skeleton h-4 w-24 mb-4" />
-        <div className="skeleton h-12 w-full mb-3" />
-        <div className="skeleton h-12 w-full" />
-      </div>
-      <div className="card-elevated p-6 reveal reveal-3">
-        <div className="skeleton h-4 w-24 mb-4" />
-        <div className="skeleton h-12 w-full mb-3" />
-        <div className="skeleton h-12 w-full" />
-      </div>
-    </div>
-  );
-
   return (
-    <div className="max-w-lg mx-auto space-y-5 pb-8">
-      {/* Page Title */}
-      <motion.div
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-      >
-        <p className="eyebrow mb-1">Account</p>
-        <h1 className="display-lg text-[var(--text-primary)]">Settings</h1>
-      </motion.div>
-
-      {/* Profile Section */}
-      <motion.div
-        custom={0}
-        variants={sectionVariants}
-        initial="hidden"
-        animate="visible"
-      >
-        <Card className="bg-[var(--bg-card)] border-[var(--border)]">
-          <SectionHeader icon={User} title="Profile" />
-          {playerId && (
-            <div className="mb-6 flex justify-center">
-              <AvatarUpload
-                playerId={playerId}
-                playerName={name}
-                currentUrl={avatarUrl}
-                onUploaded={setAvatarUrl}
-              />
-            </div>
-          )}
-          <Divider />
-          <form onSubmit={handleSave} className="space-y-4">
-            <Input
-              label="Full Name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-            />
-            <Input
-              label="Display Name / Nickname"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="Optional"
-            />
-            <Input
-              label="Phone"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value.replace(/[^\d\s+\-()]/g, ''))}
-              placeholder="Optional"
-            />
-            <Textarea
-              label="Bio"
-              value={bio}
-              onChange={(e) => setBio(e.target.value)}
-              placeholder="A few words about yourself"
-            />
-            <div className="relative">
-              <Button type="submit" loading={loading} className="w-full">
-                <span className="flex items-center justify-center gap-2">
-                  <AnimatePresence mode="wait">
-                    {saved ? (
-                      <motion.span
-                        key="check"
-                        variants={saveConfirmVariants}
-                        initial="hidden"
-                        animate="visible"
-                        exit="exit"
-                        className="flex items-center gap-2"
-                      >
-                        <Check className="w-4 h-4" />
-                        Saved!
-                      </motion.span>
-                    ) : (
-                      <motion.span
-                        key="save"
-                        variants={saveConfirmVariants}
-                        initial="hidden"
-                        animate="visible"
-                        exit="exit"
-                        className="flex items-center gap-2"
-                      >
-                        <Save className="w-4 h-4" />
-                        Save Profile
-                      </motion.span>
-                    )}
-                  </AnimatePresence>
-                </span>
-              </Button>
-            </div>
-          </form>
-        </Card>
-      </motion.div>
-
-      {/* Appearance Section */}
-      <motion.div
-        custom={1}
-        variants={sectionVariants}
-        initial="hidden"
-        animate="visible"
-      >
-        <Card className="bg-[var(--bg-card)] border-[var(--border)]">
-          <SectionHeader icon={Palette} title="Appearance" />
-          <p className="text-sm text-[var(--text-muted)] mb-4">Choose your preferred theme</p>
-          <div className="grid grid-cols-3 gap-3">
-            {themeOptions.map(({ value, icon: Icon, label }) => (
-              <motion.button
-                key={value}
-                whileTap={{ scale: 0.96 }}
-                onClick={() => handleThemeChange(value)}
-                className={`relative flex flex-col items-center gap-2 px-4 py-4 rounded-xl border text-sm font-medium transition-all duration-200 ${
-                  theme === value
-                    ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/10 text-[var(--color-accent)] glow-red'
-                    : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-hover)] hover:bg-white/[0.03]'
-                }`}
-              >
-                <Icon className="w-5 h-5" />
-                <span>{label}</span>
-                {theme === value && (
-                  <motion.div
-                    layoutId="theme-indicator"
-                    className="absolute -top-px -right-px w-5 h-5 bg-[var(--color-accent)] rounded-bl-lg rounded-tr-[11px] flex items-center justify-center"
-                    transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-                  >
-                    <Check className="w-3 h-3 text-white" />
-                  </motion.div>
-                )}
-              </motion.button>
-            ))}
+    <div data-screen-label="Settings" style={{ maxWidth: 720, margin: '0 auto' }}>
+      <div className="page-header">
+        <div>
+          <div className="page-eyebrow"><span className="bar" />ACCOUNT · PROFILE</div>
+          <h1 className="page-title">Settings</h1>
+          <div className="page-sub">
+            Profile, theme, notifications, privacy. Changes save when you click <strong>Save profile</strong>.
           </div>
-        </Card>
-      </motion.div>
+        </div>
+      </div>
 
-      {/* Notifications Section */}
-      <motion.div
-        custom={2}
-        variants={sectionVariants}
-        initial="hidden"
-        animate="visible"
-      >
-        <Card className="bg-[var(--bg-card)] border-[var(--border)]">
-          <SectionHeader icon={Bell} title="Notifications" />
-          <div className="space-y-2">
+      {!loaded ? (
+        <div className="feed-col">
+          <div className="card-base"><div className="empty">Loading…</div></div>
+        </div>
+      ) : (
+        <div className="feed-col">
+          <Section icon={User} title="Profile">
+            {playerId && (
+              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 18 }}>
+                <AvatarUpload
+                  playerId={playerId}
+                  playerName={name}
+                  currentUrl={avatarUrl}
+                  onUploaded={setAvatarUrl}
+                />
+              </div>
+            )}
+            <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <Input label="Full name"           value={name}        onChange={(e) => setName(e.target.value)} required />
+              <Input label="Display name / nickname" value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Optional" />
+              <Input label="Phone"               value={phone}       onChange={(e) => setPhone(e.target.value.replace(/[^\d\s+\-()]/g, ''))} placeholder="Optional" inputMode="tel" />
+              <Textarea label="Bio"              value={bio}         onChange={(e) => setBio(e.target.value)} placeholder="A few words about yourself" />
+              <button
+                type="submit"
+                disabled={loading}
+                className="btn btn-primary btn-lg"
+                style={{ width: '100%', justifyContent: 'center' }}
+              >
+                {loading ? <Loader2 size={16} className="animate-spin" /> : saved ? <Check size={14} /> : <Save size={14} />}
+                {loading ? 'Saving…' : saved ? 'Saved' : 'Save profile'}
+              </button>
+            </form>
+          </Section>
+
+          <Section icon={Palette} title="Appearance">
+            <p className="muted" style={{ fontSize: 13, marginBottom: 14 }}>Choose your preferred theme.</p>
+            <div className="grid grid-3" style={{ gap: 10 }}>
+              {themeOptions.map(({ value, icon: Icon, label }) => {
+                const active = theme === value;
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => handleThemeChange(value)}
+                    style={{
+                      position: 'relative',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '16px 12px',
+                      borderRadius: 12,
+                      border: '1px solid ' + (active ? 'var(--red)' : 'var(--line)'),
+                      background: active ? 'var(--red-wash)' : 'var(--surface)',
+                      color: active ? 'var(--red)' : 'var(--ink-2)',
+                      fontSize: 13,
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                      transition: 'all .15s',
+                    }}
+                  >
+                    <Icon size={18} />
+                    <span>{label}</span>
+                    {active && (
+                      <span
+                        style={{
+                          position: 'absolute',
+                          top: -6,
+                          right: -6,
+                          width: 18,
+                          height: 18,
+                          borderRadius: 999,
+                          background: 'var(--red)',
+                          color: '#fff',
+                          display: 'grid',
+                          placeItems: 'center',
+                        }}
+                      >
+                        <Check size={10} />
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </Section>
+
+          <Section icon={Bell} title="Notifications">
             {pushSupported ? (
-              <div className="flex items-start gap-3">
-                <div className="mt-0.5">
-                  {pushEnabled ? (
-                    <Bell className="w-4 h-4 text-[var(--color-accent)]" />
-                  ) : (
-                    <BellOff className="w-4 h-4 text-[var(--text-muted)]" />
-                  )}
-                </div>
-                <div className="flex-1">
+              <div className="row" style={{ gap: 12, alignItems: 'flex-start' }}>
+                {pushEnabled ? <Bell size={16} className="text-[var(--red)]" style={{ marginTop: 2 }} /> : <BellOff size={16} className="text-[var(--mute)]" style={{ marginTop: 2 }} />}
+                <div style={{ flex: 1 }}>
                   <Switch
                     checked={pushEnabled}
                     onChange={handlePushToggle}
-                    label="Push Notifications"
-                    description="Get notified about challenges, results, and announcements"
+                    label="Push notifications"
+                    description="Get notified about challenges, results, and announcements."
                     disabled={pushLoading}
                   />
                 </div>
               </div>
             ) : (
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-white/[0.03] border border-white/[0.06]">
-                <BellOff className="w-4 h-4 text-[var(--text-muted)] flex-shrink-0" />
-                <p className="text-sm text-[var(--text-muted)]">Push notifications not supported in this browser.</p>
+              <div className="row" style={{ gap: 10, padding: 12, background: 'var(--surface-2)', borderRadius: 10 }}>
+                <BellOff size={14} className="text-[var(--mute)]" />
+                <span className="muted" style={{ fontSize: 13 }}>Push notifications not supported in this browser.</span>
               </div>
             )}
-          </div>
-        </Card>
-      </motion.div>
+          </Section>
 
-      {/* Privacy Section */}
-      <motion.div
-        custom={3}
-        variants={sectionVariants}
-        initial="hidden"
-        animate="visible"
-      >
-        <Card className="bg-[var(--bg-card)] border-[var(--border)]">
-          <SectionHeader icon={Shield} title="Privacy" />
-          <p className="text-xs text-[var(--text-muted)] mb-3">Saved when you tap Save Profile above.</p>
-          <div className="space-y-1">
-            <Switch
-              checked={showOnLeaderboard}
-              onChange={setShowOnLeaderboard}
-              label="Show on leaderboard"
-              description="Your rank will be visible to others"
-            />
-            <Divider />
-            <Switch
-              checked={showActivity}
-              onChange={setShowActivity}
-              label="Show activity status"
-              description="Others can see when you were last active"
-            />
-          </div>
-        </Card>
-      </motion.div>
-
-      {/* About Section */}
-      <motion.div
-        custom={4}
-        variants={sectionVariants}
-        initial="hidden"
-        animate="visible"
-      >
-        <Card className="bg-[var(--bg-card)] border-[var(--border)]">
-          <SectionHeader icon={Info} title="About" />
-          <div className="space-y-3 text-sm">
-            <div className="flex justify-between items-center p-3 rounded-lg bg-white/[0.03]">
-              <span className="text-[var(--text-muted)]">Version</span>
-              <span className="text-[var(--text-primary)] font-mono bg-white/[0.06] px-2.5 py-1 rounded-md text-xs">
-                0.0.1
-              </span>
+          <Section icon={Shield} title="Privacy">
+            <p className="muted" style={{ fontSize: 12, marginBottom: 12 }}>Saved when you tap <strong>Save profile</strong>.</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <Switch
+                checked={showOnLeaderboard}
+                onChange={setShowOnLeaderboard}
+                label="Show on leaderboard"
+                description="Your rank will be visible to others."
+              />
+              <div className="sep" />
+              <Switch
+                checked={showActivity}
+                onChange={setShowActivity}
+                label="Show activity status"
+                description="Others can see when you were last active."
+              />
             </div>
-          </div>
-        </Card>
-      </motion.div>
+          </Section>
 
-      {/* Sign Out */}
-      <motion.div
-        custom={5}
-        variants={sectionVariants}
-        initial="hidden"
-        animate="visible"
-      >
-        <motion.div whileTap={{ scale: 0.98 }}>
-          <Button variant="danger" onClick={handleSignOut} className="w-full">
-            <span className="flex items-center justify-center gap-2">
-              <LogOut className="w-4 h-4" />
-              Sign Out
-            </span>
-          </Button>
-        </motion.div>
-      </motion.div>
+          <Section icon={Info} title="About">
+            <div
+              className="row"
+              style={{ justifyContent: 'space-between', padding: 12, background: 'var(--surface-2)', borderRadius: 10, fontSize: 13 }}
+            >
+              <span className="muted">Version</span>
+              <span className="mono tag">0.0.1</span>
+            </div>
+          </Section>
+
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="btn btn-lg"
+            style={{
+              width: '100%',
+              justifyContent: 'center',
+              background: 'var(--loss)',
+              color: '#fff',
+              borderColor: 'transparent',
+            }}
+          >
+            <LogOut size={14} />
+            Sign out
+          </button>
+        </div>
+      )}
     </div>
   );
 }

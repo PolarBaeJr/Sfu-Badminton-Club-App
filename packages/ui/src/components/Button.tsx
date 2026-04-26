@@ -18,18 +18,24 @@ export function Button({
   disabled,
   ...props
 }: ButtonProps) {
-  const base = 'inline-flex items-center justify-center font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:ring-offset-2 focus:ring-offset-[var(--bg-primary)] disabled:opacity-50 disabled:cursor-not-allowed';
+  const base =
+    'inline-flex items-center justify-center gap-2 font-semibold rounded-full transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--red)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)] disabled:opacity-50 disabled:cursor-not-allowed border whitespace-nowrap';
   const variants = {
-    primary: 'bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)]',
-    secondary: 'bg-[var(--bg-surface)] text-[var(--text-primary)] hover:brightness-110',
-    danger: 'bg-[var(--color-danger)] text-white hover:brightness-110',
-    ghost: 'bg-transparent text-[var(--text-secondary)] hover:bg-[var(--border-hover)]',
-    success: 'bg-[var(--color-success)] text-white hover:brightness-110',
+    primary:
+      'bg-[var(--red)] text-white border-transparent hover:bg-[var(--red-ink)]',
+    secondary:
+      'bg-[var(--surface-2)] text-[var(--ink)] border-[var(--line)] hover:bg-[var(--line)]',
+    danger:
+      'bg-[var(--loss)] text-white border-transparent hover:brightness-110',
+    ghost:
+      'bg-transparent text-[var(--ink-2)] border-[var(--line)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]',
+    success:
+      'bg-[var(--win)] text-white border-transparent hover:brightness-110',
   };
   const sizes = {
-    sm: 'px-3 min-h-[36px] text-sm',
-    md: 'px-4 min-h-[44px] text-sm',
-    lg: 'px-6 min-h-[48px] text-base',
+    sm: 'px-3 min-h-[32px] text-xs',
+    md: 'px-4 min-h-[40px] text-sm',
+    lg: 'px-6 min-h-[48px] text-sm',
   };
 
   return (
@@ -39,7 +45,7 @@ export function Button({
       {...props}
     >
       {loading && (
-        <svg className="animate-spin -ml-1 mr-2 h-4 w-4" viewBox="0 0 24 24">
+        <svg className="animate-spin -ml-1 h-4 w-4" viewBox="0 0 24 24" aria-hidden>
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
         </svg>
