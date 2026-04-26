@@ -67,6 +67,21 @@ gunzip -c "$AUTH_DUMP" | docker exec -i "$DEV_CONTAINER" psql -U postgres -d pos
 echo "[$(date -u +%FT%TZ)] restoring public schema into dev..."
 gunzip -c "$PUBLIC_DUMP" | docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q
 
+# pg_dump --clean drops and recreates the public schema. The recreate
+# strips Supabase's default GRANTs to anon/authenticated/service_role,
+# which makes every read fail with "permission denied for schema public".
+# Re-apply them so the staging app can read its own data.
+echo "[$(date -u +%FT%TZ)] re-granting Supabase roles on dev public schema..."
+docker exec -i "$DEV_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q <<'SQL'
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authenticated, service_role;
+SQL
+
 # Retain 14 days of snapshots
 find "$OUT_DIR" -maxdepth 1 -name '*.sql.gz' -mtime +14 -delete 2>/dev/null || true
 
