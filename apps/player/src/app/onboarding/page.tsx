@@ -4,33 +4,11 @@ import { useState } from 'react';
 import { completeOnboarding } from '@/lib/actions';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/toast-provider';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent } from '@/components/ui/card';
-import { motion, AnimatePresence } from 'framer-motion';
-import {
-  User,
-  Phone,
-  Sparkles,
-  Trophy,
-  Swords,
-  TrendingUp,
-  ChevronRight,
-  ChevronLeft,
-  Loader2,
-  Rocket,
-} from 'lucide-react';
+import { User, Phone, Sparkles, Trophy, Crosshair, ChevronRight, ChevronLeft, Loader2, Rocket } from 'lucide-react';
 
 const steps = [
-  { number: 1, title: 'Your Profile', subtitle: 'Tell us about yourself' },
-  { number: 2, title: 'Ready to Play!', subtitle: 'Your journey begins' },
-];
-
-const statCards = [
-  { icon: Trophy, label: 'Starting Elo', value: '1200', color: '#FFD700' },
-  { icon: Swords, label: 'Singles & Doubles', value: 'Both', color: '#EF4444' },
-  { icon: TrendingUp, label: 'Rank', value: 'Unranked', color: '#94A3B8' },
+  { number: 1, title: 'Profile' },
+  { number: 2, title: 'Confirm' },
 ];
 
 export default function OnboardingPage() {
@@ -57,247 +35,287 @@ export default function OnboardingPage() {
     setLoading(false);
   }
 
-  return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-12 relative overflow-hidden">
-      {/* Background effects */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-1/3 left-1/3 w-80 h-80 bg-[var(--color-accent)]/5 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/3 right-1/4 w-64 h-64 bg-[var(--color-gold)]/5 rounded-full blur-3xl" />
+  function Field({
+    id,
+    label,
+    optional,
+    icon: Icon,
+    value,
+    onChange,
+    placeholder,
+    inputMode,
+  }: {
+    id: string;
+    label: string;
+    optional?: boolean;
+    icon: React.ElementType;
+    value: string;
+    onChange: (v: string) => void;
+    placeholder: string;
+    inputMode?: 'tel' | 'text';
+  }) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <label
+          htmlFor={id}
+          className="mono muted"
+          style={{ fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase' }}
+        >
+          {label} {optional ? <span className="muted">(optional)</span> : <span style={{ color: 'var(--red)' }}>*</span>}
+        </label>
+        <div style={{ position: 'relative' }}>
+          <Icon
+            size={16}
+            className="text-[var(--mute)]"
+            style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)' }}
+          />
+          <input
+            id={id}
+            value={value}
+            inputMode={inputMode}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={placeholder}
+            style={{
+              width: '100%',
+              padding: '12px 14px 12px 38px',
+              borderRadius: 10,
+              border: '1px solid var(--line)',
+              background: 'var(--surface)',
+              fontSize: 14,
+              transition: 'border .15s',
+            }}
+            onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--ink)')}
+            onBlur={(e) => (e.currentTarget.style.borderColor = 'var(--line)')}
+          />
+        </div>
       </div>
+    );
+  }
 
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-        className="w-full max-w-md relative z-10"
+  return (
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'grid',
+        gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1fr)',
+        background: 'var(--bg)',
+      }}
+      className="auth"
+    >
+      <div
+        style={{
+          padding: 80,
+          background: 'var(--ink)',
+          color: 'var(--bg)',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
+          position: 'relative',
+          overflow: 'hidden',
+        }}
+        className="auth-panel"
       >
-        {/* Header */}
-        <div className="text-center mb-6">
-          <motion.div
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
-            transition={{ type: 'spring', bounce: 0.5 }}
-            className="w-14 h-14 mx-auto mb-4 rounded-2xl gradient-gold flex items-center justify-center glow-gold"
-          >
-            <Sparkles className="w-7 h-7 text-[#0A0E1A]" />
-          </motion.div>
-          <p className="eyebrow mb-1">New Player</p>
-          <h1 className="display-lg text-shuttle-white">
-            Welcome to the Club
-          </h1>
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            background: 'radial-gradient(ellipse at bottom right, rgba(204,6,51,.3), transparent 60%)',
+            pointerEvents: 'none',
+          }}
+        />
+        <div className="brand" style={{ color: '#fff', position: 'relative', zIndex: 2 }}>
+          <div className="brand-mark">SB</div>
+          <div className="brand-wrap">
+            <div>SFU Badminton</div>
+            <div className="brand-sub" style={{ color: 'rgba(255,255,255,.5)' }}>Welcome aboard</div>
+          </div>
         </div>
 
-        {/* Progress Steps */}
-        <div className="flex items-center gap-3 mb-6 px-2">
-          {steps.map((s, i) => (
-            <div key={s.number} className="flex items-center flex-1">
-              <div className="flex items-center gap-2 flex-1">
-                <motion.div
-                  animate={{
-                    backgroundColor: step >= s.number ? '#EF4444' : 'rgba(255,255,255,0.06)',
-                    scale: step === s.number ? 1.1 : 1,
-                  }}
-                  transition={{ type: 'spring', bounce: 0.4 }}
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0"
-                >
-                  <span className={step >= s.number ? 'text-white' : 'text-[#64748B]'}>
-                    {step > s.number ? '✓' : s.number}
-                  </span>
-                </motion.div>
-                <div className="min-w-0">
-                  <p className={`text-xs font-semibold truncate ${step >= s.number ? 'text-shuttle-white' : 'text-[#64748B]'}`}>
-                    {s.title}
-                  </p>
-                </div>
-              </div>
-              {i < steps.length - 1 && (
-                <div className="w-8 mx-2">
-                  <div className="h-[2px] rounded-full overflow-hidden bg-white/[0.06]">
-                    <motion.div
-                      animate={{ width: step > s.number ? '100%' : '0%' }}
-                      transition={{ duration: 0.4 }}
-                      className="h-full bg-[#EF4444] rounded-full"
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
+        <div style={{ position: 'relative', zIndex: 2 }}>
+          <div
+            className="page-eyebrow"
+            style={{ color: 'rgba(255,255,255,.6)', marginBottom: 14 }}
+          >
+            <span className="bar" style={{ background: 'rgba(255,255,255,.6)' }} /> NEW PLAYER · GET STARTED
+          </div>
+          <div
+            className="auth-hero"
+            style={{
+              fontFamily: 'var(--display)',
+              fontSize: 'clamp(36px, 6vw, 72px)',
+              fontWeight: 700,
+              letterSpacing: '-.04em',
+              lineHeight: 0.95,
+            }}
+          >
+            Step onto<br />
+            <span style={{ color: 'var(--red)' }}>the ladder.</span>
+          </div>
+          <div
+            style={{
+              maxWidth: '46ch',
+              marginTop: 20,
+              color: 'rgba(255,255,255,.7)',
+              fontSize: 15,
+              lineHeight: 1.6,
+            }}
+          >
+            Two quick fields and you&apos;re in. Starting ELO 1200 across singles and doubles. Climb from there.
+          </div>
+        </div>
+
+        <div
+          className="row"
+          style={{
+            gap: 24,
+            fontSize: 12,
+            color: 'rgba(255,255,255,.5)',
+            position: 'relative',
+            zIndex: 2,
+            fontFamily: 'var(--mono)',
+            textTransform: 'uppercase',
+            letterSpacing: '.1em',
+          }}
+        >
+          <span>Starting ELO 1200</span>
+          <span>Provisional K=40</span>
+          <span>Unranked → Top 10</span>
+        </div>
+      </div>
+
+      <div
+        className="auth-form"
+        style={{
+          padding: 80,
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          gap: 24,
+          maxWidth: 520,
+          width: '100%',
+          margin: '0 auto',
+        }}
+      >
+        <div>
+          <div className="page-eyebrow"><span className="bar" /> STEP {step} OF 2 · {steps[step - 1]!.title.toUpperCase()}</div>
+          <h2
+            style={{
+              fontFamily: 'var(--display)',
+              fontSize: 36,
+              fontWeight: 700,
+              letterSpacing: '-.03em',
+              margin: '8px 0 0',
+            }}
+          >
+            {step === 1 ? 'Set up your profile' : `You're ready, ${displayName || name.split(' ')[0]}!`}
+          </h2>
+          <div className="page-sub" style={{ marginTop: 8 }}>
+            {step === 1
+              ? 'This is how other players will see you. Display name and phone are optional.'
+              : 'Start exploring the club, check into sessions, and issue challenges.'}
+          </div>
+        </div>
+
+        <div className="row" style={{ gap: 6 }}>
+          {steps.map((s) => (
+            <div
+              key={s.number}
+              style={{
+                flex: 1,
+                height: 4,
+                borderRadius: 999,
+                background: step >= s.number ? 'var(--red)' : 'var(--line)',
+                transition: 'background .25s',
+              }}
+            />
           ))}
         </div>
 
-        {/* Card */}
-        <Card className="bg-[#161B2E]/80 border-white/[0.06] backdrop-blur-xl shadow-2xl shadow-black/20">
-          <CardContent className="p-6">
-            <AnimatePresence mode="wait">
-              {step === 1 && (
-                <motion.div
-                  key="step1"
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  transition={{ duration: 0.3 }}
-                  className="space-y-5"
-                >
-                  <div>
-                    <h2 className="text-lg font-bold text-shuttle-white mb-1">Set up your profile</h2>
-                    <p className="text-sm text-[#94A3B8]">This is how other players will see you</p>
-                  </div>
+        {step === 1 ? (
+          <>
+            <Field id="name"        label="Full name"     icon={User}     value={name}        onChange={setName}        placeholder="Your full name" />
+            <Field id="displayName" label="Display name"  optional icon={Sparkles} value={displayName} onChange={setDisplayName} placeholder="Nickname or gamertag" />
+            <Field id="phone"       label="Phone"         optional icon={Phone}    value={phone}       onChange={(v) => setPhone(v.replace(/[^\d\s+\-()]/g, ''))} placeholder="For session reminders" inputMode="tel" />
 
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="name" className="text-[#94A3B8] text-sm font-medium">
-                        Full Name <span className="text-[#EF4444]">*</span>
-                      </Label>
-                      <div className="relative">
-                        <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#64748B]" />
-                        <Input
-                          id="name"
-                          value={name}
-                          onChange={(e) => setName(e.target.value)}
-                          placeholder="Your full name"
-                          className="h-12 pl-10 bg-white/[0.04] border-white/[0.08] text-shuttle-white placeholder:text-[#475569] focus:border-[#EF4444]/50 focus:ring-[#EF4444]/20"
-                        />
-                      </div>
-                    </div>
+            <button
+              type="button"
+              onClick={() => { if (name.length >= 2) setStep(2); }}
+              disabled={name.length < 2}
+              className="btn btn-primary btn-lg"
+              style={{
+                width: '100%',
+                justifyContent: 'center',
+                height: 48,
+                opacity: name.length < 2 ? 0.4 : 1,
+              }}
+            >
+              Continue <ChevronRight size={14} />
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="grid grid-3" style={{ gap: 12 }}>
+              <div className="card-base" style={{ textAlign: 'center', padding: 16 }}>
+                <div className="stat-label">STARTING ELO</div>
+                <div className="stat-value" style={{ marginTop: 4 }}>1200</div>
+              </div>
+              <div className="card-base" style={{ textAlign: 'center', padding: 16 }}>
+                <div className="stat-label">DIVISIONS</div>
+                <div className="stat-value" style={{ marginTop: 4, fontSize: 18 }}>S + D</div>
+              </div>
+              <div className="card-base" style={{ textAlign: 'center', padding: 16 }}>
+                <div className="stat-label">RANK</div>
+                <div className="stat-value" style={{ marginTop: 4, fontSize: 18 }}>—</div>
+              </div>
+            </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="displayName" className="text-[#94A3B8] text-sm font-medium">
-                        Display Name <span className="text-[#64748B]">(optional)</span>
-                      </Label>
-                      <div className="relative">
-                        <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#64748B]" />
-                        <Input
-                          id="displayName"
-                          value={displayName}
-                          onChange={(e) => setDisplayName(e.target.value)}
-                          placeholder="Nickname or gamertag"
-                          className="h-12 pl-10 bg-white/[0.04] border-white/[0.08] text-shuttle-white placeholder:text-[#475569] focus:border-[#EF4444]/50 focus:ring-[#EF4444]/20"
-                        />
-                      </div>
-                    </div>
+            <div
+              style={{
+                background: '#FBF1DA',
+                border: '1px solid rgba(201, 154, 60, 0.3)',
+                borderRadius: 10,
+                padding: '12px 14px',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 10,
+                fontSize: 13,
+                lineHeight: 1.5,
+                color: '#6E4F1A',
+              }}
+            >
+              <Trophy size={16} style={{ marginTop: 2, flexShrink: 0 }} />
+              <span>
+                <strong>Pro tip:</strong> challenge players near your ELO. Closer matchups give bigger ELO swings — and the climb is faster.
+              </span>
+            </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="phone" className="text-[#94A3B8] text-sm font-medium">
-                        Phone <span className="text-[#64748B]">(optional)</span>
-                      </Label>
-                      <div className="relative">
-                        <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#64748B]" />
-                        <Input
-                          id="phone"
-                          value={phone}
-                          onChange={(e) => setPhone(e.target.value.replace(/[^\d\s+\-()]/g, ''))}
-                          placeholder="For session reminders"
-                          className="h-12 pl-10 bg-white/[0.04] border-white/[0.08] text-shuttle-white placeholder:text-[#475569] focus:border-[#EF4444]/50 focus:ring-[#EF4444]/20"
-                        />
-                      </div>
-                    </div>
-                  </div>
+            <div className="row" style={{ gap: 10 }}>
+              <button
+                type="button"
+                onClick={() => setStep(1)}
+                className="btn btn-ghost"
+                style={{ height: 48 }}
+              >
+                <ChevronLeft size={14} /> Back
+              </button>
+              <button
+                type="button"
+                onClick={handleComplete}
+                disabled={loading}
+                className="btn btn-primary btn-lg"
+                style={{ flex: 1, justifyContent: 'center', height: 48 }}
+              >
+                {loading ? <Loader2 size={16} className="animate-spin" /> : <Rocket size={14} />}
+                Enter the club
+              </button>
+            </div>
+          </>
+        )}
 
-                  <Button
-                    onClick={() => { if (name.length >= 2) setStep(2); }}
-                    disabled={name.length < 2}
-                    size="lg"
-                    className="w-full h-12 bg-gradient-to-r from-[#EF4444] to-[#DC2626] hover:from-[#DC2626] hover:to-[#B91C1C] text-white font-bold tracking-wide shadow-lg shadow-[#EF4444]/20 hover:shadow-[#EF4444]/30 disabled:opacity-40 disabled:shadow-none transition-all duration-300"
-                  >
-                    Continue
-                    <ChevronRight className="w-4 h-4 ml-1" />
-                  </Button>
-                </motion.div>
-              )}
-
-              {step === 2 && (
-                <motion.div
-                  key="step2"
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  transition={{ duration: 0.3 }}
-                  className="space-y-6"
-                >
-                  <div className="text-center">
-                    <motion.div
-                      initial={{ scale: 0, rotate: -180 }}
-                      animate={{ scale: 1, rotate: 0 }}
-                      transition={{ type: 'spring', bounce: 0.5, delay: 0.15 }}
-                      className="w-16 h-16 mx-auto mb-4 rounded-full bg-[#EF4444]/15 flex items-center justify-center"
-                    >
-                      <Rocket className="w-8 h-8 text-[#EF4444]" />
-                    </motion.div>
-                    <h2 className="text-xl font-bold text-shuttle-white">
-                      You&apos;re ready, {displayName || name.split(' ')[0]}!
-                    </h2>
-                    <p className="text-sm text-[#94A3B8] mt-2">
-                      Start exploring the club, check into sessions, and challenge other players.
-                    </p>
-                  </div>
-
-                  {/* Starting Stats Cards */}
-                  <div className="grid grid-cols-3 gap-3">
-                    {statCards.map((card, i) => (
-                      <motion.div
-                        key={card.label}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.2 + i * 0.1 }}
-                        className="card-surface p-3 text-center"
-                      >
-                        <card.icon
-                          className="w-5 h-5 mx-auto mb-1.5"
-                          style={{ color: card.color }}
-                        />
-                        <p className="display-md text-shuttle-white nums">
-                          {card.value}
-                        </p>
-                        <p className="eyebrow mt-0.5" style={{ fontSize: '0.6rem' }}>
-                          {card.label}
-                        </p>
-                      </motion.div>
-                    ))}
-                  </div>
-
-                  {/* Tip */}
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 0.5 }}
-                    className="bg-[var(--color-gold)]/5 border border-[var(--color-gold)]/10 rounded-xl p-3 flex items-start gap-2.5"
-                  >
-                    <Trophy className="w-4 h-4 text-[var(--color-gold)] mt-0.5 shrink-0" />
-                    <p className="text-xs text-[var(--text-secondary)]">
-                      <span className="text-[var(--color-gold)] font-semibold">Pro tip:</span>{' '}
-                      Challenge players near your Elo to climb the leaderboard faster!
-                    </p>
-                  </motion.div>
-
-                  <div className="flex gap-3">
-                    <Button
-                      variant="outline"
-                      onClick={() => setStep(1)}
-                      className="h-12 px-5 bg-white/[0.04] border-white/[0.08] hover:bg-white/[0.08] text-[#94A3B8]"
-                    >
-                      <ChevronLeft className="w-4 h-4 mr-1" />
-                      Back
-                    </Button>
-                    <Button
-                      onClick={handleComplete}
-                      disabled={loading}
-                      size="lg"
-                      className="flex-1 h-12 bg-gradient-to-r from-[#FFD700] to-[#FFA000] hover:from-[#FFC107] hover:to-[#FF8F00] text-[#0A0E1A] font-black tracking-wide shadow-lg shadow-[#FFD700]/20 hover:shadow-[#FFD700]/30 transition-all duration-300"
-                    >
-                      {loading ? (
-                        <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                      ) : (
-                        <Rocket className="w-4 h-4 mr-2" />
-                      )}
-                      Let&apos;s Go!
-                    </Button>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </CardContent>
-        </Card>
-      </motion.div>
+        <div className="muted" style={{ fontSize: 11, textAlign: 'center', fontFamily: 'var(--mono)', letterSpacing: '.08em' }}>
+          ACCOUNT PENDING APPROVAL · YOU&apos;LL GET AN EMAIL ONCE YOU&apos;RE LIVE
+        </div>
+      </div>
     </div>
   );
 }
