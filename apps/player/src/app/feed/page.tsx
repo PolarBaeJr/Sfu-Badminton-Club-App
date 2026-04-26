@@ -162,17 +162,69 @@ export default async function FeedPage() {
                 ? `Play ${Math.max(0, 8 - (r.singles_matches_played ?? 0))} more singles to lock in your rank.`
                 : `Singles ELO ${r.singles_elo}. ${singlesWinRate} win rate over ${(r.singles_wins ?? 0) + (r.singles_losses ?? 0)} matches.`}
             </h2>
-            <div className="lead">
-              {(() => {
-                const sParts = r.singles_provisional
-                  ? `Singles provisional · ${(r.singles_wins ?? 0)}W–${(r.singles_losses ?? 0)}L of 8`
-                  : `Singles ${r.singles_elo} · ${(r.singles_wins ?? 0)}W–${(r.singles_losses ?? 0)}L`;
-                const dParts = r.doubles_provisional
-                  ? `Doubles provisional · ${(r.doubles_wins ?? 0)}W–${(r.doubles_losses ?? 0)}L of 8`
-                  : `Doubles ${r.doubles_elo} · ${(r.doubles_wins ?? 0)}W–${(r.doubles_losses ?? 0)}L`;
-                return `${sParts}. ${dParts}.`;
-              })()}
-            </div>
+
+            {(() => {
+              const singlesPlayed = (r.singles_wins ?? 0) + (r.singles_losses ?? 0);
+              const doublesPlayed = (r.doubles_wins ?? 0) + (r.doubles_losses ?? 0);
+              const singlesLeft = Math.max(0, 8 - singlesPlayed);
+              const doublesLeft = Math.max(0, 8 - doublesPlayed);
+
+              const StatusRow = ({
+                label,
+                provisional,
+                left,
+              }: { label: string; provisional: boolean; left: number }) => (
+                <div
+                  className="row"
+                  style={{
+                    gap: 12,
+                    fontSize: 13,
+                    fontFamily: 'var(--mono)',
+                    color: 'color-mix(in oklab, var(--bg) 78%, transparent)',
+                    letterSpacing: '.02em',
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 64,
+                      fontSize: 11,
+                      letterSpacing: '.12em',
+                      textTransform: 'uppercase',
+                      color: 'color-mix(in oklab, var(--bg) 55%, transparent)',
+                    }}
+                  >
+                    {label}
+                  </span>
+                  <span
+                    style={{
+                      padding: '2px 8px',
+                      borderRadius: 4,
+                      background: provisional
+                        ? 'color-mix(in oklab, var(--gold) 25%, transparent)'
+                        : 'color-mix(in oklab, var(--win) 22%, transparent)',
+                      color: provisional ? 'var(--gold)' : 'var(--win)',
+                      fontSize: 11,
+                      fontWeight: 500,
+                    }}
+                  >
+                    {provisional ? 'PROVISIONAL' : 'ESTABLISHED'}
+                  </span>
+                  {provisional && (
+                    <span style={{ color: 'color-mix(in oklab, var(--bg) 65%, transparent)' }}>
+                      {left} match{left === 1 ? '' : 'es'} to lock in
+                    </span>
+                  )}
+                </div>
+              );
+
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20, maxWidth: '46ch' }}>
+                  <StatusRow label="Singles" provisional={!!r.singles_provisional} left={singlesLeft} />
+                  <StatusRow label="Doubles" provisional={!!r.doubles_provisional} left={doublesLeft} />
+                </div>
+              );
+            })()}
+
             <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
               <Link href="/challenges/new" className="btn btn-primary">
                 <Crosshair size={14} /> Find an opponent
