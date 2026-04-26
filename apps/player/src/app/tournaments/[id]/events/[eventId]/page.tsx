@@ -164,7 +164,7 @@ export default async function EventDetailPage({
       <Link
         href={`/tournaments/${tournamentId}`}
         aria-label="Back to tournament"
-        className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors duration-150 group min-h-[44px] py-2 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+        className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors duration-150 group min-h-[44px] py-2 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)]"
       >
         <ArrowLeft className="w-4 h-4 transition-transform duration-150 group-hover:-translate-x-0.5" />
         Back to {tournament.name}
@@ -335,7 +335,7 @@ export default async function EventDetailPage({
         <FadeIn delay={0.05}>
           <div className="card-elevated rounded-2xl overflow-hidden">
             <div className="flex items-center gap-2 p-4 pb-0 mb-3">
-              <Swords className="w-4 h-4 text-[var(--color-accent)]" />
+              <Swords className="w-4 h-4 text-[var(--ds-accent)]" />
               <h2 className="display-md">Match Results</h2>
             </div>
             <div className="px-4 pb-4 space-y-4">
@@ -381,7 +381,7 @@ export default async function EventDetailPage({
       <FadeIn delay={0.1}>
         <div className="card-elevated rounded-2xl overflow-hidden">
           <div className="flex items-center gap-2 p-4 pb-0 mb-3">
-            <Users className="w-4 h-4 text-[var(--color-accent)]" />
+            <Users className="w-4 h-4 text-[var(--ds-accent)]" />
             <h2 className="display-md">{doubles ? 'Pairs' : 'Participants'}</h2>
           </div>
           <div className="px-4 pb-4 space-y-2">
@@ -492,7 +492,7 @@ export default async function EventDetailPage({
                         done
                           ? won
                             ? 'border-[var(--color-success)]/20 bg-[var(--color-success)]/5'
-                            : 'border-[var(--color-accent)]/20 bg-[var(--color-accent)]/5'
+                            : 'border-[var(--ds-accent)]/20 bg-[var(--ds-accent)]/5'
                           : 'border-[var(--border)] bg-white/[0.02]'
                       }`}
                     >
@@ -508,7 +508,7 @@ export default async function EventDetailPage({
                       <div className="text-right shrink-0">
                         {done ? (
                           <>
-                            <span className={`text-sm font-bold ${won ? 'text-[var(--color-success)]' : 'text-[var(--color-accent)]'}`} role="status">
+                            <span className={`text-sm font-bold ${won ? 'text-[var(--color-success)]' : 'text-[var(--ds-accent)]'}`} role="status">
                               {won ? 'WIN' : 'LOSS'}
                             </span>
                             {scoreStr && (
@@ -571,9 +571,9 @@ export default async function EventDetailPage({
                         </span>
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
-                        <span className="nums text-xs font-bold text-[var(--color-accent)]">{points} pts</span>
+                        <span className="nums text-xs font-bold text-[var(--ds-accent)]">{points} pts</span>
                         {!doubles && e.elo_change != null && (
-                          <span className={`nums text-xs font-bold ${e.elo_change > 0 ? 'text-[var(--color-success)]' : e.elo_change < 0 ? 'text-[var(--color-accent)]' : 'text-[var(--text-muted)]'}`}>
+                          <span className={`nums text-xs font-bold ${e.elo_change > 0 ? 'text-[var(--color-success)]' : e.elo_change < 0 ? 'text-[var(--ds-accent)]' : 'text-[var(--text-muted)]'}`}>
                             <span className="sr-only">{e.elo_change > 0 ? 'Gained' : e.elo_change < 0 ? 'Lost' : 'No change'}: </span>
                             {e.elo_change > 0 ? '+' : ''}{e.elo_change} elo
                           </span>

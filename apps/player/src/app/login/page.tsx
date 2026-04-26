@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -29,7 +29,7 @@ const fadeUp = {
 
 const features = [
   { icon: Trophy, label: 'Climb the Ranks', color: 'text-[var(--color-gold)]' },
-  { icon: Zap, label: 'Challenge Players', color: 'text-[var(--color-accent)]' },
+  { icon: Zap, label: 'Challenge Players', color: 'text-[var(--ds-accent)]' },
   { icon: Target, label: 'Track Your Stats', color: 'text-[var(--text-primary)]' },
 ];
 
@@ -41,13 +41,36 @@ export default function LoginPage() {
   const [sent, setSent] = useState(false);
   const [error, setError] = useState('');
 
+  // If we landed here via ?next= (e.g. from the QR /submit route), persist it
+  // in sessionStorage so the client-side post-login handler can pick it up
+  // after the auth-callback server redirect.
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const next = params.get('next');
+      if (next && next.startsWith('/')) {
+        sessionStorage.setItem('qr_redirect', next);
+      }
+    } catch { /* no-op */ }
+  }, []);
+
+  function buildCallbackUrl(): string {
+    try {
+      const next = new URLSearchParams(window.location.search).get('next');
+      const base = `${window.location.origin}/auth/callback`;
+      return next && next.startsWith('/') ? `${base}?next=${encodeURIComponent(next)}` : base;
+    } catch {
+      return `${window.location.origin}/auth/callback`;
+    }
+  }
+
   async function handleGoogleLogin() {
     setGoogleLoading(true);
     setError('');
     const supabase = createClient();
     const { error: authError } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
+      options: { redirectTo: buildCallbackUrl() },
     });
     if (authError) {
       setError(authError.message);
@@ -63,7 +86,7 @@ export default function LoginPage() {
     const supabase = createClient();
     const { error: authError } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+      options: { emailRedirectTo: buildCallbackUrl() },
     });
 
     if (authError) {
@@ -82,7 +105,7 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center px-4 py-12 relative overflow-hidden">
       {/* Background glow effects */}
       <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-[var(--color-accent)]/5 rounded-full blur-3xl" />
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-[var(--ds-accent)]/5 rounded-full blur-3xl" />
         <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-[var(--color-gold)]/5 rounded-full blur-3xl" />
       </div>
 
@@ -168,11 +191,11 @@ export default function LoginPage() {
                       initial={{ scale: 0 }}
                       animate={{ scale: 1 }}
                       transition={{ type: 'spring', bounce: 0.5, delay: 0.1 }}
-                      className="w-14 h-14 rounded-full bg-[var(--color-accent)]/15 flex items-center justify-center mx-auto mb-4"
+                      className="w-14 h-14 rounded-full bg-[var(--ds-accent)]/15 flex items-center justify-center mx-auto mb-4"
                     >
-                      <CheckCircle2 className="w-7 h-7 text-[var(--color-accent)]" />
+                      <CheckCircle2 className="w-7 h-7 text-[var(--ds-accent)]" />
                     </motion.div>
-                    <p className="text-[var(--color-accent)] font-bold text-lg">Check your email!</p>
+                    <p className="text-[var(--ds-accent)] font-bold text-lg">Check your email!</p>
                     <p className="text-[var(--text-secondary)] text-sm mt-2">
                       We sent a magic link to{' '}
                       <strong className="text-shuttle-white">{email}</strong>
@@ -241,7 +264,7 @@ export default function LoginPage() {
                             onChange={(e) => setEmail(e.target.value)}
                             placeholder="your.email@sfu.ca"
                             required
-                            className="h-12 pl-10 bg-[var(--bg-card)] border-[var(--border-hover)] text-shuttle-white placeholder:text-[var(--text-dim)] focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20 transition-all duration-300"
+                            className="h-12 pl-10 bg-[var(--bg-card)] border-[var(--border-hover)] text-shuttle-white placeholder:text-[var(--text-dim)] focus:border-[var(--ds-accent)]/50 focus:ring-[var(--ds-accent)]/20 transition-all duration-300"
                           />
                         </div>
                       </div>
@@ -252,7 +275,7 @@ export default function LoginPage() {
                             initial={{ opacity: 0, height: 0 }}
                             animate={{ opacity: 1, height: 'auto' }}
                             exit={{ opacity: 0, height: 0 }}
-                            className="text-sm text-[var(--color-accent)] bg-[var(--color-accent)]/10 px-3 py-2 rounded-lg"
+                            className="text-sm text-[var(--ds-accent)] bg-[var(--ds-accent)]/10 px-3 py-2 rounded-lg"
                           >
                             {error}
                           </motion.p>
@@ -263,7 +286,7 @@ export default function LoginPage() {
                         type="submit"
                         disabled={loading}
                         size="lg"
-                        className="w-full h-12 gradient-court text-white font-bold tracking-wide transition-all duration-300 shadow-lg shadow-[var(--color-accent)]/20 hover:shadow-[var(--color-accent)]/30"
+                        className="w-full h-12 gradient-court text-white font-bold tracking-wide transition-all duration-300 shadow-lg shadow-[var(--ds-accent)]/20 hover:shadow-[var(--ds-accent)]/30"
                       >
                         {loading ? (
                           <Loader2 className="w-5 h-5 animate-spin mr-2" />
@@ -281,7 +304,7 @@ export default function LoginPage() {
                           Don&apos;t have an account?{' '}
                           <button
                             onClick={() => { setMode('signup'); setError(''); }}
-                            className="text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] font-semibold transition-colors"
+                            className="text-[var(--ds-accent)] hover:text-[var(--ds-accent)]/80 font-semibold transition-colors"
                           >
                             Sign up
                           </button>
@@ -291,7 +314,7 @@ export default function LoginPage() {
                           Already have an account?{' '}
                           <button
                             onClick={() => { setMode('signin'); setError(''); }}
-                            className="text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] font-semibold transition-colors"
+                            className="text-[var(--ds-accent)] hover:text-[var(--ds-accent)]/80 font-semibold transition-colors"
                           >
                             Sign in
                           </button>

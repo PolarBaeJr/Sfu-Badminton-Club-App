@@ -79,7 +79,7 @@ export function AvatarUpload({ playerId, playerName, currentUrl, onUploaded }: A
           </span>
         </div>
         {uploading && (
-          <div className="absolute inset-0 rounded-full border-2 border-[var(--color-accent)] border-t-transparent animate-spin" />
+          <div className="absolute inset-0 rounded-full border-2 border-[var(--ds-accent)] border-t-transparent animate-spin" />
         )}
       </button>
       <input

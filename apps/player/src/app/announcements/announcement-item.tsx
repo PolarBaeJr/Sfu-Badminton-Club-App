@@ -31,8 +31,8 @@ const TYPE_CONFIG = {
     label: 'Warning',
   },
   urgent: {
-    color: 'var(--color-accent)',
-    bg: 'bg-[var(--color-accent)]/10',
+    color: 'var(--ds-accent)',
+    bg: 'bg-[var(--ds-accent)]/10',
     icon: AlertTriangle,
     label: 'Urgent',
   },
@@ -105,8 +105,8 @@ export function AnnouncementItem({ announcement, isRead }: AnnouncementItemProps
               {/* Unread dot */}
               {!isRead && (
                 <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--color-accent)] opacity-60" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--color-accent)]" />
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--ds-accent)] opacity-60" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--ds-accent)]" />
                 </span>
               )}
               {/* Pin indicator */}

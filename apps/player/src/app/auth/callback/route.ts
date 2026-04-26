@@ -8,6 +8,8 @@ export async function GET(request: Request) {
   const code = searchParams.get('code');
   const token_hash = searchParams.get('token_hash');
   const type = searchParams.get('type');
+  const nextParam = searchParams.get('next');
+  const safeNext = nextParam && nextParam.startsWith('/') ? nextParam : '/';
 
   // Rate limit: 10 callback attempts per IP per minute (defense against brute force)
   const ip = getClientIp(request);
@@ -19,7 +21,7 @@ export async function GET(request: Request) {
   const cookieStore = await cookies();
 
   // Create redirect response upfront so session cookies are set on it
-  const response = NextResponse.redirect(`${origin}/`);
+  const response = NextResponse.redirect(`${origin}${safeNext}`);
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

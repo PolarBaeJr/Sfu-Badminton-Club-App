@@ -86,7 +86,7 @@ export function LeaderboardTab({ event, participants, pairs, isDoubles }: Props)
 
   const SortHeader = ({ field, label, className }: { field: SortField; label: string; className?: string }) => (
     <th
-      className={`text-xs font-medium text-[var(--text-muted)] uppercase px-3 py-2 cursor-pointer select-none hover:text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none ${className ?? ''}`}
+      className={`text-xs font-medium text-[var(--text-muted)] uppercase px-3 py-2 cursor-pointer select-none hover:text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none ${className ?? ''}`}
       onClick={() => toggleSort(field)}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSort(field); } }}
       tabIndex={0}
@@ -106,7 +106,7 @@ export function LeaderboardTab({ event, participants, pairs, isDoubles }: Props)
         <h3 className="text-sm font-semibold text-[var(--text-primary)]">
           Leaderboard ({ranked.length} entries)
         </h3>
-        <Button size="sm" variant="ghost" onClick={exportCSV} aria-label="Export leaderboard as CSV" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
+        <Button size="sm" variant="ghost" onClick={exportCSV} aria-label="Export leaderboard as CSV" className="focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none">
           <Download className="w-3.5 h-3.5 mr-1" /> Export CSV
         </Button>
       </div>
@@ -130,7 +130,7 @@ export function LeaderboardTab({ event, participants, pairs, isDoubles }: Props)
                 <td className="px-3 py-2.5 text-sm font-medium text-[var(--text-primary)]">{r.name}</td>
                 <td className="px-3 py-2.5 text-center text-sm font-mono text-[var(--text-muted)]">{r.seed ?? '-'}</td>
                 <td className="px-3 py-2.5 text-center text-sm font-mono text-[var(--text-primary)]">{r.position}</td>
-                <td className="px-3 py-2.5 text-center text-sm font-mono font-bold text-[var(--color-accent)]">{r.points}</td>
+                <td className="px-3 py-2.5 text-center text-sm font-mono font-bold text-[var(--ds-accent)]">{r.points}</td>
                 {!isDoubles && (
                   <td className="px-3 py-2.5 text-center text-sm font-mono">
                     {r.elo_change != null ? (

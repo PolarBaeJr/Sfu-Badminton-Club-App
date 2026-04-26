@@ -4,24 +4,49 @@ import { Card, Badge } from '@badminton/ui';
 import { MATCH_FORMAT_LABELS, formatRelativeTime } from '@badminton/shared';
 import { ChallengeActions } from './actions';
 import { CreateChallengeForm } from './create-challenge';
+import { QrModalButton } from './qr-modal';
 import { Swords, Plus, Clock, CheckCircle2, XCircle, Users, Trophy } from 'lucide-react';
 
 export default async function ChallengesPage() {
   const supabase = createAdminClient();
 
-  const { data: challenges } = await supabase
-    .from('challenges')
-    .select('*, creator:players!challenges_created_by_fkey(full_name), challenge_participants(*, player:players(full_name))')
-    .order('created_at', { ascending: false })
-    .limit(50);
+  // Fetch challenges, active season, and player roster in parallel — they're
+  // independent. Was 3 sequential round-trips.
+  const [
+    { data: challenges },
+    { data: activeSeason },
+    { data: allPlayers },
+  ] = await Promise.all([
+    supabase
+      .from('challenges')
+      .select('*, creator:players!challenges_created_by_fkey(full_name), challenge_participants(*, player:players(full_name)), matches(id)')
+      .order('created_at', { ascending: false })
+      .limit(50),
+    supabase
+      .from('seasons')
+      .select('id, start_date')
+      .eq('active_flag', true)
+      .maybeSingle(),
+    supabase
+      .from('players')
+      .select('id, full_name')
+      .eq('active_flag', true)
+      .neq('status', 'pending_approval')
+      .order('full_name'),
+  ]);
 
-  // Get all active players for the create challenge form
-  const { data: allPlayers } = await supabase
-    .from('players')
-    .select('id, full_name')
-    .eq('active_flag', true)
-    .neq('status', 'pending_approval')
-    .order('full_name');
+  // QR adoption analytics depend on the active season — small follow-up query.
+  let qrStats: { qr: number; total: number; pct: number } = { qr: 0, total: 0, pct: 0 };
+  if (activeSeason?.start_date) {
+    const { data: seasonChallenges } = await supabase
+      .from('challenges')
+      .select('submitted_via')
+      .gte('created_at', activeSeason.start_date)
+      .in('status', ['completed', 'disputed', 'walkover_confirmed']);
+    const total = seasonChallenges?.length ?? 0;
+    const qr = seasonChallenges?.filter((c) => c.submitted_via === 'qr').length ?? 0;
+    qrStats = { qr, total, pct: total > 0 ? Math.round((qr / total) * 100) : 0 };
+  }
 
   const statusVariant = (s: string) => {
     switch (s) {
@@ -38,9 +63,9 @@ export default async function ChallengesPage() {
     switch (status) {
       case 'proposed':
       case 'partially_confirmed':
-        return <Clock size={14} style={{ color: 'var(--color-accent)', opacity: 0.8 }} />;
+        return <Clock size={14} style={{ color: 'var(--ds-accent)', opacity: 0.8 }} />;
       case 'accepted':
-        return <CheckCircle2 size={14} style={{ color: 'var(--color-accent)' }} />;
+        return <CheckCircle2 size={14} style={{ color: 'var(--ds-accent)' }} />;
       case 'completed':
         return <CheckCircle2 size={14} style={{ color: '#22c55e' }} />;
       case 'rejected':
@@ -68,7 +93,7 @@ export default async function ChallengesPage() {
             width: '48px',
             height: '48px',
             borderRadius: '12px',
-            background: 'var(--color-accent)',
+            background: 'var(--ds-accent)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -103,7 +128,7 @@ export default async function ChallengesPage() {
           border: '1px solid var(--border)',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-            <Trophy size={14} style={{ color: 'var(--color-accent)' }} />
+            <Trophy size={14} style={{ color: 'var(--ds-accent)' }} />
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 500, letterSpacing: '0.05em' }}>
               Total Challenges
             </span>
@@ -120,7 +145,7 @@ export default async function ChallengesPage() {
           border: '1px solid var(--border)',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-            <Clock size={14} style={{ color: 'var(--color-accent)' }} />
+            <Clock size={14} style={{ color: 'var(--ds-accent)' }} />
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 500, letterSpacing: '0.05em' }}>
               Active
             </span>
@@ -137,13 +162,33 @@ export default async function ChallengesPage() {
           border: '1px solid var(--border)',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-            <Users size={14} style={{ color: 'var(--color-accent)' }} />
+            <Users size={14} style={{ color: 'var(--ds-accent)' }} />
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 500, letterSpacing: '0.05em' }}>
               Players
             </span>
           </div>
           <span style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)' }}>
             {allPlayers?.length ?? 0}
+          </span>
+        </div>
+        <div style={{
+          flex: 1,
+          padding: '1rem 1.25rem',
+          borderRadius: '10px',
+          background: 'var(--bg-card)',
+          border: '1px solid var(--border)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+            <CheckCircle2 size={14} style={{ color: 'var(--ds-accent)' }} />
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 500, letterSpacing: '0.05em' }}>
+              QR Submissions (season)
+            </span>
+          </div>
+          <span style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+            {qrStats.qr} / {qrStats.total}
+          </span>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginLeft: '0.5rem' }}>
+            ({qrStats.pct}%)
           </span>
         </div>
       </div>
@@ -154,7 +199,7 @@ export default async function ChallengesPage() {
           width: '28px',
           height: '28px',
           borderRadius: '8px',
-          background: 'var(--color-accent)',
+          background: 'var(--ds-accent)',
           opacity: 0.15,
           position: 'absolute',
         }} />
@@ -167,7 +212,7 @@ export default async function ChallengesPage() {
           justifyContent: 'center',
           position: 'relative',
         }}>
-          <Swords size={15} style={{ color: 'var(--color-accent)' }} />
+          <Swords size={15} style={{ color: 'var(--ds-accent)' }} />
         </div>
         <h2 style={{
           fontSize: '0.875rem',
@@ -255,9 +300,19 @@ export default async function ChallengesPage() {
                     {formatRelativeTime(c.created_at)}
                   </td>
                   <td style={{ padding: '1rem 1.25rem', textAlign: 'right' }}>
-                    {['proposed', 'partially_confirmed', 'accepted'].includes(c.status) && (
-                      <ChallengeActions challengeId={c.id} />
-                    )}
+                    <div style={{ display: 'inline-flex', gap: '0.375rem', alignItems: 'center' }}>
+                      {c.status === 'accepted' && (
+                        <QrModalButton
+                          challengeId={c.id}
+                          status={c.status}
+                          hasExistingQr={!!(c as Record<string, unknown>).qr_token}
+                          hasMatch={Array.isArray((c as Record<string, unknown>).matches) && ((c as Record<string, unknown>).matches as unknown[]).length > 0}
+                        />
+                      )}
+                      {['proposed', 'partially_confirmed', 'accepted'].includes(c.status) && (
+                        <ChallengeActions challengeId={c.id} />
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

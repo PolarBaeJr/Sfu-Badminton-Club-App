@@ -94,7 +94,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
               role="tab"
               className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none ${
                 activeTab === tab.id
-                  ? 'bg-[var(--color-accent)] text-white shadow-sm'
+                  ? 'bg-[var(--ds-accent)] text-white shadow-sm'
                   : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-card)]'
               }`}
             >

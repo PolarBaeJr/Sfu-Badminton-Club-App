@@ -106,7 +106,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
       {/* Events */}
       <FadeIn delay={0.05}>
         <div className="flex items-center gap-2">
-          <Award className="w-4 h-4 text-[var(--color-accent)]" />
+          <Award className="w-4 h-4 text-[var(--ds-accent)]" />
           <h2 className="display-md">Events</h2>
         </div>
       </FadeIn>

@@ -22,8 +22,8 @@ export default async function SettingsPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--color-accent)]/10">
-          <Settings className="w-5 h-5 text-[var(--color-accent)]" />
+        <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--ds-accent)]/10">
+          <Settings className="w-5 h-5 text-[var(--ds-accent)]" />
         </div>
         <div>
           <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">SETTINGS</h1>
@@ -88,7 +88,7 @@ export default async function SettingsPage() {
         <div className="space-y-3 text-sm">
           <div className="flex items-center justify-between p-3 rounded-lg bg-[var(--bg-elevated)]">
             <span className="text-[var(--text-muted)]">App Version</span>
-            <span className="font-mono text-xs bg-[var(--color-accent)]/10 text-[var(--color-accent)] px-2 py-0.5 rounded-full">v0.0.1</span>
+            <span className="font-mono text-xs bg-[var(--ds-accent)]/10 text-[var(--ds-accent)] px-2 py-0.5 rounded-full">v0.0.1</span>
           </div>
           <div className="flex items-center justify-between p-3 rounded-lg bg-[var(--bg-elevated)]">
             <span className="text-[var(--text-muted)]">Supabase</span>

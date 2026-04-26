@@ -89,8 +89,8 @@ export function EventHeader({ tournament, event, isDoubles, totalEntries, checke
       <div className="flex flex-col sm:flex-row items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-[var(--color-accent)]/10 flex items-center justify-center">
-              <Trophy className="w-5 h-5 text-[var(--color-accent)]" />
+            <div className="w-10 h-10 rounded-lg bg-[var(--ds-accent)]/10 flex items-center justify-center">
+              <Trophy className="w-5 h-5 text-[var(--ds-accent)]" />
             </div>
             <div>
               <h1 className="text-2xl font-bold font-display text-[var(--text-primary)]">
@@ -125,7 +125,7 @@ export function EventHeader({ tournament, event, isDoubles, totalEntries, checke
               size="sm"
               loading={lockLoading}
               aria-label={drawLocked ? 'Unlock draw' : 'Lock draw'}
-              className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+              className="focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none"
               onClick={async () => {
                 setLockLoading(true);
                 try {
@@ -152,7 +152,7 @@ export function EventHeader({ tournament, event, isDoubles, totalEntries, checke
               onClick={handleAction}
               loading={loading}
               disabled={actionDisabled}
-              className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+              className="focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none"
             >
               {actionLabel[status] ?? 'Next Step'}
             </Button>
@@ -207,7 +207,7 @@ export function EventHeader({ tournament, event, isDoubles, totalEntries, checke
           icon={<Swords className="w-4 h-4" />}
           label="Matches"
           value={`${completedMatches}/${totalMatches}`}
-          color="var(--color-accent)"
+          color="var(--ds-accent)"
         />
         <StatCard
           icon={<BarChart3 className="w-4 h-4" />}

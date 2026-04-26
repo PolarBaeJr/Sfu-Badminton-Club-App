@@ -168,7 +168,7 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
                     Match #{m.match_number ?? '?'} — {m.round_name ?? `Round ${m.round_number}`}
                     {scoreStr && <span className="text-[var(--text-muted)] ml-2">({scoreStr})</span>}
                   </div>
-                  <Button size="sm" variant="ghost" onClick={() => setUndoConfirmId(m.id)} aria-label={`Undo match ${m.match_number ?? ''} result`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
+                  <Button size="sm" variant="ghost" onClick={() => setUndoConfirmId(m.id)} aria-label={`Undo match ${m.match_number ?? ''} result`} className="focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none">
                     <Undo2 className="w-3.5 h-3.5 mr-1" /> Undo
                   </Button>
                 </div>

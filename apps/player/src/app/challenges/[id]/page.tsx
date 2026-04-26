@@ -71,8 +71,8 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
           {/* Header band */}
           <div className="px-5 pt-5 pb-4 flex items-center justify-between gap-3 border-b border-[var(--border)]">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-xl bg-[var(--color-accent)]/10 flex items-center justify-center shrink-0 glow-red">
-                <Swords className="w-5 h-5 text-[var(--color-accent)]" />
+              <div className="w-10 h-10 rounded-xl bg-[var(--ds-accent)]/10 flex items-center justify-center shrink-0 glow-red">
+                <Swords className="w-5 h-5 text-[var(--ds-accent)]" />
               </div>
               <h1 className="display-md truncate">Challenge Detail</h1>
             </div>
@@ -85,7 +85,7 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
             {/* Meta Grid */}
             <div className="grid grid-cols-2 gap-3 reveal reveal-1">
               {[
-                { icon: Swords, label: 'Type',    value: challenge.type,                                                                              chipClass: 'text-[var(--color-accent)]' },
+                { icon: Swords, label: 'Type',    value: challenge.type,                                                                              chipClass: 'text-[var(--ds-accent)]' },
                 { icon: Trophy, label: 'Format',  value: MATCH_FORMAT_LABELS[challenge.format as keyof typeof MATCH_FORMAT_LABELS],                   chipClass: 'text-[var(--color-gold)]' },
                 { icon: Zap,    label: 'Rated',   value: challenge.rated_flag ? 'Rated' : 'Casual',                                                   chipClass: challenge.rated_flag ? 'text-[var(--color-gold)]' : 'text-[var(--text-muted)]' },
                 { icon: Clock,  label: 'Created', value: formatRelativeTime(challenge.created_at),                                                    chipClass: 'text-[var(--text-secondary)]' },
@@ -111,7 +111,7 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
             {/* Teams */}
             <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 reveal reveal-3">
               {[
-                { label: 'Team A', players: sideA, accentClass: 'text-[var(--color-accent)]', borderClass: 'border-[var(--color-accent)]/20' },
+                { label: 'Team A', players: sideA, accentClass: 'text-[var(--ds-accent)]', borderClass: 'border-[var(--ds-accent)]/20' },
                 { label: 'Team B', players: sideB, accentClass: 'text-[var(--color-gold)]',   borderClass: 'border-[var(--color-gold)]/20' },
               ].map((team) => (
                 <div key={team.label} className={`card-surface rounded-xl p-4 border ${team.borderClass}`}>
@@ -167,7 +167,7 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
                   {match.match_participants?.map((mp: Record<string, unknown>) => (
                     <div key={mp.id as string} className="flex items-center justify-between gap-2">
                       <span className="text-sm text-[var(--text-secondary)] truncate">{(mp.player as Record<string, unknown>)?.full_name as string}</span>
-                      <span className={`nums text-sm font-bold shrink-0 ${(mp.rating_delta as number ?? 0) >= 0 ? 'text-[var(--color-success)]' : 'text-[var(--color-accent)]'}`}>
+                      <span className={`nums text-sm font-bold shrink-0 ${(mp.rating_delta as number ?? 0) >= 0 ? 'text-[var(--color-success)]' : 'text-[var(--ds-accent)]'}`}>
                         {mp.rating_delta !== null ? `${(mp.rating_delta as number) >= 0 ? '+' : ''}${mp.rating_delta}` : 'pending'}
                       </span>
                     </div>

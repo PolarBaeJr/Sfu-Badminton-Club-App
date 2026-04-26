@@ -25,8 +25,8 @@ export default async function WalkoversPage() {
     <div className="space-y-6">
       {/* Page Header */}
       <div className="flex items-center gap-3">
-        <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--color-accent)]/10">
-          <Clock className="w-5 h-5 text-[var(--color-accent)]" />
+        <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--ds-accent)]/10">
+          <Clock className="w-5 h-5 text-[var(--ds-accent)]" />
         </div>
         <div>
           <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">WALKOVERS</h1>
@@ -89,7 +89,7 @@ export default async function WalkoversPage() {
                 {/* Admin Notes */}
                 {w.admin_notes && (
                   <div className="mt-1 p-3 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border)] flex items-start gap-2">
-                    <MessageSquare className="w-3.5 h-3.5 text-[var(--color-accent)] flex-shrink-0 mt-0.5" />
+                    <MessageSquare className="w-3.5 h-3.5 text-[var(--ds-accent)] flex-shrink-0 mt-0.5" />
                     <span className="text-sm text-[var(--text-primary)]">{w.admin_notes}</span>
                   </div>
                 )}

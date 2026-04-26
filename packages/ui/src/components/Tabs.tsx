@@ -19,7 +19,7 @@ export function Tabs({ tabs, activeTab, onChange }: TabsProps) {
           className={cn(
             'px-4 min-h-[44px] text-sm rounded-md transition-colors whitespace-nowrap flex items-center gap-1.5',
             activeTab === tab.id
-              ? 'bg-[var(--color-accent)] text-[var(--text-primary)]'
+              ? 'bg-[var(--ds-accent)] text-[var(--text-primary)]'
               : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-hover)]'
           )}
         >

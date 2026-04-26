@@ -61,12 +61,12 @@ export default async function MyStatsPage() {
     <div className="space-y-6">
       <FadeIn>
         <div className="flex items-center gap-3 reveal reveal-1">
-          <div className="w-10 h-10 rounded-xl bg-[var(--color-accent)]/10 flex items-center justify-center">
-            <BarChart3 className="w-5 h-5 text-court-red" />
+          <div className="w-10 h-10 rounded-md bg-[var(--ds-accent-dim)] flex items-center justify-center">
+            <BarChart3 className="w-5 h-5 text-[var(--ds-accent)]" />
           </div>
           <div>
             <p className="eyebrow">Performance</p>
-            <h1 className="display-lg text-shuttle-white">My Stats</h1>
+            <h1 className="ds-display text-3xl font-semibold tracking-tight text-[var(--text-primary)]">My Stats</h1>
           </div>
         </div>
       </FadeIn>
@@ -77,16 +77,16 @@ export default async function MyStatsPage() {
           <FadeIn delay={0.05}>
             <StaggerContainer className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {[
-                { icon: Target, color: 'var(--color-accent)', label: 'Singles Elo', value: r.singles_elo, sub: r.singles_provisional ? 'Provisional' : `K=${r.singles_k_factor}`, gradient: 'gradient-text-red' },
-                { icon: Swords, color: 'var(--color-gold)', label: 'Doubles Elo', value: r.doubles_elo, sub: r.doubles_provisional ? 'Provisional' : `K=${r.doubles_k_factor}`, gradient: 'gradient-text-gold' },
-                { icon: TrendingUp, color: 'var(--color-accent)', label: 'Singles Record', value: `${r.singles_wins}W-${r.singles_losses}L`, sub: getWinRate(r.singles_wins, r.singles_losses), gradient: '' },
-                { icon: Users, color: 'var(--color-gold)', label: 'Doubles Record', value: `${r.doubles_wins}W-${r.doubles_losses}L`, sub: getWinRate(r.doubles_wins, r.doubles_losses), gradient: '' },
+                { icon: Target, color: 'var(--ds-accent)', label: 'Singles Elo', value: r.singles_elo, sub: r.singles_provisional ? 'Provisional' : `K=${r.singles_k_factor}` },
+                { icon: Swords, color: 'var(--color-gold)', label: 'Doubles Elo', value: r.doubles_elo, sub: r.doubles_provisional ? 'Provisional' : `K=${r.doubles_k_factor}` },
+                { icon: TrendingUp, color: 'var(--ds-accent)', label: 'Singles Record', value: `${r.singles_wins}W-${r.singles_losses}L`, sub: getWinRate(r.singles_wins, r.singles_losses) },
+                { icon: Users, color: 'var(--color-gold)', label: 'Doubles Record', value: `${r.doubles_wins}W-${r.doubles_losses}L`, sub: getWinRate(r.doubles_wins, r.doubles_losses) },
               ].map((stat) => (
                 <StaggerItem key={stat.label}>
-                  <div className="card-surface card-interactive p-4">
+                  <div className="card-surface p-5 transition-colors duration-150 hover:border-[color-mix(in_srgb,var(--ds-accent)_30%,transparent)]">
                     <p className="eyebrow mb-2">{stat.label}</p>
-                    <p className={`display-md nums ${stat.gradient || 'text-shuttle-white'}`}>{stat.value}</p>
-                    <p className="text-xs text-[var(--text-muted)] mt-1.5">
+                    <p className="ds-mono text-2xl font-semibold leading-none" style={{ color: stat.color }}>{stat.value}</p>
+                    <p className="text-xs text-[var(--text-muted)] mt-2">
                       {stat.sub?.includes('Provisional') ? <span className="chip chip-gold">{stat.sub}</span> : stat.sub}
                     </p>
                   </div>
@@ -99,19 +99,19 @@ export default async function MyStatsPage() {
           <FadeIn delay={0.1}>
             <StaggerContainer className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {[
-                { icon: Flame, color: 'var(--color-accent)', label: 'S. Streak', value: getStreakDisplay(r.current_singles_streak), sub: `Best: ${r.best_singles_streak}` },
+                { icon: Flame, color: 'var(--ds-accent)', label: 'S. Streak', value: getStreakDisplay(r.current_singles_streak), sub: `Best: ${r.best_singles_streak}` },
                 { icon: Flame, color: 'var(--color-warning)', label: 'D. Streak', value: getStreakDisplay(r.current_doubles_streak), sub: `Best: ${r.best_doubles_streak}` },
-                { icon: Activity, color: 'var(--color-accent)', label: 'S. Point Diff', value: getPointDifferential(r.singles_points_scored, r.singles_points_allowed), sub: null },
+                { icon: Activity, color: 'var(--ds-accent)', label: 'S. Point Diff', value: getPointDifferential(r.singles_points_scored, r.singles_points_allowed), sub: null },
                 { icon: Activity, color: 'var(--color-gold)', label: 'D. Point Diff', value: getPointDifferential(r.doubles_points_scored, r.doubles_points_allowed), sub: null },
                 { icon: Zap, color: 'var(--text-secondary)', label: 'S. Games W/L', value: `${r.singles_games_won}-${r.singles_games_lost}`, sub: null },
                 { icon: Zap, color: 'var(--text-secondary)', label: 'D. Games W/L', value: `${r.doubles_games_won}-${r.doubles_games_lost}`, sub: null },
                 { icon: Trophy, color: 'var(--color-gold)', label: 'Total Matches', value: r.singles_matches_played + r.doubles_matches_played, sub: null },
-                { icon: Shield, color: 'var(--color-accent)', label: 'Reliability', value: `${reliability?.no_shows ?? 0} no-shows`, sub: null },
+                { icon: Shield, color: 'var(--ds-accent)', label: 'Reliability', value: `${reliability?.no_shows ?? 0} no-shows`, sub: null },
               ].map((stat) => (
                 <StaggerItem key={stat.label}>
                   <div className="card-surface p-4">
                     <p className="eyebrow mb-2">{stat.label}</p>
-                    <p className="display-md text-shuttle-white nums">{stat.value}</p>
+                    <p className="ds-mono text-xl font-semibold text-[var(--text-primary)]">{stat.value}</p>
                     {stat.sub && <p className="text-xs text-[var(--text-muted)] mt-1">{stat.sub}</p>}
                   </div>
                 </StaggerItem>
@@ -143,9 +143,9 @@ export default async function MyStatsPage() {
                       <span className="chip">{h.match_type}</span>
                     </div>
                     <span className="font-mono text-sm font-bold nums">
-                      <span className="text-emerald-400">{wins}W</span>
+                      <span className="text-[var(--color-success)]">{wins}W</span>
                       <span className="text-[var(--text-dim)] mx-1">-</span>
-                      <span className="text-[var(--color-accent)]">{losses}L</span>
+                      <span className="text-[var(--color-danger)]">{losses}L</span>
                     </span>
                   </div>
                 );
@@ -172,9 +172,9 @@ export default async function MyStatsPage() {
                   <span className="text-sm text-shuttle-white font-medium">{partner?.full_name}</span>
                   <div className="flex items-center gap-3">
                     <span className="font-mono text-sm nums">
-                      <span className="text-emerald-400">{p.wins}W</span>
+                      <span className="text-[var(--color-success)]">{p.wins}W</span>
                       <span className="text-[var(--text-dim)] mx-1">-</span>
-                      <span className="text-[var(--color-accent)]">{p.losses}L</span>
+                      <span className="text-[var(--color-danger)]">{p.losses}L</span>
                     </span>
                     <span className="chip chip-gold nums">{Math.round(p.win_rate * 100)}%</span>
                   </div>
@@ -201,18 +201,18 @@ export default async function MyStatsPage() {
               const isWin = mp.win_flag === true;
               const isLoss = mp.win_flag === false;
               return (
-                <div key={mp.id} className="flex items-center justify-between p-3 bg-white/[0.03] rounded-lg border border-white/[0.04]">
+                <div key={mp.id} className="flex items-center justify-between p-3 bg-white/[0.03] rounded-md border border-[var(--border)]">
                   <div className="flex items-center gap-3">
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black ${
-                      isWin ? 'bg-emerald-500/15 text-emerald-400' : isLoss ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]' : 'bg-white/[0.06] text-[var(--text-muted)]'
+                    <div className={`w-8 h-8 rounded-md flex items-center justify-center text-xs font-bold ${
+                      isWin ? 'bg-[var(--color-success)]/15 text-[var(--color-success)]' : isLoss ? 'bg-[var(--color-danger)]/15 text-[var(--color-danger)]' : 'bg-white/[0.06] text-[var(--text-muted)]'
                     }`}>
                       {isWin ? 'W' : isLoss ? 'L' : '?'}
                     </div>
-                    <span className="text-sm font-mono text-shuttle-white font-medium nums">{m.score_summary as string || '-'}</span>
+                    <span className="ds-mono text-sm text-shuttle-white font-medium">{m.score_summary as string || '-'}</span>
                     <span className="chip">{m.match_type as string}</span>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className={`font-mono text-sm font-bold nums ${(mp.rating_delta ?? 0) >= 0 ? 'text-emerald-400' : 'text-[var(--color-accent)]'}`}>
+                    <span className={`ds-mono text-sm font-bold ${(mp.rating_delta ?? 0) >= 0 ? 'text-[var(--color-success)]' : 'text-[var(--color-danger)]'}`}>
                       {mp.rating_delta !== null ? `${(mp.rating_delta ?? 0) >= 0 ? '+' : ''}${mp.rating_delta}` : ''}
                     </span>
                     <span className="text-xs text-[var(--text-dim)]">{m.played_at ? formatDate(m.played_at as string) : ''}</span>

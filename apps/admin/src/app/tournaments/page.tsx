@@ -37,7 +37,7 @@ export default async function TournamentsPage() {
             width: '2.5rem',
             height: '2.5rem',
             borderRadius: '0.75rem',
-            background: 'var(--color-accent)',
+            background: 'var(--ds-accent)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',

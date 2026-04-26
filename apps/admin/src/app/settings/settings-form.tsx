@@ -97,14 +97,14 @@ export function SettingsForm({ settings }: { settings: PlatformSetting[] }) {
         const isEdited = s.key in edits;
 
         return (
-          <Card key={s.key} className={isEdited ? 'border-[#E94560]/50' : ''}>
+          <Card key={s.key} className={isEdited ? 'border-[var(--ds-accent)]/50' : ''}>
             <div className="flex items-start justify-between mb-2">
               <div>
                 <h3 className="text-white font-medium">{SETTING_LABELS[s.key] || s.key}</h3>
                 <p className="text-xs text-gray-500">{SETTING_DESCRIPTIONS[s.key] || ''}</p>
               </div>
               {isEdited && (
-                <span className="text-xs text-[#E94560]">Modified</span>
+                <span className="text-xs text-[var(--ds-accent)]">Modified</span>
               )}
             </div>
             <Textarea

@@ -105,7 +105,7 @@ export default async function FeedPage() {
               <p className="display-md text-shuttle-white nums">
                 <span className="text-emerald-400">{r.singles_wins ?? 0}</span>
                 <span className="text-[var(--text-dim)] font-normal mx-1">/</span>
-                <span className="text-[var(--color-accent)]">{r.singles_losses ?? 0}</span>
+                <span className="text-[var(--ds-accent)]">{r.singles_losses ?? 0}</span>
               </p>
             </div>
 
@@ -115,7 +115,7 @@ export default async function FeedPage() {
               <p className="display-md text-shuttle-white nums">
                 <span className="text-emerald-400">{r.doubles_wins ?? 0}</span>
                 <span className="text-[var(--text-dim)] font-normal mx-1">/</span>
-                <span className="text-[var(--color-accent)]">{r.doubles_losses ?? 0}</span>
+                <span className="text-[var(--ds-accent)]">{r.doubles_losses ?? 0}</span>
               </p>
             </div>
           </div>
@@ -177,7 +177,7 @@ export default async function FeedPage() {
               <Trophy className="w-4 h-4 text-gold" />
               <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>Recent Matches</h2>
             </div>
-            <Link href="/my-stats" className="text-xs text-court-red hover:text-[var(--color-accent-hover)] font-semibold transition-colors">
+            <Link href="/my-stats" className="text-xs text-[var(--ds-accent)] hover:text-[var(--ds-accent)]/80 font-semibold transition-colors">
               All stats →
             </Link>
           </div>
@@ -198,7 +198,7 @@ export default async function FeedPage() {
                         isWin
                           ? 'bg-emerald-500/15 text-emerald-400'
                           : isLoss
-                            ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]'
+                            ? 'bg-[var(--ds-accent)]/15 text-[var(--ds-accent)]'
                             : 'bg-[var(--on-surface-med)] text-[var(--text-muted)]'
                       }`}>
                         {isWin ? 'W' : isLoss ? 'L' : '?'}
@@ -227,7 +227,7 @@ export default async function FeedPage() {
       <FadeIn delay={0.25}>
         <div className="flex gap-3">
           <Link href="/challenges/new" className="flex-1 press">
-            <button type="button" className="w-full h-12 rounded-xl gradient-court text-white font-bold text-sm tracking-wide flex items-center justify-center gap-2 glow-red hover:opacity-90 transition-opacity">
+            <button type="button" className="w-full h-12 rounded-xl gradient-court text-[#0A0A0A] font-bold text-sm tracking-wide flex items-center justify-center gap-2 glow-red hover:opacity-90 transition-opacity">
               <Swords className="w-4 h-4" />
               Create Challenge
             </button>

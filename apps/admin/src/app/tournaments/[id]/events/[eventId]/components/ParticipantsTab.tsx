@@ -99,7 +99,7 @@ function SeedCell({
             if (e.key === 'Escape') setEditing(false);
           }}
           aria-label="Seed number"
-          className={`w-12 text-center text-sm font-mono bg-[var(--bg-elevated)] border rounded px-1 py-0.5 outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 ${error ? 'border-[var(--color-danger)]' : 'border-[var(--color-accent)]'}`}
+          className={`w-12 text-center text-sm font-mono bg-[var(--bg-elevated)] border rounded px-1 py-0.5 outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 ${error ? 'border-[var(--color-danger)]' : 'border-[var(--ds-accent)]'}`}
           autoFocus
         />
         {error && <span className="text-[10px] text-[var(--color-danger)]">{error}</span>}
@@ -113,7 +113,7 @@ function SeedCell({
       onClick={startEdit}
       disabled={!canEdit || saving}
       aria-label={`Edit seed${seedNumber != null ? ` ${seedNumber}` : ''}`}
-      className={`group flex items-center gap-1 text-sm font-mono text-[var(--text-muted)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none rounded ${canEdit ? 'hover:text-[var(--text-primary)] cursor-pointer' : ''}`}
+      className={`group flex items-center gap-1 text-sm font-mono text-[var(--text-muted)] focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none rounded ${canEdit ? 'hover:text-[var(--text-primary)] cursor-pointer' : ''}`}
     >
       {saving ? (
         <span className="opacity-50">…</span>
@@ -242,7 +242,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
         <div className="flex gap-2">
           {canModify && !drawLocked && (
             <>
-              <Button size="sm" variant="ghost" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={async () => {
+              <Button size="sm" variant="ghost" className="focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none" onClick={async () => {
                 setLoading(true);
                 try {
                   await clearSeeds(event.id as string);
@@ -255,10 +255,10 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               }} loading={loading}>
                 <XCircle className="w-3.5 h-3.5 mr-1" /> Clear Seeds
               </Button>
-              <Button size="sm" variant="ghost" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={handleAutoSeed} loading={loading}>
+              <Button size="sm" variant="ghost" className="focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none" onClick={handleAutoSeed} loading={loading}>
                 <ArrowUpDown className="w-3.5 h-3.5 mr-1" /> Auto-Seed
               </Button>
-              <Button size="sm" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={() => setAddOpen(true)}>
+              <Button size="sm" className="focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none" onClick={() => setAddOpen(true)}>
                 <Plus className="w-3.5 h-3.5 mr-1" /> Add {isDoubles ? 'Pair' : 'Player'}
               </Button>
             </>
@@ -326,7 +326,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                   </td>
                   {canModify && !drawLocked && (
                     <td className="px-4 py-3 text-right">
-                      <Button size="sm" variant="ghost" onClick={() => handleRemove(pair.id)} loading={actionLoading === pair.id} aria-label={`Remove pair ${pair.pair_name ?? ''}`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
+                      <Button size="sm" variant="ghost" onClick={() => handleRemove(pair.id)} loading={actionLoading === pair.id} aria-label={`Remove pair ${pair.pair_name ?? ''}`} className="focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none">
                         <Trash2 className="w-3.5 h-3.5 text-[var(--color-danger)]" />
                       </Button>
                     </td>
@@ -366,7 +366,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                     </td>
                     {canModify && !drawLocked && (
                       <td className="px-4 py-3 text-right">
-                        <Button size="sm" variant="ghost" onClick={() => handleRemove(p.id)} loading={actionLoading === p.id} aria-label={`Remove participant ${player?.full_name ?? ''}`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
+                        <Button size="sm" variant="ghost" onClick={() => handleRemove(p.id)} loading={actionLoading === p.id} aria-label={`Remove participant ${player?.full_name ?? ''}`} className="focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none">
                           <Trash2 className="w-3.5 h-3.5 text-[var(--color-danger)]" />
                         </Button>
                       </td>

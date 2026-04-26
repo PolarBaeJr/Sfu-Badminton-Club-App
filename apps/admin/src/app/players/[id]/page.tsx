@@ -35,7 +35,7 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
   return (
     <div className="space-y-6">
       {/* Back link */}
-      <Link href="/players" className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--color-accent)] transition-colors">
+      <Link href="/players" className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--ds-accent)] transition-colors">
         <ArrowLeft className="w-4 h-4" />
         Back to Players
       </Link>
@@ -63,7 +63,7 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-4 gap-4">
           <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
             <div className="flex items-center gap-2 mb-2">
-              <Target className="w-4 h-4 text-[var(--color-accent)]" />
+              <Target className="w-4 h-4 text-[var(--ds-accent)]" />
               <span className="text-xs text-[var(--text-muted)] uppercase">Singles Elo</span>
             </div>
             <p className="text-2xl font-bold font-mono text-[var(--text-primary)]">{r.singles_elo}</p>

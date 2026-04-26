@@ -7,6 +7,7 @@ import { OfflineBanner } from '@/components/OfflineBanner';
 import { PostHogProvider } from '@/components/posthog-provider';
 import { PostHogIdentify } from '@/components/posthog-identify';
 import { SentryUserInit } from '@/components/sentry-user-init';
+import { QrRedirectHandler } from '@/components/qr-redirect-handler';
 import { createServerSupabaseClient } from '@/lib/supabase-server';
 import { DM_Sans } from "next/font/google";
 import { cn } from "@/lib/utils";
@@ -26,6 +27,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   let singlesElo: number | null = null;
   let doublesElo: number | null = null;
   let unreadCount = 0;
+  let unreadAnnouncements = 0;
 
   try {
     const supabase = await createServerSupabaseClient();
@@ -44,12 +46,28 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       singlesElo = (ratings as Record<string, unknown>)?.singles_elo as number ?? null;
       doublesElo = (ratings as Record<string, unknown>)?.doubles_elo as number ?? null;
 
-      const { count } = await supabase
-        .from('notifications')
-        .select('*', { count: 'exact', head: true })
-        .eq('player_id', player?.id ?? '')
-        .eq('read_flag', false);
-      unreadCount = count ?? 0;
+      if (player?.id) {
+        // Run notifications + announcement-read counts in parallel — was 3
+        // sequential round-trips before (auth → player → notifications →
+        // announcements → reads). Now: 1 auth → 1 player → 3 parallel counts.
+        const [notifRes, annRes, readsRes] = await Promise.all([
+          supabase
+            .from('notifications')
+            .select('*', { count: 'exact', head: true })
+            .eq('player_id', player.id)
+            .eq('read_flag', false),
+          supabase
+            .from('announcements')
+            .select('*', { count: 'exact', head: true })
+            .eq('status', 'published'),
+          supabase
+            .from('announcement_reads')
+            .select('*', { count: 'exact', head: true })
+            .eq('player_id', player.id),
+        ]);
+        unreadCount = notifRes.count ?? 0;
+        unreadAnnouncements = Math.max(0, (annRes.count ?? 0) - (readsRes.count ?? 0));
+      }
     }
   } catch {
     // Not authenticated
@@ -75,6 +93,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <PostHogProvider>
           <ToastProvider>
             <SentryUserInit playerId={playerId} />
+            <QrRedirectHandler isAuthed={!!playerId} />
             <PostHogIdentify
               playerId={playerId}
               playerStatus={playerStatus}
@@ -86,12 +105,16 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <main className="max-w-7xl mx-auto px-4 py-6 pb-24 md:pb-6">
               {children}
             </main>
-            <BottomNav />
+            <BottomNav unreadAnnouncements={unreadAnnouncements} />
           </ToastProvider>
         </PostHogProvider>
         <script dangerouslySetInnerHTML={{ __html: `
           if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/sw.js').catch(function() {});
+            // Defer SW registration off the critical path so it doesn't block
+            // hydration on slow mobile networks.
+            window.addEventListener('load', function() {
+              navigator.serviceWorker.register('/sw.js').catch(function() {});
+            });
           }
         `}} />
       </body>

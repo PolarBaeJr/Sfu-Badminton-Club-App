@@ -8,6 +8,7 @@ import type {
   DisputeResolveInput,
 } from '@badminton/shared';
 import { toClientError } from '@badminton/shared';
+import { generateQrToken } from '@badminton/shared/qr-token';
 
 async function getAdminPlayer() {
   return getAuthenticatedAdmin();
@@ -590,22 +591,12 @@ export async function addTournamentParticipant(tournamentId: string, playerId: s
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
-  // Try new table name first, fall back to old if migration hasn't run
-  let error;
-  const insertData = {
+  const { error } = await adminClient.from('tournament_participants').insert({
     tournament_id: tournamentId,
     player_id: playerId,
     partner_id: partnerId || null,
     seed,
-  };
-  const result = await adminClient.from('legacy_tournament_participants').insert(insertData);
-  if (result.error) {
-    // Fallback: migration not yet run
-    const fallback = await adminClient.from('tournament_participants').insert(insertData);
-    error = fallback.error;
-  } else {
-    error = result.error;
-  }
+  });
 
   if (error) {
     if (error.code === '23505') throw new Error('Player already in tournament');
@@ -632,12 +623,8 @@ export async function removeTournamentParticipant(participantId: string, tournam
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
-  // Try new table name first, fall back to old if migration hasn't run
-  const { error: err1 } = await adminClient.from('legacy_tournament_participants').delete().eq('id', participantId);
-  if (err1) {
-    const { error: err2 } = await adminClient.from('tournament_participants').delete().eq('id', participantId);
-    if (err2) throw new Error(err2.message);
-  }
+  const { error } = await adminClient.from('tournament_participants').delete().eq('id', participantId);
+  if (error) throw toClientError(error, 'admin.action');
 
   const { error: auditError } = await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
@@ -1198,6 +1185,122 @@ export async function deleteAnnouncement(announcementId: string) {
   }
 
   revalidatePath('/announcements');
+}
+
+// ============================================================
+// QR Code — signed result-submission links
+// ============================================================
+
+const QR_EXPIRES_IN_DAYS = 14;
+
+export type GeneratedQr = {
+  url: string;
+  token: string;
+  expiresAt: string;
+  players: { full_name: string; team_side: 'a' | 'b' }[];
+  format: string;
+  matchType: string;
+};
+
+export async function generateQrForChallenge(challengeId: string): Promise<GeneratedQr> {
+  const admin = await getAdminPlayer();
+  const adminClient = createAdminClient();
+
+  const { data: challenge, error: fetchErr } = await adminClient
+    .from('challenges')
+    .select('id, status, type, format, challenge_participants(team_side, player:players(full_name))')
+    .eq('id', challengeId)
+    .single();
+
+  if (fetchErr || !challenge) throw new Error('Challenge not found');
+  if (challenge.status !== 'accepted') {
+    throw new Error('QR codes can only be generated for accepted challenges');
+  }
+
+  const { data: existingMatch } = await adminClient
+    .from('matches')
+    .select('id')
+    .eq('challenge_id', challengeId)
+    .maybeSingle();
+  if (existingMatch) {
+    throw new Error('This challenge already has a submitted result');
+  }
+
+  const token = generateQrToken(challengeId, QR_EXPIRES_IN_DAYS);
+  const expiresAt = new Date(Date.now() + QR_EXPIRES_IN_DAYS * 86400 * 1000).toISOString();
+
+  const { error: updateErr } = await adminClient
+    .from('challenges')
+    .update({
+      qr_token: token,
+      qr_generated_at: new Date().toISOString(),
+      qr_expires_at: expiresAt,
+    })
+    .eq('id', challengeId);
+  if (updateErr) throw toClientError(updateErr, 'admin.qr.generate');
+
+  await adminClient.from('audit_logs').insert({
+    actor_id: admin.id,
+    action_type: 'challenge_qr_generated',
+    target_type: 'challenge',
+    target_id: challengeId,
+    new_value: { expires_at: expiresAt },
+  });
+
+  const playerUrl = process.env.NEXT_PUBLIC_PLAYER_URL || 'http://localhost:3000';
+  const url = `${playerUrl}/submit?cid=${encodeURIComponent(challengeId)}&tok=${encodeURIComponent(token)}`;
+
+  const players = ((challenge.challenge_participants as unknown as Array<{
+    team_side: 'a' | 'b';
+    player: { full_name: string } | null;
+  }>) || []).map((p) => ({
+    team_side: p.team_side,
+    full_name: p.player?.full_name ?? 'Unknown',
+  }));
+
+  revalidatePath('/challenges');
+
+  return {
+    url,
+    token,
+    expiresAt,
+    players,
+    format: challenge.format,
+    matchType: challenge.type,
+  };
+}
+
+export async function getExistingQrForChallenge(challengeId: string): Promise<GeneratedQr | null> {
+  await getAdminPlayer();
+  const adminClient = createAdminClient();
+
+  const { data: challenge } = await adminClient
+    .from('challenges')
+    .select('id, status, type, format, qr_token, qr_expires_at, challenge_participants(team_side, player:players(full_name))')
+    .eq('id', challengeId)
+    .single();
+
+  if (!challenge || !challenge.qr_token || !challenge.qr_expires_at) return null;
+
+  const playerUrl = process.env.NEXT_PUBLIC_PLAYER_URL || 'http://localhost:3000';
+  const url = `${playerUrl}/submit?cid=${encodeURIComponent(challengeId)}&tok=${encodeURIComponent(challenge.qr_token)}`;
+
+  const players = ((challenge.challenge_participants as unknown as Array<{
+    team_side: 'a' | 'b';
+    player: { full_name: string } | null;
+  }>) || []).map((p) => ({
+    team_side: p.team_side,
+    full_name: p.player?.full_name ?? 'Unknown',
+  }));
+
+  return {
+    url,
+    token: challenge.qr_token,
+    expiresAt: challenge.qr_expires_at,
+    players,
+    format: challenge.format,
+    matchType: challenge.type,
+  };
 }
 
 export async function forceExpireChallenge(challengeId: string, reason: string) {

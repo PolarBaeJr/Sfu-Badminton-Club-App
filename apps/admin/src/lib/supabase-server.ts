@@ -1,8 +1,9 @@
 import 'server-only';
+import { cache } from 'react';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
-import * as Sentry from '@sentry/nextjs';
+import { setUser as sentrySetUser } from '@sentry/nextjs';
 
 export async function createServerSupabaseClient() {
   const cookieStore = await cookies();
@@ -37,7 +38,10 @@ export function createAdminClient() {
   );
 }
 
-export async function getAuthenticatedAdmin() {
+// Wrapped in `cache()` so server actions / pages that share a render dedupe
+// the auth.getUser + admin lookup pair to one round-trip per request.
+// Selecting only the columns actually used by callers (id, role, email, full_name).
+export const getAuthenticatedAdmin = cache(async () => {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
@@ -45,13 +49,19 @@ export async function getAuthenticatedAdmin() {
   const adminClient = createAdminClient();
   const { data: player } = await adminClient
     .from('players')
-    .select('*')
+    .select('id, role, email, full_name, user_id')
     .eq('user_id', user.id)
     .single();
 
   if (!player) throw new Error('No player record found');
   if (player.role !== 'admin') throw new Error('Admin access required');
 
-  Sentry.setUser({ id: player.id });
+  sentrySetUser({ id: player.id });
   return player;
-}
+});
+
+export const getCurrentAdminUser = cache(async () => {
+  const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  return user;
+});

@@ -44,7 +44,7 @@ export default function LoginPage() {
     <div
       className="min-h-screen flex items-center justify-center relative overflow-hidden"
       style={{
-        background: 'radial-gradient(ellipse at top, rgba(233,69,96,0.08) 0%, transparent 50%), radial-gradient(ellipse at bottom right, rgba(15,52,96,0.3) 0%, transparent 50%), var(--bg-card)',
+        background: 'radial-gradient(ellipse at top, rgba(0,229,160,0.08) 0%, transparent 50%), radial-gradient(ellipse at bottom right, rgba(15,52,96,0.3) 0%, transparent 50%), var(--bg-card)',
       }}
     >
       {/* Subtle grid pattern overlay */}
@@ -61,24 +61,24 @@ export default function LoginPage() {
         {/* Glow effect behind card */}
         <div
           className="absolute -inset-4 rounded-3xl opacity-20 blur-2xl"
-          style={{ background: 'linear-gradient(135deg, var(--color-accent), transparent 60%)' }}
+          style={{ background: 'linear-gradient(135deg, var(--ds-accent), transparent 60%)' }}
         />
 
         <div
           className="relative w-full overflow-hidden rounded-xl bg-[var(--bg-card)] p-6"
           style={{
-            border: '1px solid rgba(233,69,96,0.15)',
-            boxShadow: '0 0 40px rgba(233,69,96,0.06), 0 8px 32px rgba(0,0,0,0.3)',
+            border: '1px solid rgba(0,229,160,0.15)',
+            boxShadow: '0 0 40px rgba(0,229,160,0.06), 0 8px 32px rgba(0,0,0,0.3)',
           }}
         >
           {/* Header */}
           <div className="text-center mb-8 pt-2">
-            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl mb-5" style={{ background: 'rgba(233,69,96,0.12)', border: '1px solid rgba(233,69,96,0.2)' }}>
-              <Shield className="w-7 h-7" style={{ color: 'var(--color-accent)' }} />
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl mb-5" style={{ background: 'rgba(0,229,160,0.12)', border: '1px solid rgba(0,229,160,0.2)' }}>
+              <Shield className="w-7 h-7" style={{ color: 'var(--ds-accent)' }} />
             </div>
             <h1
               className="text-3xl font-bold font-display tracking-[0.2em] mb-1"
-              style={{ color: 'var(--color-accent)' }}
+              style={{ color: 'var(--ds-accent)' }}
             >
               SFU BADMINTON
             </h1>
@@ -111,8 +111,8 @@ export default function LoginPage() {
                   color: 'var(--text-primary)',
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = 'rgba(233,69,96,0.4)';
-                  e.currentTarget.style.boxShadow = '0 0 16px rgba(233,69,96,0.08)';
+                  e.currentTarget.style.borderColor = 'rgba(0,229,160,0.4)';
+                  e.currentTarget.style.boxShadow = '0 0 16px rgba(0,229,160,0.08)';
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.borderColor = 'var(--border)';
@@ -173,16 +173,16 @@ export default function LoginPage() {
                   disabled={loading}
                   className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-semibold text-sm transition-all duration-200 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                   style={{
-                    background: 'var(--color-accent)',
-                    color: '#ffffff',
-                    boxShadow: '0 4px 16px rgba(233,69,96,0.25)',
+                    background: 'var(--ds-accent)',
+                    color: '#0A0A0A',
+                    boxShadow: '0 4px 16px rgba(0,229,160,0.25)',
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.boxShadow = '0 4px 24px rgba(233,69,96,0.4)';
+                    e.currentTarget.style.boxShadow = '0 4px 24px rgba(0,229,160,0.4)';
                     e.currentTarget.style.transform = 'translateY(-1px)';
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.boxShadow = '0 4px 16px rgba(233,69,96,0.25)';
+                    e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,229,160,0.25)';
                     e.currentTarget.style.transform = 'translateY(0)';
                   }}
                 >

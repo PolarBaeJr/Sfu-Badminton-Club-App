@@ -31,7 +31,7 @@ export function TournamentStatusControls({ tournamentId, status }: Props) {
 
   if (status === 'draft') {
     return (
-      <Button onClick={() => handleStatusChange('active', 'activated')} loading={loading} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
+      <Button onClick={() => handleStatusChange('active', 'activated')} loading={loading} className="focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none">
         <Play className="w-4 h-4 mr-1.5" />
         Activate Tournament
       </Button>
@@ -40,7 +40,7 @@ export function TournamentStatusControls({ tournamentId, status }: Props) {
 
   if (status === 'active') {
     return (
-      <Button variant="ghost" onClick={() => handleStatusChange('completed', 'completed')} loading={loading} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
+      <Button variant="ghost" onClick={() => handleStatusChange('completed', 'completed')} loading={loading} className="focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none">
         <CheckCircle className="w-4 h-4 mr-1.5" />
         Mark Completed
       </Button>

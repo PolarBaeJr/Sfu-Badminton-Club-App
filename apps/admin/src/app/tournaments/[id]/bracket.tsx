@@ -162,7 +162,7 @@ export function TournamentBracket({ tournamentId, bracketSize, matches, particip
                           {!m.winner_side && status === 'active' && sideA.length > 0 && sideB.length > 0 && (
                             <button
                               onClick={() => openScoreDialog(m)}
-                              className="w-full text-center text-xs text-[var(--color-accent)] py-1 bg-[var(--bg-card)] hover:bg-[var(--border-hover)] transition-colors border-t border-[var(--border)]"
+                              className="w-full text-center text-xs text-[var(--ds-accent)] py-1 bg-[var(--bg-card)] hover:bg-[var(--border-hover)] transition-colors border-t border-[var(--border)]"
                             >
                               Enter Score
                             </button>
@@ -200,7 +200,7 @@ export function TournamentBracket({ tournamentId, bracketSize, matches, particip
                 return (
                   <div key={p.id} className="flex items-center justify-between p-2 bg-[var(--border-hover)] rounded-lg">
                     <div className="flex items-center gap-2">
-                      <span className="font-mono text-[var(--color-accent)] font-bold w-6">#{p.placement}</span>
+                      <span className="font-mono text-[var(--ds-accent)] font-bold w-6">#{p.placement}</span>
                       <span className="text-sm text-[var(--text-primary)]">{player?.full_name as string}</span>
                     </div>
                     <Badge variant={p.placement === 1 ? 'success' : 'neutral'}>{placementLabel}</Badge>

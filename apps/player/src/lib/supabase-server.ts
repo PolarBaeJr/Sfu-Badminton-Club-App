@@ -1,4 +1,5 @@
 import 'server-only';
+import { cache } from 'react';
 import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
@@ -39,7 +40,10 @@ export async function createServerSupabaseClient() {
   );
 }
 
-export async function getCurrentPlayer() {
+// Wrapped in `cache()` so multiple callers (layout + page + components) within
+// one request share a single auth.getUser + DB lookup instead of round-tripping
+// for each one.
+export const getCurrentPlayer = cache(async () => {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
@@ -51,4 +55,10 @@ export async function getCurrentPlayer() {
     .single();
 
   return player;
-}
+});
+
+export const getCurrentUser = cache(async () => {
+  const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  return user;
+});

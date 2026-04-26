@@ -94,7 +94,7 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                       aria-label={`Match ${m.match_number ?? ''}: ${getEntryName(aId)} vs ${getEntryName(bId)}${isCompleted ? `, winner: ${getEntryName(winnerId)}` : ''}`}
                       className={`rounded-lg border overflow-hidden transition-all ${
                         isReady && isLive
-                          ? 'border-[var(--color-accent)]/40 shadow-[0_0_8px_rgba(233,69,96,0.15)]'
+                          ? 'border-[var(--ds-accent)]/40 shadow-[0_0_8px_rgba(0,229,160,0.15)]'
                           : isBye
                           ? 'border-[var(--border)] opacity-50'
                           : 'border-[var(--border)]'
@@ -168,7 +168,7 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                         <button
                           onClick={() => setScoreMatch(m)}
                           aria-label={`Enter score for match ${m.match_number ?? ''}`}
-                          className="w-full text-center text-xs text-[var(--color-accent)] py-1.5 bg-[var(--bg-elevated)] hover:bg-[var(--color-accent)]/10 transition-colors border-t border-[var(--border)] font-medium focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+                          className="w-full text-center text-xs text-[var(--ds-accent)] py-1.5 bg-[var(--bg-elevated)] hover:bg-[var(--ds-accent)]/10 transition-colors border-t border-[var(--border)] font-medium focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none"
                         >
                           Enter Score
                         </button>

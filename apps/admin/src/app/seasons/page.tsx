@@ -18,8 +18,8 @@ export default async function SeasonsPage() {
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--color-accent)]/10">
-            <Medal className="w-5 h-5 text-[var(--color-accent)]" />
+          <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--ds-accent)]/10">
+            <Medal className="w-5 h-5 text-[var(--ds-accent)]" />
           </div>
           <div>
             <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">SEASONS</h1>
@@ -60,7 +60,7 @@ export default async function SeasonsPage() {
                   <tr
                     key={s.id}
                     className={`
-                      group transition-colors duration-150 hover:bg-[var(--color-accent)]/5
+                      group transition-colors duration-150 hover:bg-[var(--ds-accent)]/5
                       ${index !== seasons.length - 1 ? 'border-b border-[var(--border)]' : ''}
                     `}
                   >

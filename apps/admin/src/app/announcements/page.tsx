@@ -62,7 +62,7 @@ export default async function AnnouncementsPage() {
         <div className="flex items-center gap-3">
           <div
             className="flex items-center justify-center w-10 h-10 rounded-lg"
-            style={{ backgroundColor: 'var(--color-accent)', color: '#fff' }}
+            style={{ backgroundColor: 'var(--ds-accent)', color: '#fff' }}
           >
             <Megaphone size={20} />
           </div>
@@ -104,7 +104,7 @@ export default async function AnnouncementsPage() {
                     {announcement.pinned && (
                       <Pin
                         size={14}
-                        style={{ color: 'var(--color-accent)', flexShrink: 0 }}
+                        style={{ color: 'var(--ds-accent)', flexShrink: 0 }}
                       />
                     )}
                     <span

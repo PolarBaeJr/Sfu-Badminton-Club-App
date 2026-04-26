@@ -11,7 +11,8 @@ export default async function DisputesPage() {
   const { data: disputes } = await supabase
     .from('disputes')
     .select('*, opener:players!disputes_opened_by_fkey(full_name), match:matches(score_summary, match_type, format)')
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .limit(100);
 
   const openCount = disputes?.filter((d) => d.status === 'open').length ?? 0;
 

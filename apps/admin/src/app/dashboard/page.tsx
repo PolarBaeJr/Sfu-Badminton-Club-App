@@ -84,7 +84,7 @@ export default async function DashboardPage() {
               <h2 className="text-sm font-semibold text-[var(--text-primary)] uppercase tracking-wide">Pending Approvals</h2>
               <span className="text-xs bg-[var(--color-warning)]/10 text-[var(--color-warning)] px-2 py-0.5 rounded-full font-medium">{pendingPlayersList.length}</span>
             </div>
-            <Link href="/players?tab=attention" className="text-xs text-[var(--color-accent)] hover:underline flex items-center gap-1">
+            <Link href="/players?tab=attention" className="text-xs text-[var(--ds-accent)] hover:underline flex items-center gap-1">
               View All <ArrowUpRight className="w-3 h-3" />
             </Link>
           </div>
@@ -181,7 +181,7 @@ export default async function DashboardPage() {
               <Trophy className="w-4 h-4 text-[var(--text-muted)]" />
               <h2 className="text-sm font-semibold text-[var(--text-primary)] uppercase tracking-wide">Tournaments</h2>
             </div>
-            <Link href="/tournaments" className="text-xs text-[var(--color-accent)] hover:underline flex items-center gap-1">
+            <Link href="/tournaments" className="text-xs text-[var(--ds-accent)] hover:underline flex items-center gap-1">
               Manage <ArrowUpRight className="w-3 h-3" />
             </Link>
           </div>
@@ -198,7 +198,7 @@ export default async function DashboardPage() {
               <Swords className="w-4 h-4 text-[var(--text-muted)]" />
               <h2 className="text-sm font-semibold text-[var(--text-primary)] uppercase tracking-wide">Active Challenges</h2>
             </div>
-            <Link href="/challenges" className="text-xs text-[var(--color-accent)] hover:underline flex items-center gap-1">
+            <Link href="/challenges" className="text-xs text-[var(--ds-accent)] hover:underline flex items-center gap-1">
               View All <ArrowUpRight className="w-3 h-3" />
             </Link>
           </div>
@@ -216,7 +216,7 @@ export default async function DashboardPage() {
             <Trophy className="w-4 h-4 text-[var(--text-muted)]" />
             <h2 className="text-sm font-semibold text-[var(--text-primary)] uppercase tracking-wide">Recent Matches</h2>
           </div>
-          <Link href="/matches" className="text-xs text-[var(--color-accent)] hover:underline flex items-center gap-1">
+          <Link href="/matches" className="text-xs text-[var(--ds-accent)] hover:underline flex items-center gap-1">
             View All <ArrowUpRight className="w-3 h-3" />
           </Link>
         </div>

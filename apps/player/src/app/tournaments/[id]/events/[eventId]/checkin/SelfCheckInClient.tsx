@@ -60,8 +60,8 @@ export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registra
   if (eventStatus !== 'checkin') {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-5 text-center px-6 pb-28">
-        <div className="w-20 h-20 rounded-full bg-[var(--color-accent)]/15 flex items-center justify-center">
-          <XCircle className="w-10 h-10 text-[var(--color-accent)]" />
+        <div className="w-20 h-20 rounded-full bg-[var(--ds-accent)]/15 flex items-center justify-center">
+          <XCircle className="w-10 h-10 text-[var(--ds-accent)]" />
         </div>
         <div>
           <h1 className="display-md">Check-in Not Available</h1>
@@ -69,7 +69,7 @@ export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registra
         </div>
         <Link
           href={backLink}
-          className="press text-sm text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors min-h-[44px] flex items-center"
+          className="press text-sm text-[var(--ds-accent)] hover:text-[var(--ds-accent)]/80 transition-colors min-h-[44px] flex items-center"
         >
           Back to Event
         </Link>
@@ -89,7 +89,7 @@ export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registra
         </div>
         <Link
           href={backLink}
-          className="press text-sm text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors min-h-[44px] flex items-center"
+          className="press text-sm text-[var(--ds-accent)] hover:text-[var(--ds-accent)]/80 transition-colors min-h-[44px] flex items-center"
         >
           Back to Event
         </Link>
@@ -110,7 +110,7 @@ export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registra
         </div>
         <Link
           href={backLink}
-          className="press text-sm text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors min-h-[44px] flex items-center"
+          className="press text-sm text-[var(--ds-accent)] hover:text-[var(--ds-accent)]/80 transition-colors min-h-[44px] flex items-center"
         >
           View Event Details
         </Link>
@@ -120,8 +120,8 @@ export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registra
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-6 text-center px-6 pb-28">
-      <div className="w-24 h-24 rounded-full bg-[var(--color-accent)]/10 flex items-center justify-center glow-red">
-        <CheckCircle className="w-12 h-12 text-[var(--color-accent)]" />
+      <div className="w-24 h-24 rounded-full bg-[var(--ds-accent)]/10 flex items-center justify-center glow-red">
+        <CheckCircle className="w-12 h-12 text-[var(--ds-accent)]" />
       </div>
       <div>
         <p className="eyebrow mb-1">Ready?</p>

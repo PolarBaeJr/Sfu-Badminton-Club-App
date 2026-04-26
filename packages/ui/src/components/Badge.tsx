@@ -10,17 +10,27 @@ interface BadgeProps {
 }
 
 export function Badge({ variant = 'default', children, className }: BadgeProps) {
-  const variants = {
-    default: 'bg-[var(--color-accent)]/20 text-[var(--color-accent)]',
-    success: 'bg-[var(--color-success)]/20 text-[var(--color-success)]',
-    warning: 'bg-[var(--color-warning)]/20 text-[var(--color-warning)]',
-    danger: 'bg-[var(--color-danger)]/20 text-[var(--color-danger)]',
-    info: 'bg-[rgba(59,130,246,0.12)] text-[var(--color-info)] border border-[rgba(59,130,246,0.3)]',
-    neutral: 'bg-[var(--border-hover)] text-[var(--text-muted)]',
-  };
+  const dotColor = {
+    default: 'bg-[var(--ds-accent)]',
+    success: 'bg-[var(--color-success)]',
+    warning: 'bg-[var(--color-warning)]',
+    danger: 'bg-[var(--color-danger)]',
+    info: 'bg-[var(--color-info)]',
+    neutral: 'bg-[var(--text-muted)]',
+  }[variant];
+
+  const textColor = {
+    default: 'text-[var(--ds-accent)]',
+    success: 'text-[var(--color-success)]',
+    warning: 'text-[var(--color-warning)]',
+    danger: 'text-[var(--color-danger)]',
+    info: 'text-[var(--color-info)]',
+    neutral: 'text-[var(--text-muted)]',
+  }[variant];
 
   return (
-    <span className={cn('inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', variants[variant], className)}>
+    <span className={cn('inline-flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide', textColor, className)}>
+      <span className={cn('w-1.5 h-1.5 rounded-full', dotColor)} aria-hidden />
       {children}
     </span>
   );

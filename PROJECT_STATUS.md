@@ -1,7 +1,7 @@
 # Badminton Platform - Comprehensive Project Status
 
-**Last Updated:** April 6, 2026
-**Project Status:** Pre-Production (Auth fixed, Mobile done, Player app features largely complete, a few UI color bugs remain)
+**Last Updated:** April 8, 2026
+**Project Status:** Pre-Production (Auth fixed, Mobile done, Player app features complete, security hardened, DB migrations current, Vercel deploy pending)
 **Live Deployment:** `admin.badminton.polardev.org:3010`
 
 ---
@@ -12,11 +12,122 @@
 |--------|-------|--------|
 | Admin Pages | 19 | ✅ All Built |
 | Server Actions | 30+ | ✅ All Built |
-| Database Tables | 12 | ✅ All Built |
+| Database Tables | 18+ | ✅ All Built + Security Hardened |
+| Migrations | 18 | ✅ All Applied |
 | Components | 25+ | ✅ All Built |
 | Test Files | 2+ | 🟡 In Progress |
 | UI Library | 1 | ✅ Shared Package |
 | Deployed Instances | 1 | ✅ Raspberry Pi |
+
+---
+
+## 🆕 RECENT CHANGES (April 7–8, 2026)
+
+### Security Hardening — Full Audit (2026-04-07, commits `3c26f9f`, `630cbe7`)
+
+A comprehensive security audit (`CLAUDE-SECURITY.md`) and resulting hardening pass covered the entire request path: frontend → middleware → server action → database/RLS.
+
+#### Secrets & Server Isolation
+- ✅ `server-only` import added to `supabase-server.ts` in both admin and player apps — any accidental client-bundle import now **fails the build**
+- ✅ `SUPABASE_SERVICE_ROLE_KEY` confirmed absent from all `NEXT_PUBLIC_*` slots; env files gitignored and untracked
+
+#### `toClientError` / Safe Error Helper (`packages/shared/src/utils/safe-error.ts`)
+- ✅ New `toClientError(err, context)` helper sanitizes raw DB/system errors before they reach the client
+- ✅ Raw error routed to Sentry; client receives only a generic safe message
+- ✅ Adopted across all server actions in both apps
+
+#### Rate Limiting (`packages/shared/src/utils/rate-limit.ts`)
+- ✅ In-memory rate limiter added (sliding window, configurable limit/window)
+- ✅ Applied to: `submitMatchResult`, `createChallenge`, `checkInToSession`, `reportWalkover`, `joinTournamentEvent`, `updateAvatar`
+- ✅ Limits enforced per `user_id` server-side; counters not client-controllable
+
+#### Avatar Update — Server Action Migration
+- ✅ Avatar URL update moved from direct client write → validated server action
+- ✅ URL allowlist enforced (only Supabase Storage URLs accepted)
+- ✅ Ownership check: caller must own the player row
+
+#### CSP & Security Headers
+- ✅ `Content-Security-Policy` header added to both `apps/admin/next.config.js` and `apps/player/next.config.js`
+- ✅ Existing headers retained: `Strict-Transport-Security`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`
+
+#### RLS Hardening Migrations
+- ✅ **`00016_rls_with_check_hardening.sql`** — Tightened `WITH CHECK` on: `matches_insert` (submitter only), `mp_insert`/`mg_insert` (must own parent match), `cp_insert` (own player_id), `matches_update` (WITH CHECK mirrors USING), `notifications_update`, `challenges_update_own`, `audit_insert` (admin only)
+- ✅ **`00017_security_hardening.sql`** — `audit_logs` made append-only via policy + trigger (blocks UPDATE/DELETE for all roles, including SECURITY DEFINER paths); `UNIQUE(match_id, player_id)` constraint on `match_participants`; `search_path` pinned on all `SECURITY DEFINER` functions to block schema-hijack attacks
+
+#### Unbounded Query Fixes
+- ✅ Sessions page: query now bounded (no full-table scan)
+- ✅ Announcements page: query now bounded
+
+---
+
+### Vibe-Security Audit Follow-Up (2026-04-08)
+- ✅ **`00018_matches_update_column_guard.sql`** — BEFORE UPDATE trigger `enforce_matches_update_scope()` added on `matches`; service_role/admin/submitter have full update rights; non-privileged participants may only flip `result_status → 'disputed'` (the one legitimate player-side write); all other column mutations by participants are rejected at the DB level
+
+---
+
+### Tournament System Hardening (2026-04-07, commit `630cbe7`)
+
+#### Revalidation Fixes
+- ✅ New `revalidateEventPaths()` helper revalidates both `/tournaments` list and `/tournaments/[id]/events/[eventId]` — fixes stale UI after mutations (add player, open check-in, enter results)
+- ✅ `checkInParticipant` / `checkInPair` now revalidate event paths
+- ✅ `addPairToEvent` was revalidating wrong path — fixed
+- ✅ `removeParticipantFromEvent`, `removePairFromEvent`, `autoSeedEventByElo`, `generateSingleEliminationBracket`, `generateRoundRobinMatches`, `enterMatchResult`, `voidMatch`, `setEventStatus` all revalidate event detail
+
+#### Walkover Elo Gap
+- ✅ `enterWalkover` now calls `applyTournamentMatchElo` — walkovers were previously not applying Elo at all
+
+#### New Migrations Applied
+- ✅ **`00013_tournament_match_elo_snapshot.sql`** — ELO snapshot stored per tournament match
+- ✅ **`00014_tournament_draw_locked_and_points.sql`** — Draw lock flag + tournament points columns
+- ✅ **`00015_tournament_perf_indexes.sql`** — Performance indexes for tournament queries
+
+#### Loading States Added
+- ✅ `apps/admin/src/app/dashboard/loading.tsx`
+- ✅ `apps/admin/src/app/tournaments/loading.tsx`
+- ✅ `apps/admin/src/app/tournaments/[id]/loading.tsx`
+- ✅ `apps/player/src/app/leaderboard/loading.tsx`
+- ✅ `apps/player/src/app/my-stats/loading.tsx`
+- ✅ `apps/player/src/app/tournaments/loading.tsx`
+- ✅ `apps/admin/src/app/tournaments/error.tsx`
+- ✅ `apps/player/src/app/tournaments/error.tsx`
+
+#### Auth Callback Hardened
+- ✅ Both `apps/admin/src/app/auth/callback/route.ts` and `apps/player/src/app/auth/callback/route.ts` hardened
+
+---
+
+### Player App — UI/UX Consistency Pass (2026-04-07, commits `98a8b73`, `be992b7`, `c066b48`)
+
+A major visual overhaul brought all player-facing pages to a consistent design language:
+
+#### Pages Updated
+- ✅ `challenges/page.tsx` — consistent card layout, badge colors fixed
+- ✅ `challenges/[id]/page.tsx` — **UI color bugs resolved**: `accepted` → green, positive `rating_delta` → green, `confirmed` result distinct from `disputed`, win Elo preview green; `cancelled`/`expired`/`walkover_confirmed`/`walkover_pending` status styles added
+- ✅ `challenges/new/page.tsx` — Elo delta preview colors fixed
+- ✅ `feed/page.tsx` — redesigned feed cards
+- ✅ `leaderboard/page.tsx` + `leaderboard/[playerId]/page.tsx` — unified leaderboard appearance
+- ✅ `my-stats/page.tsx` — stat cards redesigned; build error fixed (dashboard query)
+- ✅ `notifications/page.tsx` + `notifications/actions.tsx` — consistent notification item design
+- ✅ `sessions/page.tsx` — updated session cards; check-in button + add-to-calendar polished
+- ✅ `settings/page.tsx` — settings layout updated
+- ✅ `tournaments/page.tsx` + `tournaments/[id]/page.tsx` + `tournaments/[id]/events/[eventId]/page.tsx` — tournament pages fully redesigned; event actions, self check-in, registration button updated
+- ✅ `announcements/page.tsx` + `announcement-item.tsx` — consistent announcement style
+- ✅ `onboarding/page.tsx` — onboarding flow updated
+- ✅ `login/page.tsx` — login page polished
+
+#### Components Updated
+- ✅ `bottom-nav.tsx` — consistent active/inactive state styling
+- ✅ `top-bar.tsx` — polished top bar appearance
+- ✅ `AvatarUpload.tsx` — styling update
+- ✅ `OfflineBanner.tsx` — styling update
+
+#### Shared UI Package Updates
+- ✅ `Avatar.tsx`, `Badge.tsx`, `Dialog.tsx`, `Input.tsx`, `Switch.tsx`, `Tabs.tsx` — minor consistency fixes
+- ✅ `button.tsx` (player app local) — updated
+- ✅ `globals.css` — major CSS variable expansion; consistent color tokens across all pages
+- ✅ `tailwind.config.ts` — updated color palette references
+
+---
 
 ---
 
@@ -532,8 +643,19 @@
 - ✅ Automatic redirect to /login for unauthenticated
 - ✅ Session cookie management
 - ✅ Google OAuth integration
-- ✅ Callback handler at /auth/callback
+- ✅ Callback handler at /auth/callback (hardened 2026-04-07)
 - ✅ Logout via Supabase
+- ✅ `server-only` guards on all Supabase server helpers (build fails if imported from client)
+- ✅ `toClientError` helper sanitizes all server action errors before client delivery; raw errors sent to Sentry
+- ✅ Rate limiting on all mutating server actions (challenge, match submission, check-in, walkover, tournament join, avatar update)
+- ✅ CSP headers on both apps (admin + player `next.config.js`)
+- ✅ HSTS, X-Frame-Options, Referrer-Policy, Permissions-Policy headers
+- ✅ Avatar updates validated server-side: URL allowlist + ownership check enforced
+- ✅ RLS `WITH CHECK` tightened across all tables (migrations 00016–00018)
+- ✅ `audit_logs` append-only: UPDATE/DELETE blocked via RLS policy + BEFORE trigger for all roles
+- ✅ All `SECURITY DEFINER` functions have `search_path = public, pg_temp` pinned (schema-hijack prevention)
+- ✅ `UNIQUE(match_id, player_id)` constraint prevents duplicate participant injection
+- ✅ `enforce_matches_update_scope` trigger: non-privileged participants may only transition `result_status → 'disputed'`
 
 ### Audit Trail
 - ✅ All admin actions logged with actor_id
@@ -542,6 +664,7 @@
 - ✅ Old and new values stored (for updates)
 - ✅ Timestamp on all logs
 - ✅ Optional reason field
+- ✅ Append-only at DB level — immutable once written (migration 00017 + 00018)
 
 ---
 
@@ -622,18 +745,14 @@
 ### Authentication & Security
 - ✅ **Real authentication validation** — FIXED: `getAuthenticatedAdmin()` validates real sessions + admin role
 - ✅ **Role-based access control (RBAC)** — FIXED: Middleware calls `is_admin` RPC, redirects non-admins to `/unauthorized`
+- ✅ **Rate limiting** — FIXED: In-memory sliding-window rate limiter on all mutation endpoints
+- ✅ **RLS WITH CHECK hardening** — FIXED: Migrations 00016–00018 close all permissive insert/update policies
+- ✅ **Server-bundle secret exposure** — FIXED: `server-only` guards + confirmed no service_role in `NEXT_PUBLIC_*` slots
+- ✅ **Audit log immutability** — FIXED: Append-only enforced at DB trigger level
+- ✅ **Client error leakage** — FIXED: `toClientError` sanitizes all errors before they reach the browser
 
-- ❌ **CSRF token protection** - No visible CSRF tokens in forms
-  - Relies on framework defaults only
-
-- ❌ **Rate limiting** - No rate limit on login attempts or actions
-  - Open to brute force and DoS
-
-- ❌ **Data encryption at rest** - No indication of encryption
-  - Sensitive player data may be unencrypted
-
-- ❌ **Audit log sensitivity** - Audit logs stored in public DB
-  - May expose sensitive player data
+- ❌ **CSRF token protection** — Relies on Next.js Server Actions' built-in origin check (same-origin enforcement); no explicit CSRF token
+- ❌ **Data encryption at rest** — Relies on Supabase/PostgreSQL default; no column-level encryption on sensitive fields
 
 ### Mobile Support
 - ✅ **Mobile UI design** — FIXED: Mobile hamburger menu, `md:ml-64` layout, scrollable tabs, responsive stat cards
@@ -727,13 +846,10 @@
 
 ## Features Needing Work
 
-### Player App — Known UI Color Bugs (small, easy fixes)
-- ❌ `challenges/[id]/page.tsx:116-117` — `accepted` confirmation status shows red, should be green
-- ❌ `challenges/[id]/page.tsx:161` — positive `rating_delta` shows red instead of green (both ternary branches identical)
-- ❌ `challenges/[id]/page.tsx:146-148` — `confirmed` match result shows same red as `disputed`
-- ❌ `challenges/new/page.tsx:232` — Win Elo preview delta shows red instead of green
-- ❌ `challenges/[id]/page.tsx:50` — `completed` challenge status badge is red (should be neutral gray)
-- ❌ `challenges/[id]/page.tsx:46-52` — `cancelled`, `expired`, `walkover_confirmed`, `walkover_pending` have no style entries
+### Player App — Known UI Color Bugs
+- ✅ `challenges/[id]/page.tsx` — `accepted` status green, positive `rating_delta` green, `confirmed` result distinct from `disputed` — ALL FIXED (2026-04-07)
+- ✅ `challenges/new/page.tsx` — Win Elo preview delta green — FIXED (2026-04-07)
+- ✅ `challenges/[id]/page.tsx` — `cancelled`/`expired`/`walkover_confirmed`/`walkover_pending` status styles added — FIXED (2026-04-07)
 
 ### Admin — Disputes Page Style Inconsistency
 - ❌ `disputes/page.tsx` uses `style={{...}}` inline props throughout; every other admin page uses Tailwind `className`
@@ -921,14 +1037,17 @@ pm2 restart badminton-admin
 1. ~~**🔴 FIX AUTHENTICATION**~~ ✅ DONE (Phase 1)
 2. ~~**🟠 IMPLEMENT MOBILE SUPPORT**~~ ✅ DONE (Phases 4, 12)
 3. ~~**Player app core features**~~ ✅ DONE (cancel challenge, notifications, tier badges, best partners, scheduled date/time, security guards)
-4. **🔴 FIX UI COLOR BUGS** — 5 small fixes in `challenges/[id]/page.tsx` and `challenges/new/page.tsx` (see PARTIALLY IMPLEMENTED above)
-5. **🔴 RUN DATABASE MIGRATION** — `supabase/migrations/00012_reliability_helpers.sql` prepared, needs to run against Supabase
-6. **🔴 DEPLOY TO VERCEL** — Configure Vercel projects for admin + player apps, set env vars
-7. **🟠 REFACTOR DISPUTES PAGE** — Convert inline styles to Tailwind for consistency
-8. **🟠 IMPLEMENT DISPUTE "EDITED" FLOW** — Add branch in `resolveDispute()` to apply edited scores + re-Elo
-9. **🟠 ADD TESTS** — Vitest foundation, need integration + E2E tests
-10. **🟡 OPTIMIZE PERFORMANCE** — Pagination for leaderboard + large lists
-11. **🟡 ADD MONITORING** — Configure Sentry DSN, performance monitoring
+4. ~~**🔴 FIX UI COLOR BUGS**~~ ✅ DONE (2026-04-07) — all 6 badge/delta color issues resolved in player app
+5. ~~**🔴 RUN DATABASE MIGRATIONS**~~ ✅ DONE (2026-04-07/08) — migrations 00013–00018 all applied
+6. ~~**🔴 SECURITY HARDENING**~~ ✅ DONE (2026-04-07/08) — rate limits, toClientError, CSP, server-only, RLS tightened, audit immutability, match update guard
+7. **🔴 DEPLOY PLAYER APP** — `/apps/player` built and tested locally; needs Vercel project, domain, and env vars configured
+8. **🔴 DEPLOY ADMIN UPDATE** — Push latest security hardening + UI changes to Raspberry Pi (`git pull` + `npm run build` + `pm2 restart`)
+9. **🟠 REFACTOR DISPUTES PAGE** — Convert `disputes/page.tsx` inline styles to Tailwind for consistency
+10. **🟠 IMPLEMENT DISPUTE "EDITED" FLOW** — Add branch in `resolveDispute()` to apply edited scores + re-Elo
+11. **🟠 ADD TESTS** — Vitest foundation exists; need integration tests for server actions and RLS policies
+12. **🟡 OPTIMIZE PERFORMANCE** — Pagination for leaderboard + large match/challenge lists
+13. **🟡 ADD MONITORING** — Configure Sentry DSN in both apps; add performance monitoring
+14. **🟡 PUSH NOTIFICATIONS** — Complete service worker setup; implement push sending via Supabase Edge Function
 
 ---
 
@@ -963,7 +1082,7 @@ badminton-platform/
 │   │   │   └── app/globals.css          # Theme variables
 │   │   └── next.config.js               # Vercel-ready (standalone removed)
 │   │
-│   ├── player/                          # NOT DEPLOYED
+│   ├── player/                          # BUILT, NOT YET DEPLOYED (Vercel pending)
 │   │   └── (Same structure as admin)
 │   │
 │   ├── shared/                          # Types & utilities
@@ -998,6 +1117,73 @@ SENTRY_DSN=                            # Empty (optional)
 
 ---
 
-**Last Updated:** April 6, 2026
-**Test Status:** 🟡 Testing foundation being set up (Vitest)
-**Production Ready:** 🟡 NEARLY (auth fixed, mobile done, player features done, 5 UI color bugs remaining, DB migration + Vercel deploy pending)
+**Last Updated:** April 23, 2026
+**Test Status:** 🟡 Vitest foundation + 8 qr-token unit tests green; integration + E2E tests not yet written
+**Production Ready:** 🟠 CLOSE — auth done, security hardened, DB migrations 00001–00019 (00019 QR columns pending remote apply), player app UI/UX complete, QR scan-to-submit shipped. Blockers: player app Vercel deploy, admin Pi redeploy, `supabase db push` + `supabase functions deploy verify-qr-token`.
+
+---
+
+## QR Result Submission — shipped 2026-04-23
+
+**Database** (`supabase/migrations/00019_add_qr_to_challenges.sql`)
+- Adds `qr_token` (unique partial index where not null), `qr_generated_at`, `qr_expires_at`, `submitted_via` ('manual'|'qr') to `challenges`.
+- Deploy: `supabase db push`.
+
+**Shared** (`packages/shared/src/lib/qr-token.ts`)
+- HMAC-SHA256, keyed by `SUPABASE_SERVICE_ROLE_KEY`, format `base64url(payload).base64url(sig)` where payload is `{cid, exp}`.
+- `generateQrToken(cid, days)` / `verifyQrToken(token, cid) -> {valid:true} | {valid:false, reason:'expired'|'tampered'|'mismatch'|'malformed'}`.
+- 8 vitest cases passing (signed/tampered-sig/tampered-payload/wrong-cid/expired/malformed/empty/zero-days).
+
+**Edge function** (`supabase/functions/verify-qr-token/index.ts`)
+- Deno + Web Crypto HMAC. POST `{challengeId, token}` returns `200 {ok:true, challenge:{id,type,format,expiresAt,participants}}` or `400 {ok:false, code}` where code ∈ `INVALID_TOKEN | EXPIRED | WRONG_STATUS | ALREADY_SUBMITTED`.
+- Deploy: `supabase functions deploy verify-qr-token`.
+
+**Admin** (`apps/admin/src/`)
+- `lib/actions.ts`: `generateQrForChallenge(id)` / `getExistingQrForChallenge(id)`. 14-day expiry. Audit-logged as `challenge_qr_generated`.
+- `app/challenges/qr-modal.tsx`: `QrModalButton`, renders QR via `qrcode` npm package on a 280px canvas in a white 312px square, Download PNG + Print + Regenerate.
+- `app/challenges/page.tsx`: QR button wired per row (only when status=accepted && no match), "QR Submissions (season)" stat card (`qr / total (pct%)`) from `submitted_via` column.
+
+**Player** (`apps/player/src/`)
+- `app/submit/page.tsx`: server component. Reads `cid`, `tok` from query, checks auth → else renders `AuthRedirect` client. Calls edge function server-side via fetch. Routes to `SubmitForm` on success, or the correct error screen.
+- `app/submit/submit-form.tsx`: pre-filled player names, score inputs with BO3 toggle, `decideWinner` derived from sets, win-probability bar placeholder, DM Mono numerics.
+- `app/submit/auth-redirect.tsx`: stashes `sessionStorage.qr_redirect`, also passes `?next=` so callback can redirect server-side when cookies persist across the round-trip.
+- `app/submit/error-screens.tsx`: `WrongPlayerError`, `ExpiredError`, `AlreadySubmittedError`, `InvalidTokenError`, `WrongStatusError`.
+- `lib/actions.ts`: `submitQrMatchResult(challengeId, {winner_side, games})` — rate-limited, double-checks token + expiry + no existing match, stamps `submitted_via='qr'`, notifies other participants.
+- `components/qr-redirect-handler.tsx`: drains `sessionStorage.qr_redirect` on any authed page (mobile system-browser handoff fallback).
+- `app/login/page.tsx`: reads `?next=`, stashes to sessionStorage, forwards via `redirectTo` to both OAuth and magic link.
+- `app/auth/callback/route.ts`: honors `?next=` param for server-side redirect after code exchange.
+- `app/globals.css`: `.submit-*` styles (card, score inputs, probability bar, error states).
+
+**Typecheck:** both apps clean.
+
+## Design system overhaul — partial, needs fresh session
+
+**Shipped (non-breaking additive slice):**
+- `apps/player/src/app/globals.css`: imported Syne + DM Mono; added `--text-xs..2xl` scale, `--font-display/body/mono`, `--ds-*` palette tokens (`#00E5A0` accent, `#0A0A0A` bg, `#F2F2F2` text, etc.) in `:root`. Legacy `[data-theme="dark"]` vars untouched — existing pages unaffected.
+- `/submit` + error screens now use Syne headings and DM Mono scores.
+
+**Remaining (blocker-free but large):**
+1. Palette migration — replace every `var(--color-accent)` red reference with `var(--ds-accent)` teal. Grep hits ~80+ spots across player + admin + `packages/ui`.
+2. `packages/ui` component restyle (cascades to both apps):
+   - Card: 1px border, 8px radius, no shadow, hover = border-color to accent-30%.
+   - Button: 40px h, 6px r, primary=accent bg+black text, secondary=transparent+border, destructive=danger@10% bg. No pills.
+   - Input: 40px, 6px r, focus border=accent, labels above (font-size `--text-sm` secondary).
+   - Table: no zebra, border-bottom only, row-hover=`--ds-bg-elevated`, rank numbers in DM Mono.
+   - Sidebar (admin): 220px, right-border, active item = accent-dim bg + left-border accent.
+   - Tier badges: 6px circle dot + label, no rounded pill backgrounds.
+   - Loading: single horizontal shimmer (CSS keyframes) — replace every spinner.
+   - Empty state: heading + one-line + one CTA, strip illustrations.
+3. Screen redesigns per spec:
+   - Leaderboard (player app): full-width table, sticky header, search/filter bar, own-row highlight.
+   - Challenge flow: issue step shows Elo gap + win prob preview; detail shows expected outcome + QR section.
+   - Player profile: Syne name top, DM Mono Elo large, stat row (W/L/Win%), initials-in-square if no avatar.
+   - QR modal (admin): already 280px QR on white + DM Mono expiry — restyle container to 600px dark elevated, close top-right.
+   - Error screens: already centered card + Syne + danger/warning label — confirm once new palette lands.
+
+Recommended next-session order: migrate palette → `packages/ui` components → screen-level passes.
+
+---
+
+**Last Updated:** April 8, 2026 (initial)
+**Test Status:** 🟡 Testing foundation in place (Vitest); integration + E2E tests not yet written
+**Production Ready:** 🟠 CLOSE — auth done, security hardened, all DB migrations applied (00001–00018), player app UI/UX complete. Blockers: player app Vercel deploy, admin Pi redeploy with latest changes.

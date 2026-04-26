@@ -44,7 +44,7 @@ const config: Config = {
           foreground: 'var(--card-foreground)',
         },
         // App-specific brand colors — themed via CSS vars
-        'court-red': 'var(--color-accent)',
+        'court-red': 'var(--ds-accent)',
         gold: 'var(--color-gold)',
         'shuttle-white': 'var(--text-primary)',
         'deep-navy': 'var(--bg-primary)',

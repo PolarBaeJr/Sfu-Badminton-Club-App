@@ -39,7 +39,7 @@ export function AttendanceDialog({ sessionId: _sessionId, attendees }: Attendanc
     <>
       <button
         onClick={() => setOpen(true)}
-        className="flex items-center gap-1 text-xs text-[var(--color-accent)] hover:underline"
+        className="flex items-center gap-1 text-xs text-[var(--ds-accent)] hover:underline"
       >
         <Users className="w-3.5 h-3.5" />
         <span>{attendees.length} checked in</span>

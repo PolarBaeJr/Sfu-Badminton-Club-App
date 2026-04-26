@@ -43,10 +43,23 @@ export default function LeaderboardPage() {
   const [players, setPlayers] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   useEffect(() => {
     const ph = getPostHogClient();
     if (ph) ph.capture('leaderboard_viewed');
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return;
+      supabase
+        .from('players')
+        .select('id')
+        .eq('user_id', user.id)
+        .maybeSingle()
+        .then(({ data }) => {
+          if (data?.id) setCurrentUserId(data.id);
+        });
+    });
   }, []);
 
   useEffect(() => {
@@ -189,7 +202,7 @@ export default function LeaderboardPage() {
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           aria-label="Search leaderboard"
-          className="w-full bg-[var(--bg-surface)] border border-white/[0.06] rounded-lg pl-9 pr-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-gold)]/40 focus:border-transparent transition-colors"
+          className="w-full min-h-[40px] bg-[var(--bg-surface)] border border-[var(--border)] rounded-md pl-9 pr-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:border-transparent transition-colors"
         />
       </div>
 
@@ -209,8 +222,8 @@ export default function LeaderboardPage() {
               exit={{ opacity: 0 }}
               transition={{ duration: 0.2 }}
             >
-              {/* Header */}
-              <div className={`grid ${activeTab === 'tournament_points' ? 'grid-cols-[3rem_1fr_5rem]' : 'grid-cols-[3rem_1fr_5rem_4rem_3.5rem] md:grid-cols-[3rem_1fr_5rem_5rem_4rem]'} px-4 py-3 border-b border-white/[0.06] eyebrow`}>
+              {/* Header (sticky) */}
+              <div className={`sticky top-0 z-10 bg-[var(--bg-card)]/95 backdrop-blur grid ${activeTab === 'tournament_points' ? 'grid-cols-[3rem_1fr_5rem]' : 'grid-cols-[3rem_1fr_5rem_4rem_3.5rem] md:grid-cols-[3rem_1fr_5rem_5rem_4rem]'} px-4 py-3 border-b border-[var(--border)] eyebrow`}>
                 <span>#</span>
                 <span>Player</span>
                 {activeTab === 'tournament_points' ? (
@@ -244,20 +257,29 @@ export default function LeaderboardPage() {
                     >
                       <Link
                         href={`/leaderboard/${p.id}`}
-                        className={`grid ${activeTab === 'tournament_points' ? 'grid-cols-[3rem_1fr_5rem]' : 'grid-cols-[3rem_1fr_5rem_4rem_3.5rem] md:grid-cols-[3rem_1fr_5rem_5rem_4rem]'} px-4 py-3 items-center hover:bg-white/[0.03] transition-colors group ${
-                          i < 3 ? rankBg[i] + ' border-l-2' : ''
+                        aria-current={p.id === currentUserId ? 'true' : undefined}
+                        className={`grid ${activeTab === 'tournament_points' ? 'grid-cols-[3rem_1fr_5rem]' : 'grid-cols-[3rem_1fr_5rem_4rem_3.5rem] md:grid-cols-[3rem_1fr_5rem_5rem_4rem]'} px-4 py-3 items-center transition-colors group border-l-2 ${
+                          p.id === currentUserId
+                            ? 'bg-[var(--ds-accent-dim)] border-[var(--ds-accent)] hover:brightness-110'
+                            : i < 3
+                              ? rankBg[i]
+                              : 'border-transparent hover:bg-white/[0.03]'
                         }`}
                       >
                         <span className="flex items-center">
                           {RankIcon ? (
                             <RankIcon className={`w-5 h-5 ${rankColors[i]}`} />
                           ) : (
-                            <span className="text-sm font-mono text-[var(--text-dim)] font-bold nums">{i + 1}</span>
+                            <span className="ds-mono text-sm text-[var(--text-dim)] font-semibold">{i + 1}</span>
                           )}
                         </span>
                         <span className="flex items-center gap-2.5 min-w-0">
                           <Avatar name={p.full_name} src={p.avatar_url} size="sm" />
-                          <span className="truncate text-sm text-shuttle-white font-medium group-hover:text-[var(--color-accent)] transition-colors">
+                          <span
+                            className={`truncate font-medium transition-colors group-hover:text-[var(--ds-accent)] ${
+                              i < 3 ? 'ds-display text-base text-shuttle-white' : 'text-sm text-shuttle-white'
+                            } ${p.id === currentUserId ? 'text-[var(--ds-accent)]' : ''}`}
+                          >
                             {p.full_name}
                           </span>
                           {prov && activeTab !== 'tournament_points' && (
@@ -265,10 +287,10 @@ export default function LeaderboardPage() {
                           )}
                         </span>
                         {activeTab === 'tournament_points' ? (
-                          <span className="text-right font-mono text-base font-bold gradient-text-gold nums">{(p as any)._tournamentPoints ?? 0}</span>
+                          <span className="text-right ds-mono text-base font-bold gradient-text-gold">{(p as any)._tournamentPoints ?? 0}</span>
                         ) : (
                           <>
-                            <span className="text-right font-mono text-base font-bold text-shuttle-white nums">
+                            <span className="text-right ds-mono text-base font-bold text-shuttle-white">
                               {elo ?? '-'}
                               {(() => {
                                 if (!elo || activeTab === 'tournament_points') return null;
@@ -282,12 +304,12 @@ export default function LeaderboardPage() {
                                 );
                               })()}
                             </span>
-                            <span className="text-right text-sm text-[var(--text-secondary)] nums">
-                              <span className="text-emerald-400">{wins ?? 0}</span>
+                            <span className="text-right ds-mono text-sm text-[var(--text-secondary)]">
+                              <span className="text-[var(--color-success)]">{wins ?? 0}</span>
                               <span className="text-[var(--text-dim)]">-</span>
-                              <span className="text-[var(--color-accent)]">{losses ?? 0}</span>
+                              <span className="text-[var(--color-danger)]">{losses ?? 0}</span>
                             </span>
-                            <span className="text-right text-sm text-[var(--text-secondary)] font-medium nums">{winPct}%</span>
+                            <span className="text-right ds-mono text-sm text-[var(--text-secondary)] font-medium">{winPct}%</span>
                           </>
                         )}
                       </Link>

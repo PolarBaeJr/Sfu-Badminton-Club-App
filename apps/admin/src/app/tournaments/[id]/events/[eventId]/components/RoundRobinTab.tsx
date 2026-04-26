@@ -146,7 +146,7 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles }
                       <button
                         onClick={() => setScoreMatch(m)}
                         aria-label={`Enter score for match ${m.match_number ?? ''}`}
-                        className="text-xs text-[var(--color-accent)] font-medium ml-2 hover:underline focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none rounded"
+                        className="text-xs text-[var(--ds-accent)] font-medium ml-2 hover:underline focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none rounded"
                       >
                         Score
                       </button>

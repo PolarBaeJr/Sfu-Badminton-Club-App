@@ -55,14 +55,14 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
 
       {/* Player Hero Card */}
       <FadeIn>
-        <div className="card-elevated rounded-2xl overflow-hidden bg-court-grid bg-noise">
-          {/* Gradient band */}
-          <div className="h-1.5 gradient-court" />
-          <div className="p-5 flex flex-wrap items-center gap-4">
+        <div className="card-elevated rounded-lg overflow-hidden">
+          {/* Accent band */}
+          <div className="h-0.5 bg-[var(--ds-accent)]" />
+          <div className="p-6 flex flex-wrap items-center gap-5">
             <Avatar name={player.full_name} size="lg" />
             <div className="flex-1 min-w-0">
-              <h1 className="display-md truncate">{player.full_name}</h1>
-              <div className="flex flex-wrap gap-2 mt-2">
+              <h1 className="ds-display text-3xl font-semibold tracking-tight text-[var(--text-primary)] truncate">{player.full_name}</h1>
+              <div className="flex flex-wrap gap-2 mt-3">
                 <span className={`chip ${player.status === 'competitive' ? 'chip-success' : ''}`}>
                   {PLAYER_STATUS_LABELS[player.status as keyof typeof PLAYER_STATUS_LABELS]}
                 </span>
@@ -81,7 +81,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
             </div>
             <Link
               href={`/challenges/new?opponent=${playerId}`}
-              className="press inline-flex items-center gap-2 px-4 py-2.5 min-h-[44px] bg-[var(--color-accent)]/15 text-[var(--color-accent)] text-sm font-bold rounded-xl border border-[var(--color-accent)]/25 hover:bg-[var(--color-accent)]/25 hover:border-[var(--color-accent)]/40 transition-all duration-200 glow-red shrink-0 group"
+              className="press inline-flex items-center gap-2 px-4 min-h-[40px] bg-[var(--ds-accent)] text-[#0A0A0A] text-sm font-semibold rounded-md hover:brightness-110 active:scale-[0.98] transition-all duration-150 shrink-0 group"
             >
               <Swords className="w-4 h-4 group-hover:rotate-12 transition-transform duration-200" />
               Challenge
@@ -96,20 +96,20 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
           <FadeIn delay={0.05}>
             <StaggerContainer className="grid grid-cols-2 gap-3">
               {[
-                { icon: Target,    color: 'var(--color-accent)', label: 'Singles Elo', value: r.singles_elo, sub: r.singles_provisional ? 'Provisional' : 'Established', gold: false },
+                { icon: Target,    color: 'var(--ds-accent)', label: 'Singles Elo', value: r.singles_elo, sub: r.singles_provisional ? 'Provisional' : 'Established', gold: false },
                 { icon: Swords,    color: 'var(--color-gold)',   label: 'Doubles Elo', value: r.doubles_elo, sub: r.doubles_provisional ? 'Provisional' : 'Established', gold: true  },
-                { icon: TrendingUp,color: 'var(--color-accent)', label: 'Singles W/L', value: `${r.singles_wins}–${r.singles_losses}`, sub: getWinRate(r.singles_wins, r.singles_losses), gold: false },
+                { icon: TrendingUp,color: 'var(--ds-accent)', label: 'Singles W/L', value: `${r.singles_wins}–${r.singles_losses}`, sub: getWinRate(r.singles_wins, r.singles_losses), gold: false },
                 { icon: Users,     color: 'var(--color-gold)',   label: 'Doubles W/L', value: `${r.doubles_wins}–${r.doubles_losses}`, sub: getWinRate(r.doubles_wins, r.doubles_losses), gold: true  },
               ].map((stat) => (
                 <StaggerItem key={stat.label}>
-                  <div className="card-surface rounded-xl p-4 card-interactive h-full">
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: `${stat.color}18` }}>
+                  <div className="card-surface rounded-lg p-5 h-full transition-colors duration-150 hover:border-[color-mix(in_srgb,var(--ds-accent)_30%,transparent)]">
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-7 h-7 rounded-md flex items-center justify-center shrink-0" style={{ background: `${stat.color}18` }}>
                         <stat.icon className="w-3.5 h-3.5" style={{ color: stat.color }} />
                       </div>
                       <span className="eyebrow">{stat.label}</span>
                     </div>
-                    <p className={`nums text-2xl font-black leading-none mb-1 ${stat.gold ? 'gradient-text-gold' : 'gradient-text-red'}`}>
+                    <p className="ds-mono text-[2.5rem] font-semibold leading-none mb-2" style={{ color: stat.color }}>
                       {stat.value}
                     </p>
                     <p className="text-xs text-[var(--text-muted)]">{stat.sub}</p>
@@ -123,18 +123,18 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
           <FadeIn delay={0.1}>
             <StaggerContainer className="grid grid-cols-2 gap-3">
               {[
-                { icon: Flame,    color: 'var(--color-accent)', label: 'S. Streak',   value: getStreakDisplay(r.current_singles_streak) },
+                { icon: Flame,    color: 'var(--ds-accent)', label: 'S. Streak',   value: getStreakDisplay(r.current_singles_streak) },
                 { icon: Flame,    color: 'var(--color-warning)', label: 'D. Streak',   value: getStreakDisplay(r.current_doubles_streak) },
-                { icon: BarChart3,color: 'var(--color-accent)', label: 'S. Point +/-',value: getPointDifferential(r.singles_points_scored, r.singles_points_allowed) },
+                { icon: BarChart3,color: 'var(--ds-accent)', label: 'S. Point +/-',value: getPointDifferential(r.singles_points_scored, r.singles_points_allowed) },
                 { icon: BarChart3,color: 'var(--color-gold)',   label: 'D. Point +/-',value: getPointDifferential(r.doubles_points_scored, r.doubles_points_allowed) },
               ].map((stat) => (
                 <StaggerItem key={stat.label}>
-                  <div className="card-surface rounded-xl p-4 h-full">
+                  <div className="card-surface rounded-lg p-4 h-full">
                     <div className="flex items-center gap-2 mb-2">
                       <stat.icon className="w-3.5 h-3.5 shrink-0" style={{ color: stat.color }} />
                       <span className="eyebrow">{stat.label}</span>
                     </div>
-                    <p className="nums text-xl font-bold text-[var(--text-primary)]">{stat.value}</p>
+                    <p className="ds-mono text-xl font-semibold text-[var(--text-primary)]">{stat.value}</p>
                   </div>
                 </StaggerItem>
               ))}
@@ -159,28 +159,28 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
               return (
                 <div
                   key={mp.id}
-                  className={`reveal reveal-${Math.min(i + 1, 6) as 1|2|3|4|5|6} flex items-center justify-between p-3 bg-white/[0.03] rounded-xl border ${
+                  className={`reveal reveal-${Math.min(i + 1, 6) as 1|2|3|4|5|6} flex items-center justify-between p-3 bg-white/[0.03] rounded-md border ${
                     isWin  ? 'border-[var(--color-success)]/15' :
-                    isLoss ? 'border-[var(--color-accent)]/15' :
+                    isLoss ? 'border-[var(--color-danger)]/15' :
                     'border-[var(--border)]'
                   } gap-3`}
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black shrink-0 ${
+                    <div className={`w-8 h-8 rounded-md flex items-center justify-center text-xs font-bold shrink-0 ${
                       isWin ? 'bg-[var(--color-success)]/15 text-[var(--color-success)]' :
-                      isLoss ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]' :
+                      isLoss ? 'bg-[var(--color-danger)]/15 text-[var(--color-danger)]' :
                       'bg-white/[0.06] text-[var(--text-muted)]'
                     }`}>
                       {isWin ? 'W' : isLoss ? 'L' : '?'}
                     </div>
                     <div className="min-w-0">
-                      <p className="nums text-sm font-semibold text-[var(--text-primary)] truncate">{m.score_summary as string || '–'}</p>
+                      <p className="ds-mono text-sm font-semibold text-[var(--text-primary)] truncate">{m.score_summary as string || '–'}</p>
                       <span className="chip text-[10px] mt-0.5">{m.match_type as string}</span>
                     </div>
                   </div>
                   <div className="text-right shrink-0 flex flex-col items-end gap-0.5">
                     {mp.rating_delta !== null && (
-                      <span className={`nums text-sm font-bold ${(mp.rating_delta ?? 0) >= 0 ? 'text-[var(--color-success)]' : 'text-[var(--color-accent)]'}`}>
+                      <span className={`ds-mono text-sm font-bold ${(mp.rating_delta ?? 0) >= 0 ? 'text-[var(--color-success)]' : 'text-[var(--color-danger)]'}`}>
                         {(mp.rating_delta ?? 0) >= 0 ? '+' : ''}{mp.rating_delta}
                       </span>
                     )}
@@ -204,7 +204,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
         <FadeIn delay={0.2}>
           <div className="card-elevated rounded-2xl overflow-hidden">
             <div className="flex items-center gap-2 p-4 pb-0 mb-3">
-              <Swords className="w-4 h-4 text-[var(--color-accent)]" />
+              <Swords className="w-4 h-4 text-[var(--ds-accent)]" />
               <h2 className="display-md text-base">Head to Head</h2>
             </div>
             <div className="px-4 pb-4 space-y-2">
@@ -218,10 +218,10 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
                       <span className="text-sm text-[var(--text-secondary)] truncate capitalize">{h.match_type}</span>
                       <span className="eyebrow">&middot; {h.total_matches}m</span>
                     </div>
-                    <span className="nums text-sm font-bold shrink-0 flex items-center gap-1">
+                    <span className="ds-mono text-sm font-bold shrink-0 flex items-center gap-1">
                       <span className="text-[var(--color-success)]">{wins}W</span>
                       <span className="text-[var(--text-dim)]">–</span>
-                      <span className="text-[var(--color-accent)]">{losses}L</span>
+                      <span className="text-[var(--color-danger)]">{losses}L</span>
                     </span>
                   </div>
                 );

@@ -57,7 +57,7 @@ export default async function SessionsPage() {
       {/* Header */}
       <FadeIn>
         <div className="flex items-center gap-3 reveal reveal-1">
-          <div className="w-9 h-9 rounded-xl bg-[var(--color-accent)]/10 flex items-center justify-center">
+          <div className="w-9 h-9 rounded-xl bg-[var(--ds-accent)]/10 flex items-center justify-center">
             <Calendar className="w-4 h-4 text-court-red" />
           </div>
           <div>

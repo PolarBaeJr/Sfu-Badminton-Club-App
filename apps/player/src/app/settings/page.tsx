@@ -47,8 +47,8 @@ const saveConfirmVariants: any = {
 function SectionHeader({ icon: Icon, title }: { icon: React.ElementType; title: string }) {
   return (
     <div className="flex items-center gap-2.5 mb-4">
-      <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-[var(--color-accent)]/10">
-        <Icon className="w-4 h-4 text-[var(--color-accent)]" />
+      <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-[var(--ds-accent)]/10">
+        <Icon className="w-4 h-4 text-[var(--ds-accent)]" />
       </div>
       <h2 className="text-lg font-semibold text-[var(--text-primary)]">{title}</h2>
     </div>
@@ -307,7 +307,7 @@ export default function SettingsPage() {
                 onClick={() => handleThemeChange(value)}
                 className={`relative flex flex-col items-center gap-2 px-4 py-4 rounded-xl border text-sm font-medium transition-all duration-200 ${
                   theme === value
-                    ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/10 text-[var(--color-accent)] glow-red'
+                    ? 'border-[var(--ds-accent)] bg-[var(--ds-accent)]/10 text-[var(--ds-accent)] glow-red'
                     : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-hover)] hover:bg-white/[0.03]'
                 }`}
               >
@@ -316,7 +316,7 @@ export default function SettingsPage() {
                 {theme === value && (
                   <motion.div
                     layoutId="theme-indicator"
-                    className="absolute -top-px -right-px w-5 h-5 bg-[var(--color-accent)] rounded-bl-lg rounded-tr-[11px] flex items-center justify-center"
+                    className="absolute -top-px -right-px w-5 h-5 bg-[var(--ds-accent)] rounded-bl-lg rounded-tr-[11px] flex items-center justify-center"
                     transition={{ type: 'spring', stiffness: 400, damping: 30 }}
                   >
                     <Check className="w-3 h-3 text-white" />
@@ -342,7 +342,7 @@ export default function SettingsPage() {
               <div className="flex items-start gap-3">
                 <div className="mt-0.5">
                   {pushEnabled ? (
-                    <Bell className="w-4 h-4 text-[var(--color-accent)]" />
+                    <Bell className="w-4 h-4 text-[var(--ds-accent)]" />
                   ) : (
                     <BellOff className="w-4 h-4 text-[var(--text-muted)]" />
                   )}

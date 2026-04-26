@@ -58,7 +58,7 @@ export default async function ChallengesPage() {
         <Link href={`/challenges/${c.id}`} className="block group">
           <div className="card-surface card-interactive flex items-center justify-between p-4">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-xl bg-[var(--color-accent)]/10 flex items-center justify-center shrink-0">
+              <div className="w-10 h-10 rounded-xl bg-[var(--ds-accent)]/10 flex items-center justify-center shrink-0">
                 <Swords className="w-5 h-5 text-court-red" />
               </div>
               <div className="min-w-0">
@@ -92,7 +92,7 @@ export default async function ChallengesPage() {
       <FadeIn>
         <div className="flex items-center justify-between reveal reveal-1">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[var(--color-accent)]/10 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-xl bg-[var(--ds-accent)]/10 flex items-center justify-center">
               <Swords className="w-5 h-5 text-court-red" />
             </div>
             <div>
@@ -102,7 +102,7 @@ export default async function ChallengesPage() {
           </div>
           <Link
             href="/challenges/new"
-            className="press flex items-center gap-2 px-4 py-2.5 rounded-xl gradient-court text-white font-bold text-sm glow-red hover:opacity-90 transition-opacity"
+            className="press flex items-center gap-2 px-4 py-2.5 rounded-xl gradient-court text-[#0A0A0A] font-bold text-sm glow-red hover:opacity-90 transition-opacity"
           >
             <Plus className="w-4 h-4" />
             New

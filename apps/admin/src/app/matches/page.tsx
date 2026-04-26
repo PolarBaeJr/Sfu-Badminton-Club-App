@@ -18,31 +18,41 @@ import {
 export default async function MatchesPage() {
   const supabase = createAdminClient();
 
-  const { data: matches } = await supabase
-    .from('matches')
-    .select('*, match_participants(*, player:players(full_name)), match_games(*)')
-    .order('created_at', { ascending: false })
-    .limit(50);
+  // Round 1: matches + active player roster fetch in parallel (independent).
+  const [
+    { data: matches },
+    { data: allPlayers },
+  ] = await Promise.all([
+    supabase
+      .from('matches')
+      .select('*, match_participants(*, player:players(full_name)), match_games(*)')
+      .order('created_at', { ascending: false })
+      .limit(50),
+    supabase
+      .from('players')
+      .select('id, full_name')
+      .eq('active_flag', true)
+      .neq('status', 'pending_approval')
+      .order('full_name'),
+  ]);
 
-  // Get all active players for the create match form
-  const { data: allPlayers } = await supabase
-    .from('players')
-    .select('id, full_name')
-    .eq('active_flag', true)
-    .neq('status', 'pending_approval')
-    .order('full_name');
-
-  // Fetch disputes and walkovers inline
+  // Round 2: disputes + walkovers depend on the match list, but can fetch in
+  // parallel with each other.
   const matchIds = matches?.map(m => m.id) || [];
-  const { data: disputes } = await supabase
-    .from('disputes')
-    .select('*, opener:players!disputes_opened_by_fkey(full_name)')
-    .in('match_id', matchIds.length > 0 ? matchIds : ['00000000-0000-0000-0000-000000000000']);
-
-  const { data: walkovers } = await supabase
-    .from('walkovers')
-    .select('*, forfeit:players!walkovers_forfeit_player_id_fkey(full_name)')
-    .in('challenge_id', matches?.map(m => m.challenge_id).filter(Boolean) || ['00000000-0000-0000-0000-000000000000']);
+  const challengeIds = matches?.map(m => m.challenge_id).filter(Boolean) || [];
+  const [
+    { data: disputes },
+    { data: walkovers },
+  ] = await Promise.all([
+    supabase
+      .from('disputes')
+      .select('*, opener:players!disputes_opened_by_fkey(full_name)')
+      .in('match_id', matchIds.length > 0 ? matchIds : ['00000000-0000-0000-0000-000000000000']),
+    supabase
+      .from('walkovers')
+      .select('*, forfeit:players!walkovers_forfeit_player_id_fkey(full_name)')
+      .in('challenge_id', challengeIds.length > 0 ? challengeIds : ['00000000-0000-0000-0000-000000000000']),
+  ]);
 
   const disputesByMatch = new Map<string, typeof disputes>();
   disputes?.forEach(d => {
@@ -63,7 +73,7 @@ export default async function MatchesPage() {
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--color-accent)]/10 text-[var(--color-accent)]">
+          <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--ds-accent)]/10 text-[var(--ds-accent)]">
             <Target className="w-5 h-5" />
           </div>
           <div>

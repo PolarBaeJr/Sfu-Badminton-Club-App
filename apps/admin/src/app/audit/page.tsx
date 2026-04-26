@@ -25,8 +25,8 @@ export default async function AuditPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--color-accent)]/10">
-          <ScrollText className="w-5 h-5 text-[var(--color-accent)]" />
+        <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--ds-accent)]/10">
+          <ScrollText className="w-5 h-5 text-[var(--ds-accent)]" />
         </div>
         <div>
           <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">AUDIT LOG</h1>

@@ -93,7 +93,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
             </p>
           </div>
           {canCheckIn && notCheckedIn.length > 0 && (
-            <Button onClick={handleBulkCheckIn} loading={bulkLoading} variant="ghost" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
+            <Button onClick={handleBulkCheckIn} loading={bulkLoading} variant="ghost" className="focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none">
               Check In All Present
             </Button>
           )}
@@ -105,7 +105,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
             className="h-full rounded-full transition-all duration-500"
             style={{
               width: `${progress}%`,
-              backgroundColor: progress === 100 ? 'var(--color-success)' : 'var(--color-accent)',
+              backgroundColor: progress === 100 ? 'var(--color-success)' : 'var(--ds-accent)',
             }}
           />
         </div>
@@ -136,7 +136,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
                       size="sm"
                       onClick={() => handleCheckIn(entry.id)}
                       loading={loading === entry.id}
-                      className="bg-[var(--color-success)] hover:bg-[var(--color-success)]/80 focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+                      className="bg-[var(--color-success)] hover:bg-[var(--color-success)]/80 focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none"
                     >
                       <CheckCircle className="w-3.5 h-3.5 mr-1" /> Check In
                     </Button>
@@ -146,7 +146,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
                       onClick={() => handleNoShow(entry.id)}
                       loading={loading === `noshow-${entry.id}`}
                       aria-label="Mark as no-show"
-                      className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+                      className="focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none"
                     >
                       <XCircle className="w-3.5 h-3.5 text-[var(--color-danger)]" />
                     </Button>

@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
 import { Badge, Card, Avatar } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS } from '@badminton/shared';
@@ -32,8 +33,9 @@ export default async function PlayersPage({
 
   let query = supabase
     .from('players')
-    .select('*, ratings(*)')
-    .order('created_at', { ascending: false });
+    .select('id, full_name, email, avatar_url, status, role, active_flag, created_at, ratings(*)')
+    .order('created_at', { ascending: false })
+    .limit(200);
 
   if (tab === 'competitive') {
     // Show all active players (not recreational, suspended, or pending)
@@ -48,12 +50,18 @@ export default async function PlayersPage({
     query = query.ilike('full_name', `%${params.search}%`);
   }
 
-  const { data: players } = await query;
-
-  // Count for tabs — competitive catches all active players not in other tabs
-  const { count: compCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).not('status', 'in', '("recreational","suspended","pending_approval")');
-  const { count: recCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).eq('status', 'recreational');
-  const { count: attCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).in('status', ['suspended', 'pending_approval']);
+  // Run main list + the 3 tab counts in parallel. Was 4 sequential round-trips.
+  const [
+    { data: players },
+    { count: compCount },
+    { count: recCount },
+    { count: attCount },
+  ] = await Promise.all([
+    query,
+    supabase.from('players').select('*', { count: 'exact', head: true }).not('status', 'in', '("recreational","suspended","pending_approval")'),
+    supabase.from('players').select('*', { count: 'exact', head: true }).eq('status', 'recreational'),
+    supabase.from('players').select('*', { count: 'exact', head: true }).in('status', ['suspended', 'pending_approval']),
+  ]);
 
   const tabs = [
     { id: 'competitive', label: 'Competitive', count: compCount ?? 0 },
@@ -77,7 +85,7 @@ export default async function PlayersPage({
               href={`/players?tab=${t.id}`}
               className={`px-4 min-h-[44px] text-sm rounded-md transition-colors flex items-center gap-2 ${
                 tab === t.id
-                  ? 'bg-[var(--color-accent)] text-white'
+                  ? 'bg-[var(--ds-accent)] text-white'
                   : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-hover)]'
               }`}
             >
@@ -112,7 +120,7 @@ export default async function PlayersPage({
                 return (
                   <tr key={player.id} className="hover:bg-[var(--border-hover)] transition-colors">
                     <td className="px-4 py-3">
-                      <Link href={`/players/${player.id}`} className="flex items-center gap-3 hover:text-[var(--color-accent)]">
+                      <Link href={`/players/${player.id}`} className="flex items-center gap-3 hover:text-[var(--ds-accent)]">
                         <div className="relative">
                           <Avatar name={player.full_name} src={player.avatar_url} size="sm" />
                           {dotClass && (

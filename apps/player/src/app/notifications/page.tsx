@@ -8,7 +8,7 @@ import { FadeIn, StaggerContainer, StaggerItem } from '@/components/motion-wrapp
 
 const NOTIFICATION_ICON_MAP: Record<string, { icon: typeof Bell; color: string; bg: string }> = {
   // Challenge types
-  challenge_received: { icon: Swords, color: 'text-[var(--color-accent)]', bg: 'bg-[var(--color-accent)]/10' },
+  challenge_received: { icon: Swords, color: 'text-[var(--ds-accent)]', bg: 'bg-[var(--ds-accent)]/10' },
   challenge_accepted: { icon: Swords, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
   challenge_rejected: { icon: Swords, color: 'text-[var(--text-muted)]', bg: 'bg-white/[0.06]' },
   challenge_cancelled: { icon: Swords, color: 'text-[var(--text-muted)]', bg: 'bg-white/[0.06]' },
@@ -70,7 +70,7 @@ export default async function NotificationsPage() {
       <FadeIn>
         <div className="flex items-center justify-between reveal reveal-1">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[var(--color-accent)]/10 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-xl bg-[var(--ds-accent)]/10 flex items-center justify-center">
               <Bell className="w-5 h-5 text-court-red" />
             </div>
             <div>
@@ -103,7 +103,7 @@ export default async function NotificationsPage() {
                 return (
                   <StaggerItem key={n.id}>
                     <NotificationLink notificationId={n.id} href={getNotificationHref(n.type, n.metadata)} isRead={n.read_flag}>
-                      <div className="card-surface card-interactive flex items-start gap-3 p-4 border-l-2 border-l-[#EF4444]">
+                      <div className="card-surface card-interactive flex items-start gap-3 p-4 border-l-2 border-l-[var(--ds-accent)]">
                         <div className={`w-9 h-9 rounded-lg ${meta.bg} flex items-center justify-center shrink-0 mt-0.5`}>
                           <Icon className={`w-4 h-4 ${meta.color}`} />
                         </div>
@@ -111,7 +111,7 @@ export default async function NotificationsPage() {
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
                               <div className="flex items-center gap-2">
-                                <div className="w-2 h-2 rounded-full bg-[var(--color-accent)] shrink-0" />
+                                <div className="w-2 h-2 rounded-full bg-[var(--ds-accent)] shrink-0" />
                                 <p className="text-sm font-semibold text-shuttle-white truncate">{n.title}</p>
                               </div>
                               {n.body && (

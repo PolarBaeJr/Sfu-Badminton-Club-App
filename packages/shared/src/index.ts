@@ -8,3 +8,5 @@ export * from './utils/safe-error';
 export * from './validators/schemas';
 export * from './email/templates';
 export * from './email/sender';
+// qr-token is server-only (uses node:crypto). Import it explicitly from
+// '@badminton/shared/qr-token' to avoid pulling node:crypto into client bundles.

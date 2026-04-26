@@ -50,7 +50,7 @@ export function TopBar({ playerName, unreadCount }: { playerName: string; unread
                 className={cn(
                   'flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-all duration-200 min-h-[36px]',
                   active
-                    ? 'bg-[var(--color-accent)]/10 text-[var(--color-accent)] font-semibold'
+                    ? 'bg-[var(--ds-accent)]/10 text-[var(--ds-accent)] font-semibold'
                     : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/[0.04]'
                 )}
               >
@@ -70,10 +70,10 @@ export function TopBar({ playerName, unreadCount }: { playerName: string; unread
           >
             <Bell className={cn(
               'w-5 h-5 transition-transform duration-200',
-              unreadCount > 0 ? 'icon-bell-wiggle text-[var(--color-accent)]' : ''
+              unreadCount > 0 ? 'icon-bell-wiggle text-[var(--ds-accent)]' : ''
             )} />
             {unreadCount > 0 && (
-              <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-[var(--color-accent)] rounded-full text-[9px] flex items-center justify-center text-white font-bold shadow-lg shadow-[var(--color-accent-glow)]">
+              <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-[var(--ds-accent)] rounded-full text-[9px] flex items-center justify-center text-white font-bold shadow-lg shadow-[var(--color-accent-glow)]">
                 {unreadCount > 9 ? '9+' : unreadCount}
               </span>
             )}

@@ -29,8 +29,8 @@ export function Switch({ checked, onChange, label, description, disabled, classN
         disabled={disabled}
         onClick={() => onChange(!checked)}
         className={cn(
-          'relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:ring-offset-2 focus:ring-offset-[var(--bg-primary)] min-w-[44px] min-h-[44px] p-[10px]',
-          checked ? 'bg-[var(--color-accent)]' : 'bg-[var(--border-hover)]',
+          'relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--ds-accent)] focus:ring-offset-2 focus:ring-offset-[var(--bg-primary)] min-w-[44px] min-h-[44px] p-[10px]',
+          checked ? 'bg-[var(--ds-accent)]' : 'bg-[var(--border-hover)]',
           disabled && 'opacity-50 cursor-not-allowed'
         )}
         style={{ padding: '10px' }}

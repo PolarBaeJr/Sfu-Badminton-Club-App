@@ -56,7 +56,7 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
           size="sm"
           loading={loading}
           onClick={() => act(() => registerForEvent(eventId), 'Registered!')}
-          className="press focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none min-h-[36px]"
+          className="press focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none min-h-[36px]"
         >
           Register
         </Button>
@@ -74,7 +74,7 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
           size="sm"
           loading={loading}
           onClick={() => act(() => selfCheckIn(eventId), 'Checked in!')}
-          className="press focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none min-h-[36px]"
+          className="press focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none min-h-[36px]"
         >
           Check In
         </Button>
@@ -84,7 +84,7 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
           size="sm"
           variant="ghost"
           loading={loading}
-          className="press focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none min-h-[36px]"
+          className="press focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none min-h-[36px]"
           onClick={() => {
             if (confirm('Are you sure you want to withdraw from this event?')) {
               act(() => withdrawFromEvent(eventId), 'Withdrawn');

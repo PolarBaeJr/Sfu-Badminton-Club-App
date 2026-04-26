@@ -8,14 +8,21 @@ import { Calendar, MapPin, FileText } from 'lucide-react';
 export default async function SessionsPage() {
   const supabase = createAdminClient();
 
+  // Bound the sessions list and only pull attendance for the sessions on this
+  // page — was an unbounded full-table scan of session_attendance.
   const { data: sessions } = await supabase
     .from('sessions')
     .select('*')
-    .order('date', { ascending: false });
+    .order('date', { ascending: false })
+    .limit(50);
 
-  const { data: attendanceRows } = await supabase
-    .from('session_attendance')
-    .select('session_id, player_id, checked_in_at, players(full_name)');
+  const sessionIds = sessions?.map((s) => s.id as string) ?? [];
+  const { data: attendanceRows } = sessionIds.length > 0
+    ? await supabase
+        .from('session_attendance')
+        .select('session_id, player_id, checked_in_at, players(full_name)')
+        .in('session_id', sessionIds)
+    : { data: [] as Array<{ session_id: string; player_id: string; checked_in_at: string; players: { full_name: string } | { full_name: string }[] | null }> };
 
   // Group attendance records by session_id
   type AttendeeEntry = { player_id: string; full_name: string; checked_in_at: string };
@@ -35,8 +42,8 @@ export default async function SessionsPage() {
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--color-accent)]/10">
-            <Calendar className="w-5 h-5 text-[var(--color-accent)]" />
+          <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--ds-accent)]/10">
+            <Calendar className="w-5 h-5 text-[var(--ds-accent)]" />
           </div>
           <div>
             <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">SESSIONS</h1>

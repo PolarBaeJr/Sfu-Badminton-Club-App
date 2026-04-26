@@ -1,4 +1,53 @@
-@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700;800;900&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Mono:wght@400;500&family=Syne:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+/* ═══════════════════════════════════════════════════════════
+   DESIGN SYSTEM TOKENS (v2 — premium sports analytics dark)
+   Mirrors apps/player/src/app/globals.css. Legacy [data-theme="*"]
+   vars below remain untouched for non-migrated screens.
+   ═══════════════════════════════════════════════════════════ */
+:root {
+  /* Type scale — strict 6-step, no ad-hoc sizes */
+  --text-xs:   0.75rem;
+  --text-sm:   0.875rem;
+  --text-base: 1rem;
+  --text-lg:   1.25rem;
+  --text-xl:   1.75rem;
+  --text-2xl:  2.5rem;
+
+  /* Font stacks */
+  --font-display: 'Syne', 'DM Sans', system-ui, sans-serif;
+  --font-body:    'DM Sans', system-ui, sans-serif;
+  --font-mono:    'DM Mono', ui-monospace, Menlo, monospace;
+
+  /* Canonical dark palette — independent of legacy [data-theme="dark"] vars */
+  --ds-bg-base:        #0A0A0A;
+  --ds-bg-surface:     #111111;
+  --ds-bg-elevated:    #1A1A1A;
+  --ds-border:         #2A2A2A;
+  --ds-border-subtle:  #1F1F1F;
+  --ds-text-primary:   #F2F2F2;
+  --ds-text-secondary: #888888;
+  --ds-text-tertiary:  #444444;
+  --ds-accent:         #00E5A0;
+  --ds-accent-dim:     rgba(0, 229, 160, 0.08);
+  --ds-danger:         #FF4D4D;
+  --ds-warning:        #FFB800;
+  --ds-success:        #00E5A0;
+}
+
+.ds-mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.ds-display { font-family: var(--font-display); letter-spacing: -0.01em; }
+
+@keyframes ds-shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+.ds-shimmer-track {
+  animation: ds-shimmer 1.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ds-shimmer-track { animation: none; opacity: 0.6; }
+}
 
 @tailwind base;
 @tailwind components;
@@ -14,8 +63,8 @@
   --text-muted: #64748B;
   --border: rgba(255,255,255,0.06);
   --border-hover: rgba(255,255,255,0.10);
-  --color-accent: #E94560;
-  --color-accent-hover: #d63d56;
+  --color-accent: #00E5A0;
+  --color-accent-hover: #33EEBA;
   --color-success: #10B981;
   --color-warning: #F59E0B;
   --color-danger: #EF4444;
@@ -32,8 +81,8 @@
   --text-muted: #94A3B8;
   --border: #E2E8F0;
   --border-hover: #CBD5E1;
-  --color-accent: #E94560;
-  --color-accent-hover: #d63d56;
+  --color-accent: #00B37D;
+  --color-accent-hover: #009966;
   --color-success: #10B981;
   --color-warning: #F59E0B;
   --color-danger: #EF4444;

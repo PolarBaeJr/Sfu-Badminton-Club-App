@@ -14,7 +14,7 @@ export function MainContent({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <main className="md:ml-64 min-h-screen p-6 pt-16 md:pt-6 lg:p-8 transition-all duration-300">
+    <main className="md:ml-[220px] min-h-screen p-6 pt-16 md:pt-6 lg:p-8 transition-all duration-300">
       <div className="max-w-7xl mx-auto">
         {children}
       </div>

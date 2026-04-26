@@ -29,7 +29,7 @@ const steps = [
 
 const statCards = [
   { icon: Trophy, label: 'Starting Elo', value: '1200', color: 'var(--color-gold)' },
-  { icon: Swords, label: 'Singles & Doubles', value: 'Both', color: 'var(--color-accent)' },
+  { icon: Swords, label: 'Singles & Doubles', value: 'Both', color: 'var(--ds-accent)' },
   { icon: TrendingUp, label: 'Rank', value: 'Unranked', color: 'var(--text-secondary)' },
 ];
 
@@ -61,7 +61,7 @@ export default function OnboardingPage() {
     <div className="min-h-screen flex items-center justify-center px-4 py-12 relative overflow-hidden">
       {/* Background effects */}
       <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-1/3 left-1/3 w-80 h-80 bg-[var(--color-accent)]/5 rounded-full blur-3xl" />
+        <div className="absolute top-1/3 left-1/3 w-80 h-80 bg-[var(--ds-accent)]/5 rounded-full blur-3xl" />
         <div className="absolute bottom-1/3 right-1/4 w-64 h-64 bg-[var(--color-gold)]/5 rounded-full blur-3xl" />
       </div>
 
@@ -94,7 +94,7 @@ export default function OnboardingPage() {
               <div className="flex items-center gap-2 flex-1">
                 <motion.div
                   animate={{
-                    backgroundColor: step >= s.number ? 'var(--color-accent)' : 'var(--on-surface-med)',
+                    backgroundColor: step >= s.number ? 'var(--ds-accent)' : 'var(--on-surface-med)',
                     scale: step === s.number ? 1.1 : 1,
                   }}
                   transition={{ type: 'spring', bounce: 0.4 }}
@@ -116,7 +116,7 @@ export default function OnboardingPage() {
                     <motion.div
                       animate={{ width: step > s.number ? '100%' : '0%' }}
                       transition={{ duration: 0.4 }}
-                      className="h-full bg-[var(--color-accent)] rounded-full"
+                      className="h-full bg-[var(--ds-accent)] rounded-full"
                     />
                   </div>
                 </div>
@@ -146,7 +146,7 @@ export default function OnboardingPage() {
                   <div className="space-y-4">
                     <div className="space-y-2">
                       <Label htmlFor="name" className="text-[var(--text-secondary)] text-sm font-medium">
-                        Full Name <span className="text-[var(--color-accent)]">*</span>
+                        Full Name <span className="text-[var(--ds-accent)]">*</span>
                       </Label>
                       <div className="relative">
                         <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)]" />
@@ -155,7 +155,7 @@ export default function OnboardingPage() {
                           value={name}
                           onChange={(e) => setName(e.target.value)}
                           placeholder="Your full name"
-                          className="h-12 pl-10 bg-[var(--on-surface-soft)] border-[var(--border-hover)] text-shuttle-white placeholder:text-[var(--text-dim)] focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20"
+                          className="h-12 pl-10 bg-[var(--on-surface-soft)] border-[var(--border-hover)] text-shuttle-white placeholder:text-[var(--text-dim)] focus:border-[var(--ds-accent)]/50 focus:ring-[var(--ds-accent)]/20"
                         />
                       </div>
                     </div>
@@ -171,7 +171,7 @@ export default function OnboardingPage() {
                           value={displayName}
                           onChange={(e) => setDisplayName(e.target.value)}
                           placeholder="Nickname or gamertag"
-                          className="h-12 pl-10 bg-[var(--on-surface-soft)] border-[var(--border-hover)] text-shuttle-white placeholder:text-[var(--text-dim)] focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20"
+                          className="h-12 pl-10 bg-[var(--on-surface-soft)] border-[var(--border-hover)] text-shuttle-white placeholder:text-[var(--text-dim)] focus:border-[var(--ds-accent)]/50 focus:ring-[var(--ds-accent)]/20"
                         />
                       </div>
                     </div>
@@ -187,7 +187,7 @@ export default function OnboardingPage() {
                           value={phone}
                           onChange={(e) => setPhone(e.target.value)}
                           placeholder="For session reminders"
-                          className="h-12 pl-10 bg-[var(--on-surface-soft)] border-[var(--border-hover)] text-shuttle-white placeholder:text-[var(--text-dim)] focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20"
+                          className="h-12 pl-10 bg-[var(--on-surface-soft)] border-[var(--border-hover)] text-shuttle-white placeholder:text-[var(--text-dim)] focus:border-[var(--ds-accent)]/50 focus:ring-[var(--ds-accent)]/20"
                         />
                       </div>
                     </div>
@@ -197,7 +197,7 @@ export default function OnboardingPage() {
                     onClick={() => { if (name.length >= 2) setStep(2); }}
                     disabled={name.length < 2}
                     size="lg"
-                    className="w-full h-12 gradient-court text-white font-bold tracking-wide shadow-lg shadow-[var(--color-accent)]/20 hover:shadow-[var(--color-accent)]/30 disabled:opacity-40 disabled:shadow-none transition-all duration-300"
+                    className="w-full h-12 gradient-court text-white font-bold tracking-wide shadow-lg shadow-[var(--ds-accent)]/20 hover:shadow-[var(--ds-accent)]/30 disabled:opacity-40 disabled:shadow-none transition-all duration-300"
                   >
                     Continue
                     <ChevronRight className="w-4 h-4 ml-1" />
@@ -219,9 +219,9 @@ export default function OnboardingPage() {
                       initial={{ scale: 0, rotate: -180 }}
                       animate={{ scale: 1, rotate: 0 }}
                       transition={{ type: 'spring', bounce: 0.5, delay: 0.15 }}
-                      className="w-16 h-16 mx-auto mb-4 rounded-full bg-[var(--color-accent)]/15 flex items-center justify-center"
+                      className="w-16 h-16 mx-auto mb-4 rounded-full bg-[var(--ds-accent)]/15 flex items-center justify-center"
                     >
-                      <Rocket className="w-8 h-8 text-[var(--color-accent)]" />
+                      <Rocket className="w-8 h-8 text-[var(--ds-accent)]" />
                     </motion.div>
                     <h2 className="text-xl font-bold text-shuttle-white">
                       You&apos;re ready, {displayName || name.split(' ')[0]}!

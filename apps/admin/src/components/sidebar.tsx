@@ -20,6 +20,8 @@ import {
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 
+type SidebarProps = { userEmail?: string | null };
+
 const navSections = [
   {
     title: 'Manage',
@@ -42,10 +44,9 @@ const navSections = [
   },
 ];
 
-export function Sidebar() {
+export function Sidebar({ userEmail = null }: SidebarProps = {}) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [userEmail, setUserEmail] = useState<string | null>(null);
 
   // Don't render sidebar on public routes
   const isPublicRoute =
@@ -58,14 +59,6 @@ export function Sidebar() {
     setMobileOpen(false);
   }, [pathname]);
 
-  // Load user email
-  useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (user) setUserEmail(user.email ?? null);
-    });
-  }, []);
-
   async function handleSignOut() {
     const supabase = createClient();
     await supabase.auth.signOut();
@@ -77,7 +70,7 @@ export function Sidebar() {
       {/* Header */}
       <div className="p-4 border-b border-[var(--border)] flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-bold text-[var(--color-accent)] font-display tracking-wider">SFU BADMINTON</h1>
+          <h1 className="text-lg font-bold text-[var(--ds-accent)] font-display tracking-wider">SFU BADMINTON</h1>
           <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-widest mt-0.5">Admin Panel</p>
         </div>
         <button
@@ -103,17 +96,15 @@ export function Sidebar() {
                   <Link
                     key={item.href}
                     href={item.href}
+                    aria-current={isActive ? 'page' : undefined}
                     className={cn(
-                      'flex items-center gap-3 rounded-lg text-sm transition-all duration-200 group relative px-3 py-2.5',
+                      'flex items-center gap-3 text-sm transition-colors duration-150 group relative pl-3 pr-3 py-2.5 border-l-2',
                       isActive
-                        ? 'bg-[var(--color-accent)]/10 text-[var(--color-accent)]'
-                        : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/[0.04]'
+                        ? 'bg-[var(--ds-accent-dim)] text-[var(--ds-accent)] border-[var(--ds-accent)]'
+                        : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] border-transparent hover:bg-white/[0.03]'
                     )}
                   >
-                    {isActive && (
-                      <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-[var(--color-accent)]" />
-                    )}
-                    <Icon className={cn('w-[18px] h-[18px] flex-shrink-0', isActive && 'text-[var(--color-accent)]')} />
+                    <Icon className={cn('w-[18px] h-[18px] flex-shrink-0', isActive && 'text-[var(--ds-accent)]')} />
                     <span className="font-medium">{item.label}</span>
                   </Link>
                 );
@@ -162,7 +153,7 @@ export function Sidebar() {
       {/* Sidebar — hidden on mobile unless mobileOpen */}
       <aside
         className={cn(
-          'fixed left-0 top-0 bottom-0 bg-[var(--bg-elevated)] border-r border-[var(--border)] flex flex-col z-50 w-64 transition-transform duration-300',
+          'fixed left-0 top-0 bottom-0 bg-[var(--bg-elevated)] border-r border-[var(--border)] flex flex-col z-50 w-[220px] transition-transform duration-300',
           mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         )}
       >

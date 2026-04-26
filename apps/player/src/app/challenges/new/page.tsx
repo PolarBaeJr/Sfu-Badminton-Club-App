@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
-import { Select, Input, Textarea } from '@badminton/ui';
+import { Select, Textarea } from '@badminton/ui';
 import { MATCH_FORMAT_LABELS, previewEloChange } from '@badminton/shared';
 import { createChallenge } from '@/lib/actions';
 import { useRouter } from 'next/navigation';
@@ -15,7 +15,6 @@ import {
   TrendingUp,
   TrendingDown,
   Send,
-  Loader2,
   Zap,
   Info,
   Calendar,
@@ -83,14 +82,20 @@ export default function NewChallengePage() {
   }, []);
 
   const opponent = players.find((p) => p.id === opponentId);
+  const myRating = type === 'singles' ? myElo.singles : myElo.doubles;
+  const oppRating = opponent ? (type === 'singles' ? opponent.singles_elo : opponent.doubles_elo) : 0;
   const eloPreview = opponent ? previewEloChange(
-    type === 'singles' ? myElo.singles : myElo.doubles,
-    type === 'singles' ? opponent.singles_elo : opponent.doubles_elo,
+    myRating,
+    oppRating,
     format as 'single_21' | 'bo3_21' | 'single_15' | 'single_11',
     rated ? 'rated_challenge' : 'casual',
     type,
     true
   ) : null;
+  const winProbability = opponent
+    ? Math.round((1 / (1 + Math.pow(10, (oppRating - myRating) / 400))) * 100)
+    : null;
+  const eloGap = opponent ? myRating - oppRating : null;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -140,12 +145,12 @@ export default function NewChallengePage() {
       >
         {/* Page header */}
         <div className="flex items-center gap-3 mb-5">
-          <div className="w-11 h-11 rounded-xl bg-[var(--color-accent)]/10 flex items-center justify-center glow-red shrink-0">
-            <Swords className="w-5 h-5 text-[var(--color-accent)]" />
+          <div className="w-11 h-11 rounded-md bg-[var(--ds-accent-dim)] flex items-center justify-center shrink-0">
+            <Swords className="w-5 h-5 text-[var(--ds-accent)]" />
           </div>
           <div>
             <p className="eyebrow">Create</p>
-            <h1 className="display-lg">New Challenge</h1>
+            <h1 className="ds-display text-3xl font-semibold tracking-tight text-[var(--text-primary)]">New Challenge</h1>
           </div>
         </div>
 
@@ -161,9 +166,10 @@ export default function NewChallengePage() {
                     key={t}
                     type="button"
                     onClick={() => setType(t)}
-                    className={`flex-1 min-h-[44px] py-2.5 rounded-xl text-sm font-bold capitalize transition-all duration-200 press border ${
+                    aria-pressed={type === t}
+                    className={`flex-1 min-h-[40px] rounded-md text-sm font-semibold capitalize transition-all duration-150 press border active:scale-[0.99] ${
                       type === t
-                        ? 'bg-[var(--color-accent)]/15 border-[var(--color-accent)]/30 text-[var(--color-accent)] glow-red'
+                        ? 'bg-[var(--ds-accent-dim)] border-[var(--ds-accent)] text-[var(--ds-accent)]'
                         : 'bg-white/[0.03] border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:border-[var(--border-hover)]'
                     }`}
                   >
@@ -218,7 +224,8 @@ export default function NewChallengePage() {
               <button
                 type="button"
                 onClick={() => setRated(!rated)}
-                className={`w-full min-h-[44px] py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all duration-200 press border ${
+                aria-pressed={rated}
+                className={`w-full min-h-[40px] rounded-md text-sm font-semibold flex items-center justify-center gap-2 transition-all duration-150 press border active:scale-[0.99] ${
                   rated
                     ? 'bg-[var(--color-gold)]/10 border-[var(--color-gold)]/25 text-[var(--color-gold)] glow-gold'
                     : 'bg-white/[0.03] border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-hover)]'
@@ -229,32 +236,52 @@ export default function NewChallengePage() {
               </button>
             </div>
 
-            {/* Elo Preview */}
-            {eloPreview && rated && (
+            {/* Matchup Preview */}
+            {opponent && rated && eloPreview && winProbability !== null && eloGap !== null && (
               <motion.div
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: 'auto' }}
                 exit={{ opacity: 0, height: 0 }}
                 transition={{ duration: 0.25 }}
-                className="card-surface rounded-xl p-4 overflow-hidden"
+                className="card-surface rounded-lg p-5 overflow-hidden"
               >
-                <div className="flex items-center gap-2 mb-3">
+                <div className="flex items-center gap-2 mb-4">
                   <Info className="w-3.5 h-3.5 text-[var(--text-muted)]" />
-                  <span className="eyebrow">Elo Preview</span>
+                  <span className="eyebrow">Matchup Preview</span>
                 </div>
-                <div className="flex justify-between gap-3">
-                  <div className="flex items-center gap-2 bg-[var(--color-success)]/5 rounded-lg px-3 py-2 flex-1">
+
+                {/* Win probability bar */}
+                <div className="mb-4">
+                  <div className="flex items-baseline justify-between mb-2">
+                    <span className="text-xs text-[var(--text-muted)] uppercase tracking-wider">Win probability</span>
+                    <span className="ds-mono text-2xl font-semibold text-[var(--ds-accent)]">{winProbability}%</span>
+                  </div>
+                  <div className="relative h-1.5 w-full rounded-full bg-[var(--border)] overflow-hidden">
+                    <div
+                      className="absolute inset-y-0 left-0 rounded-full bg-[var(--ds-accent)] transition-[width] duration-300"
+                      style={{ width: `${winProbability}%` }}
+                    />
+                  </div>
+                  <div className="mt-1.5 flex items-center justify-between text-[10px] text-[var(--text-dim)] ds-mono uppercase tracking-wide">
+                    <span>Elo Δ {eloGap >= 0 ? '+' : ''}{eloGap}</span>
+                    <span>Your {myRating} · Opp {oppRating}</span>
+                  </div>
+                </div>
+
+                {/* Delta split */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex items-center gap-2 bg-[var(--color-success)]/5 border border-[var(--color-success)]/15 rounded-md px-3 py-2.5">
                     <TrendingUp className="w-4 h-4 text-[var(--color-success)] shrink-0" />
                     <div>
-                      <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wide">Win</p>
-                      <p className="nums text-base font-black text-[var(--color-success)]">+{eloPreview.winDelta}</p>
+                      <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wide">On Win</p>
+                      <p className="ds-mono text-base font-bold text-[var(--color-success)]">+{eloPreview.winDelta}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 bg-[var(--color-accent)]/5 rounded-lg px-3 py-2 flex-1">
-                    <TrendingDown className="w-4 h-4 text-[var(--color-accent)] shrink-0" />
+                  <div className="flex items-center gap-2 bg-[var(--color-danger)]/5 border border-[var(--color-danger)]/15 rounded-md px-3 py-2.5">
+                    <TrendingDown className="w-4 h-4 text-[var(--color-danger)] shrink-0" />
                     <div>
-                      <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wide">Loss</p>
-                      <p className="nums text-base font-black text-[var(--color-accent)]">{eloPreview.lossDelta}</p>
+                      <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wide">On Loss</p>
+                      <p className="ds-mono text-base font-bold text-[var(--color-danger)]">{eloPreview.lossDelta}</p>
                     </div>
                   </div>
                 </div>
@@ -277,7 +304,7 @@ export default function NewChallengePage() {
                   value={scheduledDate}
                   onChange={(e) => setScheduledDate(e.target.value)}
                   min={new Date().toISOString().split('T')[0]}
-                  className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl px-3 py-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40 focus:border-transparent transition-colors min-h-[44px] w-full"
+                  className="bg-[var(--bg-card)] border border-[var(--border)] rounded-md px-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:border-transparent transition-colors min-h-[40px] w-full"
                 />
                 <input
                   id="scheduled_time"
@@ -285,7 +312,7 @@ export default function NewChallengePage() {
                   type="time"
                   value={scheduledTime}
                   onChange={(e) => setScheduledTime(e.target.value)}
-                  className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl px-3 py-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40 focus:border-transparent transition-colors min-h-[44px] w-full"
+                  className="bg-[var(--bg-card)] border border-[var(--border)] rounded-md px-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:border-transparent transition-colors min-h-[40px] w-full"
                 />
               </div>
             </div>
@@ -301,13 +328,9 @@ export default function NewChallengePage() {
               type="submit"
               disabled={loading}
               size="lg"
-              className="w-full min-h-[52px] btn-primary-cta press"
+              className="w-full"
             >
-              {loading ? (
-                <Loader2 className="w-5 h-5 animate-spin mr-2" />
-              ) : (
-                <Send className="w-4 h-4 mr-2 transition-transform duration-150 group-hover:translate-x-0.5" />
-              )}
+              {!loading && <Send className="w-4 h-4 mr-2" />}
               Send Challenge
             </Button>
           </form>

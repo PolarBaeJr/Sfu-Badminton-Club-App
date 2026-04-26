@@ -37,7 +37,7 @@ export function CheckInButton({ sessionId, isCheckedIn }: CheckInButtonProps) {
     <button
       onClick={handleCheckIn}
       disabled={loading}
-      className="press gradient-court text-white rounded-lg px-4 py-2 text-sm font-semibold min-h-[44px] disabled:opacity-60 disabled:cursor-not-allowed transition-opacity"
+      className="press gradient-court text-[#0A0A0A] rounded-lg px-4 py-2 text-sm font-semibold min-h-[44px] disabled:opacity-60 disabled:cursor-not-allowed transition-opacity"
     >
       {loading ? 'Checking in...' : 'Check In'}
     </button>

@@ -87,7 +87,7 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
           onClick={handleRegister}
           loading={loading}
           size="sm"
-          className="press min-h-[44px] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+          className="press min-h-[44px] focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none"
         >
           <UserPlus className="w-3.5 h-3.5 mr-1.5" />
           Register
@@ -106,7 +106,7 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
           onClick={handleCheckIn}
           loading={loading}
           size="sm"
-          className="press min-h-[44px] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+          className="press min-h-[44px] focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none"
         >
           <CheckCircle className="w-3.5 h-3.5 mr-1.5" />
           Check In
@@ -118,7 +118,7 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
           loading={loading}
           size="sm"
           variant="ghost"
-          className="press min-h-[44px] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+          className="press min-h-[44px] focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none"
         >
           <UserMinus className="w-3.5 h-3.5 mr-1.5" />
           Withdraw
