@@ -2,7 +2,7 @@
 
 import { useState, useRef } from 'react';
 import { Avatar } from '@badminton/ui';
-import { createClient } from '@/lib/supabase-browser';
+import { createClient } from '@badminton/shared/supabase-browser';
 import { updateAvatarUrl } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 

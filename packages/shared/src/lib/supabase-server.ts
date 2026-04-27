@@ -1,6 +1,10 @@
+import 'server-only';
 import { createServerClient } from '@supabase/ssr';
+import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 
+// Anon-key client wired to the request cookie store. Identical wiring is
+// needed by both apps' RSC/route-handler code, so it lives here.
 export async function createServerSupabaseClient() {
   const cookieStore = await cookies();
 
@@ -18,7 +22,7 @@ export async function createServerSupabaseClient() {
               cookieStore.set(name, value, options as any)
             );
           } catch {
-            // Server Component — ignore
+            // Server Component
           }
         },
       },
@@ -26,8 +30,11 @@ export async function createServerSupabaseClient() {
   );
 }
 
-export async function createAdminClient() {
-  const { createClient } = await import('@supabase/supabase-js');
+// Service-role client — bypasses RLS. Hard-guarded by `server-only` above so
+// any accidental import from a client bundle fails the build. Use sparingly
+// and only for operations that genuinely require bypassing RLS. The auth
+// options disable session machinery that has no meaning for a service-role key.
+export function createServiceRoleClient() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,

@@ -11,7 +11,7 @@ import {
   updateParticipantSeed,
   updatePairSeed,
   clearSeeds,
-} from '@/lib/tournament-actions';
+} from '@/lib/tournament/participant-actions';
 import { nextPowerOf2 } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';

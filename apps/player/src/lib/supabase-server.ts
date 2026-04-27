@@ -1,44 +1,18 @@
 import 'server-only';
 import { cache } from 'react';
-import { createServerClient } from '@supabase/ssr';
-import { createClient } from '@supabase/supabase-js';
-import { cookies } from 'next/headers';
+import {
+  createServerSupabaseClient,
+  createServiceRoleClient,
+} from '@badminton/shared/supabase-server';
 
-// Service role client — bypasses RLS. Hard-guarded by `server-only` above so
-// any accidental import from a client bundle fails the build. Use sparingly
-// and only for operations that genuinely require bypassing RLS (onboarding
-// insert, tournament participation writes that cross player boundaries).
-export function createServiceRoleClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
+// Generic Supabase client factories live in @badminton/shared. Role-gated
+// helpers (player lookup, current user) stay app-local because admin and
+// player have fundamentally different security postures: admin THROWS on
+// missing auth/role so route handlers fail closed; player returns null so
+// pages can render a logged-out / partial state. Merging them would force
+// one app's posture on the other.
 
-export async function createServerSupabaseClient() {
-  const cookieStore = await cookies();
-
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll(cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options as any)
-            );
-          } catch {
-            // Server Component
-          }
-        },
-      },
-    }
-  );
-}
+export { createServerSupabaseClient, createServiceRoleClient };
 
 // Wrapped in `cache()` so multiple callers (layout + page + components) within
 // one request share a single auth.getUser + DB lookup instead of round-tripping

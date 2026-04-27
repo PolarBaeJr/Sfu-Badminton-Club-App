@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+// Union schema covering env vars consumed by either admin or player. PostHog
+// vars are player-only today but cost nothing to leave optional in the shared
+// schema — admin runtimes simply won't populate them.
 const envSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),

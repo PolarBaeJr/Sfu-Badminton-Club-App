@@ -18,7 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
-import { createClient } from '@/lib/supabase-browser';
+import { createClient } from '@badminton/shared/supabase-browser';
 
 type SidebarProps = { userEmail?: string | null };
 

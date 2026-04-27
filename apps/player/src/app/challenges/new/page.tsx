@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@/lib/supabase-browser';
+import { createClient } from '@badminton/shared/supabase-browser';
 import { Button, Select, Textarea } from '@badminton/ui';
 import { MATCH_FORMAT_LABELS, previewEloChange } from '@badminton/shared';
 import { createChallenge } from '@/lib/actions';

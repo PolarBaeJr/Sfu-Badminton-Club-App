@@ -46,7 +46,7 @@ export async function subscribeToPush(playerId: string): Promise<boolean> {
     const keys = subscription.toJSON().keys;
 
     // Save to Supabase
-    const { createClient } = await import('@/lib/supabase-browser');
+    const { createClient } = await import('@badminton/shared/supabase-browser');
     const supabase = createClient();
     const { error } = await supabase.from('push_subscriptions').insert({
       player_id: playerId,
@@ -81,7 +81,7 @@ export async function unsubscribeFromPush(playerId: string): Promise<boolean> {
 
     if (subscription) {
       // Remove from DB
-      const { createClient } = await import('@/lib/supabase-browser');
+      const { createClient } = await import('@badminton/shared/supabase-browser');
       const supabase = createClient();
       await supabase.from('push_subscriptions')
         .update({ active: false })

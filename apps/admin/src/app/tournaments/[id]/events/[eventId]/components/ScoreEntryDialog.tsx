@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Button, Dialog, Input, Select } from '@badminton/ui';
 import { getMaxGamesForFormat, previewEloChange } from '@badminton/shared';
 import type { TournamentMatchFormat, MatchFormat } from '@badminton/shared';
-import { enterMatchResult, enterWalkover, voidMatch } from '@/lib/tournament-actions';
+import { enterMatchResult, enterWalkover, voidMatch } from '@/lib/tournament/scoring-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 

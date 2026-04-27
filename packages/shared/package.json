@@ -6,7 +6,10 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./qr-token": "./src/lib/qr-token.ts"
+    "./qr-token": "./src/lib/qr-token.ts",
+    "./supabase-browser": "./src/lib/supabase-browser.ts",
+    "./supabase-server": "./src/lib/supabase-server.ts",
+    "./env": "./src/lib/env.ts"
   },
   "scripts": {
     "test": "vitest run",

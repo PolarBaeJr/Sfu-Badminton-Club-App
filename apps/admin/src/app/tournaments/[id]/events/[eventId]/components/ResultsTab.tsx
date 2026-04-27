@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Badge, Avatar, Button, Dialog } from '@badminton/ui';
 import { PLACEMENT_BONUSES, isDoublesEvent } from '@badminton/shared';
 import type { TournamentEventType } from '@badminton/shared';
-import { undoMatchResult } from '@/lib/tournament-actions';
+import { undoMatchResult } from '@/lib/tournament/scoring-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { Crown, TrendingUp, TrendingDown, Medal, Undo2 } from 'lucide-react';

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { createClient } from '@/lib/supabase-browser';
+import { createClient } from '@badminton/shared/supabase-browser';
 import { Button, Input, Label, Card, CardContent, Separator } from '@badminton/ui';
 import { motion, AnimatePresence } from 'framer-motion';
 import {

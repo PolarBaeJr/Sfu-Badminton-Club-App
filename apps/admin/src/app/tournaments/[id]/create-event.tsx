@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Button, Dialog, Select, Input } from '@badminton/ui';
 import { TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_MATCH_FORMAT_LABELS } from '@badminton/shared';
-import { createTournamentEvent } from '@/lib/tournament-actions';
+import { createTournamentEvent } from '@/lib/tournament/event-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { Plus } from 'lucide-react';

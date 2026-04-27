@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@/lib/supabase-browser';
+import { createClient } from '@badminton/shared/supabase-browser';
 import { Button, Card, Input, Textarea, Switch } from '@badminton/ui';
 import { updateProfile } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';

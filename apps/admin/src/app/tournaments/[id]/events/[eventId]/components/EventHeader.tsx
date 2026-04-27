@@ -9,14 +9,13 @@ import {
   nextPowerOf2,
 } from '@badminton/shared';
 import type { TournamentEventType, TournamentEventStatus } from '@badminton/shared';
+import { setEventStatus } from '@/lib/tournament/event-actions';
 import {
-  setEventStatus,
   generateSingleEliminationBracket,
   generateRoundRobinMatches,
-  finalizeEvent,
-  lockDraw,
-  unlockDraw,
-} from '@/lib/tournament-actions';
+} from '@/lib/tournament/bracket-actions';
+import { finalizeEvent } from '@/lib/tournament/standings-actions';
+import { lockDraw, unlockDraw } from '@/lib/tournament/participant-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { Trophy, Users, CheckCircle, Swords, BarChart3, ChevronRight, Lock, Unlock } from 'lucide-react';

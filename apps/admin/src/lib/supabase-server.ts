@@ -1,42 +1,23 @@
 import 'server-only';
 import { cache } from 'react';
-import { createServerClient } from '@supabase/ssr';
-import { cookies } from 'next/headers';
-import { createClient } from '@supabase/supabase-js';
 import { setUser as sentrySetUser } from '@sentry/nextjs';
+import {
+  createServerSupabaseClient,
+  createServiceRoleClient,
+} from '@badminton/shared/supabase-server';
 
-export async function createServerSupabaseClient() {
-  const cookieStore = await cookies();
+// Generic Supabase client factories live in @badminton/shared. Role-gated
+// helpers (admin gate, player lookup) stay app-local because admin and player
+// have fundamentally different security postures: admin THROWS on missing
+// auth/role so route handlers fail closed; player returns null so pages can
+// render a logged-out state. Merging them would force one app's posture on the
+// other.
 
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll(cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options as any)
-            );
-          } catch {
-            // Server Component
-          }
-        },
-      },
-    }
-  );
-}
+export { createServerSupabaseClient };
 
-export function createAdminClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
-}
+// Kept under the `createAdminClient` name so the existing 20+ callers don't
+// need to be touched. The implementation is the shared service-role factory.
+export const createAdminClient = createServiceRoleClient;
 
 // Wrapped in `cache()` so server actions / pages that share a render dedupe
 // the auth.getUser + admin lookup pair to one round-trip per request.

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { createClient } from '@/lib/supabase-browser';
+import { createClient } from '@badminton/shared/supabase-browser';
 import { Button, Input, Card } from '@badminton/ui';
 import { Shield, Mail, Loader2, Globe, CheckCircle2, AlertCircle } from 'lucide-react';
 

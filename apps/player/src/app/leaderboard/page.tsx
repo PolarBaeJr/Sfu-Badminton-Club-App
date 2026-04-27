@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@/lib/supabase-browser';
+import { createClient } from '@badminton/shared/supabase-browser';
 import { Avatar, Badge } from '@badminton/ui';
 import Link from 'next/link';
 import { getPostHogClient } from '@/lib/posthog';

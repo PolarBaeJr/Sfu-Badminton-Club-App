@@ -1,6 +1,6 @@
 'use client';
 
-import { createClient } from '@/lib/supabase-browser';
+import { createClient } from '@badminton/shared/supabase-browser';
 import { Shield, LogOut } from 'lucide-react';
 
 export default function UnauthorizedPage() {
