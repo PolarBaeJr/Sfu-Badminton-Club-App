@@ -30,21 +30,22 @@ export default async function AnnouncementsPage() {
 
   const supabase = await createServerSupabaseClient();
 
-  const { data: announcements } = await supabase
-    .from('announcements')
-    .select('*')
-    .eq('status', 'published')
-    .order('pinned', { ascending: false })
-    .order('created_at', { ascending: false })
-    .limit(100)
-    .returns<Announcement[]>();
-
-  const { data: reads } = await supabase
-    .from('announcement_reads')
-    .select('*')
-    .eq('player_id', player.id)
-    .limit(500)
-    .returns<AnnouncementRead[]>();
+  const [{ data: announcements }, { data: reads }] = await Promise.all([
+    supabase
+      .from('announcements')
+      .select('*')
+      .eq('status', 'published')
+      .order('pinned', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(100)
+      .returns<Announcement[]>(),
+    supabase
+      .from('announcement_reads')
+      .select('*')
+      .eq('player_id', player.id)
+      .limit(500)
+      .returns<AnnouncementRead[]>(),
+  ]);
 
   const readSet = new Set((reads ?? []).map((r) => r.announcement_id));
 

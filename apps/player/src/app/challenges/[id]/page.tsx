@@ -34,19 +34,20 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
 
   const supabase = await createServerSupabaseClient();
 
-  const { data: challenge } = await supabase
-    .from('challenges')
-    .select('*, creator:players!challenges_created_by_fkey(full_name), challenge_participants(*, player:players(full_name, ratings(*)))')
-    .eq('id', id)
-    .single();
+  const [{ data: challenge }, { data: match }] = await Promise.all([
+    supabase
+      .from('challenges')
+      .select('*, creator:players!challenges_created_by_fkey(full_name), challenge_participants(*, player:players(full_name, ratings(*)))')
+      .eq('id', id)
+      .single(),
+    supabase
+      .from('matches')
+      .select('*, match_participants(*, player:players(full_name)), match_games(*)')
+      .eq('challenge_id', id)
+      .maybeSingle(),
+  ]);
 
   if (!challenge) notFound();
-
-  const { data: match } = await supabase
-    .from('matches')
-    .select('*, match_participants(*, player:players(full_name)), match_games(*)')
-    .eq('challenge_id', id)
-    .maybeSingle();
 
   const myParticipant = challenge.challenge_participants?.find(
     (cp: Record<string, unknown>) => cp.player_id === player.id
