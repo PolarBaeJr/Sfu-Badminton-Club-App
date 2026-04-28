@@ -1,7 +1,18 @@
 'use client';
 
-import { motion } from 'framer-motion';
+import dynamic from 'next/dynamic';
+import type { HTMLMotionProps, AnimatePresenceProps } from 'framer-motion';
 import React from 'react';
+
+export const MotionDiv = dynamic(
+  () => import('framer-motion').then((mod) => ({ default: mod.motion.div })),
+  { ssr: false },
+) as React.ComponentType<HTMLMotionProps<'div'>>;
+
+export const AnimatePresence = dynamic(
+  () => import('framer-motion').then((mod) => ({ default: mod.AnimatePresence })),
+  { ssr: false },
+) as React.ComponentType<React.PropsWithChildren<AnimatePresenceProps>>;
 
 export function FadeIn({
   children,
@@ -13,14 +24,14 @@ export function FadeIn({
   className?: string;
 }) {
   return (
-    <motion.div
+    <MotionDiv
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay, ease: 'easeOut' }}
       className={className}
     >
       {children}
-    </motion.div>
+    </MotionDiv>
   );
 }
 
@@ -32,7 +43,7 @@ export function StaggerContainer({
   className?: string;
 }) {
   return (
-    <motion.div
+    <MotionDiv
       initial="hidden"
       animate="visible"
       variants={{
@@ -42,7 +53,7 @@ export function StaggerContainer({
       className={className}
     >
       {children}
-    </motion.div>
+    </MotionDiv>
   );
 }
 
@@ -54,7 +65,7 @@ export function StaggerItem({
   className?: string;
 }) {
   return (
-    <motion.div
+    <MotionDiv
       variants={{
         hidden: { opacity: 0, y: 10 },
         visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: 'easeOut' } },
@@ -62,6 +73,6 @@ export function StaggerItem({
       className={className}
     >
       {children}
-    </motion.div>
+    </MotionDiv>
   );
 }

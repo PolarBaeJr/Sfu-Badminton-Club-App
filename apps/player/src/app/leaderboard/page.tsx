@@ -1,5 +1,4 @@
-import { createServerSupabaseClient } from '@badminton/shared/supabase-server';
-import { getCurrentPlayer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
 import { LeaderboardClient } from './leaderboard-client';
 
 export type LeaderboardEntry = {

@@ -7,7 +7,7 @@ import { MATCH_FORMAT_LABELS, previewEloChange } from '@badminton/shared';
 import { createChallenge } from '@/lib/actions';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/toast-provider';
-import { motion } from 'framer-motion';
+import { MotionDiv } from '@/components/motion-wrapper';
 import {
   Swords,
   ArrowLeft,
@@ -137,7 +137,7 @@ export default function NewChallengePage() {
         Back to Challenges
       </Link>
 
-      <motion.div
+      <MotionDiv
         initial={{ opacity: 0, y: 14 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.38, ease: [0.16, 1, 0.3, 1] }}
@@ -237,7 +237,7 @@ export default function NewChallengePage() {
 
             {/* Matchup Preview */}
             {opponent && rated && eloPreview && winProbability !== null && eloGap !== null && (
-              <motion.div
+              <MotionDiv
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: 'auto' }}
                 exit={{ opacity: 0, height: 0 }}
@@ -284,7 +284,7 @@ export default function NewChallengePage() {
                     </div>
                   </div>
                 </div>
-              </motion.div>
+              </MotionDiv>
             )}
 
             {/* Scheduled Date/Time */}
@@ -334,7 +334,7 @@ export default function NewChallengePage() {
             </Button>
           </form>
         </div>
-      </motion.div>
+      </MotionDiv>
     </div>
   );
 }

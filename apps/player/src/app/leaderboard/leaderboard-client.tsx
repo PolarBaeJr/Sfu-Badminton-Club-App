@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { getPostHogClient } from '@/lib/posthog';
 import { getSeasonTier } from '@badminton/shared';
 import { Trophy, Medal, Crown, Search } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { MotionDiv, AnimatePresence } from '@/components/motion-wrapper';
 import type { LeaderboardEntry, TournamentPointsEntry } from './page';
 
 const tabs = [
@@ -94,7 +94,7 @@ export function LeaderboardClient({ players, tournamentPoints, currentPlayerId }
             }`}
           >
             {activeTab === tab.id && (
-              <motion.div
+              <MotionDiv
                 layoutId="leaderboardTab"
                 className="absolute inset-0 bg-gradient-to-r from-[var(--color-gold)]/20 to-[var(--color-gold-deep)]/20 border border-[var(--color-gold)]/20 rounded-lg"
                 transition={{ type: 'spring', bounce: 0.2, duration: 0.5 }}
@@ -121,7 +121,7 @@ export function LeaderboardClient({ players, tournamentPoints, currentPlayerId }
       {/* Table */}
       <div className="card-elevated overflow-hidden">
         <AnimatePresence mode="wait">
-          <motion.div
+          <MotionDiv
             key={activeTab}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -155,7 +155,7 @@ export function LeaderboardClient({ players, tournamentPoints, currentPlayerId }
                 const RankIcon = i < 3 ? rankIcons[i] : null;
 
                 return (
-                  <motion.div
+                  <MotionDiv
                     key={p.id}
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
@@ -219,7 +219,7 @@ export function LeaderboardClient({ players, tournamentPoints, currentPlayerId }
                         </>
                       )}
                     </Link>
-                  </motion.div>
+                  </MotionDiv>
                 );
               })}
             </div>
@@ -239,7 +239,7 @@ export function LeaderboardClient({ players, tournamentPoints, currentPlayerId }
                 )}
               </div>
             )}
-          </motion.div>
+          </MotionDiv>
         </AnimatePresence>
       </div>
     </div>
