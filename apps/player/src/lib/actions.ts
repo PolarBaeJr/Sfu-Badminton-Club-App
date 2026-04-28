@@ -27,8 +27,9 @@ import { PostHog } from 'posthog-node';
 
 const posthogServer = new PostHog(process.env.NEXT_PUBLIC_POSTHOG_KEY || 'dummy', {
   host: process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://us.i.posthog.com',
-  flushAt: 1,
-  flushInterval: 0,
+  flushAt: 20,
+  flushInterval: 5000,
+  disableGeoip: true,
 });
 
 function trackServerEvent(

@@ -1,12 +1,13 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import useSWR from 'swr';
 import { Avatar } from '@badminton/ui';
 import Link from 'next/link';
 import { getPostHogClient } from '@/lib/posthog';
 import { getSeasonTier } from '@badminton/shared';
 import { Trophy, Medal, Crown, Search } from 'lucide-react';
-import { MotionDiv, AnimatePresence } from '@/components/motion-wrapper';
+import { motion } from 'framer-motion';
 import type { LeaderboardEntry, TournamentPointsEntry } from './page';
 
 const tabs = [
@@ -27,7 +28,21 @@ interface LeaderboardClientProps {
   currentPlayerId: string | null;
 }
 
-export function LeaderboardClient({ players, tournamentPoints, currentPlayerId }: LeaderboardClientProps) {
+const leaderboardFetcher = (url: string) => fetch(url).then((r) => r.json());
+
+export function LeaderboardClient({
+  players: initialPlayers,
+  tournamentPoints: initialTournamentPoints,
+  currentPlayerId,
+}: LeaderboardClientProps) {
+  const { data } = useSWR<{ players: LeaderboardEntry[]; tournamentPoints: TournamentPointsEntry[] }>(
+    '/api/leaderboard',
+    leaderboardFetcher,
+    { fallbackData: { players: initialPlayers, tournamentPoints: initialTournamentPoints } }
+  );
+  const players = data?.players ?? initialPlayers;
+  const tournamentPoints = data?.tournamentPoints ?? initialTournamentPoints;
+
   const [activeTab, setActiveTab] = useState<typeof tabs[number]['id']>('open_singles');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -94,7 +109,7 @@ export function LeaderboardClient({ players, tournamentPoints, currentPlayerId }
             }`}
           >
             {activeTab === tab.id && (
-              <MotionDiv
+              <motion.div
                 layoutId="leaderboardTab"
                 className="absolute inset-0 bg-gradient-to-r from-[var(--color-gold)]/20 to-[var(--color-gold-deep)]/20 border border-[var(--color-gold)]/20 rounded-lg"
                 transition={{ type: 'spring', bounce: 0.2, duration: 0.5 }}
@@ -120,14 +135,7 @@ export function LeaderboardClient({ players, tournamentPoints, currentPlayerId }
 
       {/* Table */}
       <div className="card-elevated overflow-hidden">
-        <AnimatePresence mode="wait">
-          <MotionDiv
-            key={activeTab}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-          >
+        <div key={activeTab}>
             {/* Header (sticky) */}
             <div className={`sticky top-0 z-10 bg-[var(--bg-card)]/95 backdrop-blur grid ${isTournamentPoints ? 'grid-cols-[3rem_1fr_5rem]' : 'grid-cols-[3rem_1fr_5rem_4rem_3.5rem] md:grid-cols-[3rem_1fr_5rem_5rem_4rem]'} px-4 py-3 border-b border-[var(--border)] eyebrow`}>
               <span>#</span>
@@ -155,11 +163,13 @@ export function LeaderboardClient({ players, tournamentPoints, currentPlayerId }
                 const RankIcon = i < 3 ? rankIcons[i] : null;
 
                 return (
-                  <MotionDiv
+                  <div
                     key={p.id}
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: Math.min(i * 0.03, 0.5), duration: 0.3 }}
+                    className="reveal"
+                    style={{
+                      ['--i' as string]: i,
+                      animationDelay: 'min(calc(var(--i) * 30ms), 500ms)',
+                    } as React.CSSProperties}
                   >
                     <Link
                       href={`/leaderboard/${p.id}`}
@@ -219,7 +229,7 @@ export function LeaderboardClient({ players, tournamentPoints, currentPlayerId }
                         </>
                       )}
                     </Link>
-                  </MotionDiv>
+                  </div>
                 );
               })}
             </div>
@@ -239,8 +249,7 @@ export function LeaderboardClient({ players, tournamentPoints, currentPlayerId }
                 )}
               </div>
             )}
-          </MotionDiv>
-        </AnimatePresence>
+        </div>
       </div>
     </div>
   );

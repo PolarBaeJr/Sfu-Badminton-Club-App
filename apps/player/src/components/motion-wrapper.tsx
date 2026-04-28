@@ -1,18 +1,8 @@
-'use client';
-
-import dynamic from 'next/dynamic';
-import type { HTMLMotionProps, AnimatePresenceProps } from 'framer-motion';
 import React from 'react';
 
-export const MotionDiv = dynamic(
-  () => import('framer-motion').then((mod) => ({ default: mod.motion.div })),
-  { ssr: false },
-) as React.ComponentType<HTMLMotionProps<'div'>>;
-
-export const AnimatePresence = dynamic(
-  () => import('framer-motion').then((mod) => ({ default: mod.AnimatePresence })),
-  { ssr: false },
-) as React.ComponentType<React.PropsWithChildren<AnimatePresenceProps>>;
+function classes(...c: Array<string | undefined | false>) {
+  return c.filter(Boolean).join(' ');
+}
 
 export function FadeIn({
   children,
@@ -23,15 +13,11 @@ export function FadeIn({
   delay?: number;
   className?: string;
 }) {
+  const style = delay > 0 ? { animationDelay: `${Math.round(delay * 1000)}ms` } : undefined;
   return (
-    <MotionDiv
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, delay, ease: 'easeOut' }}
-      className={className}
-    >
+    <div className={classes('reveal', className)} style={style}>
       {children}
-    </MotionDiv>
+    </div>
   );
 }
 
@@ -43,36 +29,33 @@ export function StaggerContainer({
   className?: string;
 }) {
   return (
-    <MotionDiv
-      initial="hidden"
-      animate="visible"
-      variants={{
-        hidden: {},
-        visible: { transition: { staggerChildren: 0.06 } },
-      }}
-      className={className}
-    >
-      {children}
-    </MotionDiv>
+    <div className={className}>
+      {React.Children.map(children, (child, i) => {
+        if (!React.isValidElement(child)) return child;
+        const existingStyle = (child.props as { style?: React.CSSProperties }).style ?? {};
+        return React.cloneElement(child as React.ReactElement<{ style?: React.CSSProperties }>, {
+          style: {
+            ...existingStyle,
+            animationDelay: `${Math.min(i * 60, 500)}ms`,
+          },
+        });
+      })}
+    </div>
   );
 }
 
 export function StaggerItem({
   children,
   className,
+  style,
 }: {
   children: React.ReactNode;
   className?: string;
+  style?: React.CSSProperties;
 }) {
   return (
-    <MotionDiv
-      variants={{
-        hidden: { opacity: 0, y: 10 },
-        visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: 'easeOut' } },
-      }}
-      className={className}
-    >
+    <div className={classes('reveal', className)} style={style}>
       {children}
-    </MotionDiv>
+    </div>
   );
 }

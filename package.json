@@ -12,7 +12,9 @@
     "build": "npx turbo run build",
     "lint": "npx turbo run lint",
     "type-check": "npx turbo run type-check",
-    "test": "npx turbo run test"
+    "test": "npx turbo run test",
+    "deploy:admin": "bash scripts/deploy.sh admin",
+    "deploy:player": "bash scripts/deploy.sh player"
   },
   "packageManager": "npm@10.8.2",
   "devDependencies": {

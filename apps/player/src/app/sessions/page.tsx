@@ -31,20 +31,8 @@ export default async function SessionsPage() {
       .select('session_id')
       .eq('player_id', player.id),
     supabase
-      .from('session_attendance')
-      .select('session_id')
-      .limit(5000)
-      .then(({ data, error }) => ({
-        data: data
-          ? Object.entries(
-              data.reduce<Record<string, number>>((acc, row) => {
-                acc[row.session_id] = (acc[row.session_id] ?? 0) + 1;
-                return acc;
-              }, {})
-            ).map(([session_id, count]) => ({ session_id, count }))
-          : null,
-        error,
-      })),
+      .from('session_attendance_counts')
+      .select('session_id, count'),
   ]);
 
   const checkedInSessionIds = new Set((myAttendance ?? []).map((r) => r.session_id));

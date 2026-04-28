@@ -1,23 +1,76 @@
-const CACHE_NAME = 'sfu-badminton-v1';
+const STATIC_CACHE = 'sfu-static-v1';
+const PAGES_CACHE = 'sfu-pages-v1';
+const ALLOWED_CACHES = [STATIC_CACHE, PAGES_CACHE];
 
-// Network-first caching strategy
-self.addEventListener('fetch', (event) => {
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        if (response.ok && event.request.method === 'GET') {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, clone);
-          });
-        }
-        return response;
-      })
-      .catch(() => caches.match(event.request))
+function isStaticAsset(url) {
+  return (
+    url.pathname.startsWith('/_next/static/') ||
+    url.pathname.startsWith('/_next/image') ||
+    /\.(woff2?|ttf|otf|png|jpg|jpeg|gif|webp|svg|ico)$/.test(url.pathname)
   );
+}
+
+function isNetworkOnly(url) {
+  if (url.origin === self.location.origin) {
+    if (url.pathname.startsWith('/auth/')) return true;
+    if (url.pathname.startsWith('/api/')) return true;
+    if (url.pathname.startsWith('/monitoring')) return true;
+  }
+  const host = url.hostname;
+  if (host.endsWith('.supabase.co')) return true;
+  if (host.endsWith('.sentry.io') || host.endsWith('.ingest.sentry.io')) return true;
+  if (host.endsWith('posthog.com') || host.endsWith('i.posthog.com')) return true;
+  return false;
+}
+
+self.addEventListener('fetch', (event) => {
+  const req = event.request;
+  if (req.method !== 'GET') return;
+
+  const url = new URL(req.url);
+
+  if (isNetworkOnly(url)) return;
+
+  if (isStaticAsset(url)) {
+    event.respondWith(cacheFirst(req));
+    return;
+  }
+
+  if (url.origin === self.location.origin) {
+    event.respondWith(staleWhileRevalidate(req));
+    return;
+  }
+
+  event.respondWith(fetch(req).catch(() => caches.match(req)));
 });
 
-// Push notification handler
+async function cacheFirst(req) {
+  const cached = await caches.match(req);
+  if (cached) return cached;
+  try {
+    const res = await fetch(req);
+    if (res.ok) {
+      const clone = res.clone();
+      caches.open(STATIC_CACHE).then((c) => c.put(req, clone));
+    }
+    return res;
+  } catch {
+    return cached || Response.error();
+  }
+}
+
+async function staleWhileRevalidate(req) {
+  const cache = await caches.open(PAGES_CACHE);
+  const cached = await cache.match(req);
+  const networkPromise = fetch(req)
+    .then((res) => {
+      if (res.ok) cache.put(req, res.clone());
+      return res;
+    })
+    .catch(() => cached);
+  return cached || networkPromise;
+}
+
 self.addEventListener('push', (event) => {
   if (!event.data) return;
 
@@ -41,7 +94,6 @@ self.addEventListener('push', (event) => {
   );
 });
 
-// Notification click handler
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const url = event.notification.data?.url || '/';
@@ -59,14 +111,13 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
-// Clean old caches on activate
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) =>
+    caches.keys().then((names) =>
       Promise.all(
-        cacheNames
-          .filter((name) => name !== CACHE_NAME)
-          .map((name) => caches.delete(name))
+        names
+          .filter((n) => !ALLOWED_CACHES.includes(n))
+          .map((n) => caches.delete(n))
       )
     )
   );

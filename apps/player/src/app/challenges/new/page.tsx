@@ -7,7 +7,6 @@ import { MATCH_FORMAT_LABELS, previewEloChange } from '@badminton/shared';
 import { createChallenge } from '@/lib/actions';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/toast-provider';
-import { MotionDiv } from '@/components/motion-wrapper';
 import {
   Swords,
   ArrowLeft,
@@ -137,11 +136,7 @@ export default function NewChallengePage() {
         Back to Challenges
       </Link>
 
-      <MotionDiv
-        initial={{ opacity: 0, y: 14 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.38, ease: [0.16, 1, 0.3, 1] }}
-      >
+      <div className="reveal">
         {/* Page header */}
         <div className="flex items-center gap-3 mb-5">
           <div className="w-11 h-11 rounded-md bg-[var(--ds-accent-dim)] flex items-center justify-center shrink-0">
@@ -237,13 +232,7 @@ export default function NewChallengePage() {
 
             {/* Matchup Preview */}
             {opponent && rated && eloPreview && winProbability !== null && eloGap !== null && (
-              <MotionDiv
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.25 }}
-                className="card-surface rounded-lg p-5 overflow-hidden"
-              >
+              <div className="reveal card-surface rounded-lg p-5 overflow-hidden">
                 <div className="flex items-center gap-2 mb-4">
                   <Info className="w-3.5 h-3.5 text-[var(--text-muted)]" />
                   <span className="eyebrow">Matchup Preview</span>
@@ -284,7 +273,7 @@ export default function NewChallengePage() {
                     </div>
                   </div>
                 </div>
-              </MotionDiv>
+              </div>
             )}
 
             {/* Scheduled Date/Time */}
@@ -334,7 +323,7 @@ export default function NewChallengePage() {
             </Button>
           </form>
         </div>
-      </MotionDiv>
+      </div>
     </div>
   );
 }

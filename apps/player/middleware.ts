@@ -2,7 +2,12 @@ import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
 export async function middleware(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request });
+  // Strip any client-supplied x-user-id; this header is only ever set by us
+  // after auth resolution so downstream RSCs can skip a redundant auth.getUser().
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.delete('x-user-id');
+
+  const cookiesToWrite: { name: string; value: string; options?: Record<string, unknown> }[] = [];
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -16,10 +21,7 @@ export async function middleware(request: NextRequest) {
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value)
           );
-          supabaseResponse = NextResponse.next({ request });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options as any)
-          );
+          cookiesToWrite.push(...cookiesToSet);
         },
       },
     }
@@ -34,10 +36,20 @@ export async function middleware(request: NextRequest) {
   ) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
-    return NextResponse.redirect(url);
+    const redirect = NextResponse.redirect(url);
+    cookiesToWrite.forEach(({ name, value, options }) =>
+      redirect.cookies.set(name, value, options as any)
+    );
+    return redirect;
   }
 
-  return supabaseResponse;
+  if (user) requestHeaders.set('x-user-id', user.id);
+
+  const response = NextResponse.next({ request: { headers: requestHeaders } });
+  cookiesToWrite.forEach(({ name, value, options }) =>
+    response.cookies.set(name, value, options as any)
+  );
+  return response;
 }
 
 export const config = {

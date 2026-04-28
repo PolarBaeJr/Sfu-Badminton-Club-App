@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@badminton/ui';
+import { useNotificationCounts } from '@/components/notification-badges';
+import { useProfile } from '@/components/profile-provider';
 import {
   Home,
   Trophy,
@@ -23,8 +25,11 @@ const desktopNavItems = [
   { href: '/my-stats',    label: 'My Stats',     icon: BarChart3},
 ];
 
-export function TopBar({ playerName, unreadCount }: { playerName: string; unreadCount: number }) {
+export function TopBar() {
   const pathname = usePathname();
+  const { unreadNotifs: unreadCount } = useNotificationCounts();
+  const { profile } = useProfile();
+  const playerName = profile?.full_name ?? '';
 
   return (
     <header className="sticky top-0 safe-top bg-[var(--bg-primary)]/90 backdrop-blur-xl border-b border-[var(--border)] z-50">

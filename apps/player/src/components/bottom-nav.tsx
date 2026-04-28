@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@badminton/ui';
+import { useNotificationCounts } from '@/components/notification-badges';
 import { Home, Trophy, Swords, Calendar, Megaphone } from 'lucide-react';
 
 const navItems = [
@@ -13,8 +14,9 @@ const navItems = [
   { href: '/announcements', label: 'News',      icon: Megaphone},
 ];
 
-export function BottomNav({ unreadAnnouncements = 0 }: { unreadAnnouncements?: number }) {
+export function BottomNav() {
   const pathname = usePathname();
+  const { unreadAnnouncements } = useNotificationCounts();
 
   return (
     <nav

@@ -8,8 +8,12 @@ import { PostHogProvider } from '@/components/posthog-provider';
 import { PostHogIdentify } from '@/components/posthog-identify';
 import { SentryUserInit } from '@/components/sentry-user-init';
 import { QrRedirectHandler } from '@/components/qr-redirect-handler';
+import { NotificationCountsProvider } from '@/components/notification-badges';
+import { SWRProvider } from '@/components/swr-provider';
+import { ProfileProvider, type Profile } from '@/components/profile-provider';
 import { createServerSupabaseClient } from '@/lib/supabase-server';
 import { DM_Sans } from "next/font/google";
+import { headers } from 'next/headers';
 import { cn } from "@/lib/utils";
 
 const dmSans = DM_Sans({subsets:['latin'],variable:'--font-sans',weight:['400','500','600','700']});
@@ -24,54 +28,44 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   let playerName = '';
   let playerId: string | null = null;
   let playerStatus: string | null = null;
+  let avatarUrl: string | null = null;
   let singlesElo: number | null = null;
   let doublesElo: number | null = null;
-  let unreadCount = 0;
-  let unreadAnnouncements = 0;
 
   try {
-    const supabase = await createServerSupabaseClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
+    // Middleware already authed and set x-user-id on the request headers —
+    // read it here to skip a redundant auth.getUser() round-trip.
+    const userId = headers().get('x-user-id');
+    if (userId) {
+      const supabase = await createServerSupabaseClient();
       const { data: player } = await supabase
         .from('players')
-        .select('id, full_name, status, ratings(singles_elo, doubles_elo)')
-        .eq('user_id', user.id)
+        .select('id, full_name, avatar_url, status, ratings(singles_elo, doubles_elo)')
+        .eq('user_id', userId)
         .single();
       playerName = player?.full_name ?? '';
       playerId = player?.id ?? null;
       playerStatus = player?.status ?? null;
+      avatarUrl = (player as { avatar_url?: string | null })?.avatar_url ?? null;
 
       const ratings = Array.isArray(player?.ratings) ? player.ratings[0] : player?.ratings;
       singlesElo = (ratings as Record<string, unknown>)?.singles_elo as number ?? null;
       doublesElo = (ratings as Record<string, unknown>)?.doubles_elo as number ?? null;
-
-      if (player?.id) {
-        // Run notifications + announcement-read counts in parallel — was 3
-        // sequential round-trips before (auth → player → notifications →
-        // announcements → reads). Now: 1 auth → 1 player → 3 parallel counts.
-        const [notifRes, annRes, readsRes] = await Promise.all([
-          supabase
-            .from('notifications')
-            .select('*', { count: 'exact', head: true })
-            .eq('player_id', player.id)
-            .eq('read_flag', false),
-          supabase
-            .from('announcements')
-            .select('*', { count: 'exact', head: true })
-            .eq('status', 'published'),
-          supabase
-            .from('announcement_reads')
-            .select('*', { count: 'exact', head: true })
-            .eq('player_id', player.id),
-        ]);
-        unreadCount = notifRes.count ?? 0;
-        unreadAnnouncements = Math.max(0, (annRes.count ?? 0) - (readsRes.count ?? 0));
-      }
     }
   } catch {
     // Not authenticated
   }
+
+  const initialProfile: Profile = playerId
+    ? {
+        id: playerId,
+        full_name: playerName,
+        avatar_url: avatarUrl,
+        status: playerStatus,
+        singles_elo: singlesElo,
+        doubles_elo: doublesElo,
+      }
+    : null;
 
   return (
     <html lang="en" suppressHydrationWarning data-theme="dark" className={cn("font-sans", dmSans.variable)}>
@@ -90,24 +84,30 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         `}} />
       </head>
       <body>
-        <PostHogProvider>
-          <ToastProvider>
-            <SentryUserInit playerId={playerId} />
-            <QrRedirectHandler isAuthed={!!playerId} />
-            <PostHogIdentify
-              playerId={playerId}
-              playerStatus={playerStatus}
-              singlesElo={singlesElo}
-              doublesElo={doublesElo}
-            />
-            <OfflineBanner />
-            <TopBar playerName={playerName} unreadCount={unreadCount} />
-            <main className="max-w-7xl mx-auto px-4 py-6 pb-24 md:pb-6">
-              {children}
-            </main>
-            <BottomNav unreadAnnouncements={unreadAnnouncements} />
-          </ToastProvider>
-        </PostHogProvider>
+        <SWRProvider>
+          <ProfileProvider initial={initialProfile}>
+            <PostHogProvider>
+              <ToastProvider>
+                <SentryUserInit playerId={playerId} />
+                <QrRedirectHandler isAuthed={!!playerId} />
+                <PostHogIdentify
+                  playerId={playerId}
+                  playerStatus={playerStatus}
+                  singlesElo={singlesElo}
+                  doublesElo={doublesElo}
+                />
+                <NotificationCountsProvider isAuthed={!!playerId}>
+                  <OfflineBanner />
+                  <TopBar />
+                  <main className="max-w-7xl mx-auto px-4 py-6 pb-24 md:pb-6">
+                    {children}
+                  </main>
+                  <BottomNav />
+                </NotificationCountsProvider>
+              </ToastProvider>
+            </PostHogProvider>
+          </ProfileProvider>
+        </SWRProvider>
         <script dangerouslySetInnerHTML={{ __html: `
           if ('serviceWorker' in navigator) {
             // Defer SW registration off the critical path so it doesn't block
