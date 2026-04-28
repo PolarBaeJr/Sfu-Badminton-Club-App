@@ -14,7 +14,7 @@
     "type-check": "npx turbo run type-check",
     "test": "npx turbo run test"
   },
-  "packageManager": "npm@10.9.3",
+  "packageManager": "npm@10.8.2",
   "devDependencies": {
     "turbo": "^2.9.6",
     "typescript": "^5.5.0",
