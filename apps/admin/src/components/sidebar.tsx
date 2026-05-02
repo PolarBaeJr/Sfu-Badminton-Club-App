@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { cn, NavBadge } from '@badminton/ui';
+import { cn } from '@badminton/ui';
 import { createClient } from '@badminton/shared/supabase-browser';
 
 type Props = { userEmail?: string | null };
@@ -343,8 +343,6 @@ export function Sidebar({ userEmail = null }: Props = {}) {
           >Sign out</button>
         </div>
       </div>
-      {/* NavBadge import is intentional even if unused above; reserved for future per-link counts. */}
-      <span hidden><NavBadge count={0} /></span>
     </>
   );
 }

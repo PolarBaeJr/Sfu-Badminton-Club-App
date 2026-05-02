@@ -31,6 +31,3 @@ export function Card({ children, className, padding = true, interactive = false 
   );
 }
 
-export function CardContent({ className, ...props }: React.ComponentPropsWithoutRef<'div'>) {
-  return <div className={cn(className)} {...props} />;
-}

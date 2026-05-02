@@ -70,6 +70,10 @@ export function CreateSessionForm() {
   const [time, setTime] = useState('');
   const [location, setLocation] = useState('');
   const [notes, setNotes] = useState('');
+  const [capacity, setCapacity] = useState('20');
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
+  const [featured, setFeatured] = useState(false);
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
@@ -77,10 +81,22 @@ export function CreateSessionForm() {
     e.preventDefault();
     setLoading(true);
     try {
-      await createSession({ name, date, time: time || undefined, location, notes: notes || undefined });
+      const capNum = parseInt(capacity, 10);
+      await createSession({
+        name,
+        date,
+        time: time || undefined,
+        location,
+        notes: notes || undefined,
+        capacity: Number.isFinite(capNum) && capNum > 0 ? capNum : undefined,
+        start_time: startTime || undefined,
+        end_time: endTime || undefined,
+        featured,
+      });
       toast('Session created', 'success');
       setOpen(false);
       setName(''); setDate(''); setTime(''); setLocation(''); setNotes('');
+      setCapacity('20'); setStartTime(''); setEndTime(''); setFeatured(false);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
@@ -95,8 +111,32 @@ export function CreateSessionForm() {
           <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required placeholder="e.g. Tuesday Practice" />
           <Input label="Date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
           <Input label="Time (optional)" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+          <div className="grid grid-cols-3 gap-3">
+            <Input label="Start time" type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+            <Input label="End time" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+            <Input label="Capacity" type="number" min={1} max={200} value={capacity} onChange={(e) => setCapacity(e.target.value)} />
+          </div>
           <Input label="Location" value={location} onChange={(e) => setLocation(e.target.value)} required placeholder="e.g. SFU Gym A" />
           <Input label="Notes (optional)" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Any additional info..." />
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              cursor: 'pointer',
+              padding: '8px 0',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={featured}
+              onChange={(e) => setFeatured(e.target.checked)}
+              style={{ width: 16, height: 16, cursor: 'pointer' }}
+            />
+            <span style={{ fontSize: 13, color: 'var(--ink)' }}>
+              Featured — pin this session at the top of /feed and Sessions list
+            </span>
+          </label>
           <div className="flex gap-2">
             <Button type="submit" loading={loading}>Create</Button>
             <Button variant="ghost" onClick={() => setOpen(false)} type="button">Cancel</Button>

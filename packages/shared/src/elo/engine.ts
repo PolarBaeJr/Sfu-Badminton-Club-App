@@ -35,6 +35,24 @@ export function calculateExpected(playerRating: number, opponentRating: number):
   return 1.0 / (1.0 + Math.pow(10, (opponentRating - playerRating) / 400));
 }
 
+/**
+ * Lightweight ELO swing preview for client-side UI (challenge dialogs, etc).
+ * Returns the rounded delta the player would gain on a win and lose on a loss.
+ * This is the canonical "what's at stake" calculation — do not reimplement inline.
+ */
+export function previewEloSwing(
+  myElo: number,
+  oppElo: number,
+  k = 32
+): { win: number; loss: number; expected: number } {
+  const expected = calculateExpected(myElo, oppElo);
+  return {
+    win: Math.round(k * (1 - expected)),
+    loss: Math.round(k * (0 - expected)),
+    expected,
+  };
+}
+
 export function calculateEloUpdate(input: EloCalcInput): EloCalcResult {
   const actual = input.won ? 1.0 : 0.0;
   const expected = calculateExpected(input.playerRating, input.opponentRating);

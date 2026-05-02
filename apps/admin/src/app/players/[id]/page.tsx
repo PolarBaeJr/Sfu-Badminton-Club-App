@@ -197,6 +197,72 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
           )}
         </div>
       </div>
+
+      {/* Playing details — schema columns added in 00021_design_gaps.sql */}
+      <div
+        style={{
+          background: 'var(--surface1)',
+          border: '1px solid var(--hairline)',
+          padding: '20px 24px',
+        }}
+      >
+        <div
+          style={{
+            fontSize: 10,
+            letterSpacing: '0.2em',
+            textTransform: 'uppercase',
+            fontWeight: 700,
+            color: 'var(--ink)',
+            marginBottom: 16,
+          }}
+        >
+          Playing Details
+        </div>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gap: 16,
+          }}
+        >
+          {[
+            { label: 'Skill Level', value: player.skill_level },
+            { label: 'Format Preference', value: player.format_preference },
+            { label: 'Dominant Hand', value: player.dominant_hand },
+            { label: 'Years Playing', value: player.years_playing },
+            { label: 'Favourite Shot', value: player.favourite_shot },
+            { label: 'SFU Student ID', value: player.sfu_student_id },
+            { label: 'Goal', value: player.goal },
+          ].map((row) => (
+            <div key={row.label}>
+              <div
+                style={{
+                  fontSize: 9,
+                  letterSpacing: '0.18em',
+                  textTransform: 'uppercase',
+                  fontWeight: 700,
+                  color: 'var(--faint)',
+                }}
+              >
+                {row.label}
+              </div>
+              <div
+                style={{
+                  fontSize: 14,
+                  fontWeight: 500,
+                  color: row.value ? 'var(--ink)' : 'var(--muted)',
+                  marginTop: 4,
+                  textTransform: row.label === 'Skill Level' || row.label === 'Format Preference' || row.label === 'Dominant Hand'
+                    ? 'capitalize'
+                    : 'none',
+                }}
+              >
+                {(row.value as string | null) || '—'}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

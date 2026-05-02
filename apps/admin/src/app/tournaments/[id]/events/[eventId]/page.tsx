@@ -54,10 +54,13 @@ export default async function EventPage({
       .order('full_name'),
   ]);
 
-  const participants: unknown[] = doubles ? [] : (partsRes.data ?? []);
-  const pairs: unknown[] = doubles ? (partsRes.data ?? []) : [];
-  const matches = matchesRes.data;
-  const allPlayers = playersRes.data;
+  // Cast through unknown — Supabase generated row types don't expose every
+  // joined column; the tournament types include `[key: string]: unknown` to
+  // accept the row shape and let components access expected fields safely.
+  const participants = (doubles ? [] : (partsRes.data ?? [])) as unknown as import('@/app/tournaments/types').TournamentParticipant[];
+  const pairs = (doubles ? (partsRes.data ?? []) : []) as unknown as import('@/app/tournaments/types').TournamentPair[];
+  const matches = (matchesRes.data ?? []) as unknown as import('@/app/tournaments/types').TournamentMatch[];
+  const allPlayers = (playersRes.data ?? []) as Array<{ id: string; full_name: string }>;
 
   return (
     <div className="space-y-6">

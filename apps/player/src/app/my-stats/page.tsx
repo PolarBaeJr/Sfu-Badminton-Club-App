@@ -2,6 +2,7 @@ import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-ser
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { Avatar, Eyebrow, SectionLabel, StatusPill } from '@/components/v2/atoms';
+import { DPageHead } from '@/components/desktop/page-shell';
 
 export default async function MyStatsPage() {
   const player = await getCurrentPlayer();
@@ -66,8 +67,36 @@ export default async function MyStatsPage() {
   const trendDelta =
     trend.length >= 2 ? Math.round((trend[trend.length - 1] ?? 0) - (trend[0] ?? 0)) : 0;
 
+  // ── Build SVG sparkline path for desktop ELO history chart
+  const sparkPoints = (() => {
+    if (trend.length < 2) return '';
+    const max = Math.max(...trend);
+    const min = Math.min(...trend);
+    const range = max - min || 1;
+    return trend
+      .map((v, i) => `${(i / (trend.length - 1)) * 800},${80 - ((v - min) / range) * 70 - 5}`)
+      .join(' ');
+  })();
+  const sparkEnd = trend.length >= 2
+    ? {
+        x: 800,
+        y: 80 - ((trend[trend.length - 1]! - Math.min(...trend)) / (Math.max(...trend) - Math.min(...trend) || 1)) * 70 - 5,
+      }
+    : null;
+  const seasonHigh = trend.length > 0 ? Math.max(...trend) : null;
+  const seasonLow = trend.length > 0 ? Math.min(...trend) : null;
+
+  // Achievement chips derived from real stats
+  const achievements: string[] = [];
+  if (totalMatches >= 10) achievements.push('10 Matches');
+  if (totalWins >= 1) achievements.push('First Win');
+  if ((r?.best_singles_streak ?? 0) >= 5) achievements.push('Win Streak ×5');
+  if (myRank <= 10) achievements.push('Top 10');
+  if (totalMatches >= 1) achievements.push('Season Debut');
+
   return (
     <>
+      <div className="m-only">
       {/* Hero */}
       <section
         style={{
@@ -345,6 +374,90 @@ export default async function MyStatsPage() {
           ))}
         </div>
       </section>
+      </div>{/* /.m-only */}
+
+      {/* DESKTOP VIEW */}
+      <div className="d-only">
+        <DPageHead
+          eyebrow="Player Card"
+          title="My Profile."
+          meta="Your public-facing card. ELO history, achievements, and member since."
+        />
+        <div className="d-profile-card">
+          <div className="d-profile-avatar">
+            {(player.full_name as string)
+              .split(' ')
+              .map((p) => p[0])
+              .filter(Boolean)
+              .slice(0, 2)
+              .join('')
+              .toUpperCase()}
+          </div>
+          <div>
+            <div className="d-profile-name">{player.full_name as string}</div>
+            <div className="d-profile-meta">
+              Rank #{myRank} · ELO {r?.singles_elo ?? '—'} · {totalMatches} matches · Season 02
+            </div>
+          </div>
+        </div>
+
+        <div className="d-sparkline-wrap">
+          <div className="d-sparkline-label">Singles ELO History — Season 02</div>
+          {sparkPoints ? (
+            <svg className="d-sparkline" viewBox="0 0 800 80" preserveAspectRatio="none">
+              {/* Dashed grid lines */}
+              <line x1="0" y1="20" x2="800" y2="20" stroke="rgba(255,255,255,0.04)" strokeDasharray="2 4" />
+              <line x1="0" y1="40" x2="800" y2="40" stroke="rgba(255,255,255,0.04)" strokeDasharray="2 4" />
+              <line x1="0" y1="60" x2="800" y2="60" stroke="rgba(255,255,255,0.04)" strokeDasharray="2 4" />
+              <polyline
+                points={sparkPoints}
+                fill="none"
+                stroke="#da291c"
+                strokeWidth="2"
+                vectorEffect="non-scaling-stroke"
+              />
+              {sparkEnd && <circle cx={sparkEnd.x} cy={sparkEnd.y} r="4" fill="#da291c" />}
+            </svg>
+          ) : (
+            <div style={{ color: 'var(--text-faint)', fontSize: 12, padding: '20px 0' }}>
+              Play a few matches to see your ELO trend.
+            </div>
+          )}
+          <div className="d-spark-stats">
+            <div className="d-spark-stat">
+              <span className="d-lbl">Season High</span>
+              <span className="d-val">{seasonHigh ?? '—'}</span>
+            </div>
+            <div className="d-spark-stat">
+              <span className="d-lbl">Season Low</span>
+              <span className="d-val">{seasonLow ?? '—'}</span>
+            </div>
+            <div className="d-spark-stat">
+              <span className="d-lbl">Net Gain</span>
+              <span className={`d-val ${trendDelta > 0 ? 'd-val-green' : trendDelta < 0 ? 'd-val-red' : ''}`}>
+                {trendDelta > 0 ? '+' : ''}{trendDelta}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="d-achievements">
+          <div className="d-ach-label">Achievements</div>
+          <div className="d-ach-row">
+            {achievements.length === 0 ? (
+              <div className="d-ach" style={{ color: 'var(--text-faint)' }}>
+                Play a match to earn your first
+              </div>
+            ) : (
+              achievements.map((a) => (
+                <div key={a} className="d-ach">
+                  {a}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
     </>
   );
 }

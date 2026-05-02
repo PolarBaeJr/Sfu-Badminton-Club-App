@@ -3,35 +3,29 @@
 import { useState } from 'react';
 import { Button, Avatar } from '@badminton/ui';
 import { Download, ArrowUpDown } from 'lucide-react';
-
-interface Props {
-  event: Record<string, unknown>;
-  participants: unknown[];
-  pairs: unknown[];
-  isDoubles: boolean;
-}
+import type { TournamentTabProps, TournamentEntry } from '@/app/tournaments/types';
 
 type SortField = 'rank' | 'name' | 'seed' | 'position' | 'points' | 'elo_change';
 type SortDir = 'asc' | 'desc';
 
-export function LeaderboardTab({ event, participants, pairs, isDoubles }: Props) {
+export function LeaderboardTab({ event, participants, pairs, isDoubles }: TournamentTabProps) {
   const [sortField, setSortField] = useState<SortField>('position');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
 
-  const entries = (isDoubles ? pairs : participants) as any[];
+  const entries: TournamentEntry[] = isDoubles ? pairs : participants;
 
   const ranked = entries
-    .filter((e: any) => e.final_position != null)
-    .map((e: any, idx: number) => ({
+    .filter((e) => e.final_position != null)
+    .map((e) => ({
       id: e.id,
       rank: e.final_position as number,
       name: getName(e, isDoubles),
       seed: e.seed_number as number | null,
       position: e.final_position as number,
-      points: e.points as number ?? 0,
-      elo_change: isDoubles ? null : (e.elo_change as number | null),
-      elo_before: isDoubles ? null : (e.elo_before as number | null),
-      elo_after: isDoubles ? null : (e.elo_after as number | null),
+      points: (e.points as number | undefined) ?? 0,
+      elo_change: isDoubles ? null : (e.elo_change as number | null | undefined) ?? null,
+      elo_before: isDoubles ? null : (e.elo_before as number | null | undefined) ?? null,
+      elo_after: isDoubles ? null : (e.elo_after as number | null | undefined) ?? null,
     }));
 
   // Sort
@@ -152,9 +146,11 @@ export function LeaderboardTab({ event, participants, pairs, isDoubles }: Props)
   );
 }
 
-function getName(entry: any, isDoubles: boolean): string {
+function getName(entry: TournamentEntry, isDoubles: boolean): string {
   if (isDoubles) {
-    return entry.pair_name ?? `${entry.player1?.full_name ?? '?'} / ${entry.player2?.full_name ?? '?'}`;
+    const pair = entry as import('@/app/tournaments/types').TournamentPair;
+    return pair.pair_name ?? `${pair.player1?.full_name ?? '?'} / ${pair.player2?.full_name ?? '?'}`;
   }
-  return entry.player?.full_name ?? 'Unknown';
+  const part = entry as import('@/app/tournaments/types').TournamentParticipant;
+  return part.player?.full_name ?? 'Unknown';
 }

@@ -2,6 +2,8 @@ import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-ser
 import { redirect } from 'next/navigation';
 import { Avatar, ScreenHeader, Pill, EmptyState } from '@/components/v2/atoms';
 import { CheckInButton } from './check-in-button';
+import { SESSION_SELECT_FIELDS } from '@/lib/queries/sessions';
+import { DPageHead, DPanel } from '@/components/desktop/page-shell';
 
 type SessionAttendee = { full_name: string | null; avatar_url: string | null };
 
@@ -11,14 +13,13 @@ export default async function SessionsPage() {
 
   const supabase = await createServerSupabaseClient();
 
-  const [{ data: openSessions }, { data: myAttendance }, { data: attendanceCounts }] =
+  const [{ data: allSessions }, { data: myAttendance }, { data: attendanceCounts }] =
     await Promise.all([
       supabase
         .from('sessions')
-        .select('id, name, location, date, notes, status, session_attendance(player_id, players:players(full_name, avatar_url))')
-        .in('status', ['open', 'closed'])
+        .select(SESSION_SELECT_FIELDS)
         .order('date', { ascending: true })
-        .limit(40),
+        .limit(80),
       supabase.from('session_attendance').select('session_id').eq('player_id', player.id),
       supabase.from('session_attendance_counts').select('session_id, count'),
     ]);
@@ -28,17 +29,31 @@ export default async function SessionsPage() {
     (attendanceCounts ?? []).map((r) => [r.session_id, r.count as number])
   );
 
-  const upcoming = (openSessions ?? []).filter((s) => s.status === 'open');
+  const now = Date.now();
+  const upcoming = (allSessions ?? []).filter(
+    (s) => s.status === 'open' && new Date(s.date as string).getTime() >= now
+  );
+  const past = (allSessions ?? [])
+    .filter((s) => s.status !== 'open' || new Date(s.date as string).getTime() < now)
+    .sort((a, b) => new Date(b.date as string).getTime() - new Date(a.date as string).getTime())
+    .slice(0, 6);
 
-  // Featured = highest registration ratio against the (hardcoded) 16 capacity.
+  // Featured: prefer the DB flag. Fall back to highest-attendance heuristic only
+  // when no session in the result set is explicitly featured.
+  const anyExplicitlyFeatured = upcoming.some(
+    (s) => (s as unknown as { featured?: boolean | null }).featured === true
+  );
   const ratios = upcoming.map((s) => {
     const going = countBySession[s.id] ?? 0;
-    return going / 16;
+    const cap = ((s as unknown as { capacity?: number | null }).capacity) ?? 20;
+    return cap > 0 ? going / cap : 0;
   });
-  const maxIdx = ratios.length > 0 ? ratios.indexOf(Math.max(...ratios)) : -1;
+  const maxIdx =
+    !anyExplicitlyFeatured && ratios.length > 0 ? ratios.indexOf(Math.max(...ratios)) : -1;
 
   return (
     <>
+      <div className="m-only">
       <ScreenHeader eyebrow="Open Play & Drills" title="Sessions" />
       {upcoming.length === 0 ? (
         <EmptyState
@@ -50,9 +65,11 @@ export default async function SessionsPage() {
           {upcoming.map((s, idx) => {
             const isGoing = checkedInIds.has(s.id);
             const going = countBySession[s.id] ?? 0;
-            const capacity = 16;
-            const isFeatured = idx === maxIdx && going > 0;
-            const pct = Math.min(100, Math.round((going / capacity) * 100));
+            const sessionRecord = s as unknown as { capacity?: number | null; featured?: boolean | null };
+            const capacity = sessionRecord.capacity ?? 20;
+            const isFeatured =
+              sessionRecord.featured === true || (!anyExplicitlyFeatured && idx === maxIdx && going > 0);
+            const pct = Math.min(100, Math.round((going / Math.max(1, capacity)) * 100));
             const attendance = ((s as { session_attendance?: Array<{ players: SessionAttendee | SessionAttendee[] | null }> }).session_attendance) ?? [];
             const attendees = attendance
               .map((row) => (Array.isArray(row.players) ? row.players[0] : row.players))
@@ -80,7 +97,11 @@ export default async function SessionsPage() {
                         color: isFeatured ? '#da291c' : '#969696',
                       }}
                     >
-                      {formatDateLine(s.date as string)}
+                      {formatDateLine(
+                        s.date as string,
+                        sessionRecord && (s as unknown as { start_time?: string | null }).start_time,
+                        sessionRecord && (s as unknown as { end_time?: string | null }).end_time
+                      )}
                     </span>
                     {isFeatured && (
                       <Pill
@@ -150,16 +171,131 @@ export default async function SessionsPage() {
           })}
         </div>
       )}
+      </div>{/* /.m-only */}
+
+      {/* DESKTOP VIEW */}
+      <div className="d-only">
+        <DPageHead
+          eyebrow={`${upcoming.length} upcoming · ${past.length} past`}
+          title="Sessions."
+          meta="Open play, competitive nights, and league fixtures. Tap join when a slot opens."
+        />
+
+        <DPanel label="Upcoming">
+          {upcoming.length === 0 ? (
+            <div style={{ padding: '32px 48px', color: 'var(--text-faint)', fontSize: 12 }}>
+              No upcoming sessions — admins post sessions every week.
+            </div>
+          ) : (
+            upcoming.map((s) => {
+              const isGoing = checkedInIds.has(s.id);
+              const going = countBySession[s.id] ?? 0;
+              const sd = s as unknown as { capacity?: number | null; start_time?: string | null; end_time?: string | null };
+              const capacity = sd.capacity ?? 20;
+              const isFull = going >= capacity;
+              return (
+                <div key={s.id} className="d-session-row">
+                  <div className="d-session-name" data-label="Session">
+                    {s.name ?? 'Practice Session'}
+                  </div>
+                  <div className="d-session-cell" data-label="Time">
+                    {formatDateLine(s.date as string, sd.start_time, sd.end_time)}
+                  </div>
+                  <div className="d-session-cell" data-label="Court">
+                    {s.location ?? '—'}
+                  </div>
+                  <div className="d-session-cell d-cap" data-label="Capacity">
+                    {going} / {capacity}
+                  </div>
+                  <div className="d-session-cell" data-label="Status">
+                    <span className={`d-badge ${isFull ? 'd-full' : 'd-open'}`}>
+                      {isFull ? 'Full' : 'Open'}
+                    </span>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    {isGoing ? (
+                      <span className="d-badge d-attended">✓ Going</span>
+                    ) : isFull ? (
+                      <button className="d-btn d-btn-ghost d-disabled" disabled style={{ padding: '8px 14px' }}>
+                        Full
+                      </button>
+                    ) : (
+                      <CheckInButton sessionId={s.id} isCheckedIn={false} />
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </DPanel>
+
+        <DPanel label="Past" sublabel={`/ Last ${past.length}`}>
+          {past.length === 0 ? (
+            <div style={{ padding: '32px 48px', color: 'var(--text-faint)', fontSize: 12 }}>
+              No past sessions yet.
+            </div>
+          ) : (
+            past.map((s) => {
+              const going = countBySession[s.id] ?? 0;
+              const sd = s as unknown as { capacity?: number | null; start_time?: string | null; end_time?: string | null };
+              const capacity = sd.capacity ?? 20;
+              const wasGoing = checkedInIds.has(s.id);
+              return (
+                <div key={s.id} className="d-session-row d-past">
+                  <div className="d-session-name" data-label="Session">
+                    {s.name ?? 'Practice Session'}
+                  </div>
+                  <div className="d-session-cell" data-label="Date">
+                    {formatDateLine(s.date as string, sd.start_time, sd.end_time)}
+                  </div>
+                  <div className="d-session-cell" data-label="Court">
+                    {s.location ?? '—'}
+                  </div>
+                  <div className="d-session-cell d-cap" data-label="Capacity">
+                    {going} / {capacity}
+                  </div>
+                  <div className="d-session-cell" data-label="Status">
+                    <span className={`d-badge ${wasGoing ? 'd-attended' : 'd-completed'}`}>
+                      {wasGoing ? 'Attended' : 'Completed'}
+                    </span>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <span className="d-view-all" style={{ color: 'var(--text-secondary)' }}>
+                      Recap →
+                    </span>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </DPanel>
+      </div>
     </>
   );
 }
 
-function formatDateLine(iso: string): string {
+function formatDateLine(iso: string, startTime?: string | null, endTime?: string | null): string {
   try {
     const d = new Date(iso);
     const day = d.toLocaleDateString('en-US', { weekday: 'short' });
     const month = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    return `${day} · ${month}`;
+    const datePart = `${day} · ${month}`;
+    if (startTime) {
+      const fmt = (t: string) => {
+        const [h, m] = t.split(':');
+        const hh = parseInt(h ?? '0', 10);
+        const mm = parseInt(m ?? '0', 10);
+        const ampm = hh >= 12 ? 'pm' : 'am';
+        const hr = hh % 12 === 0 ? 12 : hh % 12;
+        return mm === 0 ? `${hr}${ampm}` : `${hr}:${mm.toString().padStart(2, '0')}${ampm}`;
+      };
+      const startStr = fmt(startTime);
+      if (endTime) {
+        return `${datePart} · ${startStr}–${fmt(endTime)}`;
+      }
+      return `${datePart} · ${startStr}`;
+    }
+    return datePart;
   } catch {
     return iso;
   }

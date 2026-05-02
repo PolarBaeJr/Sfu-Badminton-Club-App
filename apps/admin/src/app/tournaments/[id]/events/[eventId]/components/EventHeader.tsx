@@ -20,9 +20,11 @@ import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { Trophy, Users, CheckCircle, Swords, BarChart3, ChevronRight, Lock, Unlock } from 'lucide-react';
 
+import type { TournamentEvent } from '@/app/tournaments/types';
+
 interface Props {
-  tournament: Record<string, unknown>;
-  event: Record<string, unknown>;
+  tournament: { id: string; name?: string | null; status?: string | null; [key: string]: unknown };
+  event: TournamentEvent;
   isDoubles: boolean;
   totalEntries: number;
   checkedIn: number;

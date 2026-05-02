@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic';
 
 import { createAdminClient } from '@/lib/supabase-server';
+import { formatDateShort as formatDate } from '@badminton/shared';
 import { PageHero } from '@badminton/ui';
 import { CreateAnnouncementForm, AnnouncementCardMenu } from './actions';
 
@@ -156,11 +157,3 @@ export default async function AnnouncementsPage() {
   );
 }
 
-function formatDate(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  } catch {
-    return iso;
-  }
-}

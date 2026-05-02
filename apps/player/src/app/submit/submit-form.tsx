@@ -29,10 +29,6 @@ function decideWinner(games: GameScore[]): 'a' | 'b' | null {
   return null;
 }
 
-function winProbability(eloA: number, eloB: number): number {
-  return 1 / (1 + Math.pow(10, (eloB - eloA) / 400));
-}
-
 export function SubmitForm({
   challengeId,
   matchType,
@@ -59,13 +55,6 @@ export function SubmitForm({
   const router = useRouter();
 
   const winner = useMemo(() => decideWinner(games), [games]);
-
-  // Win probability is a pure-UI touch — without Elo data we lean on a
-  // symmetric 50/50 display. (Elo is rendered when the parent passes it in;
-  // omitted here because /submit intentionally stays lean on data loads.)
-  const probA = 0.5;
-  const probB = 1 - probA;
-  void winProbability; // keep import hook — used if future Elo enrichment is added
 
   function setGame(i: number, side: 'a' | 'b', raw: string) {
     const value = Math.max(0, Math.min(99, parseInt(raw, 10) || 0));
@@ -141,12 +130,6 @@ export function SubmitForm({
           <div className={`player-name ${myTeamSide === 'a' ? 'is-me' : ''}`}>{nameA}</div>
           <div className="vs-divider">vs</div>
           <div className={`player-name ${myTeamSide === 'b' ? 'is-me' : ''}`}>{nameB}</div>
-        </div>
-
-        <div className="probability-bar">
-          <div className="probability-fill" style={{ width: `${probA * 100}%` }} />
-          <div className="probability-label left">{Math.round(probA * 100)}%</div>
-          <div className="probability-label right">{Math.round(probB * 100)}%</div>
         </div>
 
         <div className="score-block">

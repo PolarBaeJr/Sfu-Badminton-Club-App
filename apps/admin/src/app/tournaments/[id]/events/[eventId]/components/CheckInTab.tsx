@@ -12,21 +12,15 @@ import {
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { CheckCircle, XCircle, Clock, Users, UserCheck } from 'lucide-react';
+import type { TournamentTabProps, TournamentEntry, TournamentParticipant, TournamentPair } from '@/app/tournaments/types';
 
-interface Props {
-  event: Record<string, unknown>;
-  participants: unknown[];
-  pairs: unknown[];
-  isDoubles: boolean;
-}
-
-export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
+export function CheckInTab({ event, participants, pairs, isDoubles }: TournamentTabProps) {
   const [loading, setLoading] = useState<string | null>(null);
   const [bulkLoading, setBulkLoading] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
 
-  const entries = (isDoubles ? pairs : participants) as any[];
+  const entries: TournamentEntry[] = isDoubles ? pairs : participants;
   const checkedIn = entries.filter(e => e.status === 'checked_in');
   const notCheckedIn = entries.filter(e => e.status === 'registered');
   const noShows = entries.filter(e => e.status === 'no_show');
@@ -125,7 +119,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
             Not Yet Checked In ({notCheckedIn.length})
           </h3>
           <div className="space-y-2">
-            {notCheckedIn.map((entry: any) => (
+            {notCheckedIn.map((entry) => (
               <EntryCard
                 key={entry.id}
                 entry={entry}
@@ -167,7 +161,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
             Checked In ({checkedIn.length})
           </h3>
           <div className="space-y-2">
-            {checkedIn.map((entry: any) => (
+            {checkedIn.map((entry) => (
               <EntryCard
                 key={entry.id}
                 entry={entry}
@@ -194,7 +188,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
             No Shows ({noShows.length})
           </h3>
           <div className="space-y-2">
-            {noShows.map((entry: any) => (
+            {noShows.map((entry) => (
               <EntryCard key={entry.id} entry={entry} isDoubles={isDoubles} dimmed />
             ))}
           </div>
@@ -211,15 +205,15 @@ function EntryCard({
   dimmed,
   actions,
 }: {
-  entry: any;
+  entry: TournamentEntry;
   isDoubles: boolean;
   checked?: boolean;
   dimmed?: boolean;
   actions?: React.ReactNode;
 }) {
   const name = isDoubles
-    ? entry.pair_name ?? `${entry.player1?.full_name ?? '?'} / ${entry.player2?.full_name ?? '?'}`
-    : entry.player?.full_name ?? 'Unknown';
+    ? (entry as TournamentPair).pair_name ?? `${(entry as TournamentPair).player1?.full_name ?? '?'} / ${(entry as TournamentPair).player2?.full_name ?? '?'}`
+    : (entry as TournamentParticipant).player?.full_name ?? 'Unknown';
 
   return (
     <div
@@ -235,7 +229,7 @@ function EntryCard({
         {entry.seed_number && (
           <span className="text-xs font-mono text-[var(--text-muted)] w-6 text-center">#{entry.seed_number}</span>
         )}
-        {!isDoubles && <Avatar name={name} src={entry.player?.avatar_url} size="sm" />}
+        {!isDoubles && <Avatar name={name} src={(entry as TournamentParticipant).player?.avatar_url} size="sm" />}
         <span className="text-sm font-medium text-[var(--text-primary)]">{name}</span>
       </div>
       {actions}

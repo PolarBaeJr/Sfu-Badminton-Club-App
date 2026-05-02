@@ -11,6 +11,10 @@ export async function createSession(data: {
   time?: string;
   location: string;
   notes?: string;
+  capacity?: number;
+  start_time?: string;
+  end_time?: string;
+  featured?: boolean;
 }) {
   const admin = await getAuthenticatedAdmin();
   const adminClient = createAdminClient();
@@ -27,6 +31,10 @@ export async function createSession(data: {
     status: 'open',
     season_id: activeSeason.data?.id || null,
     host_player_id: admin.id,
+    capacity: data.capacity ?? null,
+    start_time: data.start_time || null,
+    end_time: data.end_time || null,
+    featured: data.featured ?? false,
   }).select().single();
 
   if (error) throw toClientError(error, 'admin.action');

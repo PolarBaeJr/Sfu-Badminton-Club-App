@@ -541,9 +541,10 @@ export default async function EventDetailPage({
                 .sort((a: any, b: any) => a.final_position - b.final_position)
                 .map((e: any) => {
                   const pos    = e.final_position as number;
-                  const name   = doubles
-                    ? e.pair_name ?? `${(e.player1 as any)?.full_name} & ${(e.player2 as any)?.full_name}`
-                    : (e.player as any)?.full_name ?? 'Unknown';
+                  const name = doubles
+                    ? (e.pair_name as string | null) ??
+                      `${(e.player1 as { full_name?: string } | null)?.full_name ?? '?'} & ${(e.player2 as { full_name?: string } | null)?.full_name ?? '?'}`
+                    : (e.player as { full_name?: string } | null)?.full_name ?? 'Unknown';
                   const points = e.points ?? 0;
                   const posColors: Record<number, string> = { 1: 'var(--color-gold)', 2: 'var(--color-silver)', 3: 'var(--color-bronze)' };
                   const isTop3 = pos <= 3;

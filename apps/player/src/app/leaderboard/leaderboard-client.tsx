@@ -5,6 +5,7 @@ import useSWR from 'swr';
 import Link from 'next/link';
 import { getPostHogClient } from '@/lib/posthog';
 import { Avatar, ScreenHeader, SectionLabel } from '@/components/v2/atoms';
+import { DPageHead } from '@/components/desktop/page-shell';
 import type { LeaderboardEntry } from './page';
 
 type TabId = 'singles' | 'doubles';
@@ -56,6 +57,7 @@ export function LeaderboardClient({
 
   return (
     <>
+      <div className="m-only">
       <ScreenHeader eyebrow="Season 02 · Spring 2026" title="Leaderboard" />
 
       {/* Tabs */}
@@ -272,6 +274,87 @@ export function LeaderboardClient({
             No more players ranked yet.
           </div>
         )}
+      </div>
+      </div>{/* /.m-only */}
+
+      {/* DESKTOP VIEW */}
+      <div className="d-only">
+        <DPageHead
+          eyebrow={`${sorted.length} ranked players`}
+          title="Leaderboard."
+          meta="Live ladder for Season 02. ELO updates as matches confirm."
+        />
+        <div className="d-toggle-bar">
+          <div className="d-seg-toggle">
+            <button
+              type="button"
+              className={`d-seg-btn${tab === 'singles' ? ' d-active' : ''}`}
+              onClick={() => setTab('singles')}
+            >
+              Singles
+            </button>
+            <button
+              type="button"
+              className={`d-seg-btn${tab === 'doubles' ? ' d-active' : ''}`}
+              onClick={() => setTab('doubles')}
+            >
+              Doubles
+            </button>
+          </div>
+        </div>
+        <div className="d-table-wrap">
+          <table className="d-table">
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Player</th>
+                <th>ELO</th>
+                <th>W</th>
+                <th>L</th>
+                <th>W%</th>
+                <th>Trend</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.length === 0 ? (
+                <tr>
+                  <td colSpan={7} style={{ textAlign: 'center', padding: '32px 24px', color: 'var(--text-faint)' }}>
+                    No players ranked yet for this format.
+                  </td>
+                </tr>
+              ) : (
+                sorted.map((p) => {
+                  const isMe = p.id === currentPlayerId;
+                  const total = p.wins + p.losses;
+                  const pct = total > 0 ? Math.round((p.wins / total) * 100) : 0;
+                  const rankClass =
+                    p.rank <= 3 ? 'd-rank-top' : p.rank <= 8 ? 'd-rank-mid' : 'd-rank-low';
+                  return (
+                    <tr key={p.id} className={isMe ? 'd-you-row' : ''}>
+                      <td className={`d-td-rank ${rankClass}`}>{p.rank}</td>
+                      <td className="d-td-name">
+                        <Link
+                          href={`/leaderboard/${p.id}`}
+                          style={{ color: 'inherit', textDecoration: 'none' }}
+                        >
+                          {p.full_name}
+                          {isMe && <span className="d-you-tag">· you</span>}
+                        </Link>
+                      </td>
+                      <td className="d-td-elo">{p.elo ?? '—'}</td>
+                      <td className="d-td-num">{p.wins}</td>
+                      <td className="d-td-num">{p.losses}</td>
+                      <td className="d-td-num">{total > 0 ? `${pct}%` : '—'}</td>
+                      <td className={pct >= 60 ? 'd-trend-up' : pct >= 40 ? 'd-trend-flat' : 'd-trend-down'}>
+                        {pct >= 60 ? '↑' : pct >= 40 ? '→' : '↓'}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </>
   );

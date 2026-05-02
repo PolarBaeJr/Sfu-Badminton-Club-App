@@ -86,6 +86,10 @@ export default function OnboardingPage() {
     try {
       await completeOnboarding({
         full_name: name,
+        skill_level: skill || undefined,
+        format_preference: plays || undefined,
+        goal: goal || undefined,
+        sfu_student_id: studentId || undefined,
       });
       setStep(5);
     } catch (err) {

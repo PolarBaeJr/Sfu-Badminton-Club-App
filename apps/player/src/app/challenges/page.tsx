@@ -8,8 +8,11 @@ import {
   Pill,
   EmptyState,
 } from '@/components/v2/atoms';
+import { formatRelative, formatScheduled } from '@badminton/shared';
 import { InlineChallengeActions } from './inline-actions';
 import { NewChallengeButton, SuggestedChallengeButton } from './sheet-controls';
+import { DPageHead } from '@/components/desktop/page-shell';
+import { DesktopChallengeForm } from './desktop-challenge-form';
 
 type Challenge = {
   id: string;
@@ -77,6 +80,7 @@ export default async function ChallengesPage() {
 
   return (
     <>
+      <div className="m-only">
       <ScreenHeader
         eyebrow="Compete"
         title="Challenges"
@@ -253,6 +257,95 @@ export default async function ChallengesPage() {
           }
         />
       )}
+      </div>{/* /.m-only */}
+
+      {/* DESKTOP VIEW */}
+      <div className="d-only">
+        <DPageHead
+          eyebrow={`${incoming.length} incoming · ${sent.length} outgoing`}
+          title="Challenges."
+          meta="Issue a challenge, accept or decline incoming proposals. ELO swings are previewed before you commit."
+        />
+
+        {incoming.length > 0 && (
+          <div className="d-ch-section">
+            <h3>Incoming</h3>
+            {incoming.map(({ challenge: c, cp_id }) => {
+              if (!c) return null;
+              return (
+                <div key={cp_id} className="d-ch-card">
+                  <div>
+                    <div className="d-ch-card-name">{c.creator?.full_name ?? 'Unknown'}</div>
+                    <div className="d-ch-card-meta">
+                      {c.type} · {c.scheduled_at ? formatScheduled(c.scheduled_at) : formatRelative(c.created_at)}
+                    </div>
+                  </div>
+                  <div className="d-ch-card-actions">
+                    <InlineChallengeActions challengeId={c.id} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {sent.length > 0 && (
+          <div className="d-ch-section">
+            <h3>Outgoing</h3>
+            {sent.map(({ challenge: c, cp_id }) => {
+              if (!c) return null;
+              const opponents = c.challenge_participants
+                .map((p) => p.player)
+                .filter((p): p is { id: string; full_name: string; avatar_url: string | null } => p != null && p.id !== player.id);
+              const oppNames = opponents.map((o) => o.full_name).join(' / ') || 'Awaiting';
+              const statusLabel = labelForStatus(c.status);
+              return (
+                <div key={cp_id} className="d-ch-card">
+                  <div>
+                    <div className="d-ch-card-name">{oppNames}</div>
+                    <div className="d-ch-card-meta">
+                      {c.type} · {c.scheduled_at ? formatScheduled(c.scheduled_at) : formatRelative(c.created_at)}
+                    </div>
+                    <div className="d-ch-status">● {statusLabel.text}</div>
+                  </div>
+                  <div className="d-ch-card-actions">
+                    <Link href={`/challenges/${c.id}`} className="d-btn d-btn-ghost">
+                      View
+                    </Link>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <DesktopChallengeForm myElo={myElo} suggested={suggested} />
+
+        {incoming.length === 0 && sent.length === 0 && (
+          <div className="d-ch-section">
+            <h3>Suggested · Close to your ELO</h3>
+            {suggested.length === 0 ? (
+              <div className="d-empty">No suggestions available right now.</div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
+                {suggested.map((p) => (
+                  <div key={p.id} className="d-ch-card" style={{ gridTemplateColumns: '1fr' }}>
+                    <div>
+                      <div className="d-ch-card-name" style={{ fontSize: 18 }}>
+                        {p.full_name}
+                      </div>
+                      <div className="d-ch-card-meta">ELO {p.singles_elo}</div>
+                    </div>
+                    <div className="d-ch-card-actions">
+                      <SuggestedChallengeButton opponentId={p.id} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </>
   );
 }
@@ -299,29 +392,3 @@ function labelForStatus(status: string): { text: string; color: string; bg: stri
   }
 }
 
-function formatRelative(iso: string): string {
-  try {
-    const d = new Date(iso);
-    const diff = Date.now() - d.getTime();
-    const m = Math.floor(diff / 60000);
-    if (m < 1) return 'just now';
-    if (m < 60) return `${m}m ago`;
-    const h = Math.floor(m / 60);
-    if (h < 24) return `${h}h ago`;
-    const days = Math.floor(h / 24);
-    return `${days}d ago`;
-  } catch {
-    return iso;
-  }
-}
-
-function formatScheduled(iso: string): string {
-  try {
-    const d = new Date(iso);
-    const day = d.toLocaleDateString('en-US', { weekday: 'short' });
-    const time = d.toLocaleTimeString('en-US', { hour: 'numeric' });
-    return `${day} ${time}`;
-  } catch {
-    return iso;
-  }
-}

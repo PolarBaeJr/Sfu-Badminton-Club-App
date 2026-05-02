@@ -8,6 +8,9 @@ import {
   SectionLabel,
   ActionTile,
 } from '@/components/v2/atoms';
+import { formatRelative } from '@badminton/shared';
+import { SESSION_SELECT_FIELDS } from '@/lib/queries/sessions';
+import { FeedDesktopView } from './desktop-view';
 
 type RatingRow = {
   singles_elo: number | null;
@@ -41,7 +44,7 @@ export default async function FeedPage() {
   ] = await Promise.all([
     supabase
       .from('sessions')
-      .select('id, name, location, date, notes, session_attendance(player_id, players:players(full_name, avatar_url))')
+      .select(SESSION_SELECT_FIELDS)
       .eq('status', 'open')
       .gte('date', new Date().toISOString())
       .order('date', { ascending: true })
@@ -54,7 +57,7 @@ export default async function FeedPage() {
       .not('status', 'in', '("pending_approval","suspended")'),
     supabase
       .from('match_participants')
-      .select('id, win_flag, rating_delta, match:matches(id, score_summary, played_at, match_type, result_status)')
+      .select('id, win_flag, rating_delta, match:matches(id, score_summary, played_at, match_type, result_status, match_participants(player_id, players(full_name, avatar_url)))')
       .eq('player_id', player.id)
       .order('created_at', { ascending: false, referencedTable: 'matches' })
       .limit(1),
@@ -114,12 +117,85 @@ export default async function FeedPage() {
   const recentMatchRow = recentMatchesRaw?.[0];
   const rawMatch = recentMatchRow?.match as unknown;
   const recentMatch = (Array.isArray(rawMatch) ? rawMatch[0] : rawMatch) as
-    | { id: string; score_summary: string; played_at: string; match_type: string; result_status: string }
+    | {
+        id: string;
+        score_summary: string;
+        played_at: string;
+        match_type: string;
+        result_status: string;
+        match_participants?: Array<{
+          player_id: string;
+          players: { full_name: string; avatar_url: string | null } | { full_name: string; avatar_url: string | null }[] | null;
+        }>;
+      }
     | null;
   const recentWin = recentMatchRow?.win_flag === true;
 
+  // Pick the first participant that isn't the current player as the opponent
+  const opponentParticipant = recentMatch?.match_participants?.find(
+    (mp) => mp.player_id !== player.id
+  );
+  const opponentRaw = opponentParticipant?.players;
+  const opponent = (Array.isArray(opponentRaw) ? opponentRaw[0] : opponentRaw) as
+    | { full_name: string; avatar_url: string | null }
+    | null;
+  const opponentName = opponent?.full_name ?? 'Opponent';
+  const opponentAvatar = opponent?.avatar_url ?? null;
+
+  // ── Pull last 5 confirmed matches for the desktop "Recent Matches" panel
+  const { data: recentFiveRaw } = await supabase
+    .from('match_participants')
+    .select('id, win_flag, rating_delta, match:matches(id, score_summary, played_at, match_type, result_status)')
+    .eq('player_id', player.id)
+    .order('created_at', { ascending: false, referencedTable: 'matches' })
+    .limit(5);
+
+  type FiveRow = {
+    id: string;
+    win_flag: boolean | null;
+    rating_delta: number | null;
+    match: { id: string; score_summary: string; played_at: string; match_type: string; result_status: string } | null;
+  };
+  const recentFive = (recentFiveRaw ?? []).map((r): FiveRow => {
+    const m = r.match as unknown;
+    return {
+      id: r.id,
+      win_flag: r.win_flag,
+      rating_delta: r.rating_delta,
+      match: (Array.isArray(m) ? m[0] : m) ?? null,
+    };
+  });
+
+  // ── Pull a "Next Challenge" for the desktop next-card
+  const { data: nextChallengeRaw } = await supabase
+    .from('challenges')
+    .select('id, format, scheduled_at, created_at, status, participants:challenge_participants(role, players(full_name, ratings(singles_elo, doubles_elo)))')
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const nextChallenge = nextChallengeRaw as unknown as
+    | {
+        id: string;
+        format: string | null;
+        scheduled_at: string | null;
+        participants: Array<{
+          role: string;
+          players: { full_name: string; ratings: { singles_elo: number | null; doubles_elo: number | null }[] | { singles_elo: number | null; doubles_elo: number | null } | null } | null;
+        }>;
+      }
+    | null;
+
+  const myElo = ratings?.singles_elo ?? 1200;
+  const desktopGreetTitle = greeting === 'Good morning' ? 'Set the pace.' : greeting === 'Good afternoon' ? 'Stay on the climb.' : 'Close out strong.';
+
   return (
     <>
+      {/* ════════════════════════════════════════════════════
+          MOBILE VIEW (existing — phone-frame)
+          ════════════════════════════════════════════════════ */}
+      <div className="m-only">
       {/* Hero — greeting + ELO */}
       <section
         style={{
@@ -333,15 +409,34 @@ export default async function FeedPage() {
       {/* Up next session */}
       {nextSession && (() => {
         type Attendee = { full_name: string | null; avatar_url: string | null };
-        const attendance =
-          ((nextSession as unknown as { session_attendance?: Array<{ players: Attendee | Attendee[] | null }> }).session_attendance) ??
-          [];
+        const sessionExt = nextSession as unknown as {
+          session_attendance?: Array<{ players: Attendee | Attendee[] | null }>;
+          capacity?: number | null;
+          start_time?: string | null;
+          end_time?: string | null;
+        };
+        const attendance = sessionExt.session_attendance ?? [];
         const attendees: Attendee[] = attendance
           .map((row) => (Array.isArray(row.players) ? row.players[0] : row.players))
           .filter((p): p is Attendee => !!p && !!p.full_name);
         const going = attendees.length;
-        const capacity = 16;
+        const capacity = sessionExt.capacity ?? 20;
         const pile = attendees.slice(0, 4);
+        const startTime = sessionExt.start_time;
+        const endTime = sessionExt.end_time;
+        const fmtTime = (t: string) => {
+          const [h, m] = t.split(':');
+          const hh = parseInt(h ?? '0', 10);
+          const mm = parseInt(m ?? '0', 10);
+          const ampm = hh >= 12 ? 'pm' : 'am';
+          const hr = hh % 12 === 0 ? 12 : hh % 12;
+          return mm === 0 ? `${hr}${ampm}` : `${hr}:${mm.toString().padStart(2, '0')}${ampm}`;
+        };
+        const timeLabel = startTime
+          ? endTime
+            ? `${fmtTime(startTime)}–${fmtTime(endTime)}`
+            : fmtTime(startTime)
+          : null;
         return (
           <section style={{ padding: '12px 24px' }}>
             <SectionLabel action="See all →">Up Next</SectionLabel>
@@ -371,6 +466,12 @@ export default async function FeedPage() {
                   }}
                 >
                   {formatSessionDateOnly(nextSession.date as string)}
+                  {timeLabel && (
+                    <>
+                      <span style={{ color: '#666', margin: '0 6px' }}>·</span>
+                      {timeLabel}
+                    </>
+                  )}
                 </span>
               </div>
               <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: '-0.2px', lineHeight: 1.2 }}>
@@ -566,7 +667,7 @@ export default async function FeedPage() {
                   justifySelf: 'center',
                 }}
               >
-                <Avatar name="Opponent" size={48} />
+                <Avatar name={opponentName} src={opponentAvatar} size={48} />
                 <div
                   style={{
                     fontSize: 12,
@@ -576,7 +677,7 @@ export default async function FeedPage() {
                     textAlign: 'center',
                   }}
                 >
-                  Opponent
+                  {opponentName.split(' ')[0]}
                 </div>
                 <div
                   style={{
@@ -624,6 +725,12 @@ export default async function FeedPage() {
           </Card>
         </section>
       )}
+      </div>{/* /.m-only */}
+
+      {/* ════════════════════════════════════════════════════
+          DESKTOP VIEW (≥1024px) — sidebar + main from player-app.html
+          ════════════════════════════════════════════════════ */}
+      <FeedDesktopView greeting={greeting} desktopGreetTitle={desktopGreetTitle} myRank={myRank} myElo={myElo} ratings={ratings} delta={delta} totalMatches={totalMatches} totalWins={totalWins} winRate={winRate} recentFive={recentFive} nextChallenge={nextChallenge} />
     </>
   );
 }
@@ -639,18 +746,3 @@ function formatSessionDateOnly(iso: string): string {
   }
 }
 
-function formatRelative(iso: string): string {
-  try {
-    const d = new Date(iso);
-    const diff = Date.now() - d.getTime();
-    const m = Math.floor(diff / 60000);
-    if (m < 1) return 'just now';
-    if (m < 60) return `${m}m ago`;
-    const h = Math.floor(m / 60);
-    if (h < 24) return `${h}h ago`;
-    const days = Math.floor(h / 24);
-    return `${days}d ago`;
-  } catch {
-    return iso;
-  }
-}

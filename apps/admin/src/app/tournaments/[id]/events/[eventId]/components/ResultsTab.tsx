@@ -8,14 +8,7 @@ import { undoMatchResult } from '@/lib/tournament/scoring-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { Crown, TrendingUp, TrendingDown, Medal, Undo2 } from 'lucide-react';
-
-interface Props {
-  event: Record<string, unknown>;
-  participants: unknown[];
-  pairs: unknown[];
-  matches: unknown[];
-  isDoubles: boolean;
-}
+import type { TournamentMatchTabProps, TournamentEntry, TournamentMatch, TournamentParticipant, TournamentPair } from '@/app/tournaments/types';
 
 const POSITION_LABELS: Record<number, string> = {
   1: 'Champion', 2: 'Finalist', 3: 'Semi-finalist', 4: 'Semi-finalist',
@@ -26,16 +19,18 @@ const POSITION_COLORS: Record<number, string> = {
   1: '#FFD700', 2: '#C0C0C0', 3: '#CD7F32', 4: '#CD7F32',
 };
 
-export function ResultsTab({ event, participants, pairs, matches, isDoubles }: Props) {
+export function ResultsTab({ event, participants, pairs, matches, isDoubles }: TournamentMatchTabProps) {
   const [undoConfirmId, setUndoConfirmId] = useState<string | null>(null);
   const [undoLoading, setUndoLoading] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
 
-  const entries = (isDoubles ? pairs : participants) as any[];
+  const entries: TournamentEntry[] = isDoubles ? pairs : participants;
   const eventType = event.event_type as TournamentEventType;
   const bonuses = isDoubles ? PLACEMENT_BONUSES.doubles : PLACEMENT_BONUSES.singles;
-  const completedMatchList = (matches as any[]).filter((m: any) => m.status === 'completed' || m.status === 'walkover');
+  const completedMatchList: TournamentMatch[] = matches.filter(
+    (m) => m.status === 'completed' || m.status === 'walkover'
+  );
 
   async function handleUndo() {
     if (!undoConfirmId) return;
@@ -53,31 +48,38 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
 
   // Sort by final position
   const ranked = entries
-    .filter((e: any) => e.final_position)
-    .sort((a: any, b: any) => a.final_position - b.final_position);
+    .filter((e) => e.final_position != null)
+    .sort((a, b) => (a.final_position ?? 0) - (b.final_position ?? 0));
 
-  const unranked = entries.filter((e: any) => !e.final_position);
+  const unranked = entries.filter((e) => e.final_position == null);
 
-  const totalMatches = (matches as any[]).length;
-  const completedMatches = (matches as any[]).filter((m: any) => m.status === 'completed' || m.status === 'walkover').length;
+  const totalMatches = matches.length;
+  const completedMatches = matches.filter(
+    (m) => m.status === 'completed' || m.status === 'walkover'
+  ).length;
 
   return (
     <div className="space-y-6">
       {/* Champion card */}
-      {ranked.length > 0 && ranked[0].final_position === 1 && (
-        <div className=" border-2 border-[#FFD700]/30 bg-gradient-to-r from-[#FFD700]/5 to-transparent p-6 text-center">
-          <Crown className="w-8 h-8 mx-auto mb-2 text-[#FFD700]" />
-          <h2 className="text-2xl font-bold text-[#FFD700] font-display">CHAMPION</h2>
-          <p className="text-lg text-[var(--text-primary)] font-semibold mt-1">
-            {getName(ranked[0], isDoubles)}
-          </p>
-          {!isDoubles && ranked[0].elo_change !== null && (
-            <p className="text-sm text-[var(--color-success)] mt-1">
-              Elo: {ranked[0].elo_before} → {ranked[0].elo_after} ({ranked[0].elo_change > 0 ? '+' : ''}{ranked[0].elo_change})
+      {(() => {
+        const champion = ranked[0];
+        if (!champion || champion.final_position !== 1) return null;
+        const eloChange = champion.elo_change;
+        return (
+          <div className=" border-2 border-[#FFD700]/30 bg-gradient-to-r from-[#FFD700]/5 to-transparent p-6 text-center">
+            <Crown className="w-8 h-8 mx-auto mb-2 text-[#FFD700]" />
+            <h2 className="text-2xl font-bold text-[#FFD700] font-display">CHAMPION</h2>
+            <p className="text-lg text-[var(--text-primary)] font-semibold mt-1">
+              {getName(champion, isDoubles)}
             </p>
-          )}
-        </div>
-      )}
+            {!isDoubles && eloChange != null && (
+              <p className="text-sm text-[var(--color-success)] mt-1">
+                Elo: {champion.elo_before ?? '-'} → {champion.elo_after ?? '-'} ({eloChange > 0 ? '+' : ''}{eloChange})
+              </p>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Results table */}
       <div className=" border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
@@ -104,8 +106,8 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
             </tr>
           </thead>
           <tbody>
-            {ranked.map((e: any) => {
-              const pos = e.final_position;
+            {ranked.map((e) => {
+              const pos = (e.final_position ?? 0) as number;
               const label = POSITION_LABELS[pos] ?? `#${pos}`;
               const color = POSITION_COLORS[pos] ?? 'var(--text-muted)';
               const bonus = pos === 1 ? bonuses.champion
@@ -120,7 +122,7 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
                   </td>
                   <td className="px-4 py-2.5">
                     <div className="flex items-center gap-2">
-                      {!isDoubles && <Avatar name={e.player?.full_name ?? ''} src={e.player?.avatar_url} size="sm" />}
+                      {!isDoubles && <Avatar name={(e as TournamentParticipant).player?.full_name ?? ''} src={(e as TournamentParticipant).player?.avatar_url} size="sm" />}
                       <span className="text-sm font-medium text-[var(--text-primary)]">{getName(e, isDoubles)}</span>
                     </div>
                   </td>
@@ -159,7 +161,7 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
             <h3 className="text-sm font-semibold text-[var(--text-primary)]">Completed Matches</h3>
           </div>
           <div className="divide-y divide-[var(--border)]">
-            {completedMatchList.map((m: any) => {
+            {completedMatchList.map((m) => {
               const scores = (m.scores as Array<{ a: number; b: number }>) ?? [];
               const scoreStr = scores.map((s: { a: number; b: number }) => `${s.a}-${s.b}`).join(', ');
               return (
@@ -194,9 +196,11 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
   );
 }
 
-function getName(entry: any, isDoubles: boolean): string {
+function getName(entry: TournamentEntry, isDoubles: boolean): string {
   if (isDoubles) {
-    return entry.pair_name ?? `${entry.player1?.full_name ?? '?'} / ${entry.player2?.full_name ?? '?'}`;
+    const pair = entry as TournamentPair;
+    return pair.pair_name ?? `${pair.player1?.full_name ?? '?'} / ${pair.player2?.full_name ?? '?'}`;
   }
-  return entry.player?.full_name ?? 'Unknown';
+  const part = entry as TournamentParticipant;
+  return part.player?.full_name ?? 'Unknown';
 }

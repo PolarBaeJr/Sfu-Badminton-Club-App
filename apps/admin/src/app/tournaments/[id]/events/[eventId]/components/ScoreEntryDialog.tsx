@@ -8,9 +8,11 @@ import { enterMatchResult, enterWalkover, voidMatch } from '@/lib/tournament/sco
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 
+import type { TournamentEvent, TournamentMatch } from '@/app/tournaments/types';
+
 interface Props {
-  match: any;
-  event: Record<string, unknown>;
+  match: TournamentMatch;
+  event: TournamentEvent;
   nameMap: Record<string, string>;
   seedMap: Record<string, number>;
   isDoubles: boolean;
@@ -30,12 +32,12 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, on
   const matchFormat = event.match_format as TournamentMatchFormat;
   const maxGames = getMaxGamesForFormat(matchFormat);
 
-  const aId = isDoubles ? match.pair_a_id : match.participant_a_id;
-  const bId = isDoubles ? match.pair_b_id : match.participant_b_id;
-  const nameA = nameMap[aId] ?? 'Side A';
-  const nameB = nameMap[bId] ?? 'Side B';
-  const seedA = seedMap[aId];
-  const seedB = seedMap[bId];
+  const aId = (isDoubles ? match.pair_a_id : match.participant_a_id) ?? null;
+  const bId = (isDoubles ? match.pair_b_id : match.participant_b_id) ?? null;
+  const nameA = (aId && nameMap[aId]) || 'Side A';
+  const nameB = (bId && nameMap[bId]) || 'Side B';
+  const seedA = aId ? seedMap[aId] : undefined;
+  const seedB = bId ? seedMap[bId] : undefined;
 
   const [games, setGames] = useState<Array<{ a: string; b: string }>>(
     Array.from({ length: maxGames === 1 ? 1 : 2 }, () => ({ a: '', b: '' }))

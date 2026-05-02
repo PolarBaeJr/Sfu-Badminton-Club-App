@@ -52,8 +52,10 @@ export async function middleware(request: NextRequest) {
   return response;
 }
 
+// API routes (api/*) handle their own auth via getCurrentPlayer()/requirePlayer()
+// — exclude them from middleware to avoid a duplicate Supabase roundtrip per call.
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|_next/data|favicon.ico|robots.txt|sitemap.xml|manifest.json|sw.js|monitoring|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff|woff2|ttf|otf)$).*)',
+    '/((?!api|_next/static|_next/image|_next/data|favicon.ico|robots.txt|sitemap.xml|manifest.json|sw.js|monitoring|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff|woff2|ttf|otf)$).*)',
   ],
 };

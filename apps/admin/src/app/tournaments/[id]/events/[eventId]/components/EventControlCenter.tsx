@@ -16,20 +16,11 @@ import { BracketTab } from './BracketTab';
 import { RoundRobinTab } from './RoundRobinTab';
 import { ResultsTab } from './ResultsTab';
 import { LeaderboardTab } from './LeaderboardTab';
+import type { TournamentAdminTabProps, TournamentMatch } from '@/app/tournaments/types';
 
 type TabId = 'participants' | 'checkin' | 'bracket' | 'results' | 'leaderboard';
 
-interface Props {
-  tournament: Record<string, unknown>;
-  event: Record<string, unknown>;
-  participants: unknown[];
-  pairs: unknown[];
-  matches: unknown[];
-  allPlayers: Array<{ id: string; full_name: string }>;
-  isDoubles: boolean;
-}
-
-export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, isDoubles }: Props) {
+export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, isDoubles }: TournamentAdminTabProps) {
   const status = event.status as TournamentEventStatus;
   const eventType = event.event_type as TournamentEventType;
   const format = event.format as string;
@@ -63,10 +54,11 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
   // Stats
   const entries = isDoubles ? pairs : participants;
   const totalEntries = entries.length;
-  const checkedIn = entries.filter((e: any) => e.status === 'checked_in').length;
-  const totalMatches = (matches as any[]).length;
-  const completedMatches = (matches as any[]).filter((m: any) =>
-    m.status === 'completed' || m.status === 'walkover' || m.is_bye
+  const checkedIn = entries.filter((e) => e.status === 'checked_in').length;
+  const allMatches: TournamentMatch[] = matches ?? [];
+  const totalMatches = allMatches.length;
+  const completedMatches = allMatches.filter(
+    (m) => m.status === 'completed' || m.status === 'walkover' || m.is_bye === true
   ).length;
 
   return (
@@ -109,9 +101,11 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
       <div role="tabpanel" aria-label={`${activeTab} tab content`}>
         {activeTab === 'participants' && (
           <ParticipantsTab
+            tournament={tournament}
             event={event}
             participants={participants}
             pairs={pairs}
+            matches={allMatches}
             allPlayers={allPlayers}
             isDoubles={isDoubles}
           />

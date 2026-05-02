@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@badminton/shared/supabase-browser';
-import { updateProfile } from '@/lib/actions';
+import { updateProfile, updatePreferences } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { isPushSupported, isPushEnabled, subscribeToPush, unsubscribeFromPush } from '@/lib/push-client';
 import {
@@ -14,6 +14,7 @@ import {
   SettingsRow,
   SettingsToggle,
 } from '@/components/v2/atoms';
+import { DesktopSettings } from './desktop-settings';
 
 const TITLES: Record<string, string> = {
   profile: 'Edit Profile',
@@ -101,6 +102,17 @@ function SettingsContent() {
   const [showHistory, setShowHistory] = useState(true);
   const [discoverable, setDiscoverable] = useState(true);
 
+  // Playing details (newly schema-backed)
+  const [dominantHand, setDominantHand] = useState<'left' | 'right' | 'ambidextrous' | ''>('');
+  const [yearsPlaying, setYearsPlaying] = useState('');
+  const [favouriteShot, setFavouriteShot] = useState('');
+
+  // Desktop-only preferences (persisted into players.notification_preferences JSONB)
+  const [defaultFormat, setDefaultFormat] = useState<'singles' | 'doubles'>('singles');
+  const [leaderboardDefault, setLeaderboardDefault] = useState<'singles' | 'doubles'>('singles');
+  const [preferredDays, setPreferredDays] = useState<string[]>(['Fri', 'Sat']);
+  const [emailChannel, setEmailChannel] = useState(true);
+
   const [saving, setSaving] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
 
@@ -129,6 +141,25 @@ function SettingsContent() {
       setAvatarUrl(data.avatar_url ?? null);
       setShowOnLeaderboard(!data.hide_from_leaderboard);
       setShowActivity(data.show_activity_status !== false);
+      setDominantHand((data.dominant_hand as 'left' | 'right' | 'ambidextrous' | null) ?? '');
+      setYearsPlaying((data.years_playing as string | null) ?? '');
+      setFavouriteShot((data.favourite_shot as string | null) ?? '');
+
+      // Hydrate desktop-only prefs from notification_preferences JSONB
+      const prefs = (data.notification_preferences as Record<string, unknown> | null) ?? {};
+      if (prefs.defaultFormat === 'singles' || prefs.defaultFormat === 'doubles') {
+        setDefaultFormat(prefs.defaultFormat);
+      }
+      if (prefs.leaderboardDefault === 'singles' || prefs.leaderboardDefault === 'doubles') {
+        setLeaderboardDefault(prefs.leaderboardDefault);
+      }
+      if (Array.isArray(prefs.preferredDays)) {
+        setPreferredDays(prefs.preferredDays.filter((d): d is string => typeof d === 'string'));
+      }
+      if (typeof prefs.emailChannel === 'boolean') {
+        setEmailChannel(prefs.emailChannel);
+      }
+
       setLoaded(true);
 
       setPushSupported(isPushSupported());
@@ -147,6 +178,9 @@ function SettingsContent() {
         display_name: displayName || undefined,
         phone: phone || undefined,
         bio: bio || undefined,
+        dominant_hand: dominantHand === '' ? null : dominantHand,
+        years_playing: yearsPlaying || null,
+        favourite_shot: favouriteShot || null,
       });
       toast('Profile updated', 'success');
     } catch (err) {
@@ -185,6 +219,35 @@ function SettingsContent() {
     }
   }
 
+  async function handleSavePreferences() {
+    setSaving(true);
+    try {
+      await updatePreferences({
+        defaultFormat,
+        leaderboardDefault,
+        preferredDays,
+        emailChannel,
+        // Notification toggles also live here so they persist across sessions
+        pushChallenges,
+        pushMatches,
+        pushSessions,
+        pushAnnounce,
+        pushWeekly,
+        emailRecap,
+        emailSeason,
+        emailMarketing,
+        autoAccept,
+        openDoubles,
+        crossSkill,
+        matchReminders,
+      });
+      toast('Preferences saved', 'success');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed', 'error');
+    }
+    setSaving(false);
+  }
+
   async function handleSignOut() {
     setSigningOut(true);
     const supabase = createClient();
@@ -194,39 +257,97 @@ function SettingsContent() {
 
   const onBack = () => router.push('/my-stats');
 
+  const desktopBlock = (
+    <div className="d-only">
+      <DesktopSettings
+        loaded={loaded}
+        name={name}
+        setName={setName}
+        displayName={displayName}
+        setDisplayName={setDisplayName}
+        email={email}
+        showOnLeaderboard={showOnLeaderboard}
+        setShowOnLeaderboard={setShowOnLeaderboard}
+        showRecord={showRecord}
+        setShowRecord={setShowRecord}
+        showHistory={showHistory}
+        setShowHistory={setShowHistory}
+        discoverable={discoverable}
+        setDiscoverable={setDiscoverable}
+        pushChallenges={pushChallenges}
+        setPushChallenges={setPushChallenges}
+        pushMatches={pushMatches}
+        setPushMatches={setPushMatches}
+        pushSessions={pushSessions}
+        setPushSessions={setPushSessions}
+        pushAnnounce={pushAnnounce}
+        setPushAnnounce={setPushAnnounce}
+        emailRecap={emailRecap}
+        setEmailRecap={setEmailRecap}
+        pushSupported={pushSupported}
+        pushEnabled={pushEnabled}
+        handlePushToggle={handlePushToggle}
+        autoAccept={autoAccept}
+        setAutoAccept={setAutoAccept}
+        openDoubles={openDoubles}
+        setOpenDoubles={setOpenDoubles}
+        crossSkill={crossSkill}
+        setCrossSkill={setCrossSkill}
+        defaultFormat={defaultFormat}
+        setDefaultFormat={setDefaultFormat}
+        leaderboardDefault={leaderboardDefault}
+        setLeaderboardDefault={setLeaderboardDefault}
+        preferredDays={preferredDays}
+        setPreferredDays={setPreferredDays}
+        emailChannel={emailChannel}
+        setEmailChannel={setEmailChannel}
+        saving={saving}
+        signingOut={signingOut}
+        handleSaveProfile={handleSaveProfile}
+        handleSavePrivacy={handleSavePrivacy}
+        handleSavePreferences={handleSavePreferences}
+        handleSignOut={handleSignOut}
+      />
+    </div>
+  );
+
   if (view === 'index') {
     return (
       <>
-        <SettingsHeader title="Settings" onBack={() => router.push('/my-stats')} />
-        <div style={{ padding: '20px 24px 24px' }}>
-          <SectionLabel>Account</SectionLabel>
-          <SettingsGroup>
-            {[
-              { label: 'Edit Profile', view: 'profile' },
-              { label: 'Notifications', view: 'notifications' },
-              { label: 'Match Preferences', view: 'matches' },
-              { label: 'Privacy & Visibility', view: 'privacy' },
-              { label: 'Help & Feedback', view: 'help' },
-              { label: 'Sign Out', view: 'signout', danger: true },
-            ].map((item) => (
-              <SettingsRow
-                key={item.label}
-                label={item.label}
-                onClick={() => router.push(`/settings?view=${item.view}`)}
-              >
-                <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ color: '#666', fontSize: 18 }}>›</span>
-                </span>
-              </SettingsRow>
-            ))}
-          </SettingsGroup>
+        <div className="m-only">
+          <SettingsHeader title="Settings" onBack={() => router.push('/my-stats')} />
+          <div style={{ padding: '20px 24px 24px' }}>
+            <SectionLabel>Account</SectionLabel>
+            <SettingsGroup>
+              {[
+                { label: 'Edit Profile', view: 'profile' },
+                { label: 'Notifications', view: 'notifications' },
+                { label: 'Match Preferences', view: 'matches' },
+                { label: 'Privacy & Visibility', view: 'privacy' },
+                { label: 'Help & Feedback', view: 'help' },
+                { label: 'Sign Out', view: 'signout', danger: true },
+              ].map((item) => (
+                <SettingsRow
+                  key={item.label}
+                  label={item.label}
+                  onClick={() => router.push(`/settings?view=${item.view}`)}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ color: '#666', fontSize: 18 }}>›</span>
+                  </span>
+                </SettingsRow>
+              ))}
+            </SettingsGroup>
+          </div>
         </div>
+        {desktopBlock}
       </>
     );
   }
 
   return (
     <>
+      <div className="m-only">
       <SettingsHeader title={TITLES[view] ?? 'Settings'} onBack={onBack} />
 
       {view === 'profile' && (
@@ -286,11 +407,78 @@ function SettingsContent() {
                 />
               </div>
               <SectionLabel>Playing details</SectionLabel>
-              <SettingsGroup>
-                <SettingsRow label="Dominant Hand" value="Right" />
-                <SettingsRow label="Years Playing" value="—" />
-                <SettingsRow label="Favourite Shot" value="—" />
-              </SettingsGroup>
+              <div style={{ background: '#222', border: '1px solid #303030', padding: 16, marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 10, color: '#666', letterSpacing: '1.6px', textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>
+                    Dominant Hand
+                  </label>
+                  <select
+                    value={dominantHand}
+                    onChange={(e) => setDominantHand(e.target.value as 'left' | 'right' | 'ambidextrous' | '')}
+                    style={{
+                      width: '100%',
+                      background: '#1a1a1a',
+                      border: '1px solid #303030',
+                      color: '#fff',
+                      padding: 10,
+                      fontSize: 13,
+                      fontFamily: 'inherit',
+                      boxSizing: 'border-box',
+                    }}
+                  >
+                    <option value="">— select —</option>
+                    <option value="right">Right</option>
+                    <option value="left">Left</option>
+                    <option value="ambidextrous">Ambidextrous</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 10, color: '#666', letterSpacing: '1.6px', textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>
+                    Years Playing
+                  </label>
+                  <select
+                    value={yearsPlaying}
+                    onChange={(e) => setYearsPlaying(e.target.value)}
+                    style={{
+                      width: '100%',
+                      background: '#1a1a1a',
+                      border: '1px solid #303030',
+                      color: '#fff',
+                      padding: 10,
+                      fontSize: 13,
+                      fontFamily: 'inherit',
+                      boxSizing: 'border-box',
+                    }}
+                  >
+                    <option value="">— select —</option>
+                    <option value="<1">Less than 1 year</option>
+                    <option value="1-3">1–3 years</option>
+                    <option value="3-5">3–5 years</option>
+                    <option value="5+">5+ years</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 10, color: '#666', letterSpacing: '1.6px', textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>
+                    Favourite Shot
+                  </label>
+                  <input
+                    type="text"
+                    value={favouriteShot}
+                    onChange={(e) => setFavouriteShot(e.target.value)}
+                    placeholder="e.g. Backhand smash"
+                    style={{
+                      width: '100%',
+                      background: '#1a1a1a',
+                      border: '1px solid #303030',
+                      color: '#fff',
+                      padding: 10,
+                      fontSize: 13,
+                      fontFamily: 'inherit',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+              </div>
               <CTAButton size="lg" full onClick={handleSaveProfile} disabled={saving}>
                 {saving ? 'Saving…' : 'Save Profile'}
               </CTAButton>
@@ -541,6 +729,8 @@ function SettingsContent() {
           </div>
         </div>
       )}
+      </div>{/* /.m-only */}
+      {desktopBlock}
     </>
   );
 }

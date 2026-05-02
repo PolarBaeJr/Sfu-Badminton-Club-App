@@ -1,6 +1,7 @@
 export * from './types/database';
 export * from './elo/engine';
 export * from './utils/constants';
+export * from './utils/date';
 export * from './utils/helpers';
 export * from './utils/theme';
 export * from './utils/rate-limit';

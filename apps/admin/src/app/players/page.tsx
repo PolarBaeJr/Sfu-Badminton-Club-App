@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
+import { formatDate } from '@badminton/shared';
 import { PageHero } from '@badminton/ui';
 import Link from 'next/link';
 import { AddPlayerButton } from './add-player-button';
@@ -281,11 +282,3 @@ function Badge({
   );
 }
 
-function formatDate(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
-  } catch {
-    return iso;
-  }
-}

@@ -16,14 +16,7 @@ import { nextPowerOf2 } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil } from 'lucide-react';
-
-interface Props {
-  event: Record<string, unknown>;
-  participants: unknown[];
-  pairs: unknown[];
-  allPlayers: Array<{ id: string; full_name: string }>;
-  isDoubles: boolean;
-}
+import type { TournamentAdminTabProps, TournamentParticipant, TournamentPair, PlayerLite } from '@/app/tournaments/types';
 
 const STATUS_COLORS: Record<string, string> = {
   registered: 'var(--text-muted)',
@@ -129,7 +122,7 @@ function SeedCell({
   );
 }
 
-export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoubles }: Props) {
+export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoubles }: TournamentAdminTabProps) {
   const [addOpen, setAddOpen] = useState(false);
   const [playerId, setPlayerId] = useState('');
   const [player2Id, setPlayer2Id] = useState('');
@@ -139,7 +132,9 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   const router = useRouter();
 
   const entries = isDoubles ? pairs : participants;
-  const activeEntries = (entries as any[]).filter((e: any) => !['withdrawn', 'disqualified'].includes(e.status));
+  const activeEntries = (entries as Array<TournamentParticipant | TournamentPair>).filter(
+    (e) => !['withdrawn', 'disqualified'].includes(e.status)
+  );
   const bracketSize = nextPowerOf2(activeEntries.length);
   const byes = bracketSize - activeEntries.length;
   const canModify = event.status === 'registration';
@@ -209,13 +204,15 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   }
 
   const usedSeeds = new Set(
-    (entries as any[]).map((e: any) => e.seed_number).filter((s: number | null) => s != null) as number[]
+    (entries as Array<TournamentParticipant | TournamentPair>)
+      .map((e) => e.seed_number)
+      .filter((s): s is number => s != null)
   );
 
   const registeredPlayerIds = new Set(
     isDoubles
-      ? (pairs as any[]).flatMap((p: any) => [p.player1_id, p.player2_id])
-      : (participants as any[]).map((p: any) => p.player_id)
+      ? pairs.flatMap((p) => [p.player1_id, p.player2_id])
+      : participants.map((p) => p.player_id)
   );
 
   const availablePlayers = allPlayers.filter(p => !registeredPlayerIds.has(p.id));
@@ -299,12 +296,12 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
           </thead>
           <tbody>
             {isDoubles ? (
-              (pairs as any[]).map((pair: any) => (
+              pairs.map((pair) => (
                 <tr key={pair.id} className="border-b border-[var(--border)] last:border-b-0 hover:bg-[var(--bg-elevated)] transition-colors">
                   <td className="px-4 py-3">
                     <SeedCell
                       entryId={pair.id}
-                      seedNumber={pair.seed_number}
+                      seedNumber={pair.seed_number ?? null}
                       canEdit={canModify && !drawLocked}
                       maxSeed={activeEntries.length}
                       usedSeeds={usedSeeds}
@@ -334,7 +331,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                 </tr>
               ))
             ) : (
-              (participants as any[]).map((p: any) => {
+              participants.map((p) => {
                 const player = p.player;
                 const ratings = Array.isArray(player?.ratings) ? player.ratings[0] : player?.ratings;
                 const elo = ratings?.singles_elo ?? p.elo_before ?? '-';
@@ -343,7 +340,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                     <td className="px-4 py-3">
                       <SeedCell
                         entryId={p.id}
-                        seedNumber={p.seed_number}
+                        seedNumber={p.seed_number ?? null}
                         canEdit={canModify && !drawLocked}
                         maxSeed={activeEntries.length}
                         usedSeeds={usedSeeds}

@@ -506,7 +506,10 @@ export async function submitQrMatchResult(
   return match.id;
 }
 
-export async function submitMatchResult(challengeId: string, input: MatchResultInput) {
+export async function submitMatchResult(
+  challengeId: string,
+  input: Omit<MatchResultInput, 'match_id'>,
+) {
   const player = await requirePlayer();
   enforceLimit(player.id, 'match.submit', 15, 60 * 60_000);
   // Defensive input bounds — schemas already validate, but fail-closed here too.
@@ -792,6 +795,9 @@ export async function updateProfile(data: {
   bio?: string;
   hide_from_leaderboard?: boolean;
   show_activity_status?: boolean;
+  dominant_hand?: 'left' | 'right' | 'ambidextrous' | null;
+  years_playing?: string | null;
+  favourite_shot?: string | null;
 }) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
@@ -805,6 +811,9 @@ export async function updateProfile(data: {
   if (data.bio !== undefined) update.bio = data.bio;
   if (data.hide_from_leaderboard !== undefined) update.hide_from_leaderboard = data.hide_from_leaderboard;
   if (data.show_activity_status !== undefined) update.show_activity_status = data.show_activity_status;
+  if (data.dominant_hand !== undefined) update.dominant_hand = data.dominant_hand;
+  if (data.years_playing !== undefined) update.years_playing = data.years_playing;
+  if (data.favourite_shot !== undefined) update.favourite_shot = data.favourite_shot;
 
   const { error } = await supabase
     .from('players')
@@ -815,13 +824,57 @@ export async function updateProfile(data: {
   revalidatePath('/settings');
 }
 
-export async function completeOnboarding(data: { full_name: string; display_name?: string; phone?: string }) {
+// Persists arbitrary preference keys into players.notification_preferences (JSONB).
+// Used by Settings → Preferences/Notifications/Challenges/Account tabs to save
+// toggles and segmented controls that don't have their own column yet.
+export async function updatePreferences(prefs: Record<string, unknown>) {
+  const player = await requirePlayer();
+  const supabase = await createServerSupabaseClient();
+
+  const { data: current } = await supabase
+    .from('players')
+    .select('notification_preferences')
+    .eq('id', player.id)
+    .single();
+
+  const merged = {
+    ...((current?.notification_preferences as Record<string, unknown>) ?? {}),
+    ...prefs,
+  };
+
+  const { error } = await supabase
+    .from('players')
+    .update({ notification_preferences: merged })
+    .eq('id', player.id);
+
+  if (error) throw toClientError(error, 'player.action');
+  revalidatePath('/settings');
+}
+
+export async function completeOnboarding(data: {
+  full_name: string;
+  display_name?: string;
+  phone?: string;
+  skill_level?: 'beginner' | 'casual' | 'intermediate' | 'advanced';
+  format_preference?: 'singles' | 'doubles' | 'both';
+  goal?: string;
+  sfu_student_id?: string;
+}) {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
 
   // Check if player record already exists
   const existingPlayer = await getCurrentPlayer();
+
+  // Onboarding skill -> starting ELO bucket
+  const STARTING_ELO: Record<string, number> = {
+    beginner: 1100,
+    casual: 1300,
+    intermediate: 1500,
+    advanced: 1700,
+  };
+  const startingElo = data.skill_level ? STARTING_ELO[data.skill_level] : null;
 
   if (existingPlayer) {
     // Update existing player record
@@ -831,6 +884,10 @@ export async function completeOnboarding(data: { full_name: string; display_name
     };
     if (data.display_name) update.display_name = data.display_name;
     if (data.phone) update.phone = data.phone;
+    if (data.skill_level) update.skill_level = data.skill_level;
+    if (data.format_preference) update.format_preference = data.format_preference;
+    if (data.goal) update.goal = data.goal;
+    if (data.sfu_student_id) update.sfu_student_id = data.sfu_student_id;
 
     const { error } = await supabase
       .from('players')
@@ -850,6 +907,10 @@ export async function completeOnboarding(data: { full_name: string; display_name
     };
     if (data.display_name) insert.display_name = data.display_name;
     if (data.phone) insert.phone = data.phone;
+    if (data.skill_level) insert.skill_level = data.skill_level;
+    if (data.format_preference) insert.format_preference = data.format_preference;
+    if (data.goal) insert.goal = data.goal;
+    if (data.sfu_student_id) insert.sfu_student_id = data.sfu_student_id;
 
     const { data: newPlayer, error } = await adminClient
       .from('players')
@@ -859,12 +920,13 @@ export async function completeOnboarding(data: { full_name: string; display_name
 
     if (error) throw toClientError(error, 'player.action');
 
-    // Create initial ratings record
+    // Create initial ratings record (skill-driven starting ELO if provided)
     if (newPlayer) {
+      const seedElo = startingElo ?? 1200;
       await adminClient.from('ratings').insert({
         player_id: newPlayer.id,
-        singles_elo: 1200,
-        doubles_elo: 1200,
+        singles_elo: seedElo,
+        doubles_elo: seedElo,
         singles_provisional: true,
         doubles_provisional: true,
         singles_k_factor: 40,

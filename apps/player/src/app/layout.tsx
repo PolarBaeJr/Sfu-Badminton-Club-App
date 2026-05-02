@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { BottomNav } from '@/components/bottom-nav';
+import { DesktopSidebar } from '@/components/desktop-sidebar';
 import { ToastProvider } from '@/components/toast-provider';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { PostHogProvider } from '@/components/posthog-provider';
@@ -117,32 +118,36 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 }
 
 function PhoneFrame({ children, showChrome }: { children: React.ReactNode; showChrome: boolean }) {
-  // Authed pages render inside the device — status bar at top, scroll body in
-  // middle, bottom nav at the bottom. Login / onboarding pages opt out by
-  // wrapping in their own AuthShell, so they bypass this when showChrome is false.
+  // Auth pages (login/onboarding) opt out via AuthShell.
   if (!showChrome) {
     return <>{children}</>;
   }
+  // <1024px: phone-frame chrome (StatusBar + scroll + BottomNav).
+  // ≥1024px: .stage/.device/.device-screen/.scroll-mobile become display:contents,
+  // .m-only items hide, DesktopSidebar shows, and the d-main-wrap gets a 220px
+  // left margin to clear the fixed sidebar. Children render exactly once.
   return (
-    <div className="stage">
-      <div className="device">
-        <div className="notch" />
-        <div className="device-screen">
-          <StatusBar />
-          <div
-            className="scroll"
-            style={{
-              flex: 1,
-              overflowY: 'auto',
-              overflowX: 'hidden',
-            }}
-          >
-            {children}
-            <div style={{ height: 24 }} />
+    <>
+      <DesktopSidebar />
+      <div className="stage">
+        <div className="device">
+          <div className="notch m-only" />
+          <div className="device-screen">
+            <div className="m-only">
+              <StatusBar />
+            </div>
+            <div className="scroll scroll-mobile">
+              <main className="d-main-wrap">
+                {children}
+                <div style={{ height: 24 }} className="m-only" />
+              </main>
+            </div>
+            <div className="m-only">
+              <BottomNav />
+            </div>
           </div>
-          <BottomNav />
         </div>
       </div>
-    </div>
+    </>
   );
 }

@@ -1,6 +1,25 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
+// Admin role cache: short-lived signed cookie. We cache (user_id + isAdmin)
+// for 15 minutes to avoid one Supabase RPC roundtrip per protected request.
+// Cache busts whenever the user_id changes (re-login) or the cookie expires.
+const ADMIN_ROLE_COOKIE = 'sfu_admin_role';
+const ADMIN_ROLE_TTL_SECONDS = 15 * 60;
+
+function readRoleCookie(value: string | undefined, currentUserId: string): boolean | null {
+  if (!value) return null;
+  try {
+    const [storedUserId, storedFlag] = value.split('|');
+    if (storedUserId !== currentUserId) return null; // user changed; invalidate
+    if (storedFlag === 'admin') return true;
+    if (storedFlag === 'denied') return false;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
@@ -39,7 +58,25 @@ export async function middleware(request: NextRequest) {
   }
 
   if (user && !isPublicRoute) {
-    const { data: isAdmin } = await supabase.rpc('is_admin', { p_user_id: user.id });
+    // Cache hit: trust the signed cookie if user_id matches.
+    const cached = readRoleCookie(request.cookies.get(ADMIN_ROLE_COOKIE)?.value, user.id);
+    let isAdmin: boolean;
+
+    if (cached !== null) {
+      isAdmin = cached;
+    } else {
+      // Cache miss: hit the RPC, then write the result back to a 15-min cookie.
+      const { data } = await supabase.rpc('is_admin', { p_user_id: user.id });
+      isAdmin = !!data;
+      supabaseResponse.cookies.set(ADMIN_ROLE_COOKIE, `${user.id}|${isAdmin ? 'admin' : 'denied'}`, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        maxAge: ADMIN_ROLE_TTL_SECONDS,
+        path: '/',
+      });
+    }
+
     if (!isAdmin) {
       const url = request.nextUrl.clone();
       url.pathname = '/unauthorized';
@@ -52,6 +89,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|_next/data|favicon.ico|robots.txt|sitemap.xml|manifest.json|sw.js|monitoring|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff|woff2|ttf|otf)$).*)',
+    '/((?!api|_next/static|_next/image|_next/data|favicon.ico|robots.txt|sitemap.xml|manifest.json|sw.js|monitoring|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff|woff2|ttf|otf)$).*)',
   ],
 };

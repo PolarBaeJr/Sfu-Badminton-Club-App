@@ -10,6 +10,10 @@ type Session = {
   location: string;
   status: string;
   notes: string | null;
+  capacity: number | null;
+  start_time: string | null;
+  end_time: string | null;
+  featured: boolean | null;
 };
 
 type AttendanceRow = {
@@ -24,7 +28,7 @@ export default async function SessionsPage() {
 
   const { data: sessions } = await supabase
     .from('sessions')
-    .select('id, name, date, location, status, notes')
+    .select('id, name, date, location, status, notes, capacity, start_time, end_time, featured')
     .order('date', { ascending: false })
     .limit(50);
 
@@ -162,7 +166,7 @@ function SessionRow({
   attendees: Array<{ player_id: string; full_name: string; checked_in_at: string }>;
   past?: boolean;
 }) {
-  const capacity = 16;
+  const capacity = session.capacity ?? 20;
   const isFull = going >= capacity;
 
   return (

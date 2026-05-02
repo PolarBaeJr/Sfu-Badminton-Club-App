@@ -4,29 +4,24 @@ import { useState, useMemo } from 'react';
 import { Badge } from '@badminton/ui';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
 import { Trophy } from 'lucide-react';
+import type { TournamentMatchTabProps, TournamentMatch, TournamentParticipant, TournamentPair, TournamentGameScore } from '@/app/tournaments/types';
 
-interface Props {
-  event: Record<string, unknown>;
-  matches: unknown[];
-  participants: unknown[];
-  pairs: unknown[];
-  isDoubles: boolean;
-}
+// Props now use canonical types from app/tournaments/types.ts (TournamentTabProps)
 
-export function RoundRobinTab({ event, matches, participants, pairs, isDoubles }: Props) {
-  const [scoreMatch, setScoreMatch] = useState<any>(null);
-  const allMatches = matches as any[];
+export function RoundRobinTab({ event, matches, participants, pairs, isDoubles }: TournamentMatchTabProps) {
+  const [scoreMatch, setScoreMatch] = useState<TournamentMatch | null>(null);
+  const allMatches: TournamentMatch[] = matches;
   const isLive = event.status === 'live' || event.status === 'bracket_generated';
 
-  const entries = (isDoubles ? pairs : participants) as any[];
+  const entries: Array<TournamentParticipant | TournamentPair> = isDoubles ? pairs : participants;
 
   // Build name/seed maps
   const nameMap: Record<string, string> = {};
   const seedMap: Record<string, number> = {};
   for (const e of entries) {
     const name = isDoubles
-      ? e.pair_name ?? `${e.player1?.full_name ?? '?'} / ${e.player2?.full_name ?? '?'}`
-      : e.player?.full_name ?? 'Unknown';
+      ? (e as TournamentPair).pair_name ?? `${(e as TournamentPair).player1?.full_name ?? '?'} / ${(e as TournamentPair).player2?.full_name ?? '?'}`
+      : (e as TournamentParticipant).player?.full_name ?? 'Unknown';
     nameMap[e.id] = name;
     if (e.seed_number) seedMap[e.id] = e.seed_number;
   }
@@ -39,13 +34,13 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles }
     }
     for (const m of allMatches) {
       if (m.status !== 'completed' && m.status !== 'walkover') continue;
-      const aId = isDoubles ? m.pair_a_id : m.participant_a_id;
-      const bId = isDoubles ? m.pair_b_id : m.participant_b_id;
-      const winnerId = isDoubles ? m.winner_pair_id : m.winner_participant_id;
+      const aId = (isDoubles ? m.pair_a_id : m.participant_a_id) as string | undefined;
+      const bId = (isDoubles ? m.pair_b_id : m.participant_b_id) as string | undefined;
+      const winnerId = (isDoubles ? m.winner_pair_id : m.winner_participant_id) as string | undefined;
       if (!aId || !bId || !stats[aId] || !stats[bId]) continue;
       if (winnerId === aId) { stats[aId].wins++; stats[bId].losses++; }
       else if (winnerId === bId) { stats[bId].wins++; stats[aId].losses++; }
-      for (const g of (m.scores ?? []) as any[]) {
+      for (const g of (m.scores ?? []) as TournamentGameScore[]) {
         stats[aId].pf += g.a; stats[aId].pa += g.b;
         stats[bId].pf += g.b; stats[bId].pa += g.a;
       }
@@ -57,10 +52,11 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles }
   }, [allMatches, entries, isDoubles, nameMap]);
 
   // Group matches by round
-  const rounds: Record<number, any[]> = {};
+  const rounds: Record<number, TournamentMatch[]> = {};
   for (const m of allMatches) {
-    if (!rounds[m.round_number]) rounds[m.round_number] = [];
-    rounds[m.round_number]!.push(m);
+    const r = (m.round_number ?? 0) as number;
+    if (!rounds[r]) rounds[r] = [];
+    rounds[r]!.push(m);
   }
   const roundNumbers = Object.keys(rounds).map(Number).sort((a, b) => a - b);
 
@@ -118,7 +114,7 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles }
               {rounds[roundNum]?.[0]?.round_name ?? `Round ${roundNum}`}
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              {(rounds[roundNum] ?? []).map((m: any) => {
+              {(rounds[roundNum] ?? []).map((m) => {
                 const aId = isDoubles ? m.pair_a_id : m.participant_a_id;
                 const bId = isDoubles ? m.pair_b_id : m.participant_b_id;
                 const winnerId = isDoubles ? m.winner_pair_id : m.winner_participant_id;
@@ -130,16 +126,16 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles }
                     <div className="flex items-center gap-2 flex-1 min-w-0">
                       <span className="text-[10px] font-mono text-[var(--text-muted)]">M{m.match_number}</span>
                       <span className={`text-sm truncate ${isCompleted && winnerId === aId ? 'text-[var(--color-success)] font-semibold' : 'text-[var(--text-primary)]'}`}>
-                        {nameMap[aId] ?? 'TBD'}{isCompleted && winnerId === aId && <span className="sr-only"> (Winner)</span>}
+                        {(aId && nameMap[aId]) || 'TBD'}{isCompleted && winnerId === aId && <span className="sr-only"> (Winner)</span>}
                       </span>
                       <span className="text-xs text-[var(--text-muted)]">vs</span>
                       <span className={`text-sm truncate ${isCompleted && winnerId === bId ? 'text-[var(--color-success)] font-semibold' : 'text-[var(--text-primary)]'}`}>
-                        {nameMap[bId] ?? 'TBD'}{isCompleted && winnerId === bId && <span className="sr-only"> (Winner)</span>}
+                        {(bId && nameMap[bId]) || 'TBD'}{isCompleted && winnerId === bId && <span className="sr-only"> (Winner)</span>}
                       </span>
                     </div>
                     {isCompleted && m.scores && (
                       <span className="text-xs font-mono text-[var(--text-muted)] ml-2">
-                        {(m.scores as any[]).map((g: any) => `${g.a}-${g.b}`).join(', ')}
+                        {((m.scores as TournamentGameScore[]) ?? []).map((g) => `${g.a}-${g.b}`).join(', ')}
                       </span>
                     )}
                     {canScore && (

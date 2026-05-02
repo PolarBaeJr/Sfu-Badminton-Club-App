@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
+import { formatDateShort as formatDate } from '@badminton/shared';
 import { PageHero } from '@badminton/ui';
 import { DisputeCard } from './dispute-card';
 
@@ -9,7 +10,7 @@ export default async function DisputesPage() {
   const { data: disputes } = await supabase
     .from('disputes')
     .select(
-      'id, status, reason_category, description, created_at, resolution_type, resolution_note, match_id, opener:players!disputes_opened_by_fkey(full_name), match:matches(score_summary, match_type, format, played_at, match_participants(player_id, team_side, win_flag, player:players(full_name)))'
+      'id, status, reason_category, description, created_at, resolution_type, resolution_note, match_id, opener:players!disputes_opened_by_fkey(full_name), match:matches(score_summary, match_type, format, played_at, match_participants(player_id, team_side, win_flag, submitted_score, player:players(full_name)))'
     )
     .order('created_at', { ascending: false })
     .limit(100);
@@ -32,7 +33,7 @@ export default async function DisputesPage() {
 
       {(disputes ?? []).map((d, idx) => {
         const opener = Array.isArray(d.opener) ? d.opener[0] : (d.opener as { full_name: string } | null);
-        const match = Array.isArray(d.match) ? d.match[0] : (d.match as { score_summary?: string; match_type?: string; played_at?: string; match_participants?: Array<{ player: { full_name: string } | { full_name: string }[] | null; team_side: 'a' | 'b'; win_flag: boolean | null }> } | null);
+        const match = Array.isArray(d.match) ? d.match[0] : (d.match as { score_summary?: string; match_type?: string; played_at?: string; match_participants?: Array<{ player: { full_name: string } | { full_name: string }[] | null; team_side: 'a' | 'b'; win_flag: boolean | null; submitted_score: string | null }> } | null);
         const parts = match?.match_participants ?? [];
         const partsByName = (side: 'a' | 'b') =>
           parts
@@ -42,6 +43,12 @@ export default async function DisputesPage() {
             )
             .filter(Boolean)
             .join(' & ') || '—';
+        // Pick the per-side submitted_score; fall back to the canonical match score
+        // when only one side has submitted (or both submitted the same).
+        const submittedFor = (side: 'a' | 'b'): string => {
+          const sub = parts.find((p) => p.team_side === side)?.submitted_score;
+          return sub || match?.score_summary || '—';
+        };
 
         const playersLine = `${partsByName('a')} vs ${partsByName('b')}`;
         const filedDate = formatDate(d.created_at as string);
@@ -68,12 +75,12 @@ export default async function DisputesPage() {
                 ? [
                     {
                       name: `${partsByName('a')} submitted`,
-                      score: match?.score_summary || '—',
+                      score: submittedFor('a'),
                       result: parts.find((p) => p.team_side === 'a')?.win_flag ? 'Win' : 'Loss',
                     },
                     {
                       name: `${partsByName('b')} submitted`,
-                      score: match?.score_summary || '—',
+                      score: submittedFor('b'),
                       result: parts.find((p) => p.team_side === 'b')?.win_flag ? 'Win' : 'Loss',
                     },
                   ]
@@ -123,15 +130,6 @@ export default async function DisputesPage() {
       )}
     </div>
   );
-}
-
-function formatDate(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  } catch {
-    return iso;
-  }
 }
 
 function formatDisputeNumber(id: string, idx: number): string {
