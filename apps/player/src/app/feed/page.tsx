@@ -1,260 +1,656 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { Badge, PageHero } from '@badminton/ui';
-import { MATCH_FORMAT_LABELS, formatRelativeTime, getWinRate } from '@badminton/shared';
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import Link from 'next/link';
 import {
-  Swords,
-  ChevronRight,
-  Zap,
-  Trophy,
-} from 'lucide-react';
-import { FadeIn, StaggerContainer, StaggerItem } from '@/components/motion-wrapper';
+  Avatar,
+  Card,
+  Eyebrow,
+  SectionLabel,
+  ActionTile,
+} from '@/components/v2/atoms';
+
+type RatingRow = {
+  singles_elo: number | null;
+  doubles_elo: number | null;
+  singles_wins: number | null;
+  singles_losses: number | null;
+  doubles_wins: number | null;
+  doubles_losses: number | null;
+  current_singles_streak: number | null;
+};
 
 export default async function FeedPage() {
   const player = await getCurrentPlayer();
   if (!player) redirect('/login');
 
   const supabase = await createServerSupabaseClient();
-  const r = Array.isArray(player.ratings) ? player.ratings[0] : player.ratings;
+  const ratings = (Array.isArray(player.ratings) ? player.ratings[0] : player.ratings) as
+    | RatingRow
+    | null;
+
+  const greetingHour = new Date().getHours();
+  const greeting =
+    greetingHour < 12 ? 'Good morning' : greetingHour < 18 ? 'Good afternoon' : 'Good evening';
 
   const [
-    { data: pendingChallenges },
-    { data: recentMatches },
+    { data: nextSession },
+    { data: topPlayersRaw },
+    { data: recentMatchesRaw },
+    { data: recentDelta },
     { count: unreadNotifs },
   ] = await Promise.all([
     supabase
-      .from('challenge_participants')
-      .select('*, challenge:challenges(*, creator:players!challenges_created_by_fkey(full_name))')
-      .eq('player_id', player.id)
-      .eq('confirmation_status', 'pending')
-      .limit(5),
+      .from('sessions')
+      .select('id, name, location, date, notes, session_attendance(player_id, players:players(full_name, avatar_url))')
+      .eq('status', 'open')
+      .gte('date', new Date().toISOString())
+      .order('date', { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from('players')
+      .select('id, full_name, avatar_url, ratings(singles_elo, singles_wins, singles_losses)')
+      .eq('active_flag', true)
+      .not('status', 'in', '("pending_approval","suspended")'),
     supabase
       .from('match_participants')
-      .select('*, match:matches(score_summary, played_at, match_type, result_status)')
+      .select('id, win_flag, rating_delta, match:matches(id, score_summary, played_at, match_type, result_status)')
       .eq('player_id', player.id)
       .order('created_at', { ascending: false, referencedTable: 'matches' })
-      .limit(5),
-    supabase.from('notifications').select('*', { count: 'exact', head: true }).eq('player_id', player.id).eq('read_flag', false),
+      .limit(1),
+    supabase
+      .from('match_participants')
+      .select('rating_delta')
+      .eq('player_id', player.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true })
+      .eq('player_id', player.id)
+      .eq('read_flag', false),
   ]);
 
-  const singlesWinRate = r ? getWinRate(r.singles_wins, r.singles_losses) : '0%';
-  const doublesWinRate = r ? getWinRate(r.doubles_wins, r.doubles_losses) : '0%';
+  // Build leaderboard top-5 (singles)
+  type TopRow = { id: string; full_name: string; avatar_url: string | null; singles_elo: number | null; sw: number; sl: number };
+  const topRanked: TopRow[] = (topPlayersRaw ?? [])
+    .map((p) => {
+      const r = (Array.isArray(p.ratings) ? p.ratings[0] : p.ratings) as
+        | { singles_elo: number | null; singles_wins: number | null; singles_losses: number | null }
+        | null;
+      return {
+        id: p.id,
+        full_name: p.full_name,
+        avatar_url: p.avatar_url,
+        singles_elo: r?.singles_elo ?? null,
+        sw: r?.singles_wins ?? 0,
+        sl: r?.singles_losses ?? 0,
+      };
+    })
+    .filter((p) => p.singles_elo != null)
+    .sort((a, b) => (b.singles_elo ?? 0) - (a.singles_elo ?? 0))
+    .slice(0, 5);
+
+  const myRank =
+    1 +
+    (topPlayersRaw ?? []).filter((p) => {
+      const r = (Array.isArray(p.ratings) ? p.ratings[0] : p.ratings) as
+        | { singles_elo: number | null }
+        | null;
+      return (r?.singles_elo ?? 0) > (ratings?.singles_elo ?? 0);
+    }).length;
+
+  const totalMatches =
+    (ratings?.singles_wins ?? 0) +
+    (ratings?.singles_losses ?? 0) +
+    (ratings?.doubles_wins ?? 0) +
+    (ratings?.doubles_losses ?? 0);
+  const totalWins = (ratings?.singles_wins ?? 0) + (ratings?.doubles_wins ?? 0);
+  const winRate = totalMatches > 0 ? Math.round((totalWins / totalMatches) * 100) : 0;
+  const streak = ratings?.current_singles_streak ?? 0;
+  const delta = recentDelta?.rating_delta ?? null;
+
+  const recentMatchRow = recentMatchesRaw?.[0];
+  const rawMatch = recentMatchRow?.match as unknown;
+  const recentMatch = (Array.isArray(rawMatch) ? rawMatch[0] : rawMatch) as
+    | { id: string; score_summary: string; played_at: string; match_type: string; result_status: string }
+    | null;
+  const recentWin = recentMatchRow?.win_flag === true;
 
   return (
-    <div>
-      <PageHero
-        eyebrow="Season 02 · Spring 2026"
-        title={<>Born on the<br/>court.</>}
-        subtitle="ELO that moves with every match. Sessions you can join on the fly. Challenges that end on the score, not the dispute."
-        watermark="A1"
-        size={64}
-        watermarkOpacity={0.08}
-      />
-      <div className="space-y-6 px-2 md:px-6 py-8">
-      {/* Profile hero */}
-      <FadeIn>
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4 min-w-0">
-            {/* Avatar */}
-            <div className="w-[52px] h-[52px] rounded-full flex items-center justify-center shrink-0 overflow-hidden bg-[var(--bg-card)] border-[0.5px] border-[var(--border-strong)]">
-              {player.avatar_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={player.avatar_url as string} alt="" className="w-full h-full object-cover" />
-              ) : (
-                <span className="text-[18px] font-medium text-[var(--text-secondary)]">
-                  {(player.full_name as string).split(' ').map((p: string) => p[0]).slice(0, 2).join('').toUpperCase()}
-                </span>
-              )}
-            </div>
-            {/* Name + tier pill */}
-            <div className="min-w-0">
-              <p className="text-[16px] font-medium text-[var(--text-primary)] truncate">
-                {player.full_name}
-              </p>
-              {player.status && (
-                <span className="inline-flex items-center gap-1.5 mt-1.5 px-[10px] py-[3px] rounded-full text-[11px] text-[var(--accent)] bg-[var(--bg-accent)] border-[0.5px] border-[var(--accent-border)]">
-                  <span className="w-[5px] h-[5px] rounded-full bg-[var(--accent)] inline-block" />
-                  {player.status.charAt(0).toUpperCase() + player.status.slice(1)}
-                </span>
-              )}
+    <>
+      {/* Hero — greeting + ELO */}
+      <section
+        style={{
+          position: 'relative',
+          overflow: 'hidden',
+          flexShrink: 0,
+          background: '#181818',
+          padding: '20px 24px 24px',
+          borderBottom: '1px solid #303030',
+          animation: 'fadeUp 360ms ease both',
+        }}
+      >
+        <div
+          style={{
+            position: 'absolute',
+            top: -80,
+            right: -80,
+            width: 280,
+            height: 280,
+            background: 'radial-gradient(circle, rgba(218,41,28,0.16) 0%, transparent 65%)',
+            pointerEvents: 'none',
+          }}
+        />
+
+        <div
+          style={{
+            position: 'relative',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Avatar name={player.full_name} src={player.avatar_url as string | null} size={36} />
+            <div>
+              <div
+                style={{
+                  fontSize: 9,
+                  fontWeight: 700,
+                  letterSpacing: '1.4px',
+                  textTransform: 'uppercase',
+                  color: '#969696',
+                }}
+              >
+                {greeting}
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>
+                {(player.full_name as string).split(' ')[0]}
+              </div>
             </div>
           </div>
-          {/* ELO hero (singles) */}
-          {r && (
-            <div className="text-right shrink-0">
-              <p className="nums text-[28px] font-medium leading-none text-[var(--text-primary)]">
-                {r.singles_elo}
-              </p>
-              <p className="mt-1 text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">
-                Singles ELO
-              </p>
-            </div>
-          )}
+          <Link
+            href="/notifications"
+            style={{
+              width: 36,
+              height: 36,
+              background: 'transparent',
+              border: '1px solid #303030',
+              color: '#fff',
+              cursor: 'pointer',
+              position: 'relative',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            aria-label="Notifications"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+              <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+            </svg>
+            {(unreadNotifs ?? 0) > 0 && (
+              <span
+                className="pulse-dot"
+                style={{
+                  position: 'absolute',
+                  top: 6,
+                  right: 6,
+                  width: 6,
+                  height: 6,
+                  background: '#da291c',
+                }}
+              />
+            )}
+          </Link>
         </div>
-      </FadeIn>
 
-      {/* Stat grid */}
-      {r && (
-        <FadeIn delay={0.05}>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            <div
-              className="reveal reveal-1 bg-[var(--bg-card)] py-[10px] px-[12px] border-[0.5px] border-[var(--border)]"
-              style={{ borderLeft: '3px solid var(--ds-accent)' }}
-            >
-              <p className="text-[10px] tracking-[0.04em] uppercase font-normal text-[var(--text-muted)]">Singles ELO</p>
-              <p className="nums mt-1 text-[18px] font-medium text-[var(--text-primary)]">{r.singles_elo}</p>
-              <p className="mt-1 text-[11px] text-[var(--accent)]">
-                {r.singles_provisional ? 'Provisional' : `Win rate ${singlesWinRate}`}
-              </p>
-            </div>
-            <div
-              className="reveal reveal-2 bg-[var(--bg-card)] py-[10px] px-[12px] border-[0.5px] border-[var(--border)]"
-              style={{ borderLeft: '3px solid var(--ds-accent)' }}
-            >
-              <p className="text-[10px] tracking-[0.04em] uppercase font-normal text-[var(--text-muted)]">Doubles ELO</p>
-              <p className="nums mt-1 text-[18px] font-medium text-[var(--text-primary)]">{r.doubles_elo}</p>
-              <p className="mt-1 text-[11px] text-[var(--accent)]">
-                {r.doubles_provisional ? 'Provisional' : `Win rate ${doublesWinRate}`}
-              </p>
-            </div>
-            <div
-              className="reveal reveal-3 bg-[var(--bg-card)] py-[10px] px-[12px] border-[0.5px] border-[var(--border)]"
-              style={{ borderLeft: '3px solid var(--loss)' }}
-            >
-              <p className="text-[10px] tracking-[0.04em] uppercase font-normal text-[var(--text-muted)]">Singles W/L</p>
-              <p className="nums mt-1 text-[18px] font-medium text-[var(--text-primary)]">{r.singles_wins ?? 0} / {r.singles_losses ?? 0}</p>
-            </div>
-            <div
-              className="reveal reveal-4 bg-[var(--bg-card)] py-[10px] px-[12px] border-[0.5px] border-[var(--border)]"
-              style={{ borderLeft: '3px solid var(--loss)' }}
-            >
-              <p className="text-[10px] tracking-[0.04em] uppercase font-normal text-[var(--text-muted)]">Doubles W/L</p>
-              <p className="nums mt-1 text-[18px] font-medium text-[var(--text-primary)]">{r.doubles_wins ?? 0} / {r.doubles_losses ?? 0}</p>
-            </div>
+        {/* ELO display */}
+        <div style={{ position: 'relative', marginTop: 28 }}>
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: '1.6px',
+              textTransform: 'uppercase',
+              color: '#da291c',
+            }}
+          >
+            Singles ELO {ratings?.singles_elo != null && `· Rank #${myRank}`}
           </div>
-        </FadeIn>
-      )}
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginTop: 4 }}>
+            <span
+              style={{
+                fontSize: 56,
+                fontWeight: 700,
+                letterSpacing: '-1.5px',
+                lineHeight: 1,
+                fontFamily: 'JetBrains Mono, monospace',
+              }}
+            >
+              {ratings?.singles_elo ?? '—'}
+            </span>
+            {delta != null && (
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: delta >= 0 ? '#03904a' : '#da291c',
+                }}
+              >
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+                  <path d={delta >= 0 ? 'M5 1l4 6H1z' : 'M5 9L1 3h8z'} />
+                </svg>
+                {delta >= 0 ? '+' : ''}
+                {delta}
+              </span>
+            )}
+          </div>
+          <div style={{ fontSize: 11, color: '#969696', marginTop: 6, fontWeight: 500 }}>
+            {totalWins} wins · {totalMatches} matches · Season 02
+          </div>
+        </div>
 
-      {/* Pending Challenges */}
-      {pendingChallenges && pendingChallenges.length > 0 && (
-        <FadeIn delay={0.1}>
-          <div className="card-elevated p-4" style={{ borderColor: 'color-mix(in srgb, var(--color-gold) 12%, transparent)' }}>
-            <div className="flex items-center gap-2 mb-3">
-              <Zap className="w-4 h-4 text-gold" />
-              <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>
-                Pending Challenges
-              </h2>
-              <span className="ml-auto chip chip-gold">{pendingChallenges.length}</span>
+        {/* Stat row */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr 1fr',
+            gap: 1,
+            marginTop: 22,
+            background: '#303030',
+            border: '1px solid #303030',
+          }}
+        >
+          {[
+            { label: 'Doubles ELO', value: ratings?.doubles_elo ?? '—' },
+            { label: 'Win Rate', value: totalMatches > 0 ? `${winRate}%` : '—' },
+            { label: 'Streak', value: streak > 0 ? `+${streak}` : streak < 0 ? `${streak}` : '0' },
+          ].map((s) => (
+            <div key={s.label} style={{ background: '#181818', padding: '12px 12px' }}>
+              <div
+                style={{
+                  fontSize: 9,
+                  fontWeight: 600,
+                  letterSpacing: '1.4px',
+                  textTransform: 'uppercase',
+                  color: '#969696',
+                }}
+              >
+                {s.label}
+              </div>
+              <div
+                style={{
+                  fontSize: 20,
+                  fontWeight: 700,
+                  lineHeight: 1.1,
+                  letterSpacing: '-0.3px',
+                  marginTop: 4,
+                  fontFamily: 'JetBrains Mono, monospace',
+                }}
+              >
+                {s.value}
+              </div>
             </div>
-            <StaggerContainer className="space-y-2">
-              {pendingChallenges.map((pc) => {
-                const c = pc.challenge as Record<string, unknown>;
-                if (!c) return null;
-                const creator = c.creator as Record<string, unknown>;
-                return (
-                  <StaggerItem key={pc.id}>
-                    <Link href={`/challenges/${c.id}`} className="block group">
-                      <div className="card-surface card-interactive flex items-center justify-between p-3">
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-full bg-[var(--color-gold)]/10 flex items-center justify-center shrink-0">
-                            <Swords className="w-4 h-4 text-gold" />
-                          </div>
-                          <div>
-                            <p className="text-sm font-semibold text-shuttle-white">
-                              {creator?.full_name as string} challenged you
-                            </p>
-                            <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                              {c.type as string} &middot; {MATCH_FORMAT_LABELS[(c.format as string) as keyof typeof MATCH_FORMAT_LABELS]}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="chip chip-gold">Respond</span>
-                          <ChevronRight className="w-4 h-4 text-[var(--text-muted)] group-hover:text-gold transition-colors" />
-                        </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Quick actions */}
+      <section style={{ padding: '24px 24px 8px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <ActionTile
+            label="Challenge"
+            sub="Find an opponent"
+            primary
+            href="/challenges/new"
+            icon={
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="13 17 18 12 13 7" />
+                <polyline points="6 17 11 12 6 7" />
+              </svg>
+            }
+          />
+          <ActionTile
+            label="Log Match"
+            sub="Report a result"
+            href="/submit"
+            icon={
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+            }
+          />
+        </div>
+      </section>
+
+      {/* Up next session */}
+      {nextSession && (() => {
+        type Attendee = { full_name: string | null; avatar_url: string | null };
+        const attendance =
+          ((nextSession as unknown as { session_attendance?: Array<{ players: Attendee | Attendee[] | null }> }).session_attendance) ??
+          [];
+        const attendees: Attendee[] = attendance
+          .map((row) => (Array.isArray(row.players) ? row.players[0] : row.players))
+          .filter((p): p is Attendee => !!p && !!p.full_name);
+        const going = attendees.length;
+        const capacity = 16;
+        const pile = attendees.slice(0, 4);
+        return (
+          <section style={{ padding: '12px 24px' }}>
+            <SectionLabel action="See all →">Up Next</SectionLabel>
+            <Link
+              href="/sessions"
+              style={{
+                display: 'block',
+                width: '100%',
+                textAlign: 'left',
+                background: '#222',
+                border: '1px solid #303030',
+                borderLeft: '3px solid #da291c',
+                padding: 20,
+                cursor: 'pointer',
+                color: '#fff',
+                textDecoration: 'none',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    letterSpacing: '1.6px',
+                    textTransform: 'uppercase',
+                    color: '#da291c',
+                  }}
+                >
+                  {formatSessionDateOnly(nextSession.date as string)}
+                </span>
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: '-0.2px', lineHeight: 1.2 }}>
+                {nextSession.name ?? 'Practice Session'}
+              </div>
+              <div style={{ fontSize: 12, color: '#969696', marginTop: 4 }}>{nextSession.location}</div>
+              <div
+                style={{
+                  marginTop: 14,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ display: 'flex' }}>
+                    {pile.map((p, i) => (
+                      <div
+                        key={i}
+                        style={{ marginLeft: i === 0 ? 0 : -10, border: '2px solid #222' }}
+                      >
+                        <Avatar
+                          name={p.full_name ?? ''}
+                          src={p.avatar_url}
+                          size={26}
+                        />
                       </div>
-                    </Link>
-                  </StaggerItem>
-                );
-              })}
-            </StaggerContainer>
-          </div>
-        </FadeIn>
-      )}
-
-      {/* Recent Matches */}
-      <FadeIn delay={0.2}>
-        <div className="card-elevated p-4 w-full">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Trophy className="w-4 h-4 text-gold" />
-              <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>Recent Matches</h2>
-            </div>
-            <Link href="/my-stats" className="text-xs text-[var(--ds-accent)] hover:text-[var(--ds-accent)]/80 font-semibold transition-colors">
-              All stats →
-            </Link>
-          </div>
-          {recentMatches && recentMatches.length > 0 ? (
-            <div className="space-y-2">
-              {recentMatches.map((mp) => {
-                const m = mp.match as Record<string, unknown> | null;
-                if (!m) return null;
-                const isWin = mp.win_flag === true;
-                const isLoss = mp.win_flag === false;
-                return (
-                  <div
-                    key={mp.id}
-                    className="flex items-center justify-between p-3 bg-[var(--bg-card)] border border-[var(--border)]"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 flex items-center justify-center text-xs font-black ${
-                        isWin
-                          ? 'bg-emerald-500/15 text-emerald-400'
-                          : isLoss
-                            ? 'bg-[var(--ds-accent)]/15 text-[var(--ds-accent)]'
-                            : 'bg-[var(--on-surface-med)] text-[var(--text-muted)]'
-                      }`}>
-                        {isWin ? 'W' : isLoss ? 'L' : '?'}
-                      </div>
-                      <span className="text-sm font-mono text-shuttle-white font-medium nums">
-                        {m.score_summary as string || '-'}
-                      </span>
-                    </div>
-                    <span className="text-xs text-[var(--text-dim)]">
-                      {m.played_at ? formatRelativeTime(m.played_at as string) : ''}
-                    </span>
+                    ))}
                   </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <Trophy className="w-8 h-8 text-[var(--text-dim)] mb-2" />
-              <p className="text-sm text-[var(--text-muted)]">No matches yet</p>
-            </div>
-          )}
-        </div>
-      </FadeIn>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: '#969696',
+                      fontWeight: 600,
+                      letterSpacing: '0.65px',
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    {going} of {capacity}
+                  </span>
+                </div>
+                <span
+                  style={{
+                    background: '#da291c',
+                    color: '#fff',
+                    padding: '6px 14px',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    letterSpacing: '1.4px',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  RSVP
+                </span>
+              </div>
+            </Link>
+          </section>
+        );
+      })()}
 
-      {/* Quick Actions */}
-      <FadeIn delay={0.25}>
-        <div className="flex gap-3">
-          <Link href="/challenges/new" className="flex-1 press">
-            <button type="button" className="w-full h-12 gradient-court text-[var(--ds-bg-base)] font-bold text-sm tracking-wide flex items-center justify-center gap-2 glow-red hover:opacity-90 transition-opacity">
-              <Swords className="w-4 h-4" />
-              Create Challenge
-            </button>
-          </Link>
-          <Link href="/leaderboard" className="flex-1 press">
-            <button type="button" className="w-full h-12 bg-[var(--on-surface-soft)] border border-[var(--border)] text-[var(--text-primary)] font-bold text-sm tracking-wide flex items-center justify-center gap-2 hover:bg-[var(--on-surface-med)] hover:border-[var(--border-hover)] transition-all duration-300">
-              <Trophy className="w-4 h-4 text-gold" />
-              Leaderboard
-            </button>
-          </Link>
-        </div>
-      </FadeIn>
-    </div>
-    </div>
+      {/* Mini leaderboard */}
+      {topRanked.length > 0 && (
+        <section style={{ padding: '12px 24px' }}>
+          <SectionLabel action="Full board →">Top 5 · Singles</SectionLabel>
+          <div style={{ background: '#222', border: '1px solid #303030' }}>
+            {topRanked.map((p, i) => (
+              <Link
+                key={p.id}
+                href={`/leaderboard/${p.id}`}
+                style={{
+                  padding: '12px 16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  borderTop: i === 0 ? 'none' : '1px solid #303030',
+                  color: '#fff',
+                  textDecoration: 'none',
+                }}
+              >
+                <span
+                  style={{
+                    width: 22,
+                    fontSize: 13,
+                    fontWeight: 700,
+                    color: i < 3 ? '#da291c' : '#666',
+                    fontFamily: 'JetBrains Mono, monospace',
+                  }}
+                >
+                  {i + 1}
+                </span>
+                <Avatar name={p.full_name} src={p.avatar_url} size={32} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {p.full_name}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 10,
+                      color: '#666',
+                      letterSpacing: '0.65px',
+                      textTransform: 'uppercase',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {p.sw}–{p.sl}
+                  </div>
+                </div>
+                <span style={{ fontSize: 14, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace' }}>
+                  {p.singles_elo}
+                </span>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Latest result */}
+      {recentMatch && (
+        <section style={{ padding: '12px 24px 24px' }}>
+          <SectionLabel>Latest Result</SectionLabel>
+          <Card padding={20}>
+            <Eyebrow color={recentMatch.result_status === 'confirmed' ? '#03904a' : '#f59e0b'}>
+              {recentMatch.result_status === 'confirmed' ? '✓ Confirmed' : '⏳ Pending'} ·{' '}
+              {formatRelative(recentMatch.played_at)}
+            </Eyebrow>
+            <div
+              style={{
+                marginTop: 14,
+                display: 'grid',
+                gridTemplateColumns: '1fr auto 1fr',
+                alignItems: 'center',
+                gap: 16,
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifySelf: 'center',
+                }}
+              >
+                <Avatar name={player.full_name} src={player.avatar_url as string | null} size={48} />
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    marginTop: 8,
+                    color: recentWin ? '#03904a' : '#fff',
+                    textAlign: 'center',
+                  }}
+                >
+                  {(player.full_name as string).split(' ')[0]}
+                </div>
+                <div
+                  style={{
+                    fontSize: 9,
+                    color: '#969696',
+                    letterSpacing: '1.4px',
+                    textTransform: 'uppercase',
+                    fontWeight: 700,
+                    marginTop: 2,
+                    textAlign: 'center',
+                  }}
+                >
+                  {recentWin ? 'Winner' : '—'}
+                </div>
+              </div>
+              <div
+                style={{
+                  fontSize: 28,
+                  fontWeight: 700,
+                  color: '#da291c',
+                  fontFamily: 'JetBrains Mono, monospace',
+                  alignSelf: 'center',
+                }}
+              >
+                vs
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifySelf: 'center',
+                }}
+              >
+                <Avatar name="Opponent" size={48} />
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    marginTop: 8,
+                    color: !recentWin ? '#03904a' : '#fff',
+                    textAlign: 'center',
+                  }}
+                >
+                  Opponent
+                </div>
+                <div
+                  style={{
+                    fontSize: 9,
+                    color: '#969696',
+                    letterSpacing: '1.4px',
+                    textTransform: 'uppercase',
+                    fontWeight: 700,
+                    marginTop: 2,
+                    textAlign: 'center',
+                  }}
+                >
+                  {!recentWin ? 'Winner' : '—'}
+                </div>
+              </div>
+            </div>
+            <div
+              style={{
+                marginTop: 16,
+                padding: '10px 14px',
+                background: '#181818',
+                textAlign: 'center',
+                fontSize: 14,
+                fontWeight: 700,
+                fontFamily: 'JetBrains Mono, monospace',
+                letterSpacing: '0.5px',
+              }}
+            >
+              {recentMatch.score_summary || '—'}
+            </div>
+            <div
+              style={{
+                marginTop: 12,
+                fontSize: 10,
+                color: '#969696',
+                textAlign: 'center',
+                letterSpacing: '0.65px',
+                textTransform: 'uppercase',
+                fontWeight: 600,
+              }}
+            >
+              {recentMatch.match_type}
+              {recentMatchRow?.rating_delta != null && ` · ELO ${recentMatchRow.rating_delta > 0 ? '+' : ''}${recentMatchRow.rating_delta}`}
+            </div>
+          </Card>
+        </section>
+      )}
+    </>
   );
+}
+
+function formatSessionDateOnly(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const day = d.toLocaleDateString('en-US', { weekday: 'short' });
+    const month = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return `${day} · ${month}`;
+  } catch {
+    return iso;
+  }
+}
+
+function formatRelative(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const diff = Date.now() - d.getTime();
+    const m = Math.floor(diff / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    const days = Math.floor(h / 24);
+    return `${days}d ago`;
+  } catch {
+    return iso;
+  }
 }

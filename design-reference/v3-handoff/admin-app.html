@@ -1,0 +1,1346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SFU Badminton — Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700;800&family=Barlow:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --font-display: 'Barlow Condensed', 'Inter', -apple-system, system-ui, sans-serif;
+    --font-body: 'Barlow', 'Inter', -apple-system, system-ui, sans-serif;
+    --bg: #0A0A0A;
+    --surface1: #111111;
+    --surface2: #1A1A1A;
+    --surface3: #232323;
+    --hairline: rgba(255,255,255,0.08);
+    --hairline-soft: rgba(255,255,255,0.06);
+    --ink: #F0F0F0;
+    --text: #C8C8C8;
+    --muted: #888888;
+    --dim: #666666;
+    --faint: #444444;
+    --red: #CC0000;
+    --red-dark: #A30000;
+    --red-tint: rgba(204,0,0,0.10);
+    --green: #22c55e;
+    --amber: #eab308;
+  }
+  *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: var(--font-body); font-size: 13px;
+    -webkit-font-smoothing: antialiased; overflow-x: hidden;
+  }
+  body.no-scroll { overflow: hidden; }
+  a { color: inherit; text-decoration: none; }
+  button { font-family: inherit; cursor: pointer; border: 0; background: none; color: inherit; }
+  input, select, textarea { font-family: inherit; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: #2a2a2a; }
+  ::selection { background: var(--red); color: #fff; }
+
+  .micro { font-family: var(--font-body); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; font-weight: 600; color: var(--muted); }
+  .micro-red { color: var(--red); }
+
+  /* Top bar */
+  .topbar-wrap { position: fixed; top: 0; left: 0; right: 0; z-index: 50; }
+  .topbar { height: 56px; background: var(--surface1); border-bottom: 1px solid var(--hairline); display: flex; align-items: center; padding: 0 24px; gap: 32px; }
+  .brand { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+  .brand-mark { width: 28px; height: 28px; background: var(--red); color: #fff; display: flex; align-items: center; justify-content: center; font-family: var(--font-display); font-weight: 800; font-size: 16px; }
+  .brand-text { font-family: var(--font-display); font-weight: 700; font-size: 13px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink); }
+  .brand-sub { color: var(--muted); }
+  .nav-links { display: flex; align-items: center; gap: 32px; flex: 1; }
+  .nav-link { position: relative; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); padding: 19px 0; transition: color 150ms ease-out; display: inline-flex; align-items: center; gap: 8px; }
+  .nav-link:hover { color: var(--ink); }
+  .nav-link.active { color: var(--ink); }
+  .nav-link.active::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--red); }
+  .nav-badge { background: var(--red); color: #fff; font-size: 9px; font-weight: 700; padding: 2px 5px; min-width: 16px; text-align: center; line-height: 1; }
+  .topbar-right { display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
+  .search-wrap { display: flex; align-items: center; }
+  .search { background: var(--bg); border: 1px solid var(--hairline); color: var(--ink); padding: 7px 0; width: 0; font-size: 12px; transition: width 200ms ease-out, padding 200ms ease-out; opacity: 0; }
+  .search-wrap.open .search { width: 240px; padding: 7px 12px; opacity: 1; margin-right: 8px; }
+  .search::placeholder { color: var(--faint); text-transform: uppercase; letter-spacing: 0.18em; font-size: 10px; }
+  .icon-btn { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; color: var(--muted); position: relative; transition: color 150ms ease-out; }
+  .icon-btn:hover { color: var(--ink); }
+  .icon-btn .dot { position: absolute; top: 6px; right: 6px; width: 6px; height: 6px; background: var(--red); }
+  .avatar { width: 32px; height: 32px; background: var(--surface3); color: var(--ink); display: flex; align-items: center; justify-content: center; font-family: var(--font-display); font-weight: 700; font-size: 12px; letter-spacing: 0.05em; }
+
+  .topbar { border-bottom: 1px solid var(--hairline); }
+  .subbar { height: 36px; background: #0A0A0A; border-top: 1px solid rgba(255,255,255,0.04); border-bottom: 1px solid var(--hairline); display: flex; align-items: center; padding: 0 24px; gap: 28px; }
+  .subbar a { position: relative; height: 36px; display: inline-flex; align-items: center; font-size: 10px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: #3A3A3A; transition: color 150ms ease-out; }
+  .subbar a:hover { color: #888888; }
+  .subbar a.active { color: #F0F0F0; }
+  .subbar a.active::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--red); }
+  .subnav-link { position: relative; }
+  .subnav-link.active::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--red); }
+  .subbar .right { margin-left: auto; color: var(--dim); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; }
+  .live-dot { display: inline-block; width: 6px; height: 6px; background: var(--red); margin-right: 8px; vertical-align: middle; animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  .hamburger { display: none; width: 32px; height: 32px; flex-direction: column; gap: 5px; align-items: center; justify-content: center; }
+  .hamburger span { width: 18px; height: 1.5px; background: var(--ink); }
+
+  .mobile-overlay { position: fixed; inset: 0; z-index: 100; background: var(--surface1); transform: translateX(-100%); transition: transform 250ms cubic-bezier(0.4,0,0.2,1); display: flex; flex-direction: column; }
+  .mobile-overlay.open { transform: translateX(0); }
+  .mobile-overlay-head { height: 56px; padding: 0 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--hairline); }
+  .mobile-close { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; color: var(--ink); font-size: 28px; font-weight: 300; line-height: 1; }
+  .mobile-nav { display: flex; flex-direction: column; }
+  .mobile-nav a { min-height: 52px; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--hairline-soft); font-size: 12px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); border-left: 3px solid transparent; }
+  .mobile-nav a.active { color: var(--ink); border-left-color: var(--red); }
+  .mobile-nav-section { padding: 24px 20px 8px; font-size: 9px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--faint); font-weight: 600; }
+
+  .main { padding-top: 96px; min-height: 100vh; }
+
+  /* Hero */
+  .hero { position: relative; background: var(--surface1); border-bottom: 1px solid var(--hairline); padding: 40px 48px 44px; overflow: hidden; }
+  .hero-inner { position: relative; z-index: 2; max-width: 1400px; }
+  .tag-row { display: flex; align-items: center; gap: 14px; }
+  .red-line { width: 3px; height: 14px; background: var(--red); }
+  .hero h1 { font-family: var(--font-display); font-weight: 700; font-size: 52px; line-height: 1.0; letter-spacing: -0.015em; color: var(--ink); margin-top: 14px; }
+  .hero p { color: var(--muted); margin-top: 12px; max-width: 420px; font-size: 13px; }
+  .hero-watermark { position: absolute; right: 20px; bottom: -40px; font-family: var(--font-display); font-weight: 800; font-size: 200px; line-height: 1; color: var(--ink); opacity: 0.04; letter-spacing: -0.04em; pointer-events: none; user-select: none; }
+
+  .alert { background: var(--red-tint); border-left: 3px solid var(--red); border-bottom: 1px solid var(--hairline); padding: 14px 48px; display: flex; align-items: center; gap: 16px; }
+  .alert-text { font-size: 12px; color: var(--ink); flex: 1; letter-spacing: 0.02em; }
+  .alert-text strong { color: var(--ink); font-weight: 600; }
+  .sep { color: var(--faint); margin: 0 10px; }
+
+  .btn { font-family: var(--font-body); font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; padding: 10px 16px; border-radius: 0; transition: background 150ms ease-out, color 150ms ease-out, border-color 150ms ease-out; display: inline-flex; align-items: center; gap: 10px; line-height: 1; }
+  .btn-red { background: var(--red); color: #fff; }
+  .btn-red:hover { background: var(--red-dark); }
+  .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--hairline); }
+  .btn-ghost:hover { border-color: var(--text); color: var(--ink); }
+  .btn-dark { background: var(--surface2); color: var(--ink); border: 1px solid var(--hairline); }
+  .btn-dark:hover { border-color: var(--text); }
+
+  .stats-grid { display: grid; grid-template-columns: repeat(6, 1fr); background: var(--hairline); gap: 1px; border-bottom: 1px solid var(--hairline); }
+  .stat { background: var(--surface1); padding: 24px; transition: background 150ms ease-out; }
+  .stat:hover { background: var(--surface2); }
+  .stat-label { font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); font-weight: 600; }
+  .stat-num { font-family: var(--font-display); font-weight: 700; font-size: 52px; line-height: 1; color: var(--ink); margin-top: 14px; letter-spacing: -0.02em; }
+  .stat-num.red { color: var(--red); }
+  .stat-delta { font-size: 11px; color: var(--dim); margin-top: 8px; letter-spacing: 0.04em; }
+  .stat-delta.warn { color: var(--amber); }
+  .stat-delta.action { color: var(--red); }
+
+  .panels-row { display: grid; grid-template-columns: 1fr 1fr; background: var(--hairline); gap: 1px; }
+  .panel { background: var(--surface1); }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px; border-bottom: 1px solid var(--hairline); }
+  .panel-head .label { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink); font-weight: 700; }
+  .panel-head .label .count { color: var(--faint); margin-left: 8px; font-weight: 500; }
+  .view-all { font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); font-weight: 600; transition: color 150ms ease-out; }
+  .view-all:hover { color: var(--red); }
+
+  table { width: 100%; border-collapse: collapse; }
+  thead th { text-align: left; font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 600; color: var(--faint); padding: 12px 24px; border-bottom: 1px solid var(--hairline); white-space: nowrap; user-select: none; }
+  thead th.sortable { cursor: pointer; }
+  thead th.sortable:hover { color: var(--text); }
+  thead th .arrow { color: var(--red); margin-left: 6px; opacity: 0; }
+  thead th.sorted .arrow { opacity: 1; }
+  thead th.sortable:hover .arrow { opacity: 0.4; }
+  tbody td { padding: 14px 24px; border-bottom: 1px solid var(--hairline-soft); font-size: 13px; color: var(--text); vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr { transition: background 120ms ease-out, box-shadow 120ms ease-out; box-shadow: inset 2px 0 0 transparent; }
+  tbody tr:hover { background: rgba(255,255,255,0.025); box-shadow: inset 2px 0 0 rgba(204,0,0,0.5); }
+  td.rank, td.num { font-family: var(--font-display); font-weight: 400; color: #555555; font-variant-numeric: tabular-nums; font-size: 14px; }
+  td.rank.rank-top { font-weight: 700; color: #F0F0F0; font-size: 18px; }
+  td.rank.rank-mid { color: #555555; }
+  td.rank.rank-low { color: #333333; }
+  td.name { color: var(--ink); font-weight: 500; }
+  td.elo { font-family: var(--font-display); font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; font-size: 14px; }
+  td.date { color: var(--muted); font-size: 12px; letter-spacing: 0.02em; }
+  td.actions a { color: var(--muted); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 600; margin-right: 14px; }
+  td.actions a:hover { color: var(--red); }
+  td.actions a.approve { color: var(--red); }
+
+  .badge { display: inline-block; font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; font-weight: 600; padding: 3px 8px; border-radius: 0; line-height: 1.2; }
+  .badge.active { background: rgba(74,222,128,0.08); color: #4ade80; border: 1px solid rgba(74,222,128,0.18); }
+  .badge.pending { background: rgba(251,191,36,0.08); color: #fbbf24; border: 1px solid rgba(251,191,36,0.18); }
+  .badge.suspended { background: rgba(204,0,0,0.10); color: #CC0000; border: 1px solid rgba(204,0,0,0.22); }
+  .badge.confirmed { background: rgba(74,222,128,0.08); color: #4ade80; border: 1px solid rgba(74,222,128,0.18); }
+  .badge.review, .badge.open, .badge.disputed { background: rgba(204,0,0,0.10); color: #CC0000; border: 1px solid rgba(204,0,0,0.22); }
+  .badge.resolved, .badge.full { background: rgba(255,255,255,0.05); color: var(--muted); border: 1px solid var(--hairline); }
+
+  .page { display: none; }
+  .page.active { display: block; animation: fadeUp 240ms ease-out; }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+  .page-head { padding: 36px 48px 28px; border-bottom: 1px solid var(--hairline); display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
+  .page-head h2 { font-family: var(--font-display); font-weight: 700; font-size: 44px; letter-spacing: -0.015em; line-height: 1; color: var(--ink); margin-top: 14px; }
+  .page-head .meta { color: var(--muted); font-size: 12px; margin-top: 8px; max-width: 480px; }
+  .page-head-actions { display: flex; gap: 12px; align-items: center; }
+
+  .dispute { border-bottom: 1px solid var(--hairline); background: var(--surface1); }
+  .dispute.resolved-card { opacity: 0.5; }
+  .dispute-head { padding: 20px 48px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--hairline-soft); }
+  .dispute-id { font-family: var(--font-display); font-weight: 700; font-size: 22px; letter-spacing: 0.02em; color: var(--ink); }
+  .dispute-id .hash { color: var(--faint); margin-right: 4px; }
+  .dispute-body { padding: 24px 48px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 32px; }
+  .dispute-col-label { font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--faint); font-weight: 600; margin-bottom: 8px; }
+  .dispute-col-value { font-size: 14px; color: var(--ink); }
+  .dispute-col-value .vs { color: var(--faint); margin: 0 8px; }
+  .dispute-col-sub { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .submission { margin-bottom: 12px; }
+  .submission-name { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  .submission-score { font-family: var(--font-display); font-weight: 600; font-size: 16px; color: var(--ink); margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .submission-result { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); margin-top: 2px; }
+  .dispute-foot { padding: 20px 48px; display: flex; gap: 12px; flex-wrap: wrap; border-top: 1px solid var(--hairline-soft); }
+  .dispute-confirm { padding: 20px 48px; background: rgba(34,197,94,0.06); border-top: 1px solid rgba(34,197,94,0.2); display: none; }
+  .dispute-confirm.show { display: block; animation: fadeUp 200ms ease-out; }
+  .dispute-confirm-text { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--green); font-weight: 600; }
+
+  .session-row { display: grid; grid-template-columns: 2.2fr 1.6fr 1.2fr 0.9fr 0.9fr 0.8fr; align-items: center; padding: 18px 48px; border-bottom: 1px solid var(--hairline-soft); transition: background 150ms ease-out; gap: 16px; }
+  .session-row:hover { background: rgba(255,255,255,0.02); }
+  .session-row.past { opacity: 0.5; }
+  .session-name { font-size: 14px; color: var(--ink); font-weight: 500; }
+  .session-cell { font-size: 12px; color: var(--muted); letter-spacing: 0.02em; }
+  .session-cell.cap { font-family: var(--font-display); font-weight: 600; color: var(--ink); font-size: 14px; font-variant-numeric: tabular-nums; }
+
+  .ann-row { padding: 24px 48px; border-bottom: 1px solid var(--hairline-soft); }
+  .ann-row:last-child { border-bottom: 0; }
+  .ann-meta { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .ann-title { font-family: var(--font-display); font-weight: 700; font-size: 24px; color: var(--ink); letter-spacing: -0.01em; }
+  .ann-body { color: var(--text); margin-top: 8px; max-width: 640px; font-size: 13px; line-height: 1.6; }
+
+  /* Seasons */
+  .season-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; background: var(--hairline); gap: 1px; border-bottom: 1px solid var(--hairline); }
+  .season-card { background: var(--surface1); padding: 28px; position: relative; transition: background 150ms ease-out; }
+  .season-card:hover { background: var(--surface2); }
+  .season-card.current { background: var(--surface1); }
+  .season-card.current::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--red); }
+  .season-tag { font-family: var(--font-display); font-weight: 700; font-size: 11px; letter-spacing: 0.22em; color: var(--faint); text-transform: uppercase; }
+  .season-card.current .season-tag { color: var(--red); }
+  .season-name { font-family: var(--font-display); font-weight: 700; font-size: 32px; color: var(--ink); margin-top: 12px; letter-spacing: -0.01em; }
+  .season-name .num { color: var(--faint); margin-right: 10px; font-weight: 400; }
+  .season-card.current .season-name .num { color: var(--ink); }
+  .season-dates { font-size: 12px; color: var(--muted); margin-top: 6px; letter-spacing: 0.04em; }
+  .season-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--hairline-soft); }
+  .season-stat-label { font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); font-weight: 600; }
+  .season-stat-num { font-family: var(--font-display); font-weight: 700; font-size: 24px; color: var(--ink); margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .season-champ { margin-top: 18px; font-size: 12px; color: var(--muted); }
+  .season-champ .name { color: var(--ink); font-weight: 500; }
+  .season-progress { margin-top: 18px; }
+  .season-progress-bar { height: 4px; background: var(--surface2); position: relative; overflow: hidden; }
+  .season-progress-bar > span { position: absolute; left: 0; top: 0; bottom: 0; background: var(--red); }
+  .season-progress-meta { display: flex; justify-content: space-between; margin-top: 8px; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); font-weight: 600; }
+  .season-progress-meta .live { color: var(--red); }
+
+  /* Audit log */
+  .audit-toolbar { display: flex; gap: 8px; padding: 18px 48px; border-bottom: 1px solid var(--hairline); align-items: center; flex-wrap: wrap; }
+  .audit-chip { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 600; padding: 7px 12px; border: 1px solid var(--hairline); color: var(--muted); background: transparent; cursor: pointer; transition: all 150ms ease-out; }
+  .audit-chip:hover { color: var(--ink); border-color: var(--text); }
+  .audit-chip.active { color: var(--ink); border-color: var(--red); background: rgba(204,0,0,0.06); }
+  .audit-chip .count { color: var(--faint); margin-left: 6px; }
+  .audit-chip.active .count { color: var(--red); }
+  .audit-spacer { flex: 1; }
+  .audit-meta { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); font-weight: 600; }
+  .audit-list { background: var(--surface1); }
+  .audit-row { display: grid; grid-template-columns: 140px 100px 1fr 160px; gap: 24px; padding: 16px 48px; border-bottom: 1px solid var(--hairline-soft); align-items: center; transition: background 120ms ease-out; }
+  .audit-row:hover { background: rgba(255,255,255,0.02); }
+  .audit-time { font-family: var(--font-display); font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; font-size: 13px; }
+  .audit-time .date { display: block; font-size: 10px; color: var(--faint); font-weight: 500; letter-spacing: 0.06em; margin-top: 2px; }
+  .audit-action { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; padding: 4px 8px; border: 1px solid var(--hairline); display: inline-block; }
+  .audit-action.create { color: #4ade80; border-color: rgba(74,222,128,0.25); }
+  .audit-action.update { color: var(--amber); border-color: rgba(234,179,8,0.25); }
+  .audit-action.delete, .audit-action.suspend { color: var(--red); border-color: rgba(204,0,0,0.30); }
+  .audit-action.resolve { color: var(--ink); border-color: var(--hairline); }
+  .audit-desc { font-size: 13px; color: var(--text); }
+  .audit-desc .target { color: var(--ink); font-weight: 500; }
+  .audit-actor { font-size: 12px; color: var(--muted); text-align: right; }
+  .audit-actor .who { color: var(--ink); font-weight: 500; display: block; }
+
+  /* Settings */
+  .settings-layout { display: grid; grid-template-columns: 240px 1fr; min-height: 600px; }
+  .settings-tabs { background: var(--surface1); border-right: 1px solid var(--hairline); padding: 18px 0; }
+  .settings-tab { display: block; padding: 12px 24px; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 600; color: var(--muted); border-left: 2px solid transparent; cursor: pointer; transition: all 120ms ease-out; }
+  .settings-tab:hover { color: var(--ink); background: rgba(255,255,255,0.02); }
+  .settings-tab.active { color: var(--ink); border-left-color: var(--red); background: rgba(204,0,0,0.04); }
+  .settings-tab .tab-sub { display: block; font-size: 9px; letter-spacing: 0.16em; color: var(--faint); margin-top: 3px; font-weight: 500; }
+  .settings-panel { padding: 36px 48px; display: none; }
+  .settings-panel.active { display: block; animation: fadeUp 240ms ease-out; }
+  .settings-panel h3 { font-family: var(--font-display); font-weight: 700; font-size: 24px; color: var(--ink); letter-spacing: -0.01em; margin-bottom: 6px; }
+  .settings-panel .lede { color: var(--muted); font-size: 12px; max-width: 520px; margin-bottom: 28px; }
+  .settings-group { padding: 22px 0; border-top: 1px solid var(--hairline); display: grid; grid-template-columns: 1fr 1.4fr; gap: 32px; align-items: flex-start; }
+  .settings-group:first-of-type { border-top: 0; padding-top: 0; }
+  .settings-group .label { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink); font-weight: 700; }
+  .settings-group .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .field { background: var(--bg); border: 1px solid var(--hairline); color: var(--ink); padding: 10px 12px; font-family: var(--font-body); font-size: 13px; width: 100%; }
+  .field:focus { outline: none; border-color: var(--red); }
+  textarea.field { font-family: var(--font-body); resize: vertical; min-height: 80px; }
+  .toggle { width: 44px; height: 24px; background: var(--surface2); border: 1px solid var(--hairline); position: relative; cursor: pointer; transition: background 150ms; }
+  .toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; background: var(--muted); transition: all 150ms; }
+  .toggle.on { background: rgba(204,0,0,0.15); border-color: var(--red); }
+  .toggle.on::after { left: 22px; background: var(--red); }
+  .row-flex { display: flex; gap: 12px; align-items: center; }
+  .row-flex .field { flex: 1; }
+  .pair-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .danger-zone { margin-top: 36px; border: 1px solid rgba(204,0,0,0.3); padding: 24px; background: rgba(204,0,0,0.04); }
+  .danger-zone h4 { font-family: var(--font-display); font-weight: 700; font-size: 16px; color: var(--red); letter-spacing: 0.02em; }
+  .danger-row { display: flex; align-items: center; justify-content: space-between; padding: 14px 0; border-top: 1px solid rgba(204,0,0,0.15); gap: 24px; }
+  .danger-row:first-of-type { border-top: 0; padding-top: 14px; margin-top: 8px; }
+  .danger-row .text { flex: 1; }
+  .danger-row .text strong { color: var(--ink); font-size: 13px; font-weight: 500; display: block; }
+  .danger-row .text p { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .btn-danger { background: transparent; color: var(--red); border: 1px solid var(--red); }
+  .btn-danger:hover { background: var(--red); color: #fff; }
+  .role-pill { display: inline-block; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; padding: 3px 8px; border: 1px solid var(--hairline); color: var(--muted); }
+  .role-pill.owner { color: var(--red); border-color: rgba(204,0,0,0.30); }
+  .role-pill.admin { color: var(--ink); }
+  .admin-row { display: grid; grid-template-columns: 1fr 100px 120px 80px; gap: 16px; padding: 14px 0; border-top: 1px solid var(--hairline-soft); align-items: center; }
+  .admin-row:first-of-type { border-top: 0; }
+  .admin-row .who { color: var(--ink); font-size: 13px; }
+  .admin-row .who small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .admin-row .when { color: var(--muted); font-size: 12px; }
+  .admin-row a { color: var(--muted); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 600; }
+  .admin-row a:hover { color: var(--red); }
+
+  @media (max-width: 1023px) {
+    .nav-links { display: none; }
+    .search { width: 180px; }
+    .stats-grid { grid-template-columns: repeat(3, 1fr); }
+    .hero h1 { font-size: 44px; }
+    .panels-row { grid-template-columns: 1fr; }
+    .table-wrap { overflow-x: auto; }
+    .table-wrap table { min-width: 720px; }
+    .session-row { grid-template-columns: 1.8fr 1.4fr 1fr 0.8fr 0.8fr 0.6fr; padding: 16px 32px; }
+    .hero, .alert, .page-head, .dispute-head, .dispute-body, .dispute-foot, .ann-row, .panel-head { padding-left: 32px; padding-right: 32px; }
+    .audit-toolbar, .audit-row { padding-left: 32px; padding-right: 32px; }
+    .season-grid { grid-template-columns: 1fr 1fr; }
+    .settings-layout { grid-template-columns: 180px 1fr; }
+    .settings-panel { padding: 24px 24px; }
+    .audit-row { grid-template-columns: 110px 90px 1fr 140px; gap: 16px; }
+  }
+  @media (max-width: 767px) {
+    .topbar { padding: 0 16px; gap: 0; justify-content: space-between; }
+    .topbar > .brand { flex: 1; justify-content: center; }
+    .topbar .search, .topbar .icon-btn { display: none; }
+    .topbar .avatar { margin-left: auto; }
+    .hamburger { display: flex; }
+    .subbar { display: none; }
+    .main { padding-top: 56px; }
+    .hero { padding: 28px 20px 32px; }
+    .hero h1 { font-size: 36px; }
+    .hero-watermark { font-size: 120px; right: -10px; bottom: -10px; }
+    .alert { padding: 14px 20px; flex-direction: column; align-items: flex-start; gap: 12px; }
+    .alert .btn { width: 100%; justify-content: center; }
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .stat { padding: 18px; }
+    .stat-num { font-size: 32px; }
+    .page-head { padding: 28px 20px 22px; flex-direction: column; align-items: flex-start; }
+    .page-head h2 { font-size: 32px; }
+    .panels-row { grid-template-columns: 1fr; }
+    thead th, tbody td { padding: 12px 16px; }
+    .dispute-head, .dispute-body, .dispute-foot, .ann-row, .panel-head { padding-left: 20px !important; padding-right: 20px !important; }
+    .dispute-body { grid-template-columns: 1fr; gap: 20px; }
+    .session-row { grid-template-columns: 1fr; gap: 8px; padding: 18px 20px; align-items: flex-start; }
+    .session-row > .session-cell, .session-row > .session-name { display: block; }
+    .session-row > *::before { content: attr(data-label); display: block; font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--faint); font-weight: 600; margin-bottom: 4px; }
+    .session-row > .session-name::before { content: 'Session'; }
+    .table-wrap { overflow-x: auto; }
+    .table-wrap table { min-width: 640px; }
+    .season-grid { grid-template-columns: 1fr; }
+    .settings-layout { grid-template-columns: 1fr; }
+    .settings-tabs { display: flex; overflow-x: auto; padding: 8px 0; border-right: 0; border-bottom: 1px solid var(--hairline); }
+    .settings-tab { border-left: 0; border-bottom: 2px solid transparent; flex-shrink: 0; padding: 12px 16px; }
+    .settings-tab.active { border-left: 0; border-bottom-color: var(--red); }
+    .settings-tab .tab-sub { display: none; }
+    .settings-panel { padding: 24px 20px; }
+    .settings-group { grid-template-columns: 1fr; gap: 12px; padding: 18px 0; }
+    .audit-toolbar { padding: 14px 20px; }
+    .audit-row { grid-template-columns: 1fr; gap: 6px; padding: 14px 20px; }
+    .audit-actor { text-align: left; }
+    .admin-row { grid-template-columns: 1fr; gap: 4px; padding: 14px 0; }
+  }
+
+  /* ============ AUTH ============ */
+  .auth-root { position: fixed; inset: 0; z-index: 200; background: var(--bg); display: flex; opacity: 0; pointer-events: none; transition: opacity 200ms ease-out; }
+  .auth-root.show { opacity: 1; pointer-events: auto; }
+  .auth-left { flex: 1; min-width: 0; background: #0A0A0A; position: relative; overflow: hidden; padding: 60px; display: flex; flex-direction: column; justify-content: center; }
+  .auth-left::before { content: ''; position: absolute; inset: 0; background-image: repeating-linear-gradient(45deg, transparent, transparent 39px, rgba(255,255,255,0.03) 39px, rgba(255,255,255,0.03) 40px); pointer-events: none; }
+  .auth-left-inner { position: relative; max-width: 440px; }
+  .auth-mark { display: flex; align-items: center; gap: 10px; }
+  .auth-mark-square { width: 40px; height: 40px; background: var(--red); display: flex; align-items: center; justify-content: center; color: #fff; font-family: var(--font-display); font-weight: 700; font-size: 22px; }
+  .auth-eyebrow-club { display: block; margin-top: 12px; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; color: var(--red); font-weight: 700; }
+  .auth-headline { font-family: var(--font-display); font-weight: 700; font-size: 72px; line-height: 0.92; color: #F0F0F0; letter-spacing: -0.02em; margin-top: 32px; }
+  .auth-headline span { display: block; }
+  .auth-season { display: inline-block; margin-top: 32px; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--red); font-weight: 700; }
+  .auth-foot-copy { position: absolute; left: 60px; bottom: 40px; font-size: 10px; color: #2A2A2A; letter-spacing: 0.06em; }
+  .auth-right { flex: 1; min-width: 0; background: #111111; border-left: 1px solid rgba(255,255,255,0.06); display: flex; align-items: center; justify-content: center; padding: 60px 40px; overflow-y: auto; }
+  .auth-form { width: 100%; max-width: 380px; }
+  .auth-eyebrow { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--red); font-weight: 700; }
+  .auth-title { font-family: var(--font-display); font-weight: 700; font-size: 36px; color: #F0F0F0; margin-top: 8px; line-height: 1; letter-spacing: -0.01em; }
+  .auth-lede { font-size: 12px; color: #555555; line-height: 1.6; margin-top: 14px; margin-bottom: 32px; }
+  .auth-title + .auth-spacer { height: 32px; }
+  .auth-label { display: block; font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; color: #555555; font-weight: 600; margin-bottom: 6px; }
+  .auth-input-wrap { position: relative; margin-bottom: 20px; }
+  .auth-input { width: 100%; background: #0D0D0D; border: 1px solid rgba(255,255,255,0.10); color: #F0F0F0; font-family: var(--font-body); font-size: 13px; font-weight: 400; padding: 12px 14px; border-radius: 0; outline: none; transition: border-color 150ms ease-out; box-sizing: border-box; }
+  .auth-input:focus { border-color: var(--red); }
+  .auth-input.error { border-color: var(--red); }
+  textarea.auth-input { resize: vertical; min-height: 96px; font-family: var(--font-body); }
+  .auth-error { display: none; font-size: 10px; color: var(--red); margin-top: -14px; margin-bottom: 16px; letter-spacing: 0.04em; }
+  .auth-input-wrap.has-error .auth-input { border-color: var(--red); }
+  .auth-input-wrap.has-error + .auth-error { display: block; }
+  .auth-pass-toggle { position: absolute; right: 12px; top: 13px; background: transparent; border: 0; color: #555555; font-size: 11px; font-family: var(--font-body); font-weight: 600; cursor: pointer; letter-spacing: 0.08em; text-transform: uppercase; padding: 0; }
+  .auth-pass-toggle:hover { color: #F0F0F0; }
+  .auth-forgot { display: block; text-align: right; font-size: 11px; color: #555555; margin-top: -10px; margin-bottom: 24px; cursor: pointer; transition: color 150ms; }
+  .auth-forgot:hover { color: var(--red); }
+  .auth-btn { width: 100%; background: var(--red); color: #fff; font-family: var(--font-display); font-weight: 700; font-size: 12px; letter-spacing: 0.15em; text-transform: uppercase; padding: 14px; border: 0; border-radius: 0; cursor: pointer; transition: background 150ms ease-out, opacity 150ms; margin-top: 8px; }
+  .auth-btn:hover { background: #990000; }
+  .auth-btn.loading { opacity: 0.6; cursor: wait; }
+  .auth-btn:disabled { background: #1A1A1A; color: #333333; cursor: not-allowed; }
+  .auth-btn-ghost { background: transparent; border: 1px solid rgba(255,255,255,0.12); color: #888888; display: flex; align-items: center; justify-content: center; gap: 12px; }
+  .auth-btn-ghost:hover { border-color: rgba(255,255,255,0.25); color: #F0F0F0; background: transparent; }
+  .auth-sso-mark { width: 14px; height: 14px; background: var(--red); display: inline-flex; align-items: center; justify-content: center; font-family: var(--font-display); font-weight: 700; font-size: 8px; color: #fff; }
+  .auth-divider { position: relative; margin: 28px 0; height: 1px; background: rgba(255,255,255,0.07); }
+  .auth-divider span { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: #111111; padding: 0 10px; font-size: 10px; color: #333333; letter-spacing: 0.18em; }
+  .auth-foot { margin-top: 28px; font-size: 11px; color: #555555; }
+  .auth-foot a { color: var(--red); cursor: pointer; font-weight: 600; }
+  .auth-foot a:hover { text-decoration: underline; }
+  .auth-note { margin-top: 24px; font-size: 10px; color: #333333; line-height: 1.6; }
+  .auth-screen { display: none; width: 100%; height: 100%; }
+  .auth-screen.active { display: flex; animation: authFade 200ms ease-out; }
+  @keyframes authFade { from { opacity: 0; } to { opacity: 1; } }
+
+  .auth-success { text-align: center; padding: 20px 0; }
+  .auth-success-check { width: 56px; height: 56px; margin: 0 auto 24px; border: 1px solid #4ade80; color: #4ade80; display: flex; align-items: center; justify-content: center; font-size: 32px; font-family: var(--font-display); }
+  .auth-success-title { font-family: var(--font-display); font-weight: 700; font-size: 24px; color: #F0F0F0; }
+  .auth-success-body { font-size: 13px; color: #555555; line-height: 1.7; margin-top: 14px; }
+  .auth-success-back { display: inline-block; margin-top: 28px; font-size: 11px; color: var(--red); cursor: pointer; letter-spacing: 0.06em; font-weight: 600; }
+  .auth-success-back:hover { text-decoration: underline; }
+
+  .ignition-flash { position: fixed; inset: 0; background: var(--red); z-index: 300; pointer-events: none; opacity: 0; transition: opacity 150ms ease-out; }
+  .ignition-flash.show { opacity: 1; }
+  .ignition-flash.fadeblack { background: #0A0A0A; opacity: 1; }
+
+  @media (max-width: 900px) {
+    .auth-root { flex-direction: column; }
+    .auth-left { flex: none; height: 200px; padding: 28px 24px; }
+    .auth-left-inner { max-width: none; }
+    .auth-headline { font-size: 36px; margin-top: 16px; }
+    .auth-foot-copy { display: none; }
+    .auth-season { margin-top: 14px; }
+    .auth-right { flex: 1; padding: 36px 24px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="ignition-flash" id="ignitionFlash"></div>
+<div class="auth-root show" id="authRoot">
+
+  <!-- SIGN IN -->
+  <div class="auth-screen active" data-auth="signin">
+    <div class="auth-left">
+      <div class="auth-left-inner">
+        <div class="auth-mark">
+          <div class="auth-mark-square">S</div>
+          <span class="auth-eyebrow-club" style="margin-top: 0">SFU Badminton</span>
+        </div>
+        <h1 class="auth-headline"><span>Run your</span><span>club like</span><span>a team.</span></h1>
+        <span class="auth-season">Season 02 · Spring 2026</span>
+      </div>
+      <div class="auth-foot-copy">© 2026 SFU Badminton Club</div>
+    </div>
+    <div class="auth-right">
+      <form class="auth-form" id="signinForm" novalidate>
+        <div class="auth-eyebrow">Welcome back</div>
+        <h2 class="auth-title">Sign in.</h2>
+        <div class="auth-spacer"></div>
+        <label class="auth-label">Email Address</label>
+        <div class="auth-input-wrap" data-field="email">
+          <input class="auth-input" type="email" name="email" placeholder="you@sfu.ca" autocomplete="email" />
+        </div>
+        <div class="auth-error">↑ This field is required</div>
+        <label class="auth-label">Password</label>
+        <div class="auth-input-wrap" data-field="password">
+          <input class="auth-input" type="password" name="password" placeholder="••••••••" autocomplete="current-password" />
+          <button type="button" class="auth-pass-toggle" data-toggle-pass>Show</button>
+        </div>
+        <div class="auth-error">↑ This field is required</div>
+        <a class="auth-forgot">Forgot password?</a>
+        <button type="submit" class="auth-btn" data-action="signin">Sign In</button>
+        <div class="auth-divider"><span>OR</span></div>
+        <button type="button" class="auth-btn auth-btn-ghost" data-action="signin">
+          <span class="auth-sso-mark">S</span>Sign In with SFU SSO
+        </button>
+        <div class="auth-foot">Don't have an account? <a data-go="request">Join the club →</a></div>
+        <div class="auth-note">Admin access is restricted to authorized SFU Badminton executive members.</div>
+      </form>
+    </div>
+  </div>
+
+  <!-- REQUEST ACCESS -->
+  <div class="auth-screen" data-auth="request">
+    <div class="auth-left">
+      <div class="auth-left-inner">
+        <div class="auth-mark">
+          <div class="auth-mark-square">S</div>
+          <span class="auth-eyebrow-club" style="margin-top: 0">SFU Badminton</span>
+        </div>
+        <h1 class="auth-headline"><span>Run your</span><span>club like</span><span>a team.</span></h1>
+        <span class="auth-season">Season 02 · Spring 2026</span>
+      </div>
+      <div class="auth-foot-copy">© 2026 SFU Badminton Club</div>
+    </div>
+    <div class="auth-right">
+      <form class="auth-form" id="requestForm" novalidate>
+        <div id="requestFormBody">
+          <div class="auth-eyebrow">Admin access</div>
+          <h2 class="auth-title">Request access.</h2>
+          <p class="auth-lede">Admin accounts are created by the Super Admin only. Submit your details and you will be contacted.</p>
+          <label class="auth-label">Full Name</label>
+          <div class="auth-input-wrap" data-field="name"><input class="auth-input" name="name" placeholder="Your full name" /></div>
+          <div class="auth-error">↑ This field is required</div>
+          <label class="auth-label">SFU Email</label>
+          <div class="auth-input-wrap" data-field="email"><input class="auth-input" type="email" name="email" placeholder="you@sfu.ca" /></div>
+          <div class="auth-error">↑ This field is required</div>
+          <label class="auth-label">Role / Position</label>
+          <div class="auth-input-wrap" data-field="role"><input class="auth-input" name="role" placeholder="e.g. Club President" /></div>
+          <div class="auth-error">↑ This field is required</div>
+          <label class="auth-label">Message</label>
+          <div class="auth-input-wrap" data-field="message"><textarea class="auth-input" name="message" rows="4" placeholder="Why do you need admin access?"></textarea></div>
+          <div class="auth-error">↑ This field is required</div>
+          <button type="submit" class="auth-btn" id="sendRequest">Send Request</button>
+          <div class="auth-foot">Already have an account? <a data-go="signin">Sign in →</a></div>
+        </div>
+        <div class="auth-success" id="requestSuccess" style="display:none">
+          <div class="auth-success-check">✓</div>
+          <div class="auth-success-title">Request sent.</div>
+          <div class="auth-success-body">The Super Admin will review your request and contact you at your SFU email within 48 hours.</div>
+          <a class="auth-success-back" data-go="signin">← Back to sign in</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+</div>
+
+<div class="topbar-wrap">
+  <header class="topbar">
+    <button class="hamburger" id="hamburger" aria-label="Open menu"><span></span><span></span><span></span></button>
+    <div class="brand">
+      <div class="brand-mark">S</div>
+      <div class="brand-text">SFU Badminton<span class="brand-sub"> · Admin</span></div>
+    </div>
+    <nav class="nav-links">
+      <a href="#" class="nav-link active" data-page="dashboard">Dashboard</a>
+      <a href="#" class="nav-link" data-page="players">Players <span class="nav-badge">4</span></a>
+      <a href="#" class="nav-link" data-page="sessions">Sessions</a>
+      <a href="#" class="nav-link" data-page="matches">Matches</a>
+      <a href="#" class="nav-link" data-page="announcements">Announcements</a>
+      <a href="#" class="nav-link" data-page="disputes">Disputes <span class="nav-badge">2</span></a>
+    </nav>
+    <div class="topbar-right">
+      <div class="search-wrap" id="searchWrap">
+        <input class="search" id="searchInput" placeholder="Search players, matches…" />
+        <button class="icon-btn" id="searchToggle" aria-label="Search">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
+        </button>
+      </div>
+      <button class="icon-btn" aria-label="Notifications">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
+        <span class="dot"></span>
+      </button>
+      <div class="avatar" id="adminAvatar" title="Sign out" style="cursor:pointer">AU</div>
+    </div>
+  </header>
+  <div class="subbar">
+    <a href="#" class="subnav-link active" data-page="seasons">Seasons</a><a href="#" class="subnav-link" data-page="audit">Audit Log</a><a href="#" class="subnav-link" data-page="settings">Settings</a>
+    <span class="right"><span class="live-dot"></span>Season 02 · Spring 2026 · Live</span>
+  </div>
+</div>
+
+<div class="mobile-overlay" id="mobileOverlay">
+  <div class="mobile-overlay-head">
+    <div class="brand"><div class="brand-mark">S</div><div class="brand-text">SFU Badminton</div></div>
+    <button class="mobile-close" id="mobileClose" aria-label="Close">×</button>
+  </div>
+  <div class="mobile-nav-section">Primary</div>
+  <nav class="mobile-nav">
+    <a href="#" class="active" data-page="dashboard">Dashboard</a>
+    <a href="#" data-page="players">Players <span class="nav-badge">4</span></a>
+    <a href="#" data-page="sessions">Sessions</a>
+    <a href="#" data-page="matches">Matches</a>
+    <a href="#" data-page="announcements">Announcements</a>
+    <a href="#" data-page="disputes">Disputes <span class="nav-badge">2</span></a>
+  </nav>
+  <div class="mobile-nav-section">Secondary</div>
+  <nav class="mobile-nav">
+    <a href="#" data-page="seasons">Seasons</a><a href="#" data-page="audit">Audit Log</a><a href="#" data-page="settings">Settings</a>
+  </nav>
+</div>
+
+<main class="main">
+
+  <section class="page active" data-page="dashboard">
+    <div class="hero">
+      <div class="hero-watermark">S02</div>
+      <div class="hero-inner">
+        <div class="tag-row"><span class="red-line"></span><span class="micro micro-red">Season 02 · Spring 2026</span></div>
+        <h1>Run your club like a team.</h1>
+        <p>Approve players, resolve disputes, keep the season moving. Everything that needs your attention, in one place.</p>
+      </div>
+    </div>
+
+    <div class="alert">
+      <div class="alert-text"><span class="live-dot"></span><strong>Items need your attention</strong><span class="sep">—</span>4 pending approvals<span class="sep">·</span>2 open disputes</div>
+      <button class="btn btn-red" data-goto="disputes">Review →</button>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat"><div class="stat-label">Total Players</div><div class="stat-num">10</div><div class="stat-delta">+3 this week</div></div>
+      <div class="stat"><div class="stat-label">Active Sessions</div><div class="stat-num">4</div><div class="stat-delta">2 this weekend</div></div>
+      <div class="stat"><div class="stat-label">Matches Today</div><div class="stat-num">12</div><div class="stat-delta">+5 vs last wk</div></div>
+      <div class="stat"><div class="stat-label">Pending Approvals</div><div class="stat-num">4</div><div class="stat-delta action">Requires action</div></div>
+      <div class="stat"><div class="stat-label">Open Disputes</div><div class="stat-num red">2</div><div class="stat-delta action">Requires action</div></div>
+      <div class="stat"><div class="stat-label">Active Challenges</div><div class="stat-num">9</div><div class="stat-delta warn">3 expiring soon</div></div>
+    </div>
+
+    <div class="panels-row">
+      <div class="panel">
+        <div class="panel-head"><div class="label">Players <span class="count">/ Recent</span></div><a href="#" class="view-all" data-goto="players">View All →</a></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th style="width:40px">#</th><th>Full Name</th><th>Singles ELO</th><th>Status</th><th>Joined</th></tr></thead>
+          <tbody>
+            <tr><td class="num">01</td><td class="name">Aiden Park</td><td class="elo">1487</td><td><span class="badge active">Active</span></td><td class="date">Mar 12 2026</td></tr>
+            <tr><td class="num">02</td><td class="name">Priya Nambiar</td><td class="elo">1456</td><td><span class="badge active">Active</span></td><td class="date">Mar 08 2026</td></tr>
+            <tr><td class="num">03</td><td class="name">Lucas Tran</td><td class="elo">1423</td><td><span class="badge active">Active</span></td><td class="date">Mar 15 2026</td></tr>
+            <tr><td class="num">04</td><td class="name">Sofia Reyes</td><td class="elo">1398</td><td><span class="badge pending">Pending</span></td><td class="date">Apr 28 2026</td></tr>
+            <tr><td class="num">05</td><td class="name">Marcus Okonkwo</td><td class="elo">1381</td><td><span class="badge pending">Pending</span></td><td class="date">Apr 30 2026</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><div class="label">Matches <span class="count">/ Recent</span></div><a href="#" class="view-all" data-goto="matches">View All →</a></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Match</th><th>Score</th><th>Date</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td class="name">Aiden Park <span style="color:var(--faint)">vs</span> Lucas Tran</td><td class="elo" style="font-size:12px">21–17, 21–15</td><td class="date">Apr 30</td><td><span class="badge confirmed">Confirmed</span></td></tr>
+            <tr><td class="name">Priya Nambiar <span style="color:var(--faint)">vs</span> Sofia Reyes</td><td class="elo" style="font-size:12px">21–19, 18–21, 21–14</td><td class="date">Apr 29</td><td><span class="badge confirmed">Confirmed</span></td></tr>
+            <tr><td class="name">Marcus Okonkwo <span style="color:var(--faint)">vs</span> Aiden Park</td><td class="elo" style="font-size:12px">15–21, 21–18, 19–21</td><td class="date">Apr 28</td><td><span class="badge review">Under Review</span></td></tr>
+            <tr><td class="name">James Wu <span style="color:var(--faint)">vs</span> David Chen</td><td class="elo" style="font-size:12px">21–11, 21–9</td><td class="date">Apr 27</td><td><span class="badge confirmed">Confirmed</span></td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="page" data-page="players">
+    <div class="page-head">
+      <div>
+        <div class="tag-row"><span class="red-line"></span><span class="micro micro-red">Roster · 13 players</span></div>
+        <h2>Players.</h2>
+        <p class="meta">Full club roster. Approve pending registrations and review ELO movement across the season.</p>
+      </div>
+      <div class="page-head-actions">
+        <button class="btn btn-ghost">Export CSV</button>
+        <button class="btn btn-red">Add Player</button>
+      </div>
+    </div>
+    <div class="table-wrap"><table id="playersTable">
+      <thead><tr>
+        <th class="sortable" data-sort="rank">Rank<span class="arrow">↑</span></th>
+        <th class="sortable" data-sort="name">Full Name<span class="arrow">↑</span></th>
+        <th class="sortable sorted" data-sort="elo">Singles ELO<span class="arrow">↑</span></th>
+        <th class="sortable" data-sort="delo">Doubles ELO<span class="arrow">↑</span></th>
+        <th class="sortable" data-sort="w">W<span class="arrow">↑</span></th>
+        <th class="sortable" data-sort="l">L<span class="arrow">↑</span></th>
+        <th>Status</th><th>Joined</th><th>Actions</th>
+      </tr></thead>
+      <tbody>
+        <tr><td class="rank">01</td><td class="name">Aiden Park</td><td class="elo">1487</td><td class="elo">1412</td><td class="num">18</td><td class="num">4</td><td><span class="badge active">Active</span></td><td class="date">Mar 12 2026</td><td class="actions"><a href="#">View</a><a href="#">…</a></td></tr>
+        <tr><td class="rank">02</td><td class="name">Priya Nambiar</td><td class="elo">1456</td><td class="elo">1388</td><td class="num">15</td><td class="num">6</td><td><span class="badge active">Active</span></td><td class="date">Mar 08 2026</td><td class="actions"><a href="#">View</a><a href="#">…</a></td></tr>
+        <tr><td class="rank">03</td><td class="name">Lucas Tran</td><td class="elo">1423</td><td class="elo">1401</td><td class="num">14</td><td class="num">7</td><td><span class="badge active">Active</span></td><td class="date">Mar 15 2026</td><td class="actions"><a href="#">View</a><a href="#">…</a></td></tr>
+        <tr><td class="rank">04</td><td class="name">James Wu</td><td class="elo">1398</td><td class="elo">1356</td><td class="num">12</td><td class="num">8</td><td><span class="badge active">Active</span></td><td class="date">Mar 02 2026</td><td class="actions"><a href="#">View</a><a href="#">…</a></td></tr>
+        <tr><td class="rank">05</td><td class="name">Sofia Reyes</td><td class="elo">1371</td><td class="elo">1290</td><td class="num">10</td><td class="num">9</td><td><span class="badge active">Active</span></td><td class="date">Mar 11 2026</td><td class="actions"><a href="#">View</a><a href="#">…</a></td></tr>
+        <tr><td class="rank">06</td><td class="name">David Chen</td><td class="elo">1344</td><td class="elo">1378</td><td class="num">10</td><td class="num">10</td><td><span class="badge active">Active</span></td><td class="date">Mar 04 2026</td><td class="actions"><a href="#">View</a><a href="#">…</a></td></tr>
+        <tr><td class="rank">07</td><td class="name">Marcus Okonkwo</td><td class="elo">1312</td><td class="elo">1289</td><td class="num">8</td><td class="num">11</td><td><span class="badge active">Active</span></td><td class="date">Mar 18 2026</td><td class="actions"><a href="#">View</a><a href="#">…</a></td></tr>
+        <tr><td class="rank">08</td><td class="name">Yuki Tanaka</td><td class="elo">1298</td><td class="elo">1334</td><td class="num">7</td><td class="num">12</td><td><span class="badge active">Active</span></td><td class="date">Mar 21 2026</td><td class="actions"><a href="#">View</a><a href="#">…</a></td></tr>
+        <tr><td class="rank">09</td><td class="name">Fatima Al-Hassan</td><td class="elo">1276</td><td class="elo">1241</td><td class="num">6</td><td class="num">12</td><td><span class="badge active">Active</span></td><td class="date">Mar 24 2026</td><td class="actions"><a href="#">View</a><a href="#">…</a></td></tr>
+        <tr><td class="rank">10</td><td class="name">Ryan Kowalski</td><td class="elo">1251</td><td class="elo">1198</td><td class="num">5</td><td class="num">13</td><td><span class="badge active">Active</span></td><td class="date">Mar 28 2026</td><td class="actions"><a href="#">View</a><a href="#">…</a></td></tr>
+        <tr><td class="rank">11</td><td class="name">Elena Vasquez</td><td class="elo">1224</td><td class="elo">1267</td><td class="num">4</td><td class="num">13</td><td><span class="badge active">Active</span></td><td class="date">Apr 02 2026</td><td class="actions"><a href="#">View</a><a href="#">…</a></td></tr>
+        <tr><td class="rank">12</td><td class="name">Noah Patel</td><td class="elo">1398</td><td class="elo">1301</td><td class="num">0</td><td class="num">0</td><td><span class="badge pending">Pending</span></td><td class="date">Apr 28 2026</td><td class="actions"><a href="#" class="approve">Approve</a><a href="#">View</a></td></tr>
+        <tr><td class="rank">13</td><td class="name">Amara Diallo</td><td class="elo">1381</td><td class="elo">1289</td><td class="num">0</td><td class="num">0</td><td><span class="badge pending">Pending</span></td><td class="date">Apr 30 2026</td><td class="actions"><a href="#" class="approve">Approve</a><a href="#">View</a></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="page" data-page="disputes">
+    <div class="page-head">
+      <div>
+        <div class="tag-row"><span class="red-line"></span><span class="micro micro-red">2 open · 1 resolved</span></div>
+        <h2>Disputes.</h2>
+        <p class="meta">Score disagreements and no-shows. Resolve with the correct submission, or escalate for committee review.</p>
+      </div>
+    </div>
+
+    <article class="dispute">
+      <div class="dispute-head">
+        <div class="dispute-id"><span class="hash">#</span>Dispute 004</div>
+        <span class="badge open">Open · Filed Apr 28</span>
+      </div>
+      <div class="dispute-body">
+        <div>
+          <div class="dispute-col-label">Players</div>
+          <div class="dispute-col-value">Marcus Okonkwo<span class="vs">vs</span>Aiden Park</div>
+          <div class="dispute-col-sub">Match · Apr 28, 2026</div>
+        </div>
+        <div>
+          <div class="dispute-col-label">Issue</div>
+          <div class="dispute-col-value">Score disagreement — submitted scores do not match.</div>
+          <div class="dispute-col-sub">Filed Apr 28 at 9:14pm</div>
+        </div>
+        <div>
+          <div class="dispute-col-label">Submissions</div>
+          <div class="submission"><div class="submission-name">Marcus submitted</div><div class="submission-score">15–21, 21–18, 19–21</div><div class="submission-result">Loss</div></div>
+          <div class="submission"><div class="submission-name">Aiden submitted</div><div class="submission-score">15–21, 21–18, 21–19</div><div class="submission-result">Win</div></div>
+        </div>
+      </div>
+      <div class="dispute-foot">
+        <button class="btn btn-red dispute-action">Resolve — Accept Aiden's Score</button>
+        <button class="btn btn-dark dispute-action">Resolve — Accept Marcus's Score</button>
+        <button class="btn btn-ghost dispute-action">Escalate</button>
+      </div>
+      <div class="dispute-confirm"><div class="dispute-confirm-text">✓ Resolution applied. ELO recalculated · audit entry recorded.</div></div>
+    </article>
+
+    <article class="dispute">
+      <div class="dispute-head">
+        <div class="dispute-id"><span class="hash">#</span>Dispute 003</div>
+        <span class="badge open">Open · Filed Apr 25</span>
+      </div>
+      <div class="dispute-body">
+        <div>
+          <div class="dispute-col-label">Players</div>
+          <div class="dispute-col-value">Sofia Reyes<span class="vs">vs</span>James Wu</div>
+          <div class="dispute-col-sub">Match · Apr 25, 2026</div>
+        </div>
+        <div>
+          <div class="dispute-col-label">Issue</div>
+          <div class="dispute-col-value">No-show — Sofia did not appear for scheduled match.</div>
+          <div class="dispute-col-sub">15-minute grace period elapsed.</div>
+        </div>
+        <div>
+          <div class="dispute-col-label">Requested Outcome</div>
+          <div class="dispute-col-value">Walkover win for James Wu</div>
+          <div class="dispute-col-sub">No prior no-show flags on Sofia's record.</div>
+        </div>
+      </div>
+      <div class="dispute-foot">
+        <button class="btn btn-red dispute-action">Grant Walkover</button>
+        <button class="btn btn-dark dispute-action">Request Response</button>
+        <button class="btn btn-ghost dispute-action">Dismiss</button>
+      </div>
+      <div class="dispute-confirm"><div class="dispute-confirm-text">✓ Resolution applied. Audit entry recorded.</div></div>
+    </article>
+
+    <article class="dispute resolved-card">
+      <div class="dispute-head">
+        <div class="dispute-id"><span class="hash">#</span>Dispute 002</div>
+        <span class="badge resolved">Resolved · Apr 20</span>
+      </div>
+      <div class="dispute-body">
+        <div><div class="dispute-col-label">Players</div><div class="dispute-col-value">Yuki Tanaka<span class="vs">vs</span>David Chen</div></div>
+        <div><div class="dispute-col-label">Resolution</div><div class="dispute-col-value">Admin accepted David Chen's score submission.</div></div>
+        <div><div class="dispute-col-label">Outcome</div><div class="dispute-col-value">21–18, 19–21, 21–17 · Chen win</div><div class="dispute-col-sub">ELO adjusted · audit entry on file.</div></div>
+      </div>
+    </article>
+  </section>
+
+  <section class="page" data-page="sessions">
+    <div class="page-head">
+      <div>
+        <div class="tag-row"><span class="red-line"></span><span class="micro micro-red">3 upcoming · 3 past</span></div>
+        <h2>Sessions.</h2>
+        <p class="meta">Open play, competitive nights, and league fixtures across SFU courts.</p>
+      </div>
+      <div class="page-head-actions"><button class="btn btn-red">+ New Session</button></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><div class="label">Upcoming</div></div>
+      <div class="session-row"><div class="session-name" data-label="Session">Friday Open Play</div><div class="session-cell" data-label="Time">Fri May 2 · 6:00–9:00pm</div><div class="session-cell" data-label="Court">Court A + B</div><div class="session-cell cap" data-label="Capacity">14 / 20</div><div class="session-cell" data-label="Status"><span class="badge confirmed">Open</span></div><div class="session-cell" style="text-align:right"><a href="#" class="view-all">Manage →</a></div></div><div class="session-row"><div class="session-name" data-label="Session">Competitive Night</div><div class="session-cell" data-label="Time">Tue May 6 · 7:00–9:30pm</div><div class="session-cell" data-label="Court">Court A</div><div class="session-cell cap" data-label="Capacity">8 / 12</div><div class="session-cell" data-label="Status"><span class="badge confirmed">Open</span></div><div class="session-cell" style="text-align:right"><a href="#" class="view-all">Manage →</a></div></div><div class="session-row"><div class="session-name" data-label="Session">Doubles League</div><div class="session-cell" data-label="Time">Sat May 10 · 10:00am–1:00pm</div><div class="session-cell" data-label="Court">Court A + B</div><div class="session-cell cap" data-label="Capacity">20 / 20</div><div class="session-cell" data-label="Status"><span class="badge full">Full</span></div><div class="session-cell" style="text-align:right"><a href="#" class="view-all">Manage →</a></div></div>
+    </div>
+
+    <div class="panel" style="border-top:1px solid var(--hairline)">
+      <div class="panel-head"><div class="label">Past <span class="count">/ Last 3</span></div></div>
+      <div class="session-row past"><div class="session-name" data-label="Session">Friday Open Play</div><div class="session-cell" data-label="Time">Apr 25</div><div class="session-cell" data-label="Court">Court A + B</div><div class="session-cell cap" data-label="Capacity">18 / 20</div><div class="session-cell" data-label="Status"><span class="badge resolved">Completed</span></div><div class="session-cell" style="text-align:right"><a href="#" class="view-all">Recap →</a></div></div><div class="session-row past"><div class="session-name" data-label="Session">Competitive Night</div><div class="session-cell" data-label="Time">Apr 22</div><div class="session-cell" data-label="Court">Court A</div><div class="session-cell cap" data-label="Capacity">11 / 12</div><div class="session-cell" data-label="Status"><span class="badge resolved">Completed</span></div><div class="session-cell" style="text-align:right"><a href="#" class="view-all">Recap →</a></div></div><div class="session-row past"><div class="session-name" data-label="Session">Friday Open Play</div><div class="session-cell" data-label="Time">Apr 18</div><div class="session-cell" data-label="Court">Court A + B</div><div class="session-cell cap" data-label="Capacity">20 / 20</div><div class="session-cell" data-label="Status"><span class="badge resolved">Completed</span></div><div class="session-cell" style="text-align:right"><a href="#" class="view-all">Recap →</a></div></div></div>
+  </section>
+
+  <section class="page" data-page="matches">
+    <div class="page-head">
+      <div>
+        <div class="tag-row"><span class="red-line"></span><span class="micro micro-red">12 today · 1 under review</span></div>
+        <h2>Matches.</h2>
+        <p class="meta">Every score submitted across the club — confirmed, disputed, and pending.</p>
+      </div>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Match</th><th>Format</th><th>Score</th><th>Date</th><th>Submitted by</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody>
+        <tr><td class="name">Aiden Park <span style="color:var(--faint)">vs</span> Lucas Tran</td><td class="date">Singles</td><td class="elo" style="font-size:12px">21–17, 21–15</td><td class="date">Apr 30</td><td class="date">Aiden Park</td><td><span class="badge confirmed">Confirmed</span></td><td class="actions"><a href="#">View</a></td></tr>
+        <tr><td class="name">Priya Nambiar <span style="color:var(--faint)">vs</span> Sofia Reyes</td><td class="date">Singles</td><td class="elo" style="font-size:12px">21–19, 18–21, 21–14</td><td class="date">Apr 29</td><td class="date">Sofia Reyes</td><td><span class="badge confirmed">Confirmed</span></td><td class="actions"><a href="#">View</a></td></tr>
+        <tr><td class="name">Marcus Okonkwo <span style="color:var(--faint)">vs</span> Aiden Park</td><td class="date">Singles</td><td class="elo" style="font-size:12px">15–21, 21–18, 19–21</td><td class="date">Apr 28</td><td class="date">Disputed</td><td><span class="badge review">Under Review</span></td><td class="actions"><a href="#" class="approve" data-goto="disputes">Review</a></td></tr>
+        <tr><td class="name">James Wu <span style="color:var(--faint)">vs</span> David Chen</td><td class="date">Singles</td><td class="elo" style="font-size:12px">21–11, 21–9</td><td class="date">Apr 27</td><td class="date">James Wu</td><td><span class="badge confirmed">Confirmed</span></td><td class="actions"><a href="#">View</a></td></tr>
+        <tr><td class="name">Yuki Tanaka <span style="color:var(--faint)">vs</span> David Chen</td><td class="date">Singles</td><td class="elo" style="font-size:12px">21–18, 19–21, 21–17</td><td class="date">Apr 20</td><td class="date">Admin (resolved)</td><td><span class="badge resolved">Resolved</span></td><td class="actions"><a href="#">View</a></td></tr>
+        <tr><td class="name">Lucas Tran <span style="color:var(--faint)">vs</span> Fatima Al-Hassan</td><td class="date">Singles</td><td class="elo" style="font-size:12px">21–14, 21–19</td><td class="date">Apr 18</td><td class="date">Lucas Tran</td><td><span class="badge confirmed">Confirmed</span></td><td class="actions"><a href="#">View</a></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="page" data-page="announcements">
+    <div class="page-head">
+      <div>
+        <div class="tag-row"><span class="red-line"></span><span class="micro micro-red">3 published · 1 draft</span></div>
+        <h2>Announcements.</h2>
+        <p class="meta">Club-wide communications. Pinned items appear on every player's dashboard.</p>
+      </div>
+      <div class="page-head-actions"><button class="btn btn-red">+ New Announcement</button></div>
+    </div>
+    <div class="panel">
+      <div class="ann-row">
+        <div class="ann-meta"><span class="micro micro-red">Pinned</span><span class="micro" style="color:var(--faint)">Posted Apr 28 · 47 reads</span></div>
+        <div class="ann-title">Doubles League — registration closes Friday.</div>
+        <div class="ann-body">Sign up before May 8 to lock your seed. Pairs that haven't picked a partner by Friday will be auto-paired by ELO.</div>
+      </div>
+      <div class="ann-row">
+        <div class="ann-meta"><span class="micro" style="color:var(--muted)">Published</span><span class="micro" style="color:var(--faint)">Posted Apr 22 · 89 reads</span></div>
+        <div class="ann-title">Court B booking system migrating Monday.</div>
+        <div class="ann-body">Existing reservations will carry over. Expect a 30-minute window where the booking page is offline around 2pm.</div>
+      </div>
+      <div class="ann-row">
+        <div class="ann-meta"><span class="micro" style="color:var(--amber)">Draft</span><span class="micro" style="color:var(--faint)">Edited Apr 30 · not published</span></div>
+        <div class="ann-title">Season 02 mid-point recap.</div>
+        <div class="ann-body">Half-season summary with movers, top 5 climbs, and the matches that defined April.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="page" data-page="seasons">
+    <div class="page-head">
+      <div>
+        <div class="tag-row"><span class="red-line"></span><span class="micro micro-red">3 seasons · 1 active</span></div>
+        <h2>Seasons.</h2>
+        <p class="meta">Each season is a self-contained ladder. ELO carries over with a soft reset; W/L records do not.</p>
+      </div>
+      <div class="page-head-actions"><button class="btn btn-ghost">Archive Season</button><button class="btn btn-red">+ New Season</button></div>
+    </div>
+    <div class="season-grid">
+
+      <div class="season-card current">
+        <div class="season-tag">● Live</div>
+        <div class="season-name"><span class="num">02</span>Spring 2026</div>
+        <div class="season-dates">Mar 1, 2026 — Jun 30, 2026</div>
+        <div class="season-progress">
+          <div class="season-progress-bar"><span style="width: 62%"></span></div>
+          <div class="season-progress-meta"><span class="live">Week 9 of 14</span><span>62% complete</span></div>
+        </div>
+        <div class="season-stats">
+          <div><div class="season-stat-label">Players</div><div class="season-stat-num">42</div></div>
+          <div><div class="season-stat-label">Matches</div><div class="season-stat-num">187</div></div>
+          <div><div class="season-stat-label">Disputes</div><div class="season-stat-num">2</div></div>
+        </div>
+        <div class="season-champ">Leader · <span class="name">Aiden Park</span> · 1487 ELO</div>
+      </div>
+
+      <div class="season-card">
+        <div class="season-tag">Archived</div>
+        <div class="season-name"><span class="num">01</span>Fall 2025</div>
+        <div class="season-dates">Sep 1, 2025 — Feb 28, 2026</div>
+        <div class="season-progress">
+          <div class="season-progress-bar"><span style="width: 100%; background: var(--muted)"></span></div>
+          <div class="season-progress-meta"><span>Closed Feb 28</span><span>180 days</span></div>
+        </div>
+        <div class="season-stats">
+          <div><div class="season-stat-label">Players</div><div class="season-stat-num">38</div></div>
+          <div><div class="season-stat-label">Matches</div><div class="season-stat-num">412</div></div>
+          <div><div class="season-stat-label">Disputes</div><div class="season-stat-num">7</div></div>
+        </div>
+        <div class="season-champ">Champion · <span class="name">Priya Nambiar</span> · 1612 ELO</div>
+      </div>
+
+      <div class="season-card">
+        <div class="season-tag">Archived</div>
+        <div class="season-name"><span class="num">00</span>Beta</div>
+        <div class="season-dates">May 15, 2025 — Aug 31, 2025</div>
+        <div class="season-progress">
+          <div class="season-progress-bar"><span style="width: 100%; background: var(--muted)"></span></div>
+          <div class="season-progress-meta"><span>Closed Aug 31</span><span>108 days</span></div>
+        </div>
+        <div class="season-stats">
+          <div><div class="season-stat-label">Players</div><div class="season-stat-num">22</div></div>
+          <div><div class="season-stat-label">Matches</div><div class="season-stat-num">156</div></div>
+          <div><div class="season-stat-label">Disputes</div><div class="season-stat-num">3</div></div>
+        </div>
+        <div class="season-champ">Champion · <span class="name">Lucas Tran</span> · 1534 ELO</div>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="page" data-page="audit">
+    <div class="page-head">
+      <div>
+        <div class="tag-row"><span class="red-line"></span><span class="micro micro-red">Last 30 days</span></div>
+        <h2>Audit Log.</h2>
+        <p class="meta">Every administrative action, surfaced and timestamped. This log is append-only and exportable.</p>
+      </div>
+      <div class="page-head-actions"><button class="btn btn-ghost">Export CSV</button></div>
+    </div>
+    <div class="audit-toolbar">
+      <button class="audit-chip active">All <span class="count">247</span></button>
+      <button class="audit-chip">Players <span class="count">86</span></button>
+      <button class="audit-chip">Matches <span class="count">94</span></button>
+      <button class="audit-chip">Disputes <span class="count">12</span></button>
+      <button class="audit-chip">Sessions <span class="count">31</span></button>
+      <button class="audit-chip">Settings <span class="count">24</span></button>
+      <span class="audit-spacer"></span>
+      <span class="audit-meta">Auto-refresh · 30s</span>
+    </div>
+    <div class="audit-list">
+
+      <div class="audit-row">
+        <div class="audit-time">14:32:08<span class="date">May 1, 2026</span></div>
+        <div><span class="audit-action resolve">Resolve</span></div>
+        <div class="audit-desc">Resolved dispute <span class="target">#0142</span> in favour of submitted score 21–15. Player <span class="target">Aiden Park</span> credited the win.</div>
+        <div class="audit-actor"><span class="who">Maya Rosenthal</span>Owner</div>
+      </div>
+
+      <div class="audit-row">
+        <div class="audit-time">14:18:47<span class="date">May 1, 2026</span></div>
+        <div><span class="audit-action update">Update</span></div>
+        <div class="audit-desc">Adjusted ELO floor from <span class="target">800</span> to <span class="target">900</span> in season 02 settings.</div>
+        <div class="audit-actor"><span class="who">Maya Rosenthal</span>Owner</div>
+      </div>
+
+      <div class="audit-row">
+        <div class="audit-time">11:04:22<span class="date">May 1, 2026</span></div>
+        <div><span class="audit-action create">Create</span></div>
+        <div class="audit-desc">Approved player application for <span class="target">Noah Patel</span>. Initial ELO assigned: 1398.</div>
+        <div class="audit-actor"><span class="who">Theo Nguyen</span>Admin</div>
+      </div>
+
+      <div class="audit-row">
+        <div class="audit-time">10:51:09<span class="date">May 1, 2026</span></div>
+        <div><span class="audit-action create">Create</span></div>
+        <div class="audit-desc">Posted announcement <span class="target">"Doubles League — registration closes Friday"</span> with pin enabled.</div>
+        <div class="audit-actor"><span class="who">Maya Rosenthal</span>Owner</div>
+      </div>
+
+      <div class="audit-row">
+        <div class="audit-time">22:14:36<span class="date">Apr 30, 2026</span></div>
+        <div><span class="audit-action suspend">Suspend</span></div>
+        <div class="audit-desc">Suspended <span class="target">Marcus Okonkwo</span> for 14 days following repeated no-shows. Reason logged.</div>
+        <div class="audit-actor"><span class="who">Theo Nguyen</span>Admin</div>
+      </div>
+
+      <div class="audit-row">
+        <div class="audit-time">19:42:11<span class="date">Apr 30, 2026</span></div>
+        <div><span class="audit-action update">Update</span></div>
+        <div class="audit-desc">Edited match <span class="target">#0398</span> score from 21–18 to 21–17. Original submission preserved in history.</div>
+        <div class="audit-actor"><span class="who">Maya Rosenthal</span>Owner</div>
+      </div>
+
+      <div class="audit-row">
+        <div class="audit-time">16:08:54<span class="date">Apr 30, 2026</span></div>
+        <div><span class="audit-action create">Create</span></div>
+        <div class="audit-desc">Scheduled session <span class="target">"Open Play — Court A"</span> for May 4, 6:00 PM. Capacity 16.</div>
+        <div class="audit-actor"><span class="who">Theo Nguyen</span>Admin</div>
+      </div>
+
+      <div class="audit-row">
+        <div class="audit-time">12:33:02<span class="date">Apr 30, 2026</span></div>
+        <div><span class="audit-action delete">Delete</span></div>
+        <div class="audit-desc">Removed announcement draft <span class="target">"Equipment swap reminder"</span>. Never published.</div>
+        <div class="audit-actor"><span class="who">Maya Rosenthal</span>Owner</div>
+      </div>
+
+      <div class="audit-row">
+        <div class="audit-time">09:15:48<span class="date">Apr 30, 2026</span></div>
+        <div><span class="audit-action update">Update</span></div>
+        <div class="audit-desc">Promoted <span class="target">Theo Nguyen</span> from Moderator to Admin. Email notification sent.</div>
+        <div class="audit-actor"><span class="who">Maya Rosenthal</span>Owner</div>
+      </div>
+
+      <div class="audit-row">
+        <div class="audit-time">17:28:31<span class="date">Apr 29, 2026</span></div>
+        <div><span class="audit-action resolve">Resolve</span></div>
+        <div class="audit-desc">Resolved dispute <span class="target">#0139</span> by re-submission. Both players agreed to a replay; match logged as void.</div>
+        <div class="audit-actor"><span class="who">Theo Nguyen</span>Admin</div>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="page" data-page="settings">
+    <div class="page-head">
+      <div>
+        <div class="tag-row"><span class="red-line"></span><span class="micro micro-red">Configuration</span></div>
+        <h2>Settings.</h2>
+        <p class="meta">Club-wide configuration. Changes take effect immediately and are written to the audit log.</p>
+      </div>
+      <div class="page-head-actions"><button class="btn btn-red">Save Changes</button></div>
+    </div>
+    <div class="settings-layout">
+      <div class="settings-tabs">
+        <a class="settings-tab active" data-stab="general">General<span class="tab-sub">Club identity & branding</span></a>
+        <a class="settings-tab" data-stab="elo">ELO & Ranking<span class="tab-sub">Scoring formulas</span></a>
+        <a class="settings-tab" data-stab="matches">Matches<span class="tab-sub">Submission & disputes</span></a>
+        <a class="settings-tab" data-stab="notifications">Notifications<span class="tab-sub">Email & push</span></a>
+        <a class="settings-tab" data-stab="admins">Admins<span class="tab-sub">Roles & access</span></a>
+      </div>
+
+      <div>
+        <div class="settings-panel active" data-panel="general">
+          <h3>General</h3>
+          <p class="lede">The basic identity of your club. These values appear on player-facing pages and exported PDFs.</p>
+
+          <div class="settings-group">
+            <div><div class="label">Club Name</div><div class="hint">Shown in headers, email signatures, and the player app.</div></div>
+            <div><input class="field" value="SFU Badminton Club" /></div>
+          </div>
+          <div class="settings-group">
+            <div><div class="label">Short Code</div><div class="hint">Used in match IDs and URLs. Three letters, uppercase.</div></div>
+            <div><input class="field" value="SFU" maxlength="3" style="max-width: 100px" /></div>
+          </div>
+          <div class="settings-group">
+            <div><div class="label">Tagline</div><div class="hint">A one-line descriptor displayed below the logo.</div></div>
+            <div><input class="field" value="Competitive Ladder · Established 2024" /></div>
+          </div>
+          <div class="settings-group">
+            <div><div class="label">Time Zone</div><div class="hint">All match times and audit logs use this zone.</div></div>
+            <div><input class="field" value="America/Vancouver (PDT, UTC−7)" style="max-width: 320px" /></div>
+          </div>
+          <div class="settings-group">
+            <div><div class="label">Public Visibility</div><div class="hint">When on, the leaderboard is viewable without an account.</div></div>
+            <div><div class="toggle on"></div></div>
+          </div>
+
+          <div class="danger-zone">
+            <h4>Danger Zone</h4>
+            <div class="danger-row">
+              <div class="text"><strong>Reset all ELO ratings</strong><p>Every player drops to the season starting value. Match history is preserved. Cannot be undone.</p></div>
+              <button class="btn btn-danger">Reset Ratings</button>
+            </div>
+            <div class="danger-row">
+              <div class="text"><strong>Wipe match history</strong><p>Removes every match record from the database. ELO snapshots remain. Cannot be undone.</p></div>
+              <button class="btn btn-danger">Wipe Matches</button>
+            </div>
+            <div class="danger-row">
+              <div class="text"><strong>Delete club</strong><p>Permanently removes this club and all associated data, including audit logs. Cannot be undone.</p></div>
+              <button class="btn btn-danger">Delete Club</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-panel" data-panel="elo">
+          <h3>ELO &amp; Ranking</h3>
+          <p class="lede">The math behind the ladder. Be cautious — changes affect all future matches and dispute outcomes.</p>
+
+          <div class="settings-group">
+            <div><div class="label">Starting ELO</div><div class="hint">Assigned to all new players on approval.</div></div>
+            <div><input class="field" value="1200" style="max-width: 140px" /></div>
+          </div>
+          <div class="settings-group">
+            <div><div class="label">K-Factor</div><div class="hint">How aggressively rating moves per match. Higher = more volatile.</div></div>
+            <div class="pair-grid"><input class="field" value="32" placeholder="Singles" /><input class="field" value="24" placeholder="Doubles" /></div>
+          </div>
+          <div class="settings-group">
+            <div><div class="label">ELO Floor</div><div class="hint">No player can drop below this value, regardless of losses.</div></div>
+            <div><input class="field" value="900" style="max-width: 140px" /></div>
+          </div>
+          <div class="settings-group">
+            <div><div class="label">Provisional Period</div><div class="hint">Number of matches a new player plays at 2× K-factor.</div></div>
+            <div><input class="field" value="10" style="max-width: 140px" /></div>
+          </div>
+          <div class="settings-group">
+            <div><div class="label">Soft Reset Between Seasons</div><div class="hint">At season rollover, regress every rating 50% toward the starting ELO.</div></div>
+            <div><div class="toggle on"></div></div>
+          </div>
+          <div class="settings-group">
+            <div><div class="label">Decay for Inactive Players</div><div class="hint">Lose 5 ELO per week after 30 days of no recorded matches.</div></div>
+            <div><div class="toggle"></div></div>
+          </div>
+        </div>
+
+        <div class="settings-panel" data-panel="matches">
+          <h3>Matches</h3>
+          <p class="lede">Submission rules, dispute windows, and what counts as a valid result.</p>
+
+          <div class="settings-group">
+            <div><div class="label">Submission Window</div><div class="hint">A match must be submitted within this many hours of being played.</div></div>
+            <div><input class="field" value="48" style="max-width: 140px" /></div>
+          </div>
+          <div class="settings-group">
+            <div><div class="label">Dispute Window</div><div class="hint">After a result is posted, opponents have this long to dispute.</div></div>
+            <div><input class="field" value="24" style="max-width: 140px" /></div>
+          </div>
+          <div class="settings-group">
+            <div><div class="label">Require Both Players Confirm</div><div class="hint">Match doesn't count until both submit matching scores.</div></div>
+            <div><div class="toggle on"></div></div>
+          </div>
+          <div class="settings-group">
+            <div><div class="label">Allow Score Format</div><div class="hint">Best-of-three sets to 21, or single game to 21.</div></div>
+            <div><input class="field" value="Best of 3 to 21 · Win by 2" style="max-width: 320px" /></div>
+          </div>
+          <div class="settings-group">
+            <div><div class="label">No-Show Penalty</div><div class="hint">ELO deduction for missing a scheduled match without notice.</div></div>
+            <div><input class="field" value="−15" style="max-width: 140px" /></div>
+          </div>
+          <div class="settings-group">
+            <div><div class="label">Cross-Skill Matches</div><div class="hint">When on, players more than 200 ELO apart can still play ranked.</div></div>
+            <div><div class="toggle on"></div></div>
+          </div>
+        </div>
+
+        <div class="settings-panel" data-panel="notifications">
+          <h3>Notifications</h3>
+          <p class="lede">When the system sends email and push notifications. Players control their own preferences in their profile.</p>
+
+          <div class="settings-group">
+            <div><div class="label">Match Submitted</div><div class="hint">Notify the opponent when a result is posted.</div></div>
+            <div class="row-flex"><div class="toggle on"></div><span class="micro" style="color:var(--muted)">Email + Push</span></div>
+          </div>
+          <div class="settings-group">
+            <div><div class="label">Dispute Filed</div><div class="hint">Notify all admins when a player opens a dispute.</div></div>
+            <div class="row-flex"><div class="toggle on"></div><span class="micro" style="color:var(--muted)">Email + Push</span></div>
+          </div>
+          <div class="settings-group">
+            <div><div class="label">Weekly Recap</div><div class="hint">Sunday evening: top movers, biggest upsets, your week's results.</div></div>
+            <div class="row-flex"><div class="toggle on"></div><span class="micro" style="color:var(--muted)">Email only</span></div>
+          </div>
+          <div class="settings-group">
+            <div><div class="label">Session Reminder</div><div class="hint">Push notification 2 hours before a session you're registered for.</div></div>
+            <div class="row-flex"><div class="toggle"></div><span class="micro" style="color:var(--muted)">Push only</span></div>
+          </div>
+          <div class="settings-group">
+            <div><div class="label">Reply-To Address</div><div class="hint">Replies to system emails are routed here.</div></div>
+            <div><input class="field" value="admin@sfubadminton.club" /></div>
+          </div>
+          <div class="settings-group">
+            <div><div class="label">Email Footer</div><div class="hint">Appended to every outgoing message.</div></div>
+            <div><textarea class="field">SFU Badminton Club · Burnaby, BC · Reply STOP to unsubscribe.</textarea></div>
+          </div>
+        </div>
+
+        <div class="settings-panel" data-panel="admins">
+          <h3>Admins</h3>
+          <p class="lede">Members with elevated access. Owners can delete the club; admins can resolve disputes and manage players.</p>
+
+          <div class="admin-row">
+            <div class="who">Maya Rosenthal<small>maya@sfubadminton.club</small></div>
+            <div><span class="role-pill owner">Owner</span></div>
+            <div class="when">Joined Sep 2024</div>
+            <div></div>
+          </div>
+          <div class="admin-row">
+            <div class="who">Theo Nguyen<small>theo@sfubadminton.club</small></div>
+            <div><span class="role-pill admin">Admin</span></div>
+            <div class="when">Joined Apr 2026</div>
+            <div><a href="#">Revoke</a></div>
+          </div>
+          <div class="admin-row">
+            <div class="who">Priya Nambiar<small>priya@sfubadminton.club</small></div>
+            <div><span class="role-pill">Moderator</span></div>
+            <div class="when">Joined Feb 2025</div>
+            <div><a href="#">Revoke</a></div>
+          </div>
+
+          <div class="settings-group" style="margin-top: 28px">
+            <div><div class="label">Invite New Admin</div><div class="hint">Send an email invite. Recipient must already be a player.</div></div>
+            <div class="row-flex"><input class="field" placeholder="player@email.com" /><button class="btn btn-ghost">Send Invite</button></div>
+          </div>
+          <div class="settings-group">
+            <div><div class="label">Two-Factor Required</div><div class="hint">All admins must enable 2FA before accessing this dashboard.</div></div>
+            <div><div class="toggle on"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+(function () {
+  function showPage(name) {
+    document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.dataset.page === name));
+    document.querySelectorAll('.nav-link, .mobile-nav a, .subnav-link').forEach(el => {
+      if (el.dataset.page) el.classList.toggle('active', el.dataset.page === name);
+    });
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    closeMobile();
+  }
+  document.querySelectorAll('.nav-link[data-page], .mobile-nav a[data-page], .subnav-link[data-page]').forEach(el => {
+    el.addEventListener('click', e => { e.preventDefault(); showPage(el.dataset.page); });
+  });
+
+  // Rank tier classes on the players table
+  document.querySelectorAll('section[data-page="players"] td.rank').forEach(td => {
+    const n = parseInt(td.textContent, 10);
+    if (n <= 3) td.classList.add('rank-top');
+    else if (n <= 8) td.classList.add('rank-mid');
+    else td.classList.add('rank-low');
+  });
+
+  // Search toggle
+  const searchToggle = document.getElementById('searchToggle');
+  const searchWrap = document.getElementById('searchWrap');
+  const searchInput = document.getElementById('searchInput');
+  if (searchToggle) {
+    searchToggle.addEventListener('click', () => {
+      searchWrap.classList.toggle('open');
+      if (searchWrap.classList.contains('open')) searchInput.focus();
+    });
+    searchInput.addEventListener('blur', () => {
+      if (!searchInput.value) searchWrap.classList.remove('open');
+    });
+  }
+  document.querySelectorAll('[data-goto]').forEach(el => {
+    el.addEventListener('click', e => { e.preventDefault(); showPage(el.dataset.goto); });
+  });
+
+  const overlay = document.getElementById('mobileOverlay');
+  const hamburger = document.getElementById('hamburger');
+  const closer = document.getElementById('mobileClose');
+  function openMobile() { overlay.classList.add('open'); document.body.classList.add('no-scroll'); }
+  function closeMobile() { overlay.classList.remove('open'); document.body.classList.remove('no-scroll'); }
+  hamburger.addEventListener('click', openMobile);
+  closer.addEventListener('click', closeMobile);
+
+  document.querySelectorAll('.dispute-action').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const dispute = btn.closest('.dispute');
+      dispute.querySelector('.dispute-foot').style.display = 'none';
+      dispute.querySelector('.dispute-confirm').classList.add('show');
+      const head = dispute.querySelector('.dispute-head .badge');
+      head.textContent = 'Resolved · Just now';
+      head.classList.remove('open'); head.classList.add('resolved');
+      dispute.classList.add('resolved-card');
+    });
+  });
+
+  // Settings tabs
+  document.querySelectorAll('.settings-tab').forEach(tab => {
+    tab.addEventListener('click', e => {
+      e.preventDefault();
+      const key = tab.dataset.stab;
+      document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t === tab));
+      document.querySelectorAll('.settings-panel').forEach(p => p.classList.toggle('active', p.dataset.panel === key));
+    });
+  });
+
+  // Toggles
+  document.querySelectorAll('.toggle').forEach(t => {
+    t.addEventListener('click', () => t.classList.toggle('on'));
+  });
+
+  // Audit chips
+  document.querySelectorAll('.audit-chip').forEach(c => {
+    c.addEventListener('click', () => {
+      document.querySelectorAll('.audit-chip').forEach(o => o.classList.toggle('active', o === c));
+    });
+  });
+
+  document.querySelectorAll('th.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+      const table = th.closest('table');
+      const idx = [...th.parentNode.children].indexOf(th);
+      const sortKey = th.dataset.sort;
+      table.querySelectorAll('th.sortable').forEach(o => o.classList.remove('sorted'));
+      th.classList.add('sorted');
+      const tbody = table.querySelector('tbody');
+      const rows = [...tbody.querySelectorAll('tr')];
+      const isNum = ['rank','elo','delo','w','l'].includes(sortKey);
+      const dir = th.dataset.dir === 'asc' ? 'desc' : 'asc';
+      th.dataset.dir = dir;
+      rows.sort((a, b) => {
+        const av = a.children[idx].textContent.trim();
+        const bv = b.children[idx].textContent.trim();
+        if (isNum) return (parseFloat(av) - parseFloat(bv)) * (dir === 'asc' ? 1 : -1);
+        return av.localeCompare(bv) * (dir === 'asc' ? 1 : -1);
+      });
+      rows.forEach(r => tbody.appendChild(r));
+    });
+  });
+
+  /* ============ AUTH FLOW ============ */
+  const authRoot = document.getElementById('authRoot');
+  const flash = document.getElementById('ignitionFlash');
+  const screens = document.querySelectorAll('.auth-screen');
+  const showScreen = (name) => {
+    screens.forEach(s => s.classList.toggle('active', s.dataset.auth === name));
+  };
+  document.querySelectorAll('[data-go]').forEach(el => {
+    el.addEventListener('click', (e) => { e.preventDefault(); showScreen(el.dataset.go); });
+  });
+  document.querySelectorAll('[data-toggle-pass]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const inp = btn.parentElement.querySelector('input');
+      if (inp.type === 'password') { inp.type = 'text'; btn.textContent = 'Hide'; }
+      else { inp.type = 'password'; btn.textContent = 'Show'; }
+    });
+  });
+  const validateForm = (form) => {
+    let valid = true;
+    form.querySelectorAll('.auth-input-wrap').forEach(wrap => {
+      const inp = wrap.querySelector('input, textarea');
+      if (!inp.value.trim()) { wrap.classList.add('has-error'); valid = false; }
+      else { wrap.classList.remove('has-error'); }
+    });
+    return valid;
+  };
+  document.querySelectorAll('.auth-input').forEach(inp => {
+    inp.addEventListener('input', () => inp.parentElement.classList.remove('has-error'));
+  });
+
+  const ignite = (cb) => {
+    flash.classList.add('show');
+    setTimeout(() => {
+      authRoot.classList.remove('show');
+      flash.classList.add('fadeblack');
+      setTimeout(() => {
+        if (cb) cb();
+        flash.classList.remove('show', 'fadeblack');
+      }, 280);
+    }, 180);
+  };
+
+  const signinForm = document.getElementById('signinForm');
+  signinForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (!validateForm(signinForm)) return;
+    const btn = signinForm.querySelector('[data-action="signin"]');
+    btn.classList.add('loading'); btn.textContent = 'Authenticating…';
+    setTimeout(() => ignite(() => { btn.classList.remove('loading'); btn.textContent = 'Sign In'; }), 500);
+  });
+  signinForm.querySelectorAll('.auth-btn-ghost').forEach(b => {
+    b.addEventListener('click', () => ignite());
+  });
+
+  const requestForm = document.getElementById('requestForm');
+  requestForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (!validateForm(requestForm)) return;
+    document.getElementById('requestFormBody').style.display = 'none';
+    document.getElementById('requestSuccess').style.display = 'block';
+  });
+
+  document.getElementById('adminAvatar').addEventListener('click', () => {
+    if (!confirm('Sign out?')) return;
+    authRoot.classList.add('show');
+    showScreen('signin');
+    signinForm.reset();
+    document.getElementById('requestFormBody').style.display = 'block';
+    document.getElementById('requestSuccess').style.display = 'none';
+    requestForm.reset();
+  });
+})();
+</script>
+</body>
+</html>

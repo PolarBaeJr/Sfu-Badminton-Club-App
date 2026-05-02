@@ -1,271 +1,488 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Badge, Avatar, PageHero, StatCard } from '@badminton/ui';
-import { PLAYER_STATUS_LABELS } from '@badminton/shared';
+import { Badge, PageHero, StatCard } from '@badminton/ui';
 import Link from 'next/link';
-import {
-  Users,
-  UserCheck,
-  AlertTriangle,
-  Clock,
-  Swords,
-  ArrowUpRight,
-  Trophy,
-} from 'lucide-react';
-import { ApproveButtons } from './approve-buttons';
+
+const SEASON_LABEL = 'Season 02 · Spring 2026';
 
 export default async function DashboardPage() {
   const supabase = createAdminClient();
 
-  // Fold pendingPlayersList into the same parallel batch — it used to chain
-  // sequentially after Promise.all, costing an extra round-trip on every load.
-  // Use head:true counts everywhere instead of select('*') to avoid streaming
-  // every row just to get a count.
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+  const startOfWeekAgo = new Date();
+  startOfWeekAgo.setDate(startOfWeekAgo.getDate() - 7);
+
   const [
     { count: totalPlayers },
     { count: pendingPlayers },
     { count: openDisputes },
-    { count: pendingWalkovers },
-    { data: recentMatches },
-    { count: activeTournaments },
     { count: activeChalls },
-    { data: pendingPlayersList },
+    { count: activeSessions },
+    { count: matchesToday },
+    { count: playersAddedThisWeek },
+    { data: recentPlayers },
+    { data: recentMatches },
   ] = await Promise.all([
-    supabase.from('players').select('id', { count: 'exact', head: true }).neq('status', 'pending_approval'),
-    supabase.from('players').select('id', { count: 'exact', head: true }).eq('status', 'pending_approval'),
-    supabase.from('disputes').select('id', { count: 'exact', head: true }).eq('status', 'open'),
-    supabase.from('walkovers').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-    supabase.from('matches').select('id, score_summary, played_at, match_type, format, created_at, result_status, match_participants(player_id, win_flag, rating_delta, player:players(full_name))').order('created_at', { ascending: false }).limit(5),
-    supabase.from('tournaments').select('id', { count: 'exact', head: true }).eq('status', 'active'),
-    supabase.from('challenges').select('id', { count: 'exact', head: true }).in('status', ['proposed', 'partially_confirmed', 'accepted']),
     supabase
       .from('players')
-      .select('id, full_name, email, avatar_url, created_at')
-      .eq('status', 'pending_approval')
+      .select('id', { count: 'exact', head: true })
+      .neq('status', 'pending_approval'),
+    supabase
+      .from('players')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'pending_approval'),
+    supabase.from('disputes').select('id', { count: 'exact', head: true }).eq('status', 'open'),
+    supabase
+      .from('challenges')
+      .select('id', { count: 'exact', head: true })
+      .in('status', ['proposed', 'partially_confirmed', 'accepted']),
+    supabase.from('sessions').select('id', { count: 'exact', head: true }).eq('status', 'open'),
+    supabase
+      .from('matches')
+      .select('id', { count: 'exact', head: true })
+      .gte('played_at', startOfDay.toISOString()),
+    supabase
+      .from('players')
+      .select('id', { count: 'exact', head: true })
+      .gte('created_at', startOfWeekAgo.toISOString()),
+    supabase
+      .from('players')
+      .select('id, full_name, status, created_at, ratings(singles_elo)')
       .order('created_at', { ascending: false })
-      .limit(10),
+      .limit(5),
+    supabase
+      .from('matches')
+      .select(
+        'id, score_summary, played_at, match_type, result_status, created_at, match_participants(player_id, team_side, win_flag, player:players(full_name))'
+      )
+      .order('created_at', { ascending: false })
+      .limit(5),
   ]);
 
-  const hasAlerts = (pendingPlayers ?? 0) > 0 || (openDisputes ?? 0) > 0 || (pendingWalkovers ?? 0) > 0;
+  const hasAlerts = (pendingPlayers ?? 0) > 0 || (openDisputes ?? 0) > 0;
 
   return (
     <div>
       <PageHero
-        eyebrow="Season 02 · Spring 2026"
+        eyebrow={SEASON_LABEL}
         title="Run your club like a team."
         subtitle="Approve players, resolve disputes, keep the season moving. Everything that needs your attention, in one place."
         watermark="S02"
       />
-      <div className="space-y-8 p-12">
-        {/* spacer wrapper preserves legacy section spacing */}
 
-      {/* Alert Banner */}
       {hasAlerts && (
-        <div className=" border border-[var(--color-warning)]/20 bg-[var(--color-warning)]/5 p-4 flex items-center gap-3">
-          <div className="w-10 h-10 bg-[var(--color-warning)]/10 flex items-center justify-center flex-shrink-0">
-            <AlertTriangle className="w-5 h-5 text-[var(--color-warning)]" />
-          </div>
-          <div className="flex-1">
-            <p className="text-sm font-medium text-[var(--text-primary)]">Items need your attention</p>
-            <p className="text-xs text-[var(--text-muted)] mt-0.5">
-              {[
-                pendingPlayers && pendingPlayers > 0 ? `${pendingPlayers} pending approval${pendingPlayers > 1 ? 's' : ''}` : null,
-                openDisputes && openDisputes > 0 ? `${openDisputes} open dispute${openDisputes > 1 ? 's' : ''}` : null,
-                pendingWalkovers && pendingWalkovers > 0 ? `${pendingWalkovers} pending walkover${pendingWalkovers > 1 ? 's' : ''}` : null,
-              ].filter(Boolean).join(' · ')}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Pending Players */}
-      {pendingPlayersList && pendingPlayersList.length > 0 && (
-        <div className=" border border-[var(--color-warning)]/20 bg-[var(--bg-card)] overflow-hidden">
-          <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <UserCheck className="w-4 h-4 text-[var(--color-warning)]" />
-              <h2 className="text-sm font-semibold text-[var(--text-primary)] uppercase tracking-wide">Pending Approvals</h2>
-              <span className="text-xs bg-[var(--color-warning)]/10 text-[var(--color-warning)] px-2 py-0.5 rounded-full font-medium">{pendingPlayersList.length}</span>
-            </div>
-            <Link href="/players?tab=attention" className="text-xs text-[var(--ds-accent)] hover:underline flex items-center gap-1">
-              View All <ArrowUpRight className="w-3 h-3" />
-            </Link>
-          </div>
-          <div className="divide-y divide-[var(--border)]">
-            {pendingPlayersList.map((player) => (
-              <div key={player.id} className="px-5 py-3 flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3 min-w-0">
-                  <Avatar src={player.avatar_url} name={player.full_name} size="sm" />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-[var(--text-primary)] truncate">{player.full_name}</p>
-                    <p className="text-xs text-[var(--text-muted)] truncate">{player.email}</p>
-                  </div>
-                </div>
-                <ApproveButtons playerId={player.id} playerName={player.full_name} />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Stat Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Link href="/players" className="group">
-          <div className=" border border-[var(--border)] bg-[var(--bg-card)] p-5 hover:border-[var(--border-hover)] transition-all hover:shadow-lg hover:shadow-black/5">
-            <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 bg-[var(--color-info)]/10 flex items-center justify-center">
-                <Users className="w-5 h-5 text-[var(--color-info)]" />
-              </div>
-              <ArrowUpRight className="w-4 h-4 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
-            </div>
-            <p className="text-2xl font-bold font-mono text-[var(--text-primary)]">{totalPlayers ?? 0}</p>
-            <p className="text-xs text-[var(--text-muted)] mt-1">Active Players</p>
-          </div>
-        </Link>
-
-        <Link href="/players?tab=attention" className="group">
-          <div className={` border p-5 transition-all hover:shadow-lg hover:shadow-black/5 ${
-            (pendingPlayers ?? 0) > 0
-              ? 'border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5 hover:border-[var(--color-warning)]/50'
-              : 'border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--border-hover)]'
-          }`}>
-            <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 bg-[var(--color-warning)]/10 flex items-center justify-center">
-                <UserCheck className="w-5 h-5 text-[var(--color-warning)]" />
-              </div>
-              <ArrowUpRight className="w-4 h-4 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
-            </div>
-            <p className="text-2xl font-bold font-mono text-[var(--text-primary)]">{pendingPlayers ?? 0}</p>
-            <p className="text-xs text-[var(--text-muted)] mt-1">Pending Approvals</p>
-          </div>
-        </Link>
-
-        <Link href="/disputes" className="group">
-          <div className={` border p-5 transition-all hover:shadow-lg hover:shadow-black/5 ${
-            (openDisputes ?? 0) > 0
-              ? 'border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5 hover:border-[var(--color-danger)]/50'
-              : 'border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--border-hover)]'
-          }`}>
-            <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 bg-[var(--color-danger)]/10 flex items-center justify-center">
-                <AlertTriangle className="w-5 h-5 text-[var(--color-danger)]" />
-              </div>
-              <ArrowUpRight className="w-4 h-4 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
-            </div>
-            <p className="text-2xl font-bold font-mono text-[var(--text-primary)]">{openDisputes ?? 0}</p>
-            <p className="text-xs text-[var(--text-muted)] mt-1">Open Disputes</p>
-          </div>
-        </Link>
-
-        <Link href="/walkovers" className="group">
-          <div className={` border p-5 transition-all hover:shadow-lg hover:shadow-black/5 ${
-            (pendingWalkovers ?? 0) > 0
-              ? 'border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5 hover:border-[var(--color-warning)]/50'
-              : 'border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--border-hover)]'
-          }`}>
-            <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 bg-[var(--color-warning)]/10 flex items-center justify-center">
-                <Clock className="w-5 h-5 text-[var(--color-warning)]" />
-              </div>
-              <ArrowUpRight className="w-4 h-4 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
-            </div>
-            <p className="text-2xl font-bold font-mono text-[var(--text-primary)]">{pendingWalkovers ?? 0}</p>
-            <p className="text-xs text-[var(--text-muted)] mt-1">Pending Walkovers</p>
-          </div>
-        </Link>
-      </div>
-
-      {/* Two Column Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Active Tournaments */}
-        <div className=" border border-[var(--border)] bg-[var(--bg-card)] p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <Trophy className="w-4 h-4 text-[var(--text-muted)]" />
-              <h2 className="text-sm font-semibold text-[var(--text-primary)] uppercase tracking-wide">Tournaments</h2>
-            </div>
-            <Link href="/tournaments" className="text-xs text-[var(--ds-accent)] hover:underline flex items-center gap-1">
-              Manage <ArrowUpRight className="w-3 h-3" />
-            </Link>
-          </div>
-          <div className="flex items-end gap-2">
-            <p className="text-4xl font-bold font-mono text-[var(--text-primary)]">{activeTournaments ?? 0}</p>
-            <p className="text-sm text-[var(--text-muted)] mb-1">active</p>
-          </div>
-        </div>
-
-        {/* Active Challenges */}
-        <div className=" border border-[var(--border)] bg-[var(--bg-card)] p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <Swords className="w-4 h-4 text-[var(--text-muted)]" />
-              <h2 className="text-sm font-semibold text-[var(--text-primary)] uppercase tracking-wide">Active Challenges</h2>
-            </div>
-            <Link href="/challenges" className="text-xs text-[var(--ds-accent)] hover:underline flex items-center gap-1">
-              View All <ArrowUpRight className="w-3 h-3" />
-            </Link>
-          </div>
-          <div className="flex items-end gap-2">
-            <p className="text-4xl font-bold font-mono text-[var(--text-primary)]">{activeChalls ?? 0}</p>
-            <p className="text-sm text-[var(--text-muted)] mb-1">active</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Recent Matches */}
-      <div className=" border border-[var(--border)] bg-[var(--bg-card)]">
-        <div className="flex items-center justify-between p-6 pb-4">
-          <div className="flex items-center gap-2">
-            <Trophy className="w-4 h-4 text-[var(--text-muted)]" />
-            <h2 className="text-sm font-semibold text-[var(--text-primary)] uppercase tracking-wide">Recent Matches</h2>
-          </div>
-          <Link href="/matches" className="text-xs text-[var(--ds-accent)] hover:underline flex items-center gap-1">
-            View All <ArrowUpRight className="w-3 h-3" />
-          </Link>
-        </div>
-        <div className="px-6 pb-6">
-          <div className="space-y-1">
-            {recentMatches?.map((match) => {
-              const participants = match.match_participants || [];
-              const sideA = participants.filter((p: Record<string, unknown>) => p.team_side === 'a');
-              const sideB = participants.filter((p: Record<string, unknown>) => p.team_side === 'b');
-
-              return (
-                <div key={match.id} className="flex items-center justify-between py-3 border-b border-[var(--border)] last:border-0 hover:bg-white/[0.02] -mx-3 px-3 transition-colors">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className="text-sm text-[var(--text-primary)] truncate">
-                      {sideA.map((p: Record<string, unknown>) => (p.player as Record<string, unknown>)?.full_name).join(' & ')}
-                    </span>
-                    <span className="text-xs text-[var(--text-muted)] flex-shrink-0 bg-[var(--border-hover)] px-1.5 py-0.5 rounded">vs</span>
-                    <span className="text-sm text-[var(--text-primary)] truncate">
-                      {sideB.map((p: Record<string, unknown>) => (p.player as Record<string, unknown>)?.full_name).join(' & ')}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3 flex-shrink-0 ml-4">
-                    <span className="text-sm font-mono text-[var(--text-primary)] font-medium">{match.score_summary || '-'}</span>
-                    <Badge
-                      variant={
-                        match.result_status === 'confirmed' ? 'success' :
-                        match.result_status === 'disputed' ? 'danger' :
-                        'warning'
-                      }
-                    >
-                      {match.result_status}
-                    </Badge>
-                  </div>
-                </div>
-              );
-            })}
-            {(!recentMatches || recentMatches.length === 0) && (
-              <div className="flex flex-col items-center py-8">
-                <Trophy className="w-8 h-8 text-[var(--text-muted)]/50 mb-2" />
-                <p className="text-sm text-[var(--text-muted)]">No matches yet</p>
-              </div>
+        <div
+          style={{
+            background: 'var(--red-tint)',
+            borderLeft: '3px solid var(--red)',
+            borderBottom: '1px solid var(--hairline)',
+            padding: '14px 48px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 16,
+          }}
+        >
+          <div style={{ flex: 1, fontSize: 12, color: 'var(--ink)', letterSpacing: '0.02em' }}>
+            <span
+              aria-hidden
+              style={{
+                display: 'inline-block',
+                width: 6,
+                height: 6,
+                background: 'var(--red)',
+                marginRight: 8,
+                verticalAlign: 'middle',
+                animation: 'pulse 1.6s ease-in-out infinite',
+              }}
+            />
+            <strong style={{ color: 'var(--ink)', fontWeight: 600 }}>
+              Items need your attention
+            </strong>
+            {(pendingPlayers ?? 0) > 0 && (
+              <>
+                <span style={{ color: 'var(--faint)', margin: '0 10px' }}>—</span>
+                {pendingPlayers} pending approval{pendingPlayers === 1 ? '' : 's'}
+              </>
+            )}
+            {(openDisputes ?? 0) > 0 && (
+              <>
+                <span style={{ color: 'var(--faint)', margin: '0 10px' }}>·</span>
+                {openDisputes} open dispute{openDisputes === 1 ? '' : 's'}
+              </>
             )}
           </div>
+          <Link
+            href="/disputes"
+            style={{
+              background: 'var(--red)',
+              color: '#fff',
+              padding: '10px 16px',
+              fontFamily: 'var(--font-body)',
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: '0.16em',
+              textTransform: 'uppercase',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 10,
+              lineHeight: 1,
+            }}
+          >
+            Review →
+          </Link>
         </div>
+      )}
+
+      <div
+        className="stats-grid"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(6, 1fr)',
+          background: 'var(--hairline)',
+          gap: 1,
+          borderBottom: '1px solid var(--hairline)',
+        }}
+      >
+        <StatCard
+          label="Total Players"
+          value={totalPlayers ?? 0}
+          delta={
+            (playersAddedThisWeek ?? 0) > 0 ? `+${playersAddedThisWeek} this week` : '—'
+          }
+        />
+        <StatCard label="Active Sessions" value={activeSessions ?? 0} />
+        <StatCard label="Matches Today" value={matchesToday ?? 0} />
+        <StatCard
+          label="Pending Approvals"
+          value={pendingPlayers ?? 0}
+          delta={(pendingPlayers ?? 0) > 0 ? 'Requires action' : '—'}
+          deltaVariant={(pendingPlayers ?? 0) > 0 ? 'action' : 'default'}
+        />
+        <StatCard
+          label="Open Disputes"
+          value={openDisputes ?? 0}
+          highlight={(openDisputes ?? 0) > 0}
+          delta={(openDisputes ?? 0) > 0 ? 'Requires action' : '—'}
+          deltaVariant={(openDisputes ?? 0) > 0 ? 'action' : 'default'}
+        />
+        <StatCard label="Active Challenges" value={activeChalls ?? 0} />
       </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          background: 'var(--hairline)',
+          gap: 1,
+        }}
+      >
+        <div style={{ background: 'var(--surface1)' }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '20px 24px',
+              borderBottom: '1px solid var(--hairline)',
+            }}
+          >
+            <div
+              style={{
+                fontSize: 10,
+                letterSpacing: '0.2em',
+                textTransform: 'uppercase',
+                color: 'var(--ink)',
+                fontWeight: 700,
+              }}
+            >
+              Players <span style={{ color: 'var(--faint)', marginLeft: 8, fontWeight: 500 }}>/ Recent</span>
+            </div>
+            <Link
+              href="/players"
+              style={{
+                fontSize: 10,
+                letterSpacing: '0.18em',
+                textTransform: 'uppercase',
+                color: 'var(--muted)',
+                fontWeight: 600,
+              }}
+            >
+              View All →
+            </Link>
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                {['#', 'Full Name', 'Singles ELO', 'Status', 'Joined'].map((h, i) => (
+                  <th
+                    key={h}
+                    style={{
+                      textAlign: 'left',
+                      fontSize: 9,
+                      letterSpacing: '0.18em',
+                      textTransform: 'uppercase',
+                      fontWeight: 600,
+                      color: 'var(--faint)',
+                      padding: '12px 24px',
+                      borderBottom: '1px solid var(--hairline)',
+                      whiteSpace: 'nowrap',
+                      width: i === 0 ? 40 : undefined,
+                    }}
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {(recentPlayers ?? []).map((p, i) => {
+                const r = Array.isArray(p.ratings) ? p.ratings[0] : p.ratings;
+                const elo = (r as { singles_elo: number | null } | null)?.singles_elo ?? null;
+                const isPending = p.status === 'pending_approval';
+                return (
+                  <tr key={p.id}>
+                    <td
+                      style={{
+                        padding: '14px 24px',
+                        borderBottom: '1px solid var(--hairline-soft)',
+                        fontFamily: 'var(--font-display)',
+                        color: '#555',
+                        fontSize: 14,
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      {String(i + 1).padStart(2, '0')}
+                    </td>
+                    <td
+                      style={{
+                        padding: '14px 24px',
+                        borderBottom: '1px solid var(--hairline-soft)',
+                        fontSize: 13,
+                        color: 'var(--ink)',
+                        fontWeight: 500,
+                      }}
+                    >
+                      {p.full_name}
+                    </td>
+                    <td
+                      style={{
+                        padding: '14px 24px',
+                        borderBottom: '1px solid var(--hairline-soft)',
+                        fontFamily: 'var(--font-display)',
+                        color: 'var(--ink)',
+                        fontWeight: 600,
+                        fontVariantNumeric: 'tabular-nums',
+                        fontSize: 14,
+                      }}
+                    >
+                      {elo ?? '—'}
+                    </td>
+                    <td
+                      style={{
+                        padding: '14px 24px',
+                        borderBottom: '1px solid var(--hairline-soft)',
+                      }}
+                    >
+                      <Badge variant={isPending ? 'warning' : 'success'}>
+                        {isPending ? 'Pending' : 'Active'}
+                      </Badge>
+                    </td>
+                    <td
+                      style={{
+                        padding: '14px 24px',
+                        borderBottom: '1px solid var(--hairline-soft)',
+                        color: 'var(--muted)',
+                        fontSize: 12,
+                        letterSpacing: '0.02em',
+                      }}
+                    >
+                      {formatDate(p.created_at as string)}
+                    </td>
+                  </tr>
+                );
+              })}
+              {(!recentPlayers || recentPlayers.length === 0) && (
+                <tr>
+                  <td
+                    colSpan={5}
+                    style={{
+                      padding: '32px 24px',
+                      textAlign: 'center',
+                      color: 'var(--muted)',
+                      fontSize: 12,
+                    }}
+                  >
+                    No players yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ background: 'var(--surface1)' }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '20px 24px',
+              borderBottom: '1px solid var(--hairline)',
+            }}
+          >
+            <div
+              style={{
+                fontSize: 10,
+                letterSpacing: '0.2em',
+                textTransform: 'uppercase',
+                color: 'var(--ink)',
+                fontWeight: 700,
+              }}
+            >
+              Matches <span style={{ color: 'var(--faint)', marginLeft: 8, fontWeight: 500 }}>/ Recent</span>
+            </div>
+            <Link
+              href="/matches"
+              style={{
+                fontSize: 10,
+                letterSpacing: '0.18em',
+                textTransform: 'uppercase',
+                color: 'var(--muted)',
+                fontWeight: 600,
+              }}
+            >
+              View All →
+            </Link>
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                {['Match', 'Score', 'Date', 'Status'].map((h) => (
+                  <th
+                    key={h}
+                    style={{
+                      textAlign: 'left',
+                      fontSize: 9,
+                      letterSpacing: '0.18em',
+                      textTransform: 'uppercase',
+                      fontWeight: 600,
+                      color: 'var(--faint)',
+                      padding: '12px 24px',
+                      borderBottom: '1px solid var(--hairline)',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {(recentMatches ?? []).map((m) => {
+                const parts = (m.match_participants ?? []) as Array<{
+                  team_side: 'a' | 'b';
+                  player: { full_name: string } | { full_name: string }[] | null;
+                }>;
+                const a = parts.filter((p) => p.team_side === 'a');
+                const b = parts.filter((p) => p.team_side === 'b');
+                const fmt = (arr: typeof a) =>
+                  arr
+                    .map((p) =>
+                      Array.isArray(p.player)
+                        ? p.player[0]?.full_name
+                        : p.player?.full_name
+                    )
+                    .filter(Boolean)
+                    .join(' & ') || '—';
+                const status = m.result_status as string;
+                return (
+                  <tr key={m.id}>
+                    <td
+                      style={{
+                        padding: '14px 24px',
+                        borderBottom: '1px solid var(--hairline-soft)',
+                        fontSize: 13,
+                        color: 'var(--ink)',
+                        fontWeight: 500,
+                      }}
+                    >
+                      {fmt(a)}{' '}
+                      <span style={{ color: 'var(--faint)' }}>vs</span>{' '}
+                      {fmt(b)}
+                    </td>
+                    <td
+                      style={{
+                        padding: '14px 24px',
+                        borderBottom: '1px solid var(--hairline-soft)',
+                        fontFamily: 'var(--font-display)',
+                        fontWeight: 600,
+                        color: 'var(--ink)',
+                        fontSize: 12,
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      {(m.score_summary as string) || '—'}
+                    </td>
+                    <td
+                      style={{
+                        padding: '14px 24px',
+                        borderBottom: '1px solid var(--hairline-soft)',
+                        color: 'var(--muted)',
+                        fontSize: 12,
+                      }}
+                    >
+                      {formatDate(m.played_at as string)}
+                    </td>
+                    <td
+                      style={{
+                        padding: '14px 24px',
+                        borderBottom: '1px solid var(--hairline-soft)',
+                      }}
+                    >
+                      <Badge
+                        variant={
+                          status === 'confirmed'
+                            ? 'success'
+                            : status === 'disputed'
+                              ? 'danger'
+                              : 'warning'
+                        }
+                      >
+                        {status}
+                      </Badge>
+                    </td>
+                  </tr>
+                );
+              })}
+              {(!recentMatches || recentMatches.length === 0) && (
+                <tr>
+                  <td
+                    colSpan={4}
+                    style={{
+                      padding: '32px 24px',
+                      textAlign: 'center',
+                      color: 'var(--muted)',
+                      fontSize: 12,
+                    }}
+                  >
+                    No matches yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
+}
+
+function formatDate(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+  } catch {
+    return iso;
+  }
 }

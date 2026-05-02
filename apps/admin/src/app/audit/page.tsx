@@ -1,89 +1,49 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge, PageHero } from '@badminton/ui';
-import { formatDateTime } from '@badminton/shared';
-import { ScrollText, User, Inbox } from 'lucide-react';
-
-const actionCategory = (action: string): 'success' | 'danger' | 'warning' | 'info' | 'neutral' => {
-  if (action.includes('created') || action.includes('added')) return 'success';
-  if (action.includes('voided') || action.includes('removed') || action.includes('rejected')) return 'danger';
-  if (action.includes('expired') || action.includes('ended') || action.includes('closed')) return 'warning';
-  if (action.includes('updated') || action.includes('changed') || action.includes('converted')) return 'info';
-  return 'neutral';
-};
+import { PageHero } from '@badminton/ui';
+import { AuditLogClient, type AuditEntry } from './audit-log-client';
 
 export default async function AuditPage() {
   const supabase = createAdminClient();
 
   const { data: logs } = await supabase
     .from('audit_logs')
-    .select('*, actor:players!audit_logs_actor_id_fkey(full_name)')
+    .select('id, action_type, target_type, target_id, reason, created_at, actor:players!audit_logs_actor_id_fkey(full_name, role)')
     .order('created_at', { ascending: false })
-    .limit(100);
+    .limit(200);
+
+  const entries: AuditEntry[] = (logs ?? []).map((log) => {
+    const actor = Array.isArray(log.actor) ? log.actor[0] : (log.actor as { full_name: string; role: string } | null);
+    return {
+      id: log.id as string,
+      action_type: log.action_type as string,
+      target_type: (log.target_type as string) ?? '',
+      target_id: (log.target_id as string | null) ?? null,
+      reason: (log.reason as string | null) ?? null,
+      created_at: log.created_at as string,
+      actor_name: actor?.full_name ?? 'System',
+      actor_role: actor?.role ?? '',
+    };
+  });
+
+  const counts = {
+    all: entries.length,
+    players: entries.filter((e) => e.target_type === 'player').length,
+    matches: entries.filter((e) => e.target_type === 'match').length,
+    disputes: entries.filter((e) => e.target_type === 'dispute').length,
+    sessions: entries.filter((e) => e.target_type === 'session').length,
+    settings: entries.filter((e) => e.target_type === 'platform_setting' || e.target_type === 'setting').length,
+  };
 
   return (
     <div>
       <PageHero
-        eyebrow="Last 100 events"
+        eyebrow="Last 30 days"
         title="Audit Log."
         subtitle="Every administrative action, surfaced and timestamped. This log is append-only and exportable."
         watermark="A"
       />
-      <div className="space-y-6 px-12 py-8">
-
-      <div className=" border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b-2 border-[var(--border)]">
-                <th className="px-5 py-4 text-left text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">Time</th>
-                <th className="px-5 py-4 text-left text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">Actor</th>
-                <th className="px-5 py-4 text-left text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">Action</th>
-                <th className="px-5 py-4 text-left text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">Target</th>
-                <th className="px-5 py-4 text-left text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">Reason</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border)]">
-              {logs?.map((log) => (
-                <tr key={log.id} className="hover:bg-white/[0.03] transition-colors">
-                  <td className="px-5 py-3.5 text-sm text-[var(--text-muted)] whitespace-nowrap font-mono text-xs">
-                    {formatDateTime(log.created_at)}
-                  </td>
-                  <td className="px-5 py-3.5 text-sm text-[var(--text-primary)]">
-                    <div className="flex items-center gap-2">
-                      <User className="w-3.5 h-3.5 text-[var(--text-muted)]" />
-                      {(log.actor as Record<string, unknown>)?.full_name as string || <span className="text-[var(--text-muted)] italic">System</span>}
-                    </div>
-                  </td>
-                  <td className="px-5 py-3.5">
-                    <Badge variant={actionCategory(log.action_type)}>{log.action_type.replace(/_/g, ' ')}</Badge>
-                  </td>
-                  <td className="px-5 py-3.5 text-sm text-[var(--text-secondary)]">
-                    <span className="capitalize">{log.target_type}</span>
-                    {log.target_id && (
-                      <span className="text-xs text-[var(--text-muted)] font-mono ml-1.5 bg-[var(--border-hover)] px-1.5 py-0.5 rounded">
-                        {String(log.target_id).slice(0, 8)}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-5 py-3.5 text-sm text-[var(--text-muted)] max-w-xs truncate">
-                    {log.reason || <span className="opacity-40">-</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {(!logs || logs.length === 0) && (
-          <div className="flex flex-col items-center py-12 gap-3">
-            <div className="w-14 h-14 rounded-full bg-[var(--border-hover)] flex items-center justify-center">
-              <Inbox className="w-7 h-7 text-[var(--text-muted)]" />
-            </div>
-            <p className="text-[var(--text-muted)]">No audit entries yet</p>
-          </div>
-        )}
-      </div>
-    </div>
+      <AuditLogClient entries={entries} counts={counts} />
     </div>
   );
 }

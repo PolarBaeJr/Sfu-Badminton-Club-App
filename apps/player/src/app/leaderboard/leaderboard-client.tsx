@@ -2,24 +2,15 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import useSWR from 'swr';
-import { Avatar, PageHero } from '@badminton/ui';
 import Link from 'next/link';
 import { getPostHogClient } from '@/lib/posthog';
-import { getSeasonTier } from '@badminton/shared';
-import { Trophy, Search } from 'lucide-react';
-import type { LeaderboardEntry, TournamentPointsEntry } from './page';
+import { Avatar, ScreenHeader, SectionLabel } from '@/components/v2/atoms';
+import type { LeaderboardEntry } from './page';
 
-const tabs = [
-  { id: 'open_singles', label: 'Open Singles' },
-  { id: 'open_doubles', label: 'Open Doubles' },
-  { id: 'comp_singles', label: 'Comp Singles' },
-  { id: 'comp_doubles', label: 'Comp Doubles' },
-  { id: 'tournament_points', label: 'Tournament Pts' },
-] as const;
+type TabId = 'singles' | 'doubles';
 
 interface LeaderboardClientProps {
   players: LeaderboardEntry[];
-  tournamentPoints: TournamentPointsEntry[];
   currentPlayerId: string | null;
 }
 
@@ -27,234 +18,261 @@ const leaderboardFetcher = (url: string) => fetch(url).then((r) => r.json());
 
 export function LeaderboardClient({
   players: initialPlayers,
-  tournamentPoints: initialTournamentPoints,
   currentPlayerId,
 }: LeaderboardClientProps) {
-  const { data } = useSWR<{ players: LeaderboardEntry[]; tournamentPoints: TournamentPointsEntry[] }>(
-    '/api/leaderboard',
-    leaderboardFetcher,
-    { fallbackData: { players: initialPlayers, tournamentPoints: initialTournamentPoints } }
-  );
+  const { data } = useSWR<{ players: LeaderboardEntry[] }>('/api/leaderboard', leaderboardFetcher, {
+    fallbackData: { players: initialPlayers },
+  });
   const players = data?.players ?? initialPlayers;
-  const tournamentPoints = data?.tournamentPoints ?? initialTournamentPoints;
 
-  const [activeTab, setActiveTab] = useState<typeof tabs[number]['id']>('open_singles');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [tab, setTab] = useState<TabId>('singles');
 
   useEffect(() => {
     const ph = getPostHogClient();
     if (ph) ph.capture('leaderboard_viewed');
   }, []);
 
-  const isDoubles = activeTab.includes('doubles');
-  const isTournamentPoints = activeTab === 'tournament_points';
+  const sorted = useMemo(() => {
+    const ranked = [...players]
+      .filter((p) => p.ratings != null)
+      .sort((a, b) => {
+        const av = tab === 'singles' ? a.ratings?.singles_elo ?? 0 : a.ratings?.doubles_elo ?? 0;
+        const bv = tab === 'singles' ? b.ratings?.singles_elo ?? 0 : b.ratings?.doubles_elo ?? 0;
+        return bv - av;
+      });
+    return ranked.map((p, i) => ({
+      id: p.id,
+      full_name: p.full_name,
+      avatar_url: p.avatar_url,
+      elo: tab === 'singles' ? p.ratings?.singles_elo ?? null : p.ratings?.doubles_elo ?? null,
+      wins: tab === 'singles' ? p.ratings?.singles_wins ?? 0 : p.ratings?.doubles_wins ?? 0,
+      losses: tab === 'singles' ? p.ratings?.singles_losses ?? 0 : p.ratings?.doubles_losses ?? 0,
+      rank: i + 1,
+    }));
+  }, [tab, players]);
 
-  // Sort + filter the appropriate dataset for the active tab. Server passes
-  // unsorted player rows so we don't duplicate one dataset five ways across
-  // the wire — sorting per-tab is cheap and avoids that bloat.
-  const rows = useMemo(() => {
-    if (isTournamentPoints) {
-      return tournamentPoints.map((p) => ({
-        id: p.id,
-        full_name: p.full_name,
-        avatar_url: p.avatar_url,
-        status: p.status,
-        ratings: null,
-        _tournamentPoints: p.total,
-      }));
-    }
-
-    const filtered = activeTab.startsWith('comp_')
-      ? players.filter((p) => p.status === 'competitive')
-      : players;
-
-    return [...filtered].sort((a, b) => {
-      return isDoubles
-        ? (b.ratings?.doubles_elo ?? 0) - (a.ratings?.doubles_elo ?? 0)
-        : (b.ratings?.singles_elo ?? 0) - (a.ratings?.singles_elo ?? 0);
-    });
-  }, [activeTab, isDoubles, isTournamentPoints, players, tournamentPoints]);
-
-  const filteredPlayers = searchQuery
-    ? rows.filter((p) => p.full_name.toLowerCase().includes(searchQuery.toLowerCase()))
-    : rows;
+  const podium = sorted.slice(0, 3);
+  const rest = sorted.slice(3);
 
   return (
-    <div>
-      <PageHero
-        eyebrow={`${players.length} ranked players`}
-        title="Leaderboard."
-        subtitle="Live ladder for Season 02. ELO updates as matches confirm."
-        watermark="L"
-      />
-      <div className="space-y-6 px-2 md:px-6 py-8">
+    <>
+      <ScreenHeader eyebrow="Season 02 · Spring 2026" title="Leaderboard" />
 
       {/* Tabs */}
-      <div className="flex gap-1 overflow-x-auto scroll-fade-x border-b-[0.5px] border-[var(--border)]">
-        {tabs.map((tab) => {
-          const isActive = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-3 py-2.5 text-[13px] font-medium whitespace-nowrap transition-colors duration-150 border-b-2 ${
-                isActive
-                  ? 'bg-[var(--bg-accent)] text-[var(--accent)] border-[var(--accent)]'
-                  : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
-              }`}
-            >
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)] pointer-events-none" />
-        <input
-          type="text"
-          placeholder="Search players..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          aria-label="Search leaderboard"
-          className="w-full min-h-[40px] bg-[var(--bg-inset)] border-[0.5px] border-[var(--border)] pl-9 pr-3 text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)] transition-colors"
-        />
-      </div>
-
-      {/* Table */}
-      <div className="bg-[var(--bg-card)] border-[0.5px] border-[var(--border)] overflow-hidden">
-        <div key={activeTab}>
-            {/* Header (sticky) */}
-            <div className={`sticky top-14 z-10 bg-[var(--bg-card)] grid ${isTournamentPoints ? 'grid-cols-[2.5rem_1fr_5rem]' : 'grid-cols-[2.5rem_1fr_5rem_3.5rem] md:grid-cols-[2.5rem_1fr_5rem_5rem_3.5rem]'} px-5 py-2.5 border-b-[0.5px] border-[var(--border)] text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]`}>
-              <span>#</span>
-              <span>Player</span>
-              {isTournamentPoints ? (
-                <span className="text-right">Points</span>
-              ) : (
-                <>
-                  <span className="text-right">Elo</span>
-                  <span className="text-right hidden md:block">W/L</span>
-                  <span className="text-right">Win%</span>
-                </>
-              )}
-            </div>
-
-            {/* Rows */}
-            <div className="divide-y divide-[var(--border)]">
-              {filteredPlayers.map((p, i) => {
-                const elo = isDoubles ? p.ratings?.doubles_elo : p.ratings?.singles_elo;
-                const wins = isDoubles ? p.ratings?.doubles_wins : p.ratings?.singles_wins;
-                const losses = isDoubles ? p.ratings?.doubles_losses : p.ratings?.singles_losses;
-                const prov = isDoubles ? p.ratings?.doubles_provisional : p.ratings?.singles_provisional;
-                const total = (wins ?? 0) + (losses ?? 0);
-                const winPct = total > 0 ? Math.round(((wins ?? 0) / total) * 100) : 0;
-                const isTop3 = i < 3;
-                const isYou = p.id === currentPlayerId;
-
-                return (
-                  <div
-                    key={p.id}
-                    className="reveal"
-                    style={{
-                      ['--i' as string]: i,
-                      animationDelay: 'min(calc(var(--i) * 30ms), 500ms)',
-                    } as React.CSSProperties}
-                  >
-                    <Link
-                      href={`/leaderboard/${p.id}`}
-                      aria-current={isYou ? 'true' : undefined}
-                      className={`grid ${isTournamentPoints ? 'grid-cols-[2.5rem_1fr_5rem]' : 'grid-cols-[2.5rem_1fr_5rem_3.5rem] md:grid-cols-[2.5rem_1fr_5rem_5rem_3.5rem]'} px-5 py-2.5 items-center transition-colors group border-l-2 ${
-                        isYou
-                          ? 'bg-[var(--bg-accent)]'
-                          : 'border-transparent hover:bg-[var(--bg-card-hover)]'
-                      }`}
-                      style={isYou ? { borderLeftColor: 'var(--accent)' } : undefined}
-                    >
-                      <span className="flex items-center gap-1">
-                        {isTop3 && (
-                          <Trophy
-                            className="w-3.5 h-3.5 shrink-0"
-                            aria-hidden="true"
-                            style={{
-                              color:
-                                i === 0
-                                  ? 'var(--color-gold)'
-                                  : i === 1
-                                    ? 'var(--color-silver)'
-                                    : 'var(--color-bronze)',
-                            }}
-                          />
-                        )}
-                        <span className={`nums text-[13px] font-medium ${isTop3 ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}`}>
-                          {i + 1}
-                        </span>
-                      </span>
-                      <span className="flex items-center gap-2.5 min-w-0">
-                        <Avatar name={p.full_name} src={p.avatar_url} size="sm" />
-                        <span
-                          className={`truncate text-[16px] font-medium transition-colors ${
-                            isYou ? 'text-[var(--accent)]' : 'text-[var(--text-primary)] group-hover:text-[var(--accent)]'
-                          }`}
-                        >
-                          {p.full_name}
-                        </span>
-                        {prov && !isTournamentPoints && (
-                          <span className="shrink-0 text-[10px] text-[var(--text-faint)] font-medium" title="Provisional">P</span>
-                        )}
-                      </span>
-                      {isTournamentPoints ? (
-                        <span className={`text-right nums text-[13px] font-medium ${isYou ? 'text-[var(--accent)]' : 'text-[var(--text-primary)]'}`}>
-                          {(p as any)._tournamentPoints ?? 0}
-                        </span>
-                      ) : (
-                        <>
-                          <span className={`text-right nums text-[13px] font-medium ${isYou ? 'text-[var(--accent)]' : 'text-[var(--text-primary)]'}`}>
-                            {elo ?? '-'}
-                            {(() => {
-                              if (!elo) return null;
-                              const t = getSeasonTier(elo);
-                              return (
-                                <span
-                                  className="inline-block w-2 h-2 rounded-full ml-1"
-                                  style={{ backgroundColor: t.color }}
-                                  title={t.tier}
-                                />
-                              );
-                            })()}
-                          </span>
-                          <span className="text-right nums text-[12px] hidden md:block text-[var(--text-secondary)]">
-                            <span>{wins ?? 0}</span>
-                            <span className="text-[var(--text-faint)]">-</span>
-                            <span>{losses ?? 0}</span>
-                          </span>
-                          <span className="text-right nums text-[12px] text-[var(--text-secondary)]">{winPct}%</span>
-                        </>
-                      )}
-                    </Link>
-                  </div>
-                );
-              })}
-            </div>
-
-            {filteredPlayers.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-16">
-                {searchQuery ? (
-                  <>
-                    <Search className="w-10 h-10 text-[var(--text-faint)] mb-3" />
-                    <p className="text-[var(--text-muted)]">No players found matching &ldquo;{searchQuery}&rdquo;</p>
-                  </>
-                ) : (
-                  <>
-                    <Trophy className="w-10 h-10 text-[var(--text-faint)] mb-3" />
-                    <p className="text-[var(--text-muted)]">No players ranked yet</p>
-                  </>
-                )}
-              </div>
-            )}
+      <div style={{ padding: '0 24px', marginBottom: 16 }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: 0,
+            border: '1px solid #303030',
+          }}
+        >
+          {([
+            { id: 'singles', label: 'Singles' },
+            { id: 'doubles', label: 'Doubles' },
+          ] as { id: TabId; label: string }[]).map((t) => {
+            const active = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setTab(t.id)}
+                style={{
+                  padding: '12px',
+                  background: active ? '#da291c' : 'transparent',
+                  color: active ? '#fff' : '#969696',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: '1.4px',
+                  textTransform: 'uppercase',
+                  fontFamily: 'inherit',
+                }}
+              >
+                {t.label}
+              </button>
+            );
+          })}
         </div>
       </div>
-    </div>
-    </div>
+
+      {/* Podium */}
+      {podium.length >= 3 && (
+        <div style={{ padding: '0 24px 8px' }}>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1.2fr 1fr',
+              gap: 8,
+              alignItems: 'end',
+            }}
+          >
+            {([podium[1]!, podium[0]!, podium[2]!]).map((p, i) => {
+              const place = ([2, 1, 3] as const)[i]!;
+              const h = ([80, 110, 70] as const)[i]!;
+              const isMe = p.id === currentPlayerId;
+              return (
+                <Link
+                  key={p.id}
+                  href={`/leaderboard/${p.id}`}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    color: '#fff',
+                    textDecoration: 'none',
+                    animation: `fadeUp 400ms ${i * 80}ms ease both`,
+                  }}
+                >
+                  <Avatar
+                    name={p.full_name}
+                    src={p.avatar_url}
+                    size={place === 1 ? 60 : 48}
+                    ring
+                  />
+                  <div
+                    style={{
+                      fontSize: place === 1 ? 14 : 12,
+                      fontWeight: 700,
+                      marginTop: 8,
+                      textAlign: 'center',
+                      maxWidth: '100%',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      color: isMe ? '#da291c' : '#fff',
+                    }}
+                  >
+                    {p.full_name.split(' ')[0]}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: '#969696',
+                      fontFamily: 'JetBrains Mono, monospace',
+                      fontWeight: 600,
+                      textAlign: 'center',
+                    }}
+                  >
+                    {p.elo ?? '—'}
+                  </div>
+                  <div
+                    style={{
+                      height: h,
+                      width: '100%',
+                      background: place === 1 ? '#da291c' : '#303030',
+                      marginTop: 8,
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      justifyContent: 'center',
+                      paddingTop: 12,
+                      color: place === 1 ? '#fff' : '#969696',
+                      fontSize: 28,
+                      fontWeight: 700,
+                      fontFamily: 'JetBrains Mono, monospace',
+                    }}
+                  >
+                    {place}
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Rest */}
+      <div style={{ padding: '20px 24px 0' }}>
+        <SectionLabel>The rest</SectionLabel>
+        {rest.length > 0 ? (
+          <div style={{ background: '#222', border: '1px solid #303030' }}>
+            {rest.map((p, i) => {
+              const isMe = p.id === currentPlayerId;
+              return (
+                <Link
+                  key={p.id}
+                  href={`/leaderboard/${p.id}`}
+                  style={{
+                    padding: '14px 16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    borderTop: i === 0 ? 'none' : '1px solid #303030',
+                    color: '#fff',
+                    textDecoration: 'none',
+                    background: isMe ? 'rgba(218,41,28,0.08)' : 'transparent',
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 22,
+                      fontSize: 13,
+                      fontWeight: 700,
+                      color: isMe ? '#da291c' : '#666',
+                      fontFamily: 'JetBrains Mono, monospace',
+                    }}
+                  >
+                    {p.rank}
+                  </span>
+                  <Avatar name={p.full_name} src={p.avatar_url} size={32} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 600,
+                        color: isMe ? '#da291c' : '#fff',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {p.full_name}
+                    </div>
+                    {p.elo != null && (
+                      <div
+                        style={{
+                          fontSize: 10,
+                          color: '#666',
+                          letterSpacing: '0.65px',
+                          textTransform: 'uppercase',
+                          fontWeight: 600,
+                          marginTop: 2,
+                        }}
+                      >
+                        {p.wins}–{p.losses}
+                      </div>
+                    )}
+                  </div>
+                  <span
+                    style={{
+                      fontSize: 14,
+                      fontWeight: 700,
+                      fontFamily: 'JetBrains Mono, monospace',
+                    }}
+                  >
+                    {p.elo ?? '—'}
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
+        ) : (
+          <div
+            style={{
+              padding: '32px 24px',
+              textAlign: 'center',
+              fontSize: 12,
+              color: '#969696',
+              background: '#222',
+              border: '1px solid #303030',
+            }}
+          >
+            No more players ranked yet.
+          </div>
+        )}
+      </div>
+    </>
   );
 }

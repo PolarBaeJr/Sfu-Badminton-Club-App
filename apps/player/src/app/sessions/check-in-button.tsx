@@ -1,7 +1,6 @@
 'use client';
 import { useState } from 'react';
 import { checkInToSession } from '@/lib/actions';
-import { CheckCircle2 } from 'lucide-react';
 import { useToast } from '@/components/toast-provider';
 
 interface CheckInButtonProps {
@@ -12,15 +11,6 @@ interface CheckInButtonProps {
 export function CheckInButton({ sessionId, isCheckedIn }: CheckInButtonProps) {
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
-
-  if (isCheckedIn) {
-    return (
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-[0.06em] bg-[var(--bg-accent)] text-[var(--accent)] border border-[var(--accent-border)]">
-        <CheckCircle2 className="w-3 h-3 shrink-0" />
-        Checked In
-      </span>
-    );
-  }
 
   async function handleCheckIn() {
     setLoading(true);
@@ -33,13 +23,51 @@ export function CheckInButton({ sessionId, isCheckedIn }: CheckInButtonProps) {
     }
   }
 
+  if (isCheckedIn) {
+    return (
+      <button
+        type="button"
+        disabled
+        style={{
+          height: 36,
+          padding: '0 16px',
+          background: 'transparent',
+          color: '#03904a',
+          border: '1px solid #03904a',
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: '1.4px',
+          textTransform: 'uppercase',
+          cursor: 'default',
+          fontFamily: 'inherit',
+        }}
+      >
+        ✓ Going
+      </button>
+    );
+  }
+
   return (
     <button
+      type="button"
       onClick={handleCheckIn}
       disabled={loading}
-      className="press btn-primary-cta px-4 py-2 text-sm font-semibold min-h-[44px] disabled:opacity-60 disabled:cursor-not-allowed"
+      style={{
+        height: 36,
+        padding: '0 16px',
+        background: '#da291c',
+        color: '#fff',
+        border: 'none',
+        fontSize: 11,
+        fontWeight: 700,
+        letterSpacing: '1.4px',
+        textTransform: 'uppercase',
+        cursor: loading ? 'not-allowed' : 'pointer',
+        opacity: loading ? 0.6 : 1,
+        fontFamily: 'inherit',
+      }}
     >
-      {loading ? 'Checking in...' : 'Check In'}
+      {loading ? 'RSVP…' : 'RSVP'}
     </button>
   );
 }

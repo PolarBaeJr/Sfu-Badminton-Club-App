@@ -3,267 +3,282 @@
 import { useState } from 'react';
 import { createClient } from '@badminton/shared/supabase-browser';
 
-export default function LoginPage() {
-  const [email, setEmail] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [error, setError] = useState('');
+type View = 'signin' | 'request' | 'request-sent' | 'sent';
 
-  async function handleGoogleLogin() {
-    setGoogleLoading(true);
-    setError('');
+export default function LoginPage() {
+  const [view, setView] = useState<View>('signin');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPass, setShowPass] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [ssoLoading, setSsoLoading] = useState(false);
+  const [errors, setErrors] = useState<{ email?: string; password?: string; general?: string }>({});
+
+  // Request access fields
+  const [reqName, setReqName] = useState('');
+  const [reqEmail, setReqEmail] = useState('');
+  const [reqRole, setReqRole] = useState('');
+  const [reqMessage, setReqMessage] = useState('');
+  const [reqErrors, setReqErrors] = useState<Record<string, string>>({});
+
+  async function handleSso() {
+    setSsoLoading(true);
+    setErrors({});
     const supabase = createClient();
     const { error: authError } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: `${window.location.origin}/auth/callback` },
     });
     if (authError) {
-      setError(authError.message);
-      setGoogleLoading(false);
+      setErrors({ general: authError.message });
+      setSsoLoading(false);
     }
   }
 
-  async function handleMagicLink(e: React.FormEvent) {
+  async function handleSignIn(e: React.FormEvent) {
     e.preventDefault();
+    const errs: { email?: string; password?: string } = {};
+    if (!email.trim()) errs.email = 'This field is required';
+    else if (!/.+@.+\..+/.test(email)) errs.email = 'Invalid email';
+    if (!password) errs.password = 'This field is required';
+    setErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+
     setLoading(true);
-    setError('');
     const supabase = createClient();
     const { error: authError } = await supabase.auth.signInWithOtp({
       email,
       options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
     });
-    if (authError) setError(authError.message);
-    else setSent(true);
+    if (authError) {
+      setErrors({ general: authError.message });
+      setLoading(false);
+      return;
+    }
     setLoading(false);
+    setView('sent');
+  }
+
+  function handleRequest(e: React.FormEvent) {
+    e.preventDefault();
+    const errs: Record<string, string> = {};
+    if (!reqName.trim()) errs.name = 'This field is required';
+    if (!reqEmail.trim()) errs.email = 'This field is required';
+    if (!reqRole.trim()) errs.role = 'This field is required';
+    if (!reqMessage.trim()) errs.message = 'This field is required';
+    setReqErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+    setView('request-sent');
   }
 
   return (
-    <div
-      className="fixed inset-0 flex flex-col md:flex-row"
-      style={{ background: 'var(--bg)', zIndex: 200 }}
-    >
-      {/* Left panel */}
-      <div
-        className="flex-1 min-w-0 relative overflow-hidden flex flex-col justify-center"
-        style={{
-          background: '#0A0A0A',
-          padding: '60px',
-        }}
-      >
-        <div
-          aria-hidden
-          className="absolute inset-0 pointer-events-none"
-          style={{
-            backgroundImage:
-              'repeating-linear-gradient(45deg, transparent, transparent 39px, rgba(255,255,255,0.03) 39px, rgba(255,255,255,0.03) 40px)',
-          }}
-        />
-        <div className="relative" style={{ maxWidth: 440 }}>
-          <div className="flex items-center gap-[10px]">
-            <span
-              className="flex items-center justify-center"
-              style={{
-                width: 40, height: 40, background: 'var(--red)', color: '#fff',
-                fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22,
-              }}
-            >S</span>
-          </div>
-          <span
-            className="block uppercase font-bold"
-            style={{ marginTop: 12, fontSize: 11, letterSpacing: '0.25em', color: 'var(--red)' }}
-          >
-            SFU Badminton · Admin
-          </span>
-          <h1
-            style={{
-              fontFamily: 'var(--font-display)',
-              fontWeight: 700,
-              fontSize: 72,
-              lineHeight: 0.92,
-              color: '#F0F0F0',
-              letterSpacing: '-0.02em',
-              marginTop: 32,
-            }}
-          >
-            <span className="block">Run your</span>
-            <span className="block">club like</span>
-            <span className="block">a team.</span>
-          </h1>
-          <span
-            className="inline-block uppercase font-bold"
-            style={{ marginTop: 32, fontSize: 10, letterSpacing: '0.2em', color: 'var(--red)' }}
-          >
-            Season 02 · Spring 2026
-          </span>
+    <div className="auth-root">
+      {/* Left brand panel */}
+      <div className="auth-left-panel">
+        <div className="auth-brand">
+          <div className="auth-mark-sq">S</div>
+          <span className="auth-club">SFU Badminton · Admin</span>
         </div>
-        <div
-          className="absolute"
-          style={{ left: 60, bottom: 40, fontSize: 10, color: '#2A2A2A', letterSpacing: '0.06em' }}
-        >
-          © {new Date().getFullYear()} SFU Badminton Club
-        </div>
+        <h1 className="auth-headline">
+          <span>Run your</span>
+          <span>club like</span>
+          <span>a team.</span>
+        </h1>
+        <span className="auth-season">Season 02 · Spring 2026</span>
+        <div className="auth-foot-copy">© {new Date().getFullYear()} SFU Badminton Club</div>
       </div>
 
-      {/* Right panel */}
-      <div
-        className="flex-1 min-w-0 flex items-center justify-center overflow-y-auto"
-        style={{
-          background: '#111111',
-          borderLeft: '1px solid rgba(255,255,255,0.06)',
-          padding: '60px 40px',
-        }}
-      >
-        <div className="w-full" style={{ maxWidth: 380 }}>
-          {sent ? (
-            <>
-              <span
-                className="uppercase font-bold"
-                style={{ fontSize: 10, letterSpacing: '0.2em', color: 'var(--red)' }}
-              >
-                Magic Link Sent
-              </span>
-              <h2
-                style={{
-                  fontFamily: 'var(--font-display)',
-                  fontWeight: 700,
-                  fontSize: 36,
-                  color: '#F0F0F0',
-                  marginTop: 8,
-                  lineHeight: 1,
-                  letterSpacing: '-0.01em',
-                }}
-              >Check your email.</h2>
-              <p style={{ fontSize: 12, color: '#888', lineHeight: 1.6, marginTop: 14 }}>
-                We sent a sign-in link to <strong style={{ color: '#F0F0F0' }}>{email}</strong>.
-                Open it on this device to continue.
-              </p>
-              <button
-                type="button"
-                onClick={() => { setSent(false); setEmail(''); }}
-                className="mt-8 uppercase font-bold"
-                style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--muted)', fontFamily: 'var(--font-display)' }}
-              >← Use a different email</button>
-            </>
-          ) : (
-            <>
-              <span
-                className="uppercase font-bold"
-                style={{ fontSize: 10, letterSpacing: '0.2em', color: 'var(--red)' }}
-              >Welcome back</span>
-              <h2
-                style={{
-                  fontFamily: 'var(--font-display)',
-                  fontWeight: 700,
-                  fontSize: 36,
-                  color: '#F0F0F0',
-                  marginTop: 8,
-                  lineHeight: 1,
-                  letterSpacing: '-0.01em',
-                }}
-              >Sign in.</h2>
-              <p style={{ fontSize: 12, color: '#555', lineHeight: 1.6, marginTop: 14, marginBottom: 32 }}>
-                Sign in with a magic link or Google. Admin access is required.
-              </p>
+      {/* Right form panel */}
+      <div className="auth-right-panel">
+        <div className="auth-form">
+          {view === 'signin' && (
+            <form onSubmit={handleSignIn} noValidate>
+              <div className="auth-eyebrow">Welcome back</div>
+              <h2 className="auth-title">Sign in.</h2>
+              <div style={{ height: 32 }} />
 
-              <form onSubmit={handleMagicLink}>
-                <label
-                  className="block uppercase font-bold"
-                  style={{ fontSize: 9, letterSpacing: '0.15em', color: '#555', marginBottom: 6 }}
-                >Email</label>
+              <label className="auth-label">Email Address</label>
+              <div className="auth-input-wrap">
                 <input
+                  className="auth-input"
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="admin@sfu.ca"
-                  required
-                  className="w-full outline-none"
+                  placeholder="you@sfu.ca"
+                  autoComplete="email"
                   style={{
-                    background: '#0D0D0D',
-                    border: `1px solid ${error ? 'var(--red)' : 'rgba(255,255,255,0.10)'}`,
-                    color: '#F0F0F0',
-                    fontFamily: 'var(--font-body)',
-                    fontSize: 13,
-                    fontWeight: 400,
-                    padding: '12px 14px',
-                    transition: 'border-color 150ms ease-out',
-                    marginBottom: error ? 10 : 24,
-                    boxSizing: 'border-box',
+                    borderColor: errors.email ? 'var(--red)' : undefined,
                   }}
-                  onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--red)'; }}
-                  onBlur={(e) => { e.currentTarget.style.borderColor = error ? 'var(--red)' : 'rgba(255,255,255,0.10)'; }}
                 />
-                {error && (
-                  <div
-                    style={{
-                      fontSize: 10,
-                      color: 'var(--red)',
-                      letterSpacing: '0.04em',
-                      marginBottom: 16,
-                    }}
-                  >{error}</div>
-                )}
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full uppercase font-bold inline-flex items-center justify-center gap-[10px]"
-                  style={{
-                    background: 'var(--red)',
-                    color: '#fff',
-                    fontFamily: 'var(--font-display)',
-                    fontSize: 11,
-                    letterSpacing: '0.16em',
-                    padding: '12px 16px',
-                    border: 0,
-                    cursor: loading ? 'not-allowed' : 'pointer',
-                    opacity: loading ? 0.6 : 1,
-                    transition: 'background 150ms ease-out, opacity 150ms ease-out',
-                  }}
-                >
-                  {loading ? 'Sending…' : 'Send magic link'}
-                </button>
-              </form>
+              </div>
+              {errors.email && <div className="auth-error-show">↑ {errors.email}</div>}
 
-              {/* OR Divider */}
-              <div className="flex items-center gap-3 my-6">
-                <span className="flex-1 h-px" style={{ background: 'rgba(255,255,255,0.06)' }} />
-                <span
-                  className="uppercase"
-                  style={{ fontSize: 10, letterSpacing: '0.2em', color: 'var(--faint)' }}
-                >or</span>
-                <span className="flex-1 h-px" style={{ background: 'rgba(255,255,255,0.06)' }} />
+              <label className="auth-label">Password</label>
+              <div className="auth-input-wrap">
+                <input
+                  className="auth-input"
+                  type={showPass ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  autoComplete="current-password"
+                  style={{
+                    paddingRight: 60,
+                    borderColor: errors.password ? 'var(--red)' : undefined,
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPass((s) => !s)}
+                  className="auth-pass-toggle"
+                >
+                  {showPass ? 'Hide' : 'Show'}
+                </button>
+              </div>
+              {errors.password && <div className="auth-error-show">↑ {errors.password}</div>}
+
+              <button
+                type="button"
+                onClick={() => setView('signin')}
+                className="auth-forgot"
+                style={{ background: 'transparent', border: 0, padding: 0 }}
+              >
+                Forgot password?
+              </button>
+
+              <button type="submit" className="auth-btn" disabled={loading}>
+                {loading ? 'Authenticating…' : 'Sign In'}
+              </button>
+
+              {errors.general && (
+                <div className="auth-error-show" style={{ marginTop: 12 }}>
+                  ↑ {errors.general}
+                </div>
+              )}
+
+              <div className="auth-divider">
+                <span>OR</span>
               </div>
 
               <button
                 type="button"
-                onClick={handleGoogleLogin}
-                disabled={googleLoading}
-                className="w-full uppercase font-bold inline-flex items-center justify-center gap-[10px]"
-                style={{
-                  background: 'transparent',
-                  color: 'var(--text)',
-                  fontFamily: 'var(--font-display)',
-                  fontSize: 11,
-                  letterSpacing: '0.16em',
-                  padding: '12px 16px',
-                  border: '1px solid var(--hairline)',
-                  cursor: googleLoading ? 'not-allowed' : 'pointer',
-                  opacity: googleLoading ? 0.6 : 1,
-                  transition: 'border-color 150ms ease-out, color 150ms ease-out',
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--hairline-strong)'; e.currentTarget.style.color = 'var(--ink)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--hairline)'; e.currentTarget.style.color = 'var(--text)'; }}
+                className="auth-btn auth-btn-ghost"
+                onClick={handleSso}
+                disabled={ssoLoading}
               >
-                {googleLoading ? 'Redirecting…' : 'Continue with Google'}
+                <span className="auth-sso-mark">S</span>
+                {ssoLoading ? 'Redirecting…' : 'Sign In with SFU SSO'}
               </button>
 
-              <p
-                className="mt-8"
-                style={{ fontSize: 10, color: '#333', letterSpacing: '0.06em' }}
+              <div className="auth-foot">
+                Don&apos;t have an account?{' '}
+                <a onClick={() => setView('request')}>Join the club →</a>
+              </div>
+              <div className="auth-note">
+                Admin access is restricted to authorized SFU Badminton executive members.
+              </div>
+            </form>
+          )}
+
+          {view === 'sent' && (
+            <div className="auth-success">
+              <div className="auth-success-check">✓</div>
+              <div className="auth-success-title">Check your email.</div>
+              <div className="auth-success-body">
+                We sent a sign-in link to <strong style={{ color: '#F0F0F0' }}>{email}</strong>. Open it on this device
+                to continue.
+              </div>
+              <a
+                className="auth-success-back"
+                onClick={() => {
+                  setView('signin');
+                  setEmail('');
+                  setPassword('');
+                }}
               >
-                Admin access is granted by invitation. Contact a club captain to request access.
+                ← Back to sign in
+              </a>
+            </div>
+          )}
+
+          {view === 'request' && (
+            <form onSubmit={handleRequest} noValidate>
+              <div className="auth-eyebrow">Admin access</div>
+              <h2 className="auth-title">Request access.</h2>
+              <p className="auth-lede">
+                Admin accounts are created by the Super Admin only. Submit your details and you will be contacted.
               </p>
-            </>
+
+              <label className="auth-label">Full Name</label>
+              <div className="auth-input-wrap">
+                <input
+                  className="auth-input"
+                  value={reqName}
+                  onChange={(e) => setReqName(e.target.value)}
+                  placeholder="Your full name"
+                  style={{ borderColor: reqErrors.name ? 'var(--red)' : undefined }}
+                />
+              </div>
+              {reqErrors.name && <div className="auth-error-show">↑ {reqErrors.name}</div>}
+
+              <label className="auth-label">SFU Email</label>
+              <div className="auth-input-wrap">
+                <input
+                  className="auth-input"
+                  type="email"
+                  value={reqEmail}
+                  onChange={(e) => setReqEmail(e.target.value)}
+                  placeholder="you@sfu.ca"
+                  style={{ borderColor: reqErrors.email ? 'var(--red)' : undefined }}
+                />
+              </div>
+              {reqErrors.email && <div className="auth-error-show">↑ {reqErrors.email}</div>}
+
+              <label className="auth-label">Role / Position</label>
+              <div className="auth-input-wrap">
+                <input
+                  className="auth-input"
+                  value={reqRole}
+                  onChange={(e) => setReqRole(e.target.value)}
+                  placeholder="e.g. Club President"
+                  style={{ borderColor: reqErrors.role ? 'var(--red)' : undefined }}
+                />
+              </div>
+              {reqErrors.role && <div className="auth-error-show">↑ {reqErrors.role}</div>}
+
+              <label className="auth-label">Message</label>
+              <div className="auth-input-wrap">
+                <textarea
+                  className="auth-input"
+                  rows={4}
+                  value={reqMessage}
+                  onChange={(e) => setReqMessage(e.target.value)}
+                  placeholder="Why do you need admin access?"
+                  style={{
+                    borderColor: reqErrors.message ? 'var(--red)' : undefined,
+                    resize: 'vertical',
+                    minHeight: 96,
+                  }}
+                />
+              </div>
+              {reqErrors.message && <div className="auth-error-show">↑ {reqErrors.message}</div>}
+
+              <button type="submit" className="auth-btn">Send Request</button>
+              <div className="auth-foot">
+                Already have an account? <a onClick={() => setView('signin')}>Sign in →</a>
+              </div>
+            </form>
+          )}
+
+          {view === 'request-sent' && (
+            <div className="auth-success">
+              <div className="auth-success-check">✓</div>
+              <div className="auth-success-title">Request sent.</div>
+              <div className="auth-success-body">
+                The Super Admin will review your request and contact you at your SFU email within 48 hours.
+              </div>
+              <a className="auth-success-back" onClick={() => setView('signin')}>← Back to sign in</a>
+            </div>
           )}
         </div>
       </div>

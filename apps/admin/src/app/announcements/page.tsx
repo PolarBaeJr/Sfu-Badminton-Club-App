@@ -1,17 +1,14 @@
 export const dynamic = 'force-dynamic';
 
 import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge, PageHero } from '@badminton/ui';
-import { formatRelativeTime } from '@badminton/shared';
+import { PageHero } from '@badminton/ui';
 import { CreateAnnouncementForm, AnnouncementCardMenu } from './actions';
-import { Megaphone, Pin } from 'lucide-react';
 
 interface Announcement {
   id: string;
   title: string;
   body: string;
   type: 'info' | 'warning' | 'urgent' | 'event';
-  author_id: string | null;
   pinned: boolean;
   send_push: boolean;
   target_audience: 'all' | 'competitive' | 'recreational' | 'eligible_only';
@@ -21,136 +18,149 @@ interface Announcement {
   updated_at: string;
 }
 
-const TYPE_BADGE_VARIANT: Record<Announcement['type'], 'neutral' | 'warning' | 'danger' | 'success'> = {
-  info: 'neutral',
-  warning: 'warning',
-  urgent: 'danger',
-  event: 'success',
-};
-
-const STATUS_BADGE_VARIANT: Record<Announcement['status'], 'warning' | 'success'> = {
-  draft: 'warning',
-  published: 'success',
-};
-
-const AUDIENCE_LABEL: Record<Announcement['target_audience'], string> = {
-  all: 'All Members',
-  competitive: 'Competitive',
-  recreational: 'Recreational',
-  eligible_only: 'Eligible Only',
-};
-
 export default async function AnnouncementsPage() {
   const supabase = createAdminClient();
 
-  const { data: announcements, error } = await supabase
+  const { data: announcements } = await supabase
     .from('announcements')
     .select('*')
     .order('pinned', { ascending: false })
     .order('created_at', { ascending: false });
 
-  if (error) {
-    console.error('Failed to fetch announcements:', error);
-  }
-
-  const items: Announcement[] = announcements ?? [];
+  const items: Announcement[] = (announcements ?? []) as Announcement[];
+  const drafts = items.filter((a) => a.status === 'draft').length;
+  const published = items.filter((a) => a.status === 'published').length;
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div>
       <PageHero
-        eyebrow={`${items.length} announcements`}
+        eyebrow={`${published} published · ${drafts} draft${drafts === 1 ? '' : 's'}`}
         title="Announcements."
         subtitle="Club-wide communications. Pinned items appear on every player's dashboard."
         watermark="A"
       />
-      <div className="px-12 py-8 flex justify-end"><CreateAnnouncementForm /></div>
 
-      {/* Announcement List */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'flex-end',
+          padding: '20px 48px 0',
+        }}
+      >
+        <CreateAnnouncementForm />
+      </div>
+
       {items.length === 0 ? (
         <div
-          className="flex flex-col items-center justify-center py-20 gap-3 border"
-          style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}
+          style={{
+            padding: '64px 48px',
+            textAlign: 'center',
+            color: 'var(--muted)',
+            fontSize: 13,
+          }}
         >
-          <Megaphone size={40} strokeWidth={1.5} />
-          <p className="text-sm font-medium">No announcements yet</p>
-          <p className="text-xs">Create your first announcement to get started.</p>
+          No announcements yet.
         </div>
       ) : (
-        <div className="flex flex-col gap-3">
-          {items.map((announcement) => (
-            <Card key={announcement.id} className="p-4">
-              <div className="flex items-start justify-between gap-4">
-                {/* Left content */}
-                <div className="flex flex-col gap-2 flex-1 min-w-0">
-                  {/* Title row */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {announcement.pinned && (
-                      <Pin
-                        size={14}
-                        style={{ color: 'var(--ds-accent)', flexShrink: 0 }}
-                      />
-                    )}
+        <div style={{ background: 'var(--surface1)' }}>
+          {items.map((a) => {
+            const tag: { label: string; color: string } =
+              a.pinned
+                ? { label: 'Pinned', color: 'var(--red)' }
+                : a.status === 'draft'
+                  ? { label: 'Draft', color: 'var(--amber)' }
+                  : { label: 'Published', color: 'var(--muted)' };
+            return (
+              <div
+                key={a.id}
+                style={{
+                  padding: '24px 48px',
+                  borderBottom: '1px solid var(--hairline-soft)',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  justifyContent: 'space-between',
+                  gap: 16,
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
                     <span
-                      className="font-semibold text-sm leading-snug"
-                      style={{ color: 'var(--text-primary)' }}
-                    >
-                      {announcement.title}
-                    </span>
-                  </div>
-
-                  {/* Body preview */}
-                  <p
-                    className="text-sm leading-relaxed line-clamp-2"
-                    style={{ color: 'var(--text-secondary)' }}
-                  >
-                    {announcement.body}
-                  </p>
-
-                  {/* Meta row */}
-                  <div className="flex items-center gap-2 flex-wrap mt-1">
-                    <Badge variant={TYPE_BADGE_VARIANT[announcement.type]}>
-                      {announcement.type}
-                    </Badge>
-                    <Badge variant={STATUS_BADGE_VARIANT[announcement.status]}>
-                      {announcement.status}
-                    </Badge>
-                    <span
-                      className="text-xs px-2 py-0.5 rounded-full border"
                       style={{
-                        color: 'var(--text-muted)',
-                        borderColor: 'var(--border)',
-                        backgroundColor: 'var(--bg-elevated)',
+                        fontSize: 10,
+                        letterSpacing: '0.2em',
+                        textTransform: 'uppercase',
+                        fontWeight: 600,
+                        color: tag.color,
                       }}
                     >
-                      {AUDIENCE_LABEL[announcement.target_audience]}
+                      {tag.label}
                     </span>
-                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                      {formatRelativeTime(announcement.created_at)}
+                    <span
+                      style={{
+                        fontSize: 10,
+                        letterSpacing: '0.2em',
+                        textTransform: 'uppercase',
+                        fontWeight: 600,
+                        color: 'var(--faint)',
+                      }}
+                    >
+                      {a.status === 'draft'
+                        ? `Edited ${formatDate(a.updated_at)} · not published`
+                        : `Posted ${formatDate(a.created_at)}`}
                     </span>
                   </div>
+                  <div
+                    style={{
+                      fontFamily: 'var(--font-display)',
+                      fontWeight: 700,
+                      fontSize: 24,
+                      color: 'var(--ink)',
+                      letterSpacing: '-0.01em',
+                    }}
+                  >
+                    {a.title}
+                  </div>
+                  <div
+                    style={{
+                      color: 'var(--text)',
+                      marginTop: 8,
+                      maxWidth: 640,
+                      fontSize: 13,
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    {a.body}
+                  </div>
                 </div>
-
-                {/* Right: menu */}
-                <div className="flex-shrink-0">
+                <div style={{ flexShrink: 0 }}>
                   <AnnouncementCardMenu
                     announcement={{
-                      id: announcement.id,
-                      title: announcement.title,
-                      body: announcement.body,
-                      type: announcement.type,
-                      target_audience: announcement.target_audience,
-                      pinned: announcement.pinned,
-                      send_push: announcement.send_push,
-                      status: announcement.status,
-                      expires_at: announcement.expires_at,
+                      id: a.id,
+                      title: a.title,
+                      body: a.body,
+                      type: a.type,
+                      target_audience: a.target_audience,
+                      pinned: a.pinned,
+                      send_push: a.send_push,
+                      status: a.status,
+                      expires_at: a.expires_at,
                     }}
                   />
                 </div>
               </div>
-            </Card>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
   );
+}
+
+function formatDate(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  } catch {
+    return iso;
+  }
 }

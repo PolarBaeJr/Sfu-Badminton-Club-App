@@ -2,12 +2,17 @@
 
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 
-type Counts = { unreadNotifs: number; unreadAnnouncements: number };
+type Counts = {
+  unreadNotifs: number;
+  unreadAnnouncements: number;
+  incomingChallenges: number;
+};
 type CountsContextValue = Counts & { refresh: () => void };
 
 const Ctx = createContext<CountsContextValue>({
   unreadNotifs: 0,
   unreadAnnouncements: 0,
+  incomingChallenges: 0,
   refresh: () => {},
 });
 
@@ -22,7 +27,11 @@ export function NotificationCountsProvider({
   isAuthed: boolean;
   children: React.ReactNode;
 }) {
-  const [counts, setCounts] = useState<Counts>({ unreadNotifs: 0, unreadAnnouncements: 0 });
+  const [counts, setCounts] = useState<Counts>({
+    unreadNotifs: 0,
+    unreadAnnouncements: 0,
+    incomingChallenges: 0,
+  });
 
   const refresh = useCallback(async () => {
     if (!isAuthed) return;

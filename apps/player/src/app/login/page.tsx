@@ -2,13 +2,25 @@
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@badminton/shared/supabase-browser';
+import {
+  AuthShell,
+  AuthHeader,
+  AuthField,
+  CTAButton,
+  ShuttleMark,
+} from '@/components/v2/atoms';
+
+type View = 'signin' | 'forgot' | 'sent';
 
 export default function LoginPage() {
+  const [view, setView] = useState<View>('signin');
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPass, setShowPass] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [error, setError] = useState('');
+  const [errors, setErrors] = useState<{ email?: string; password?: string; general?: string }>({});
 
   useEffect(() => {
     try {
@@ -17,7 +29,9 @@ export default function LoginPage() {
       if (next && next.startsWith('/')) {
         sessionStorage.setItem('qr_redirect', next);
       }
-    } catch { /* no-op */ }
+    } catch {
+      /* no-op */
+    }
   }, []);
 
   function buildCallbackUrl(): string {
@@ -30,186 +44,412 @@ export default function LoginPage() {
     }
   }
 
+  async function handleMagicLink(targetEmail: string) {
+    setLoading(true);
+    setErrors({});
+    const supabase = createClient();
+    const { error: authError } = await supabase.auth.signInWithOtp({
+      email: targetEmail,
+      options: { emailRedirectTo: buildCallbackUrl() },
+    });
+    if (authError) {
+      setErrors({
+        general: authError.message.includes('rate')
+          ? 'Too many attempts — please wait before trying again'
+          : authError.message,
+      });
+      setLoading(false);
+      return;
+    }
+    setLoading(false);
+    setView('sent');
+  }
+
+  function handleSignin(e?: React.FormEvent) {
+    e?.preventDefault();
+    const errs: { email?: string; password?: string } = {};
+    if (!email.trim()) errs.email = 'Required';
+    else if (!/.+@.+\..+/.test(email)) errs.email = 'Invalid email';
+    if (!password) errs.password = 'Required';
+    setErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+    void handleMagicLink(email);
+  }
+
   async function handleGoogleLogin() {
     setGoogleLoading(true);
-    setError('');
+    setErrors({});
     const supabase = createClient();
     const { error: authError } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: buildCallbackUrl() },
     });
     if (authError) {
-      setError(authError.message);
+      setErrors({ general: authError.message });
       setGoogleLoading(false);
     }
   }
 
-  async function handleMagicLink(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
-    const supabase = createClient();
-    const { error: authError } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: buildCallbackUrl() },
-    });
-    if (authError) {
-      setError(authError.message.includes('rate') ? 'Too many attempts — please wait before trying again' : authError.message);
-    } else {
-      setSent(true);
-    }
-    setLoading(false);
-  }
-
-  return (
-    <div className="fixed inset-0 flex flex-col md:flex-row" style={{ background: 'var(--bg)', zIndex: 200 }}>
-      {/* Left panel */}
-      <div
-        className="flex-1 min-w-0 relative overflow-hidden flex flex-col justify-center"
-        style={{ background: '#0A0A0A', padding: '60px' }}
-      >
-        <div
-          aria-hidden
-          className="absolute inset-0 pointer-events-none"
-          style={{ backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 39px, rgba(255,255,255,0.03) 39px, rgba(255,255,255,0.03) 40px)' }}
-        />
-        <div className="relative" style={{ maxWidth: 440 }}>
-          <span
-            className="flex items-center justify-center"
+  // ── SIGN IN ─────────────────────────────────────────────
+  if (view === 'signin') {
+    return (
+      <AuthShell>
+        <form
+          onSubmit={handleSignin}
+          style={{
+            flex: 1,
+            padding: '36px 24px 28px',
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 36 }}>
+            <ShuttleMark size={22} color="#da291c" />
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: '2.5px',
+                textTransform: 'uppercase',
+                color: '#da291c',
+              }}
+            >
+              SFU Badminton
+            </span>
+          </div>
+          <div
             style={{
-              width: 40, height: 40, background: 'var(--red)', color: '#fff',
-              fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22,
-            }}
-          >S</span>
-          <span
-            className="block uppercase font-bold"
-            style={{ marginTop: 12, fontSize: 11, letterSpacing: '0.25em', color: 'var(--red)' }}
-          >SFU Badminton · Player Portal</span>
-          <h1
-            style={{
-              fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 72,
-              lineHeight: 0.92, color: '#F0F0F0', letterSpacing: '-0.02em', marginTop: 32,
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: '2.4px',
+              textTransform: 'uppercase',
+              color: '#da291c',
             }}
           >
-            <span className="block">Compete.</span>
-            <span className="block">Rank.</span>
-            <span className="block">Repeat.</span>
-          </h1>
-          <span
-            className="inline-block uppercase font-bold"
-            style={{ marginTop: 32, fontSize: 10, letterSpacing: '0.2em', color: 'var(--red)' }}
-          >Season 02 · Spring 2026</span>
+            Welcome back
+          </div>
+          <div
+            style={{
+              fontSize: 36,
+              fontWeight: 700,
+              letterSpacing: '-1.2px',
+              lineHeight: 1,
+              marginTop: 8,
+            }}
+          >
+            Pick up
+            <br />
+            where you left.
+          </div>
+          <div
+            style={{
+              fontSize: 13,
+              color: '#969696',
+              lineHeight: 1.55,
+              marginTop: 14,
+              marginBottom: 32,
+            }}
+          >
+            Sign in to log matches, accept challenges, and check your ELO.
+          </div>
+
+          <AuthField
+            label="SFU Email"
+            type="email"
+            value={email}
+            onChange={setEmail}
+            placeholder="you@sfu.ca"
+            error={errors.email}
+            autoFocus
+          />
+
+          <div style={{ marginBottom: 18, position: 'relative' }}>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'baseline',
+                marginBottom: 6,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 9,
+                  fontWeight: 600,
+                  letterSpacing: '1.5px',
+                  textTransform: 'uppercase',
+                  color: errors.password ? '#da291c' : '#666',
+                }}
+              >
+                Password
+              </div>
+              <button
+                type="button"
+                onClick={() => setView('forgot')}
+                style={{
+                  background: 'transparent',
+                  border: 0,
+                  color: '#969696',
+                  fontSize: 10,
+                  fontWeight: 600,
+                  letterSpacing: '0.06em',
+                  cursor: 'pointer',
+                  padding: 0,
+                  fontFamily: 'inherit',
+                }}
+              >
+                Forgot?
+              </button>
+            </div>
+            <input
+              type={showPass ? 'text' : 'password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              style={{
+                width: '100%',
+                background: '#181818',
+                border: '1px solid ' + (errors.password ? '#da291c' : '#303030'),
+                color: '#fff',
+                fontSize: 14,
+                fontWeight: 500,
+                padding: '13px 14px',
+                paddingRight: 60,
+                boxSizing: 'border-box',
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPass((s) => !s)}
+              style={{
+                position: 'absolute',
+                right: 12,
+                top: 32,
+                background: 'transparent',
+                border: 0,
+                color: '#969696',
+                fontSize: 10,
+                fontWeight: 600,
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              {showPass ? 'Hide' : 'Show'}
+            </button>
+            {errors.password && (
+              <div
+                style={{
+                  fontSize: 10,
+                  color: '#da291c',
+                  marginTop: 6,
+                  fontWeight: 600,
+                }}
+              >
+                ↑ {errors.password}
+              </div>
+            )}
+          </div>
+
+          <CTAButton size="lg" full disabled={loading} type="submit">
+            {loading ? 'Sending magic link…' : 'Sign In'}
+          </CTAButton>
+
+          {errors.general && (
+            <div style={{ fontSize: 10, color: '#da291c', marginTop: 12, fontWeight: 600 }}>
+              ↑ {errors.general}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '24px 0' }}>
+            <div style={{ flex: 1, height: 1, background: '#303030' }} />
+            <span style={{ fontSize: 9, color: '#666', letterSpacing: '0.18em', fontWeight: 600 }}>
+              OR
+            </span>
+            <div style={{ flex: 1, height: 1, background: '#303030' }} />
+          </div>
+
+          <button
+            type="button"
+            onClick={handleGoogleLogin}
+            disabled={googleLoading}
+            style={{
+              width: '100%',
+              background: 'transparent',
+              color: '#fff',
+              border: '1px solid #303030',
+              padding: '14px',
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: '2px',
+              textTransform: 'uppercase',
+              cursor: googleLoading ? 'not-allowed' : 'pointer',
+              opacity: googleLoading ? 0.6 : 1,
+              fontFamily: 'inherit',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 10,
+            }}
+          >
+            <span
+              style={{
+                width: 16,
+                height: 16,
+                background: '#da291c',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontFamily: 'JetBrains Mono, monospace',
+                fontWeight: 700,
+                fontSize: 9,
+                color: '#fff',
+              }}
+            >
+              S
+            </span>
+            {googleLoading ? 'Redirecting…' : 'SFU SSO'}
+          </button>
+
+          <div
+            style={{
+              marginTop: 'auto',
+              paddingTop: 28,
+              fontSize: 12,
+              color: '#969696',
+              textAlign: 'center',
+            }}
+          >
+            New to the club?{' '}
+            <a
+              href="/onboarding"
+              style={{
+                color: '#da291c',
+                fontSize: 12,
+                fontWeight: 700,
+                textDecoration: 'none',
+              }}
+            >
+              Join now →
+            </a>
+          </div>
+        </form>
+      </AuthShell>
+    );
+  }
+
+  // ── FORGOT ─────────────────────────────────────────────
+  if (view === 'forgot') {
+    return (
+      <AuthShell>
+        <div
+          style={{
+            flex: 1,
+            padding: '0 24px 28px',
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
+          <AuthHeader
+            eyebrow="Recover access"
+            title={
+              <>
+                Forgot
+                <br />
+                password?
+              </>
+            }
+            sub="Enter your SFU email and we'll send a reset link."
+            onBack={() => setView('signin')}
+          />
+          <div style={{ marginTop: 32 }}>
+            <AuthField
+              label="SFU Email"
+              type="email"
+              value={forgotEmail}
+              onChange={setForgotEmail}
+              placeholder="you@sfu.ca"
+              autoFocus
+            />
+            <CTAButton
+              size="lg"
+              full
+              disabled={loading || !forgotEmail}
+              onClick={() => forgotEmail && handleMagicLink(forgotEmail)}
+            >
+              {loading ? 'Sending…' : 'Send Reset Link'}
+            </CTAButton>
+            {errors.general && (
+              <div style={{ fontSize: 10, color: '#da291c', marginTop: 12, fontWeight: 600 }}>
+                ↑ {errors.general}
+              </div>
+            )}
+          </div>
+        </div>
+      </AuthShell>
+    );
+  }
+
+  // ── SENT ───────────────────────────────────────────────
+  return (
+    <AuthShell>
+      <div
+        style={{
+          flex: 1,
+          padding: '24px 24px 28px',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center',
+          textAlign: 'center',
+        }}
+      >
+        <div
+          style={{
+            width: 56,
+            height: 56,
+            border: '1px solid #4ade80',
+            color: '#4ade80',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 32,
+            fontFamily: 'JetBrains Mono, monospace',
+          }}
+        >
+          ✓
+        </div>
+        <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.4px', marginTop: 22 }}>
+          Check your inbox.
         </div>
         <div
-          className="absolute"
-          style={{ left: 60, bottom: 40, fontSize: 10, color: '#2A2A2A', letterSpacing: '0.06em' }}
-        >© {new Date().getFullYear()} SFU Badminton Club</div>
-      </div>
-
-      {/* Right panel */}
-      <div
-        className="flex-1 min-w-0 flex items-center justify-center overflow-y-auto"
-        style={{ background: '#111111', borderLeft: '1px solid rgba(255,255,255,0.06)', padding: '60px 40px' }}
-      >
-        <div className="w-full" style={{ maxWidth: 380 }}>
-          {sent ? (
-            <>
-              <span className="uppercase font-bold" style={{ fontSize: 10, letterSpacing: '0.2em', color: 'var(--red)' }}>Magic link sent</span>
-              <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 36, color: '#F0F0F0', marginTop: 8, lineHeight: 1, letterSpacing: '-0.01em' }}>Check your email.</h2>
-              <p style={{ fontSize: 12, color: '#888', lineHeight: 1.6, marginTop: 14 }}>
-                We sent a sign-in link to <strong style={{ color: '#F0F0F0' }}>{email}</strong>. Open it on this device.
-              </p>
-              <button
-                type="button"
-                onClick={() => { setSent(false); setEmail(''); }}
-                className="mt-8 uppercase font-bold"
-                style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--muted)', fontFamily: 'var(--font-display)' }}
-              >← Use a different email</button>
-            </>
-          ) : (
-            <>
-              <span className="uppercase font-bold" style={{ fontSize: 10, letterSpacing: '0.2em', color: 'var(--red)' }}>Welcome</span>
-              <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 36, color: '#F0F0F0', marginTop: 8, lineHeight: 1, letterSpacing: '-0.01em' }}>Sign in.</h2>
-              <p style={{ fontSize: 12, color: '#555', lineHeight: 1.6, marginTop: 14, marginBottom: 32 }}>
-                Access is by invite only. Use the email your captain registered.
-              </p>
-
-              <form onSubmit={handleMagicLink}>
-                <label className="block uppercase font-bold" style={{ fontSize: 9, letterSpacing: '0.15em', color: '#555', marginBottom: 6 }}>Email</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="your.email@sfu.ca"
-                  required
-                  className="w-full outline-none"
-                  style={{
-                    background: '#0D0D0D',
-                    border: `1px solid ${error ? 'var(--red)' : 'rgba(255,255,255,0.10)'}`,
-                    color: '#F0F0F0',
-                    fontFamily: 'var(--font-body)',
-                    fontSize: 13, fontWeight: 400,
-                    padding: '12px 14px',
-                    transition: 'border-color 150ms ease-out',
-                    marginBottom: error ? 10 : 24,
-                    boxSizing: 'border-box',
-                  }}
-                  onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--red)'; }}
-                  onBlur={(e) => { e.currentTarget.style.borderColor = error ? 'var(--red)' : 'rgba(255,255,255,0.10)'; }}
-                />
-                {error && <div style={{ fontSize: 10, color: 'var(--red)', letterSpacing: '0.04em', marginBottom: 16 }}>{error}</div>}
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full uppercase font-bold inline-flex items-center justify-center"
-                  style={{
-                    background: 'var(--red)', color: '#fff',
-                    fontFamily: 'var(--font-display)',
-                    fontSize: 11, letterSpacing: '0.16em',
-                    padding: '12px 16px', border: 0,
-                    cursor: loading ? 'not-allowed' : 'pointer',
-                    opacity: loading ? 0.6 : 1,
-                    transition: 'background 150ms ease-out, opacity 150ms ease-out',
-                  }}
-                >
-                  {loading ? 'Sending…' : 'Send magic link'}
-                </button>
-              </form>
-
-              <div className="flex items-center gap-3 my-6">
-                <span className="flex-1 h-px" style={{ background: 'rgba(255,255,255,0.06)' }} />
-                <span className="uppercase" style={{ fontSize: 10, letterSpacing: '0.2em', color: 'var(--faint)' }}>or</span>
-                <span className="flex-1 h-px" style={{ background: 'rgba(255,255,255,0.06)' }} />
-              </div>
-
-              <button
-                type="button"
-                onClick={handleGoogleLogin}
-                disabled={googleLoading}
-                className="w-full uppercase font-bold inline-flex items-center justify-center"
-                style={{
-                  background: 'transparent', color: 'var(--text)',
-                  fontFamily: 'var(--font-display)',
-                  fontSize: 11, letterSpacing: '0.16em',
-                  padding: '12px 16px',
-                  border: '1px solid var(--hairline)',
-                  cursor: googleLoading ? 'not-allowed' : 'pointer',
-                  opacity: googleLoading ? 0.6 : 1,
-                  transition: 'border-color 150ms ease-out, color 150ms ease-out',
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--hairline-strong)'; e.currentTarget.style.color = 'var(--ink)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--hairline)'; e.currentTarget.style.color = 'var(--text)'; }}
-              >
-                {googleLoading ? 'Redirecting…' : 'Continue with Google'}
-              </button>
-
-              <p className="mt-8" style={{ fontSize: 10, color: '#333', letterSpacing: '0.06em' }}>
-                Don&apos;t have an account? Ask a captain to add you to the roster.
-              </p>
-            </>
-          )}
+          style={{
+            fontSize: 13,
+            color: '#969696',
+            lineHeight: 1.55,
+            marginTop: 12,
+            maxWidth: 280,
+          }}
+        >
+          If <strong style={{ color: '#fff' }}>{email || forgotEmail}</strong> matches a club account, a reset link is on
+          its way. It&apos;s good for 1 hour.
+        </div>
+        <div style={{ marginTop: 36, width: '100%' }}>
+          <CTAButton
+            size="lg"
+            full
+            onClick={() => {
+              setView('signin');
+              setEmail('');
+              setPassword('');
+              setForgotEmail('');
+            }}
+          >
+            Back to Sign In
+          </CTAButton>
         </div>
       </div>
-    </div>
+    </AuthShell>
   );
 }

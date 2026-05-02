@@ -1,0 +1,1506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>SFU Badminton — Player</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet" />
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+  *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body, #root { height: 100%; }
+  body {
+    background: #0d0d0d; color: #fff;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  .scroll::-webkit-scrollbar { display: none; }
+  .scroll { scrollbar-width: none; }
+  ::selection { background: #da291c; color: #fff; }
+  input, button, select, textarea { font-family: inherit; }
+  input:focus, select:focus, textarea:focus { outline: none; }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes pulseDot { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* Desktop showcase: phone frames on a stage */
+  .stage {
+    min-height: 100vh;
+    background:
+      radial-gradient(ellipse at 20% 0%, rgba(218,41,28,0.10) 0%, transparent 55%),
+      radial-gradient(ellipse at 80% 100%, rgba(218,41,28,0.06) 0%, transparent 50%),
+      #0d0d0d;
+    padding: 56px 48px 80px;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .stage-header {
+    width: 100%; max-width: 1400px;
+    display: flex; align-items: flex-end; justify-content: space-between; gap: 48px;
+    margin-bottom: 56px;
+  }
+  .stage-copy { max-width: 520px; }
+  .stage-meta {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    border: 1px solid #303030; flex: 0 0 auto; min-width: 360px;
+  }
+  .stage-meta > div {
+    padding: 14px 18px; border-right: 1px solid #303030;
+  }
+  .stage-meta > div:last-child { border-right: none; }
+  .stage-rail {
+    display: flex; gap: 64px; align-items: center; justify-content: center;
+    width: 100%;
+    perspective: 2400px;
+  }
+  .device {
+    width: 390px; height: 820px;
+    background: #181818; border-radius: 56px;
+    border: 1px solid #303030;
+    box-shadow: 0 60px 120px rgba(0,0,0,0.6), 0 0 0 12px #1f1f1f, 0 0 0 13px #303030;
+    overflow: hidden; position: relative; flex-shrink: 0;
+    transition: transform 480ms cubic-bezier(0.2,0.8,0.2,1);
+  }
+  .device.aux { transform: scale(0.78); opacity: 0.62; cursor: pointer; }
+  .device.aux:hover { opacity: 0.85; transform: scale(0.82); }
+  .device.aux.left { transform-origin: right center; }
+  .device.aux.right { transform-origin: left center; }
+  .device-screen {
+    position: absolute; inset: 12px;
+    background: #181818; border-radius: 44px; overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .notch {
+    position: absolute; top: 22px; left: 50%; transform: translateX(-50%);
+    width: 110px; height: 32px; background: #000; border-radius: 20px; z-index: 100;
+  }
+  .device-label {
+    position: absolute; bottom: -36px; left: 0; right: 0;
+    text-align: center; font-size: 9px; font-weight: 700;
+    letter-spacing: 1.6px; text-transform: uppercase;
+    color: #666;
+  }
+
+  /* Tablet: hide aux frames, keep main */
+  @media (max-width: 1280px) {
+    .stage-rail { gap: 0; }
+    .device.aux { display: none; }
+  }
+
+  /* Mobile: full-bleed phone, no chrome */
+  @media (max-width: 900px) {
+    .stage { padding: 0; background: #181818; }
+    .stage-header { display: none; }
+    .stage-rail { gap: 0; }
+    .device {
+      width: 100vw; height: 100vh; border-radius: 0; border: none;
+      box-shadow: none;
+    }
+    .device-screen { inset: 0; border-radius: 0; }
+    .notch { display: none; }
+    .device-label { display: none; }
+  }
+
+  /* ============ PLAYER AUTH ============ */
+  .auth-stage { min-height: 100vh; background: #0a0a0a; display: flex; align-items: center; justify-content: center; padding: 24px; position: relative; overflow: hidden; }
+  .auth-stage::before { content: ''; position: absolute; inset: 0; background-image: repeating-linear-gradient(45deg, transparent, transparent 39px, rgba(255,255,255,0.025) 39px, rgba(255,255,255,0.025) 40px); pointer-events: none; }
+  .auth-stage::after { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 0%, rgba(218,41,28,0.18) 0%, transparent 55%); pointer-events: none; }
+  .auth-phone { width: 390px; min-height: 780px; background: #181818; border-radius: 56px; border: 1px solid #303030; box-shadow: 0 60px 120px rgba(0,0,0,0.6), 0 0 0 12px #1f1f1f, 0 0 0 13px #303030; overflow: hidden; position: relative; flex-shrink: 0; z-index: 1; }
+  .auth-phone-screen { position: absolute; inset: 12px; background: #0d0d0d; border-radius: 44px; overflow: hidden; display: flex; flex-direction: column; }
+  .auth-phone .notch { position: absolute; top: 22px; left: 50%; transform: translateX(-50%); width: 110px; height: 32px; background: #000; border-radius: 20px; z-index: 100; }
+  @media (max-width: 900px) {
+    .auth-stage { padding: 0; background: #0d0d0d; }
+    .auth-stage::before, .auth-stage::after { display: none; }
+    .auth-phone { width: 100vw; min-height: 100vh; border-radius: 0; border: none; box-shadow: none; }
+    .auth-phone-screen { inset: 0; border-radius: 0; }
+    .auth-phone .notch { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" src="app-shared.jsx"></script>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+const ME = { id: 'me', name: 'You', email: 'you@sfu.ca', singles: 1612, doubles: 1538, sw: 16, sl: 15, dw: 12, dl: 12, rank: 6, status: 'competitive' };
+
+// ── Status bar ──────────────────────────────────────────────────────
+function StatusBar() {
+  return (
+    <div style={{
+      height: 50, padding: '14px 28px 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      flexShrink: 0, position: 'relative', zIndex: 60,
+    }}>
+      <span style={{ fontSize: 15, fontWeight: 600, fontFamily: 'JetBrains Mono, monospace' }}>9:41</span>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <svg width="17" height="11" viewBox="0 0 17 11" fill="none"><rect x="0" y="7" width="3" height="4" fill="#fff"/><rect x="4" y="5" width="3" height="6" fill="#fff"/><rect x="8" y="2" width="3" height="9" fill="#fff"/><rect x="12" y="0" width="3" height="11" fill="#fff" opacity="0.4"/></svg>
+        <svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M8 2c2 0 4 1 5 2.5l-1 1C11 4 9.5 3.5 8 3.5S5 4 4 5.5l-1-1C4 3 6 2 8 2zM8 6c1 0 2 0.5 2.5 1l-1 1c-.5-.5-1-.5-1.5-.5s-1 0-1.5.5l-1-1C6 6.5 7 6 8 6zM8 9.5l1.5 1.5L8 11l-1.5-1.5z" fill="#fff"/></svg>
+        <svg width="26" height="12" viewBox="0 0 26 12" fill="none"><rect x="0.5" y="0.5" width="22" height="11" rx="2.5" stroke="#fff" fill="none"/><rect x="2" y="2" width="18" height="8" rx="1" fill="#fff"/><rect x="23" y="3" width="2" height="6" rx="1" fill="#fff"/></svg>
+      </div>
+    </div>
+  );
+}
+
+// ── Reusable atoms ──────────────────────────────────────────────────
+function ScreenHeader({ eyebrow, title, action }) {
+  return (
+    <div style={{ padding: '8px 24px 20px', display: 'flex', alignItems: 'flex-end', gap: 16, animation: 'fadeUp 320ms ease both' }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {eyebrow && <Eyebrow>{eyebrow}</Eyebrow>}
+        <h1 style={{ fontSize: 32, fontWeight: 500, letterSpacing: '-0.6px', lineHeight: 1.05, marginTop: 6 }}>{title}</h1>
+      </div>
+      {action}
+    </div>
+  );
+}
+
+function Card({ children, padding = 20, style }) {
+  return <div style={{ background: '#222', border: '1px solid #303030', padding, ...style }}>{children}</div>;
+}
+
+// ── Home / Feed ─────────────────────────────────────────────────────
+function HomeScreen({ onChallenge, onMatch, onSession, onLeaderboard }) {
+  const upNext = SESSIONS[0];
+  const recentMatch = MATCHES[1];
+
+  return (
+    <React.Fragment>
+      {/* Hero — greeting + ELO */}
+      <section style={{
+        position: 'relative', overflow: 'hidden', flexShrink: 0,
+        background: '#181818',
+        padding: '20px 24px 24px', borderBottom: '1px solid #303030',
+        animation: 'fadeUp 360ms ease both',
+      }}>
+        {/* Subtle red atmospheric */}
+        <div style={{ position: 'absolute', top: -80, right: -80, width: 280, height: 280, background: 'radial-gradient(circle, rgba(218,41,28,0.16) 0%, transparent 65%)', pointerEvents: 'none' }} />
+
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Avatar name="Marcus Reid" size={36} />
+            <div>
+              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '1.4px', textTransform: 'uppercase', color: '#969696' }}>Good evening</div>
+              <div style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>Marcus</div>
+            </div>
+          </div>
+          <button style={{ width: 36, height: 36, background: 'transparent', border: '1px solid #303030', color: '#fff', cursor: 'pointer', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            <span style={{ position: 'absolute', top: 6, right: 6, width: 6, height: 6, background: '#da291c', animation: 'pulseDot 2s ease infinite' }}/>
+          </button>
+        </div>
+
+        {/* ELO display */}
+        <div style={{ position: 'relative', marginTop: 28 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '1.6px', textTransform: 'uppercase', color: '#da291c' }}>Singles ELO · Rank #{ME.rank}</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginTop: 4 }}>
+            <span style={{ fontSize: 56, fontWeight: 700, letterSpacing: '-1.5px', lineHeight: 1, fontFamily: 'JetBrains Mono, monospace' }}>{ME.singles}</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 700, color: '#03904a' }}>
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M5 1l4 6H1z"/></svg>
+              +18
+            </span>
+          </div>
+          <div style={{ fontSize: 11, color: '#969696', marginTop: 6, fontWeight: 500 }}>{ME.sw + ME.dw} wins · {ME.sw + ME.sl + ME.dw + ME.dl} matches · Season 02</div>
+        </div>
+
+        {/* Stat row */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 1, marginTop: 22, background: '#303030', border: '1px solid #303030' }}>
+          {[
+            { label: 'Doubles ELO', value: ME.doubles },
+            { label: 'Win Rate', value: `${Math.round((ME.sw + ME.dw) / (ME.sw + ME.sl + ME.dw + ME.dl) * 100)}%` },
+            { label: 'Streak', value: '+3' },
+          ].map(s => (
+            <div key={s.label} style={{ background: '#181818', padding: '12px 12px' }}>
+              <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '1.4px', textTransform: 'uppercase', color: '#969696' }}>{s.label}</div>
+              <div style={{ fontSize: 20, fontWeight: 700, lineHeight: 1.1, letterSpacing: '-0.3px', marginTop: 4, fontFamily: 'JetBrains Mono, monospace' }}>{s.value}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Quick actions */}
+      <section style={{ padding: '24px 24px 8px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <ActionTile
+            label="Challenge"
+            sub="Find an opponent"
+            onClick={onChallenge}
+            primary
+            icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg>}
+          />
+          <ActionTile
+            label="Log Match"
+            sub="Report a result"
+            onClick={onMatch}
+            icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>}
+          />
+        </div>
+      </section>
+
+      {/* Up next session */}
+      {upNext && (
+        <section style={{ padding: '12px 24px' }}>
+          <SectionLabel action="See all →" onAction={onSession}>Up Next</SectionLabel>
+          <button onClick={onSession} style={{ width: '100%', textAlign: 'left', background: '#222', border: '1px solid #303030', borderLeft: '3px solid #da291c', padding: 20, cursor: 'pointer', fontFamily: 'inherit', color: '#fff' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '1.6px', textTransform: 'uppercase', color: '#da291c' }}>{upNext.date.toUpperCase()}</span>
+              <span style={{ width: 3, height: 3, background: '#666', borderRadius: '50%' }}/>
+              <span style={{ fontSize: 10, color: '#969696', fontWeight: 600, letterSpacing: '1px' }}>{upNext.time}</span>
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: '-0.2px', lineHeight: 1.2 }}>{upNext.name}</div>
+            <div style={{ fontSize: 12, color: '#969696', marginTop: 4 }}>{upNext.court}</div>
+            <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ display: 'flex' }}>
+                  {PLAYERS.slice(0, 4).map((p, i) => (
+                    <div key={p.id} style={{ marginLeft: i === 0 ? 0 : -10, border: '2px solid #222' }}>
+                      <Avatar name={p.name} size={26} />
+                    </div>
+                  ))}
+                </div>
+                <span style={{ fontSize: 11, color: '#969696', fontWeight: 600, letterSpacing: '0.65px', textTransform: 'uppercase' }}>{upNext.going} of {upNext.capacity}</span>
+              </div>
+              <span style={{ background: '#da291c', color: '#fff', padding: '6px 14px', fontSize: 10, fontWeight: 700, letterSpacing: '1.4px', textTransform: 'uppercase' }}>RSVP</span>
+            </div>
+          </button>
+        </section>
+      )}
+
+      {/* Mini leaderboard */}
+      <section style={{ padding: '12px 24px' }}>
+        <SectionLabel action="Full board →" onAction={onLeaderboard}>Top 5 · Singles</SectionLabel>
+        <div style={{ background: '#222', border: '1px solid #303030' }}>
+          {PLAYERS.slice(0, 5).map((p, i) => (
+            <div key={p.id} style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, borderTop: i === 0 ? 'none' : '1px solid #303030' }}>
+              <span style={{ width: 22, fontSize: 13, fontWeight: 700, color: i < 3 ? '#da291c' : '#666', fontFamily: 'JetBrains Mono, monospace' }}>{p.rank}</span>
+              <Avatar name={p.name} size={32} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
+                <div style={{ fontSize: 10, color: '#666', letterSpacing: '0.65px', textTransform: 'uppercase', fontWeight: 600 }}>{p.sw}–{p.sl}</div>
+              </div>
+              <span style={{ fontSize: 14, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace' }}>{p.singles}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Latest result */}
+      <section style={{ padding: '12px 24px 24px' }}>
+        <SectionLabel>Latest Result</SectionLabel>
+        <Card padding={20}>
+          <Eyebrow color="#03904a">✓ Confirmed · {recentMatch.when}</Eyebrow>
+          <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 16 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifySelf: 'center' }}>
+              <Avatar name={recentMatch.a} size={48} />
+              <div style={{ fontSize: 12, fontWeight: 600, marginTop: 8, color: '#03904a', textAlign: 'center' }}>{recentMatch.a}</div>
+              <div style={{ fontSize: 9, color: '#969696', letterSpacing: '1.4px', textTransform: 'uppercase', fontWeight: 700, marginTop: 2, textAlign: 'center' }}>Winner</div>
+            </div>
+            <div style={{ fontSize: 28, fontWeight: 700, color: '#da291c', fontFamily: 'JetBrains Mono, monospace', alignSelf: 'center' }}>vs</div>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifySelf: 'center' }}>
+              <Avatar name={recentMatch.b} size={48} />
+              <div style={{ fontSize: 12, fontWeight: 600, marginTop: 8, color: '#fff', textAlign: 'center' }}>{recentMatch.b}</div>
+              <div style={{ fontSize: 9, color: '#969696', letterSpacing: '1.4px', textTransform: 'uppercase', fontWeight: 700, marginTop: 2, textAlign: 'center' }}>—</div>
+            </div>
+          </div>
+          <div style={{ marginTop: 16, padding: '10px 14px', background: '#181818', textAlign: 'center', fontSize: 14, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace', letterSpacing: '0.5px' }}>
+            {recentMatch.score}
+          </div>
+          <div style={{ marginTop: 12, fontSize: 10, color: '#969696', textAlign: 'center', letterSpacing: '0.65px', textTransform: 'uppercase', fontWeight: 600 }}>
+            {recentMatch.type} · ELO ±18
+          </div>
+        </Card>
+      </section>
+    </React.Fragment>
+  );
+}
+
+function ActionTile({ label, sub, icon, onClick, primary }) {
+  return (
+    <button onClick={onClick} style={{
+      background: primary ? '#da291c' : '#222',
+      border: primary ? 'none' : '1px solid #303030',
+      padding: '18px 16px', textAlign: 'left', cursor: 'pointer', color: '#fff', fontFamily: 'inherit',
+      display: 'flex', flexDirection: 'column', gap: 12, transition: 'background 120ms ease',
+    }}>
+      <div style={{ width: 36, height: 36, background: primary ? 'rgba(255,255,255,0.15)' : 'rgba(218,41,28,0.12)', color: primary ? '#fff' : '#da291c', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        {icon}
+      </div>
+      <div>
+        <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: '0.3px' }}>{label}</div>
+        <div style={{ fontSize: 11, color: primary ? 'rgba(255,255,255,0.7)' : '#969696', marginTop: 2, fontWeight: 500 }}>{sub}</div>
+      </div>
+    </button>
+  );
+}
+
+function SectionLabel({ children, action, onAction }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+      <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '1.6px', textTransform: 'uppercase', color: '#969696' }}>{children}</span>
+      {action && <button onClick={onAction} style={{ background: 'none', border: 'none', color: '#da291c', fontSize: 10, fontWeight: 700, letterSpacing: '1.4px', textTransform: 'uppercase', cursor: 'pointer', padding: 0 }}>{action}</button>}
+    </div>
+  );
+}
+
+// ── Leaderboard ─────────────────────────────────────────────────────
+function LeaderboardScreen() {
+  const [tab, setTab] = useState('singles');
+  const sorted = [...PLAYERS].filter(p => p.status !== 'pending').sort((a, b) => (b[tab] || 0) - (a[tab] || 0));
+
+  return (
+    <React.Fragment>
+      <ScreenHeader eyebrow="Season 02 · Spring 2026" title="Leaderboard" />
+
+      {/* Tabs */}
+      <div style={{ padding: '0 24px', marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0, border: '1px solid #303030' }}>
+          {['singles', 'doubles'].map(t => (
+            <button key={t} onClick={() => setTab(t)} style={{
+              padding: '12px', background: tab === t ? '#da291c' : 'transparent',
+              color: tab === t ? '#fff' : '#969696', border: 'none', cursor: 'pointer',
+              fontSize: 11, fontWeight: 700, letterSpacing: '1.4px', textTransform: 'uppercase',
+            }}>{t}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Podium */}
+      <div style={{ padding: '0 24px 8px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr 1fr', gap: 8, alignItems: 'end' }}>
+          {[sorted[1], sorted[0], sorted[2]].map((p, i) => {
+            const place = [2, 1, 3][i];
+            const h = [80, 110, 70][i];
+            return (
+              <div key={p.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', animation: `fadeUp 400ms ${i*80}ms ease both` }}>
+                <Avatar name={p.name} size={place === 1 ? 60 : 48} ring />
+                <div style={{ fontSize: place === 1 ? 14 : 12, fontWeight: 700, marginTop: 8, textAlign: 'center', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name.split(' ')[0]}</div>
+                <div style={{ fontSize: 11, color: '#969696', fontFamily: 'JetBrains Mono, monospace', fontWeight: 600, textAlign: 'center' }}>{p[tab]}</div>
+                <div style={{
+                  height: h, width: '100%', background: place === 1 ? '#da291c' : '#303030',
+                  marginTop: 8, display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+                  paddingTop: 12, color: place === 1 ? '#fff' : '#969696',
+                  fontSize: 28, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace',
+                }}>{place}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Rest of list */}
+      <div style={{ padding: '20px 24px 0' }}>
+        <SectionLabel>The rest</SectionLabel>
+        <div style={{ background: '#222', border: '1px solid #303030' }}>
+          {sorted.slice(3).map((p, i) => (
+            <div key={p.id} style={{ padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, borderTop: i === 0 ? 'none' : '1px solid #303030' }}>
+              <span style={{ width: 22, fontSize: 13, fontWeight: 700, color: '#666', fontFamily: 'JetBrains Mono, monospace' }}>{i + 4}</span>
+              <Avatar name={p.name} size={32} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{p.name}</div>
+                <div style={{ fontSize: 10, color: '#666', letterSpacing: '0.65px', textTransform: 'uppercase', fontWeight: 600, marginTop: 2 }}>{p[tab === 'singles' ? 'sw' : 'dw']}–{p[tab === 'singles' ? 'sl' : 'dl']}</div>
+              </div>
+              <span style={{ fontSize: 14, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace' }}>{p[tab]}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </React.Fragment>
+  );
+}
+
+// ── Challenges ──────────────────────────────────────────────────────
+function ChallengesScreen({ onChallenge }) {
+  const challenges = [
+    { id: 'c1', from: 'Tyler Ross',    type: 'Singles', when: 'Fri 7 PM',  status: 'incoming' },
+    { id: 'c2', from: 'Wei Liu',       type: 'Singles', when: 'Sat 2 PM',  status: 'incoming' },
+    { id: 'c3', from: 'You',           to: 'Jordan Park', type: 'Singles', when: 'Sun 6 PM',  status: 'sent' },
+    { id: 'c4', from: 'Priya / Connor', to: 'You / Jamie', type: 'Doubles', when: 'Mon 8 PM',  status: 'sent' },
+  ];
+  const recommended = PLAYERS.slice(2, 6);
+
+  return (
+    <React.Fragment>
+      <ScreenHeader
+        eyebrow="Compete"
+        title="Challenges"
+        action={<CTAButton size="sm" onClick={onChallenge}>+ New</CTAButton>}
+      />
+
+      {/* Incoming */}
+      <section style={{ padding: '0 24px 16px' }}>
+        <SectionLabel>Incoming · 2</SectionLabel>
+        {challenges.filter(c => c.status === 'incoming').map(c => (
+          <div key={c.id} style={{ background: '#222', border: '1px solid #303030', borderLeft: '3px solid #da291c', padding: 16, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Avatar name={c.from} size={44} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>{c.from}</div>
+              <div style={{ fontSize: 11, color: '#969696', marginTop: 2 }}>{c.type} · {c.when}</div>
+            </div>
+            <button style={{ width: 36, height: 36, background: '#da291c', border: 'none', color: '#fff', fontSize: 16, cursor: 'pointer' }}>✓</button>
+            <button style={{ width: 36, height: 36, background: 'transparent', border: '1px solid #303030', color: '#fff', fontSize: 16, cursor: 'pointer' }}>✕</button>
+          </div>
+        ))}
+      </section>
+
+      {/* Sent */}
+      <section style={{ padding: '0 24px 16px' }}>
+        <SectionLabel>Sent · 2</SectionLabel>
+        {challenges.filter(c => c.status === 'sent').map(c => (
+          <div key={c.id} style={{ background: '#222', border: '1px solid #303030', padding: 16, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Avatar name={c.to} size={44} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>{c.to}</div>
+              <div style={{ fontSize: 11, color: '#969696', marginTop: 2 }}>{c.type} · {c.when}</div>
+            </div>
+            <Pill color="#f59e0b" bg="rgba(245,158,11,0.12)" border="1px solid rgba(245,158,11,0.35)">Awaiting</Pill>
+          </div>
+        ))}
+      </section>
+
+      {/* Suggested */}
+      <section style={{ padding: '0 24px 24px' }}>
+        <SectionLabel>Suggested · Close to your ELO</SectionLabel>
+        <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 4 }} className="scroll">
+          {recommended.map(p => (
+            <div key={p.id} style={{
+              width: 160, flexShrink: 0,
+              background: '#222', border: '1px solid #303030',
+              padding: '20px 16px',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10,
+            }}>
+              <Avatar name={p.name} size={48} />
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, minHeight: 40, justifyContent: 'flex-start' }}>
+                <div style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.2, textAlign: 'center' }}>{p.name}</div>
+                <div style={{ fontSize: 10, color: '#969696', letterSpacing: '0.65px', textTransform: 'uppercase', fontWeight: 600, fontFamily: 'JetBrains Mono, monospace' }}>ELO {p.singles}</div>
+              </div>
+              <button onClick={onChallenge} style={{
+                width: '100%', height: 34, marginTop: 'auto',
+                background: 'transparent', border: '1px solid #da291c', color: '#da291c',
+                fontSize: 10, fontWeight: 700, letterSpacing: '1.4px', textTransform: 'uppercase',
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}>Challenge</button>
+            </div>
+          ))}
+        </div>
+      </section>
+    </React.Fragment>
+  );
+}
+
+// ── Sessions ────────────────────────────────────────────────────────
+function SessionsScreen() {
+  const [rsvp, setRsvp] = useState({});
+
+  return (
+    <React.Fragment>
+      <ScreenHeader eyebrow="Open Play & Drills" title="Sessions" />
+      <div style={{ padding: '0 24px 24px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {SESSIONS.map(s => {
+          const isGoing = rsvp[s.id];
+          return (
+            <div key={s.id} style={{ background: '#222', border: '1px solid #303030', borderLeft: s.status === 'featured' ? '3px solid #da291c' : '3px solid transparent', overflow: 'hidden' }}>
+              <div style={{ padding: 20, paddingLeft: s.status === 'featured' ? 17 : 20 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '1.6px', textTransform: 'uppercase', color: s.status === 'featured' ? '#da291c' : '#969696' }}>{s.date.toUpperCase()}</span>
+                  <span style={{ width: 3, height: 3, background: '#666', borderRadius: '50%' }}/>
+                  <span style={{ fontSize: 10, color: '#969696', fontWeight: 600, letterSpacing: '1px' }}>{s.time}</span>
+                  {s.status === 'featured' && <Pill color="#da291c" bg="rgba(218,41,28,0.12)" border="1px solid rgba(218,41,28,0.35)">Featured</Pill>}
+                </div>
+                <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: '-0.2px', lineHeight: 1.2 }}>{s.name}</div>
+                <div style={{ fontSize: 12, color: '#969696', marginTop: 4 }}>{s.court}</div>
+                {/* progress */}
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, fontWeight: 600, letterSpacing: '0.65px', textTransform: 'uppercase', color: '#969696', marginBottom: 6 }}>
+                    <span>{s.going + (isGoing ? 1 : 0)} / {s.capacity} going</span>
+                    <span>{Math.round((s.going + (isGoing ? 1 : 0)) / s.capacity * 100)}% full</span>
+                  </div>
+                  <div style={{ height: 4, background: '#181818', overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${(s.going + (isGoing ? 1 : 0)) / s.capacity * 100}%`, background: '#da291c', transition: 'width 240ms ease' }}/>
+                  </div>
+                </div>
+                <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ display: 'flex', flex: 1 }}>
+                    {PLAYERS.slice(0, 5).map((p, i) => (
+                      <div key={p.id} style={{ marginLeft: i === 0 ? 0 : -8, border: '2px solid #222' }}>
+                        <Avatar name={p.name} size={24} />
+                      </div>
+                    ))}
+                  </div>
+                  <button onClick={() => setRsvp(r => ({ ...r, [s.id]: !r[s.id] }))} style={{
+                    height: 36, padding: '0 16px',
+                    background: isGoing ? 'transparent' : '#da291c',
+                    color: isGoing ? '#03904a' : '#fff',
+                    border: isGoing ? '1px solid #03904a' : 'none',
+                    fontSize: 11, fontWeight: 700, letterSpacing: '1.4px', textTransform: 'uppercase', cursor: 'pointer',
+                  }}>{isGoing ? '✓ Going' : 'RSVP'}</button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </React.Fragment>
+  );
+}
+
+// ── Profile ─────────────────────────────────────────────────────────
+function ProfileScreen({ onOpenSettings }) {
+  const winrate = Math.round((ME.sw + ME.dw) / (ME.sw + ME.sl + ME.dw + ME.dl) * 100);
+  // Tiny trend chart points
+  const trend = [1540, 1560, 1555, 1580, 1595, 1612];
+  const max = Math.max(...trend), min = Math.min(...trend);
+  const points = trend.map((v, i) => `${(i / (trend.length - 1)) * 100},${100 - ((v - min) / (max - min)) * 100}`).join(' ');
+
+  return (
+    <React.Fragment>
+      {/* Hero */}
+      <section style={{
+        position: 'relative', overflow: 'hidden', flexShrink: 0,
+        background: 'linear-gradient(160deg, #1a1a1a 0%, #2a1410 50%, #181818 100%)',
+        padding: '24px 24px 28px', borderBottom: '1px solid #303030',
+      }}>
+        <div style={{ position: 'absolute', top: -40, right: -40, width: 240, height: 240, background: 'radial-gradient(circle, rgba(218,41,28,0.20) 0%, transparent 70%)' }}/>
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 16 }}>
+          <Avatar name="Marcus Reid" size={72} ring />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <Eyebrow>Member · #{ME.rank}</Eyebrow>
+            <h1 style={{ fontSize: 24, fontWeight: 500, letterSpacing: '-0.4px', marginTop: 4 }}>Marcus Reid</h1>
+            <div style={{ marginTop: 6 }}><StatusPill status={ME.status} /></div>
+          </div>
+        </div>
+      </section>
+
+      {/* ELO Trend */}
+      <section style={{ padding: '20px 24px 8px' }}>
+        <SectionLabel>Singles ELO · Last 6 matches</SectionLabel>
+        <div style={{ background: '#222', border: '1px solid #303030', padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
+            <span style={{ fontSize: 36, fontWeight: 700, letterSpacing: '-0.7px', fontFamily: 'JetBrains Mono, monospace' }}>{ME.singles}</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: '#03904a' }}>+72</span>
+            <span style={{ fontSize: 10, color: '#666', letterSpacing: '0.65px', textTransform: 'uppercase', fontWeight: 600, marginLeft: 'auto' }}>30 days</span>
+          </div>
+          <div style={{ position: 'relative', marginTop: 16 }}>
+            <svg width="100%" height="84" viewBox="0 0 100 100" preserveAspectRatio="none">
+              {/* grid */}
+              <line x1="0" y1="25" x2="100" y2="25" stroke="#303030" strokeWidth="0.5" strokeDasharray="1,2" vectorEffect="non-scaling-stroke" />
+              <line x1="0" y1="75" x2="100" y2="75" stroke="#303030" strokeWidth="0.5" strokeDasharray="1,2" vectorEffect="non-scaling-stroke" />
+              <polyline points={`0,100 ${points} 100,100`} fill="rgba(218,41,28,0.12)" />
+              <polyline points={points} fill="none" stroke="#da291c" strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            {/* end dot */}
+            <div style={{ position: 'absolute', right: 0, top: 0, width: 8, height: 8, background: '#da291c', boxShadow: '0 0 0 3px rgba(218,41,28,0.25)', transform: 'translate(50%, -50%)' }} />
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10, fontSize: 9, color: '#666', fontWeight: 600, letterSpacing: '1px', textTransform: 'uppercase', fontFamily: 'JetBrains Mono, monospace' }}>
+            {trend.map((v, i) => <span key={i}>M{i + 1}</span>)}
+          </div>
+        </div>
+      </section>
+
+      {/* Stat grid */}
+      <section style={{ padding: '12px 24px' }}>
+        <SectionLabel>Season stats</SectionLabel>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, background: '#303030', border: '1px solid #303030' }}>
+          {[
+            { label: 'Singles ELO', value: ME.singles },
+            { label: 'Doubles ELO', value: ME.doubles },
+            { label: 'Singles W/L', value: `${ME.sw}–${ME.sl}` },
+            { label: 'Doubles W/L', value: `${ME.dw}–${ME.dl}` },
+            { label: 'Win Rate',    value: `${winrate}%` },
+            { label: 'Streak',      value: '+3' },
+          ].map(s => (
+            <div key={s.label} style={{ background: '#222', padding: '16px 18px' }}>
+              <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '1.4px', textTransform: 'uppercase', color: '#969696' }}>{s.label}</div>
+              <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.1, letterSpacing: '-0.3px', marginTop: 6, fontFamily: 'JetBrains Mono, monospace' }}>{s.value}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Settings list */}
+      <section style={{ padding: '12px 24px 24px' }}>
+        <SectionLabel>Account</SectionLabel>
+        <div style={{ background: '#222', border: '1px solid #303030' }}>
+          {[
+            { label: 'Edit Profile', view: 'profile' },
+            { label: 'Notifications', view: 'notifications', badge: '3' },
+            { label: 'Match Preferences', view: 'matches' },
+            { label: 'Privacy & Visibility', view: 'privacy' },
+            { label: 'Help & Feedback', view: 'help' },
+            { label: 'Sign Out', view: 'signout', danger: true },
+          ].map((item, i, arr) => (
+            <button key={item.label} onClick={() => onOpenSettings && onOpenSettings(item.view)} style={{
+              width: '100%', padding: '16px 18px', textAlign: 'left',
+              background: 'transparent', border: 'none', borderTop: i === 0 ? 'none' : '1px solid #303030',
+              color: item.danger ? '#da291c' : '#fff',
+              fontFamily: 'inherit', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+            }}>
+              <span>{item.label}</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                {item.badge && <span style={{ background: '#da291c', color: '#fff', fontSize: 9, fontWeight: 700, padding: '2px 6px', letterSpacing: '0.5px' }}>{item.badge}</span>}
+                <span style={{ color: '#666', fontSize: 18 }}>›</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </section>
+    </React.Fragment>
+  );
+}
+
+// ── Settings sub-screens ───────────────────────────────────────────
+function SettingsToggle({ on, onChange }) {
+  return (
+    <button onClick={onChange} style={{
+      width: 44, height: 26, background: on ? 'rgba(218,41,28,0.15)' : '#1a1a1a',
+      border: on ? '1px solid #da291c' : '1px solid #303030',
+      position: 'relative', cursor: 'pointer', flexShrink: 0, padding: 0,
+      transition: 'all 150ms',
+    }} aria-pressed={on}>
+      <span style={{
+        position: 'absolute', top: 2, left: on ? 22 : 2, width: 18, height: 18,
+        background: on ? '#da291c' : '#666', transition: 'all 150ms',
+      }}/>
+    </button>
+  );
+}
+
+function SettingsRow({ label, hint, children, onClick, value }) {
+  return (
+    <div onClick={onClick} style={{
+      padding: '16px 18px', borderTop: '1px solid #303030',
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16,
+      cursor: onClick ? 'pointer' : 'default',
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{label}</div>
+        {hint && <div style={{ fontSize: 11, color: '#969696', marginTop: 4, lineHeight: 1.4 }}>{hint}</div>}
+      </div>
+      {children !== undefined ? children : (value !== undefined ? (
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 12, color: '#969696', fontFamily: 'JetBrains Mono, monospace' }}>{value}</span>
+          <span style={{ color: '#666', fontSize: 18 }}>›</span>
+        </span>
+      ) : null)}
+    </div>
+  );
+}
+
+function SettingsGroup({ children }) {
+  const arr = React.Children.toArray(children).filter(Boolean);
+  return (
+    <div style={{ background: '#222', border: '1px solid #303030', marginBottom: 20 }}>
+      {arr.map((child, i) =>
+        i === 0 ? React.cloneElement(child, { style: { ...((child.props && child.props.style) || {}), borderTop: 'none' }, key: i }) : React.cloneElement(child, { key: i })
+      )}
+    </div>
+  );
+}
+
+function NotificationsSettings() {
+  const [push, setPush] = useState({ challenges: true, matches: true, sessions: false, weekly: true, league: true });
+  const [email, setEmail] = useState({ recap: true, season: true, marketing: false });
+  const tp = (k) => setPush({ ...push, [k]: !push[k] });
+  const te = (k) => setEmail({ ...email, [k]: !email[k] });
+  return (
+    <React.Fragment>
+      <div style={{ padding: '20px 24px 8px' }}>
+        <SectionLabel>Push notifications</SectionLabel>
+        <SettingsGroup>
+          <SettingsRow label="New challenge" hint="When someone challenges you to a match."><SettingsToggle on={push.challenges} onChange={() => tp('challenges')} /></SettingsRow>
+          <SettingsRow label="Match result" hint="When an opponent confirms a score."><SettingsToggle on={push.matches} onChange={() => tp('matches')} /></SettingsRow>
+          <SettingsRow label="Session reminders" hint="Two hours before a session you're registered for."><SettingsToggle on={push.sessions} onChange={() => tp('sessions')} /></SettingsRow>
+          <SettingsRow label="Weekly recap" hint="Sunday evening summary of your matches."><SettingsToggle on={push.weekly} onChange={() => tp('weekly')} /></SettingsRow>
+          <SettingsRow label="League announcements" hint="Pinned posts from club admins."><SettingsToggle on={push.league} onChange={() => tp('league')} /></SettingsRow>
+        </SettingsGroup>
+      </div>
+      <div style={{ padding: '0 24px 24px' }}>
+        <SectionLabel>Email</SectionLabel>
+        <SettingsGroup>
+          <SettingsRow label="Weekly recap" hint="Top movers, biggest upsets, your week's results."><SettingsToggle on={email.recap} onChange={() => te('recap')} /></SettingsRow>
+          <SettingsRow label="Season updates" hint="Mid-season recaps and end-of-season standings."><SettingsToggle on={email.season} onChange={() => te('season')} /></SettingsRow>
+          <SettingsRow label="Tournaments & events" hint="Special events, doubles leagues, social play."><SettingsToggle on={email.marketing} onChange={() => te('marketing')} /></SettingsRow>
+        </SettingsGroup>
+        <div style={{ fontSize: 11, color: '#666', lineHeight: 1.5 }}>You'll always receive critical account notices (sign-in alerts, dispute outcomes) regardless of these settings.</div>
+      </div>
+    </React.Fragment>
+  );
+}
+
+function ProfileSettings() {
+  return (
+    <div style={{ padding: '20px 24px 24px' }}>
+      <SectionLabel>Identity</SectionLabel>
+      <SettingsGroup>
+        <SettingsRow label="Display Name" value="Marcus Reid" onClick={() => {}} />
+        <SettingsRow label="Handle" value="@mreid" onClick={() => {}} />
+        <SettingsRow label="Email" value="mreid@sfu.ca" onClick={() => {}} />
+        <SettingsRow label="Phone" value="+1 (604) ••••" onClick={() => {}} />
+      </SettingsGroup>
+      <SectionLabel>Photo & bio</SectionLabel>
+      <div style={{ background: '#222', border: '1px solid #303030', padding: 20, marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
+          <Avatar name="Marcus Reid" size={64} ring />
+          <button style={{ background: 'transparent', border: '1px solid #303030', color: '#fff', padding: '8px 14px', fontSize: 11, fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase', cursor: 'pointer' }}>Change photo</button>
+        </div>
+        <textarea defaultValue="Engineering student. Left-handed. Doubles partner welcome." style={{ width: '100%', minHeight: 72, background: '#1a1a1a', border: '1px solid #303030', color: '#fff', padding: 10, fontSize: 13, fontFamily: 'inherit', resize: 'vertical', boxSizing: 'border-box' }} />
+      </div>
+      <SectionLabel>Playing details</SectionLabel>
+      <SettingsGroup>
+        <SettingsRow label="Dominant Hand" value="Left" onClick={() => {}} />
+        <SettingsRow label="Years Playing" value="6" onClick={() => {}} />
+        <SettingsRow label="Favourite Shot" value="Backhand smash" onClick={() => {}} />
+      </SettingsGroup>
+    </div>
+  );
+}
+
+function MatchSettings() {
+  const [autoAccept, setAutoAccept] = useState(false);
+  const [doubles, setDoubles] = useState(true);
+  const [crossSkill, setCrossSkill] = useState(true);
+  const [reminders, setReminders] = useState(true);
+  return (
+    <React.Fragment>
+      <div style={{ padding: '20px 24px 8px' }}>
+        <SectionLabel>Availability</SectionLabel>
+        <SettingsGroup>
+          <SettingsRow label="Available days" value="Mon – Fri" onClick={() => {}} />
+          <SettingsRow label="Available hours" value="5 PM – 10 PM" onClick={() => {}} />
+          <SettingsRow label="Home court" value="SFU Burnaby" onClick={() => {}} />
+        </SettingsGroup>
+      </div>
+      <div style={{ padding: '0 24px 8px' }}>
+        <SectionLabel>Challenge preferences</SectionLabel>
+        <SettingsGroup>
+          <SettingsRow label="Auto-accept challenges" hint="Within your skill bracket and available hours."><SettingsToggle on={autoAccept} onChange={() => setAutoAccept(!autoAccept)} /></SettingsRow>
+          <SettingsRow label="Open to doubles" hint="Show you in the doubles partner pool."><SettingsToggle on={doubles} onChange={() => setDoubles(!doubles)} /></SettingsRow>
+          <SettingsRow label="Cross-skill matches" hint="Allow challenges from players >200 ELO away."><SettingsToggle on={crossSkill} onChange={() => setCrossSkill(!crossSkill)} /></SettingsRow>
+        </SettingsGroup>
+      </div>
+      <div style={{ padding: '0 24px 24px' }}>
+        <SectionLabel>Match logging</SectionLabel>
+        <SettingsGroup>
+          <SettingsRow label="Default match type" value="Singles" onClick={() => {}} />
+          <SettingsRow label="Score format" value="Best of 3 to 21" onClick={() => {}} />
+          <SettingsRow label="Submission reminders" hint="Nudge me to log scheduled matches."><SettingsToggle on={reminders} onChange={() => setReminders(!reminders)} /></SettingsRow>
+        </SettingsGroup>
+      </div>
+    </React.Fragment>
+  );
+}
+
+function PrivacySettings() {
+  const [showRecord, setShowRecord] = useState(true);
+  const [showHistory, setShowHistory] = useState(true);
+  const [appearLeaderboard, setAppearLeaderboard] = useState(true);
+  const [discoverable, setDiscoverable] = useState(true);
+  return (
+    <React.Fragment>
+      <div style={{ padding: '20px 24px 8px' }}>
+        <SectionLabel>Profile visibility</SectionLabel>
+        <SettingsGroup>
+          <SettingsRow label="Show on leaderboard" hint="Your rank and ELO are visible to all players."><SettingsToggle on={appearLeaderboard} onChange={() => setAppearLeaderboard(!appearLeaderboard)} /></SettingsRow>
+          <SettingsRow label="Show win/loss record" hint="Other players can see your detailed record."><SettingsToggle on={showRecord} onChange={() => setShowRecord(!showRecord)} /></SettingsRow>
+          <SettingsRow label="Show match history" hint="Last 10 matches are visible on your profile."><SettingsToggle on={showHistory} onChange={() => setShowHistory(!showHistory)} /></SettingsRow>
+          <SettingsRow label="Discoverable" hint="Appear in player search and challenge suggestions."><SettingsToggle on={discoverable} onChange={() => setDiscoverable(!discoverable)} /></SettingsRow>
+        </SettingsGroup>
+      </div>
+      <div style={{ padding: '0 24px 8px' }}>
+        <SectionLabel>Blocked players</SectionLabel>
+        <div style={{ background: '#222', border: '1px solid #303030', padding: 20, marginBottom: 20, textAlign: 'center', fontSize: 12, color: '#969696' }}>You haven't blocked anyone.</div>
+      </div>
+      <div style={{ padding: '0 24px 24px' }}>
+        <SectionLabel>Data</SectionLabel>
+        <SettingsGroup>
+          <SettingsRow label="Download my data" hint="Export every match, every score, every rating change."><span style={{ color: '#666', fontSize: 18 }}>›</span></SettingsRow>
+          <SettingsRow label="Delete account" hint="Removes you from the ladder. Match history is anonymized."><span style={{ color: '#da291c', fontSize: 11, fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase' }}>Delete</span></SettingsRow>
+        </SettingsGroup>
+      </div>
+    </React.Fragment>
+  );
+}
+
+function HelpSettings() {
+  return (
+    <div style={{ padding: '20px 24px 24px' }}>
+      <SectionLabel>Get help</SectionLabel>
+      <SettingsGroup>
+        <SettingsRow label="How ELO works" onClick={() => {}}><span style={{ color: '#666', fontSize: 18 }}>›</span></SettingsRow>
+        <SettingsRow label="Match dispute process" onClick={() => {}}><span style={{ color: '#666', fontSize: 18 }}>›</span></SettingsRow>
+        <SettingsRow label="Court etiquette" onClick={() => {}}><span style={{ color: '#666', fontSize: 18 }}>›</span></SettingsRow>
+        <SettingsRow label="FAQ" onClick={() => {}}><span style={{ color: '#666', fontSize: 18 }}>›</span></SettingsRow>
+      </SettingsGroup>
+      <SectionLabel>Contact</SectionLabel>
+      <SettingsGroup>
+        <SettingsRow label="Message a club admin" hint="Average response time: 4 hours."><span style={{ color: '#666', fontSize: 18 }}>›</span></SettingsRow>
+        <SettingsRow label="Report a bug" onClick={() => {}}><span style={{ color: '#666', fontSize: 18 }}>›</span></SettingsRow>
+        <SettingsRow label="Suggest a feature" onClick={() => {}}><span style={{ color: '#666', fontSize: 18 }}>›</span></SettingsRow>
+      </SettingsGroup>
+      <div style={{ background: '#1a1a1a', border: '1px solid #303030', padding: 20 }}>
+        <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '1.4px', textTransform: 'uppercase', color: '#666' }}>App version</div>
+        <div style={{ fontSize: 14, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace', marginTop: 6 }}>2.4.1 · build 4287</div>
+        <div style={{ fontSize: 11, color: '#969696', marginTop: 8 }}>Tap version number 7 times to enable developer settings.</div>
+      </div>
+    </div>
+  );
+}
+
+function SignOutSettings({ onCancel }) {
+  return (
+    <div style={{ padding: '40px 24px 24px', textAlign: 'center' }}>
+      <div style={{ width: 56, height: 56, margin: '0 auto', background: 'rgba(218,41,28,0.10)', border: '1px solid rgba(218,41,28,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32, color: '#da291c', fontFamily: 'JetBrains Mono, monospace' }}>×</div>
+      <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.4px', marginTop: 18 }}>Sign out?</div>
+      <div style={{ fontSize: 13, color: '#969696', marginTop: 10, lineHeight: 1.5, maxWidth: 280, margin: '10px auto 0' }}>You'll need to sign in again to log matches, accept challenges, or check the leaderboard.</div>
+      <div style={{ marginTop: 28, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <CTAButton size="lg" full onClick={() => window.dispatchEvent(new Event('player:signout'))}>Sign Out</CTAButton>
+        <CTAButton variant="ghost" size="md" full onClick={onCancel}>Cancel</CTAButton>
+      </div>
+    </div>
+  );
+}
+
+const SETTINGS_TITLES = {
+  profile: 'Edit Profile',
+  notifications: 'Notifications',
+  matches: 'Match Preferences',
+  privacy: 'Privacy & Visibility',
+  help: 'Help & Feedback',
+  signout: 'Sign Out',
+};
+
+function SettingsScreen({ view, onBack }) {
+  return (
+    <React.Fragment>
+      <section style={{
+        position: 'sticky', top: 0, zIndex: 10, background: '#181818', borderBottom: '1px solid #303030',
+        padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 10,
+      }}>
+        <button onClick={onBack} style={{
+          background: 'transparent', border: 'none', color: '#fff',
+          fontSize: 26, lineHeight: 1, cursor: 'pointer', padding: '0 8px', fontFamily: 'inherit',
+        }} aria-label="Back">‹</button>
+        <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.2px' }}>{SETTINGS_TITLES[view] || 'Settings'}</div>
+      </section>
+      {view === 'profile' && <ProfileSettings />}
+      {view === 'notifications' && <NotificationsSettings />}
+      {view === 'matches' && <MatchSettings />}
+      {view === 'privacy' && <PrivacySettings />}
+      {view === 'help' && <HelpSettings />}
+      {view === 'signout' && <SignOutSettings onCancel={onBack} />}
+    </React.Fragment>
+  );
+}
+
+// ── Bottom Tab Bar ─────────────────────────────────────────────────
+const TABS = [
+  { id: 'home',        label: 'Home',     icon: 'home' },
+  { id: 'leaderboard', label: 'Ranks',    icon: 'trophy' },
+  { id: 'challenges',  label: 'Challenge',icon: 'swords', primary: true, badge: 2 },
+  { id: 'sessions',    label: 'Sessions', icon: 'calendar' },
+  { id: 'profile',     label: 'Profile',  icon: 'user' },
+];
+
+function TabIcon({ name, active }) {
+  const c = active ? '#fff' : '#666';
+  if (name === 'home')     return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>;
+  if (name === 'trophy')   return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2z"/></svg>;
+  if (name === 'swords')   return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><polyline points="14.5 17.5 3 6 3 3 6 3 17.5 14.5"/><line x1="13" y1="19" x2="19" y2="13"/><line x1="16" y1="16" x2="20" y2="20"/><line x1="19" y1="21" x2="21" y2="19"/><polyline points="14.5 6.5 18 3 21 3 21 6 17.5 9.5"/><line x1="5" y1="14" x2="9" y2="18"/><line x1="7" y1="17" x2="4" y2="20"/><line x1="3" y1="19" x2="5" y2="21"/></svg>;
+  if (name === 'calendar') return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>;
+  if (name === 'user')     return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>;
+  return null;
+}
+
+function TabBar({ active, onChange }) {
+  return (
+    <nav style={{
+      flexShrink: 0, borderTop: '1px solid #303030',
+      background: '#181818',
+      padding: '8px 8px calc(8px + env(safe-area-inset-bottom, 14px)) 8px',
+      display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)',
+      position: 'relative', zIndex: 50,
+    }}>
+      {TABS.map(t => {
+        const isActive = active === t.id;
+        if (t.primary) {
+          return (
+            <button key={t.id} onClick={() => onChange(t.id)} style={{
+              background: 'transparent', border: 'none', cursor: 'pointer', padding: '8px 0',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, position: 'relative',
+            }}>
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <ShuttleMark size={20} color={isActive ? '#da291c' : '#666'} />
+                {t.badge && (
+                  <span style={{ position: 'absolute', top: -6, right: -10, minWidth: 16, height: 16, padding: '0 4px', background: '#da291c', color: '#fff', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid #181818' }}>{t.badge}</span>
+                )}
+              </div>
+              <span style={{ fontSize: 9, fontWeight: 700, color: isActive ? '#da291c' : '#666', letterSpacing: '1.4px', textTransform: 'uppercase' }}>{t.label}</span>
+            </button>
+          );
+        }
+        return (
+          <button key={t.id} onClick={() => onChange(t.id)} style={{
+            background: 'transparent', border: 'none', cursor: 'pointer', padding: '8px 0',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+          }}>
+            <TabIcon name={t.icon} active={isActive} />
+            <span style={{ fontSize: 9, fontWeight: 700, color: isActive ? '#fff' : '#666', letterSpacing: '1.4px', textTransform: 'uppercase' }}>{t.label}</span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+// ── Challenge sheet (modal) ─────────────────────────────────────────
+function ChallengeSheet({ open, onClose }) {
+  const [opp, setOpp] = useState(null);
+  const [type, setType] = useState('Singles');
+  const [step, setStep] = useState(0);
+
+  useEffect(() => {
+    if (!open) { setOpp(null); setStep(0); setType('Singles'); }
+  }, [open]);
+
+  if (!open) return null;
+  const candidates = PLAYERS.filter(p => p.status !== 'pending').slice(0, 8);
+
+  return (
+    <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200, display: 'flex', alignItems: 'flex-end', animation: 'fadeIn 200ms ease both' }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: '100%', background: '#181818', borderTop: '1px solid #303030', maxHeight: '90%', display: 'flex', flexDirection: 'column', animation: 'slideUp 280ms ease both' }}>
+        <div style={{ padding: '16px 24px', borderBottom: '1px solid #303030', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ flex: 1 }}>
+            <Eyebrow>Step {step + 1} of 2</Eyebrow>
+            <div style={{ fontSize: 18, fontWeight: 600, marginTop: 4 }}>{step === 0 ? 'Choose opponent' : 'Confirm challenge'}</div>
+          </div>
+          <button onClick={onClose} style={{ width: 36, height: 36, background: 'transparent', border: '1px solid #303030', color: '#fff', fontSize: 18, cursor: 'pointer' }}>×</button>
+        </div>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }}>
+          {step === 0 ? (
+            <React.Fragment>
+              <input placeholder="SEARCH PLAYERS" style={{ width: '100%', height: 44, background: '#222', border: '1px solid #303030', color: '#fff', padding: '0 14px', fontSize: 12, fontWeight: 600, letterSpacing: '0.65px', textTransform: 'uppercase', marginBottom: 16 }} />
+              <div style={{ background: '#222', border: '1px solid #303030' }}>
+                {candidates.map((p, i) => (
+                  <button key={p.id} onClick={() => { setOpp(p); setStep(1); }} style={{
+                    width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', borderTop: i === 0 ? 'none' : '1px solid #303030',
+                    color: '#fff', fontFamily: 'inherit', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left',
+                  }}>
+                    <Avatar name={p.name} size={36} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{p.name}</div>
+                      <div style={{ fontSize: 10, color: '#666', letterSpacing: '0.65px', textTransform: 'uppercase', fontWeight: 600 }}>ELO {p.singles}</div>
+                    </div>
+                    <span style={{ color: '#666', fontSize: 18 }}>›</span>
+                  </button>
+                ))}
+              </div>
+            </React.Fragment>
+          ) : (
+            <React.Fragment>
+              <div style={{ background: '#222', border: '1px solid #303030', borderLeft: '3px solid #da291c', padding: 24, marginBottom: 20, textAlign: 'center' }}>
+                <Avatar name={opp.name} size={64} ring />
+                <div style={{ fontSize: 18, fontWeight: 700, marginTop: 12 }}>{opp.name}</div>
+                <div style={{ fontSize: 11, color: '#969696', letterSpacing: '0.65px', textTransform: 'uppercase', fontWeight: 600, marginTop: 2 }}>ELO {opp.singles}</div>
+              </div>
+              <SectionLabel>Match Type</SectionLabel>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 20 }}>
+                {['Singles', 'Doubles'].map(t => (
+                  <button key={t} onClick={() => setType(t)} style={{
+                    padding: '14px', background: type === t ? '#da291c' : '#222',
+                    color: '#fff', border: type === t ? 'none' : '1px solid #303030',
+                    fontSize: 12, fontWeight: 700, letterSpacing: '1.4px', textTransform: 'uppercase', cursor: 'pointer',
+                  }}>{t}</button>
+                ))}
+              </div>
+              <CTAButton size="lg" full onClick={onClose}>Send Challenge →</CTAButton>
+              <div style={{ height: 12 }}/>
+              <CTAButton variant="ghost" size="md" full onClick={() => setStep(0)}>← Choose someone else</CTAButton>
+            </React.Fragment>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── App shell ───────────────────────────────────────────────────────
+function PlayerApp({ initialTab = 'home', label, aux, side, onFocus }) {
+  const [tab, setTab] = useState(initialTab);
+  const [sheet, setSheet] = useState(false);
+  const [settings, setSettings] = useState(null);
+  const scrollRef = useRef(null);
+
+  // Reset scroll on tab change
+  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = 0; }, [tab, settings]);
+
+  const onChallenge = () => setSheet(true);
+  const onMatch = () => alert('Log Match — coming soon');
+  const goSession = () => setTab('sessions');
+  const goLeaderboard = () => setTab('leaderboard');
+  const openSettings = (view) => setSettings(view);
+  const closeSettings = () => setSettings(null);
+
+  const className = aux ? `device aux ${side || ''}` : 'device';
+  return (
+    <div className={className} onClick={aux && onFocus ? () => onFocus(initialTab) : undefined}>
+      <div className="notch" />
+      <div className="device-screen">
+        <StatusBar />
+        <div ref={scrollRef} className="scroll" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+          {settings ? (
+            <SettingsScreen view={settings} onBack={closeSettings} />
+          ) : (
+            <React.Fragment>
+              {tab === 'home'        && <HomeScreen onChallenge={onChallenge} onMatch={onMatch} onSession={goSession} onLeaderboard={goLeaderboard} />}
+              {tab === 'leaderboard' && <LeaderboardScreen />}
+              {tab === 'challenges'  && <ChallengesScreen onChallenge={onChallenge} />}
+              {tab === 'sessions'    && <SessionsScreen />}
+              {tab === 'profile'     && <ProfileScreen onOpenSettings={openSettings} />}
+              <div style={{ height: 24 }}/>
+            </React.Fragment>
+          )}
+        </div>
+        <TabBar active={tab} onChange={aux ? () => {} : (t) => { setSettings(null); setTab(t); }} />
+        <ChallengeSheet open={sheet} onClose={() => setSheet(false)} />
+      </div>
+      {label && <div className="device-label">{label}</div>}
+    </div>
+  );
+}
+
+// ── Auth flow ───────────────────────────────────────────────────────
+function AuthShell({ children, progress }) {
+  return (
+    <div className="auth-stage">
+      <div className="auth-phone">
+        <div className="notch"></div>
+        <div className="auth-phone-screen">
+          <StatusBar />
+          {progress != null && (
+            <div style={{ height: 2, background: '#1a1a1a', position: 'relative' }}>
+              <div style={{ position: 'absolute', top: 0, left: 0, height: 2, width: progress + '%', background: '#da291c', transition: 'width 280ms cubic-bezier(0.2,0.8,0.2,1)' }} />
+            </div>
+          )}
+          <div className="scroll" style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+            {children}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AuthField({ label, value, onChange, type = 'text', placeholder, error, autoFocus, hint }) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '1.5px', textTransform: 'uppercase', color: error ? '#da291c' : '#666', marginBottom: 6 }}>{label}</div>
+      <input
+        type={type} value={value} onChange={e => onChange(e.target.value)}
+        placeholder={placeholder} autoFocus={autoFocus}
+        onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+        style={{
+          width: '100%', background: '#181818',
+          border: '1px solid', borderColor: error ? '#da291c' : focused ? '#da291c' : '#303030',
+          color: '#fff', fontSize: 14, fontWeight: 500, padding: '13px 14px',
+          transition: 'border-color 150ms',
+        }}
+      />
+      {hint && !error && <div style={{ fontSize: 10, color: '#666', marginTop: 6, lineHeight: 1.5 }}>{hint}</div>}
+      {error && <div style={{ fontSize: 10, color: '#da291c', marginTop: 6, fontWeight: 600, letterSpacing: '0.04em' }}>↑ {error}</div>}
+    </div>
+  );
+}
+
+function AuthHeader({ eyebrow, title, sub, onBack }) {
+  return (
+    <div style={{ padding: '28px 24px 0' }}>
+      {onBack && (
+        <button onClick={onBack} style={{ background: 'transparent', border: 0, color: '#969696', fontSize: 12, fontWeight: 600, letterSpacing: '0.06em', padding: 0, marginBottom: 22, cursor: 'pointer' }}>← Back</button>
+      )}
+      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '2.4px', textTransform: 'uppercase', color: '#da291c' }}>{eyebrow}</div>
+      <div style={{ fontSize: 32, fontWeight: 700, letterSpacing: '-0.8px', lineHeight: 1.05, marginTop: 8 }}>{title}</div>
+      {sub && <div style={{ fontSize: 13, color: '#969696', lineHeight: 1.55, marginTop: 14 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function AuthFlow({ onComplete }) {
+  const [view, setView] = useState('signin'); // signin | forgot | sent | signup
+  const [step, setStep] = useState(0);
+  const [signinEmail, setSigninEmail] = useState('');
+  const [signinPass, setSigninPass] = useState('');
+  const [signinErr, setSigninErr] = useState({});
+  const [showPass, setShowPass] = useState(false);
+
+  const [data, setData] = useState({
+    email: '', password: '', name: '', studentId: '', skill: '', plays: '', goal: '', notif: true,
+  });
+  const setD = (k, v) => setData(d => ({ ...d, [k]: v }));
+  const [stepErr, setStepErr] = useState({});
+  const [forgotEmail, setForgotEmail] = useState('');
+
+  const handleSignin = () => {
+    const errs = {};
+    if (!signinEmail.trim()) errs.email = 'Required';
+    else if (!/.+@.+\..+/.test(signinEmail)) errs.email = 'Invalid email';
+    if (!signinPass) errs.password = 'Required';
+    setSigninErr(errs);
+    if (Object.keys(errs).length === 0) onComplete();
+  };
+
+  const validateStep = () => {
+    const errs = {};
+    if (step === 1) {
+      if (!data.email.trim()) errs.email = 'Required';
+      else if (!/.+@sfu\.ca$/i.test(data.email.trim())) errs.email = 'Must be a @sfu.ca email';
+      if (!data.password) errs.password = 'Required';
+      else if (data.password.length < 8) errs.password = 'At least 8 characters';
+    }
+    if (step === 2) {
+      if (!data.name.trim()) errs.name = 'Required';
+      if (!data.studentId.trim()) errs.studentId = 'Required';
+      else if (!/^\d{9}$/.test(data.studentId.trim())) errs.studentId = '9-digit SFU ID';
+    }
+    if (step === 3 && !data.skill) errs.skill = 'Pick one';
+    if (step === 4 && !data.plays) errs.plays = 'Pick one';
+    setStepErr(errs);
+    return Object.keys(errs).length === 0;
+  };
+
+  const next = () => { if (validateStep()) { setStep(s => s + 1); setStepErr({}); } };
+  const back = () => { setStep(s => s - 1); setStepErr({}); };
+
+  // ── SIGN IN ────────────────────────────────────────────────────
+  if (view === 'signin') {
+    return (
+      <AuthShell>
+        <div style={{ flex: 1, padding: '36px 24px 28px', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 36 }}>
+            <ShuttleMark size={22} color="#da291c" />
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '2.5px', textTransform: 'uppercase', color: '#da291c' }}>SFU Badminton</span>
+          </div>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '2.4px', textTransform: 'uppercase', color: '#da291c' }}>Welcome back</div>
+          <div style={{ fontSize: 36, fontWeight: 700, letterSpacing: '-1.2px', lineHeight: 1, marginTop: 8 }}>Pick up<br/>where you left.</div>
+          <div style={{ fontSize: 13, color: '#969696', lineHeight: 1.55, marginTop: 14, marginBottom: 32 }}>Sign in to log matches, accept challenges, and check your ELO.</div>
+
+          <AuthField label="SFU Email" type="email" value={signinEmail} onChange={setSigninEmail} placeholder="you@sfu.ca" error={signinErr.email} autoFocus />
+          <div style={{ marginBottom: 18, position: 'relative' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+              <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '1.5px', textTransform: 'uppercase', color: signinErr.password ? '#da291c' : '#666' }}>Password</div>
+              <button onClick={() => setView('forgot')} style={{ background: 'transparent', border: 0, color: '#969696', fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', cursor: 'pointer', padding: 0 }}>Forgot?</button>
+            </div>
+            <input type={showPass ? 'text' : 'password'} value={signinPass} onChange={e => setSigninPass(e.target.value)} placeholder="••••••••" style={{ width: '100%', background: '#181818', border: '1px solid ' + (signinErr.password ? '#da291c' : '#303030'), color: '#fff', fontSize: 14, fontWeight: 500, padding: '13px 14px', paddingRight: 60 }} />
+            <button onClick={() => setShowPass(s => !s)} style={{ position: 'absolute', right: 12, top: 32, background: 'transparent', border: 0, color: '#969696', fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', cursor: 'pointer' }}>{showPass ? 'Hide' : 'Show'}</button>
+            {signinErr.password && <div style={{ fontSize: 10, color: '#da291c', marginTop: 6, fontWeight: 600 }}>↑ {signinErr.password}</div>}
+          </div>
+
+          <CTAButton size="lg" full onClick={handleSignin}>Sign In</CTAButton>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '24px 0' }}>
+            <div style={{ flex: 1, height: 1, background: '#303030' }} />
+            <span style={{ fontSize: 9, color: '#666', letterSpacing: '0.18em', fontWeight: 600 }}>OR</span>
+            <div style={{ flex: 1, height: 1, background: '#303030' }} />
+          </div>
+
+          <button onClick={onComplete} style={{ width: '100%', background: 'transparent', color: '#fff', border: '1px solid #303030', padding: '14px', fontSize: 11, fontWeight: 700, letterSpacing: '2px', textTransform: 'uppercase', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+            <span style={{ width: 16, height: 16, background: '#da291c', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'JetBrains Mono, monospace', fontWeight: 700, fontSize: 9 }}>S</span>
+            SFU SSO
+          </button>
+
+          <div style={{ marginTop: 'auto', paddingTop: 28, fontSize: 12, color: '#969696', textAlign: 'center' }}>
+            New to the club? <button onClick={() => { setView('signup'); setStep(0); }} style={{ background: 'transparent', border: 0, color: '#da291c', fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: 0 }}>Join now →</button>
+          </div>
+        </div>
+      </AuthShell>
+    );
+  }
+
+  // ── FORGOT ─────────────────────────────────────────────────────
+  if (view === 'forgot') {
+    return (
+      <AuthShell>
+        <div style={{ flex: 1, padding: '0 24px 28px', display: 'flex', flexDirection: 'column' }}>
+          <AuthHeader eyebrow="Recover access" title={<>Forgot<br/>password?</>} sub="Enter your SFU email and we'll send a reset link." onBack={() => setView('signin')} />
+          <div style={{ marginTop: 32 }}>
+            <AuthField label="SFU Email" type="email" value={forgotEmail} onChange={setForgotEmail} placeholder="you@sfu.ca" autoFocus />
+            <CTAButton size="lg" full onClick={() => setView('sent')}>Send Reset Link</CTAButton>
+          </div>
+        </div>
+      </AuthShell>
+    );
+  }
+
+  if (view === 'sent') {
+    return (
+      <AuthShell>
+        <div style={{ flex: 1, padding: '24px 24px 28px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center' }}>
+          <div style={{ width: 56, height: 56, border: '1px solid #4ade80', color: '#4ade80', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32, fontFamily: 'JetBrains Mono, monospace' }}>✓</div>
+          <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.4px', marginTop: 22 }}>Check your inbox.</div>
+          <div style={{ fontSize: 13, color: '#969696', lineHeight: 1.55, marginTop: 12, maxWidth: 280 }}>If <strong style={{ color: '#fff' }}>{forgotEmail || 'that email'}</strong> matches a club account, a reset link is on its way. It's good for 1 hour.</div>
+          <div style={{ marginTop: 36, width: '100%' }}>
+            <CTAButton size="lg" full onClick={() => { setView('signin'); setForgotEmail(''); }}>Back to Sign In</CTAButton>
+          </div>
+        </div>
+      </AuthShell>
+    );
+  }
+
+  // ── SIGN UP / ONBOARDING ───────────────────────────────────────
+  const totalSteps = 5; // 0..4
+  const progress = ((step + 1) / totalSteps) * 100;
+
+  // Step 0: intro / welcome
+  if (step === 0) {
+    return (
+      <AuthShell progress={progress}>
+        <div style={{ flex: 1, padding: '0 24px 28px', display: 'flex', flexDirection: 'column' }}>
+          <AuthHeader eyebrow={`Step 1 of ${totalSteps}`} title={<>Welcome<br/>to the club.</>} sub="Five quick steps to get you on the leaderboard. Takes about 90 seconds." onBack={() => setView('signin')} />
+          <div style={{ marginTop: 28, display: 'flex', flexDirection: 'column', gap: 1, background: '#303030', border: '1px solid #303030' }}>
+            {[
+              { n: '01', l: 'Account', d: 'Email + password' },
+              { n: '02', l: 'Identity', d: 'Name + SFU ID' },
+              { n: '03', l: 'Skill', d: 'Self-rated level' },
+              { n: '04', l: 'Preferences', d: 'How you play' },
+              { n: '05', l: 'Confirm', d: 'Verify email' },
+            ].map(r => (
+              <div key={r.n} style={{ background: '#1a1a1a', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 16 }}>
+                <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 11, fontWeight: 700, color: '#da291c', letterSpacing: '0.06em' }}>{r.n}</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{r.l}</div>
+                  <div style={{ fontSize: 11, color: '#969696', marginTop: 2 }}>{r.d}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: 'auto', paddingTop: 28 }}>
+            <CTAButton size="lg" full onClick={() => setStep(1)}>Get Started</CTAButton>
+          </div>
+        </div>
+      </AuthShell>
+    );
+  }
+
+  // Step 1: account
+  if (step === 1) {
+    return (
+      <AuthShell progress={progress}>
+        <div style={{ flex: 1, padding: '0 24px 28px', display: 'flex', flexDirection: 'column' }}>
+          <AuthHeader eyebrow={`Step 2 of ${totalSteps}`} title="Create account." sub="Use your SFU email — it's how we verify membership." onBack={back} />
+          <div style={{ marginTop: 28 }}>
+            <AuthField label="SFU Email" type="email" value={data.email} onChange={v => setD('email', v)} placeholder="you@sfu.ca" error={stepErr.email} autoFocus />
+            <AuthField label="Password" type="password" value={data.password} onChange={v => setD('password', v)} placeholder="At least 8 characters" error={stepErr.password} hint="Use 8+ characters with a mix of letters & numbers." />
+          </div>
+          <div style={{ marginTop: 'auto', paddingTop: 28 }}>
+            <CTAButton size="lg" full onClick={next}>Continue</CTAButton>
+            <div style={{ marginTop: 16, fontSize: 11, color: '#666', textAlign: 'center', lineHeight: 1.55 }}>By continuing you agree to the club's <span style={{ color: '#969696', textDecoration: 'underline' }}>Code of Conduct</span>.</div>
+          </div>
+        </div>
+      </AuthShell>
+    );
+  }
+
+  // Step 2: identity
+  if (step === 2) {
+    return (
+      <AuthShell progress={progress}>
+        <div style={{ flex: 1, padding: '0 24px 28px', display: 'flex', flexDirection: 'column' }}>
+          <AuthHeader eyebrow={`Step 3 of ${totalSteps}`} title="Who are you?" sub="Your name appears on the leaderboard. Your SFU ID stays private — admins use it for membership checks only." onBack={back} />
+          <div style={{ marginTop: 28 }}>
+            <AuthField label="Full Name" value={data.name} onChange={v => setD('name', v)} placeholder="e.g. Alex Tran" error={stepErr.name} autoFocus />
+            <AuthField label="SFU Student ID" value={data.studentId} onChange={v => setD('studentId', v)} placeholder="9 digits" error={stepErr.studentId} hint="Found on your SFU ID card." />
+          </div>
+          <div style={{ marginTop: 'auto', paddingTop: 28 }}>
+            <CTAButton size="lg" full onClick={next}>Continue</CTAButton>
+          </div>
+        </div>
+      </AuthShell>
+    );
+  }
+
+  // Step 3: skill self-rating
+  if (step === 3) {
+    const skills = [
+      { v: 'beginner',  t: 'Beginner',     d: 'New to the sport. Still getting the hang of serves & rallies.' },
+      { v: 'casual',    t: 'Casual',       d: 'Play for fun. Comfortable with rallies, learning strategy.' },
+      { v: 'intermediate', t: 'Intermediate', d: 'Confident in singles & doubles. Have a solid clear & smash.' },
+      { v: 'advanced',  t: 'Advanced',     d: 'Tournament experience. Competitive in regional/club events.' },
+    ];
+    return (
+      <AuthShell progress={progress}>
+        <div style={{ flex: 1, padding: '0 24px 28px', display: 'flex', flexDirection: 'column' }}>
+          <AuthHeader eyebrow={`Step 4 of ${totalSteps}`} title={<>How do you<br/>play?</>} sub="Pick the level that fits today. Your real ELO is set by your matches — this is just where we start you." onBack={back} />
+          <div style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {skills.map(s => {
+              const active = data.skill === s.v;
+              return (
+                <button key={s.v} onClick={() => { setD('skill', s.v); setStepErr({}); }} style={{
+                  background: active ? 'rgba(218,41,28,0.10)' : '#1a1a1a',
+                  border: '1px solid ' + (active ? '#da291c' : '#303030'),
+                  padding: '14px 16px', textAlign: 'left', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 14,
+                }}>
+                  <div style={{ width: 18, height: 18, border: '1.5px solid ' + (active ? '#da291c' : '#666'), borderRadius: '50%', flexShrink: 0, position: 'relative' }}>
+                    {active && <div style={{ position: 'absolute', inset: 3, background: '#da291c', borderRadius: '50%' }} />}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 700 }}>{s.t}</div>
+                    <div style={{ fontSize: 11, color: '#969696', marginTop: 3, lineHeight: 1.4 }}>{s.d}</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          {stepErr.skill && <div style={{ fontSize: 10, color: '#da291c', marginTop: 10, fontWeight: 600 }}>↑ {stepErr.skill}</div>}
+          <div style={{ marginTop: 'auto', paddingTop: 28 }}>
+            <CTAButton size="lg" full onClick={next}>Continue</CTAButton>
+          </div>
+        </div>
+      </AuthShell>
+    );
+  }
+
+  // Step 4: preferences (plays + notif)
+  if (step === 4) {
+    const plays = [{ v: 'singles', t: 'Singles' }, { v: 'doubles', t: 'Doubles' }, { v: 'both', t: 'Both' }];
+    return (
+      <AuthShell progress={progress}>
+        <div style={{ flex: 1, padding: '0 24px 28px', display: 'flex', flexDirection: 'column' }}>
+          <AuthHeader eyebrow={`Step 5 of ${totalSteps}`} title="Last bit." sub="We use these to match you with the right opponents and sessions." onBack={back} />
+          <div style={{ marginTop: 28 }}>
+            <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '1.5px', textTransform: 'uppercase', color: stepErr.plays ? '#da291c' : '#666', marginBottom: 8 }}>Format you prefer</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+              {plays.map(p => {
+                const active = data.plays === p.v;
+                return (
+                  <button key={p.v} onClick={() => { setD('plays', p.v); setStepErr({}); }} style={{
+                    background: active ? '#da291c' : '#1a1a1a',
+                    border: '1px solid ' + (active ? '#da291c' : '#303030'),
+                    color: active ? '#fff' : '#fff',
+                    padding: '14px', fontSize: 12, fontWeight: 700, letterSpacing: '0.06em',
+                    textTransform: 'uppercase', cursor: 'pointer',
+                  }}>{p.t}</button>
+                );
+              })}
+            </div>
+            {stepErr.plays && <div style={{ fontSize: 10, color: '#da291c', marginTop: 8, fontWeight: 600 }}>↑ {stepErr.plays}</div>}
+
+            <div style={{ marginTop: 28 }}>
+              <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '1.5px', textTransform: 'uppercase', color: '#666', marginBottom: 8 }}>Goal (optional)</div>
+              <textarea value={data.goal} onChange={e => setD('goal', e.target.value)} placeholder="e.g. Make top 10 by end of season" rows={3} style={{ width: '100%', background: '#181818', border: '1px solid #303030', color: '#fff', fontSize: 13, padding: '12px 14px', resize: 'none', fontFamily: 'inherit' }} />
+            </div>
+
+            <div style={{ marginTop: 22, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', background: '#1a1a1a', border: '1px solid #303030' }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>Notifications</div>
+                <div style={{ fontSize: 11, color: '#969696', marginTop: 2 }}>Challenges, sessions & match results.</div>
+              </div>
+              <button onClick={() => setD('notif', !data.notif)} style={{ width: 40, height: 22, borderRadius: 0, background: data.notif ? '#da291c' : '#303030', border: 0, position: 'relative', cursor: 'pointer', flexShrink: 0 }}>
+                <div style={{ position: 'absolute', top: 2, left: data.notif ? 20 : 2, width: 18, height: 18, background: '#fff', transition: 'left 160ms' }} />
+              </button>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 'auto', paddingTop: 28 }}>
+            <CTAButton size="lg" full onClick={() => { if (validateStep()) setStep(5); }}>Create Account</CTAButton>
+          </div>
+        </div>
+      </AuthShell>
+    );
+  }
+
+  // Step 5: confirmation
+  return (
+    <AuthShell progress={100}>
+      <div style={{ flex: 1, padding: '24px 24px 28px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center' }}>
+        <div style={{ width: 64, height: 64, border: '1px solid #4ade80', color: '#4ade80', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 36, fontFamily: 'JetBrains Mono, monospace' }}>✓</div>
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '2.4px', textTransform: 'uppercase', color: '#da291c', marginTop: 22 }}>You're in</div>
+        <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-0.6px', lineHeight: 1.05, marginTop: 8 }}>Welcome,<br/>{data.name.split(' ')[0] || 'player'}.</div>
+        <div style={{ fontSize: 13, color: '#969696', lineHeight: 1.55, marginTop: 14, maxWidth: 300 }}>
+          We sent a verification link to <strong style={{ color: '#fff' }}>{data.email}</strong>. Tap it to unlock match logging — you can browse the app meanwhile.
+        </div>
+        <div style={{ marginTop: 28, width: '100%', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 1, background: '#303030', border: '1px solid #303030' }}>
+          <div style={{ background: '#1a1a1a', padding: 14 }}>
+            <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '1.4px', textTransform: 'uppercase', color: '#666' }}>Starting ELO</div>
+            <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 18, fontWeight: 700, marginTop: 4 }}>{ {beginner:1100, casual:1300, intermediate:1500, advanced:1700}[data.skill] || 1500 }</div>
+          </div>
+          <div style={{ background: '#1a1a1a', padding: 14 }}>
+            <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '1.4px', textTransform: 'uppercase', color: '#666' }}>Format</div>
+            <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 13, fontWeight: 700, marginTop: 4, textTransform: 'capitalize' }}>{data.plays}</div>
+          </div>
+          <div style={{ background: '#1a1a1a', padding: 14 }}>
+            <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '1.4px', textTransform: 'uppercase', color: '#666' }}>Status</div>
+            <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 13, fontWeight: 700, marginTop: 4, color: '#fbbf24' }}>Pending</div>
+          </div>
+        </div>
+        <div style={{ marginTop: 28, width: '100%' }}>
+          <CTAButton size="lg" full onClick={onComplete}>Enter the App</CTAButton>
+        </div>
+      </div>
+    </AuthShell>
+  );
+}
+
+function MainApp() {
+  // Main device focus — driven by clicking the side frames
+  const [focusTab, setFocusTab] = useState('home');
+  // bumping `focusKey` remounts the main PlayerApp so initialTab takes effect
+  const [focusKey, setFocusKey] = useState(0);
+  const setFocus = (t) => { setFocusTab(t); setFocusKey(k => k + 1); };
+
+  return (
+    <div className="stage">
+      <header className="stage-header">
+        <div className="stage-copy">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
+            <ShuttleMark size={24} color="#da291c" />
+            <span style={{ color: '#da291c', fontSize: 11, fontWeight: 700, letterSpacing: '2.5px', textTransform: 'uppercase' }}>SFU Badminton · Player</span>
+          </div>
+          <h1 style={{ fontSize: 64, fontWeight: 500, letterSpacing: '-1.4px', lineHeight: 1.0 }}>Born on<br/>the court.</h1>
+          <p style={{ color: '#969696', fontSize: 14, lineHeight: 1.6, marginTop: 20, maxWidth: 440 }}>
+            ELO that moves with every match. Sessions you can join in two taps. Challenges that end on the score, not the dispute.
+          </p>
+        </div>
+        <div className="stage-meta">
+          {[
+            { l: 'Platform', v: 'iOS · Android' },
+            { l: 'Version',  v: '0.1 Alpha' },
+            { l: 'Built for', v: 'Members' },
+          ].map(m => (
+            <div key={m.l}>
+              <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '1.4px', textTransform: 'uppercase', color: '#666' }}>{m.l}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, marginTop: 6, fontFamily: 'JetBrains Mono, monospace' }}>{m.v}</div>
+            </div>
+          ))}
+        </div>
+      </header>
+
+      <div className="stage-rail">
+        <PlayerApp aux side="left" initialTab="leaderboard" label="Leaderboard" onFocus={setFocus} />
+        <PlayerApp key={focusKey} initialTab={focusTab} />
+        <PlayerApp aux side="right" initialTab="profile" label="Profile" onFocus={setFocus} />
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [authed, setAuthed] = useState(false);
+  useEffect(() => {
+    const off = () => setAuthed(false);
+    window.addEventListener('player:signout', off);
+    return () => window.removeEventListener('player:signout', off);
+  }, []);
+  return authed ? <MainApp /> : <AuthFlow onComplete={() => setAuthed(true)} />;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

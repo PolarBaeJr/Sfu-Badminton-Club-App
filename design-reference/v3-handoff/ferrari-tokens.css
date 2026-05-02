@@ -1,0 +1,298 @@
+/* ============================================================
+   Ferrari Design System — Alpha (Ferrari)
+   colors_and_type.css
+   CSS Custom Properties: all color, typography, spacing,
+   radius, and shadow tokens.
+   ============================================================
+   NOTE: FerrariSans is a licensed typeface.
+   This file uses Inter as a documented substitute.
+   Replace --font-ferrari-sans with the licensed font stack
+   when FerrariSans files are available.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+/* ── Font Family ─────────────────────────────────────────── */
+:root {
+  --font-ferrari-sans: 'Inter', -apple-system, system-ui, sans-serif;
+  /* ⚠️  Substitute: Inter replaces licensed FerrariSans.
+         Replace this value when font files are provided. */
+}
+
+/* ── Colors: Brand & Accent ──────────────────────────────── */
+:root {
+  --color-primary:              #da291c; /* Rosso Corsa */
+  --color-primary-active:       #b01e0a;
+  --color-primary-hover:        #9d2211;
+  --color-accent-yellow-hypersail: #fff200; /* Hypersail sub-brand only */
+  --color-accent-yellow:        #f6e500;   /* Hypersail sub-brand only */
+}
+
+/* ── Colors: Surface ─────────────────────────────────────── */
+:root {
+  --color-canvas:               #181818; /* Near-black page floor */
+  --color-canvas-elevated:      #303030; /* Cards / panels on dark */
+  --color-canvas-light:         #ffffff; /* White editorial bands */
+  --color-surface-card:         #303030;
+  --color-surface-soft-light:   #f7f7f7;
+  --color-surface-strong-light: #ebebeb;
+}
+
+/* ── Colors: Text ────────────────────────────────────────── */
+:root {
+  --color-ink:                  #ffffff; /* Display + emphasis on dark */
+  --color-body:                 #969696; /* Default body on dark */
+  --color-body-strong:          #ffffff;
+  --color-body-on-light:        #181818; /* Default body on light bands */
+  --color-muted:                #666666;
+  --color-muted-soft:           #8f8f8f;
+  --color-on-primary:           #ffffff;
+  --color-on-dark:              #ffffff;
+  --color-on-light:             #181818;
+}
+
+/* ── Colors: Hairlines ───────────────────────────────────── */
+:root {
+  --color-hairline:             #303030; /* 1px divider on dark */
+  --color-hairline-on-light:    #d2d2d2; /* 1px divider on light */
+  --color-hairline-soft:        #ebebeb;
+}
+
+/* ── Colors: Semantic ────────────────────────────────────── */
+:root {
+  --color-semantic-info:        #4c98b9;
+  --color-semantic-success:     #03904a;
+  --color-semantic-warning:     #f13a2c;
+}
+
+/* ── Gradients ───────────────────────────────────────────── */
+:root {
+  --gradient-rosso-corsa:   linear-gradient(180deg, #a00c01 0%, #da291c 64%);
+  --gradient-dark-atmos:    linear-gradient(180deg, #3c3c3c 0%, #030303 64%);
+  --gradient-hero-scrim:    linear-gradient(to top, rgba(24,24,24,0.85) 0%, rgba(24,24,24,0.0) 50%);
+}
+
+/* ── Typography: Scale ───────────────────────────────────── */
+:root {
+  /* display-mega: homepage hero h1 */
+  --text-display-mega-family:     var(--font-ferrari-sans);
+  --text-display-mega-size:       80px;
+  --text-display-mega-weight:     500;
+  --text-display-mega-line:       1.05;
+  --text-display-mega-tracking:   -1.6px;
+
+  /* display-xl: subsidiary heroes */
+  --text-display-xl-family:       var(--font-ferrari-sans);
+  --text-display-xl-size:         56px;
+  --text-display-xl-weight:       500;
+  --text-display-xl-line:         1.1;
+  --text-display-xl-tracking:     -1.12px;
+
+  /* display-lg: section heads, livery band */
+  --text-display-lg-family:       var(--font-ferrari-sans);
+  --text-display-lg-size:         36px;
+  --text-display-lg-weight:       500;
+  --text-display-lg-line:         1.2;
+  --text-display-lg-tracking:     -0.36px;
+
+  /* display-md: sub-section heads */
+  --text-display-md-family:       var(--font-ferrari-sans);
+  --text-display-md-size:         26px;
+  --text-display-md-weight:       500;
+  --text-display-md-line:         1.5;
+  --text-display-md-tracking:     0.195px;
+
+  /* title-md: component titles */
+  --text-title-md-family:         var(--font-ferrari-sans);
+  --text-title-md-size:           18px;
+  --text-title-md-weight:         700;
+  --text-title-md-line:           1.2;
+  --text-title-md-tracking:       0px;
+
+  /* title-sm: list labels */
+  --text-title-sm-family:         var(--font-ferrari-sans);
+  --text-title-sm-size:           16px;
+  --text-title-sm-weight:         500;
+  --text-title-sm-line:           1.4;
+  --text-title-sm-tracking:       0.08px;
+
+  /* body-md: default body */
+  --text-body-md-family:          var(--font-ferrari-sans);
+  --text-body-md-size:            14px;
+  --text-body-md-weight:          400;
+  --text-body-md-line:            1.5;
+  --text-body-md-tracking:        0px;
+
+  /* body-sm: footer body */
+  --text-body-sm-family:          var(--font-ferrari-sans);
+  --text-body-sm-size:            13px;
+  --text-body-sm-weight:          400;
+  --text-body-sm-line:            1.5;
+  --text-body-sm-tracking:        0px;
+
+  /* caption */
+  --text-caption-family:          var(--font-ferrari-sans);
+  --text-caption-size:            12px;
+  --text-caption-weight:          400;
+  --text-caption-line:            1.4;
+  --text-caption-tracking:        0px;
+
+  /* caption-uppercase: section labels, badges */
+  --text-caption-up-family:       var(--font-ferrari-sans);
+  --text-caption-up-size:         11px;
+  --text-caption-up-weight:       600;
+  --text-caption-up-line:         1.4;
+  --text-caption-up-tracking:     1.1px;
+  --text-caption-up-transform:    uppercase;
+
+  /* button: CTA labels */
+  --text-button-family:           var(--font-ferrari-sans);
+  --text-button-size:             14px;
+  --text-button-weight:           700;
+  --text-button-line:             1.0;
+  --text-button-tracking:         1.4px;
+  --text-button-transform:        uppercase;
+
+  /* nav-link */
+  --text-nav-link-family:         var(--font-ferrari-sans);
+  --text-nav-link-size:           13px;
+  --text-nav-link-weight:         600;
+  --text-nav-link-line:           1.4;
+  --text-nav-link-tracking:       0.65px;
+  --text-nav-link-transform:      uppercase;
+
+  /* number-display: race position, spec values */
+  --text-number-display-family:   var(--font-ferrari-sans);
+  --text-number-display-size:     80px;
+  --text-number-display-weight:   700;
+  --text-number-display-line:     1.0;
+  --text-number-display-tracking: -1.6px;
+}
+
+/* ── Spacing ─────────────────────────────────────────────── */
+:root {
+  --spacing-xxxs:  4px;
+  --spacing-xxs:   8px;
+  --spacing-xs:    16px;
+  --spacing-sm:    24px;
+  --spacing-md:    32px;
+  --spacing-lg:    48px;
+  --spacing-xl:    64px;
+  --spacing-xxl:   96px;
+  --spacing-super: 128px;
+}
+
+/* ── Border Radius ───────────────────────────────────────── */
+:root {
+  --radius-none: 0px;    /* CTAs, cards, bands — dominant */
+  --radius-xs:   2px;
+  --radius-sm:   4px;    /* Form inputs */
+  --radius-md:   6px;
+  --radius-lg:   8px;
+  --radius-xl:   12px;
+  --radius-full: 9999px; /* Badge pills only */
+}
+
+/* ── Shadows ─────────────────────────────────────────────── */
+:root {
+  --shadow-card-hover: 0 4px 8px rgba(0, 0, 0, 0.10);
+  /* Single shadow tier — no stacked elevations */
+}
+
+/* ── Semantic Utility Classes ────────────────────────────── */
+
+/* Typography utility classes */
+.t-display-mega {
+  font-family: var(--text-display-mega-family);
+  font-size: var(--text-display-mega-size);
+  font-weight: var(--text-display-mega-weight);
+  line-height: var(--text-display-mega-line);
+  letter-spacing: var(--text-display-mega-tracking);
+}
+.t-display-xl {
+  font-family: var(--text-display-xl-family);
+  font-size: var(--text-display-xl-size);
+  font-weight: var(--text-display-xl-weight);
+  line-height: var(--text-display-xl-line);
+  letter-spacing: var(--text-display-xl-tracking);
+}
+.t-display-lg {
+  font-family: var(--text-display-lg-family);
+  font-size: var(--text-display-lg-size);
+  font-weight: var(--text-display-lg-weight);
+  line-height: var(--text-display-lg-line);
+  letter-spacing: var(--text-display-lg-tracking);
+}
+.t-display-md {
+  font-family: var(--text-display-md-family);
+  font-size: var(--text-display-md-size);
+  font-weight: var(--text-display-md-weight);
+  line-height: var(--text-display-md-line);
+  letter-spacing: var(--text-display-md-tracking);
+}
+.t-title-md {
+  font-family: var(--text-title-md-family);
+  font-size: var(--text-title-md-size);
+  font-weight: var(--text-title-md-weight);
+  line-height: var(--text-title-md-line);
+  letter-spacing: var(--text-title-md-tracking);
+}
+.t-title-sm {
+  font-family: var(--text-title-sm-family);
+  font-size: var(--text-title-sm-size);
+  font-weight: var(--text-title-sm-weight);
+  line-height: var(--text-title-sm-line);
+  letter-spacing: var(--text-title-sm-tracking);
+}
+.t-body-md {
+  font-family: var(--text-body-md-family);
+  font-size: var(--text-body-md-size);
+  font-weight: var(--text-body-md-weight);
+  line-height: var(--text-body-md-line);
+  letter-spacing: var(--text-body-md-tracking);
+}
+.t-body-sm {
+  font-family: var(--text-body-sm-family);
+  font-size: var(--text-body-sm-size);
+  font-weight: var(--text-body-sm-weight);
+  line-height: var(--text-body-sm-line);
+  letter-spacing: var(--text-body-sm-tracking);
+}
+.t-caption {
+  font-family: var(--text-caption-family);
+  font-size: var(--text-caption-size);
+  font-weight: var(--text-caption-weight);
+  line-height: var(--text-caption-line);
+  letter-spacing: var(--text-caption-tracking);
+}
+.t-caption-uppercase {
+  font-family: var(--text-caption-up-family);
+  font-size: var(--text-caption-up-size);
+  font-weight: var(--text-caption-up-weight);
+  line-height: var(--text-caption-up-line);
+  letter-spacing: var(--text-caption-up-tracking);
+  text-transform: uppercase;
+}
+.t-button {
+  font-family: var(--text-button-family);
+  font-size: var(--text-button-size);
+  font-weight: var(--text-button-weight);
+  line-height: var(--text-button-line);
+  letter-spacing: var(--text-button-tracking);
+  text-transform: uppercase;
+}
+.t-nav-link {
+  font-family: var(--text-nav-link-family);
+  font-size: var(--text-nav-link-size);
+  font-weight: var(--text-nav-link-weight);
+  line-height: var(--text-nav-link-line);
+  letter-spacing: var(--text-nav-link-tracking);
+  text-transform: uppercase;
+}
+.t-number-display {
+  font-family: var(--text-number-display-family);
+  font-size: var(--text-number-display-size);
+  font-weight: var(--text-number-display-weight);
+  line-height: var(--text-number-display-line);
+  letter-spacing: var(--text-number-display-tracking);
+}

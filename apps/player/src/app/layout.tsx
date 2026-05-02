@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { BottomNav } from '@/components/bottom-nav';
-import { TopBar } from '@/components/top-bar';
 import { ToastProvider } from '@/components/toast-provider';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { PostHogProvider } from '@/components/posthog-provider';
@@ -11,29 +10,28 @@ import { QrRedirectHandler } from '@/components/qr-redirect-handler';
 import { NotificationCountsProvider } from '@/components/notification-badges';
 import { SWRProvider } from '@/components/swr-provider';
 import { ProfileProvider, type Profile } from '@/components/profile-provider';
-import { SidebarNav } from '@/components/sidebar-nav';
+import { StatusBar } from '@/components/v2/atoms';
 import { createServerSupabaseClient } from '@/lib/supabase-server';
-import { Barlow, Barlow_Condensed } from "next/font/google";
+import { Inter, JetBrains_Mono } from 'next/font/google';
 import { headers } from 'next/headers';
-import { cn } from "@/lib/utils";
 
-const barlowCondensed = Barlow_Condensed({
+const inter = Inter({
   subsets: ['latin'],
-  weight: ['400', '600', '700', '800'],
-  variable: '--font-barlow-condensed',
+  weight: ['400', '500', '600', '700', '800'],
+  variable: '--font-inter',
   display: 'swap',
 });
 
-const barlow = Barlow({
+const jetbrains = JetBrains_Mono({
   subsets: ['latin'],
-  weight: ['300', '400', '500', '600', '700'],
-  variable: '--font-barlow',
+  weight: ['500', '600', '700'],
+  variable: '--font-jetbrains',
   display: 'swap',
 });
 
 export const metadata: Metadata = {
-  title: 'SFU Badminton Club',
-  description: 'Challenge, compete, and climb the ranks',
+  title: 'SFU Badminton — Player',
+  description: 'ELO that moves with every match.',
   manifest: '/manifest.json',
 };
 
@@ -46,8 +44,6 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   let doublesElo: number | null = null;
 
   try {
-    // Middleware already authed and set x-user-id on the request headers —
-    // read it here to skip a redundant auth.getUser() round-trip.
     const userId = headers().get('x-user-id');
     if (userId) {
       const supabase = await createServerSupabaseClient();
@@ -62,11 +58,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       avatarUrl = (player as { avatar_url?: string | null })?.avatar_url ?? null;
 
       const ratings = Array.isArray(player?.ratings) ? player.ratings[0] : player?.ratings;
-      singlesElo = (ratings as Record<string, unknown>)?.singles_elo as number ?? null;
-      doublesElo = (ratings as Record<string, unknown>)?.doubles_elo as number ?? null;
+      singlesElo = ((ratings as Record<string, unknown>)?.singles_elo as number) ?? null;
+      doublesElo = ((ratings as Record<string, unknown>)?.doubles_elo as number) ?? null;
     }
   } catch {
-    // Not authenticated
+    // not authed
   }
 
   const initialProfile: Profile = playerId
@@ -80,60 +76,73 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       }
     : null;
 
+  const isAuthed = !!playerId;
+
   return (
-    <html lang="en" suppressHydrationWarning data-theme="dark" className={cn(barlowCondensed.variable, barlow.variable)}>
+    <html lang="en" suppressHydrationWarning className={`${inter.variable} ${jetbrains.variable}`}>
       <head>
-        <meta name="theme-color" content="#0A0E1A" />
+        <meta name="theme-color" content="#0d0d0d" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-        <script dangerouslySetInnerHTML={{ __html: `
-          try {
-            var t = localStorage.getItem('theme') || 'dark';
-            var r = t === 'system'
-              ? window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-              : t;
-            document.documentElement.setAttribute('data-theme', r);
-          } catch(e) { document.documentElement.setAttribute('data-theme', 'dark'); }
-        `}} />
       </head>
-      <body style={{ background: 'var(--bg-base)' }}>
+      <body suppressHydrationWarning>
         <SWRProvider>
           <ProfileProvider initial={initialProfile}>
             <PostHogProvider>
               <ToastProvider>
                 <SentryUserInit playerId={playerId} />
-                <QrRedirectHandler isAuthed={!!playerId} />
+                <QrRedirectHandler isAuthed={isAuthed} />
                 <PostHogIdentify
                   playerId={playerId}
                   playerStatus={playerStatus}
                   singlesElo={singlesElo}
                   doublesElo={doublesElo}
                 />
-                <NotificationCountsProvider isAuthed={!!playerId}>
+                <NotificationCountsProvider isAuthed={isAuthed}>
                   <OfflineBanner />
-                  <SidebarNav />
-                  <div className="md:hidden"><TopBar /></div>
-                  <main className="min-w-0 md:ml-[200px]" style={{ animation: 'fadeUp 240ms ease-out' }}>
-                    <div className="max-w-[900px] mx-auto px-6 py-6 pb-24 md:pb-6">
-                      {children}
-                    </div>
-                  </main>
-                  <BottomNav />
+                  <PhoneFrame showChrome={isAuthed}>{children}</PhoneFrame>
                 </NotificationCountsProvider>
               </ToastProvider>
             </PostHogProvider>
           </ProfileProvider>
         </SWRProvider>
-        <script dangerouslySetInnerHTML={{ __html: `
-          if ('serviceWorker' in navigator) {
-            // Defer SW registration off the critical path so it doesn't block
-            // hydration on slow mobile networks.
-            window.addEventListener('load', function() {
-              navigator.serviceWorker.register('/sw.js').catch(function() {});
-            });
-          }
-        `}} />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `if ('serviceWorker' in navigator) { window.addEventListener('load', function() { navigator.serviceWorker.register('/sw.js').catch(function() {}); }); }`,
+          }}
+        />
       </body>
     </html>
+  );
+}
+
+function PhoneFrame({ children, showChrome }: { children: React.ReactNode; showChrome: boolean }) {
+  // Authed pages render inside the device — status bar at top, scroll body in
+  // middle, bottom nav at the bottom. Login / onboarding pages opt out by
+  // wrapping in their own AuthShell, so they bypass this when showChrome is false.
+  if (!showChrome) {
+    return <>{children}</>;
+  }
+  return (
+    <div className="stage">
+      <div className="device">
+        <div className="notch" />
+        <div className="device-screen">
+          <StatusBar />
+          <div
+            className="scroll"
+            style={{
+              flex: 1,
+              overflowY: 'auto',
+              overflowX: 'hidden',
+            }}
+          >
+            {children}
+            <div style={{ height: 24 }} />
+          </div>
+          <BottomNav />
+        </div>
+      </div>
+    </div>
   );
 }

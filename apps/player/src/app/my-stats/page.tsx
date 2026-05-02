@@ -1,244 +1,373 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { Badge, PageHero } from '@badminton/ui';
-import { getWinRate, getStreakDisplay, getPointDifferential, formatDate } from '@badminton/shared';
 import { redirect } from 'next/navigation';
-import {
-  BarChart3,
-  Target,
-  Swords,
-  TrendingUp,
-  Flame,
-  Trophy,
-  Users,
-  Shield,
-  Zap,
-  Activity,
-} from 'lucide-react';
-import { FadeIn, StaggerContainer, StaggerItem } from '@/components/motion-wrapper';
+import Link from 'next/link';
+import { Avatar, Eyebrow, SectionLabel, StatusPill } from '@/components/v2/atoms';
 
 export default async function MyStatsPage() {
   const player = await getCurrentPlayer();
   if (!player) redirect('/login');
 
   const supabase = await createServerSupabaseClient();
-  const r = Array.isArray(player.ratings) ? player.ratings[0] : player.ratings;
+  const r = (Array.isArray(player.ratings) ? player.ratings[0] : player.ratings) as
+    | {
+        singles_elo: number | null;
+        doubles_elo: number | null;
+        singles_wins: number | null;
+        singles_losses: number | null;
+        doubles_wins: number | null;
+        doubles_losses: number | null;
+        current_singles_streak: number | null;
+        best_singles_streak: number | null;
+      }
+    | null;
 
-  // Fan out the four independent stat queries in parallel — they used to chain
-  // sequentially, blocking the page on ~4× round-trip latency.
-  const [reliabilityRes, recentMatchesRes, h2hRes, partnersRes] = await Promise.all([
+  // Compute rank + unread notifications in parallel
+  const [{ data: allRanked }, { count: unreadNotifs }] = await Promise.all([
     supabase
-      .from('reliability_metrics')
-      .select('no_shows')
+      .from('players')
+      .select('id, ratings(singles_elo)')
+      .eq('active_flag', true)
+      .not('status', 'in', '("pending_approval","suspended")'),
+    supabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true })
       .eq('player_id', player.id)
-      .maybeSingle(),
-    supabase
-      .from('match_participants')
-      .select('id, win_flag, rating_delta, match:matches(score_summary, played_at, match_type, format)')
-      .eq('player_id', player.id)
-      .order('created_at', { ascending: false, referencedTable: 'matches' })
-      .limit(20),
-    supabase
-      .from('head_to_head_stats')
-      .select('id, player_a_id, player_b_id, player_a_wins, player_b_wins, total_matches, match_type, a:players!head_to_head_stats_player_a_id_fkey(full_name), b:players!head_to_head_stats_player_b_id_fkey(full_name)')
-      .or(`player_a_id.eq.${player.id},player_b_id.eq.${player.id}`)
-      .order('total_matches', { ascending: false })
-      .limit(10),
-    supabase
-      .from('partnership_stats')
-      .select('id, wins, losses, win_rate, total_matches, partner:players!partnership_stats_partner_id_fkey(full_name)')
-      .eq('player_id', player.id)
-      .gte('total_matches', 3)
-      .order('win_rate', { ascending: false })
-      .limit(5),
+      .eq('read_flag', false),
   ]);
+  const myRank =
+    1 +
+    (allRanked ?? []).filter((p) => {
+      const rr = (Array.isArray(p.ratings) ? p.ratings[0] : p.ratings) as
+        | { singles_elo: number | null }
+        | null;
+      return (rr?.singles_elo ?? 0) > (r?.singles_elo ?? 0);
+    }).length;
 
-  const reliability = reliabilityRes.data;
-  const recentMatches = recentMatchesRes.data;
-  const h2h = h2hRes.data;
-  const partners = partnersRes.data;
+  // Last 6 ELO trend (singles only)
+  const { data: lastSingles } = await supabase
+    .from('match_participants')
+    .select('rating_delta, match:matches(played_at, match_type)')
+    .eq('player_id', player.id)
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+  const trend = buildTrend((r?.singles_elo as number | null) ?? 1500, lastSingles ?? []);
+  const points = trend.length >= 2 ? buildPolyline(trend) : '';
+
+  const sw = r?.singles_wins ?? 0;
+  const sl = r?.singles_losses ?? 0;
+  const dw = r?.doubles_wins ?? 0;
+  const dl = r?.doubles_losses ?? 0;
+  const totalMatches = sw + sl + dw + dl;
+  const totalWins = sw + dw;
+  const winrate = totalMatches > 0 ? Math.round((totalWins / totalMatches) * 100) : 0;
+  const streak = r?.current_singles_streak ?? 0;
+
+  const trendDelta =
+    trend.length >= 2 ? Math.round((trend[trend.length - 1] ?? 0) - (trend[0] ?? 0)) : 0;
 
   return (
-    <div>
-      <PageHero
-        eyebrow="Season 02 · My Record"
-        title="My Stats."
-        subtitle={r ? `${r.singles_wins ?? 0}W · ${r.singles_losses ?? 0}L · ${getWinRate(r.singles_wins, r.singles_losses)} singles win rate this season.` : 'Performance, head-to-head, and partner data this season.'}
-        watermark="M"
-      />
-      <div className="space-y-6 px-2 md:px-6 py-8">
-
-      {r && (
-        <>
-          {/* Primary Stats */}
-          <FadeIn delay={0.05}>
-            <StaggerContainer className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {[
-                { icon: Target, color: 'var(--ds-accent)', label: 'Singles Elo', value: r.singles_elo, sub: r.singles_provisional ? 'Provisional' : `K=${r.singles_k_factor}` },
-                { icon: Swords, color: 'var(--color-gold)', label: 'Doubles Elo', value: r.doubles_elo, sub: r.doubles_provisional ? 'Provisional' : `K=${r.doubles_k_factor}` },
-                { icon: TrendingUp, color: 'var(--ds-accent)', label: 'Singles Record', value: `${r.singles_wins}W-${r.singles_losses}L`, sub: getWinRate(r.singles_wins, r.singles_losses) },
-                { icon: Users, color: 'var(--color-gold)', label: 'Doubles Record', value: `${r.doubles_wins}W-${r.doubles_losses}L`, sub: getWinRate(r.doubles_wins, r.doubles_losses) },
-              ].map((stat) => (
-                <StaggerItem key={stat.label}>
-                  <div className="card-surface p-5 transition-colors duration-150 hover:border-[color-mix(in_srgb,var(--ds-accent)_30%,transparent)]">
-                    <p className="eyebrow mb-2">{stat.label}</p>
-                    <p className="ds-mono text-2xl font-semibold leading-none" style={{ color: stat.color }}>{stat.value}</p>
-                    <p className="text-xs text-[var(--text-muted)] mt-2">
-                      {stat.sub?.includes('Provisional') ? <span className="chip chip-gold">{stat.sub}</span> : stat.sub}
-                    </p>
-                  </div>
-                </StaggerItem>
-              ))}
-            </StaggerContainer>
-          </FadeIn>
-
-          {/* Extended Stats */}
-          <FadeIn delay={0.1}>
-            <StaggerContainer className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {[
-                { icon: Flame, color: 'var(--ds-accent)', label: 'S. Streak', value: getStreakDisplay(r.current_singles_streak), sub: `Best: ${r.best_singles_streak}` },
-                { icon: Flame, color: 'var(--color-warning)', label: 'D. Streak', value: getStreakDisplay(r.current_doubles_streak), sub: `Best: ${r.best_doubles_streak}` },
-                { icon: Activity, color: 'var(--ds-accent)', label: 'S. Point Diff', value: getPointDifferential(r.singles_points_scored, r.singles_points_allowed), sub: null },
-                { icon: Activity, color: 'var(--color-gold)', label: 'D. Point Diff', value: getPointDifferential(r.doubles_points_scored, r.doubles_points_allowed), sub: null },
-                { icon: Zap, color: 'var(--text-secondary)', label: 'S. Games W/L', value: `${r.singles_games_won}-${r.singles_games_lost}`, sub: null },
-                { icon: Zap, color: 'var(--text-secondary)', label: 'D. Games W/L', value: `${r.doubles_games_won}-${r.doubles_games_lost}`, sub: null },
-                { icon: Trophy, color: 'var(--color-gold)', label: 'Total Matches', value: r.singles_matches_played + r.doubles_matches_played, sub: null },
-                { icon: Shield, color: 'var(--ds-accent)', label: 'Reliability', value: `${reliability?.no_shows ?? 0} no-shows`, sub: null },
-              ].map((stat) => (
-                <StaggerItem key={stat.label}>
-                  <div className="card-surface p-4">
-                    <p className="eyebrow mb-2">{stat.label}</p>
-                    <p className="ds-mono text-xl font-semibold text-[var(--text-primary)]">{stat.value}</p>
-                    {stat.sub && <p className="text-xs text-[var(--text-muted)] mt-1">{stat.sub}</p>}
-                  </div>
-                </StaggerItem>
-              ))}
-            </StaggerContainer>
-          </FadeIn>
-        </>
-      )}
-
-      {/* Head to Head */}
-      {h2h && h2h.length > 0 && (
-        <FadeIn delay={0.15}>
-          <div className="card-elevated p-4">
-            <div className="flex items-center gap-2 mb-4">
-              <Swords className="w-4 h-4 text-[var(--accent)]" />
-              <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>Head to Head</h2>
-            </div>
-            <div className="space-y-2">
-              {h2h.map((h) => {
-                const isA = h.player_a_id === player.id;
-                const opponentRaw = isA ? h.b : h.a;
-                const opponent = (Array.isArray(opponentRaw) ? opponentRaw[0] : opponentRaw) as { full_name?: string } | null;
-                const wins = isA ? h.player_a_wins : h.player_b_wins;
-                const losses = isA ? h.player_b_wins : h.player_a_wins;
-                return (
-                  <div key={h.id} className="flex items-center justify-between p-3 bg-[var(--bg-card-hover)] border border-[var(--border)]">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-[var(--text-primary)] font-medium">{opponent?.full_name}</span>
-                      <span className="chip">{h.match_type}</span>
-                    </div>
-                    <span className="font-mono text-sm font-bold nums">
-                      <span className="text-[var(--accent)]">{wins}W</span>
-                      <span className="text-[var(--text-muted)] mx-1">-</span>
-                      <span className="text-[var(--loss)]">{losses}L</span>
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </FadeIn>
-      )}
-
-      {/* Best Partners */}
-      {partners && partners.length > 0 && (
-        <FadeIn delay={0.17}>
-          <div className="card-elevated p-4">
-            <div className="flex items-center gap-2 mb-4">
-              <Users className="w-4 h-4 text-[var(--color-gold)]" />
-              <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>Best Partners</h2>
-            </div>
-            <div className="space-y-2">
-              {partners.map((p) => {
-                const partnerRaw = p.partner as unknown;
-                const partner = (Array.isArray(partnerRaw) ? partnerRaw[0] : partnerRaw) as { full_name?: string } | null;
-                return (
-                <div key={p.id} className="flex items-center justify-between p-3 bg-[var(--bg-card-hover)] border border-[var(--border)]">
-                  <span className="text-sm text-[var(--text-primary)] font-medium">{partner?.full_name}</span>
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-sm nums">
-                      <span className="text-[var(--accent)]">{p.wins}W</span>
-                      <span className="text-[var(--text-muted)] mx-1">-</span>
-                      <span className="text-[var(--loss)]">{p.losses}L</span>
-                    </span>
-                    <span className="chip chip-gold nums">{Math.round(p.win_rate * 100)}%</span>
-                  </div>
-                </div>
-                );
-              })}
-            </div>
-          </div>
-        </FadeIn>
-      )}
-
-      {/* Match History */}
-      <FadeIn delay={0.2}>
-        <div className="card-elevated p-4">
-          <div className="flex items-center gap-2 mb-4">
-            <Trophy className="w-4 h-4 text-[var(--color-gold)]" />
-            <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>Match History</h2>
-          </div>
-          <div className="space-y-2">
-            {recentMatches?.map((mp) => {
-              const matchRaw = mp.match as unknown;
-              const m = (Array.isArray(matchRaw) ? matchRaw[0] : matchRaw) as Record<string, unknown> | null;
-              if (!m) return null;
-              const isWin = mp.win_flag === true;
-              const isLoss = mp.win_flag === false;
-              const delta = mp.rating_delta;
-              const hasDelta = delta !== null && delta !== undefined;
-              const isPositive = (delta ?? 0) >= 0;
-              return (
-                <div key={mp.id} className="flex items-center justify-between p-3 bg-[var(--bg-card-hover)] border border-[var(--border)]">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-8 h-8 flex items-center justify-center text-xs font-bold ${
-                      isWin
-                        ? 'bg-[var(--bg-accent)] text-[var(--accent)] border border-[var(--accent-border)]'
-                        : isLoss
-                        ? 'bg-[var(--bg-loss)] text-[var(--loss)] border border-[var(--loss-border)]'
-                        : 'bg-[var(--bg-inset)] text-[var(--text-muted)] border border-[var(--border)]'
-                    }`}>
-                      {isWin ? 'W' : isLoss ? 'L' : '?'}
-                    </div>
-                    <span className="ds-mono text-sm text-[var(--text-primary)] font-medium">{m.score_summary as string || '-'}</span>
-                    <span className="chip">{m.match_type as string}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {hasDelta && (
-                      <span className={`ds-mono text-xs font-bold inline-flex items-center px-2 py-0.5 rounded-full border ${
-                        isPositive
-                          ? 'bg-[var(--bg-accent)] text-[var(--accent)] border-[var(--accent-border)]'
-                          : 'bg-[var(--bg-loss)] text-[var(--loss)] border-[var(--loss-border)]'
-                      }`}>
-                        {isPositive ? '+' : ''}{delta}
-                      </span>
-                    )}
-                    <span className="text-xs text-[var(--text-muted)]">{m.played_at ? formatDate(m.played_at as string) : ''}</span>
-                  </div>
-                </div>
-              );
-            })}
-            {(!recentMatches || recentMatches.length === 0) && (
-              <div className="text-center py-8">
-                <Trophy className="w-8 h-8 text-[var(--text-muted)] mx-auto mb-2" />
-                <p className="text-[var(--text-muted)] text-sm">No matches yet</p>
+    <>
+      {/* Hero */}
+      <section
+        style={{
+          position: 'relative',
+          overflow: 'hidden',
+          flexShrink: 0,
+          background: 'linear-gradient(160deg, #1a1a1a 0%, #2a1410 50%, #181818 100%)',
+          padding: '24px 24px 28px',
+          borderBottom: '1px solid #303030',
+        }}
+      >
+        <div
+          style={{
+            position: 'absolute',
+            top: -40,
+            right: -40,
+            width: 240,
+            height: 240,
+            background: 'radial-gradient(circle, rgba(218,41,28,0.20) 0%, transparent 70%)',
+          }}
+        />
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 16 }}>
+          <Avatar
+            name={player.full_name as string}
+            src={player.avatar_url as string | null}
+            size={72}
+            ring
+          />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <Eyebrow>Member · #{myRank}</Eyebrow>
+            <h1
+              style={{
+                fontSize: 24,
+                fontWeight: 500,
+                letterSpacing: '-0.4px',
+                marginTop: 4,
+              }}
+            >
+              {player.full_name}
+            </h1>
+            {player.status && (
+              <div style={{ marginTop: 6 }}>
+                <StatusPill status={player.status as string} />
               </div>
             )}
           </div>
         </div>
-      </FadeIn>
-    </div>
-    </div>
+      </section>
+
+      {/* ELO Trend */}
+      <section style={{ padding: '20px 24px 8px' }}>
+        <SectionLabel>Singles ELO · Last {Math.min(trend.length, 6)} matches</SectionLabel>
+        <div style={{ background: '#222', border: '1px solid #303030', padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
+            <span
+              style={{
+                fontSize: 36,
+                fontWeight: 700,
+                letterSpacing: '-0.7px',
+                fontFamily: 'JetBrains Mono, monospace',
+              }}
+            >
+              {r?.singles_elo ?? '—'}
+            </span>
+            {trendDelta !== 0 && (
+              <span
+                style={{
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: trendDelta >= 0 ? '#03904a' : '#da291c',
+                }}
+              >
+                {trendDelta >= 0 ? '+' : ''}
+                {trendDelta}
+              </span>
+            )}
+            <span
+              style={{
+                fontSize: 10,
+                color: '#666',
+                letterSpacing: '0.65px',
+                textTransform: 'uppercase',
+                fontWeight: 600,
+                marginLeft: 'auto',
+              }}
+            >
+              30 days
+            </span>
+          </div>
+          {trend.length >= 2 ? (
+            <>
+              <div style={{ position: 'relative', marginTop: 16 }}>
+                <svg width="100%" height="84" viewBox="0 0 100 100" preserveAspectRatio="none">
+                  <line
+                    x1="0"
+                    y1="25"
+                    x2="100"
+                    y2="25"
+                    stroke="#303030"
+                    strokeWidth="0.5"
+                    strokeDasharray="1,2"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                  <line
+                    x1="0"
+                    y1="75"
+                    x2="100"
+                    y2="75"
+                    stroke="#303030"
+                    strokeWidth="0.5"
+                    strokeDasharray="1,2"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                  <polyline points={`0,100 ${points} 100,100`} fill="rgba(218,41,28,0.12)" />
+                  <polyline
+                    points={points}
+                    fill="none"
+                    stroke="#da291c"
+                    strokeWidth="2"
+                    vectorEffect="non-scaling-stroke"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <div
+                  style={{
+                    position: 'absolute',
+                    right: 0,
+                    top: 0,
+                    width: 8,
+                    height: 8,
+                    background: '#da291c',
+                    boxShadow: '0 0 0 3px rgba(218,41,28,0.25)',
+                    transform: 'translate(50%, -50%)',
+                  }}
+                />
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  marginTop: 10,
+                  fontSize: 9,
+                  color: '#666',
+                  fontWeight: 600,
+                  letterSpacing: '1px',
+                  textTransform: 'uppercase',
+                  fontFamily: 'JetBrains Mono, monospace',
+                }}
+              >
+                {trend.map((_, i) => (
+                  <span key={i}>M{i + 1}</span>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div style={{ marginTop: 16, fontSize: 12, color: '#969696', textAlign: 'center', padding: '20px 0' }}>
+              Play a few matches to see your trend.
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* Stat grid */}
+      <section style={{ padding: '12px 24px' }}>
+        <SectionLabel>Season stats</SectionLabel>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: 1,
+            background: '#303030',
+            border: '1px solid #303030',
+          }}
+        >
+          {[
+            { label: 'Singles ELO', value: r?.singles_elo ?? '—' },
+            { label: 'Doubles ELO', value: r?.doubles_elo ?? '—' },
+            { label: 'Singles W/L', value: `${sw}–${sl}` },
+            { label: 'Doubles W/L', value: `${dw}–${dl}` },
+            { label: 'Win Rate', value: totalMatches > 0 ? `${winrate}%` : '—' },
+            {
+              label: 'Streak',
+              value: streak > 0 ? `+${streak}` : streak < 0 ? `${streak}` : '0',
+            },
+          ].map((s) => (
+            <div key={s.label} style={{ background: '#222', padding: '16px 18px' }}>
+              <div
+                style={{
+                  fontSize: 9,
+                  fontWeight: 600,
+                  letterSpacing: '1.4px',
+                  textTransform: 'uppercase',
+                  color: '#969696',
+                }}
+              >
+                {s.label}
+              </div>
+              <div
+                style={{
+                  fontSize: 22,
+                  fontWeight: 700,
+                  lineHeight: 1.1,
+                  letterSpacing: '-0.3px',
+                  marginTop: 6,
+                  fontFamily: 'JetBrains Mono, monospace',
+                }}
+              >
+                {s.value}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Account list */}
+      <section style={{ padding: '12px 24px 24px' }}>
+        <SectionLabel>Account</SectionLabel>
+        <div style={{ background: '#222', border: '1px solid #303030' }}>
+          {(
+            [
+              { label: 'Edit Profile', view: 'profile' },
+              {
+                label: 'Notifications',
+                view: 'notifications',
+                badge: unreadNotifs && unreadNotifs > 0 ? String(unreadNotifs) : undefined,
+              },
+              { label: 'Match Preferences', view: 'matches' },
+              { label: 'Privacy & Visibility', view: 'privacy' },
+              { label: 'Help & Feedback', view: 'help' },
+              { label: 'Sign Out', view: 'signout', danger: true as const },
+            ] as Array<{ label: string; view: string; badge?: string; danger?: true }>
+          ).map((item, i) => (
+            <Link
+              key={item.label}
+              href={`/settings?view=${item.view}`}
+              style={{
+                width: '100%',
+                padding: '16px 18px',
+                textAlign: 'left',
+                background: 'transparent',
+                border: 'none',
+                borderTop: i === 0 ? 'none' : '1px solid #303030',
+                color: item.danger ? '#da291c' : '#fff',
+                fontFamily: 'inherit',
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                textDecoration: 'none',
+              }}
+            >
+              <span>{item.label}</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                {item.badge && (
+                  <span
+                    style={{
+                      background: '#da291c',
+                      color: '#fff',
+                      fontSize: 9,
+                      fontWeight: 700,
+                      padding: '2px 6px',
+                      letterSpacing: '0.5px',
+                    }}
+                  >
+                    {item.badge}
+                  </span>
+                )}
+                <span style={{ color: '#666', fontSize: 18 }}>›</span>
+              </span>
+            </Link>
+          ))}
+        </div>
+      </section>
+    </>
   );
+}
+
+function buildTrend(currentElo: number, history: Array<{ rating_delta: number | null }>): number[] {
+  // history is most-recent-first. Walk back applying deltas to reconstruct the
+  // ELO at each point, then reverse so the oldest is first.
+  const recent = history.slice(0, 6);
+  if (recent.length === 0) return [];
+  const out: number[] = [currentElo];
+  let elo = currentElo;
+  for (const m of recent) {
+    elo -= m.rating_delta ?? 0;
+    out.push(elo);
+  }
+  return out.reverse();
+}
+
+function buildPolyline(trend: number[]): string {
+  const max = Math.max(...trend);
+  const min = Math.min(...trend);
+  const range = max - min || 1;
+  return trend
+    .map((v, i) => `${(i / (trend.length - 1)) * 100},${100 - ((v - min) / range) * 100}`)
+    .join(' ');
 }

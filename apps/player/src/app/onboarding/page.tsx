@@ -1,419 +1,664 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { completeOnboarding } from '@/lib/actions';
 import { useRouter } from 'next/navigation';
+import { completeOnboarding } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
+import {
+  AuthShell,
+  AuthHeader,
+  AuthField,
+  CTAButton,
+} from '@/components/v2/atoms';
 
-const TOTAL_STEPS = 3;
+const TOTAL_STEPS = 5;
 
-type Direction = 'forward' | 'back';
+const SKILLS = [
+  { v: 'beginner', t: 'Beginner', d: 'New to the sport. Still getting the hang of serves & rallies.' },
+  { v: 'casual', t: 'Casual', d: 'Play for fun. Comfortable with rallies, learning strategy.' },
+  { v: 'intermediate', t: 'Intermediate', d: 'Confident in singles & doubles. Have a solid clear & smash.' },
+  { v: 'advanced', t: 'Advanced', d: 'Tournament experience. Competitive in regional/club events.' },
+] as const;
+
+const STARTING_ELO: Record<string, number> = {
+  beginner: 1100,
+  casual: 1300,
+  intermediate: 1500,
+  advanced: 1700,
+};
+
+type SkillKey = (typeof SKILLS)[number]['v'];
+type Plays = 'singles' | 'doubles' | 'both';
 
 export default function OnboardingPage() {
-  const [step, setStep] = useState(1);
-  const [direction, setDirection] = useState<Direction>('forward');
-  const [animating, setAnimating] = useState(false);
-
-  const [name, setName] = useState('');
-  const [displayName, setDisplayName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [acknowledged, setAcknowledged] = useState(false);
-
-  const [, startTransition] = useTransition();
-  const [submitting, setSubmitting] = useState(false);
   const router = useRouter();
   const { toast } = useToast();
+  const [, startTransition] = useTransition();
+  const [submitting, setSubmitting] = useState(false);
+  const [step, setStep] = useState(0);
 
-  function go(toStep: number) {
-    if (animating) return;
-    if (toStep < 1 || toStep > TOTAL_STEPS) return;
-    setDirection(toStep > step ? 'forward' : 'back');
-    setAnimating(true);
-    // Step transition: 250ms cubic-bezier(0.4,0,0.2,1) per spec
-    setTimeout(() => {
-      setStep(toStep);
-      setAnimating(false);
-    }, 250);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [studentId, setStudentId] = useState('');
+  const [skill, setSkill] = useState<SkillKey | ''>('');
+  const [plays, setPlays] = useState<Plays | ''>('');
+  const [goal, setGoal] = useState('');
+  const [notif, setNotif] = useState(true);
+  const [errs, setErrs] = useState<Record<string, string>>({});
+
+  const progress = ((step + 1) / (TOTAL_STEPS + 1)) * 100;
+
+  function validate() {
+    const e: Record<string, string> = {};
+    if (step === 1) {
+      if (!email.trim()) e.email = 'Required';
+      else if (!/.+@sfu\.ca$/i.test(email.trim())) e.email = 'Must be a @sfu.ca email';
+      if (!password) e.password = 'Required';
+      else if (password.length < 8) e.password = 'At least 8 characters';
+    }
+    if (step === 2) {
+      if (!name.trim()) e.name = 'Required';
+      if (!studentId.trim()) e.studentId = 'Required';
+      else if (!/^\d{9}$/.test(studentId.trim())) e.studentId = '9-digit SFU ID';
+    }
+    if (step === 3 && !skill) e.skill = 'Pick one';
+    if (step === 4 && !plays) e.plays = 'Pick one';
+    setErrs(e);
+    return Object.keys(e).length === 0;
   }
 
-  async function handleComplete() {
-    if (!acknowledged) return;
+  function next() {
+    if (validate()) {
+      setStep((s) => s + 1);
+      setErrs({});
+    }
+  }
+
+  function back() {
+    setStep((s) => s - 1);
+    setErrs({});
+  }
+
+  async function submit() {
+    if (!validate()) return;
     setSubmitting(true);
     try {
       await completeOnboarding({
         full_name: name,
-        display_name: displayName || undefined,
-        phone: phone || undefined,
       });
-      // Brief delay so the user sees success state before navigating
-      startTransition(() => router.push('/feed'));
+      setStep(5);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed to complete onboarding', 'error');
       setSubmitting(false);
     }
   }
 
-  const progressPct = (step / TOTAL_STEPS) * 100;
+  function enterApp() {
+    startTransition(() => router.push('/feed'));
+  }
 
-  // Step transition classes (slide ±40px + opacity per spec)
-  const stepStyle: React.CSSProperties = animating
-    ? {
-        opacity: 0,
-        transform: `translateX(${direction === 'forward' ? -40 : 40}px)`,
-        transition: 'opacity 200ms cubic-bezier(0.4,0,0.2,1), transform 200ms cubic-bezier(0.4,0,0.2,1)',
-      }
-    : {
-        opacity: 1,
-        transform: 'translateX(0)',
-        transition: 'opacity 200ms cubic-bezier(0.4,0,0.2,1), transform 200ms cubic-bezier(0.4,0,0.2,1)',
-      };
-
-  const fieldLabel: React.CSSProperties = {
-    display: 'block',
-    fontSize: 9,
-    letterSpacing: '0.18em',
-    textTransform: 'uppercase',
-    color: 'var(--dim)',
-    fontWeight: 700,
-    marginBottom: 8,
-  };
-
-  const inputStyle: React.CSSProperties = {
-    width: '100%',
-    background: '#0D0D0D',
-    border: '1px solid rgba(255,255,255,0.10)',
-    color: '#F0F0F0',
-    fontFamily: 'var(--font-body)',
-    fontSize: 14,
-    padding: '12px 14px',
-    outline: 'none',
-    transition: 'border-color 150ms ease-out',
-    boxSizing: 'border-box',
-  };
-
-  const btnRed: React.CSSProperties = {
-    background: 'var(--red)',
-    color: '#fff',
-    fontFamily: 'var(--font-display)',
-    fontSize: 11,
-    fontWeight: 700,
-    letterSpacing: '0.16em',
-    textTransform: 'uppercase',
-    padding: '12px 18px',
-    border: 0,
-    cursor: 'pointer',
-    transition: 'background 150ms ease-out, opacity 150ms ease-out',
-  };
-
-  const btnBack: React.CSSProperties = {
-    background: 'transparent',
-    color: 'var(--muted)',
-    fontFamily: 'var(--font-display)',
-    fontSize: 11,
-    fontWeight: 700,
-    letterSpacing: '0.16em',
-    textTransform: 'uppercase',
-    border: 0,
-    cursor: 'pointer',
-    padding: '10px 14px',
-    transition: 'color 150ms',
-  };
-
-  return (
-    <div
-      className="fixed inset-0 flex flex-col overflow-y-auto"
-      style={{ background: 'var(--bg)', zIndex: 200 }}
-    >
-      {/* Diagonal grid texture */}
-      <div
-        aria-hidden
-        className="fixed inset-0 pointer-events-none"
-        style={{
-          backgroundImage:
-            'repeating-linear-gradient(45deg, transparent, transparent 39px, rgba(255,255,255,0.03) 39px, rgba(255,255,255,0.03) 40px)',
-          zIndex: 0,
-        }}
-      />
-
-      {/* Progress + step counter */}
-      <div className="relative pt-7 pb-4 text-center" style={{ zIndex: 2 }}>
-        <div
-          className="font-bold uppercase mb-3"
-          style={{ fontSize: 9, letterSpacing: '0.22em', color: 'var(--dim)' }}
-        >
-          Step {step} of {TOTAL_STEPS}
-        </div>
-        <div
-          className="relative mx-auto"
-          style={{ height: 2, background: 'var(--surface2)', maxWidth: 480 }}
-        >
-          <span
-            className="absolute left-0 top-0 bottom-0"
-            style={{
-              background: 'var(--red)',
-              transition: 'width 240ms ease-out',
-              width: `${progressPct}%`,
-            }}
+  // ── Step 0: welcome ───────────────────────────────────────────
+  if (step === 0) {
+    return (
+      <AuthShell progress={progress}>
+        <div style={{ flex: 1, padding: '0 24px 28px', display: 'flex', flexDirection: 'column' }}>
+          <AuthHeader
+            eyebrow={`Step 1 of ${TOTAL_STEPS}`}
+            title={
+              <>
+                Welcome
+                <br />
+                to the club.
+              </>
+            }
+            sub="Five quick steps to get you on the leaderboard. Takes about 90 seconds."
+            onBack={() => router.push('/login')}
           />
-        </div>
-      </div>
-
-      {/* Stage */}
-      <div
-        className="flex-1 flex items-center justify-center px-8 py-10 relative min-h-0"
-        style={{ zIndex: 2 }}
-      >
-        <div className="w-full" style={{ maxWidth: 520, ...stepStyle }}>
-          {step === 1 && (
-            <>
-              <div className="flex items-center gap-[14px]">
-                <span aria-hidden style={{ width: 3, height: 14, background: 'var(--red)' }} />
-                <span
-                  className="uppercase font-bold"
-                  style={{ fontSize: 10, letterSpacing: '0.25em', color: 'var(--red)' }}
-                >
-                  Welcome
-                </span>
-              </div>
-              <h1
+          <div
+            style={{
+              marginTop: 28,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 1,
+              background: '#303030',
+              border: '1px solid #303030',
+            }}
+          >
+            {[
+              { n: '01', l: 'Account', d: 'Email + password' },
+              { n: '02', l: 'Identity', d: 'Name + SFU ID' },
+              { n: '03', l: 'Skill', d: 'Self-rated level' },
+              { n: '04', l: 'Preferences', d: 'How you play' },
+              { n: '05', l: 'Confirm', d: 'Verify email' },
+            ].map((r) => (
+              <div
+                key={r.n}
                 style={{
-                  fontFamily: 'var(--font-display)',
-                  fontWeight: 700,
-                  fontSize: 64,
-                  lineHeight: 0.9,
-                  color: 'var(--ink)',
-                  letterSpacing: '-0.02em',
-                  marginTop: 16,
+                  background: '#1a1a1a',
+                  padding: '14px 16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 16,
                 }}
               >
-                You&apos;re in.
-              </h1>
-              <p
-                className="mt-5"
-                style={{ color: 'var(--muted)', fontSize: 14, lineHeight: 1.6, maxWidth: 440 }}
-              >
-                Three quick steps. Then you&apos;re ready to play.
-              </p>
-
-              <div className="mt-7 flex flex-col gap-[14px]">
-                {[
-                  { num: '01', text: <><strong style={{ color: 'var(--ink)', fontWeight: 600 }}>Tell us your name</strong> so other players know who they&apos;re challenging.</> },
-                  { num: '02', text: <><strong style={{ color: 'var(--ink)', fontWeight: 600 }}>Add a phone number</strong> for session reminders. Optional.</> },
-                  { num: '03', text: <><strong style={{ color: 'var(--ink)', fontWeight: 600 }}>Confirm club rules</strong> and you&apos;re on the ladder.</> },
-                ].map((row, i) => (
-                  <div
-                    key={row.num}
-                    className="grid items-center"
-                    style={{
-                      gridTemplateColumns: '32px 1fr',
-                      gap: 16,
-                      padding: '12px 0',
-                      borderTop: i === 0 ? 0 : '1px solid var(--hairline)',
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontFamily: 'var(--font-display)',
-                        fontWeight: 700,
-                        fontSize: 18,
-                        color: 'var(--red)',
-                        fontVariantNumeric: 'tabular-nums',
-                      }}
-                    >{row.num}</span>
-                    <span style={{ color: 'var(--text)', fontSize: 13, lineHeight: 1.5 }}>{row.text}</span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-9 flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => go(2)}
-                  disabled={animating}
-                  style={btnRed}
-                >Get started →</button>
-              </div>
-            </>
-          )}
-
-          {step === 2 && (
-            <>
-              <div className="flex items-center gap-[14px]">
-                <span aria-hidden style={{ width: 3, height: 14, background: 'var(--red)' }} />
-                <span
-                  className="uppercase font-bold"
-                  style={{ fontSize: 10, letterSpacing: '0.25em', color: 'var(--red)' }}
-                >
-                  Your profile
-                </span>
-              </div>
-              <h2
-                style={{
-                  fontFamily: 'var(--font-display)',
-                  fontWeight: 700,
-                  fontSize: 48,
-                  lineHeight: 0.9,
-                  color: 'var(--ink)',
-                  letterSpacing: '-0.02em',
-                  marginTop: 16,
-                }}
-              >
-                Who plays.
-              </h2>
-              <p className="mt-4" style={{ color: 'var(--muted)', fontSize: 14, lineHeight: 1.6, maxWidth: 440 }}>
-                Your name is how matches credit you. Display name and phone are optional.
-              </p>
-
-              <div className="mt-6 flex flex-col gap-[18px]">
-                <div>
-                  <label htmlFor="name" style={fieldLabel}>Full name *</label>
-                  <input
-                    id="name"
-                    type="text"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="First Last"
-                    required
-                    style={inputStyle}
-                    onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--red)'; }}
-                    onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.10)'; }}
-                  />
-                </div>
-                <div>
-                  <label htmlFor="displayName" style={fieldLabel}>Display name <span style={{ color: 'var(--faint)' }}>(optional)</span></label>
-                  <input
-                    id="displayName"
-                    type="text"
-                    value={displayName}
-                    onChange={(e) => setDisplayName(e.target.value)}
-                    placeholder="What people call you on court"
-                    style={inputStyle}
-                    onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--red)'; }}
-                    onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.10)'; }}
-                  />
-                </div>
-                <div>
-                  <label htmlFor="phone" style={fieldLabel}>Phone <span style={{ color: 'var(--faint)' }}>(optional)</span></label>
-                  <input
-                    id="phone"
-                    type="tel"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="For session reminders"
-                    style={inputStyle}
-                    onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--red)'; }}
-                    onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.10)'; }}
-                  />
-                </div>
-              </div>
-
-              <div className="mt-9 flex items-center gap-3">
-                <button type="button" onClick={() => go(1)} disabled={animating} style={btnBack}>← Back</button>
-                <button
-                  type="button"
-                  onClick={() => go(3)}
-                  disabled={animating || name.trim().length < 2}
-                  style={{ ...btnRed, opacity: name.trim().length < 2 ? 0.4 : 1, cursor: name.trim().length < 2 ? 'not-allowed' : 'pointer' }}
-                >Continue →</button>
-              </div>
-            </>
-          )}
-
-          {step === 3 && (
-            <>
-              <div className="flex items-center gap-[14px]">
-                <span aria-hidden style={{ width: 3, height: 14, background: 'var(--red)' }} />
-                <span
-                  className="uppercase font-bold"
-                  style={{ fontSize: 10, letterSpacing: '0.25em', color: 'var(--red)' }}
-                >
-                  Club rules
-                </span>
-              </div>
-              <h2
-                style={{
-                  fontFamily: 'var(--font-display)',
-                  fontWeight: 700,
-                  fontSize: 48,
-                  lineHeight: 0.9,
-                  color: 'var(--ink)',
-                  letterSpacing: '-0.02em',
-                  marginTop: 16,
-                }}
-              >
-                The basics.
-              </h2>
-              <p className="mt-4" style={{ color: 'var(--muted)', fontSize: 14, lineHeight: 1.6, maxWidth: 440 }}>
-                Five things we ask of every player.
-              </p>
-
-              <div className="mt-7 flex flex-col gap-[14px]">
-                {[
-                  { num: '01', text: <><strong style={{ color: 'var(--ink)', fontWeight: 600 }}>Show up.</strong> If you sign up for a session, attend or cancel ≥2h ahead.</> },
-                  { num: '02', text: <><strong style={{ color: 'var(--ink)', fontWeight: 600 }}>Submit scores</strong> within 24h of any rated match — both players confirm.</> },
-                  { num: '03', text: <><strong style={{ color: 'var(--ink)', fontWeight: 600 }}>Dispute respectfully.</strong> Flag the score, don&apos;t argue at court.</> },
-                  { num: '04', text: <><strong style={{ color: 'var(--ink)', fontWeight: 600 }}>Climb honestly.</strong> ELO only counts when both sides agree on the result.</> },
-                  { num: '05', text: <><strong style={{ color: 'var(--ink)', fontWeight: 600 }}>Have fun.</strong> The ranking is real but the club comes first.</> },
-                ].map((row, i) => (
-                  <div
-                    key={row.num}
-                    className="grid items-center"
-                    style={{
-                      gridTemplateColumns: '32px 1fr',
-                      gap: 16,
-                      padding: '12px 0',
-                      borderTop: i === 0 ? 0 : '1px solid var(--hairline)',
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontFamily: 'var(--font-display)',
-                        fontWeight: 700,
-                        fontSize: 18,
-                        color: 'var(--red)',
-                        fontVariantNumeric: 'tabular-nums',
-                      }}
-                    >{row.num}</span>
-                    <span style={{ color: 'var(--text)', fontSize: 13, lineHeight: 1.5 }}>{row.text}</span>
-                  </div>
-                ))}
-              </div>
-
-              <label
-                className="mt-7 flex items-start gap-3 cursor-pointer select-none"
-                style={{ fontSize: 13, color: 'var(--text)' }}
-              >
-                <input
-                  type="checkbox"
-                  checked={acknowledged}
-                  onChange={(e) => setAcknowledged(e.target.checked)}
-                  className="mt-[3px]"
+                <div
                   style={{
-                    accentColor: 'var(--red)',
-                    width: 16,
-                    height: 16,
+                    fontFamily: 'JetBrains Mono, monospace',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color: '#da291c',
+                    letterSpacing: '0.06em',
+                  }}
+                >
+                  {r.n}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{r.l}</div>
+                  <div style={{ fontSize: 11, color: '#969696', marginTop: 2 }}>{r.d}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: 'auto', paddingTop: 28 }}>
+            <CTAButton size="lg" full onClick={() => setStep(1)}>
+              Get Started
+            </CTAButton>
+          </div>
+        </div>
+      </AuthShell>
+    );
+  }
+
+  // ── Step 1: account ───────────────────────────────────────────
+  if (step === 1) {
+    return (
+      <AuthShell progress={progress}>
+        <div style={{ flex: 1, padding: '0 24px 28px', display: 'flex', flexDirection: 'column' }}>
+          <AuthHeader
+            eyebrow={`Step 2 of ${TOTAL_STEPS}`}
+            title="Create account."
+            sub="Use your SFU email — it's how we verify membership."
+            onBack={back}
+          />
+          <div style={{ marginTop: 28 }}>
+            <AuthField
+              label="SFU Email"
+              type="email"
+              value={email}
+              onChange={setEmail}
+              placeholder="you@sfu.ca"
+              error={errs.email}
+              autoFocus
+            />
+            <AuthField
+              label="Password"
+              type="password"
+              value={password}
+              onChange={setPassword}
+              placeholder="At least 8 characters"
+              error={errs.password}
+              hint="Use 8+ characters with a mix of letters & numbers."
+            />
+          </div>
+          <div style={{ marginTop: 'auto', paddingTop: 28 }}>
+            <CTAButton size="lg" full onClick={next}>
+              Continue
+            </CTAButton>
+            <div
+              style={{
+                marginTop: 16,
+                fontSize: 11,
+                color: '#666',
+                textAlign: 'center',
+                lineHeight: 1.55,
+              }}
+            >
+              By continuing you agree to the club&apos;s{' '}
+              <span style={{ color: '#969696', textDecoration: 'underline' }}>Code of Conduct</span>.
+            </div>
+          </div>
+        </div>
+      </AuthShell>
+    );
+  }
+
+  // ── Step 2: identity ──────────────────────────────────────────
+  if (step === 2) {
+    return (
+      <AuthShell progress={progress}>
+        <div style={{ flex: 1, padding: '0 24px 28px', display: 'flex', flexDirection: 'column' }}>
+          <AuthHeader
+            eyebrow={`Step 3 of ${TOTAL_STEPS}`}
+            title="Who are you?"
+            sub="Your name appears on the leaderboard. Your SFU ID stays private — admins use it for membership checks only."
+            onBack={back}
+          />
+          <div style={{ marginTop: 28 }}>
+            <AuthField
+              label="Full Name"
+              value={name}
+              onChange={setName}
+              placeholder="e.g. Alex Tran"
+              error={errs.name}
+              autoFocus
+            />
+            <AuthField
+              label="SFU Student ID"
+              value={studentId}
+              onChange={setStudentId}
+              placeholder="9 digits"
+              error={errs.studentId}
+              hint="Found on your SFU ID card."
+            />
+          </div>
+          <div style={{ marginTop: 'auto', paddingTop: 28 }}>
+            <CTAButton size="lg" full onClick={next}>
+              Continue
+            </CTAButton>
+          </div>
+        </div>
+      </AuthShell>
+    );
+  }
+
+  // ── Step 3: skill ─────────────────────────────────────────────
+  if (step === 3) {
+    return (
+      <AuthShell progress={progress}>
+        <div style={{ flex: 1, padding: '0 24px 28px', display: 'flex', flexDirection: 'column' }}>
+          <AuthHeader
+            eyebrow={`Step 4 of ${TOTAL_STEPS}`}
+            title={
+              <>
+                How do you
+                <br />
+                play?
+              </>
+            }
+            sub="Pick the level that fits today. Your real ELO is set by your matches — this is just where we start you."
+            onBack={back}
+          />
+          <div style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {SKILLS.map((s) => {
+              const active = skill === s.v;
+              return (
+                <button
+                  key={s.v}
+                  type="button"
+                  onClick={() => {
+                    setSkill(s.v);
+                    setErrs({});
+                  }}
+                  style={{
+                    background: active ? 'rgba(218,41,28,0.10)' : '#1a1a1a',
+                    border: '1px solid ' + (active ? '#da291c' : '#303030'),
+                    padding: '14px 16px',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 14,
+                    color: '#fff',
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 18,
+                      height: 18,
+                      border: '1.5px solid ' + (active ? '#da291c' : '#666'),
+                      borderRadius: '50%',
+                      flexShrink: 0,
+                      position: 'relative',
+                    }}
+                  >
+                    {active && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          inset: 3,
+                          background: '#da291c',
+                          borderRadius: '50%',
+                        }}
+                      />
+                    )}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 700 }}>{s.t}</div>
+                    <div style={{ fontSize: 11, color: '#969696', marginTop: 3, lineHeight: 1.4 }}>
+                      {s.d}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          {errs.skill && (
+            <div style={{ fontSize: 10, color: '#da291c', marginTop: 10, fontWeight: 600 }}>
+              ↑ {errs.skill}
+            </div>
+          )}
+          <div style={{ marginTop: 'auto', paddingTop: 28 }}>
+            <CTAButton size="lg" full onClick={next}>
+              Continue
+            </CTAButton>
+          </div>
+        </div>
+      </AuthShell>
+    );
+  }
+
+  // ── Step 4: preferences ───────────────────────────────────────
+  if (step === 4) {
+    const opts: { v: Plays; t: string }[] = [
+      { v: 'singles', t: 'Singles' },
+      { v: 'doubles', t: 'Doubles' },
+      { v: 'both', t: 'Both' },
+    ];
+    return (
+      <AuthShell progress={progress}>
+        <div style={{ flex: 1, padding: '0 24px 28px', display: 'flex', flexDirection: 'column' }}>
+          <AuthHeader
+            eyebrow={`Step 5 of ${TOTAL_STEPS}`}
+            title="Last bit."
+            sub="We use these to match you with the right opponents and sessions."
+            onBack={back}
+          />
+          <div style={{ marginTop: 28 }}>
+            <div
+              style={{
+                fontSize: 9,
+                fontWeight: 600,
+                letterSpacing: '1.5px',
+                textTransform: 'uppercase',
+                color: errs.plays ? '#da291c' : '#666',
+                marginBottom: 8,
+              }}
+            >
+              Format you prefer
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+              {opts.map((p) => {
+                const active = plays === p.v;
+                return (
+                  <button
+                    key={p.v}
+                    type="button"
+                    onClick={() => {
+                      setPlays(p.v);
+                      setErrs({});
+                    }}
+                    style={{
+                      background: active ? '#da291c' : '#1a1a1a',
+                      border: '1px solid ' + (active ? '#da291c' : '#303030'),
+                      color: '#fff',
+                      padding: '14px',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      letterSpacing: '0.06em',
+                      textTransform: 'uppercase',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                    }}
+                  >
+                    {p.t}
+                  </button>
+                );
+              })}
+            </div>
+            {errs.plays && (
+              <div style={{ fontSize: 10, color: '#da291c', marginTop: 8, fontWeight: 600 }}>
+                ↑ {errs.plays}
+              </div>
+            )}
+
+            <div style={{ marginTop: 28 }}>
+              <div
+                style={{
+                  fontSize: 9,
+                  fontWeight: 600,
+                  letterSpacing: '1.5px',
+                  textTransform: 'uppercase',
+                  color: '#666',
+                  marginBottom: 8,
+                }}
+              >
+                Goal (optional)
+              </div>
+              <textarea
+                value={goal}
+                onChange={(e) => setGoal(e.target.value)}
+                placeholder="e.g. Make top 10 by end of season"
+                rows={3}
+                style={{
+                  width: '100%',
+                  background: '#181818',
+                  border: '1px solid #303030',
+                  color: '#fff',
+                  fontSize: 13,
+                  padding: '12px 14px',
+                  resize: 'none',
+                  fontFamily: 'inherit',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+
+            <div
+              style={{
+                marginTop: 22,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '14px 16px',
+                background: '#1a1a1a',
+                border: '1px solid #303030',
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>Notifications</div>
+                <div style={{ fontSize: 11, color: '#969696', marginTop: 2 }}>
+                  Challenges, sessions &amp; match results.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNotif(!notif)}
+                style={{
+                  width: 40,
+                  height: 22,
+                  borderRadius: 0,
+                  background: notif ? '#da291c' : '#303030',
+                  border: 0,
+                  position: 'relative',
+                  cursor: 'pointer',
+                  flexShrink: 0,
+                }}
+              >
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 2,
+                    left: notif ? 20 : 2,
+                    width: 18,
+                    height: 18,
+                    background: '#fff',
+                    transition: 'left 160ms',
                   }}
                 />
-                <span>I&apos;ve read these and I&apos;m in.</span>
-              </label>
+              </button>
+            </div>
+          </div>
 
-              <div className="mt-9 flex items-center gap-3">
-                <button type="button" onClick={() => go(2)} disabled={animating || submitting} style={btnBack}>← Back</button>
-                <button
-                  type="button"
-                  onClick={handleComplete}
-                  disabled={!acknowledged || submitting || animating}
-                  style={{
-                    ...btnRed,
-                    opacity: !acknowledged || submitting ? 0.4 : 1,
-                    cursor: !acknowledged || submitting ? 'not-allowed' : 'pointer',
-                  }}
-                >{submitting ? 'Setting up…' : "I'm ready →"}</button>
-              </div>
-            </>
-          )}
+          <div style={{ marginTop: 'auto', paddingTop: 28 }}>
+            <CTAButton size="lg" full disabled={submitting} onClick={() => void submit()}>
+              {submitting ? 'Creating account…' : 'Create Account'}
+            </CTAButton>
+          </div>
         </div>
+      </AuthShell>
+    );
+  }
+
+  // ── Step 5: confirmation ──────────────────────────────────────
+  return (
+    <AuthShell progress={100}>
+      <div
+        style={{
+          flex: 1,
+          padding: '24px 24px 28px',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center',
+          textAlign: 'center',
+        }}
+      >
+        <div
+          style={{
+            width: 64,
+            height: 64,
+            border: '1px solid #4ade80',
+            color: '#4ade80',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 36,
+            fontFamily: 'JetBrains Mono, monospace',
+          }}
+        >
+          ✓
+        </div>
+        <div
+          style={{
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: '2.4px',
+            textTransform: 'uppercase',
+            color: '#da291c',
+            marginTop: 22,
+          }}
+        >
+          You&apos;re in
+        </div>
+        <div
+          style={{
+            fontSize: 28,
+            fontWeight: 700,
+            letterSpacing: '-0.6px',
+            lineHeight: 1.05,
+            marginTop: 8,
+          }}
+        >
+          Welcome,
+          <br />
+          {name.split(' ')[0] || 'player'}.
+        </div>
+        <div
+          style={{
+            fontSize: 13,
+            color: '#969696',
+            lineHeight: 1.55,
+            marginTop: 14,
+            maxWidth: 300,
+          }}
+        >
+          We sent a verification link to <strong style={{ color: '#fff' }}>{email}</strong>. Tap it to unlock match
+          logging — you can browse the app meanwhile.
+        </div>
+        <div
+          style={{
+            marginTop: 28,
+            width: '100%',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, 1fr)',
+            gap: 1,
+            background: '#303030',
+            border: '1px solid #303030',
+          }}
+        >
+          <div style={{ background: '#1a1a1a', padding: 14 }}>
+            <div
+              style={{
+                fontSize: 9,
+                fontWeight: 600,
+                letterSpacing: '1.4px',
+                textTransform: 'uppercase',
+                color: '#666',
+              }}
+            >
+              Starting ELO
+            </div>
+            <div
+              style={{
+                fontFamily: 'JetBrains Mono, monospace',
+                fontSize: 18,
+                fontWeight: 700,
+                marginTop: 4,
+              }}
+            >
+              {STARTING_ELO[skill || 'casual'] ?? 1500}
+            </div>
+          </div>
+          <div style={{ background: '#1a1a1a', padding: 14 }}>
+            <div
+              style={{
+                fontSize: 9,
+                fontWeight: 600,
+                letterSpacing: '1.4px',
+                textTransform: 'uppercase',
+                color: '#666',
+              }}
+            >
+              Format
+            </div>
+            <div
+              style={{
+                fontFamily: 'JetBrains Mono, monospace',
+                fontSize: 13,
+                fontWeight: 700,
+                marginTop: 4,
+                textTransform: 'capitalize',
+              }}
+            >
+              {plays || '—'}
+            </div>
+          </div>
+          <div style={{ background: '#1a1a1a', padding: 14 }}>
+            <div
+              style={{
+                fontSize: 9,
+                fontWeight: 600,
+                letterSpacing: '1.4px',
+                textTransform: 'uppercase',
+                color: '#666',
+              }}
+            >
+              Status
+            </div>
+            <div
+              style={{
+                fontFamily: 'JetBrains Mono, monospace',
+                fontSize: 13,
+                fontWeight: 700,
+                marginTop: 4,
+                color: '#fbbf24',
+              }}
+            >
+              Pending
+            </div>
+          </div>
+        </div>
+        <div style={{ marginTop: 28, width: '100%' }}>
+          <CTAButton size="lg" full onClick={enterApp}>
+            Enter the App
+          </CTAButton>
+        </div>
+        {/* keep notif preference visible (used at submit time) */}
+        <div hidden>{String(notif)}</div>
+        <div hidden>{goal}</div>
       </div>
-    </div>
+    </AuthShell>
   );
 }

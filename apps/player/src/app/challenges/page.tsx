@@ -1,10 +1,30 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { Badge, PageHero } from '@badminton/ui';
-import { MATCH_FORMAT_LABELS, formatRelativeTime } from '@badminton/shared';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { Swords, Plus, Zap, Clock, CheckCircle2, ChevronRight, Inbox } from 'lucide-react';
-import { FadeIn, StaggerContainer, StaggerItem } from '@/components/motion-wrapper';
+import {
+  Avatar,
+  ScreenHeader,
+  SectionLabel,
+  Pill,
+  EmptyState,
+} from '@/components/v2/atoms';
+import { InlineChallengeActions } from './inline-actions';
+import { NewChallengeButton, SuggestedChallengeButton } from './sheet-controls';
+
+type Challenge = {
+  id: string;
+  status: string;
+  type: string;
+  rated_flag: boolean;
+  format: string;
+  created_by: string;
+  created_at: string;
+  scheduled_at: string | null;
+  creator: { full_name: string; avatar_url: string | null } | null;
+  challenge_participants: Array<{
+    player: { id: string; full_name: string; avatar_url: string | null } | null;
+  }>;
+};
 
 export default async function ChallengesPage() {
   const player = await getCurrentPlayer();
@@ -12,183 +32,296 @@ export default async function ChallengesPage() {
 
   const supabase = await createServerSupabaseClient();
 
-  const { data: myChallenges } = await supabase
-    .from('challenge_participants')
-    .select('*, challenge:challenges(*, creator:players!challenges_created_by_fkey(full_name), challenge_participants(*, player:players(full_name)))')
-    .eq('player_id', player.id)
-    .order('created_at', { ascending: false, referencedTable: 'challenges' })
-    .limit(20);
+  const [{ data: myChallengesRaw }, { data: suggestedRaw }] = await Promise.all([
+    supabase
+      .from('challenge_participants')
+      .select('id, confirmation_status, challenge:challenges(id, status, type, rated_flag, format, created_by, created_at, scheduled_at, creator:players!challenges_created_by_fkey(full_name, avatar_url), challenge_participants(player:players(id, full_name, avatar_url)))')
+      .eq('player_id', player.id)
+      .order('created_at', { ascending: false, referencedTable: 'challenges' })
+      .limit(40),
+    supabase
+      .from('players')
+      .select('id, full_name, avatar_url, ratings(singles_elo)')
+      .eq('active_flag', true)
+      .neq('id', player.id)
+      .not('status', 'in', '("pending_approval","suspended")')
+      .limit(20),
+  ]);
 
-  const incoming = myChallenges?.filter((cp) => {
-    const c = cp.challenge as Record<string, unknown>;
-    return c?.created_by !== player.id && cp.confirmation_status === 'pending';
-  }) || [];
+  const myChallenges = (myChallengesRaw ?? []).map((cp) => ({
+    cp_id: cp.id,
+    confirmation_status: cp.confirmation_status as string,
+    challenge: cp.challenge as unknown as Challenge | null,
+  }));
 
-  const outgoing = myChallenges?.filter((cp) => {
-    const c = cp.challenge as Record<string, unknown>;
-    return c?.created_by === player.id;
-  }) || [];
+  const incoming = myChallenges.filter(
+    (cp) => cp.challenge && cp.challenge.created_by !== player.id && cp.confirmation_status === 'pending'
+  );
+  const sent = myChallenges.filter((cp) => cp.challenge && cp.challenge.created_by === player.id);
 
-  const active = myChallenges?.filter((cp) => {
-    const c = cp.challenge as Record<string, unknown>;
-    return ['accepted', 'partially_confirmed'].includes(c?.status as string);
-  }) || [];
-
-  const completed = myChallenges?.filter((cp) => {
-    const c = cp.challenge as Record<string, unknown>;
-    return ['completed', 'walkover_confirmed'].includes(c?.status as string);
-  }) || [];
-
-  function ChallengeRow({ cp, isIncoming = false }: { cp: Record<string, unknown>; isIncoming?: boolean }) {
-    const c = cp.challenge as Record<string, unknown>;
-    if (!c) return null;
-    const parts = (c.challenge_participants as Record<string, unknown>[]) || [];
-    const creator = c.creator as Record<string, unknown>;
-
-    const statusStyle: Record<string, string> = {
-      proposed: 'bg-[var(--bg-accent)] text-[var(--accent)] border-[var(--accent-border)]',
-      partially_confirmed: 'bg-[var(--bg-accent)] text-[var(--accent)] border-[var(--accent-border)]',
-      accepted: 'bg-[var(--bg-accent)] text-[var(--accent)] border-[var(--accent-border)]',
-      completed: 'bg-[var(--bg-card)] text-[var(--text-muted)] border-[var(--border)]',
-      disputed: 'bg-[var(--bg-loss)] text-[var(--loss)] border-[var(--loss-border)]',
-    };
-
-    return (
-      <StaggerItem>
-        <Link href={`/challenges/${c.id}`} className="block group">
-          <div
-            className={`bg-[var(--bg-card)] hover:bg-[var(--bg-card-hover)] flex items-center justify-between py-[14px] px-[14px] transition-colors duration-150 border-[0.5px] ${
-              isIncoming ? 'border-[var(--accent-border)]' : 'border-[var(--border)]'
-            }`}
-          >
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 bg-[var(--bg-accent)] flex items-center justify-center shrink-0 border-[0.5px] border-[var(--accent-border)]">
-                <Swords className="w-4 h-4 text-[var(--accent)]" />
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[13px] text-[var(--text-primary)] font-medium truncate">{creator?.full_name as string}</span>
-                  <span className="text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">{c.type as string}</span>
-                  {Boolean(c.rated_flag) && (
-                    <span className="text-[10px] tracking-[0.04em] uppercase text-[var(--accent)]">Rated</span>
-                  )}
-                </div>
-                <p className="text-[12px] text-[var(--text-muted)] mt-0.5">
-                  {MATCH_FORMAT_LABELS[(c.format as string) as keyof typeof MATCH_FORMAT_LABELS]} &middot; {formatRelativeTime(c.created_at as string)}
-                </p>
-                <p className="text-[12px] text-[var(--text-faint)] mt-0.5 truncate">
-                  {parts.map((p) => (p.player as Record<string, unknown>)?.full_name as string).join(' vs ')}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0 ml-3">
-              <span className={`text-[10px] tracking-[0.04em] uppercase px-2 py-0.5 rounded-full border-[0.5px] ${statusStyle[c.status as string] || 'bg-[var(--bg-card)] text-[var(--text-muted)] border-[var(--border)]'}`}>
-                {c.status as string}
-              </span>
-              <ChevronRight className="w-4 h-4 text-[var(--text-faint)] group-hover:text-[var(--accent)] transition-colors" />
-            </div>
-          </div>
-        </Link>
-      </StaggerItem>
-    );
-  }
+  // Sort suggested by ELO closeness to my singles ELO
+  const myElo = ((player.ratings as { singles_elo?: number } | null)?.singles_elo) ?? 1500;
+  const suggested = (suggestedRaw ?? [])
+    .map((p) => {
+      const r = (Array.isArray(p.ratings) ? p.ratings[0] : p.ratings) as { singles_elo: number | null } | null;
+      return {
+        id: p.id,
+        full_name: p.full_name,
+        avatar_url: p.avatar_url,
+        singles_elo: r?.singles_elo ?? null,
+      };
+    })
+    .filter((p) => p.singles_elo != null)
+    .sort((a, b) => Math.abs((a.singles_elo ?? 0) - myElo) - Math.abs((b.singles_elo ?? 0) - myElo))
+    .slice(0, 6);
 
   return (
-    <div>
-      <PageHero
-        eyebrow={`${incoming.length} incoming · ${outgoing.length} outgoing`}
-        title="Challenges."
-        subtitle="Issue a challenge, accept or decline incoming proposals. ELO swings are previewed before you commit."
-        watermark="C"
+    <>
+      <ScreenHeader
+        eyebrow="Compete"
+        title="Challenges"
+        action={<NewChallengeButton />}
       />
-      <div className="space-y-6 px-2 md:px-6 py-8">
-      <FadeIn>
-        <div className="flex justify-end">
-          <Link
-            href="/challenges/new"
-            className="press inline-flex items-center gap-2 px-4 py-2 bg-[var(--red)] text-white text-[11px] font-bold uppercase tracking-[0.16em] hover:bg-[var(--red-dark)] transition-colors"
-            style={{ fontFamily: 'var(--font-display)' }}
-          >
-            <Plus className="w-4 h-4" />
-            New
-          </Link>
-        </div>
-      </FadeIn>
 
+      {/* Incoming */}
       {incoming.length > 0 && (
-        <FadeIn delay={0.05}>
-          <div>
-            <div className="flex items-center gap-2 mb-3 px-1">
-              <Zap className="w-4 h-4 text-[var(--accent)]" />
-              <h2 className="text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">Incoming</h2>
-              <span className="ml-auto text-[10px] tracking-[0.04em] uppercase text-[var(--accent)]">{incoming.length}</span>
-            </div>
-            <StaggerContainer className="space-y-2">
-              {incoming.map((cp) => <ChallengeRow key={cp.id} cp={cp as Record<string, unknown>} isIncoming />)}
-            </StaggerContainer>
-          </div>
-        </FadeIn>
+        <section style={{ padding: '0 24px 16px' }}>
+          <SectionLabel>Incoming · {incoming.length}</SectionLabel>
+          {incoming.map(({ challenge: c, cp_id }) => {
+            if (!c) return null;
+            return (
+              <div
+                key={cp_id}
+                style={{
+                  background: '#222',
+                  border: '1px solid #303030',
+                  borderLeft: '3px solid #da291c',
+                  padding: 16,
+                  marginBottom: 8,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                }}
+              >
+                <Link
+                  href={`/challenges/${c.id}`}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    color: '#fff',
+                    textDecoration: 'none',
+                  }}
+                >
+                  <Avatar
+                    name={c.creator?.full_name ?? 'Unknown'}
+                    src={c.creator?.avatar_url}
+                    size={44}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>{c.creator?.full_name}</div>
+                    <div style={{ fontSize: 11, color: '#969696', marginTop: 2 }}>
+                      {c.type} · {c.scheduled_at ? formatScheduled(c.scheduled_at) : formatRelative(c.created_at)}
+                    </div>
+                  </div>
+                </Link>
+                <InlineChallengeActions challengeId={c.id} />
+              </div>
+            );
+          })}
+        </section>
       )}
 
-      {active.length > 0 && (
-        <FadeIn delay={0.1}>
-          <div>
-            <div className="flex items-center gap-2 mb-3 px-1">
-              <Clock className="w-4 h-4 text-[var(--text-muted)]" />
-              <h2 className="text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">Active</h2>
-              <span className="ml-auto text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">{active.length}</span>
-            </div>
-            <StaggerContainer className="space-y-2">
-              {active.map((cp) => <ChallengeRow key={cp.id} cp={cp as Record<string, unknown>} />)}
-            </StaggerContainer>
-          </div>
-        </FadeIn>
+      {/* Sent */}
+      {sent.length > 0 && (
+        <section style={{ padding: '0 24px 16px' }}>
+          <SectionLabel>Sent · {sent.length}</SectionLabel>
+          {sent.map(({ challenge: c, cp_id }) => {
+            if (!c) return null;
+            const opponents = c.challenge_participants
+              .map((p) => p.player)
+              .filter((p): p is { id: string; full_name: string; avatar_url: string | null } => p != null && p.id !== player.id);
+            const oppName = opponents[0]?.full_name ?? 'Awaiting';
+            const statusLabel = labelForStatus(c.status);
+            return (
+              <Link
+                key={cp_id}
+                href={`/challenges/${c.id}`}
+                style={{
+                  background: '#222',
+                  border: '1px solid #303030',
+                  padding: 16,
+                  marginBottom: 8,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  color: '#fff',
+                  textDecoration: 'none',
+                }}
+              >
+                <Avatar name={oppName} src={opponents[0]?.avatar_url} size={44} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{oppName}</div>
+                  <div style={{ fontSize: 11, color: '#969696', marginTop: 2 }}>
+                    {c.type} · {c.scheduled_at ? formatScheduled(c.scheduled_at) : formatRelative(c.created_at)}
+                  </div>
+                </div>
+                <Pill
+                  color={statusLabel.color}
+                  bg={statusLabel.bg}
+                  border={`1px solid ${statusLabel.border}`}
+                >
+                  {statusLabel.text}
+                </Pill>
+              </Link>
+            );
+          })}
+        </section>
       )}
 
-      {outgoing.length > 0 && (
-        <FadeIn delay={0.15}>
-          <div>
-            <div className="flex items-center gap-2 mb-3 px-1">
-              <Swords className="w-4 h-4 text-[var(--text-muted)]" />
-              <h2 className="text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">Sent</h2>
-              <span className="ml-auto text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">{outgoing.length}</span>
-            </div>
-            <StaggerContainer className="space-y-2">
-              {outgoing.map((cp) => <ChallengeRow key={cp.id} cp={cp as Record<string, unknown>} />)}
-            </StaggerContainer>
+      {/* Suggested */}
+      {suggested.length > 0 && (
+        <section style={{ padding: '0 24px 24px' }}>
+          <SectionLabel>Suggested · Close to your ELO</SectionLabel>
+          <div
+            className="scroll"
+            style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 4 }}
+          >
+            {suggested.map((p) => (
+              <div
+                key={p.id}
+                style={{
+                  width: 160,
+                  flexShrink: 0,
+                  background: '#222',
+                  border: '1px solid #303030',
+                  padding: '20px 16px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: 10,
+                }}
+              >
+                <Avatar name={p.full_name} src={p.avatar_url} size={48} />
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: 4,
+                    minHeight: 40,
+                    justifyContent: 'flex-start',
+                  }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.2, textAlign: 'center' }}>
+                    {p.full_name}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 10,
+                      color: '#969696',
+                      letterSpacing: '0.65px',
+                      textTransform: 'uppercase',
+                      fontWeight: 600,
+                      fontFamily: 'JetBrains Mono, monospace',
+                    }}
+                  >
+                    ELO {p.singles_elo}
+                  </div>
+                </div>
+                <SuggestedChallengeButton opponentId={p.id} />
+              </div>
+            ))}
           </div>
-        </FadeIn>
+        </section>
       )}
 
-      {completed.length > 0 && (
-        <FadeIn delay={0.2}>
-          <div>
-            <div className="flex items-center gap-2 mb-3 px-1">
-              <CheckCircle2 className="w-4 h-4 text-[var(--text-faint)]" />
-              <h2 className="text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">Completed</h2>
-            </div>
-            <StaggerContainer className="space-y-2">
-              {completed.map((cp) => <ChallengeRow key={cp.id} cp={cp as Record<string, unknown>} />)}
-            </StaggerContainer>
-          </div>
-        </FadeIn>
+      {incoming.length === 0 && sent.length === 0 && suggested.length === 0 && (
+        <EmptyState
+          title="No challenges yet"
+          hint="Send a challenge to get on the leaderboard."
+          icon={
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <polyline points="14.5 17.5 3 6 3 3 6 3 17.5 14.5" />
+              <line x1="13" y1="19" x2="19" y2="13" />
+              <line x1="16" y1="16" x2="20" y2="20" />
+              <polyline points="14.5 6.5 18 3 21 3 21 6 17.5 9.5" />
+              <line x1="5" y1="14" x2="9" y2="18" />
+            </svg>
+          }
+        />
       )}
-
-      {(!myChallenges || myChallenges.length === 0) && (
-        <FadeIn delay={0.05}>
-          <div className="py-16 text-center">
-            <Inbox className="w-10 h-10 text-[var(--text-faint)] mx-auto mb-3" />
-            <p className="text-[13px] text-[var(--text-muted)] mb-4">No challenges yet</p>
-            <Link
-              href="/challenges/new"
-              className="press inline-flex items-center gap-2 px-4 py-2 bg-[var(--bg-accent)] border-[0.5px] border-[var(--accent-border)] text-[var(--accent)] text-[13px] font-medium hover:border-[var(--accent)] transition-colors"
-            >
-              Create your first challenge
-            </Link>
-          </div>
-        </FadeIn>
-      )}
-    </div>
-    </div>
+    </>
   );
+}
+
+function labelForStatus(status: string): { text: string; color: string; bg: string; border: string } {
+  switch (status) {
+    case 'proposed':
+      return {
+        text: 'Awaiting',
+        color: '#f59e0b',
+        bg: 'rgba(245,158,11,0.12)',
+        border: 'rgba(245,158,11,0.35)',
+      };
+    case 'accepted':
+    case 'partially_confirmed':
+      return {
+        text: 'Accepted',
+        color: '#03904a',
+        bg: 'rgba(3,144,74,0.12)',
+        border: 'rgba(3,144,74,0.35)',
+      };
+    case 'completed':
+    case 'walkover_confirmed':
+      return {
+        text: 'Done',
+        color: '#969696',
+        bg: 'rgba(255,255,255,0.05)',
+        border: 'rgba(255,255,255,0.15)',
+      };
+    case 'disputed':
+      return {
+        text: 'Disputed',
+        color: '#da291c',
+        bg: 'rgba(218,41,28,0.12)',
+        border: 'rgba(218,41,28,0.35)',
+      };
+    default:
+      return {
+        text: status,
+        color: '#969696',
+        bg: 'rgba(255,255,255,0.05)',
+        border: 'rgba(255,255,255,0.15)',
+      };
+  }
+}
+
+function formatRelative(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const diff = Date.now() - d.getTime();
+    const m = Math.floor(diff / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    const days = Math.floor(h / 24);
+    return `${days}d ago`;
+  } catch {
+    return iso;
+  }
+}
+
+function formatScheduled(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const day = d.toLocaleDateString('en-US', { weekday: 'short' });
+    const time = d.toLocaleTimeString('en-US', { hour: 'numeric' });
+    return `${day} ${time}`;
+  } catch {
+    return iso;
+  }
 }

@@ -15,7 +15,6 @@ const PRIMARY = [
   { href: '/matches',       label: 'Matches' },
   { href: '/announcements', label: 'Announcements' },
   { href: '/disputes',      label: 'Disputes' },
-  { href: '/tournaments',   label: 'Tournaments' },
 ] as const;
 
 const SECONDARY = [

@@ -1,93 +1,116 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@badminton/shared/supabase-browser';
-import { Button, Card, Input, Textarea, Switch, PageHero } from '@badminton/ui';
 import { updateProfile } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
-import { useRouter } from 'next/navigation';
 import { isPushSupported, isPushEnabled, subscribeToPush, unsubscribeFromPush } from '@/lib/push-client';
-import { AvatarUpload } from '@/components/AvatarUpload';
-import { motion, AnimatePresence } from 'framer-motion';
 import {
-  User,
-  Camera,
-  Moon,
-  Sun,
-  Monitor,
-  Bell,
-  BellOff,
-  Shield,
-  LogOut,
-  Info,
-  Check,
-  Save,
-  Palette,
-} from 'lucide-react';
+  Avatar,
+  CTAButton,
+  SectionLabel,
+  SettingsGroup,
+  SettingsRow,
+  SettingsToggle,
+} from '@/components/v2/atoms';
 
-type Theme = 'light' | 'dark' | 'system';
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const sectionVariants: any = {
-  hidden: { opacity: 0, y: 20 },
-  visible: (i: number) => ({
-    opacity: 1,
-    y: 0,
-    transition: { delay: i * 0.08, duration: 0.4, ease: 'easeOut' },
-  }),
+const TITLES: Record<string, string> = {
+  profile: 'Edit Profile',
+  notifications: 'Notifications',
+  matches: 'Match Preferences',
+  privacy: 'Privacy & Visibility',
+  help: 'Help & Feedback',
+  signout: 'Sign Out',
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const saveConfirmVariants: any = {
-  hidden: { opacity: 0, scale: 0.8 },
-  visible: { opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 300, damping: 20 } },
-  exit: { opacity: 0, scale: 0.8, transition: { duration: 0.2 } },
-};
-
-function SectionHeader({ icon: Icon, title }: { icon: React.ElementType; title: string }) {
+function SettingsHeader({ title, onBack }: { title: string; onBack: () => void }) {
   return (
-    <div className="flex items-center gap-2.5 mb-4">
-      <div className="flex items-center justify-center w-8 h-8 bg-[var(--ds-accent-dim)]">
-        <Icon className="w-4 h-4 text-[var(--ds-accent)]" />
-      </div>
-      <h2 className="text-lg font-semibold text-[var(--text-primary)]">{title}</h2>
-    </div>
+    <section
+      style={{
+        position: 'sticky',
+        top: 0,
+        zIndex: 10,
+        background: '#181818',
+        borderBottom: '1px solid #303030',
+        padding: '14px 18px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+      }}
+    >
+      <button
+        type="button"
+        onClick={onBack}
+        style={{
+          background: 'transparent',
+          border: 'none',
+          color: '#fff',
+          fontSize: 26,
+          lineHeight: 1,
+          cursor: 'pointer',
+          padding: '0 8px',
+          fontFamily: 'inherit',
+        }}
+        aria-label="Back"
+      >
+        ‹
+      </button>
+      <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.2px' }}>{title}</div>
+    </section>
   );
 }
 
-function Divider() {
-  return <div className="border-t border-[var(--border)] my-4" />;
-}
+function SettingsContent() {
+  const router = useRouter();
+  const params = useSearchParams();
+  const view = params.get('view') ?? 'index';
+  const { toast } = useToast();
 
-const themeOptions: { value: Theme; icon: React.ElementType; label: string }[] = [
-  { value: 'light', icon: Sun, label: 'Light' },
-  { value: 'dark', icon: Moon, label: 'Dark' },
-  { value: 'system', icon: Monitor, label: 'System' },
-];
-
-export default function SettingsPage() {
+  const [loaded, setLoaded] = useState(false);
+  const [playerId, setPlayerId] = useState('');
   const [name, setName] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [phone, setPhone] = useState('');
   const [bio, setBio] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-  const [theme, setThemeState] = useState<Theme>('dark');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [showOnLeaderboard, setShowOnLeaderboard] = useState(true);
   const [showActivity, setShowActivity] = useState(true);
-  const [pushEnabled, setPushEnabled] = useState(false);
+
+  // Push
   const [pushSupported, setPushSupported] = useState(false);
-  const [pushLoading, setPushLoading] = useState(false);
-  const [playerId, setPlayerId] = useState('');
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
-  const { toast } = useToast();
-  const router = useRouter();
+  const [pushEnabled, setPushEnabled] = useState(false);
+
+  // Local-only toggles for UX surfaces (not yet backed by API — match v2 design surface)
+  const [pushChallenges, setPushChallenges] = useState(true);
+  const [pushMatches, setPushMatches] = useState(true);
+  const [pushSessions, setPushSessions] = useState(false);
+  const [pushWeekly, setPushWeekly] = useState(true);
+  const [pushAnnounce, setPushAnnounce] = useState(true);
+  const [emailRecap, setEmailRecap] = useState(true);
+  const [emailSeason, setEmailSeason] = useState(true);
+  const [emailMarketing, setEmailMarketing] = useState(false);
+
+  const [autoAccept, setAutoAccept] = useState(false);
+  const [openDoubles, setOpenDoubles] = useState(true);
+  const [crossSkill, setCrossSkill] = useState(true);
+  const [matchReminders, setMatchReminders] = useState(true);
+
+  const [showRecord, setShowRecord] = useState(true);
+  const [showHistory, setShowHistory] = useState(true);
+  const [discoverable, setDiscoverable] = useState(true);
+
+  const [saving, setSaving] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
-    async function load() {
+    let cancelled = false;
+    (async () => {
       const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) return;
 
       const { data } = await supabase
@@ -95,345 +118,447 @@ export default function SettingsPage() {
         .select('*')
         .eq('user_id', user.id)
         .single();
+      if (!data || cancelled) return;
 
-      if (data) {
-        setPlayerId(data.id);
-        setAvatarUrl(data.avatar_url);
-        setName(data.full_name);
-        setDisplayName(data.display_name || '');
-        setPhone(data.phone || '');
-        setBio(data.bio || '');
-        setShowOnLeaderboard(!data.hide_from_leaderboard);
-        setShowActivity(data.show_activity_status !== false); // default true
-        setLoaded(true);
-      }
-    }
-    load();
-    const saved = localStorage.getItem('theme') as Theme || 'dark';
-    setThemeState(saved);
+      setPlayerId(data.id);
+      setName(data.full_name ?? '');
+      setDisplayName(data.display_name ?? '');
+      setBio(data.bio ?? '');
+      setPhone(data.phone ?? '');
+      setEmail((data.email as string | null) ?? user.email ?? '');
+      setAvatarUrl(data.avatar_url ?? null);
+      setShowOnLeaderboard(!data.hide_from_leaderboard);
+      setShowActivity(data.show_activity_status !== false);
+      setLoaded(true);
 
-    // Check push
-    setPushSupported(isPushSupported());
-    isPushEnabled().then(setPushEnabled);
+      setPushSupported(isPushSupported());
+      isPushEnabled().then(setPushEnabled);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  function handleThemeChange(newTheme: Theme) {
-    setThemeState(newTheme);
-    localStorage.setItem('theme', newTheme);
-    const resolved = newTheme === 'system'
-      ? window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-      : newTheme;
-    document.documentElement.setAttribute('data-theme', resolved);
-  }
-
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
+  async function handleSaveProfile() {
+    setSaving(true);
     try {
       await updateProfile({
         full_name: name,
         display_name: displayName || undefined,
         phone: phone || undefined,
         bio: bio || undefined,
-        hide_from_leaderboard: !showOnLeaderboard,
-        show_activity_status: showActivity,
       });
-      setSaved(true);
       toast('Profile updated', 'success');
-      setTimeout(() => setSaved(false), 2000);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
-    setLoading(false);
+    setSaving(false);
   }
 
-  async function handlePushToggle(enabled: boolean) {
-    setPushLoading(true);
+  async function handleSavePrivacy() {
+    setSaving(true);
     try {
-      if (enabled) {
-        const ok = await subscribeToPush(playerId);
-        if (ok) {
-          setPushEnabled(true);
-          toast('Push notifications enabled', 'success');
-        } else {
-          toast('Could not enable push notifications', 'error');
-        }
-      } else {
+      await updateProfile({
+        full_name: name,
+        hide_from_leaderboard: !showOnLeaderboard,
+        show_activity_status: showActivity,
+      });
+      toast('Privacy updated', 'success');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed', 'error');
+    }
+    setSaving(false);
+  }
+
+  async function handlePushToggle() {
+    if (!pushSupported || !playerId) return;
+    try {
+      if (pushEnabled) {
         await unsubscribeFromPush(playerId);
         setPushEnabled(false);
-        toast('Push notifications disabled', 'info');
+      } else {
+        const ok = await subscribeToPush(playerId);
+        if (ok) setPushEnabled(true);
       }
     } catch {
-      toast('Failed to update push settings', 'error');
+      toast('Failed to update push', 'error');
     }
-    setPushLoading(false);
   }
 
   async function handleSignOut() {
+    setSigningOut(true);
     const supabase = createClient();
     await supabase.auth.signOut();
     router.push('/login');
   }
 
-  if (!loaded) return (
-    <div className="max-w-lg mx-auto space-y-5 pt-4">
-      <div className="card-elevated p-6 reveal reveal-1">
-        <div className="skeleton h-4 w-24 mb-4" />
-        <div className="skeleton h-12 w-full mb-3" />
-        <div className="skeleton h-12 w-full" />
-      </div>
-      <div className="card-elevated p-6 reveal reveal-2">
-        <div className="skeleton h-4 w-24 mb-4" />
-        <div className="skeleton h-12 w-full mb-3" />
-        <div className="skeleton h-12 w-full" />
-      </div>
-      <div className="card-elevated p-6 reveal reveal-3">
-        <div className="skeleton h-4 w-24 mb-4" />
-        <div className="skeleton h-12 w-full mb-3" />
-        <div className="skeleton h-12 w-full" />
-      </div>
-    </div>
-  );
+  const onBack = () => router.push('/my-stats');
+
+  if (view === 'index') {
+    return (
+      <>
+        <SettingsHeader title="Settings" onBack={() => router.push('/my-stats')} />
+        <div style={{ padding: '20px 24px 24px' }}>
+          <SectionLabel>Account</SectionLabel>
+          <SettingsGroup>
+            {[
+              { label: 'Edit Profile', view: 'profile' },
+              { label: 'Notifications', view: 'notifications' },
+              { label: 'Match Preferences', view: 'matches' },
+              { label: 'Privacy & Visibility', view: 'privacy' },
+              { label: 'Help & Feedback', view: 'help' },
+              { label: 'Sign Out', view: 'signout', danger: true },
+            ].map((item) => (
+              <SettingsRow
+                key={item.label}
+                label={item.label}
+                onClick={() => router.push(`/settings?view=${item.view}`)}
+              >
+                <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ color: '#666', fontSize: 18 }}>›</span>
+                </span>
+              </SettingsRow>
+            ))}
+          </SettingsGroup>
+        </div>
+      </>
+    );
+  }
 
   return (
-    <div style={{ color: 'var(--text-primary)' }}>
-      <PageHero
-        eyebrow="Configuration"
-        title="Settings."
-        subtitle="Your profile, preferences, and how you receive notifications."
-        watermark="S"
-      />
-      <div className="max-w-lg mx-auto space-y-5 pb-8 px-2 md:px-6 py-8">
+    <>
+      <SettingsHeader title={TITLES[view] ?? 'Settings'} onBack={onBack} />
 
-      {/* Profile Section */}
-      <motion.div
-        custom={0}
-        variants={sectionVariants}
-        initial="hidden"
-        animate="visible"
-      >
-        <Card className="bg-[var(--bg-card)] border-[var(--border)] p-6">
-          <SectionHeader icon={User} title="Profile" />
-          {playerId && (
-            <div className="mb-6 flex justify-center">
-              <AvatarUpload
-                playerId={playerId}
-                playerName={name}
-                currentUrl={avatarUrl}
-                onUploaded={setAvatarUrl}
-              />
-            </div>
-          )}
-          <Divider />
-          <form onSubmit={handleSave} className="space-y-4">
-            <Input
-              label="Full Name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-              className="bg-[var(--bg-card)] border-[var(--border)] text-[var(--text-primary)]"
-            />
-            <Input
-              label="Display Name / Nickname"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="Optional"
-              className="bg-[var(--bg-card)] border-[var(--border)] text-[var(--text-primary)]"
-            />
-            <Input
-              label="Phone"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="Optional"
-              className="bg-[var(--bg-card)] border-[var(--border)] text-[var(--text-primary)]"
-            />
-            <Textarea
-              label="Bio"
-              value={bio}
-              onChange={(e) => setBio(e.target.value)}
-              placeholder="A few words about yourself"
-              className="bg-[var(--bg-card)] border-[var(--border)] text-[var(--text-primary)]"
-            />
-            <div className="relative">
-              <Button type="submit" loading={loading} className="w-full">
-                <span className="flex items-center justify-center gap-2">
-                  <AnimatePresence mode="wait">
-                    {saved ? (
-                      <motion.span
-                        key="check"
-                        variants={saveConfirmVariants}
-                        initial="hidden"
-                        animate="visible"
-                        exit="exit"
-                        className="flex items-center gap-2"
-                      >
-                        <Check className="w-4 h-4" />
-                        Saved!
-                      </motion.span>
-                    ) : (
-                      <motion.span
-                        key="save"
-                        variants={saveConfirmVariants}
-                        initial="hidden"
-                        animate="visible"
-                        exit="exit"
-                        className="flex items-center gap-2"
-                      >
-                        <Save className="w-4 h-4" />
-                        Save Profile
-                      </motion.span>
-                    )}
-                  </AnimatePresence>
-                </span>
-              </Button>
-            </div>
-          </form>
-        </Card>
-      </motion.div>
-
-      {/* Appearance Section */}
-      <motion.div
-        custom={1}
-        variants={sectionVariants}
-        initial="hidden"
-        animate="visible"
-      >
-        <Card className="bg-[var(--bg-card)] border-[var(--border)]">
-          <SectionHeader icon={Palette} title="Appearance" />
-          <p className="text-sm text-[var(--text-muted)] mb-4">Choose your preferred theme</p>
-          <div className="grid grid-cols-3 gap-3">
-            {themeOptions.map(({ value, icon: Icon, label }) => (
-              <motion.button
-                key={value}
-                whileTap={{ scale: 0.96 }}
-                onClick={() => handleThemeChange(value)}
-                className={`relative flex flex-col items-center gap-2 px-4 py-4 border text-sm font-medium transition-all duration-200 ${
-                  theme === value
-                    ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-dim)] text-[var(--ds-accent)] glow-red'
-                    : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-hover)] hover:bg-[var(--bg-card-hover)]'
-                }`}
-              >
-                <Icon className="w-5 h-5" />
-                <span>{label}</span>
-                {theme === value && (
-                  <motion.div
-                    layoutId="theme-indicator"
-                    className="absolute -top-px -right-px w-5 h-5 bg-[var(--ds-accent)] flex items-center justify-center"
-                    transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+      {view === 'profile' && (
+        <div style={{ padding: '20px 24px 24px' }}>
+          {!loaded ? (
+            <SkeletonGroup />
+          ) : (
+            <>
+              <SectionLabel>Identity</SectionLabel>
+              <SettingsGroup>
+                <SettingsRow label="Display Name" value={name || '—'} />
+                <SettingsRow label="Handle" value={displayName ? `@${displayName}` : '—'} />
+                <SettingsRow label="Email" value={email || '—'} />
+                <SettingsRow label="Phone" value={phone || '—'} />
+              </SettingsGroup>
+              <SectionLabel>Photo &amp; bio</SectionLabel>
+              <div style={{ background: '#222', border: '1px solid #303030', padding: 20, marginBottom: 20 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
+                  <Avatar name={name} src={avatarUrl} size={64} ring />
+                  <button
+                    type="button"
+                    title="Photo updates rolling out soon"
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid #303030',
+                      color: '#fff',
+                      padding: '8px 14px',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      letterSpacing: '1px',
+                      textTransform: 'uppercase',
+                      cursor: 'not-allowed',
+                      fontFamily: 'inherit',
+                      opacity: 0.7,
+                    }}
                   >
-                    <Check className="w-3 h-3 text-white" />
-                  </motion.div>
-                )}
-              </motion.button>
-            ))}
-          </div>
-        </Card>
-      </motion.div>
-
-      {/* Notifications Section */}
-      <motion.div
-        custom={2}
-        variants={sectionVariants}
-        initial="hidden"
-        animate="visible"
-      >
-        <Card className="bg-[var(--bg-card)] border-[var(--border)]">
-          <SectionHeader icon={Bell} title="Notifications" />
-          <div className="space-y-2">
-            {pushSupported ? (
-              <div className="flex items-start gap-3">
-                <div className="mt-0.5">
-                  {pushEnabled ? (
-                    <Bell className="w-4 h-4 text-[var(--ds-accent)]" />
-                  ) : (
-                    <BellOff className="w-4 h-4 text-[var(--text-muted)]" />
-                  )}
+                    Change photo
+                  </button>
                 </div>
-                <div className="flex-1">
-                  <Switch
-                    checked={pushEnabled}
-                    onChange={handlePushToggle}
-                    label="Push Notifications"
-                    description="Get notified about challenges, results, and announcements"
-                    disabled={pushLoading}
-                  />
-                </div>
+                <textarea
+                  value={bio}
+                  onChange={(e) => setBio(e.target.value)}
+                  rows={3}
+                  placeholder="Engineering student. Left-handed. Doubles partner welcome."
+                  style={{
+                    width: '100%',
+                    minHeight: 72,
+                    background: '#1a1a1a',
+                    border: '1px solid #303030',
+                    color: '#fff',
+                    padding: 10,
+                    fontSize: 13,
+                    fontFamily: 'inherit',
+                    resize: 'vertical',
+                    boxSizing: 'border-box',
+                  }}
+                />
               </div>
-            ) : (
-              <div className="flex items-center gap-3 p-3 bg-[var(--bg-card-hover)] border border-[var(--border)]">
-                <BellOff className="w-4 h-4 text-[var(--text-muted)] flex-shrink-0" />
-                <p className="text-sm text-[var(--text-muted)]">Push notifications not supported in this browser.</p>
+              <SectionLabel>Playing details</SectionLabel>
+              <SettingsGroup>
+                <SettingsRow label="Dominant Hand" value="Right" />
+                <SettingsRow label="Years Playing" value="—" />
+                <SettingsRow label="Favourite Shot" value="—" />
+              </SettingsGroup>
+              <CTAButton size="lg" full onClick={handleSaveProfile} disabled={saving}>
+                {saving ? 'Saving…' : 'Save Profile'}
+              </CTAButton>
+            </>
+          )}
+        </div>
+      )}
+
+      {view === 'notifications' && (
+        <>
+          <div style={{ padding: '20px 24px 8px' }}>
+            <SectionLabel>Push notifications</SectionLabel>
+            <SettingsGroup>
+              <SettingsRow label="New challenge" hint="When someone challenges you to a match.">
+                <SettingsToggle
+                  on={pushEnabled && pushChallenges}
+                  onChange={async () => {
+                    if (!pushEnabled) {
+                      await handlePushToggle();
+                      setPushChallenges(true);
+                      return;
+                    }
+                    setPushChallenges(!pushChallenges);
+                  }}
+                />
+              </SettingsRow>
+              <SettingsRow label="Match result" hint="When an opponent confirms a score.">
+                <SettingsToggle on={pushMatches} onChange={() => setPushMatches(!pushMatches)} />
+              </SettingsRow>
+              <SettingsRow label="Session reminders" hint="Two hours before a session you're registered for.">
+                <SettingsToggle on={pushSessions} onChange={() => setPushSessions(!pushSessions)} />
+              </SettingsRow>
+              <SettingsRow label="Weekly recap" hint="Sunday evening summary of your matches.">
+                <SettingsToggle on={pushWeekly} onChange={() => setPushWeekly(!pushWeekly)} />
+              </SettingsRow>
+              <SettingsRow label="League announcements" hint="Pinned posts from club admins.">
+                <SettingsToggle on={pushAnnounce} onChange={() => setPushAnnounce(!pushAnnounce)} />
+              </SettingsRow>
+            </SettingsGroup>
+            {!pushSupported && (
+              <div
+                style={{
+                  fontSize: 11,
+                  color: '#666',
+                  lineHeight: 1.5,
+                  marginBottom: 20,
+                }}
+              >
+                Push not supported in this browser. Notifications still arrive over email.
               </div>
             )}
           </div>
-        </Card>
-      </motion.div>
-
-      {/* Privacy Section */}
-      <motion.div
-        custom={3}
-        variants={sectionVariants}
-        initial="hidden"
-        animate="visible"
-      >
-        <Card className="bg-[var(--bg-card)] border-[var(--border)]">
-          <SectionHeader icon={Shield} title="Privacy" />
-          <p className="text-xs text-[var(--text-muted)] mb-3">Saved when you tap Save Profile above.</p>
-          <div className="space-y-1">
-            <Switch
-              checked={showOnLeaderboard}
-              onChange={setShowOnLeaderboard}
-              label="Show on leaderboard"
-              description="Your rank will be visible to others"
-            />
-            <Divider />
-            <Switch
-              checked={showActivity}
-              onChange={setShowActivity}
-              label="Show activity status"
-              description="Others can see when you were last active"
-            />
-          </div>
-        </Card>
-      </motion.div>
-
-      {/* About Section */}
-      <motion.div
-        custom={4}
-        variants={sectionVariants}
-        initial="hidden"
-        animate="visible"
-      >
-        <Card className="bg-[var(--bg-card)] border-[var(--border)]">
-          <SectionHeader icon={Info} title="About" />
-          <div className="space-y-3 text-sm">
-            <div className="flex justify-between items-center p-3 bg-[var(--bg-card-hover)]">
-              <span className="text-[var(--text-muted)]">Version</span>
-              <span className="text-[var(--text-primary)] font-mono bg-[var(--bg-inset)] px-2.5 py-1 text-xs">
-                0.0.1
-              </span>
+          <div style={{ padding: '0 24px 24px' }}>
+            <SectionLabel>Email</SectionLabel>
+            <SettingsGroup>
+              <SettingsRow label="Weekly recap" hint="Top movers, biggest upsets, your week's results.">
+                <SettingsToggle on={emailRecap} onChange={() => setEmailRecap(!emailRecap)} />
+              </SettingsRow>
+              <SettingsRow label="Season updates" hint="Mid-season recaps and end-of-season standings.">
+                <SettingsToggle on={emailSeason} onChange={() => setEmailSeason(!emailSeason)} />
+              </SettingsRow>
+              <SettingsRow label="Tournaments & events" hint="Special events, doubles leagues, social play.">
+                <SettingsToggle on={emailMarketing} onChange={() => setEmailMarketing(!emailMarketing)} />
+              </SettingsRow>
+            </SettingsGroup>
+            <div style={{ fontSize: 11, color: '#666', lineHeight: 1.5 }}>
+              You'll always receive critical account notices (sign-in alerts, dispute outcomes) regardless of these
+              settings.
             </div>
           </div>
-        </Card>
-      </motion.div>
+        </>
+      )}
 
-      {/* Sign Out */}
-      <motion.div
-        custom={5}
-        variants={sectionVariants}
-        initial="hidden"
-        animate="visible"
-      >
-        <motion.div whileTap={{ scale: 0.98 }}>
-          <Button variant="danger" onClick={handleSignOut} className="w-full">
-            <span className="flex items-center justify-center gap-2">
-              <LogOut className="w-4 h-4" />
-              Sign Out
-            </span>
-          </Button>
-        </motion.div>
-      </motion.div>
+      {view === 'matches' && (
+        <>
+          <div style={{ padding: '20px 24px 8px' }}>
+            <SectionLabel>Availability</SectionLabel>
+            <SettingsGroup>
+              <SettingsRow label="Available days" value="Mon – Fri" />
+              <SettingsRow label="Available hours" value="5 PM – 10 PM" />
+              <SettingsRow label="Home court" value="SFU Burnaby" />
+            </SettingsGroup>
+          </div>
+          <div style={{ padding: '0 24px 8px' }}>
+            <SectionLabel>Challenge preferences</SectionLabel>
+            <SettingsGroup>
+              <SettingsRow label="Auto-accept challenges" hint="Within your skill bracket and available hours.">
+                <SettingsToggle on={autoAccept} onChange={() => setAutoAccept(!autoAccept)} />
+              </SettingsRow>
+              <SettingsRow label="Open to doubles" hint="Show you in the doubles partner pool.">
+                <SettingsToggle on={openDoubles} onChange={() => setOpenDoubles(!openDoubles)} />
+              </SettingsRow>
+              <SettingsRow label="Cross-skill matches" hint="Allow challenges from players >200 ELO away.">
+                <SettingsToggle on={crossSkill} onChange={() => setCrossSkill(!crossSkill)} />
+              </SettingsRow>
+            </SettingsGroup>
+          </div>
+          <div style={{ padding: '0 24px 24px' }}>
+            <SectionLabel>Match logging</SectionLabel>
+            <SettingsGroup>
+              <SettingsRow label="Default match type" value="Singles" />
+              <SettingsRow label="Score format" value="Best of 3 to 21" />
+              <SettingsRow label="Submission reminders" hint="Nudge me to log scheduled matches.">
+                <SettingsToggle on={matchReminders} onChange={() => setMatchReminders(!matchReminders)} />
+              </SettingsRow>
+            </SettingsGroup>
+          </div>
+        </>
+      )}
+
+      {view === 'privacy' && (
+        <>
+          <div style={{ padding: '20px 24px 8px' }}>
+            <SectionLabel>Profile visibility</SectionLabel>
+            <SettingsGroup>
+              <SettingsRow
+                label="Show on leaderboard"
+                hint="Your rank and ELO are visible to all players."
+              >
+                <SettingsToggle
+                  on={showOnLeaderboard}
+                  onChange={() => {
+                    setShowOnLeaderboard(!showOnLeaderboard);
+                    void handleSavePrivacy();
+                  }}
+                />
+              </SettingsRow>
+              <SettingsRow
+                label="Show win/loss record"
+                hint="Other players can see your detailed record."
+              >
+                <SettingsToggle on={showRecord} onChange={() => setShowRecord(!showRecord)} />
+              </SettingsRow>
+              <SettingsRow
+                label="Show match history"
+                hint="Last 10 matches are visible on your profile."
+              >
+                <SettingsToggle on={showHistory} onChange={() => setShowHistory(!showHistory)} />
+              </SettingsRow>
+              <SettingsRow
+                label="Discoverable"
+                hint="Appear in player search and challenge suggestions."
+              >
+                <SettingsToggle on={discoverable} onChange={() => setDiscoverable(!discoverable)} />
+              </SettingsRow>
+            </SettingsGroup>
+          </div>
+          <div style={{ padding: '0 24px 8px' }}>
+            <SectionLabel>Blocked players</SectionLabel>
+            <div
+              style={{
+                background: '#222',
+                border: '1px solid #303030',
+                padding: 20,
+                marginBottom: 20,
+                textAlign: 'center',
+                fontSize: 12,
+                color: '#969696',
+              }}
+            >
+              You haven&apos;t blocked anyone.
+            </div>
+          </div>
+          <div style={{ padding: '0 24px 24px' }}>
+            <SectionLabel>Data</SectionLabel>
+            <SettingsGroup>
+              <SettingsRow label="Download my data" hint="Export every match, every score, every rating change.">
+                <span style={{ color: '#666', fontSize: 18 }}>›</span>
+              </SettingsRow>
+              <SettingsRow label="Delete account" hint="Removes you from the ladder. Match history is anonymized.">
+                <span style={{ color: '#da291c', fontSize: 11, fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase' }}>
+                  Delete
+                </span>
+              </SettingsRow>
+            </SettingsGroup>
+          </div>
+        </>
+      )}
+
+      {view === 'help' && (
+        <div style={{ padding: '20px 24px 24px' }}>
+          <SectionLabel>Get help</SectionLabel>
+          <SettingsGroup>
+            <SettingsRow label="How ELO works" />
+            <SettingsRow label="Match dispute process" />
+            <SettingsRow label="Court etiquette" />
+            <SettingsRow label="FAQ" />
+          </SettingsGroup>
+          <SectionLabel>Contact</SectionLabel>
+          <SettingsGroup>
+            <SettingsRow label="Message a club admin" hint="Average response time: 4 hours." />
+            <SettingsRow label="Report a bug" />
+            <SettingsRow label="Suggest a feature" />
+          </SettingsGroup>
+          <div style={{ background: '#1a1a1a', border: '1px solid #303030', padding: 20 }}>
+            <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '1.4px', textTransform: 'uppercase', color: '#666' }}>
+              App version
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace', marginTop: 6 }}>
+              2.4.1 · build 4287
+            </div>
+            <div style={{ fontSize: 11, color: '#969696', marginTop: 8 }}>
+              Tap version number 7 times to enable developer settings.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {view === 'signout' && (
+        <div style={{ padding: '40px 24px 24px', textAlign: 'center' }}>
+          <div
+            style={{
+              width: 56,
+              height: 56,
+              margin: '0 auto',
+              background: 'rgba(218,41,28,0.10)',
+              border: '1px solid rgba(218,41,28,0.4)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 32,
+              color: '#da291c',
+              fontFamily: 'JetBrains Mono, monospace',
+            }}
+          >
+            ×
+          </div>
+          <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.4px', marginTop: 18 }}>Sign out?</div>
+          <div
+            style={{
+              fontSize: 13,
+              color: '#969696',
+              marginTop: 10,
+              lineHeight: 1.5,
+              maxWidth: 280,
+              margin: '10px auto 0',
+            }}
+          >
+            You'll need to sign in again to log matches, accept challenges, or check the leaderboard.
+          </div>
+          <div style={{ marginTop: 28, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <CTAButton size="lg" full onClick={handleSignOut} disabled={signingOut}>
+              {signingOut ? 'Signing out…' : 'Sign Out'}
+            </CTAButton>
+            <CTAButton variant="ghost" size="md" full onClick={onBack}>
+              Cancel
+            </CTAButton>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function SkeletonGroup() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div className="skeleton" style={{ height: 60, width: '100%' }} />
+      <div className="skeleton" style={{ height: 60, width: '100%' }} />
+      <div className="skeleton" style={{ height: 60, width: '100%' }} />
     </div>
-    </div>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={<div style={{ padding: 24 }}>Loading…</div>}>
+      <SettingsContent />
+    </Suspense>
   );
 }

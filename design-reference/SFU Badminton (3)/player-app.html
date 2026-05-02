@@ -1,0 +1,1675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SFU Badminton — Player</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700;800&family=Barlow:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --font-display: 'Barlow Condensed', sans-serif;
+    --font-body: 'Barlow', sans-serif;
+    --bg: #0A0A0A;
+    --surface1: #111111;
+    --surface2: #1A1A1A;
+    --surface3: #232323;
+    --hairline: rgba(255,255,255,0.08);
+    --hairline-soft: rgba(255,255,255,0.05);
+    --hairline-strong: rgba(255,255,255,0.14);
+    --ink: #F0F0F0;
+    --text: #C8C8C8;
+    --muted: #888888;
+    --dim: #666666;
+    --faint: #444444;
+    --ghost: #333333;
+    --red: #CC0000;
+    --red-dark: #990000;
+    --red-tint: rgba(204,0,0,0.10);
+    --red-border: rgba(204,0,0,0.25);
+    --green: #4ade80;
+    --amber: #fbbf24;
+  }
+  *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: var(--font-body); font-size: 13px;
+    -webkit-font-smoothing: antialiased; overflow-x: hidden;
+  }
+  body.no-scroll { overflow: hidden; }
+  a { color: inherit; text-decoration: none; }
+  button { font-family: inherit; cursor: pointer; border: 0; background: none; color: inherit; }
+  input, select, textarea { font-family: inherit; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: #2a2a2a; }
+  ::selection { background: var(--red); color: #fff; }
+
+  .micro { font-family: var(--font-body); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; font-weight: 700; color: var(--muted); }
+  .micro-red { color: var(--red); }
+
+  /* Buttons */
+  .btn { font-family: var(--font-display); font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; padding: 10px 16px; border-radius: 0; transition: all 150ms ease-out; display: inline-flex; align-items: center; justify-content: center; gap: 10px; line-height: 1; border: 0; }
+  .btn-red { background: var(--red); color: #fff; }
+  .btn-red:hover { background: var(--red-dark); }
+  .btn-red:disabled, .btn-red.disabled { background: var(--surface2); color: var(--ghost); cursor: not-allowed; }
+  .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--hairline); }
+  .btn-ghost:hover { border-color: var(--hairline-strong); color: var(--ink); }
+  .btn-ghost.disabled { color: var(--ghost); cursor: not-allowed; pointer-events: none; }
+  .btn-dark { background: var(--surface2); color: var(--ink); border: 1px solid var(--hairline); }
+  .btn-dark:hover { border-color: var(--hairline-strong); }
+  .btn-danger { background: transparent; color: var(--red); border: 1px solid var(--red); }
+  .btn-danger:hover { background: var(--red); color: #fff; }
+
+  /* Badges */
+  .badge { display: inline-block; font-family: var(--font-body); font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; font-weight: 700; padding: 3px 8px; border-radius: 0; line-height: 1.2; }
+  .badge.active, .badge.confirmed, .badge.attended { background: rgba(74,222,128,0.08); color: var(--green); border: 1px solid rgba(74,222,128,0.18); }
+  .badge.pending { background: rgba(251,191,36,0.08); color: var(--amber); border: 1px solid rgba(251,191,36,0.18); }
+  .badge.suspended, .badge.full { background: rgba(204,0,0,0.10); color: var(--red); border: 1px solid rgba(204,0,0,0.22); }
+  .badge.resolved, .badge.completed { background: rgba(255,255,255,0.05); color: var(--muted); border: 1px solid var(--hairline); }
+  .badge.open { background: rgba(255,255,255,0.05); color: var(--ink); border: 1px solid var(--hairline-strong); }
+
+  /* Toggles */
+  .toggle { width: 44px; height: 24px; background: var(--surface2); border: 1px solid var(--hairline); position: relative; cursor: pointer; transition: all 150ms ease-out; border-radius: 0; flex-shrink: 0; }
+  .toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; background: var(--muted); transition: all 150ms ease-out; }
+  .toggle.on { background: rgba(204,0,0,0.15); border-color: var(--red); }
+  .toggle.on::after { left: 22px; background: var(--red); }
+
+  /* Forms */
+  .field { background: var(--surface2); border: 1px solid var(--hairline); color: var(--ink); padding: 10px 12px; font-family: var(--font-body); font-size: 13px; width: 100%; border-radius: 0; }
+  .field:focus { outline: none; border-color: var(--red); }
+  textarea.field { resize: vertical; min-height: 80px; }
+  select.field { appearance: none; -webkit-appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; padding-right: 32px; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; }
+  thead th { text-align: left; font-family: var(--font-body); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 600; color: var(--faint); padding: 12px 24px; border-bottom: 1px solid var(--hairline); white-space: nowrap; user-select: none; }
+  tbody td { padding: 14px 24px; border-bottom: 1px solid var(--hairline-soft); font-size: 13px; color: var(--text); vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr { transition: all 120ms ease-out; box-shadow: inset 2px 0 0 transparent; }
+  tbody tr:hover { background: rgba(255,255,255,0.025); box-shadow: inset 2px 0 0 rgba(204,0,0,0.5); }
+  td.rank { font-family: var(--font-display); font-weight: 400; color: #555; font-variant-numeric: tabular-nums; font-size: 14px; }
+  td.rank.rank-top { font-weight: 700; color: var(--ink); font-size: 18px; }
+  td.rank.rank-mid { color: #555; }
+  td.rank.rank-low { color: #333; }
+  td.name { color: var(--ink); font-weight: 500; }
+  td.elo { font-family: var(--font-display); font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; font-size: 14px; }
+  td.num { font-family: var(--font-display); font-weight: 400; color: var(--text); font-variant-numeric: tabular-nums; font-size: 14px; }
+  td.date { color: var(--muted); font-size: 12px; letter-spacing: 0.02em; }
+  td.win { color: var(--green); font-weight: 600; }
+  td.loss { color: var(--red); font-weight: 600; }
+  td.delta-pos { color: var(--green); font-family: var(--font-display); font-weight: 600; font-size: 13px; font-variant-numeric: tabular-nums; }
+  td.delta-neg { color: var(--red); font-family: var(--font-display); font-weight: 600; font-size: 13px; font-variant-numeric: tabular-nums; }
+
+  /* Layout: sidebar + main */
+  .app { display: flex; min-height: 100vh; }
+  .sidebar {
+    width: 220px; flex-shrink: 0;
+    background: var(--surface1);
+    border-right: 1px solid var(--hairline);
+    position: fixed; top: 0; bottom: 0; left: 0;
+    display: flex; flex-direction: column;
+    z-index: 40;
+  }
+  .sidebar-brand { padding: 20px 20px 18px; border-bottom: 1px solid var(--hairline); }
+  .brand-row { display: flex; align-items: center; gap: 10px; }
+  .brand-mark { width: 28px; height: 28px; background: var(--red); color: #fff; display: flex; align-items: center; justify-content: center; font-family: var(--font-display); font-weight: 800; font-size: 16px; }
+  .brand-text { font-family: var(--font-display); font-weight: 700; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink); }
+  .brand-portal { display: block; margin-top: 10px; font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--red); font-weight: 700; }
+  .sidebar-nav { flex: 1; padding: 16px 0; overflow-y: auto; }
+  .side-link { display: block; padding: 13px 20px 13px 18px; font-family: var(--font-display); font-weight: 600; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); border-left: 2px solid transparent; transition: all 120ms ease-out; min-height: 44px; }
+  .side-link:hover { color: var(--muted); }
+  .side-link.active { color: var(--ink); border-left-color: var(--red); background: rgba(204,0,0,0.04); }
+  .sidebar-foot { padding: 14px 18px; border-top: 1px solid var(--hairline); display: flex; align-items: center; gap: 12px; cursor: pointer; transition: background 120ms ease-out; }
+  .sidebar-foot:hover { background: rgba(255,255,255,0.02); }
+  .player-avatar { width: 32px; height: 32px; background: var(--red); color: #fff; display: flex; align-items: center; justify-content: center; font-family: var(--font-display); font-weight: 700; font-size: 12px; flex-shrink: 0; }
+  .player-foot-text { display: flex; flex-direction: column; min-width: 0; }
+  .player-foot-name { font-size: 12px; color: var(--ink); font-weight: 600; }
+  .player-foot-elo { font-size: 9px; color: var(--faint); letter-spacing: 0.2em; text-transform: uppercase; font-weight: 700; margin-top: 2px; }
+
+  .main { flex: 1; min-width: 0; margin-left: 220px; }
+
+  /* Mobile top bar */
+  .mobile-top { display: none; height: 56px; padding: 0 16px; background: var(--surface1); border-bottom: 1px solid var(--hairline); align-items: center; justify-content: space-between; position: fixed; top: 0; left: 0; right: 0; z-index: 40; }
+  .hamburger { width: 32px; height: 32px; display: flex; flex-direction: column; gap: 5px; align-items: center; justify-content: center; }
+  .hamburger span { width: 18px; height: 1.5px; background: var(--ink); }
+  .mobile-overlay { position: fixed; inset: 0; z-index: 100; background: var(--surface1); transform: translateX(-100%); transition: transform 250ms cubic-bezier(0.4,0,0.2,1); display: flex; flex-direction: column; }
+  .mobile-overlay.open { transform: translateX(0); }
+  .mobile-overlay-head { height: 56px; padding: 0 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--hairline); }
+  .mobile-close { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; color: var(--ink); font-size: 28px; font-weight: 300; line-height: 1; }
+  .mobile-nav { display: flex; flex-direction: column; }
+  .mobile-nav a { min-height: 52px; padding: 0 20px; display: flex; align-items: center; border-bottom: 1px solid var(--hairline-soft); font-family: var(--font-display); font-size: 12px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); border-left: 3px solid transparent; }
+  .mobile-nav a.active { color: var(--ink); border-left-color: var(--red); }
+
+  /* Pages */
+  .page { display: none; }
+  .page.active { display: block; animation: fadeUp 240ms ease-out; }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* Hero */
+  .hero { position: relative; background: var(--surface1); border-bottom: 1px solid var(--hairline); padding: 48px 48px 52px; overflow: hidden; }
+  .hero-inner { position: relative; z-index: 2; max-width: 1400px; }
+  .tag-row { display: flex; align-items: center; gap: 14px; }
+  .red-line { width: 3px; height: 14px; background: var(--red); }
+  .hero h1 { font-family: var(--font-display); font-weight: 700; font-size: 64px; line-height: 0.92; letter-spacing: -0.015em; color: var(--ink); margin-top: 16px; }
+  .hero p { color: var(--muted); margin-top: 14px; max-width: 480px; font-size: 13px; line-height: 1.6; }
+  .hero-watermark { position: absolute; right: 20px; bottom: -36px; font-family: var(--font-display); font-weight: 800; font-size: 200px; line-height: 1; color: var(--ink); opacity: 0.08; letter-spacing: -0.04em; pointer-events: none; user-select: none; }
+
+  .page-head { padding: 36px 48px 28px; border-bottom: 1px solid var(--hairline); display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
+  .page-head h2 { font-family: var(--font-display); font-weight: 700; font-size: 44px; letter-spacing: -0.015em; line-height: 1; color: var(--ink); margin-top: 14px; }
+  .page-head .meta { color: var(--muted); font-size: 12px; margin-top: 8px; max-width: 480px; }
+  .page-head-actions { display: flex; gap: 12px; align-items: center; }
+
+  /* Stats grid */
+  .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); background: var(--hairline); gap: 1px; border-bottom: 1px solid var(--hairline); }
+  .stat { background: var(--surface1); padding: 24px; transition: background 150ms ease-out; }
+  .stat:hover { background: var(--surface2); }
+  .stat-label { font-family: var(--font-body); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); font-weight: 700; }
+  .stat-num { font-family: var(--font-display); font-weight: 700; font-size: 52px; line-height: 1; color: var(--ink); margin-top: 14px; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .stat-num.red { color: var(--red); }
+  .stat-delta { font-size: 11px; color: var(--dim); margin-top: 8px; letter-spacing: 0.04em; }
+  .stat-delta.up { color: var(--green); }
+  .stat-delta.down { color: var(--red); }
+
+  /* Panels */
+  .panel { background: var(--surface1); border-bottom: 1px solid var(--hairline); }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 20px 48px; border-bottom: 1px solid var(--hairline); }
+  .panel-head .label { font-family: var(--font-body); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink); font-weight: 700; }
+  .view-all { font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); font-weight: 700; transition: color 150ms ease-out; }
+  .view-all:hover { color: var(--red); }
+
+  /* Challenge card on dashboard */
+  .next-card { background: var(--surface1); padding: 28px 48px; border-bottom: 1px solid var(--hairline); display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: center; }
+  .next-card-inner { }
+  .next-card-name { font-family: var(--font-display); font-weight: 700; font-size: 32px; color: var(--ink); letter-spacing: -0.01em; line-height: 1; margin-top: 10px; }
+  .next-card-meta { color: var(--muted); font-size: 12px; margin-top: 10px; letter-spacing: 0.02em; }
+  .next-card-elo { font-family: var(--font-display); margin-top: 14px; color: var(--text); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .next-card-elo .pos { color: var(--green); font-weight: 700; }
+  .next-card-elo .neg { color: var(--red); font-weight: 700; }
+  .next-card-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+  /* Leaderboard toggle */
+  .toggle-bar { display: flex; padding: 24px 48px; border-bottom: 1px solid var(--hairline); gap: 0; }
+  .seg-toggle { display: inline-flex; border: 1px solid var(--hairline); }
+  .seg-btn { font-family: var(--font-display); font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; padding: 10px 20px; background: transparent; color: var(--muted); border: 0; border-radius: 0; cursor: pointer; transition: all 150ms ease-out; min-width: 120px; }
+  .seg-btn:hover { color: var(--ink); }
+  .seg-btn.active { background: var(--red); color: #fff; }
+
+  tr.you-row { background: rgba(204,0,0,0.06); box-shadow: inset 2px 0 0 var(--red); }
+  tr.you-row:hover { background: rgba(204,0,0,0.10); box-shadow: inset 2px 0 0 var(--red); }
+  td.you-tag { color: var(--faint); font-weight: 400; margin-left: 6px; font-size: 11px; }
+  td.trend.up { color: var(--green); font-family: var(--font-display); font-weight: 600; }
+  td.trend.down { color: var(--red); font-family: var(--font-display); font-weight: 600; }
+  td.trend.flat { color: var(--faint); font-family: var(--font-display); font-weight: 600; }
+
+  /* Challenge cards */
+  .ch-section { padding: 28px 48px; border-bottom: 1px solid var(--hairline); }
+  .ch-section h3 { font-family: var(--font-body); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink); font-weight: 700; margin-bottom: 18px; }
+  .ch-section .empty { color: var(--faint); font-size: 12px; padding: 12px 0; }
+  .ch-card { background: var(--surface2); border: 1px solid var(--hairline); padding: 22px 24px; display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center; margin-bottom: 12px; transition: border-color 150ms ease-out; }
+  .ch-card:hover { border-color: var(--hairline-strong); }
+  .ch-card:last-child { margin-bottom: 0; }
+  .ch-card-name { font-family: var(--font-display); font-weight: 700; font-size: 22px; color: var(--ink); letter-spacing: -0.005em; }
+  .ch-card-meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .ch-card-elo { color: var(--text); font-size: 12px; margin-top: 8px; font-family: var(--font-display); font-variant-numeric: tabular-nums; }
+  .ch-card-elo .pos { color: var(--green); font-weight: 700; }
+  .ch-card-elo .neg { color: var(--red); font-weight: 700; }
+  .ch-card-actions { display: flex; gap: 10px; flex-shrink: 0; }
+  .ch-status { font-size: 10px; color: var(--amber); letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; margin-top: 8px; }
+
+  /* New challenge form */
+  .ch-issue { padding: 24px 48px 28px; border-bottom: 1px solid var(--hairline); }
+  .ch-form { max-height: 0; overflow: hidden; transition: max-height 300ms ease-out; }
+  .ch-form.open { max-height: 720px; }
+  .ch-form-inner { padding-top: 24px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .ch-form-inner .full { grid-column: 1 / -1; }
+  .form-label { display: block; font-family: var(--font-body); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); font-weight: 700; margin-bottom: 8px; }
+  .ch-preview { padding: 14px 16px; background: var(--surface2); border: 1px solid var(--red-border); margin-top: 6px; font-family: var(--font-display); font-size: 14px; color: var(--text); font-variant-numeric: tabular-nums; }
+  .ch-preview .pos { color: var(--green); font-weight: 700; }
+  .ch-preview .neg { color: var(--red); font-weight: 700; }
+  .ch-form-actions { grid-column: 1 / -1; display: flex; gap: 12px; padding-top: 6px; }
+
+  /* My matches filter */
+  .matches-toolbar { padding: 20px 48px; border-bottom: 1px solid var(--hairline); display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .matches-toolbar .meta-text { font-size: 11px; color: var(--muted); letter-spacing: 0.04em; }
+
+  /* Sessions */
+  .session-row { display: grid; grid-template-columns: 2.2fr 1.6fr 1.2fr 0.9fr 0.9fr auto; align-items: center; padding: 18px 48px; border-bottom: 1px solid var(--hairline-soft); transition: background 150ms ease-out; gap: 16px; }
+  .session-row:hover { background: rgba(255,255,255,0.02); }
+  .session-row.past { opacity: 0.55; }
+  .session-name { font-size: 14px; color: var(--ink); font-weight: 500; }
+  .session-cell { font-size: 12px; color: var(--muted); letter-spacing: 0.02em; }
+  .session-cell.cap { font-family: var(--font-display); font-weight: 600; color: var(--ink); font-size: 14px; font-variant-numeric: tabular-nums; }
+
+  /* Profile */
+  .profile-card { background: var(--surface1); padding: 32px 48px; border-bottom: 1px solid var(--hairline); display: flex; align-items: center; gap: 20px; }
+  .profile-avatar { width: 48px; height: 48px; background: var(--red); color: #fff; display: flex; align-items: center; justify-content: center; font-family: var(--font-display); font-weight: 700; font-size: 18px; flex-shrink: 0; }
+  .profile-name { font-family: var(--font-display); font-weight: 700; font-size: 28px; color: var(--ink); letter-spacing: -0.01em; line-height: 1; }
+  .profile-meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
+
+  .sparkline-wrap { padding: 32px 48px; border-bottom: 1px solid var(--hairline); }
+  .sparkline-label { font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink); font-weight: 700; margin-bottom: 16px; }
+  .sparkline { width: 100%; height: 80px; display: block; }
+  .spark-stats { margin-top: 18px; display: flex; gap: 28px; flex-wrap: wrap; }
+  .spark-stat { display: flex; gap: 8px; align-items: baseline; font-size: 11px; }
+  .spark-stat .lbl { color: var(--faint); letter-spacing: 0.18em; text-transform: uppercase; font-weight: 700; font-size: 9px; }
+  .spark-stat .val { color: var(--ink); font-family: var(--font-display); font-weight: 700; font-size: 14px; font-variant-numeric: tabular-nums; }
+  .spark-stat .val.red { color: var(--red); }
+  .spark-stat .val.green { color: var(--green); }
+
+  .achievements { padding: 28px 48px 36px; }
+  .ach-label { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink); font-weight: 700; margin-bottom: 16px; }
+  .ach-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .ach { background: var(--surface2); border: 1px solid var(--hairline); padding: 8px 12px; font-family: var(--font-body); font-weight: 700; font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--text); }
+
+  /* Settings */
+  .settings-layout { display: grid; grid-template-columns: 220px 1fr; min-height: 600px; }
+  .settings-tabs { background: var(--surface1); border-right: 1px solid var(--hairline); padding: 18px 0; }
+  .settings-tab { display: block; padding: 12px 24px; font-family: var(--font-display); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 600; color: var(--muted); border-left: 2px solid transparent; cursor: pointer; transition: all 120ms ease-out; }
+  .settings-tab:hover { color: var(--ink); background: rgba(255,255,255,0.02); }
+  .settings-tab.active { color: var(--ink); border-left-color: var(--red); background: rgba(204,0,0,0.04); }
+  .settings-panel { padding: 36px 48px; display: none; }
+  .settings-panel.active { display: block; animation: fadeUp 240ms ease-out; }
+  .settings-panel h3 { font-family: var(--font-display); font-weight: 700; font-size: 24px; color: var(--ink); letter-spacing: -0.01em; margin-bottom: 6px; }
+  .settings-panel .lede { color: var(--muted); font-size: 12px; max-width: 520px; margin-bottom: 28px; }
+  .settings-group { padding: 22px 0; border-top: 1px solid var(--hairline); display: grid; grid-template-columns: 1fr 1.4fr; gap: 32px; align-items: flex-start; }
+  .settings-group:first-of-type { border-top: 0; padding-top: 0; }
+  .settings-group .label { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink); font-weight: 700; }
+  .settings-group .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .row-flex { display: flex; gap: 12px; align-items: center; }
+  .row-flex .field { flex: 1; }
+  .save-row { display: flex; padding: 22px 0 6px; border-top: 1px solid var(--hairline); margin-top: 12px; }
+
+  /* Day buttons */
+  .day-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .day-btn { font-family: var(--font-display); font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; padding: 9px 14px; background: var(--surface2); color: var(--faint); border: 1px solid var(--hairline); cursor: pointer; transition: all 150ms ease-out; min-width: 56px; text-align: center; }
+  .day-btn:hover { color: var(--text); border-color: var(--hairline-strong); }
+  .day-btn.selected { background: var(--red); color: #fff; border-color: var(--red); }
+
+  .pair-toggle { display: inline-flex; border: 1px solid var(--hairline); }
+  .pair-toggle button { font-family: var(--font-display); font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; padding: 10px 18px; background: transparent; color: var(--muted); cursor: pointer; transition: all 150ms ease-out; min-width: 100px; }
+  .pair-toggle button:hover { color: var(--ink); }
+  .pair-toggle button.active { background: var(--red); color: #fff; }
+
+  .three-toggle { display: inline-flex; border: 1px solid var(--hairline); }
+  .three-toggle button { font-family: var(--font-display); font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; padding: 10px 18px; background: transparent; color: var(--muted); cursor: pointer; transition: all 150ms ease-out; min-width: 80px; }
+  .three-toggle button:hover { color: var(--ink); }
+  .three-toggle button.active { background: var(--red); color: #fff; }
+
+  .blackout-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .blackout-chip { display: inline-flex; align-items: center; gap: 8px; background: var(--surface2); border: 1px solid var(--hairline); padding: 7px 12px; font-size: 11px; color: var(--text); font-family: var(--font-body); font-weight: 500; }
+  .blackout-chip .x { color: var(--faint); cursor: pointer; transition: color 120ms ease-out; font-size: 14px; }
+  .blackout-chip .x:hover { color: var(--red); }
+  .add-date-btn { font-family: var(--font-display); font-size: 10px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; padding: 8px 12px; background: transparent; color: var(--muted); border: 1px dashed var(--hairline-strong); cursor: pointer; transition: all 150ms ease-out; }
+  .add-date-btn:hover { color: var(--red); border-color: var(--red); }
+
+  /* Responsive */
+  @media (max-width: 1023px) {
+    .sidebar { display: none; }
+    .main { margin-left: 0; padding-top: 56px; }
+    .mobile-top { display: flex; }
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .hero { padding: 36px 32px 40px; }
+    .hero h1 { font-size: 52px; }
+    .page-head, .panel-head, .next-card, .ch-section, .ch-issue, .toggle-bar, .matches-toolbar, .session-row, .profile-card, .sparkline-wrap, .achievements { padding-left: 32px; padding-right: 32px; }
+    .table-wrap { overflow-x: auto; }
+    .table-wrap table { min-width: 720px; }
+    .session-row { grid-template-columns: 1.6fr 1.4fr 1fr 0.8fr 0.8fr auto; padding: 16px 32px; gap: 12px; }
+    .ch-form-inner { grid-template-columns: 1fr; }
+    .next-card { grid-template-columns: 1fr; }
+    .next-card-actions { justify-content: flex-start; }
+    .settings-layout { grid-template-columns: 180px 1fr; }
+    .settings-panel { padding: 28px 32px; }
+  }
+  @media (max-width: 767px) {
+    .hero { padding: 28px 20px 32px; }
+    .hero h1 { font-size: 40px; }
+    .hero p { font-size: 12px; }
+    .hero-watermark { font-size: 120px; right: -10px; bottom: -10px; }
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .stat { padding: 18px; }
+    .stat-num { font-size: 32px; }
+    .page-head, .panel-head, .next-card, .ch-section, .ch-issue, .toggle-bar, .matches-toolbar, .profile-card, .sparkline-wrap, .achievements { padding-left: 20px !important; padding-right: 20px !important; }
+    .page-head { padding-top: 28px; flex-direction: column; align-items: flex-start; }
+    .page-head h2 { font-size: 32px; }
+    thead th, tbody td { padding: 12px 16px; }
+    .table-wrap { overflow-x: auto; }
+    .table-wrap table { min-width: 560px; }
+    .ch-card { grid-template-columns: 1fr; }
+    .ch-card-actions { justify-content: flex-start; }
+    .next-card-name { font-size: 26px; }
+    .session-row { grid-template-columns: 1fr; gap: 6px; padding: 16px 20px; align-items: flex-start; }
+    .session-row > *::before { content: attr(data-label); display: block; font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--faint); font-weight: 700; margin-bottom: 4px; }
+    .session-row > .session-name::before { content: 'Session'; }
+    .settings-layout { grid-template-columns: 1fr; }
+    .settings-tabs { display: flex; overflow-x: auto; padding: 8px 0; border-right: 0; border-bottom: 1px solid var(--hairline); }
+    .settings-tab { border-left: 0; border-bottom: 2px solid transparent; flex-shrink: 0; padding: 12px 16px; }
+    .settings-tab.active { border-left: 0; border-bottom-color: var(--red); }
+    .settings-panel { padding: 24px 20px; }
+    .settings-group { grid-template-columns: 1fr; gap: 12px; padding: 18px 0; }
+  }
+
+  /* ============ AUTH ============ */
+  .auth-root { position: fixed; inset: 0; z-index: 200; background: var(--bg); display: flex; opacity: 0; pointer-events: none; transition: opacity 200ms ease-out; }
+  .auth-root.show { opacity: 1; pointer-events: auto; }
+  .auth-left { flex: 1; min-width: 0; background: #0A0A0A; position: relative; overflow: hidden; padding: 60px; display: flex; flex-direction: column; justify-content: center; }
+  .auth-left::before { content: ''; position: absolute; inset: 0; background-image: repeating-linear-gradient(45deg, transparent, transparent 39px, rgba(255,255,255,0.03) 39px, rgba(255,255,255,0.03) 40px); pointer-events: none; }
+  .auth-left-inner { position: relative; max-width: 440px; }
+  .auth-mark { display: flex; align-items: center; gap: 10px; }
+  .auth-mark-square { width: 40px; height: 40px; background: var(--red); display: flex; align-items: center; justify-content: center; color: #fff; font-family: var(--font-display); font-weight: 700; font-size: 22px; }
+  .auth-eyebrow-club { display: block; margin-top: 12px; font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; color: var(--red); font-weight: 700; }
+  .auth-headline { font-family: var(--font-display); font-weight: 700; font-size: 72px; line-height: 0.92; color: var(--ink); letter-spacing: -0.02em; margin-top: 32px; }
+  .auth-headline span { display: block; }
+  .auth-season { display: inline-block; margin-top: 32px; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--red); font-weight: 700; }
+  .auth-foot-copy { position: absolute; left: 60px; bottom: 40px; font-size: 10px; color: var(--ghost); letter-spacing: 0.06em; }
+  .auth-right { flex: 1; min-width: 0; background: var(--surface1); border-left: 1px solid rgba(255,255,255,0.06); display: flex; align-items: center; justify-content: center; padding: 60px 40px; overflow-y: auto; }
+  .auth-form { width: 100%; max-width: 420px; }
+  .auth-eyebrow { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--red); font-weight: 700; }
+  .auth-title { font-family: var(--font-display); font-weight: 700; font-size: 36px; color: var(--ink); margin-top: 8px; line-height: 1; letter-spacing: -0.01em; }
+  .auth-lede { font-size: 12px; color: var(--dim); line-height: 1.6; margin-top: 14px; margin-bottom: 28px; }
+  .auth-spacer { height: 28px; }
+  .auth-label { display: block; font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--dim); font-weight: 700; margin-bottom: 6px; }
+  .auth-input-wrap { position: relative; margin-bottom: 18px; }
+  .auth-input { width: 100%; background: #0D0D0D; border: 1px solid rgba(255,255,255,0.10); color: var(--ink); font-family: var(--font-body); font-size: 13px; font-weight: 400; padding: 12px 14px; border-radius: 0; outline: none; transition: border-color 150ms ease-out; box-sizing: border-box; }
+  .auth-input:focus { border-color: var(--red); }
+  .auth-input-wrap.has-error .auth-input { border-color: var(--red); }
+  .auth-input-wrap.has-error + .auth-error { display: block; }
+  .auth-error { display: none; font-size: 10px; color: var(--red); margin-top: -10px; margin-bottom: 14px; letter-spacing: 0.04em; }
+  .auth-pass-toggle { position: absolute; right: 12px; top: 13px; background: transparent; border: 0; color: var(--dim); font-size: 11px; font-family: var(--font-body); font-weight: 600; cursor: pointer; letter-spacing: 0.08em; text-transform: uppercase; padding: 0; }
+  .auth-pass-toggle:hover { color: var(--ink); }
+  .auth-forgot { display: block; text-align: right; font-size: 11px; color: var(--dim); margin-top: -8px; margin-bottom: 22px; cursor: pointer; transition: color 150ms; }
+  .auth-forgot:hover { color: var(--red); }
+  .auth-btn { width: 100%; background: var(--red); color: #fff; font-family: var(--font-display); font-weight: 700; font-size: 12px; letter-spacing: 0.15em; text-transform: uppercase; padding: 14px; border: 0; border-radius: 0; cursor: pointer; transition: background 150ms ease-out, opacity 150ms; }
+  .auth-btn:hover { background: var(--red-dark); }
+  .auth-btn:disabled { background: var(--surface2); color: var(--ghost); cursor: not-allowed; }
+  .auth-btn.loading { opacity: 0.6; cursor: wait; }
+  .auth-foot { margin-top: 24px; font-size: 11px; color: var(--dim); }
+  .auth-foot a { color: var(--red); cursor: pointer; font-weight: 700; }
+  .auth-foot a:hover { text-decoration: underline; }
+  .auth-note { margin-top: 18px; font-size: 10px; color: var(--ghost); line-height: 1.6; }
+  .auth-screen { display: none; width: 100%; height: 100%; }
+  .auth-screen.active { display: flex; animation: authFade 200ms ease-out; }
+  @keyframes authFade { from { opacity: 0; } to { opacity: 1; } }
+
+  .auth-checkbox-row { display: flex; align-items: flex-start; gap: 10px; margin: 18px 0 22px; cursor: pointer; }
+  .auth-checkbox { width: 16px; height: 16px; border: 1px solid rgba(255,255,255,0.15); background: #0D0D0D; flex-shrink: 0; margin-top: 2px; position: relative; cursor: pointer; }
+  .auth-checkbox.checked { background: var(--red); border-color: var(--red); }
+  .auth-checkbox.checked::after { content: '✓'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 11px; font-weight: 700; }
+  .auth-checkbox-label { font-size: 12px; color: var(--text); line-height: 1.5; }
+
+  .strength-bar { height: 3px; background: var(--surface2); margin-top: 4px; margin-bottom: 14px; position: relative; }
+  .strength-bar > span { position: absolute; left: 0; top: 0; bottom: 0; background: var(--red); transition: width 200ms; width: 0; }
+  .strength-bar > span.s2 { background: var(--amber); }
+  .strength-bar > span.s3 { background: var(--green); }
+
+  .auth-segrow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin-bottom: 18px; border: 1px solid var(--hairline); }
+  .auth-seg { font-family: var(--font-display); font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; padding: 10px 8px; background: transparent; color: var(--muted); border: 0; cursor: pointer; transition: all 150ms ease-out; text-align: center; border-right: 1px solid var(--hairline); }
+  .auth-seg:last-child { border-right: 0; }
+  .auth-seg:hover { color: var(--ink); }
+  .auth-seg.active { background: var(--red); color: #fff; }
+
+  /* Ignition flash */
+  .ignition-flash { position: fixed; inset: 0; background: var(--red); z-index: 300; pointer-events: none; opacity: 0; transition: opacity 150ms ease-out; }
+  .ignition-flash.show { opacity: 1; }
+  .ignition-flash.fadeblack { background: var(--bg); opacity: 1; }
+
+  /* Onboarding */
+  .onb-root { position: fixed; inset: 0; z-index: 200; background: var(--bg); display: flex; flex-direction: column; opacity: 0; pointer-events: none; transition: opacity 200ms ease-out; overflow-y: auto; }
+  .onb-root.show { opacity: 1; pointer-events: auto; }
+  .onb-root::before { content: ''; position: fixed; inset: 0; background-image: repeating-linear-gradient(45deg, transparent, transparent 39px, rgba(255,255,255,0.03) 39px, rgba(255,255,255,0.03) 40px); pointer-events: none; z-index: 0; }
+  .onb-progress-wrap { position: relative; z-index: 2; padding-top: 28px; padding-bottom: 16px; text-align: center; flex-shrink: 0; }
+  .onb-step-label { font-size: 9px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--dim); font-weight: 700; margin-bottom: 12px; }
+  .onb-progress-bar { height: 2px; background: var(--surface2); position: relative; max-width: 480px; margin: 0 auto; }
+  .onb-progress-bar > span { position: absolute; left: 0; top: 0; bottom: 0; background: var(--red); transition: width 240ms ease-out; width: 0; }
+  .onb-stage { flex: 1; display: flex; align-items: center; justify-content: center; padding: 40px 32px; position: relative; z-index: 2; min-height: 0; }
+  .onb-step { width: 100%; max-width: 520px; opacity: 1; transform: translateX(0); transition: opacity 200ms cubic-bezier(0.4,0,0.2,1), transform 200ms cubic-bezier(0.4,0,0.2,1); }
+  .onb-step.exit-left { opacity: 0; transform: translateX(-40px); }
+  .onb-step.enter-right { opacity: 0; transform: translateX(40px); }
+  .onb-step.hidden { display: none; }
+  .onb-headline { font-family: var(--font-display); font-weight: 700; line-height: 0.9; color: var(--ink); letter-spacing: -0.02em; }
+  .onb-headline.h1 { font-size: 64px; }
+  .onb-headline.h2 { font-size: 48px; }
+  .onb-headline.h3 { font-size: 80px; }
+  .onb-intro { color: var(--muted); font-size: 14px; line-height: 1.6; margin-top: 18px; max-width: 440px; }
+  .onb-tease-list { margin-top: 28px; display: flex; flex-direction: column; gap: 14px; }
+  .onb-tease { display: grid; grid-template-columns: 32px 1fr; gap: 16px; padding: 12px 0; border-top: 1px solid var(--hairline); }
+  .onb-tease:first-child { border-top: 0; padding-top: 8px; }
+  .onb-tease-num { font-family: var(--font-display); font-weight: 700; font-size: 18px; color: var(--red); font-variant-numeric: tabular-nums; }
+  .onb-tease-text { color: var(--text); font-size: 13px; line-height: 1.5; }
+  .onb-tease-text strong { color: var(--ink); font-weight: 600; }
+  .onb-actions { margin-top: 36px; display: flex; gap: 12px; align-items: center; }
+  .onb-back { font-family: var(--font-display); font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); background: transparent; border: 0; cursor: pointer; padding: 10px 14px; transition: color 150ms; }
+  .onb-back:hover { color: var(--ink); }
+  .onb-fields { margin-top: 24px; display: flex; flex-direction: column; gap: 18px; }
+  .onb-field-label { font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--dim); font-weight: 700; margin-bottom: 8px; }
+  .onb-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .onb-tag { font-family: var(--font-display); font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; padding: 9px 14px; background: var(--surface2); color: var(--faint); border: 1px solid var(--hairline); cursor: pointer; transition: all 150ms ease-out; }
+  .onb-tag:hover { color: var(--text); border-color: var(--hairline-strong); }
+  .onb-tag.selected { background: var(--red); color: #fff; border-color: var(--red); }
+  .onb-tag-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .onb-tag-grid .onb-tag { text-align: center; padding: 12px; }
+
+  .rule { display: grid; grid-template-columns: 32px 1fr; gap: 16px; padding: 14px 0; border-top: 1px solid var(--hairline); }
+  .rule:first-child { border-top: 0; }
+  .rule-num { font-family: var(--font-display); font-weight: 700; font-size: 18px; color: var(--red); font-variant-numeric: tabular-nums; }
+  .rule-title { font-family: var(--font-display); font-weight: 700; font-size: 16px; color: var(--ink); letter-spacing: -0.005em; }
+  .rule-body { color: var(--text); font-size: 13px; margin-top: 4px; line-height: 1.5; }
+
+  .onb-final-headline { font-family: var(--font-display); font-weight: 700; font-size: 80px; line-height: 0.9; color: var(--ink); letter-spacing: -0.02em; }
+  .onb-final-headline .red { color: var(--red); }
+  .onb-final-msg { color: var(--text); font-size: 14px; margin-top: 24px; max-width: 440px; line-height: 1.5; }
+
+  @media (max-width: 767px) {
+    .auth-root { flex-direction: column; }
+    .auth-left { flex: none; min-height: 200px; padding: 28px 24px; }
+    .auth-left-inner { max-width: none; }
+    .auth-headline { font-size: 36px; margin-top: 16px; }
+    .auth-foot-copy { display: none; }
+    .auth-season { margin-top: 14px; }
+    .auth-right { flex: 1; padding: 36px 24px; }
+    .onb-headline.h1 { font-size: 44px; }
+    .onb-headline.h2 { font-size: 36px; }
+    .onb-headline.h3 { font-size: 56px; }
+    .onb-final-headline { font-size: 56px; }
+    .onb-tag-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="ignition-flash" id="ignitionFlash"></div>
+
+<!-- ============ AUTH SCREENS ============ -->
+<div class="auth-root show" id="authRoot">
+
+  <!-- SIGN IN -->
+  <div class="auth-screen active" data-auth="signin">
+    <div class="auth-left">
+      <div class="auth-left-inner">
+        <div class="auth-mark">
+          <div class="auth-mark-square">S</div>
+          <span class="auth-eyebrow-club" style="margin-top: 0">SFU Badminton</span>
+        </div>
+        <h1 class="auth-headline"><span>Compete.</span><span>Rank.</span><span>Repeat.</span></h1>
+        <span class="auth-season">Season 02 · Spring 2026</span>
+      </div>
+      <div class="auth-foot-copy">© 2026 SFU Badminton Club</div>
+    </div>
+    <div class="auth-right">
+      <form class="auth-form" id="signinForm" novalidate>
+        <div class="auth-eyebrow">Welcome back</div>
+        <h2 class="auth-title">Sign in.</h2>
+        <div class="auth-spacer"></div>
+        <label class="auth-label">SFU Email</label>
+        <div class="auth-input-wrap" data-field="email">
+          <input class="auth-input" type="email" name="email" placeholder="you@sfu.ca" autocomplete="email" />
+        </div>
+        <div class="auth-error">↑ This field is required</div>
+        <label class="auth-label">Password</label>
+        <div class="auth-input-wrap" data-field="password">
+          <input class="auth-input" type="password" name="password" placeholder="••••••••" autocomplete="current-password" />
+          <button type="button" class="auth-pass-toggle" data-toggle-pass>Show</button>
+        </div>
+        <div class="auth-error">↑ This field is required</div>
+        <a class="auth-forgot">Forgot password?</a>
+        <button type="submit" class="auth-btn">Sign In</button>
+        <div class="auth-foot">New to the club? <a data-go="signup">Sign up →</a></div>
+        <div class="auth-note">Access is by invite only. Your account must be approved by an admin before you can sign in.</div>
+      </form>
+    </div>
+  </div>
+
+  <!-- SIGN UP -->
+  <div class="auth-screen" data-auth="signup">
+    <div class="auth-left">
+      <div class="auth-left-inner">
+        <div class="auth-mark">
+          <div class="auth-mark-square">S</div>
+          <span class="auth-eyebrow-club" style="margin-top: 0">SFU Badminton</span>
+        </div>
+        <h1 class="auth-headline"><span>Compete.</span><span>Rank.</span><span>Repeat.</span></h1>
+        <span class="auth-season">Season 02 · Spring 2026</span>
+      </div>
+      <div class="auth-foot-copy">© 2026 SFU Badminton Club</div>
+    </div>
+    <div class="auth-right">
+      <form class="auth-form" id="signupForm" novalidate>
+        <div class="auth-eyebrow">Join the club</div>
+        <h2 class="auth-title">Sign up.</h2>
+        <p class="auth-lede">Create an account, complete onboarding, and an admin will approve your access within 48 hours.</p>
+
+        <label class="auth-label">Full Name</label>
+        <div class="auth-input-wrap" data-field="name"><input class="auth-input" name="name" placeholder="Your full name" /></div>
+
+        <label class="auth-label">SFU Email</label>
+        <div class="auth-input-wrap" data-field="email"><input class="auth-input" type="email" name="email" placeholder="you@sfu.ca" /></div>
+
+        <label class="auth-label">Password</label>
+        <div class="auth-input-wrap" data-field="password"><input class="auth-input" type="password" name="password" id="pwInput" placeholder="At least 8 characters" /></div>
+        <div class="strength-bar"><span id="strengthFill"></span></div>
+
+        <label class="auth-label">Confirm Password</label>
+        <div class="auth-input-wrap" data-field="password2"><input class="auth-input" type="password" name="password2" placeholder="Repeat password" /></div>
+
+        <label class="auth-label">Skill Level</label>
+        <div class="auth-segrow" id="skillRow">
+          <button type="button" class="auth-seg" data-skill="beginner">Beginner</button>
+          <button type="button" class="auth-seg active" data-skill="intermediate">Intermediate</button>
+          <button type="button" class="auth-seg" data-skill="advanced">Advanced</button>
+          <button type="button" class="auth-seg" data-skill="competitive">Competitive</button>
+        </div>
+
+        <label class="auth-label">Format Preference</label>
+        <div class="pair-toggle" id="formatPref" style="margin-bottom:18px">
+          <button type="button" class="active" data-format="singles">Singles</button>
+          <button type="button" data-format="doubles">Doubles</button>
+        </div>
+
+        <label class="auth-label">How did you hear about us?</label>
+        <div class="auth-input-wrap">
+          <select class="auth-input" name="hear">
+            <option>Friend or teammate</option>
+            <option>Club booth on campus</option>
+            <option>SFU rec listings</option>
+            <option>Social media</option>
+            <option>Other</option>
+          </select>
+        </div>
+
+        <div class="auth-checkbox-row" id="conductRow">
+          <div class="auth-checkbox" id="conductBox"></div>
+          <div class="auth-checkbox-label">I agree to the club's <a style="color:var(--red)">code of conduct</a> and dispute resolution rules.</div>
+        </div>
+
+        <button type="submit" class="auth-btn" id="createBtn" disabled>Create Account</button>
+        <div class="auth-foot">Already have an account? <a data-go="signin">Sign in →</a></div>
+      </form>
+    </div>
+  </div>
+
+</div>
+
+<!-- ============ ONBOARDING ============ -->
+<div class="onb-root" id="onbRoot">
+  <div class="onb-progress-wrap">
+    <div class="onb-step-label" id="onbStepLabel">STEP 1 OF 4</div>
+    <div class="onb-progress-bar"><span id="onbProgress" style="width:25%"></span></div>
+  </div>
+  <div class="onb-stage" id="onbStage">
+
+    <!-- Step 1 -->
+    <div class="onb-step" data-onb="1">
+      <div class="onb-headline h1">Welcome,<br/>Aiden.</div>
+      <p class="onb-intro">You're a few minutes from your first match. Here's the shape of the next four screens.</p>
+      <div class="onb-tease-list">
+        <div class="onb-tease"><div class="onb-tease-num">01</div><div class="onb-tease-text"><strong>Profile.</strong> Your name, hand, and how you play.</div></div>
+        <div class="onb-tease"><div class="onb-tease-num">02</div><div class="onb-tease-text"><strong>Availability.</strong> Days, times, and court preference.</div></div>
+        <div class="onb-tease"><div class="onb-tease-num">03</div><div class="onb-tease-text"><strong>The rules.</strong> Five things, then you're in.</div></div>
+        <div class="onb-tease"><div class="onb-tease-num">04</div><div class="onb-tease-text"><strong>Approval.</strong> An admin reviews and you're live.</div></div>
+      </div>
+      <div class="onb-actions">
+        <button class="btn btn-red" data-onb-next>Get Started →</button>
+      </div>
+    </div>
+
+    <!-- Step 2 -->
+    <div class="onb-step hidden" data-onb="2">
+      <div class="onb-headline h2">Your profile.</div>
+      <p class="onb-intro">A few details so opponents know who they're playing.</p>
+      <div class="onb-fields">
+        <div>
+          <div class="onb-field-label">Display Name</div>
+          <input class="field" value="Aiden Park" />
+        </div>
+        <div>
+          <div class="onb-field-label">Dominant Hand</div>
+          <div class="pair-toggle" id="handToggle">
+            <button type="button" data-hand="right" class="active">Right</button>
+            <button type="button" data-hand="left">Left</button>
+          </div>
+        </div>
+        <div>
+          <div class="onb-field-label">Years Playing</div>
+          <div class="onb-tags" id="yearsRow">
+            <button type="button" class="onb-tag" data-years="0-1">0–1 yr</button>
+            <button type="button" class="onb-tag selected" data-years="2-4">2–4 yrs</button>
+            <button type="button" class="onb-tag" data-years="5-9">5–9 yrs</button>
+            <button type="button" class="onb-tag" data-years="10+">10+ yrs</button>
+          </div>
+        </div>
+        <div>
+          <div class="onb-field-label">Playing Style <span style="color:var(--faint); font-weight:500; letter-spacing:0.04em; text-transform:none">— pick up to 2</span></div>
+          <div class="onb-tags" id="styleRow">
+            <button type="button" class="onb-tag" data-style="aggressive">Aggressive</button>
+            <button type="button" class="onb-tag" data-style="defensive">Defensive</button>
+            <button type="button" class="onb-tag" data-style="net-game">Net Game</button>
+            <button type="button" class="onb-tag" data-style="power">Power</button>
+            <button type="button" class="onb-tag" data-style="finesse">Finesse</button>
+            <button type="button" class="onb-tag" data-style="all-court">All Court</button>
+          </div>
+        </div>
+      </div>
+      <div class="onb-actions">
+        <button class="onb-back" data-onb-back>← Back</button>
+        <button class="btn btn-red" data-onb-next>Continue →</button>
+      </div>
+    </div>
+
+    <!-- Step 3 -->
+    <div class="onb-step hidden" data-onb="3">
+      <div class="onb-headline h2">When do you play?</div>
+      <p class="onb-intro">We'll pair you with players who match your schedule.</p>
+      <div class="onb-fields">
+        <div>
+          <div class="onb-field-label">Preferred Days</div>
+          <div class="day-row" id="daysRow">
+            <button type="button" class="day-btn" data-day="mon">Mon</button>
+            <button type="button" class="day-btn" data-day="tue">Tue</button>
+            <button type="button" class="day-btn" data-day="wed">Wed</button>
+            <button type="button" class="day-btn" data-day="thu">Thu</button>
+            <button type="button" class="day-btn selected" data-day="fri">Fri</button>
+            <button type="button" class="day-btn selected" data-day="sat">Sat</button>
+            <button type="button" class="day-btn" data-day="sun">Sun</button>
+          </div>
+        </div>
+        <div>
+          <div class="onb-field-label">Time Preference</div>
+          <div class="onb-tag-grid" id="timeRow">
+            <button type="button" class="onb-tag" data-time="morning">Morning</button>
+            <button type="button" class="onb-tag" data-time="afternoon">Afternoon</button>
+            <button type="button" class="onb-tag selected" data-time="evening">Evening</button>
+            <button type="button" class="onb-tag" data-time="any">Any time</button>
+          </div>
+        </div>
+        <div>
+          <div class="onb-field-label">Court Preference</div>
+          <div class="onb-tags" id="courtRow">
+            <button type="button" class="onb-tag selected" data-court="any">Any Court</button>
+            <button type="button" class="onb-tag" data-court="a">Court A</button>
+            <button type="button" class="onb-tag" data-court="b">Court B</button>
+          </div>
+        </div>
+        <div>
+          <div class="onb-field-label">Response Commitment</div>
+          <div class="three-toggle" id="respRow">
+            <button type="button" data-resp="24h">24h</button>
+            <button type="button" class="active" data-resp="48h">48h</button>
+            <button type="button" data-resp="72h">72h</button>
+          </div>
+        </div>
+      </div>
+      <div class="onb-actions">
+        <button class="onb-back" data-onb-back>← Back</button>
+        <button class="btn btn-red" data-onb-next>Continue →</button>
+      </div>
+    </div>
+
+    <!-- Step 4 -->
+    <div class="onb-step hidden" data-onb="4">
+      <div class="onb-headline h2">The rules.</div>
+      <p class="onb-intro">Short version. Read once, play forever.</p>
+      <div class="onb-tease-list" style="margin-top: 24px">
+        <div class="rule"><div class="rule-num">01</div><div><div class="rule-title">Submit scores within 48 hours.</div><div class="rule-body">Late submissions need admin approval and may be voided.</div></div></div>
+        <div class="rule"><div class="rule-num">02</div><div><div class="rule-title">Disputes go to admins.</div><div class="rule-body">Don't argue at court — file a dispute and let admins resolve it.</div></div></div>
+        <div class="rule"><div class="rule-num">03</div><div><div class="rule-title">No-shows cost ELO.</div><div class="rule-body">15-minute grace period, then walkover. Repeated no-shows mean a suspension.</div></div></div>
+        <div class="rule"><div class="rule-num">04</div><div><div class="rule-title">Be on time. Be fair.</div><div class="rule-body">Bring your own shuttles for ranked play. Calls are honour-system unless you ask for a line judge.</div></div></div>
+        <div class="rule"><div class="rule-num">05</div><div><div class="rule-title">Have fun, mostly.</div><div class="rule-body">It's a club ladder, not the World Tour. Compete hard, lose well.</div></div></div>
+      </div>
+      <div class="auth-checkbox-row" id="rulesRow" style="margin-top: 24px">
+        <div class="auth-checkbox" id="rulesBox"></div>
+        <div class="auth-checkbox-label">I've read the rules and I'm ready to compete.</div>
+      </div>
+      <div class="onb-actions">
+        <button class="onb-back" data-onb-back>← Back</button>
+        <button class="btn btn-red" id="readyBtn" disabled>I'm Ready →</button>
+      </div>
+    </div>
+
+    <!-- Final -->
+    <div class="onb-step hidden" data-onb="5">
+      <div class="onb-final-headline">You're in.<br/><span class="red">Good luck, Aiden.</span></div>
+      <p class="onb-final-msg">Your application is in front of an admin now. You'll get an email when you're approved — usually within 48 hours. In the meantime, take a look around.</p>
+      <div class="onb-actions">
+        <button class="btn btn-ghost" data-onb-explore>Explore the App</button>
+        <button class="btn btn-red" data-onb-explore>View Leaderboard →</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============ APP ============ -->
+<div class="app" id="app">
+
+  <!-- Mobile top bar -->
+  <div class="mobile-top">
+    <button class="hamburger" id="hamburger" aria-label="Open menu"><span></span><span></span><span></span></button>
+    <div class="brand-row"><div class="brand-mark">S</div><div class="brand-text">SFU Badminton</div></div>
+    <div class="player-avatar" id="mobileAvatar" title="Sign out" style="cursor:pointer">AP</div>
+  </div>
+
+  <!-- Mobile overlay nav -->
+  <div class="mobile-overlay" id="mobileOverlay">
+    <div class="mobile-overlay-head">
+      <div class="brand-row"><div class="brand-mark">S</div><div class="brand-text">SFU Badminton</div></div>
+      <button class="mobile-close" id="mobileClose" aria-label="Close">×</button>
+    </div>
+    <nav class="mobile-nav">
+      <a href="#" class="active" data-page="dashboard">Dashboard</a>
+      <a href="#" data-page="leaderboard">Leaderboard</a>
+      <a href="#" data-page="challenge">Challenge</a>
+      <a href="#" data-page="my-matches">My Matches</a>
+      <a href="#" data-page="sessions">Sessions</a>
+      <a href="#" data-page="profile">My Profile</a>
+      <a href="#" data-page="settings">Settings</a>
+    </nav>
+  </div>
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-row"><div class="brand-mark">S</div><div class="brand-text">SFU Badminton</div></div>
+      <span class="brand-portal">Player Portal</span>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="#" class="side-link active" data-page="dashboard">Dashboard</a>
+      <a href="#" class="side-link" data-page="leaderboard">Leaderboard</a>
+      <a href="#" class="side-link" data-page="challenge">Challenge</a>
+      <a href="#" class="side-link" data-page="my-matches">My Matches</a>
+      <a href="#" class="side-link" data-page="sessions">Sessions</a>
+      <a href="#" class="side-link" data-page="profile">My Profile</a>
+      <a href="#" class="side-link" data-page="settings">Settings</a>
+    </nav>
+    <div class="sidebar-foot" id="sidebarFoot" title="Sign out">
+      <div class="player-avatar">AP</div>
+      <div class="player-foot-text">
+        <span class="player-foot-name">Aiden Park</span>
+        <span class="player-foot-elo">ELO 1487</span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+
+    <!-- DASHBOARD -->
+    <section class="page active" data-page="dashboard">
+      <div class="hero">
+        <div class="hero-watermark">A1</div>
+        <div class="hero-inner">
+          <div class="tag-row"><span class="red-line"></span><span class="micro micro-red">Season 02 · Spring 2026</span></div>
+          <h1>Born on the<br/>court.</h1>
+          <p>ELO that moves with every match. Sessions you can join on the fly. Challenges that end on the score, not the dispute.</p>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat"><div class="stat-label">Rank</div><div class="stat-num">#1</div><div class="stat-delta">Top of the club</div></div>
+        <div class="stat"><div class="stat-label">Singles ELO</div><div class="stat-num">1487</div><div class="stat-delta up">+34 this season</div></div>
+        <div class="stat"><div class="stat-label">Doubles ELO</div><div class="stat-num">1412</div><div class="stat-delta up">+18 this season</div></div>
+        <div class="stat"><div class="stat-label">Win Rate</div><div class="stat-num">82%</div><div class="stat-delta">18W · 4L</div></div>
+      </div>
+
+      <div class="next-card">
+        <div class="next-card-inner">
+          <div class="micro" style="color:var(--ink)">Next Challenge</div>
+          <div class="next-card-name">Priya Nambiar</div>
+          <div class="next-card-meta">ELO 1456 · Singles · Proposed May 3, 2026 · 7:00pm</div>
+          <div class="next-card-elo">If you win: <span class="pos">+14</span> ELO &nbsp;·&nbsp; If you lose: <span class="neg">−13</span> ELO</div>
+        </div>
+        <div class="next-card-actions">
+          <button class="btn btn-red">Accept</button>
+          <button class="btn btn-ghost">Decline</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><div class="label">Recent Matches <span style="color:var(--faint); font-weight:500; margin-left:8px">/ Last 5</span></div><a href="#" class="view-all" data-goto="my-matches">View All →</a></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Date</th><th>Opponent</th><th>Format</th><th>Score</th><th>Result</th><th>ELO Δ</th></tr></thead>
+          <tbody>
+            <tr><td class="date">Apr 30</td><td class="name">Lucas Tran</td><td class="date">Singles</td><td class="elo" style="font-size:12px">21–17, 21–15</td><td class="win">WIN</td><td class="delta-pos">+14</td></tr>
+            <tr><td class="date">Apr 26</td><td class="name">James Wu</td><td class="date">Singles</td><td class="elo" style="font-size:12px">19–21, 21–18, 21–17</td><td class="win">WIN</td><td class="delta-pos">+18</td></tr>
+            <tr><td class="date">Apr 22</td><td class="name">Priya Nambiar</td><td class="date">Doubles</td><td class="elo" style="font-size:12px">17–21, 15–21</td><td class="loss">LOSS</td><td class="delta-neg">−11</td></tr>
+            <tr><td class="date">Apr 19</td><td class="name">David Chen</td><td class="date">Singles</td><td class="elo" style="font-size:12px">21–9, 21–11</td><td class="win">WIN</td><td class="delta-pos">+9</td></tr>
+            <tr><td class="date">Apr 15</td><td class="name">Marcus Okonkwo</td><td class="date">Singles</td><td class="elo" style="font-size:12px">21–18, 21–16</td><td class="win">WIN</td><td class="delta-pos">+12</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- LEADERBOARD -->
+    <section class="page" data-page="leaderboard">
+      <div class="page-head">
+        <div>
+          <div class="tag-row"><span class="red-line"></span><span class="micro micro-red">11 ranked players</span></div>
+          <h2>Leaderboard.</h2>
+          <p class="meta">Live ladder for Season 02. ELO updates as matches confirm.</p>
+        </div>
+      </div>
+
+      <div class="toggle-bar">
+        <div class="seg-toggle" id="lbToggle">
+          <button class="seg-btn active" data-lb="singles">Singles</button>
+          <button class="seg-btn" data-lb="doubles">Doubles</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table id="lbTable">
+          <thead><tr><th>Rank</th><th>Player</th><th>ELO</th><th>W</th><th>L</th><th>W%</th><th>Trend</th></tr></thead>
+          <tbody id="lbBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- CHALLENGE -->
+    <section class="page" data-page="challenge">
+      <div class="page-head">
+        <div>
+          <div class="tag-row"><span class="red-line"></span><span class="micro micro-red">1 incoming · 1 outgoing</span></div>
+          <h2>Challenges.</h2>
+          <p class="meta">Issue a challenge, accept or decline incoming proposals. ELO swings are previewed before you commit.</p>
+        </div>
+      </div>
+
+      <div class="ch-section">
+        <h3>Incoming</h3>
+        <div class="ch-card">
+          <div>
+            <div class="ch-card-name">Priya Nambiar</div>
+            <div class="ch-card-meta">ELO 1456 · Singles · May 3, 2026 · 7:00pm</div>
+            <div class="ch-card-elo">If you win: <span class="pos">+14</span> ELO &nbsp;·&nbsp; If you lose: <span class="neg">−13</span> ELO</div>
+          </div>
+          <div class="ch-card-actions">
+            <button class="btn btn-red">Accept</button>
+            <button class="btn btn-ghost">Decline</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="ch-section">
+        <h3>Outgoing</h3>
+        <div class="ch-card">
+          <div>
+            <div class="ch-card-name">Marcus Okonkwo</div>
+            <div class="ch-card-meta">ELO 1312 · Doubles · May 5, 2026 · 6:30pm</div>
+            <div class="ch-status">● Awaiting response</div>
+          </div>
+          <div class="ch-card-actions">
+            <button class="btn btn-ghost">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="ch-issue">
+        <button class="btn btn-red" id="issueToggle" style="width: 100%; padding: 14px">+ Issue New Challenge</button>
+        <div class="ch-form" id="chForm">
+          <div class="ch-form-inner">
+            <div class="full">
+              <label class="form-label">Select Opponent</label>
+              <select class="field" id="oppSelect"></select>
+            </div>
+            <div class="full">
+              <div class="ch-preview" id="chPreview">If you win: <span class="pos">+14</span> ELO &nbsp;·&nbsp; If you lose: <span class="neg">−18</span> ELO</div>
+            </div>
+            <div>
+              <label class="form-label">Format</label>
+              <div class="pair-toggle" id="chFormat">
+                <button type="button" class="active" data-fmt="singles">Singles</button>
+                <button type="button" data-fmt="doubles">Doubles</button>
+              </div>
+            </div>
+            <div>
+              <label class="form-label">Date</label>
+              <input class="field" type="date" value="2026-05-08" />
+            </div>
+            <div>
+              <label class="form-label">Time</label>
+              <input class="field" type="time" value="19:00" />
+            </div>
+            <div class="full">
+              <label class="form-label">Message <span style="color:var(--faint); font-weight:500; letter-spacing:0.04em; text-transform:none">— optional</span></label>
+              <textarea class="field" rows="3" placeholder="Court A or B? Bring extra shuttles?"></textarea>
+            </div>
+            <div class="ch-form-actions">
+              <button class="btn btn-red">Send Challenge</button>
+              <button class="btn btn-ghost" id="chCancel">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- MY MATCHES -->
+    <section class="page" data-page="my-matches">
+      <div class="page-head">
+        <div>
+          <div class="tag-row"><span class="red-line"></span><span class="micro micro-red">Season 02 · My Record</span></div>
+          <h2>My Matches.</h2>
+          <p class="meta">18W · 4L · 82% win rate this season. Filter by format to break it down.</p>
+        </div>
+      </div>
+
+      <div class="matches-toolbar">
+        <div class="seg-toggle" id="mmFilter">
+          <button class="seg-btn active" data-mm="all">All</button>
+          <button class="seg-btn" data-mm="singles">Singles</button>
+          <button class="seg-btn" data-mm="doubles">Doubles</button>
+        </div>
+        <div class="meta-text" id="mmCount">22 matches</div>
+      </div>
+
+      <div class="table-wrap">
+        <table id="mmTable">
+          <thead><tr><th>Date</th><th>Opponent</th><th>Format</th><th>Score</th><th>Result</th><th>ELO Δ</th></tr></thead>
+          <tbody id="mmBody"></tbody>
+        </table>
+      </div>
+
+      <div class="stats-grid" style="grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--hairline)">
+        <div class="stat"><div class="stat-label">Matches Played</div><div class="stat-num">22</div><div class="stat-delta">This season</div></div>
+        <div class="stat"><div class="stat-label">Best Win</div><div class="stat-num"><span style="color:var(--green)">+18</span></div><div class="stat-delta">vs James Wu · Apr 26</div></div>
+        <div class="stat"><div class="stat-label">Longest Streak</div><div class="stat-num">5</div><div class="stat-delta">Consecutive wins</div></div>
+      </div>
+    </section>
+
+    <!-- SESSIONS -->
+    <section class="page" data-page="sessions">
+      <div class="page-head">
+        <div>
+          <div class="tag-row"><span class="red-line"></span><span class="micro micro-red">3 upcoming · 3 past</span></div>
+          <h2>Sessions.</h2>
+          <p class="meta">Open play, competitive nights, and league fixtures. Tap join when a slot opens.</p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><div class="label">Upcoming</div></div>
+        <div class="session-row">
+          <div class="session-name" data-label="Session">Friday Open Play</div>
+          <div class="session-cell" data-label="Time">Fri May 2 · 6:00–9:00pm</div>
+          <div class="session-cell" data-label="Court">Court A + B</div>
+          <div class="session-cell cap" data-label="Capacity">14 / 20</div>
+          <div class="session-cell" data-label="Status"><span class="badge open">Open</span></div>
+          <div style="text-align:right"><button class="btn btn-red" style="padding:8px 14px">Join</button></div>
+        </div>
+        <div class="session-row">
+          <div class="session-name" data-label="Session">Competitive Night</div>
+          <div class="session-cell" data-label="Time">Tue May 6 · 7:00–9:30pm</div>
+          <div class="session-cell" data-label="Court">Court A</div>
+          <div class="session-cell cap" data-label="Capacity">8 / 12</div>
+          <div class="session-cell" data-label="Status"><span class="badge open">Open</span></div>
+          <div style="text-align:right"><button class="btn btn-red" style="padding:8px 14px">Join</button></div>
+        </div>
+        <div class="session-row">
+          <div class="session-name" data-label="Session">Doubles League</div>
+          <div class="session-cell" data-label="Time">Sat May 10 · 10:00am–1:00pm</div>
+          <div class="session-cell" data-label="Court">Court A + B</div>
+          <div class="session-cell cap" data-label="Capacity">20 / 20</div>
+          <div class="session-cell" data-label="Status"><span class="badge full">Full</span></div>
+          <div style="text-align:right"><button class="btn btn-ghost disabled" style="padding:8px 14px">Full</button></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><div class="label">Past <span style="color:var(--faint); font-weight:500; margin-left:8px">/ Last 3</span></div></div>
+        <div class="session-row past">
+          <div class="session-name" data-label="Session">Friday Open Play</div>
+          <div class="session-cell" data-label="Date">Apr 25</div>
+          <div class="session-cell" data-label="Court">Court A + B</div>
+          <div class="session-cell cap" data-label="Capacity">18 / 20</div>
+          <div class="session-cell" data-label="Status"><span class="badge attended">Attended</span></div>
+          <div style="text-align:right"><a href="#" class="view-all">Recap →</a></div>
+        </div>
+        <div class="session-row past">
+          <div class="session-name" data-label="Session">Competitive Night</div>
+          <div class="session-cell" data-label="Date">Apr 22</div>
+          <div class="session-cell" data-label="Court">Court A</div>
+          <div class="session-cell cap" data-label="Capacity">11 / 12</div>
+          <div class="session-cell" data-label="Status"><span class="badge attended">Attended</span></div>
+          <div style="text-align:right"><a href="#" class="view-all">Recap →</a></div>
+        </div>
+        <div class="session-row past">
+          <div class="session-name" data-label="Session">Friday Open Play</div>
+          <div class="session-cell" data-label="Date">Apr 18</div>
+          <div class="session-cell" data-label="Court">Court A + B</div>
+          <div class="session-cell cap" data-label="Capacity">20 / 20</div>
+          <div class="session-cell" data-label="Status"><span class="badge completed">Completed</span></div>
+          <div style="text-align:right"><a href="#" class="view-all">Recap →</a></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PROFILE -->
+    <section class="page" data-page="profile">
+      <div class="page-head">
+        <div>
+          <div class="tag-row"><span class="red-line"></span><span class="micro micro-red">Player Card</span></div>
+          <h2>My Profile.</h2>
+          <p class="meta">Your public-facing card. ELO history, achievements, and member since.</p>
+        </div>
+      </div>
+
+      <div class="profile-card">
+        <div class="profile-avatar">AP</div>
+        <div>
+          <div class="profile-name">Aiden Park</div>
+          <div class="profile-meta">apark@sfu.ca · Member since March 2026 · Season 02 Active</div>
+        </div>
+      </div>
+
+      <div class="sparkline-wrap">
+        <div class="sparkline-label">Singles ELO History — Season 02</div>
+        <svg class="sparkline" id="sparkline" viewBox="0 0 800 80" preserveAspectRatio="none"></svg>
+        <div class="spark-stats">
+          <div class="spark-stat"><span class="lbl">Season High</span><span class="val">1487</span></div>
+          <div class="spark-stat"><span class="lbl">Season Low</span><span class="val">1200</span></div>
+          <div class="spark-stat"><span class="lbl">Net Gain</span><span class="val green">+287</span></div>
+        </div>
+      </div>
+
+      <div class="achievements">
+        <div class="ach-label">Achievements</div>
+        <div class="ach-row">
+          <div class="ach">10 Matches</div>
+          <div class="ach">First Win</div>
+          <div class="ach">Win Streak ×5</div>
+          <div class="ach">Top 10</div>
+          <div class="ach">Season Debut</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="page" data-page="settings">
+      <div class="page-head">
+        <div>
+          <div class="tag-row"><span class="red-line"></span><span class="micro micro-red">Configuration</span></div>
+          <h2>Settings.</h2>
+          <p class="meta">Your profile, preferences, and how you receive notifications.</p>
+        </div>
+      </div>
+
+      <div class="settings-layout">
+        <div class="settings-tabs">
+          <a class="settings-tab active" data-stab="profile">Profile</a>
+          <a class="settings-tab" data-stab="preferences">Preferences</a>
+          <a class="settings-tab" data-stab="notifications">Notifications</a>
+          <a class="settings-tab" data-stab="challenges">Challenges</a>
+          <a class="settings-tab" data-stab="account">Account</a>
+        </div>
+
+        <div>
+          <!-- PROFILE -->
+          <div class="settings-panel active" data-panel="profile">
+            <h3>Profile</h3>
+            <p class="lede">Your name and how the club sees you. Email is verified once and read-only.</p>
+
+            <div class="settings-group">
+              <div><div class="label">Display Name</div><div class="hint">Visible on the leaderboard and in challenges.</div></div>
+              <div><input class="field" value="Aiden Park" /></div>
+            </div>
+            <div class="settings-group">
+              <div><div class="label">SFU Email</div><div class="hint">Verified at sign-up. Contact an admin to change.</div></div>
+              <div><input class="field" value="apark@sfu.ca" disabled style="opacity:0.6" /></div>
+            </div>
+            <div class="settings-group">
+              <div><div class="label">Member Since</div><div class="hint">Your join date.</div></div>
+              <div><input class="field" value="March 2026" disabled style="opacity:0.6" /></div>
+            </div>
+            <div class="settings-group">
+              <div><div class="label">Show My ELO</div><div class="hint">Display your current rating on your public card.</div></div>
+              <div><div class="toggle on"></div></div>
+            </div>
+            <div class="settings-group">
+              <div><div class="label">Show Match History Publicly</div><div class="hint">Other club members can browse your past matches.</div></div>
+              <div><div class="toggle on"></div></div>
+            </div>
+            <div class="settings-group">
+              <div><div class="label">Allow Challenges from Anyone</div><div class="hint">Off limits challenges to players within 200 ELO.</div></div>
+              <div><div class="toggle on"></div></div>
+            </div>
+            <div class="save-row"><button class="btn btn-red">Save Profile</button></div>
+          </div>
+
+          <!-- PREFERENCES -->
+          <div class="settings-panel" data-panel="preferences">
+            <h3>Preferences</h3>
+            <p class="lede">How the app shows up for you, by default.</p>
+
+            <div class="settings-group">
+              <div><div class="label">Default Format</div><div class="hint">Pre-selected when you issue a challenge.</div></div>
+              <div><div class="pair-toggle"><button class="active">Singles</button><button>Doubles</button></div></div>
+            </div>
+            <div class="settings-group">
+              <div><div class="label">Preferred Days</div><div class="hint">Used by session matchmaking.</div></div>
+              <div>
+                <div class="day-row" id="prefDays">
+                  <button class="day-btn" data-pday="mon">Mon</button>
+                  <button class="day-btn" data-pday="tue">Tue</button>
+                  <button class="day-btn" data-pday="wed">Wed</button>
+                  <button class="day-btn" data-pday="thu">Thu</button>
+                  <button class="day-btn selected" data-pday="fri">Fri</button>
+                  <button class="day-btn selected" data-pday="sat">Sat</button>
+                  <button class="day-btn" data-pday="sun">Sun</button>
+                </div>
+              </div>
+            </div>
+            <div class="settings-group">
+              <div><div class="label">ELO Display</div><div class="hint">Show full number, or relative to median.</div></div>
+              <div><div class="toggle on"></div></div>
+            </div>
+            <div class="settings-group">
+              <div><div class="label">Leaderboard Default</div><div class="hint">Which board opens first.</div></div>
+              <div><div class="pair-toggle"><button class="active">Singles</button><button>Doubles</button></div></div>
+            </div>
+            <div class="save-row"><button class="btn btn-red">Save Preferences</button></div>
+          </div>
+
+          <!-- NOTIFICATIONS -->
+          <div class="settings-panel" data-panel="notifications">
+            <h3>Notifications</h3>
+            <p class="lede">When the app pings you. Email is the default; push needs browser permission.</p>
+
+            <div class="settings-group"><div><div class="label">Someone challenges me</div></div><div><div class="toggle on"></div></div></div>
+            <div class="settings-group"><div><div class="label">My challenge is accepted</div></div><div><div class="toggle on"></div></div></div>
+            <div class="settings-group"><div><div class="label">My challenge is declined</div></div><div><div class="toggle on"></div></div></div>
+            <div class="settings-group"><div><div class="label">Match result needs my confirmation</div></div><div><div class="toggle on"></div></div></div>
+            <div class="settings-group"><div><div class="label">My ELO changes by more than 20</div></div><div><div class="toggle"></div></div></div>
+            <div class="settings-group"><div><div class="label">A new session is posted</div></div><div><div class="toggle"></div></div></div>
+            <div class="settings-group"><div><div class="label">Admin announcement sent</div></div><div><div class="toggle on"></div></div></div>
+            <div class="settings-group"><div><div class="label">Dispute I'm involved in updated</div></div><div><div class="toggle on"></div></div></div>
+
+            <div class="settings-group" style="border-top: 1px solid var(--hairline-strong); margin-top:8px"><div><div class="label">Channels</div><div class="hint">How notifications reach you.</div></div><div></div></div>
+            <div class="settings-group"><div><div class="label">Email</div></div><div><div class="toggle on"></div></div></div>
+            <div class="settings-group"><div><div class="label">Browser Push</div></div><div><div class="toggle"></div></div></div>
+
+            <div class="save-row"><button class="btn btn-red">Save Notifications</button></div>
+          </div>
+
+          <!-- CHALLENGES -->
+          <div class="settings-panel" data-panel="challenges">
+            <h3>Challenges</h3>
+            <p class="lede">Rules of engagement. Auto-decline lopsided challenges, set blackout dates.</p>
+
+            <div class="settings-group">
+              <div><div class="label">Auto-decline if ELO gap &gt; <input class="field" value="300" style="display:inline-block; width: 70px; padding: 4px 8px; vertical-align: middle" /></div><div class="hint">Saves you from challenges way above or below your level.</div></div>
+              <div><div class="toggle"></div></div>
+            </div>
+            <div class="settings-group">
+              <div><div class="label">Response Window</div><div class="hint">How long you have to accept before it auto-declines.</div></div>
+              <div><div class="three-toggle"><button>24h</button><button class="active">48h</button><button>72h</button></div></div>
+            </div>
+            <div class="settings-group">
+              <div><div class="label">Blackout Dates</div><div class="hint">Dates when no one can challenge you.</div></div>
+              <div>
+                <div class="blackout-row" id="blackoutRow">
+                  <div class="blackout-chip">May 11–15, 2026 <span class="x">×</span></div>
+                  <button class="add-date-btn" id="addBlackout">+ Add Date</button>
+                </div>
+              </div>
+            </div>
+            <div class="save-row"><button class="btn btn-red">Save Challenge Settings</button></div>
+          </div>
+
+          <!-- ACCOUNT -->
+          <div class="settings-panel" data-panel="account">
+            <h3>Account</h3>
+            <p class="lede">Password, your data, and how to leave.</p>
+
+            <div class="settings-group">
+              <div><div class="label">Change Password</div><div class="hint">8 characters minimum. Required at least once a year.</div></div>
+              <div style="display:flex; flex-direction:column; gap:10px">
+                <input class="field" type="password" placeholder="Current password" />
+                <input class="field" type="password" placeholder="New password" />
+                <input class="field" type="password" placeholder="Confirm new password" />
+                <button class="btn btn-ghost" style="align-self:flex-start; margin-top: 4px">Update Password</button>
+              </div>
+            </div>
+            <div class="settings-group">
+              <div><div class="label">Download My Data</div><div class="hint">Download all your matches, ELO history, and records.</div></div>
+              <div><button class="btn btn-ghost">Download My Data</button></div>
+            </div>
+            <div class="settings-group">
+              <div><div class="label">Account Deletion</div><div class="hint">Your match history will be anonymised, not deleted.</div></div>
+              <div><button class="btn btn-danger">Request Account Deletion</button></div>
+            </div>
+            <div class="settings-group">
+              <div><div class="label">Session</div><div class="hint">Last signed in: May 1, 2026 at 2:31am</div></div>
+              <div><button class="btn btn-ghost" id="signOutBtn">Sign Out</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+(function () {
+  // ───────── DATA ─────────
+  const ROSTER = [
+    { id: 1, name: 'Aiden Park',       sElo: 1487, dElo: 1412, w: 18, l: 4,  status: 'Active',  joined: 'Mar 12 2026', trend: 34 },
+    { id: 2, name: 'Priya Nambiar',    sElo: 1456, dElo: 1388, w: 15, l: 6,  status: 'Active',  joined: 'Mar 08 2026', trend: 18 },
+    { id: 3, name: 'Lucas Tran',       sElo: 1423, dElo: 1401, w: 14, l: 7,  status: 'Active',  joined: 'Mar 15 2026', trend: 12 },
+    { id: 4, name: 'James Wu',         sElo: 1398, dElo: 1356, w: 12, l: 8,  status: 'Active',  joined: 'Mar 02 2026', trend: 0 },
+    { id: 5, name: 'Sofia Reyes',      sElo: 1371, dElo: 1290, w: 10, l: 9,  status: 'Active',  joined: 'Mar 11 2026', trend: -8 },
+    { id: 6, name: 'David Chen',       sElo: 1344, dElo: 1378, w: 10, l: 10, status: 'Active',  joined: 'Mar 04 2026', trend: 22 },
+    { id: 7, name: 'Marcus Okonkwo',   sElo: 1312, dElo: 1289, w: 8,  l: 11, status: 'Active',  joined: 'Mar 18 2026', trend: -15 },
+    { id: 8, name: 'Yuki Tanaka',      sElo: 1298, dElo: 1334, w: 7,  l: 12, status: 'Active',  joined: 'Mar 21 2026', trend: 9 },
+    { id: 9, name: 'Fatima Al-Hassan', sElo: 1276, dElo: 1241, w: 6,  l: 12, status: 'Active',  joined: 'Mar 24 2026', trend: 0 },
+    { id:10, name: 'Ryan Kowalski',    sElo: 1251, dElo: 1198, w: 5,  l: 13, status: 'Active',  joined: 'Mar 28 2026', trend: -6 },
+    { id:11, name: 'Elena Vasquez',    sElo: 1224, dElo: 1267, w: 4,  l: 13, status: 'Active',  joined: 'Apr 02 2026', trend: 4 },
+    { id:12, name: 'Noah Patel',       sElo: 1200, dElo: 1200, w: 0,  l: 0,  status: 'Pending',  joined: 'Apr 28 2026', trend: 0 },
+    { id:13, name: 'Amara Diallo',     sElo: 1200, dElo: 1200, w: 0,  l: 0,  status: 'Pending',  joined: 'Apr 30 2026', trend: 0 }
+  ];
+  const ME_ID = 1; // Aiden Park
+  const ELO_HISTORY = [1200,1218,1241,1229,1258,1301,1334,1318,1356,1389,1412,1398,1423,1456,1487];
+
+  // 22 matches, 18W 4L
+  const MATCHES = [
+    { date: 'Apr 30', opp: 'Lucas Tran',       fmt: 'Singles', score: '21–17, 21–15',         result: 'WIN',  delta: 14 },
+    { date: 'Apr 26', opp: 'James Wu',         fmt: 'Singles', score: '19–21, 21–18, 21–17',  result: 'WIN',  delta: 18 },
+    { date: 'Apr 22', opp: 'Priya Nambiar',    fmt: 'Doubles', score: '17–21, 15–21',         result: 'LOSS', delta: -11 },
+    { date: 'Apr 19', opp: 'David Chen',       fmt: 'Singles', score: '21–9, 21–11',          result: 'WIN',  delta: 9 },
+    { date: 'Apr 15', opp: 'Marcus Okonkwo',   fmt: 'Singles', score: '21–18, 21–16',         result: 'WIN',  delta: 12 },
+    { date: 'Apr 11', opp: 'Ryan Kowalski',    fmt: 'Singles', score: '21–14, 21–12',         result: 'WIN',  delta: 8 },
+    { date: 'Apr 08', opp: 'Elena Vasquez',    fmt: 'Doubles', score: '21–19, 21–17',         result: 'WIN',  delta: 11 },
+    { date: 'Apr 05', opp: 'Yuki Tanaka',      fmt: 'Singles', score: '19–21, 21–18, 21–19',  result: 'WIN',  delta: 16 },
+    { date: 'Apr 01', opp: 'Sofia Reyes',      fmt: 'Singles', score: '18–21, 21–18, 16–21',  result: 'LOSS', delta: -9 },
+    { date: 'Mar 28', opp: 'Fatima Al-Hassan', fmt: 'Singles', score: '21–11, 21–15',         result: 'WIN',  delta: 7 },
+    { date: 'Mar 25', opp: 'James Wu',         fmt: 'Doubles', score: '21–18, 17–21, 21–16',  result: 'WIN',  delta: 14 },
+    { date: 'Mar 21', opp: 'Marcus Okonkwo',   fmt: 'Singles', score: '21–17, 21–13',         result: 'WIN',  delta: 10 },
+    { date: 'Mar 18', opp: 'Lucas Tran',       fmt: 'Singles', score: '16–21, 21–19, 15–21',  result: 'LOSS', delta: -12 },
+    { date: 'Mar 15', opp: 'David Chen',       fmt: 'Singles', score: '21–14, 21–16',         result: 'WIN',  delta: 9 },
+    { date: 'Mar 12', opp: 'Priya Nambiar',    fmt: 'Singles', score: '14–21, 21–18, 17–21',  result: 'LOSS', delta: -14 },
+    { date: 'Mar 08', opp: 'Ryan Kowalski',    fmt: 'Singles', score: '21–9, 21–7',           result: 'WIN',  delta: 6 },
+    { date: 'Mar 05', opp: 'Elena Vasquez',    fmt: 'Singles', score: '21–15, 21–11',         result: 'WIN',  delta: 8 },
+    { date: 'Mar 01', opp: 'Yuki Tanaka',      fmt: 'Singles', score: '21–18, 21–14',         result: 'WIN',  delta: 11 },
+    // 4 more wins to reach 18 (currently 14 W in singles + 3 W doubles = 17; one more)
+    { date: 'Feb 26', opp: 'David Chen',       fmt: 'Doubles', score: '21–14, 21–17',         result: 'WIN',  delta: 9 },
+    { date: 'Feb 22', opp: 'James Wu',         fmt: 'Singles', score: '21–16, 21–18',         result: 'WIN',  delta: 7 },
+    { date: 'Feb 18', opp: 'Sofia Reyes',      fmt: 'Singles', score: '21–13, 21–15',         result: 'WIN',  delta: 8 },
+    { date: 'Feb 14', opp: 'Marcus Okonkwo',   fmt: 'Singles', score: '21–12, 21–17',         result: 'WIN',  delta: 6 }
+  ];
+
+  // ───────── PAGE NAV ─────────
+  function showPage(name) {
+    document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.dataset.page === name));
+    document.querySelectorAll('.side-link, .mobile-nav a').forEach(el => {
+      if (el.dataset.page) el.classList.toggle('active', el.dataset.page === name);
+    });
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    closeMobile();
+  }
+  document.querySelectorAll('[data-page]').forEach(el => {
+    el.addEventListener('click', e => { e.preventDefault(); showPage(el.dataset.page); });
+  });
+  document.querySelectorAll('[data-goto]').forEach(el => {
+    el.addEventListener('click', e => { e.preventDefault(); showPage(el.dataset.goto); });
+  });
+
+  // ───────── MOBILE NAV ─────────
+  const overlay = document.getElementById('mobileOverlay');
+  const hamburger = document.getElementById('hamburger');
+  const closer = document.getElementById('mobileClose');
+  function openMobile() { overlay.classList.add('open'); document.body.classList.add('no-scroll'); }
+  function closeMobile() { overlay.classList.remove('open'); document.body.classList.remove('no-scroll'); }
+  hamburger.addEventListener('click', openMobile);
+  closer.addEventListener('click', closeMobile);
+
+  // ───────── TOGGLES ─────────
+  document.querySelectorAll('.toggle').forEach(t => {
+    t.addEventListener('click', () => t.classList.toggle('on'));
+  });
+
+  // ───────── PAIR & THREE TOGGLES (generic active-on-click in their group) ─────────
+  document.querySelectorAll('.pair-toggle, .three-toggle').forEach(group => {
+    group.addEventListener('click', e => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      group.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+    });
+  });
+
+  // ───────── DAY BUTTONS ─────────
+  document.querySelectorAll('.day-row .day-btn, .day-row [data-day], .day-row [data-pday]').forEach(b => {
+    b.addEventListener('click', () => b.classList.toggle('selected'));
+  });
+
+  // ───────── LEADERBOARD ─────────
+  function renderLeaderboard(mode) {
+    const rows = ROSTER.filter(p => p.status === 'Active')
+      .sort((a, b) => (mode === 'singles' ? b.sElo - a.sElo : b.dElo - a.dElo));
+    const tbody = document.getElementById('lbBody');
+    tbody.innerHTML = '';
+    rows.forEach((p, i) => {
+      const rank = i + 1;
+      const elo = mode === 'singles' ? p.sElo : p.dElo;
+      const wp = Math.round(p.w / Math.max(1, p.w + p.l) * 100);
+      const tr = document.createElement('tr');
+      if (p.id === ME_ID) tr.classList.add('you-row');
+      const rankCls = rank <= 3 ? 'rank-top' : (rank <= 8 ? 'rank-mid' : 'rank-low');
+      const trendCls = p.trend > 0 ? 'up' : (p.trend < 0 ? 'down' : 'flat');
+      const trendChar = p.trend > 0 ? '↑' : (p.trend < 0 ? '↓' : '—');
+      const trendVal = p.trend === 0 ? '0' : (p.trend > 0 ? '+' + p.trend : '' + p.trend);
+      tr.innerHTML = `
+        <td class="rank ${rankCls}">${String(rank).padStart(2,'0')}</td>
+        <td class="name">${p.name}${p.id === ME_ID ? '<span class="you-tag"> (You)</span>' : ''}</td>
+        <td class="elo">${elo}</td>
+        <td class="num">${p.w}</td>
+        <td class="num">${p.l}</td>
+        <td class="num">${wp}%</td>
+        <td class="trend ${trendCls}">${trendChar} ${trendVal}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+  renderLeaderboard('singles');
+  document.querySelectorAll('#lbToggle .seg-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#lbToggle .seg-btn').forEach(b => b.classList.toggle('active', b === btn));
+      renderLeaderboard(btn.dataset.lb);
+    });
+  });
+
+  // ───────── MY MATCHES ─────────
+  function renderMatches(filter) {
+    const list = filter === 'all' ? MATCHES : MATCHES.filter(m => m.fmt.toLowerCase() === filter);
+    const tbody = document.getElementById('mmBody');
+    tbody.innerHTML = '';
+    list.forEach(m => {
+      const tr = document.createElement('tr');
+      const resCls = m.result === 'WIN' ? 'win' : 'loss';
+      const dCls = m.delta > 0 ? 'delta-pos' : 'delta-neg';
+      const dStr = m.delta > 0 ? '+' + m.delta : '' + m.delta;
+      tr.innerHTML = `
+        <td class="date">${m.date}</td>
+        <td class="name">${m.opp}</td>
+        <td class="date">${m.fmt}</td>
+        <td class="elo" style="font-size:12px">${m.score}</td>
+        <td class="${resCls}">${m.result}</td>
+        <td class="${dCls}">${dStr}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+    document.getElementById('mmCount').textContent = list.length + ' match' + (list.length === 1 ? '' : 'es');
+  }
+  renderMatches('all');
+  document.querySelectorAll('#mmFilter .seg-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#mmFilter .seg-btn').forEach(b => b.classList.toggle('active', b === btn));
+      renderMatches(btn.dataset.mm);
+    });
+  });
+
+  // ───────── CHALLENGE FORM ─────────
+  const oppSelect = document.getElementById('oppSelect');
+  const opponents = ROSTER.filter(p => p.status === 'Active' && p.id !== ME_ID).sort((a, b) => b.sElo - a.sElo);
+  opponents.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = `${p.name} (ELO ${p.sElo})`;
+    opt.dataset.elo = p.sElo;
+    oppSelect.appendChild(opt);
+  });
+  function eloPreview() {
+    const myElo = ROSTER.find(p => p.id === ME_ID).sElo;
+    const oppElo = parseInt(oppSelect.value ? oppSelect.options[oppSelect.selectedIndex].dataset.elo : opponents[0].sElo, 10);
+    // K=32 elo
+    const expW = 1 / (1 + Math.pow(10, (oppElo - myElo) / 400));
+    const winDelta = Math.round(32 * (1 - expW));
+    const lossDelta = Math.round(32 * (0 - expW));
+    document.getElementById('chPreview').innerHTML =
+      `If you win: <span class="pos">+${winDelta}</span> ELO &nbsp;·&nbsp; If you lose: <span class="neg">${lossDelta}</span> ELO`;
+  }
+  oppSelect.addEventListener('change', eloPreview);
+  eloPreview();
+
+  const issueToggle = document.getElementById('issueToggle');
+  const chForm = document.getElementById('chForm');
+  const chCancel = document.getElementById('chCancel');
+  issueToggle.addEventListener('click', () => {
+    chForm.classList.toggle('open');
+    issueToggle.textContent = chForm.classList.contains('open') ? '× Close Form' : '+ Issue New Challenge';
+  });
+  chCancel.addEventListener('click', () => {
+    chForm.classList.remove('open');
+    issueToggle.textContent = '+ Issue New Challenge';
+  });
+
+  // ───────── SPARKLINE ─────────
+  function renderSparkline() {
+    const svg = document.getElementById('sparkline');
+    const w = 800, h = 80, pad = 8;
+    const min = Math.min(...ELO_HISTORY), max = Math.max(...ELO_HISTORY);
+    const range = max - min || 1;
+    const xs = ELO_HISTORY.map((_, i) => pad + i * ((w - pad * 2) / (ELO_HISTORY.length - 1)));
+    const ys = ELO_HISTORY.map(v => h - pad - ((v - min) / range) * (h - pad * 2));
+    let d = `M ${xs[0].toFixed(2)} ${ys[0].toFixed(2)}`;
+    for (let i = 1; i < xs.length; i++) d += ` L ${xs[i].toFixed(2)} ${ys[i].toFixed(2)}`;
+    const lastX = xs[xs.length - 1], lastY = ys[ys.length - 1];
+    svg.innerHTML = `
+      <path d="${d}" fill="none" stroke="#CC0000" stroke-width="1.5" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round" />
+      <circle cx="${lastX.toFixed(2)}" cy="${lastY.toFixed(2)}" r="4" fill="#CC0000" />
+      <text x="${pad}" y="${(ys[0] - 4).toFixed(2)}" fill="#666" font-family="Barlow Condensed" font-weight="600" font-size="11" letter-spacing="0.5">1200</text>
+      <text x="${(lastX - 32).toFixed(2)}" y="${(lastY - 10).toFixed(2)}" fill="#F0F0F0" font-family="Barlow Condensed" font-weight="700" font-size="11" letter-spacing="0.5">1487</text>
+    `;
+  }
+  renderSparkline();
+
+  // ───────── SETTINGS TABS ─────────
+  document.querySelectorAll('.settings-tab').forEach(tab => {
+    tab.addEventListener('click', e => {
+      e.preventDefault();
+      const key = tab.dataset.stab;
+      document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t === tab));
+      document.querySelectorAll('.settings-panel').forEach(p => p.classList.toggle('active', p.dataset.panel === key));
+    });
+  });
+
+  // ───────── BLACKOUT DATES ─────────
+  const blackoutRow = document.getElementById('blackoutRow');
+  const addBlackout = document.getElementById('addBlackout');
+  function attachChipRemove(chip) {
+    chip.querySelector('.x').addEventListener('click', () => chip.remove());
+  }
+  document.querySelectorAll('.blackout-chip').forEach(attachChipRemove);
+  addBlackout.addEventListener('click', () => {
+    const labels = ['May 22, 2026','Jun 5–7, 2026','Jul 14–18, 2026','Aug 3, 2026'];
+    const label = labels[Math.floor(Math.random() * labels.length)];
+    const chip = document.createElement('div');
+    chip.className = 'blackout-chip';
+    chip.innerHTML = `${label} <span class="x">×</span>`;
+    blackoutRow.insertBefore(chip, addBlackout);
+    attachChipRemove(chip);
+  });
+
+  // ───────── AUTH ─────────
+  const authRoot = document.getElementById('authRoot');
+  const onbRoot = document.getElementById('onbRoot');
+  const flash = document.getElementById('ignitionFlash');
+  const authScreens = document.querySelectorAll('.auth-screen');
+  function showAuthScreen(name) {
+    authScreens.forEach(s => s.classList.toggle('active', s.dataset.auth === name));
+  }
+  document.querySelectorAll('[data-go]').forEach(el => {
+    el.addEventListener('click', (e) => { e.preventDefault(); showAuthScreen(el.dataset.go); });
+  });
+  document.querySelectorAll('[data-toggle-pass]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const inp = btn.parentElement.querySelector('input');
+      if (inp.type === 'password') { inp.type = 'text'; btn.textContent = 'Hide'; }
+      else { inp.type = 'password'; btn.textContent = 'Show'; }
+    });
+  });
+  function validateForm(form) {
+    let valid = true;
+    form.querySelectorAll('.auth-input-wrap').forEach(wrap => {
+      const inp = wrap.querySelector('input, textarea, select');
+      if (!inp || inp.disabled) return;
+      if (!inp.value.trim()) { wrap.classList.add('has-error'); valid = false; }
+      else { wrap.classList.remove('has-error'); }
+    });
+    return valid;
+  }
+  document.querySelectorAll('.auth-input').forEach(inp => {
+    inp.addEventListener('input', () => inp.parentElement.classList.remove('has-error'));
+  });
+  function ignite(cb) {
+    flash.classList.add('show');
+    setTimeout(() => {
+      authRoot.classList.remove('show');
+      onbRoot.classList.remove('show');
+      flash.classList.add('fadeblack');
+      setTimeout(() => {
+        if (cb) cb();
+        flash.classList.remove('show', 'fadeblack');
+      }, 280);
+    }, 180);
+  }
+  // Skill segment
+  document.querySelectorAll('#skillRow .auth-seg').forEach(b => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('#skillRow .auth-seg').forEach(o => o.classList.toggle('active', o === b));
+    });
+  });
+  // Conduct checkbox enables Create
+  const conductBox = document.getElementById('conductBox');
+  const conductRow = document.getElementById('conductRow');
+  const createBtn = document.getElementById('createBtn');
+  conductRow.addEventListener('click', () => {
+    conductBox.classList.toggle('checked');
+    createBtn.disabled = !conductBox.classList.contains('checked');
+  });
+  // Strength bar
+  const pwInput = document.getElementById('pwInput');
+  const strengthFill = document.getElementById('strengthFill');
+  pwInput.addEventListener('input', () => {
+    const v = pwInput.value;
+    let score = 0;
+    if (v.length >= 8) score++;
+    if (/[A-Z]/.test(v) && /[a-z]/.test(v)) score++;
+    if (/\d/.test(v) && /[^\w]/.test(v)) score++;
+    strengthFill.className = '';
+    if (score === 0) { strengthFill.style.width = '0%'; }
+    else if (score === 1) { strengthFill.style.width = '33%'; }
+    else if (score === 2) { strengthFill.style.width = '66%'; strengthFill.className = 's2'; }
+    else { strengthFill.style.width = '100%'; strengthFill.className = 's3'; }
+  });
+
+  document.getElementById('signinForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (!validateForm(e.target)) return;
+    const btn = e.target.querySelector('button[type="submit"]');
+    btn.classList.add('loading'); btn.textContent = 'Authenticating…';
+    setTimeout(() => ignite(() => { btn.classList.remove('loading'); btn.textContent = 'Sign In'; }), 500);
+  });
+  document.getElementById('signupForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (!validateForm(e.target)) return;
+    if (createBtn.disabled) return;
+    // Begin onboarding
+    authRoot.classList.remove('show');
+    onbRoot.classList.add('show');
+    setOnbStep(1);
+  });
+
+  // ───────── ONBOARDING ─────────
+  let onbStep = 1;
+  const TOTAL_STEPS = 4;
+  function setOnbStep(n, dir) {
+    const prevEl = document.querySelector(`.onb-step[data-onb="${onbStep}"]`);
+    const nextEl = document.querySelector(`.onb-step[data-onb="${n}"]`);
+    if (prevEl && nextEl && prevEl !== nextEl) {
+      prevEl.classList.add('exit-left');
+      setTimeout(() => {
+        prevEl.classList.add('hidden');
+        prevEl.classList.remove('exit-left');
+        nextEl.classList.remove('hidden');
+        nextEl.classList.add('enter-right');
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => nextEl.classList.remove('enter-right'));
+        });
+      }, 200);
+    } else if (nextEl) {
+      document.querySelectorAll('.onb-step').forEach(s => s.classList.add('hidden'));
+      nextEl.classList.remove('hidden');
+    }
+    onbStep = n;
+    const isFinal = n === 5;
+    document.getElementById('onbStepLabel').textContent = isFinal ? 'COMPLETE' : `STEP ${n} OF ${TOTAL_STEPS}`;
+    document.getElementById('onbProgress').style.width = isFinal ? '100%' : `${(n / TOTAL_STEPS) * 100}%`;
+  }
+  document.querySelectorAll('[data-onb-next]').forEach(b => b.addEventListener('click', () => setOnbStep(onbStep + 1)));
+  document.querySelectorAll('[data-onb-back]').forEach(b => b.addEventListener('click', () => setOnbStep(Math.max(1, onbStep - 1))));
+  document.querySelectorAll('[data-onb-explore]').forEach(b => b.addEventListener('click', () => ignite()));
+  // Style multi-select max 2 (FIFO)
+  const styleQueue = [];
+  document.querySelectorAll('#styleRow .onb-tag').forEach(t => {
+    t.addEventListener('click', () => {
+      if (t.classList.contains('selected')) {
+        t.classList.remove('selected');
+        const i = styleQueue.indexOf(t);
+        if (i >= 0) styleQueue.splice(i, 1);
+      } else {
+        t.classList.add('selected');
+        styleQueue.push(t);
+        if (styleQueue.length > 2) {
+          const dropped = styleQueue.shift();
+          dropped.classList.remove('selected');
+        }
+      }
+    });
+  });
+  // Years single-select
+  document.querySelectorAll('#yearsRow .onb-tag').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('#yearsRow .onb-tag').forEach(o => o.classList.toggle('selected', o === t));
+    });
+  });
+  // Time single-select
+  document.querySelectorAll('#timeRow .onb-tag').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('#timeRow .onb-tag').forEach(o => o.classList.toggle('selected', o === t));
+    });
+  });
+  // Court single-select
+  document.querySelectorAll('#courtRow .onb-tag').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('#courtRow .onb-tag').forEach(o => o.classList.toggle('selected', o === t));
+    });
+  });
+  // Day buttons in onboarding (multi)
+  document.querySelectorAll('#daysRow .day-btn').forEach(b => {
+    b.addEventListener('click', () => b.classList.toggle('selected'));
+  });
+  // Rules checkbox
+  const rulesBox = document.getElementById('rulesBox');
+  const rulesRow = document.getElementById('rulesRow');
+  const readyBtn = document.getElementById('readyBtn');
+  rulesRow.addEventListener('click', () => {
+    rulesBox.classList.toggle('checked');
+    readyBtn.disabled = !rulesBox.classList.contains('checked');
+  });
+  readyBtn.addEventListener('click', () => setOnbStep(5));
+
+  // ───────── SIGN OUT ─────────
+  function signOut() {
+    if (!confirm('Sign out?')) return;
+    authRoot.classList.add('show');
+    showAuthScreen('signin');
+    document.getElementById('signinForm').reset();
+    document.getElementById('signupForm').reset();
+  }
+  document.getElementById('signOutBtn').addEventListener('click', signOut);
+  document.getElementById('sidebarFoot').addEventListener('click', signOut);
+  document.getElementById('mobileAvatar').addEventListener('click', signOut);
+
+})();
+</script>
+</body>
+</html>

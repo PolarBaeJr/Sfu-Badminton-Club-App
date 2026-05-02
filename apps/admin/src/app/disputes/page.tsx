@@ -1,215 +1,174 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge, PageHero } from '@badminton/ui';
-import { formatRelativeTime } from '@badminton/shared';
-import { DisputeActions } from './actions';
-import { AlertTriangle, User, MessageSquare, CheckCircle2, Scale } from 'lucide-react';
+import { PageHero } from '@badminton/ui';
+import { DisputeCard } from './dispute-card';
 
 export default async function DisputesPage() {
   const supabase = createAdminClient();
 
   const { data: disputes } = await supabase
     .from('disputes')
-    .select('*, opener:players!disputes_opened_by_fkey(full_name), match:matches(score_summary, match_type, format)')
+    .select(
+      'id, status, reason_category, description, created_at, resolution_type, resolution_note, match_id, opener:players!disputes_opened_by_fkey(full_name), match:matches(score_summary, match_type, format, played_at, match_participants(player_id, team_side, win_flag, player:players(full_name)))'
+    )
     .order('created_at', { ascending: false })
     .limit(100);
 
-  const openCount = disputes?.filter((d) => d.status === 'open').length ?? 0;
+  const openCount = (disputes ?? []).filter((d) => d.status === 'open').length;
+  const resolvedCount = (disputes ?? []).length - openCount;
+  const eyebrow =
+    openCount > 0 || resolvedCount > 0
+      ? `${openCount} open · ${resolvedCount} resolved`
+      : 'All resolved';
 
   return (
     <div>
       <PageHero
-        eyebrow={openCount > 0 ? `${openCount} open · ${(disputes?.length ?? 0) - openCount} resolved` : 'All resolved'}
+        eyebrow={eyebrow}
         title="Disputes."
         subtitle="Score disagreements and no-shows. Resolve with the correct submission, or escalate for committee review."
         watermark="D"
       />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', padding: '32px 48px' }}>
 
-      {/* Dispute Cards */}
-      <div style={{ display: 'grid', gap: '1rem' }}>
-        {disputes?.map((d) => {
-          const isOpen = d.status === 'open';
-          const isResolved = d.status === 'resolved';
+      {(disputes ?? []).map((d, idx) => {
+        const opener = Array.isArray(d.opener) ? d.opener[0] : (d.opener as { full_name: string } | null);
+        const match = Array.isArray(d.match) ? d.match[0] : (d.match as { score_summary?: string; match_type?: string; played_at?: string; match_participants?: Array<{ player: { full_name: string } | { full_name: string }[] | null; team_side: 'a' | 'b'; win_flag: boolean | null }> } | null);
+        const parts = match?.match_participants ?? [];
+        const partsByName = (side: 'a' | 'b') =>
+          parts
+            .filter((p) => p.team_side === side)
+            .map((p) =>
+              Array.isArray(p.player) ? p.player[0]?.full_name : p.player?.full_name
+            )
+            .filter(Boolean)
+            .join(' & ') || '—';
 
-          return (
-            <Card key={d.id}>
-              <div
-                style={{
-                  borderLeft: `3px solid ${
-                    isOpen
-                      ? 'var(--color-danger, #ef4444)'
-                      : isResolved
-                        ? 'var(--color-success, #22c55e)'
-                        : 'var(--color-warning, #f59e0b)'
-                  }`,
-                  paddingLeft: '1rem',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem', flex: 1 }}>
-                    {/* Status & Category Badges */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                      <Badge variant={isOpen ? 'danger' : isResolved ? 'success' : 'warning'}>
-                        {d.status}
-                      </Badge>
-                      <Badge variant="neutral">{d.reason_category}</Badge>
-                    </div>
+        const playersLine = `${partsByName('a')} vs ${partsByName('b')}`;
+        const filedDate = formatDate(d.created_at as string);
+        const matchDate = match?.played_at ? formatDate(match.played_at) : filedDate;
+        const number = formatDisputeNumber(d.id as string, idx);
 
-                    {/* Opener */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <User
-                        size={14}
-                        style={{ color: 'var(--color-text-tertiary, #9ca3af)', flexShrink: 0 }}
-                      />
-                      <p
-                        style={{
-                          color: 'var(--color-text-primary, white)',
-                          fontWeight: 500,
-                          fontSize: '0.9375rem',
-                          margin: 0,
-                        }}
-                      >
-                        Opened by {(d.opener as Record<string, unknown>)?.full_name as string}
-                      </p>
-                    </div>
+        const isResolved = d.status === 'resolved';
+        const issue = humanizeReason(d.reason_category as string);
+        const description = (d.description as string) ?? '';
 
-                    {/* Description */}
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.375rem' }}>
-                      <MessageSquare
-                        size={14}
-                        style={{
-                          color: 'var(--color-text-tertiary, #9ca3af)',
-                          flexShrink: 0,
-                          marginTop: '0.125rem',
-                        }}
-                      />
-                      <p
-                        style={{
-                          fontSize: '0.875rem',
-                          color: 'var(--color-text-secondary, #9ca3af)',
-                          margin: 0,
-                          lineHeight: 1.5,
-                        }}
-                      >
-                        {d.description}
-                      </p>
-                    </div>
+        return (
+          <DisputeCard
+            key={d.id as string}
+            disputeId={d.id as string}
+            number={number}
+            filedDate={filedDate}
+            status={isResolved ? 'resolved' : 'open'}
+            playersLine={playersLine}
+            matchSubLabel={`Match · ${matchDate}`}
+            issueValue={isResolved ? humanizeResolution(d.resolution_type as string) : issue}
+            issueSub={description || (isResolved ? 'Resolution note on file.' : 'No additional notes.')}
+            submissions={
+              !isResolved && parts.length > 0
+                ? [
+                    {
+                      name: `${partsByName('a')} submitted`,
+                      score: match?.score_summary || '—',
+                      result: parts.find((p) => p.team_side === 'a')?.win_flag ? 'Win' : 'Loss',
+                    },
+                    {
+                      name: `${partsByName('b')} submitted`,
+                      score: match?.score_summary || '—',
+                      result: parts.find((p) => p.team_side === 'b')?.win_flag ? 'Win' : 'Loss',
+                    },
+                  ]
+                : undefined
+            }
+            requestedOutcome={
+              !isResolved && parts.length === 0
+                ? {
+                    value: opener
+                      ? `Opener: ${opener.full_name}`
+                      : 'Awaiting submission',
+                  }
+                : undefined
+            }
+            resolutionLine={
+              isResolved && d.resolution_note
+                ? (d.resolution_note as string)
+                : undefined
+            }
+            outcomeLine={
+              isResolved
+                ? {
+                    value: match?.score_summary || '—',
+                    sub: 'ELO adjusted · audit entry on file.',
+                  }
+                : undefined
+            }
+            primaryActionLabel={`Resolve — Accept ${partsByName('a')}'s Score`}
+            secondaryActionLabel={
+              parts.length > 1 ? `Resolve — Accept ${partsByName('b')}'s Score` : undefined
+            }
+          />
+        );
+      })}
 
-                    {/* Match Info & Timestamp */}
-                    <p
-                      style={{
-                        fontSize: '0.75rem',
-                        color: 'var(--color-text-tertiary, #6b7280)',
-                        margin: 0,
-                      }}
-                    >
-                      Match: {(d.match as Record<string, unknown>)?.score_summary as string || 'N/A'} &middot; {formatRelativeTime(d.created_at)}
-                    </p>
-
-                    {/* Resolution Note */}
-                    {d.resolution_note && (
-                      <div
-                        style={{
-                          marginTop: '0.25rem',
-                          padding: '0.625rem 0.75rem',
-                          borderRadius: '0.5rem',
-                          background: 'var(--color-surface-secondary, rgba(34, 197, 94, 0.08))',
-                          border: '1px solid var(--color-border-subtle, rgba(34, 197, 94, 0.15))',
-                          display: 'flex',
-                          alignItems: 'flex-start',
-                          gap: '0.5rem',
-                        }}
-                      >
-                        <Scale
-                          size={14}
-                          style={{
-                            color: 'var(--color-success, #22c55e)',
-                            flexShrink: 0,
-                            marginTop: '0.125rem',
-                          }}
-                        />
-                        <div>
-                          <p
-                            style={{
-                              fontSize: '0.75rem',
-                              fontWeight: 600,
-                              color: 'var(--color-success, #22c55e)',
-                              margin: 0,
-                              marginBottom: '0.125rem',
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.025em',
-                            }}
-                          >
-                            {d.resolution_type}
-                          </p>
-                          <p
-                            style={{
-                              fontSize: '0.8125rem',
-                              color: 'var(--color-text-secondary, #d1d5db)',
-                              margin: 0,
-                              lineHeight: 1.5,
-                            }}
-                          >
-                            {d.resolution_note}
-                          </p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Actions */}
-                  {d.status !== 'resolved' && (
-                    <DisputeActions disputeId={d.id} matchId={d.match_id} />
-                  )}
-                </div>
-              </div>
-            </Card>
-          );
-        })}
-
-        {/* Empty State */}
-        {(!disputes || disputes.length === 0) && (
-          <Card>
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '2.5rem 1rem',
-                gap: '0.75rem',
-              }}
-            >
-              <CheckCircle2
-                size={40}
-                style={{ color: 'var(--color-success, #22c55e)', opacity: 0.6 }}
-              />
-              <p
-                style={{
-                  color: 'var(--color-text-tertiary, #6b7280)',
-                  fontSize: '0.9375rem',
-                  margin: 0,
-                  textAlign: 'center',
-                }}
-              >
-                No disputes have been filed
-              </p>
-              <p
-                style={{
-                  color: 'var(--color-text-tertiary, #4b5563)',
-                  fontSize: '0.8125rem',
-                  margin: 0,
-                  textAlign: 'center',
-                }}
-              >
-                Disputes will appear here when players contest match results
-              </p>
-            </div>
-          </Card>
-        )}
-      </div>
-    </div>
+      {(!disputes || disputes.length === 0) && (
+        <div
+          style={{
+            padding: '64px 48px',
+            textAlign: 'center',
+            color: 'var(--muted)',
+            fontSize: 13,
+          }}
+        >
+          No disputes have been filed.
+        </div>
+      )}
     </div>
   );
+}
+
+function formatDate(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  } catch {
+    return iso;
+  }
+}
+
+function formatDisputeNumber(id: string, idx: number): string {
+  const tail = id.replace(/-/g, '').slice(-3).toUpperCase();
+  return tail || String(idx + 1).padStart(3, '0');
+}
+
+function humanizeReason(category: string): string {
+  switch (category) {
+    case 'score_wrong':
+      return 'Score disagreement — submitted scores do not match.';
+    case 'winner_wrong':
+      return 'Winner disagreement — opponent contested the result.';
+    case 'format_wrong':
+      return 'Format mismatch — submitted match format disputed.';
+    case 'incomplete':
+      return 'Match incomplete — opponent claims match was not finished.';
+    case 'abuse':
+      return 'Abuse / fraud reported.';
+    case 'other':
+      return 'Other dispute — see description.';
+    default:
+      return category ?? '—';
+  }
+}
+
+function humanizeResolution(type: string): string {
+  switch (type) {
+    case 'accepted':
+      return 'Admin accepted submission.';
+    case 'edited':
+      return 'Admin edited the score.';
+    case 'voided':
+      return 'Match voided.';
+    case 'converted_to_casual':
+      return 'Converted to casual (unrated).';
+    default:
+      return type ?? '—';
+  }
 }

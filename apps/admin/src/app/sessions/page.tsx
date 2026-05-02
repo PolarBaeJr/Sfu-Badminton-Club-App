@@ -1,119 +1,289 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge, PageHero } from '@badminton/ui';
-import { formatDate } from '@badminton/shared';
+import { PageHero } from '@badminton/ui';
 import { CreateSessionForm, SessionCardMenu, AttendanceDialog } from './actions';
-import { Calendar, MapPin, FileText } from 'lucide-react';
+
+type Session = {
+  id: string;
+  name: string | null;
+  date: string;
+  location: string;
+  status: string;
+  notes: string | null;
+};
+
+type AttendanceRow = {
+  session_id: string;
+  player_id: string;
+  checked_in_at: string;
+  players: { full_name: string } | { full_name: string }[] | null;
+};
 
 export default async function SessionsPage() {
   const supabase = createAdminClient();
 
-  // Bound the sessions list and only pull attendance for the sessions on this
-  // page — was an unbounded full-table scan of session_attendance.
   const { data: sessions } = await supabase
     .from('sessions')
-    .select('*')
+    .select('id, name, date, location, status, notes')
     .order('date', { ascending: false })
     .limit(50);
 
-  const sessionIds = sessions?.map((s) => s.id as string) ?? [];
-  const { data: attendanceRows } = sessionIds.length > 0
-    ? await supabase
-        .from('session_attendance')
-        .select('session_id, player_id, checked_in_at, players(full_name)')
-        .in('session_id', sessionIds)
-    : { data: [] as Array<{ session_id: string; player_id: string; checked_in_at: string; players: { full_name: string } | { full_name: string }[] | null }> };
+  const list: Session[] = (sessions ?? []) as Session[];
+  const sessionIds = list.map((s) => s.id);
 
-  // Group attendance records by session_id
-  type AttendeeEntry = { player_id: string; full_name: string; checked_in_at: string };
-  const attendanceMap: Record<string, AttendeeEntry[]> = {};
-  for (const row of attendanceRows ?? []) {
-    const name =
-      Array.isArray(row.players)
-        ? (row.players[0]?.full_name ?? 'Unknown')
-        : ((row.players as { full_name: string } | null)?.full_name ?? 'Unknown');
-    const sid = row.session_id as string;
+  const { data: attendanceRows } =
+    sessionIds.length > 0
+      ? await supabase
+          .from('session_attendance')
+          .select('session_id, player_id, checked_in_at, players(full_name)')
+          .in('session_id', sessionIds)
+      : { data: [] as AttendanceRow[] };
+
+  const attendanceMap: Record<
+    string,
+    Array<{ player_id: string; full_name: string; checked_in_at: string }>
+  > = {};
+  const countBySession: Record<string, number> = {};
+  for (const row of (attendanceRows ?? []) as AttendanceRow[]) {
+    const player = Array.isArray(row.players) ? row.players[0] : row.players;
+    const sid = row.session_id;
     if (!attendanceMap[sid]) attendanceMap[sid] = [];
-    attendanceMap[sid].push({ player_id: row.player_id as string, full_name: name, checked_in_at: row.checked_in_at as string });
+    attendanceMap[sid].push({
+      player_id: row.player_id,
+      full_name: player?.full_name ?? 'Unknown',
+      checked_in_at: row.checked_in_at,
+    });
+    countBySession[sid] = (countBySession[sid] ?? 0) + 1;
   }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const upcoming = list.filter((s) => new Date(s.date) >= today);
+  const past = list.filter((s) => new Date(s.date) < today);
 
   return (
     <div>
       <PageHero
-        eyebrow={`${(sessions?.length ?? 0)} sessions`}
+        eyebrow={`${upcoming.length} upcoming · ${past.length} past`}
         title="Sessions."
         subtitle="Open play, competitive nights, and league fixtures across SFU courts."
         watermark="S"
       />
-      <div className="space-y-8 px-12 py-8">
-        <div className="flex justify-end"><CreateSessionForm /></div>
 
-      {/* Sessions List */}
-      {sessions && sessions.length > 0 ? (
-        <div className="space-y-3">
-          {sessions.map((session) => (
-            <Card key={session.id}>
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1 min-w-0 space-y-2">
-                  {/* Name + Status */}
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <h2 className="text-base font-semibold text-[var(--text-primary)]">
-                      {session.name || 'Untitled Session'}
-                    </h2>
-                    <Badge variant={session.status === 'open' ? 'success' : 'neutral'}>
-                      {session.status === 'open' ? 'Open' : 'Closed'}
-                    </Badge>
-                  </div>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'flex-end',
+          padding: '20px 48px 0',
+        }}
+      >
+        <CreateSessionForm />
+      </div>
 
-                  {/* Date + Location */}
-                  <div className="flex items-center gap-4 flex-wrap">
-                    <div className="flex items-center gap-1.5 text-sm text-[var(--text-secondary)]">
-                      <Calendar className="w-3.5 h-3.5 text-[var(--text-muted)]" />
-                      {formatDate(session.date)}
-                    </div>
-                    <div className="flex items-center gap-1.5 text-sm text-[var(--text-secondary)]">
-                      <MapPin className="w-3.5 h-3.5 text-[var(--text-muted)]" />
-                      {session.location}
-                    </div>
-                  </div>
+      <Section title="Upcoming">
+        {upcoming.length === 0 ? (
+          <Empty message="No upcoming sessions." />
+        ) : (
+          upcoming.map((s) => (
+            <SessionRow
+              key={s.id}
+              session={s}
+              going={countBySession[s.id] ?? 0}
+              attendees={attendanceMap[s.id] ?? []}
+            />
+          ))
+        )}
+      </Section>
 
-                  {/* Notes preview */}
-                  {session.notes && (
-                    <div className="flex items-start gap-1.5 text-sm text-[var(--text-muted)]">
-                      <FileText className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-                      <span className="line-clamp-1">{session.notes}</span>
-                    </div>
-                  )}
-
-                  {/* Attendance count + view dialog */}
-                  <AttendanceDialog
-                    sessionId={session.id}
-                    attendees={attendanceMap[session.id] ?? []}
-                  />
-                </div>
-
-                {/* Three-dot menu */}
-                <div className="flex-shrink-0">
-                  <SessionCardMenu session={session} />
-                </div>
-              </div>
-            </Card>
+      {past.length > 0 && (
+        <Section title="Past" subtitle="/ Last 50">
+          {past.map((s) => (
+            <SessionRow
+              key={s.id}
+              session={s}
+              going={countBySession[s.id] ?? 0}
+              attendees={attendanceMap[s.id] ?? []}
+              past
+            />
           ))}
-        </div>
-      ) : (
-        <Card>
-          <div className="flex flex-col items-center justify-center py-12 px-4">
-            <div className="flex items-center justify-center w-14 h-14 rounded-full bg-[var(--bg-surface)] mb-4">
-              <Calendar className="w-7 h-7 text-[var(--text-muted)]" />
-            </div>
-            <p className="text-[var(--text-primary)] font-medium mb-1">No sessions yet</p>
-            <p className="text-sm text-[var(--text-muted)]">
-              Create your first session to get started
-            </p>
-          </div>
-        </Card>
+        </Section>
       )}
     </div>
+  );
+}
+
+function Section({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={{ background: 'var(--surface1)', borderTop: '1px solid var(--hairline)' }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '20px 48px',
+          borderBottom: '1px solid var(--hairline)',
+        }}
+      >
+        <div
+          style={{
+            fontSize: 10,
+            letterSpacing: '0.2em',
+            textTransform: 'uppercase',
+            color: 'var(--ink)',
+            fontWeight: 700,
+          }}
+        >
+          {title}
+          {subtitle && <span style={{ color: 'var(--faint)', marginLeft: 8, fontWeight: 500 }}>{subtitle}</span>}
+        </div>
+      </div>
+      {children}
     </div>
   );
+}
+
+function SessionRow({
+  session,
+  going,
+  attendees,
+  past,
+}: {
+  session: Session;
+  going: number;
+  attendees: Array<{ player_id: string; full_name: string; checked_in_at: string }>;
+  past?: boolean;
+}) {
+  const capacity = 16;
+  const isFull = going >= capacity;
+
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '2.2fr 1.6fr 1.2fr 0.9fr 0.9fr 0.8fr',
+        alignItems: 'center',
+        padding: '18px 48px',
+        borderBottom: '1px solid var(--hairline-soft)',
+        gap: 16,
+        opacity: past ? 0.5 : 1,
+      }}
+    >
+      <div style={{ fontSize: 14, color: 'var(--ink)', fontWeight: 500 }}>
+        {session.name || 'Untitled Session'}
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--muted)', letterSpacing: '0.02em' }}>
+        {formatDate(session.date)}
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--muted)', letterSpacing: '0.02em' }}>
+        {session.location}
+      </div>
+      <div
+        style={{
+          fontFamily: 'var(--font-display)',
+          fontWeight: 600,
+          color: 'var(--ink)',
+          fontSize: 14,
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        {going} / {capacity}
+      </div>
+      <div>
+        <SessionStatusBadge status={past ? 'completed' : isFull ? 'full' : session.status} />
+      </div>
+      <div style={{ textAlign: 'right', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <AttendanceDialog sessionId={session.id} attendees={attendees} />
+        <SessionCardMenu session={session} />
+      </div>
+    </div>
+  );
+}
+
+type SessionBadgeConf = { c: string; bg: string; bd: string; label: string };
+
+function SessionStatusBadge({ status }: { status: string }) {
+  const map: Record<string, SessionBadgeConf> = {
+    open: {
+      c: '#4ade80',
+      bg: 'rgba(74,222,128,0.08)',
+      bd: 'rgba(74,222,128,0.18)',
+      label: 'Open',
+    },
+    full: {
+      c: 'var(--muted)',
+      bg: 'rgba(255,255,255,0.05)',
+      bd: 'var(--hairline)',
+      label: 'Full',
+    },
+    closed: {
+      c: 'var(--muted)',
+      bg: 'rgba(255,255,255,0.05)',
+      bd: 'var(--hairline)',
+      label: 'Closed',
+    },
+    completed: {
+      c: 'var(--muted)',
+      bg: 'rgba(255,255,255,0.05)',
+      bd: 'var(--hairline)',
+      label: 'Completed',
+    },
+  };
+  const fallback: SessionBadgeConf = {
+    c: 'var(--muted)',
+    bg: 'rgba(255,255,255,0.05)',
+    bd: 'var(--hairline)',
+    label: status,
+  };
+  const conf: SessionBadgeConf = map[status] ?? fallback;
+  return (
+    <span
+      style={{
+        display: 'inline-block',
+        fontSize: 9,
+        letterSpacing: '0.15em',
+        textTransform: 'uppercase',
+        fontWeight: 600,
+        padding: '3px 8px',
+        color: conf.c,
+        background: conf.bg,
+        border: `1px solid ${conf.bd}`,
+        lineHeight: 1.2,
+      }}
+    >
+      {conf.label}
+    </span>
+  );
+}
+
+function Empty({ message }: { message: string }) {
+  return (
+    <div
+      style={{
+        padding: '40px 48px',
+        textAlign: 'center',
+        color: 'var(--muted)',
+        fontSize: 13,
+      }}
+    >
+      {message}
+    </div>
+  );
+}
+
+function formatDate(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  } catch {
+    return iso;
+  }
 }

@@ -50,7 +50,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           } catch(e) { document.documentElement.setAttribute('data-theme', 'dark'); }
         `}} />
       </head>
-      <body className="antialiased">
+      <body suppressHydrationWarning className="antialiased">
         <ToastProvider>
           <SentryUserInit playerId={null} />
           <Sidebar userEmail={userEmail} />

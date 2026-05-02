@@ -1,11 +1,9 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { Badge, PageHero } from '@badminton/ui';
-import { formatDate } from '@badminton/shared';
 import { redirect } from 'next/navigation';
-import { Calendar, MapPin, FileText, Users } from 'lucide-react';
-import { FadeIn, StaggerContainer, StaggerItem } from '@/components/motion-wrapper';
+import { Avatar, ScreenHeader, Pill, EmptyState } from '@/components/v2/atoms';
 import { CheckInButton } from './check-in-button';
-import { AddToCalendarButton } from './add-to-calendar';
+
+type SessionAttendee = { full_name: string | null; avatar_url: string | null };
 
 export default async function SessionsPage() {
   const player = await getCurrentPlayer();
@@ -13,160 +11,156 @@ export default async function SessionsPage() {
 
   const supabase = await createServerSupabaseClient();
 
-  const [{ data: openSessions }, { data: closedSessions }, { data: myAttendance }, { data: attendanceCounts }] = await Promise.all([
-    supabase
-      .from('sessions')
-      .select('*')
-      .eq('status', 'open')
-      .order('date', { ascending: false })
-      .limit(50),
-    supabase
-      .from('sessions')
-      .select('*')
-      .eq('status', 'closed')
-      .order('date', { ascending: false })
-      .limit(10),
-    supabase
-      .from('session_attendance')
-      .select('session_id')
-      .eq('player_id', player.id),
-    supabase
-      .from('session_attendance_counts')
-      .select('session_id, count'),
-  ]);
+  const [{ data: openSessions }, { data: myAttendance }, { data: attendanceCounts }] =
+    await Promise.all([
+      supabase
+        .from('sessions')
+        .select('id, name, location, date, notes, status, session_attendance(player_id, players:players(full_name, avatar_url))')
+        .in('status', ['open', 'closed'])
+        .order('date', { ascending: true })
+        .limit(40),
+      supabase.from('session_attendance').select('session_id').eq('player_id', player.id),
+      supabase.from('session_attendance_counts').select('session_id, count'),
+    ]);
 
-  const checkedInSessionIds = new Set((myAttendance ?? []).map((r) => r.session_id));
-  const countBySession = Object.fromEntries(
-    (attendanceCounts ?? []).map((r) => [r.session_id, r.count])
+  const checkedInIds = new Set((myAttendance ?? []).map((r) => r.session_id));
+  const countBySession: Record<string, number> = Object.fromEntries(
+    (attendanceCounts ?? []).map((r) => [r.session_id, r.count as number])
   );
+
+  const upcoming = (openSessions ?? []).filter((s) => s.status === 'open');
+
+  // Featured = highest registration ratio against the (hardcoded) 16 capacity.
+  const ratios = upcoming.map((s) => {
+    const going = countBySession[s.id] ?? 0;
+    return going / 16;
+  });
+  const maxIdx = ratios.length > 0 ? ratios.indexOf(Math.max(...ratios)) : -1;
 
   return (
-    <div>
-      <PageHero
-        eyebrow={`${(openSessions?.length ?? 0)} upcoming · ${(closedSessions?.length ?? 0)} past`}
-        title="Sessions."
-        subtitle="Open play, competitive nights, and league fixtures across SFU courts."
-        watermark="S"
-      />
-      <div className="space-y-6 pb-28 px-2 md:px-6 py-8">
+    <>
+      <ScreenHeader eyebrow="Open Play & Drills" title="Sessions" />
+      {upcoming.length === 0 ? (
+        <EmptyState
+          title="No upcoming sessions"
+          hint="Check back soon — admins post sessions every week."
+        />
+      ) : (
+        <div style={{ padding: '0 24px 24px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {upcoming.map((s, idx) => {
+            const isGoing = checkedInIds.has(s.id);
+            const going = countBySession[s.id] ?? 0;
+            const capacity = 16;
+            const isFeatured = idx === maxIdx && going > 0;
+            const pct = Math.min(100, Math.round((going / capacity) * 100));
+            const attendance = ((s as { session_attendance?: Array<{ players: SessionAttendee | SessionAttendee[] | null }> }).session_attendance) ?? [];
+            const attendees = attendance
+              .map((row) => (Array.isArray(row.players) ? row.players[0] : row.players))
+              .filter((p): p is SessionAttendee => !!p && !!p.full_name)
+              .slice(0, 5);
 
-      {/* Upcoming Sessions */}
-      <FadeIn delay={0.05}>
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <h2 className="eyebrow text-[var(--text-primary)]">Upcoming Sessions</h2>
-            {openSessions && openSessions.length > 0 && (
-              <span className="chip chip-success">{openSessions.length}</span>
-            )}
-          </div>
+            return (
+              <div
+                key={s.id}
+                style={{
+                  background: '#222',
+                  border: '1px solid #303030',
+                  borderLeft: isFeatured ? '3px solid #da291c' : '3px solid transparent',
+                  overflow: 'hidden',
+                }}
+              >
+                <div style={{ padding: 20, paddingLeft: isFeatured ? 17 : 20 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        letterSpacing: '1.6px',
+                        textTransform: 'uppercase',
+                        color: isFeatured ? '#da291c' : '#969696',
+                      }}
+                    >
+                      {formatDateLine(s.date as string)}
+                    </span>
+                    {isFeatured && (
+                      <Pill
+                        color="#da291c"
+                        bg="rgba(218,41,28,0.12)"
+                        border="1px solid rgba(218,41,28,0.35)"
+                      >
+                        Featured
+                      </Pill>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: '-0.2px', lineHeight: 1.2 }}>
+                    {s.name ?? 'Practice Session'}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#969696', marginTop: 4 }}>{s.location}</div>
 
-          {openSessions && openSessions.length > 0 ? (
-            <StaggerContainer className="space-y-3">
-              {openSessions.map((session) => {
-                const isCheckedIn = checkedInSessionIds.has(session.id);
-                const attendeeCount = countBySession[session.id] ?? 0;
-                return (
-                  <StaggerItem key={session.id}>
-                    <div className="card-surface card-interactive p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-[var(--text-primary)] truncate">
-                            {session.name ?? 'Practice Session'}
-                          </p>
-                          <div className="mt-2 space-y-1.5">
-                            <div className="flex items-center gap-1.5">
-                              <Calendar className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
-                              <span className="text-xs text-[var(--text-muted)]">
-                                {formatDate(session.date)}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              <MapPin className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
-                              <span className="text-xs text-[var(--text-muted)] truncate">
-                                {session.location}
-                              </span>
-                            </div>
-                            {session.notes && (
-                              <div className="flex items-start gap-1.5">
-                                <FileText className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0 mt-0.5" />
-                                <span className="text-xs text-[var(--text-muted)] line-clamp-2">
-                                  {session.notes}
-                                </span>
-                              </div>
-                            )}
-                            <div className="flex items-center gap-1.5">
-                              <Users className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
-                              <span className="nums text-xs text-[var(--text-muted)]">
-                                {attendeeCount} attending
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex flex-col items-end gap-2 shrink-0">
-                          <Badge variant="success">Open</Badge>
-                          <CheckInButton sessionId={session.id} isCheckedIn={isCheckedIn} />
-                          <AddToCalendarButton
-                            name={session.name ?? 'Practice Session'}
-                            date={session.date}
-                            location={session.location}
-                            notes={session.notes}
-                          />
-                        </div>
-                      </div>
+                  <div style={{ marginTop: 14 }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        fontSize: 10,
+                        fontWeight: 600,
+                        letterSpacing: '0.65px',
+                        textTransform: 'uppercase',
+                        color: '#969696',
+                        marginBottom: 6,
+                      }}
+                    >
+                      <span>
+                        {going} / {capacity} going
+                      </span>
+                      <span>{pct}% full</span>
                     </div>
-                  </StaggerItem>
-                );
-              })}
-            </StaggerContainer>
-          ) : (
-            <div className="card-elevated p-8 flex flex-col items-center justify-center text-center">
-              <Calendar className="w-9 h-9 text-[var(--text-muted)] mb-3" />
-              <p className="text-sm font-semibold text-[var(--text-primary)] mb-1">No upcoming sessions</p>
-              <p className="text-xs text-[var(--text-muted)]">Check back later for new sessions.</p>
-            </div>
-          )}
-        </div>
-      </FadeIn>
-
-      {/* Past Sessions */}
-      {closedSessions && closedSessions.length > 0 && (
-        <FadeIn delay={0.15}>
-          <div>
-            <h2 className="eyebrow mb-3">Past Sessions</h2>
-            <StaggerContainer className="space-y-2">
-              {closedSessions.map((session) => (
-                <StaggerItem key={session.id}>
-                  <div className="bg-[var(--bg-inset)] border border-[var(--border)] p-3 opacity-60">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold text-[var(--text-primary)] truncate">
-                          {session.name ?? 'Practice Session'}
-                        </p>
-                        <div className="mt-1 flex items-center gap-3">
-                          <div className="flex items-center gap-1">
-                            <Calendar className="w-3 h-3 text-[var(--text-muted)] shrink-0" />
-                            <span className="text-xs text-[var(--text-muted)]">
-                              {formatDate(session.date)}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <MapPin className="w-3 h-3 text-[var(--text-muted)] shrink-0" />
-                            <span className="text-xs text-[var(--text-muted)] truncate">
-                              {session.location}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      <Badge variant="neutral">Closed</Badge>
+                    <div style={{ height: 4, background: '#181818', overflow: 'hidden' }}>
+                      <div
+                        style={{
+                          height: '100%',
+                          width: `${pct}%`,
+                          background: '#da291c',
+                          transition: 'width 240ms ease',
+                        }}
+                      />
                     </div>
                   </div>
-                </StaggerItem>
-              ))}
-            </StaggerContainer>
-          </div>
-        </FadeIn>
+
+                  <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ display: 'flex', flex: 1 }}>
+                      {attendees.map((p, i) => (
+                        <div
+                          key={i}
+                          style={{ marginLeft: i === 0 ? 0 : -8, border: '2px solid #222' }}
+                        >
+                          <Avatar
+                            name={p.full_name ?? ''}
+                            src={p.avatar_url}
+                            size={24}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <CheckInButton sessionId={s.id} isCheckedIn={isGoing} />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
-    </div>
-    </div>
+    </>
   );
+}
+
+function formatDateLine(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const day = d.toLocaleDateString('en-US', { weekday: 'short' });
+    const month = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return `${day} · ${month}`;
+  } catch {
+    return iso;
+  }
 }
