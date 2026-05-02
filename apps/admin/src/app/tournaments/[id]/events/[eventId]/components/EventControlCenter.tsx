@@ -84,7 +84,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
 
       {/* Tab Navigation */}
       <div className="overflow-x-auto -mx-1 px-1">
-        <div className="flex gap-1 p-1 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border)] min-w-fit" role="tablist" aria-label="Event sections">
+        <div className="flex gap-1 p-1 bg-[var(--bg-elevated)] border border-[var(--border)] min-w-fit" role="tablist" aria-label="Event sections">
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -92,7 +92,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
               aria-label={tab.label}
               aria-selected={activeTab === tab.id}
               role="tab"
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none ${
+              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-all whitespace-nowrap focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none ${
                 activeTab === tab.id
                   ? 'bg-[var(--ds-accent)] text-white shadow-sm'
                   : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-card)]'

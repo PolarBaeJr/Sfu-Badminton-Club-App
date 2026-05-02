@@ -109,7 +109,7 @@ export function QrModalButton({ challengeId, status, hasExistingQr, hasMatch }: 
         onClick={handleOpen}
         disabled={disabled}
         title={disabled ? disabledReason : hasExistingQr ? 'View existing QR' : 'Generate QR code'}
-        className="inline-flex items-center gap-1.5 px-2.5 h-8 rounded-md border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        className="inline-flex items-center gap-1.5 px-2.5 h-8 border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         style={{
           borderColor: 'var(--border)',
           background: 'transparent',
@@ -145,7 +145,7 @@ export function QrModalButton({ challengeId, status, hasExistingQr, hasMatch }: 
               </div>
 
               <div
-                className="mx-auto rounded-lg"
+                className="mx-auto"
                 style={{
                   background: '#FFFFFF',
                   padding: 16,

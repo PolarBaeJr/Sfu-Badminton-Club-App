@@ -23,7 +23,7 @@ export default function EventLoading() {
       {/* Content skeleton */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="h-32 bg-[var(--bg-surface)] rounded-lg" />
+          <div key={i} className="h-32 bg-[var(--bg-surface)]" />
         ))}
       </div>
     </div>

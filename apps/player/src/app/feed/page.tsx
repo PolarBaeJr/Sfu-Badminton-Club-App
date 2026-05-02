@@ -1,17 +1,13 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { Badge } from '@badminton/ui';
+import { Badge, PageHero } from '@badminton/ui';
 import { MATCH_FORMAT_LABELS, formatRelativeTime, getWinRate } from '@badminton/shared';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import {
   Swords,
-  TrendingUp,
-  TrendingDown,
   ChevronRight,
   Zap,
   Trophy,
-  Target,
-  Flame,
 } from 'lucide-react';
 import { FadeIn, StaggerContainer, StaggerItem } from '@/components/motion-wrapper';
 
@@ -46,77 +42,95 @@ export default async function FeedPage() {
   const doublesWinRate = r ? getWinRate(r.doubles_wins, r.doubles_losses) : '0%';
 
   return (
-    <div className="space-y-6">
-      {/* Greeting */}
+    <div>
+      <PageHero
+        eyebrow="Season 02 · Spring 2026"
+        title={<>Born on the<br/>court.</>}
+        subtitle="ELO that moves with every match. Sessions you can join on the fly. Challenges that end on the score, not the dispute."
+        watermark="A1"
+        size={64}
+        watermarkOpacity={0.08}
+      />
+      <div className="space-y-6 px-2 md:px-6 py-8">
+      {/* Profile hero */}
       <FadeIn>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="eyebrow mb-1">Dashboard</p>
-            <h1 className="display-lg text-shuttle-white">
-              Hey, {player.full_name.split(' ')[0]}!
-            </h1>
-            <p className="text-[var(--text-muted)] text-sm mt-1">Here&apos;s what&apos;s happening</p>
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4 min-w-0">
+            {/* Avatar */}
+            <div className="w-[52px] h-[52px] rounded-full flex items-center justify-center shrink-0 overflow-hidden bg-[var(--bg-card)] border-[0.5px] border-[var(--border-strong)]">
+              {player.avatar_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={player.avatar_url as string} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-[18px] font-medium text-[var(--text-secondary)]">
+                  {(player.full_name as string).split(' ').map((p: string) => p[0]).slice(0, 2).join('').toUpperCase()}
+                </span>
+              )}
+            </div>
+            {/* Name + tier pill */}
+            <div className="min-w-0">
+              <p className="text-[16px] font-medium text-[var(--text-primary)] truncate">
+                {player.full_name}
+              </p>
+              {player.status && (
+                <span className="inline-flex items-center gap-1.5 mt-1.5 px-[10px] py-[3px] rounded-full text-[11px] text-[var(--accent)] bg-[var(--bg-accent)] border-[0.5px] border-[var(--accent-border)]">
+                  <span className="w-[5px] h-[5px] rounded-full bg-[var(--accent)] inline-block" />
+                  {player.status.charAt(0).toUpperCase() + player.status.slice(1)}
+                </span>
+              )}
+            </div>
           </div>
-          {unreadNotifs && unreadNotifs > 0 ? (
-            <Link
-              href="/notifications"
-              className="chip chip-red press"
-            >
-              <Flame className="w-3 h-3" />
-              {unreadNotifs} new
-            </Link>
-          ) : null}
+          {/* ELO hero (singles) */}
+          {r && (
+            <div className="text-right shrink-0">
+              <p className="nums text-[28px] font-medium leading-none text-[var(--text-primary)]">
+                {r.singles_elo}
+              </p>
+              <p className="mt-1 text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">
+                Singles ELO
+              </p>
+            </div>
+          )}
         </div>
       </FadeIn>
 
-      {/* Elo Stats */}
+      {/* Stat grid */}
       {r && (
         <FadeIn delay={0.05}>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {/* Singles Elo */}
-            <div className="card-surface card-interactive p-4 group reveal reveal-1">
-              <p className="eyebrow mb-2">Singles ELO</p>
-              <p className="display-md gradient-text-red nums">{r.singles_elo}</p>
-              <p className="text-xs text-[var(--text-muted)] mt-1.5">
-                {r.singles_provisional ? (
-                  <span className="chip chip-gold">Provisional</span>
-                ) : (
-                  <>Win rate: {singlesWinRate}</>
-                )}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <div
+              className="reveal reveal-1 bg-[var(--bg-card)] py-[10px] px-[12px] border-[0.5px] border-[var(--border)]"
+              style={{ borderLeft: '3px solid var(--ds-accent)' }}
+            >
+              <p className="text-[10px] tracking-[0.04em] uppercase font-normal text-[var(--text-muted)]">Singles ELO</p>
+              <p className="nums mt-1 text-[18px] font-medium text-[var(--text-primary)]">{r.singles_elo}</p>
+              <p className="mt-1 text-[11px] text-[var(--accent)]">
+                {r.singles_provisional ? 'Provisional' : `Win rate ${singlesWinRate}`}
               </p>
             </div>
-
-            {/* Doubles Elo */}
-            <div className="card-surface card-interactive p-4 group reveal reveal-2">
-              <p className="eyebrow mb-2">Doubles ELO</p>
-              <p className="display-md gradient-text-gold nums">{r.doubles_elo}</p>
-              <p className="text-xs text-[var(--text-muted)] mt-1.5">
-                {r.doubles_provisional ? (
-                  <span className="chip chip-gold">Provisional</span>
-                ) : (
-                  <>Win rate: {doublesWinRate}</>
-                )}
+            <div
+              className="reveal reveal-2 bg-[var(--bg-card)] py-[10px] px-[12px] border-[0.5px] border-[var(--border)]"
+              style={{ borderLeft: '3px solid var(--ds-accent)' }}
+            >
+              <p className="text-[10px] tracking-[0.04em] uppercase font-normal text-[var(--text-muted)]">Doubles ELO</p>
+              <p className="nums mt-1 text-[18px] font-medium text-[var(--text-primary)]">{r.doubles_elo}</p>
+              <p className="mt-1 text-[11px] text-[var(--accent)]">
+                {r.doubles_provisional ? 'Provisional' : `Win rate ${doublesWinRate}`}
               </p>
             </div>
-
-            {/* Singles Record */}
-            <div className="card-surface p-4 reveal reveal-3">
-              <p className="eyebrow mb-2">Singles W/L</p>
-              <p className="display-md text-shuttle-white nums">
-                <span className="text-emerald-400">{r.singles_wins ?? 0}</span>
-                <span className="text-[var(--text-dim)] font-normal mx-1">/</span>
-                <span className="text-[var(--ds-accent)]">{r.singles_losses ?? 0}</span>
-              </p>
+            <div
+              className="reveal reveal-3 bg-[var(--bg-card)] py-[10px] px-[12px] border-[0.5px] border-[var(--border)]"
+              style={{ borderLeft: '3px solid var(--loss)' }}
+            >
+              <p className="text-[10px] tracking-[0.04em] uppercase font-normal text-[var(--text-muted)]">Singles W/L</p>
+              <p className="nums mt-1 text-[18px] font-medium text-[var(--text-primary)]">{r.singles_wins ?? 0} / {r.singles_losses ?? 0}</p>
             </div>
-
-            {/* Doubles Record */}
-            <div className="card-surface p-4 reveal reveal-4">
-              <p className="eyebrow mb-2">Doubles W/L</p>
-              <p className="display-md text-shuttle-white nums">
-                <span className="text-emerald-400">{r.doubles_wins ?? 0}</span>
-                <span className="text-[var(--text-dim)] font-normal mx-1">/</span>
-                <span className="text-[var(--ds-accent)]">{r.doubles_losses ?? 0}</span>
-              </p>
+            <div
+              className="reveal reveal-4 bg-[var(--bg-card)] py-[10px] px-[12px] border-[0.5px] border-[var(--border)]"
+              style={{ borderLeft: '3px solid var(--loss)' }}
+            >
+              <p className="text-[10px] tracking-[0.04em] uppercase font-normal text-[var(--text-muted)]">Doubles W/L</p>
+              <p className="nums mt-1 text-[18px] font-medium text-[var(--text-primary)]">{r.doubles_wins ?? 0} / {r.doubles_losses ?? 0}</p>
             </div>
           </div>
         </FadeIn>
@@ -125,7 +139,7 @@ export default async function FeedPage() {
       {/* Pending Challenges */}
       {pendingChallenges && pendingChallenges.length > 0 && (
         <FadeIn delay={0.1}>
-          <div className="card-elevated p-4" style={{ borderColor: 'rgba(252,211,77,0.12)' }}>
+          <div className="card-elevated p-4" style={{ borderColor: 'color-mix(in srgb, var(--color-gold) 12%, transparent)' }}>
             <div className="flex items-center gap-2 mb-3">
               <Zap className="w-4 h-4 text-gold" />
               <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>
@@ -191,10 +205,10 @@ export default async function FeedPage() {
                 return (
                   <div
                     key={mp.id}
-                    className="flex items-center justify-between p-3 bg-[var(--bg-card)] rounded-lg border border-[var(--border)]"
+                    className="flex items-center justify-between p-3 bg-[var(--bg-card)] border border-[var(--border)]"
                   >
                     <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black ${
+                      <div className={`w-8 h-8 flex items-center justify-center text-xs font-black ${
                         isWin
                           ? 'bg-emerald-500/15 text-emerald-400'
                           : isLoss
@@ -227,19 +241,20 @@ export default async function FeedPage() {
       <FadeIn delay={0.25}>
         <div className="flex gap-3">
           <Link href="/challenges/new" className="flex-1 press">
-            <button type="button" className="w-full h-12 rounded-xl gradient-court text-[#0A0A0A] font-bold text-sm tracking-wide flex items-center justify-center gap-2 glow-red hover:opacity-90 transition-opacity">
+            <button type="button" className="w-full h-12 gradient-court text-[var(--ds-bg-base)] font-bold text-sm tracking-wide flex items-center justify-center gap-2 glow-red hover:opacity-90 transition-opacity">
               <Swords className="w-4 h-4" />
               Create Challenge
             </button>
           </Link>
           <Link href="/leaderboard" className="flex-1 press">
-            <button type="button" className="w-full h-12 rounded-xl bg-[var(--on-surface-soft)] border border-[var(--border)] text-[var(--text-primary)] font-bold text-sm tracking-wide flex items-center justify-center gap-2 hover:bg-[var(--on-surface-med)] hover:border-[var(--border-hover)] transition-all duration-300">
+            <button type="button" className="w-full h-12 bg-[var(--on-surface-soft)] border border-[var(--border)] text-[var(--text-primary)] font-bold text-sm tracking-wide flex items-center justify-center gap-2 hover:bg-[var(--on-surface-med)] hover:border-[var(--border-hover)] transition-all duration-300">
               <Trophy className="w-4 h-4 text-gold" />
               Leaderboard
             </button>
           </Link>
         </div>
       </FadeIn>
+    </div>
     </div>
   );
 }

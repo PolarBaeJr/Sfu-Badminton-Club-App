@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge } from '@badminton/ui';
+import { Card, Badge, PageHero } from '@badminton/ui';
 import { formatRelativeTime } from '@badminton/shared';
 import { DisputeActions } from './actions';
 import { AlertTriangle, User, MessageSquare, CheckCircle2, Scale } from 'lucide-react';
@@ -17,49 +17,14 @@ export default async function DisputesPage() {
   const openCount = disputes?.filter((d) => d.status === 'open').length ?? 0;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-      {/* Page Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-        <div
-          style={{
-            width: '2.5rem',
-            height: '2.5rem',
-            borderRadius: '0.75rem',
-            background: 'var(--color-danger, #ef4444)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0,
-          }}
-        >
-          <AlertTriangle size={20} color="white" />
-        </div>
-        <div>
-          <h1
-            style={{
-              fontSize: '1.875rem',
-              fontWeight: 700,
-              fontFamily: 'var(--font-display, inherit)',
-              color: 'var(--color-text-primary, white)',
-              lineHeight: 1.2,
-              margin: 0,
-            }}
-          >
-            DISPUTES
-          </h1>
-          <p
-            style={{
-              fontSize: '0.875rem',
-              color: 'var(--color-text-tertiary, #6b7280)',
-              margin: 0,
-            }}
-          >
-            {openCount > 0
-              ? `${openCount} open dispute${openCount !== 1 ? 's' : ''} requiring attention`
-              : 'All disputes resolved'}
-          </p>
-        </div>
-      </div>
+    <div>
+      <PageHero
+        eyebrow={openCount > 0 ? `${openCount} open · ${(disputes?.length ?? 0) - openCount} resolved` : 'All resolved'}
+        title="Disputes."
+        subtitle="Score disagreements and no-shows. Resolve with the correct submission, or escalate for committee review."
+        watermark="D"
+      />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', padding: '32px 48px' }}>
 
       {/* Dispute Cards */}
       <div style={{ display: 'grid', gap: '1rem' }}>
@@ -244,6 +209,7 @@ export default async function DisputesPage() {
           </Card>
         )}
       </div>
+    </div>
     </div>
   );
 }

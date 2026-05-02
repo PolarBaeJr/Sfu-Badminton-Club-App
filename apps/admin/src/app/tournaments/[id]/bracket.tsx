@@ -145,7 +145,7 @@ export function TournamentBracket({ tournamentId, bracketSize, matches, particip
                       const sideA = m.match_participants?.filter(p => p.team_side === 'a') || [];
                       const sideB = m.match_participants?.filter(p => p.team_side === 'b') || [];
                       return (
-                        <div key={m.id} className="border border-[var(--border)] rounded-lg overflow-hidden">
+                        <div key={m.id} className="border border-[var(--border)] overflow-hidden">
                           <div className={`p-2 flex items-center justify-between text-sm ${m.winner_side === 'a' ? 'bg-[var(--color-success)]/10' : 'bg-[var(--border-hover)]'}`}>
                             <span className={m.winner_side === 'a' ? 'text-[var(--color-success)] font-medium' : 'text-[var(--text-secondary)]'}>
                               {sideA.map(p => p.player?.full_name).join(' & ') || 'TBD'}
@@ -198,7 +198,7 @@ export function TournamentBracket({ tournamentId, bracketSize, matches, particip
                 const player = p.player as Record<string, unknown>;
                 const placementLabel = p.placement === 1 ? 'Champion' : p.placement === 2 ? 'Finalist' : p.placement && p.placement <= 4 ? 'Semi-finalist' : `#${p.placement}`;
                 return (
-                  <div key={p.id} className="flex items-center justify-between p-2 bg-[var(--border-hover)] rounded-lg">
+                  <div key={p.id} className="flex items-center justify-between p-2 bg-[var(--border-hover)]">
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-[var(--ds-accent)] font-bold w-6">#{p.placement}</span>
                       <span className="text-sm text-[var(--text-primary)]">{player?.full_name as string}</span>

@@ -2,44 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@badminton/shared/supabase-browser';
-import { Button, Input, Label, Card, CardContent, Separator } from '@badminton/ui';
-import { motion, AnimatePresence } from 'framer-motion';
-import {
-  Trophy,
-  Zap,
-  Target,
-  Mail,
-  CheckCircle2,
-  ChevronRight,
-  Loader2,
-} from 'lucide-react';
-
-const fadeUp = {
-  hidden: { opacity: 0, y: 20 },
-  visible: (i: number) => ({
-    opacity: 1,
-    y: 0,
-    transition: { delay: i * 0.1, duration: 0.5, ease: 'easeOut' as const },
-  }),
-};
-
-const features = [
-  { icon: Trophy, label: 'Climb the Ranks', color: 'text-[var(--color-gold)]' },
-  { icon: Zap, label: 'Challenge Players', color: 'text-[var(--ds-accent)]' },
-  { icon: Target, label: 'Track Your Stats', color: 'text-[var(--text-primary)]' },
-];
 
 export default function LoginPage() {
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState('');
 
-  // If we landed here via ?next= (e.g. from the QR /submit route), persist it
-  // in sessionStorage so the client-side post-login handler can pick it up
-  // after the auth-callback server redirect.
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -78,19 +48,13 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     setError('');
-
     const supabase = createClient();
     const { error: authError } = await supabase.auth.signInWithOtp({
       email,
       options: { emailRedirectTo: buildCallbackUrl() },
     });
-
     if (authError) {
-      if (authError.message.includes('rate')) {
-        setError('Too many attempts — please wait before trying again');
-      } else {
-        setError(authError.message);
-      }
+      setError(authError.message.includes('rate') ? 'Too many attempts — please wait before trying again' : authError.message);
     } else {
       setSent(true);
     }
@@ -98,241 +62,154 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-12 relative overflow-hidden">
-      {/* Background glow effects */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-[var(--ds-accent)]/5 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-[var(--color-gold)]/5 rounded-full blur-3xl" />
+    <div className="fixed inset-0 flex flex-col md:flex-row" style={{ background: 'var(--bg)', zIndex: 200 }}>
+      {/* Left panel */}
+      <div
+        className="flex-1 min-w-0 relative overflow-hidden flex flex-col justify-center"
+        style={{ background: '#0A0A0A', padding: '60px' }}
+      >
+        <div
+          aria-hidden
+          className="absolute inset-0 pointer-events-none"
+          style={{ backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 39px, rgba(255,255,255,0.03) 39px, rgba(255,255,255,0.03) 40px)' }}
+        />
+        <div className="relative" style={{ maxWidth: 440 }}>
+          <span
+            className="flex items-center justify-center"
+            style={{
+              width: 40, height: 40, background: 'var(--red)', color: '#fff',
+              fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22,
+            }}
+          >S</span>
+          <span
+            className="block uppercase font-bold"
+            style={{ marginTop: 12, fontSize: 11, letterSpacing: '0.25em', color: 'var(--red)' }}
+          >SFU Badminton · Player Portal</span>
+          <h1
+            style={{
+              fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 72,
+              lineHeight: 0.92, color: '#F0F0F0', letterSpacing: '-0.02em', marginTop: 32,
+            }}
+          >
+            <span className="block">Compete.</span>
+            <span className="block">Rank.</span>
+            <span className="block">Repeat.</span>
+          </h1>
+          <span
+            className="inline-block uppercase font-bold"
+            style={{ marginTop: 32, fontSize: 10, letterSpacing: '0.2em', color: 'var(--red)' }}
+          >Season 02 · Spring 2026</span>
+        </div>
+        <div
+          className="absolute"
+          style={{ left: 60, bottom: 40, fontSize: 10, color: '#2A2A2A', letterSpacing: '0.06em' }}
+        >© {new Date().getFullYear()} SFU Badminton Club</div>
       </div>
 
-      <motion.div
-        initial="hidden"
-        animate="visible"
-        className="w-full max-w-md relative z-10"
+      {/* Right panel */}
+      <div
+        className="flex-1 min-w-0 flex items-center justify-center overflow-y-auto"
+        style={{ background: '#111111', borderLeft: '1px solid rgba(255,255,255,0.06)', padding: '60px 40px' }}
       >
-        {/* Logo & Branding */}
-        <motion.div variants={fadeUp} custom={0} className="text-center mb-8">
-          {/* Logo icon */}
-          <motion.div
-            className="w-16 h-16 mx-auto mb-5 rounded-2xl gradient-court flex items-center justify-center glow-red"
-            animate={{ y: [0, -6, 0] }}
-            transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
-          >
-            <span className="text-2xl font-black text-white" style={{ fontFamily: "'Barlow Condensed', sans-serif" }}>SB</span>
-          </motion.div>
+        <div className="w-full" style={{ maxWidth: 380 }}>
+          {sent ? (
+            <>
+              <span className="uppercase font-bold" style={{ fontSize: 10, letterSpacing: '0.2em', color: 'var(--red)' }}>Magic link sent</span>
+              <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 36, color: '#F0F0F0', marginTop: 8, lineHeight: 1, letterSpacing: '-0.01em' }}>Check your email.</h2>
+              <p style={{ fontSize: 12, color: '#888', lineHeight: 1.6, marginTop: 14 }}>
+                We sent a sign-in link to <strong style={{ color: '#F0F0F0' }}>{email}</strong>. Open it on this device.
+              </p>
+              <button
+                type="button"
+                onClick={() => { setSent(false); setEmail(''); }}
+                className="mt-8 uppercase font-bold"
+                style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--muted)', fontFamily: 'var(--font-display)' }}
+              >← Use a different email</button>
+            </>
+          ) : (
+            <>
+              <span className="uppercase font-bold" style={{ fontSize: 10, letterSpacing: '0.2em', color: 'var(--red)' }}>Welcome</span>
+              <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 36, color: '#F0F0F0', marginTop: 8, lineHeight: 1, letterSpacing: '-0.01em' }}>Sign in.</h2>
+              <p style={{ fontSize: 12, color: '#555', lineHeight: 1.6, marginTop: 14, marginBottom: 32 }}>
+                Access is by invite only. Use the email your captain registered.
+              </p>
 
-          <h1 className="display-xl text-shuttle-white">
-            SFU Badminton
-          </h1>
-          <p className="text-[var(--text-secondary)] mt-2 text-sm tracking-wide eyebrow" style={{ textTransform: 'none', letterSpacing: '0.08em' }}>
-            Challenge. Compete. Climb.
-          </p>
+              <form onSubmit={handleMagicLink}>
+                <label className="block uppercase font-bold" style={{ fontSize: 9, letterSpacing: '0.15em', color: '#555', marginBottom: 6 }}>Email</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="your.email@sfu.ca"
+                  required
+                  className="w-full outline-none"
+                  style={{
+                    background: '#0D0D0D',
+                    border: `1px solid ${error ? 'var(--red)' : 'rgba(255,255,255,0.10)'}`,
+                    color: '#F0F0F0',
+                    fontFamily: 'var(--font-body)',
+                    fontSize: 13, fontWeight: 400,
+                    padding: '12px 14px',
+                    transition: 'border-color 150ms ease-out',
+                    marginBottom: error ? 10 : 24,
+                    boxSizing: 'border-box',
+                  }}
+                  onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--red)'; }}
+                  onBlur={(e) => { e.currentTarget.style.borderColor = error ? 'var(--red)' : 'rgba(255,255,255,0.10)'; }}
+                />
+                {error && <div style={{ fontSize: 10, color: 'var(--red)', letterSpacing: '0.04em', marginBottom: 16 }}>{error}</div>}
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full uppercase font-bold inline-flex items-center justify-center"
+                  style={{
+                    background: 'var(--red)', color: '#fff',
+                    fontFamily: 'var(--font-display)',
+                    fontSize: 11, letterSpacing: '0.16em',
+                    padding: '12px 16px', border: 0,
+                    cursor: loading ? 'not-allowed' : 'pointer',
+                    opacity: loading ? 0.6 : 1,
+                    transition: 'background 150ms ease-out, opacity 150ms ease-out',
+                  }}
+                >
+                  {loading ? 'Sending…' : 'Send magic link'}
+                </button>
+              </form>
 
-          {/* Feature chips */}
-          <div className="flex justify-center gap-2 mt-5 flex-wrap">
-            {features.map((feat, i) => (
-              <motion.div
-                key={feat.label}
-                variants={fadeUp}
-                custom={i + 1}
-                className="chip"
-              >
-                <feat.icon className={`w-3 h-3 ${feat.color}`} />
-                <span>{feat.label}</span>
-              </motion.div>
-            ))}
-          </div>
-        </motion.div>
-
-        {/* Auth Card */}
-        <motion.div variants={fadeUp} custom={4}>
-          <Card padding={false} className="bg-[var(--bg-card)]/80 border-[var(--border)] backdrop-blur-xl shadow-2xl shadow-black/20">
-            <CardContent className="p-6">
-              {/* Sign In / Sign Up Toggle */}
-              <div className="flex mb-6 bg-[var(--on-surface-soft)] rounded-xl p-1 border border-white/[0.04]">
-                {(['signin', 'signup'] as const).map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => { setMode(m); setError(''); setSent(false); }}
-                    className={`relative flex-1 py-2.5 text-sm font-semibold rounded-lg transition-all duration-300 ${
-                      mode === m
-                        ? 'text-white'
-                        : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
-                    }`}
-                  >
-                    {mode === m && (
-                      <motion.div
-                        layoutId="activeTab"
-                        className="absolute inset-0 gradient-court rounded-lg"
-                        transition={{ type: 'spring', bounce: 0.2, duration: 0.5 }}
-                      />
-                    )}
-                    <span className="relative z-10">
-                      {m === 'signin' ? 'Sign In' : 'Sign Up'}
-                    </span>
-                  </button>
-                ))}
+              <div className="flex items-center gap-3 my-6">
+                <span className="flex-1 h-px" style={{ background: 'rgba(255,255,255,0.06)' }} />
+                <span className="uppercase" style={{ fontSize: 10, letterSpacing: '0.2em', color: 'var(--faint)' }}>or</span>
+                <span className="flex-1 h-px" style={{ background: 'rgba(255,255,255,0.06)' }} />
               </div>
 
-              <AnimatePresence mode="wait">
-                {sent ? (
-                  <motion.div
-                    key="sent"
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    className="text-center py-6"
-                  >
-                    <motion.div
-                      initial={{ scale: 0 }}
-                      animate={{ scale: 1 }}
-                      transition={{ type: 'spring', bounce: 0.5, delay: 0.1 }}
-                      className="w-14 h-14 rounded-full bg-[var(--ds-accent)]/15 flex items-center justify-center mx-auto mb-4"
-                    >
-                      <CheckCircle2 className="w-7 h-7 text-[var(--ds-accent)]" />
-                    </motion.div>
-                    <p className="text-[var(--ds-accent)] font-bold text-lg">Check your email!</p>
-                    <p className="text-[var(--text-secondary)] text-sm mt-2">
-                      We sent a magic link to{' '}
-                      <strong className="text-shuttle-white">{email}</strong>
-                    </p>
-                    <button
-                      onClick={() => setSent(false)}
-                      className="mt-4 text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors"
-                    >
-                      Use a different email
-                    </button>
-                  </motion.div>
-                ) : (
-                  <motion.div
-                    key="form"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="space-y-5"
-                  >
-                    <p className="text-center text-sm text-[var(--text-secondary)]">
-                      {mode === 'signin'
-                        ? 'Welcome back, player'
-                        : 'Join the club and start competing'}
-                    </p>
+              <button
+                type="button"
+                onClick={handleGoogleLogin}
+                disabled={googleLoading}
+                className="w-full uppercase font-bold inline-flex items-center justify-center"
+                style={{
+                  background: 'transparent', color: 'var(--text)',
+                  fontFamily: 'var(--font-display)',
+                  fontSize: 11, letterSpacing: '0.16em',
+                  padding: '12px 16px',
+                  border: '1px solid var(--hairline)',
+                  cursor: googleLoading ? 'not-allowed' : 'pointer',
+                  opacity: googleLoading ? 0.6 : 1,
+                  transition: 'border-color 150ms ease-out, color 150ms ease-out',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--hairline-strong)'; e.currentTarget.style.color = 'var(--ink)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--hairline)'; e.currentTarget.style.color = 'var(--text)'; }}
+              >
+                {googleLoading ? 'Redirecting…' : 'Continue with Google'}
+              </button>
 
-                    {/* Google OAuth */}
-                    <Button
-                      onClick={handleGoogleLogin}
-                      disabled={googleLoading}
-                      variant="outline"
-                      size="lg"
-                      className="w-full h-12 bg-[var(--bg-card)] border-[var(--border-hover)] hover:bg-[var(--on-surface-med)] hover:border-[var(--border-strong)] text-shuttle-white font-semibold transition-all duration-300"
-                    >
-                      {googleLoading ? (
-                        <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                      ) : (
-                        <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
-                          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
-                          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                          <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-                          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-                        </svg>
-                      )}
-                      Continue with Google
-                    </Button>
-
-                    <div className="relative">
-                      <Separator className="bg-white/[0.06]" />
-                      <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 px-3 bg-[var(--bg-card)] text-xs text-[var(--text-muted)]">
-                        or use email
-                      </span>
-                    </div>
-
-                    {/* Magic Link Form */}
-                    <form onSubmit={handleMagicLink} className="space-y-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="email" className="text-[var(--text-secondary)] text-sm font-medium">
-                          Email
-                        </Label>
-                        <div className="relative">
-                          <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)]" />
-                          <Input
-                            id="email"
-                            type="email"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            placeholder="your.email@sfu.ca"
-                            required
-                            className="h-12 pl-10 bg-[var(--bg-card)] border-[var(--border-hover)] text-shuttle-white placeholder:text-[var(--text-dim)] focus:border-[var(--ds-accent)]/50 focus:ring-[var(--ds-accent)]/20 transition-all duration-300"
-                          />
-                        </div>
-                      </div>
-
-                      <AnimatePresence>
-                        {error && (
-                          <motion.p
-                            initial={{ opacity: 0, height: 0 }}
-                            animate={{ opacity: 1, height: 'auto' }}
-                            exit={{ opacity: 0, height: 0 }}
-                            className="text-sm text-[var(--ds-accent)] bg-[var(--ds-accent)]/10 px-3 py-2 rounded-lg"
-                          >
-                            {error}
-                          </motion.p>
-                        )}
-                      </AnimatePresence>
-
-                      <Button
-                        type="submit"
-                        disabled={loading}
-                        size="lg"
-                        className="w-full h-12 gradient-court text-white font-bold tracking-wide transition-all duration-300 shadow-lg shadow-[var(--ds-accent)]/20 hover:shadow-[var(--ds-accent)]/30"
-                      >
-                        {loading ? (
-                          <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                        ) : (
-                          <Mail className="w-4 h-4 mr-2" />
-                        )}
-                        Send Magic Link
-                        {!loading && <ChevronRight className="w-4 h-4 ml-1" />}
-                      </Button>
-                    </form>
-
-                    <p className="text-center text-xs text-[var(--text-muted)]">
-                      {mode === 'signin' ? (
-                        <>
-                          Don&apos;t have an account?{' '}
-                          <button
-                            onClick={() => { setMode('signup'); setError(''); }}
-                            className="text-[var(--ds-accent)] hover:text-[var(--ds-accent)]/80 font-semibold transition-colors"
-                          >
-                            Sign up
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          Already have an account?{' '}
-                          <button
-                            onClick={() => { setMode('signin'); setError(''); }}
-                            className="text-[var(--ds-accent)] hover:text-[var(--ds-accent)]/80 font-semibold transition-colors"
-                          >
-                            Sign in
-                          </button>
-                        </>
-                      )}
-                    </p>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </CardContent>
-          </Card>
-        </motion.div>
-
-        {/* Footer */}
-        <motion.p
-          variants={fadeUp}
-          custom={5}
-          className="text-center text-xs text-[var(--text-dim)] mt-6"
-        >
-          SFU Badminton Club &middot; Powered by passion
-        </motion.p>
-      </motion.div>
+              <p className="mt-8" style={{ fontSize: 10, color: '#333', letterSpacing: '0.06em' }}>
+                Don&apos;t have an account? Ask a captain to add you to the roster.
+              </p>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

@@ -26,8 +26,7 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
       return (
         <div className="flex items-center gap-2">
           <span
-            className={`chip ${playerRegistration.status === 'checked_in' ? 'chip-success' : ''}`}
-            style={playerRegistration.status !== 'checked_in' ? { borderColor: 'rgba(59,130,246,0.35)', background: 'rgba(59,130,246,0.1)', color: '#93C5FD' } : undefined}
+            className={`chip ${playerRegistration.status === 'checked_in' ? 'chip-success' : 'chip-info'}`}
             role="status"
           >
             <span className="sr-only">Registration status: </span>

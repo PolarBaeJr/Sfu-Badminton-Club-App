@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Badge, Card, Avatar } from '@badminton/ui';
+import { Badge, Card, Avatar, PageHero } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS } from '@badminton/shared';
 import Link from 'next/link';
 import { PlayerActions } from './player-actions';
@@ -70,11 +70,17 @@ export default async function PlayersPage({
   ];
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">PLAYERS</h1>
-        <AddPlayerButton />
-      </div>
+    <div>
+      <PageHero
+        eyebrow={`Roster · ${(compCount ?? 0) + (recCount ?? 0)} players`}
+        title="Players."
+        subtitle="Approve new sign-ups, manage roles, and review the full club roster."
+        watermark="P"
+      />
+      <div className="space-y-6 px-12 py-8">
+        <div className="flex items-center justify-end">
+          <AddPlayerButton />
+        </div>
 
       {/* Tabs */}
       <Card padding={false}>
@@ -83,7 +89,7 @@ export default async function PlayersPage({
             <Link
               key={t.id}
               href={`/players?tab=${t.id}`}
-              className={`px-4 min-h-[44px] text-sm rounded-md transition-colors flex items-center gap-2 ${
+              className={`px-4 min-h-[44px] text-sm transition-colors flex items-center gap-2 ${
                 tab === t.id
                   ? 'bg-[var(--ds-accent)] text-white'
                   : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-hover)]'
@@ -168,6 +174,7 @@ export default async function PlayersPage({
           <p className="text-center text-[var(--text-muted)] py-8">No players found</p>
         )}
       </Card>
+      </div>
     </div>
   );
 }

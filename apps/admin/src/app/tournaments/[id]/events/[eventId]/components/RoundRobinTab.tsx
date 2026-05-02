@@ -66,7 +66,7 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles }
 
   if (allMatches.length === 0) {
     return (
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-8 text-center">
+      <div className=" border border-[var(--border)] bg-[var(--bg-card)] p-8 text-center">
         <Trophy className="w-8 h-8 mx-auto mb-3 text-[var(--text-muted)] opacity-50" />
         <p className="text-sm text-[var(--text-muted)]">Round robin matches not generated yet.</p>
       </div>
@@ -77,7 +77,7 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles }
     <>
       <div className="space-y-6">
         {/* Standings Table */}
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden" role="region" aria-label="Round robin standings">
+        <div className=" border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden" role="region" aria-label="Round robin standings">
           <div className="px-4 py-3 border-b border-[var(--border)]">
             <h3 className="text-sm font-semibold text-[var(--text-primary)]">Standings</h3>
           </div>
@@ -126,7 +126,7 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles }
                 const canScore = isLive && aId && bId && !isCompleted;
 
                 return (
-                  <div key={m.id} className="flex items-center justify-between p-3 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)]">
+                  <div key={m.id} className="flex items-center justify-between p-3 border border-[var(--border)] bg-[var(--bg-elevated)]">
                     <div className="flex items-center gap-2 flex-1 min-w-0">
                       <span className="text-[10px] font-mono text-[var(--text-muted)]">M{m.match_number}</span>
                       <span className={`text-sm truncate ${isCompleted && winnerId === aId ? 'text-[var(--color-success)] font-semibold' : 'text-[var(--text-primary)]'}`}>

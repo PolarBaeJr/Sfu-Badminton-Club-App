@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@badminton/shared/supabase-browser';
-import { Button, Card, Input, Textarea, Switch } from '@badminton/ui';
+import { Button, Card, Input, Textarea, Switch, PageHero } from '@badminton/ui';
 import { updateProfile } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
@@ -47,7 +47,7 @@ const saveConfirmVariants: any = {
 function SectionHeader({ icon: Icon, title }: { icon: React.ElementType; title: string }) {
   return (
     <div className="flex items-center gap-2.5 mb-4">
-      <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-[var(--ds-accent)]/10">
+      <div className="flex items-center justify-center w-8 h-8 bg-[var(--ds-accent-dim)]">
         <Icon className="w-4 h-4 text-[var(--ds-accent)]" />
       </div>
       <h2 className="text-lg font-semibold text-[var(--text-primary)]">{title}</h2>
@@ -56,7 +56,7 @@ function SectionHeader({ icon: Icon, title }: { icon: React.ElementType; title: 
 }
 
 function Divider() {
-  return <div className="border-t border-white/[0.06] my-4" />;
+  return <div className="border-t border-[var(--border)] my-4" />;
 }
 
 const themeOptions: { value: Theme; icon: React.ElementType; label: string }[] = [
@@ -196,16 +196,14 @@ export default function SettingsPage() {
   );
 
   return (
-    <div className="max-w-lg mx-auto space-y-5 pb-8">
-      {/* Page Title */}
-      <motion.div
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-      >
-        <p className="eyebrow mb-1">Account</p>
-        <h1 className="display-lg text-[var(--text-primary)]">Settings</h1>
-      </motion.div>
+    <div style={{ color: 'var(--text-primary)' }}>
+      <PageHero
+        eyebrow="Configuration"
+        title="Settings."
+        subtitle="Your profile, preferences, and how you receive notifications."
+        watermark="S"
+      />
+      <div className="max-w-lg mx-auto space-y-5 pb-8 px-2 md:px-6 py-8">
 
       {/* Profile Section */}
       <motion.div
@@ -214,7 +212,7 @@ export default function SettingsPage() {
         initial="hidden"
         animate="visible"
       >
-        <Card className="bg-[var(--bg-card)] border-[var(--border)]">
+        <Card className="bg-[var(--bg-card)] border-[var(--border)] p-6">
           <SectionHeader icon={User} title="Profile" />
           {playerId && (
             <div className="mb-6 flex justify-center">
@@ -233,24 +231,28 @@ export default function SettingsPage() {
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
+              className="bg-[var(--bg-card)] border-[var(--border)] text-[var(--text-primary)]"
             />
             <Input
               label="Display Name / Nickname"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               placeholder="Optional"
+              className="bg-[var(--bg-card)] border-[var(--border)] text-[var(--text-primary)]"
             />
             <Input
               label="Phone"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               placeholder="Optional"
+              className="bg-[var(--bg-card)] border-[var(--border)] text-[var(--text-primary)]"
             />
             <Textarea
               label="Bio"
               value={bio}
               onChange={(e) => setBio(e.target.value)}
               placeholder="A few words about yourself"
+              className="bg-[var(--bg-card)] border-[var(--border)] text-[var(--text-primary)]"
             />
             <div className="relative">
               <Button type="submit" loading={loading} className="w-full">
@@ -305,10 +307,10 @@ export default function SettingsPage() {
                 key={value}
                 whileTap={{ scale: 0.96 }}
                 onClick={() => handleThemeChange(value)}
-                className={`relative flex flex-col items-center gap-2 px-4 py-4 rounded-xl border text-sm font-medium transition-all duration-200 ${
+                className={`relative flex flex-col items-center gap-2 px-4 py-4 border text-sm font-medium transition-all duration-200 ${
                   theme === value
-                    ? 'border-[var(--ds-accent)] bg-[var(--ds-accent)]/10 text-[var(--ds-accent)] glow-red'
-                    : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-hover)] hover:bg-white/[0.03]'
+                    ? 'border-[var(--ds-accent)] bg-[var(--ds-accent-dim)] text-[var(--ds-accent)] glow-red'
+                    : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-hover)] hover:bg-[var(--bg-card-hover)]'
                 }`}
               >
                 <Icon className="w-5 h-5" />
@@ -316,7 +318,7 @@ export default function SettingsPage() {
                 {theme === value && (
                   <motion.div
                     layoutId="theme-indicator"
-                    className="absolute -top-px -right-px w-5 h-5 bg-[var(--ds-accent)] rounded-bl-lg rounded-tr-[11px] flex items-center justify-center"
+                    className="absolute -top-px -right-px w-5 h-5 bg-[var(--ds-accent)] flex items-center justify-center"
                     transition={{ type: 'spring', stiffness: 400, damping: 30 }}
                   >
                     <Check className="w-3 h-3 text-white" />
@@ -358,7 +360,7 @@ export default function SettingsPage() {
                 </div>
               </div>
             ) : (
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-white/[0.03] border border-white/[0.06]">
+              <div className="flex items-center gap-3 p-3 bg-[var(--bg-card-hover)] border border-[var(--border)]">
                 <BellOff className="w-4 h-4 text-[var(--text-muted)] flex-shrink-0" />
                 <p className="text-sm text-[var(--text-muted)]">Push notifications not supported in this browser.</p>
               </div>
@@ -405,9 +407,9 @@ export default function SettingsPage() {
         <Card className="bg-[var(--bg-card)] border-[var(--border)]">
           <SectionHeader icon={Info} title="About" />
           <div className="space-y-3 text-sm">
-            <div className="flex justify-between items-center p-3 rounded-lg bg-white/[0.03]">
+            <div className="flex justify-between items-center p-3 bg-[var(--bg-card-hover)]">
               <span className="text-[var(--text-muted)]">Version</span>
-              <span className="text-[var(--text-primary)] font-mono bg-white/[0.06] px-2.5 py-1 rounded-md text-xs">
+              <span className="text-[var(--text-primary)] font-mono bg-[var(--bg-inset)] px-2.5 py-1 text-xs">
                 0.0.1
               </span>
             </div>
@@ -431,6 +433,7 @@ export default function SettingsPage() {
           </Button>
         </motion.div>
       </motion.div>
+    </div>
     </div>
   );
 }

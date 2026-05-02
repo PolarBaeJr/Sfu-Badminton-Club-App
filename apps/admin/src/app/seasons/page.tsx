@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge } from '@badminton/ui';
+import { Card, Badge, PageHero } from '@badminton/ui';
 import { formatDate } from '@badminton/shared';
 import { CreateSeasonForm, SeasonActions } from './actions';
 import { Medal, Calendar, CheckCircle2, XCircle, Clock } from 'lucide-react';
@@ -14,22 +14,15 @@ export default async function SeasonsPage() {
     .order('start_date', { ascending: false });
 
   return (
-    <div className="space-y-8">
-      {/* Page Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--ds-accent)]/10">
-            <Medal className="w-5 h-5 text-[var(--ds-accent)]" />
-          </div>
-          <div>
-            <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">SEASONS</h1>
-            <p className="text-sm text-[var(--text-muted)] mt-0.5">
-              Manage club seasons, set active periods, and track history
-            </p>
-          </div>
-        </div>
-        <CreateSeasonForm />
-      </div>
+    <div>
+      <PageHero
+        eyebrow={`${seasons?.length ?? 0} seasons · ${seasons?.filter((s) => s.active_flag).length ?? 0} active`}
+        title="Seasons."
+        subtitle="Each season is a self-contained ladder. ELO carries over with a soft reset; W/L records do not."
+        watermark="S"
+      />
+      <div className="space-y-8 px-12 py-8">
+        <div className="flex justify-end"><CreateSeasonForm /></div>
 
       {/* Seasons Table */}
       <Card padding={false}>
@@ -130,6 +123,7 @@ export default async function SeasonsPage() {
           </div>
         )}
       </Card>
+    </div>
     </div>
   );
 }

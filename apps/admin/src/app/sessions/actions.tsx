@@ -188,14 +188,14 @@ export function SessionCardMenu({ session }: SessionCardMenuProps) {
       <div ref={menuRef} className="relative">
         <button
           onClick={() => setMenuOpen((v) => !v)}
-          className="flex items-center justify-center w-8 h-8 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-hover)] transition-colors"
+          className="flex items-center justify-center w-8 h-8 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-hover)] transition-colors"
           aria-label="Session options"
         >
           <MoreVertical className="w-4 h-4" />
         </button>
 
         {menuOpen && (
-          <div className="absolute right-0 top-9 z-20 w-36 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] shadow-lg shadow-black/10 overflow-hidden">
+          <div className="absolute right-0 top-9 z-20 w-36 border border-[var(--border)] bg-[var(--bg-elevated)] shadow-lg shadow-black/10 overflow-hidden">
             <button
               onClick={() => { setEditOpen(true); setMenuOpen(false); }}
               className="w-full px-4 py-2.5 text-left text-sm text-[var(--text-primary)] hover:bg-[var(--border-hover)] transition-colors"

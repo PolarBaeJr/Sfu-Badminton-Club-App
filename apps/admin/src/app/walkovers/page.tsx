@@ -25,7 +25,7 @@ export default async function WalkoversPage() {
     <div className="space-y-6">
       {/* Page Header */}
       <div className="flex items-center gap-3">
-        <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--ds-accent)]/10">
+        <div className="flex items-center justify-center w-10 h-10 bg-[var(--ds-accent)]/10">
           <Clock className="w-5 h-5 text-[var(--ds-accent)]" />
         </div>
         <div>
@@ -44,7 +44,7 @@ export default async function WalkoversPage() {
       {/* Walkover Cards */}
       <div className="grid gap-4">
         {walkovers?.map((w) => (
-          <div key={w.id} className={`rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-5 border-l-4 ${borderColor(w.status)}`}>
+          <div key={w.id} className={` border border-[var(--border)] bg-[var(--bg-card)] p-5 border-l-4 ${borderColor(w.status)}`}>
             <div className="flex items-start justify-between gap-4">
               <div className="flex flex-col gap-2.5 flex-1">
                 {/* Status and Type Badges */}
@@ -88,7 +88,7 @@ export default async function WalkoversPage() {
 
                 {/* Admin Notes */}
                 {w.admin_notes && (
-                  <div className="mt-1 p-3 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border)] flex items-start gap-2">
+                  <div className="mt-1 p-3 bg-[var(--bg-elevated)] border border-[var(--border)] flex items-start gap-2">
                     <MessageSquare className="w-3.5 h-3.5 text-[var(--ds-accent)] flex-shrink-0 mt-0.5" />
                     <span className="text-sm text-[var(--text-primary)]">{w.admin_notes}</span>
                   </div>
@@ -103,7 +103,7 @@ export default async function WalkoversPage() {
 
         {/* Empty State */}
         {(!walkovers || walkovers.length === 0) && (
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-12 flex flex-col items-center gap-3">
+          <div className=" border border-[var(--border)] bg-[var(--bg-card)] p-12 flex flex-col items-center gap-3">
             <div className="w-14 h-14 rounded-full bg-[var(--color-success)]/10 flex items-center justify-center">
               <CheckCircle2 className="w-7 h-7 text-[var(--color-success)]" />
             </div>

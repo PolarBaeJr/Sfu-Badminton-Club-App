@@ -112,7 +112,7 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, on
     <Dialog open={true} onClose={onClose} title="Enter Match Score">
       <div className="space-y-5">
         {/* Players header */}
-        <div className="flex items-center justify-between p-3 rounded-lg bg-[var(--bg-elevated)]">
+        <div className="flex items-center justify-between p-3 bg-[var(--bg-elevated)]">
           <div className="text-center flex-1">
             {seedA && <span className="text-[10px] text-[var(--text-muted)] font-mono block">[{seedA}]</span>}
             <span className={`text-sm font-semibold ${autoWinner === 'a' ? 'text-[var(--color-success)]' : 'text-[var(--text-primary)]'}`}>

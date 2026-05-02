@@ -61,11 +61,11 @@ export default async function TournamentDetailPage({ params }: { params: Promise
 
       {/* Tournament Hero */}
       <FadeIn>
-        <div className="card-elevated rounded-2xl overflow-hidden">
+        <div className="card-elevated overflow-hidden">
           <div className="h-1.5 gradient-gold" />
           <div className="p-5">
             <div className="flex items-start gap-3 mb-3">
-              <div className="w-11 h-11 rounded-xl bg-[var(--color-gold)]/10 flex items-center justify-center shrink-0 glow-gold">
+              <div className="w-11 h-11 bg-[var(--color-gold)]/10 flex items-center justify-center shrink-0 glow-gold">
                 <Trophy className="w-5 h-5 text-[var(--color-gold)]" />
               </div>
               <div className="min-w-0 flex-1">
@@ -125,7 +125,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
           return (
             <StaggerItem key={event.id}>
               <Link href={`/tournaments/${id}/events/${event.id}`} className="block h-full">
-                <div className="card-surface card-interactive rounded-2xl p-5 h-full flex flex-col gap-3 group cursor-pointer min-h-[44px]">
+                <div className="card-surface card-interactive p-5 h-full flex flex-col gap-3 group cursor-pointer min-h-[44px]">
                   <div className="flex items-start justify-between gap-2">
                     <div className="space-y-2 flex-1 min-w-0">
                       <h3 className="display-md leading-snug truncate">
@@ -177,7 +177,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
 
       {(!events || events.length === 0) && (
         <FadeIn delay={0.1}>
-          <div className="card-surface rounded-2xl p-10 text-center">
+          <div className="card-surface p-10 text-center">
             <Trophy className="w-10 h-10 text-[var(--border-strong)] mx-auto mb-3" />
             <p className="text-[var(--text-muted)] text-sm">No events have been created yet.</p>
           </div>

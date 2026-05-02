@@ -1,5 +1,5 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { Badge } from '@badminton/ui';
+import { Badge, PageHero } from '@badminton/ui';
 import { getWinRate, getStreakDisplay, getPointDifferential, formatDate } from '@badminton/shared';
 import { redirect } from 'next/navigation';
 import {
@@ -58,18 +58,14 @@ export default async function MyStatsPage() {
   const partners = partnersRes.data;
 
   return (
-    <div className="space-y-6">
-      <FadeIn>
-        <div className="flex items-center gap-3 reveal reveal-1">
-          <div className="w-10 h-10 rounded-md bg-[var(--ds-accent-dim)] flex items-center justify-center">
-            <BarChart3 className="w-5 h-5 text-[var(--ds-accent)]" />
-          </div>
-          <div>
-            <p className="eyebrow">Performance</p>
-            <h1 className="ds-display text-3xl font-semibold tracking-tight text-[var(--text-primary)]">My Stats</h1>
-          </div>
-        </div>
-      </FadeIn>
+    <div>
+      <PageHero
+        eyebrow="Season 02 · My Record"
+        title="My Stats."
+        subtitle={r ? `${r.singles_wins ?? 0}W · ${r.singles_losses ?? 0}L · ${getWinRate(r.singles_wins, r.singles_losses)} singles win rate this season.` : 'Performance, head-to-head, and partner data this season.'}
+        watermark="M"
+      />
+      <div className="space-y-6 px-2 md:px-6 py-8">
 
       {r && (
         <>
@@ -126,7 +122,7 @@ export default async function MyStatsPage() {
         <FadeIn delay={0.15}>
           <div className="card-elevated p-4">
             <div className="flex items-center gap-2 mb-4">
-              <Swords className="w-4 h-4 text-court-red" />
+              <Swords className="w-4 h-4 text-[var(--accent)]" />
               <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>Head to Head</h2>
             </div>
             <div className="space-y-2">
@@ -137,15 +133,15 @@ export default async function MyStatsPage() {
                 const wins = isA ? h.player_a_wins : h.player_b_wins;
                 const losses = isA ? h.player_b_wins : h.player_a_wins;
                 return (
-                  <div key={h.id} className="flex items-center justify-between p-3 bg-white/[0.03] rounded-lg border border-white/[0.04]">
+                  <div key={h.id} className="flex items-center justify-between p-3 bg-[var(--bg-card-hover)] border border-[var(--border)]">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm text-shuttle-white font-medium">{opponent?.full_name}</span>
+                      <span className="text-sm text-[var(--text-primary)] font-medium">{opponent?.full_name}</span>
                       <span className="chip">{h.match_type}</span>
                     </div>
                     <span className="font-mono text-sm font-bold nums">
-                      <span className="text-[var(--color-success)]">{wins}W</span>
-                      <span className="text-[var(--text-dim)] mx-1">-</span>
-                      <span className="text-[var(--color-danger)]">{losses}L</span>
+                      <span className="text-[var(--accent)]">{wins}W</span>
+                      <span className="text-[var(--text-muted)] mx-1">-</span>
+                      <span className="text-[var(--loss)]">{losses}L</span>
                     </span>
                   </div>
                 );
@@ -160,7 +156,7 @@ export default async function MyStatsPage() {
         <FadeIn delay={0.17}>
           <div className="card-elevated p-4">
             <div className="flex items-center gap-2 mb-4">
-              <Users className="w-4 h-4 text-gold" />
+              <Users className="w-4 h-4 text-[var(--color-gold)]" />
               <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>Best Partners</h2>
             </div>
             <div className="space-y-2">
@@ -168,13 +164,13 @@ export default async function MyStatsPage() {
                 const partnerRaw = p.partner as unknown;
                 const partner = (Array.isArray(partnerRaw) ? partnerRaw[0] : partnerRaw) as { full_name?: string } | null;
                 return (
-                <div key={p.id} className="flex items-center justify-between p-3 bg-white/[0.03] rounded-lg border border-white/[0.04]">
-                  <span className="text-sm text-shuttle-white font-medium">{partner?.full_name}</span>
+                <div key={p.id} className="flex items-center justify-between p-3 bg-[var(--bg-card-hover)] border border-[var(--border)]">
+                  <span className="text-sm text-[var(--text-primary)] font-medium">{partner?.full_name}</span>
                   <div className="flex items-center gap-3">
                     <span className="font-mono text-sm nums">
-                      <span className="text-[var(--color-success)]">{p.wins}W</span>
-                      <span className="text-[var(--text-dim)] mx-1">-</span>
-                      <span className="text-[var(--color-danger)]">{p.losses}L</span>
+                      <span className="text-[var(--accent)]">{p.wins}W</span>
+                      <span className="text-[var(--text-muted)] mx-1">-</span>
+                      <span className="text-[var(--loss)]">{p.losses}L</span>
                     </span>
                     <span className="chip chip-gold nums">{Math.round(p.win_rate * 100)}%</span>
                   </div>
@@ -190,7 +186,7 @@ export default async function MyStatsPage() {
       <FadeIn delay={0.2}>
         <div className="card-elevated p-4">
           <div className="flex items-center gap-2 mb-4">
-            <Trophy className="w-4 h-4 text-gold" />
+            <Trophy className="w-4 h-4 text-[var(--color-gold)]" />
             <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>Match History</h2>
           </div>
           <div className="space-y-2">
@@ -200,35 +196,49 @@ export default async function MyStatsPage() {
               if (!m) return null;
               const isWin = mp.win_flag === true;
               const isLoss = mp.win_flag === false;
+              const delta = mp.rating_delta;
+              const hasDelta = delta !== null && delta !== undefined;
+              const isPositive = (delta ?? 0) >= 0;
               return (
-                <div key={mp.id} className="flex items-center justify-between p-3 bg-white/[0.03] rounded-md border border-[var(--border)]">
+                <div key={mp.id} className="flex items-center justify-between p-3 bg-[var(--bg-card-hover)] border border-[var(--border)]">
                   <div className="flex items-center gap-3">
-                    <div className={`w-8 h-8 rounded-md flex items-center justify-center text-xs font-bold ${
-                      isWin ? 'bg-[var(--color-success)]/15 text-[var(--color-success)]' : isLoss ? 'bg-[var(--color-danger)]/15 text-[var(--color-danger)]' : 'bg-white/[0.06] text-[var(--text-muted)]'
+                    <div className={`w-8 h-8 flex items-center justify-center text-xs font-bold ${
+                      isWin
+                        ? 'bg-[var(--bg-accent)] text-[var(--accent)] border border-[var(--accent-border)]'
+                        : isLoss
+                        ? 'bg-[var(--bg-loss)] text-[var(--loss)] border border-[var(--loss-border)]'
+                        : 'bg-[var(--bg-inset)] text-[var(--text-muted)] border border-[var(--border)]'
                     }`}>
                       {isWin ? 'W' : isLoss ? 'L' : '?'}
                     </div>
-                    <span className="ds-mono text-sm text-shuttle-white font-medium">{m.score_summary as string || '-'}</span>
+                    <span className="ds-mono text-sm text-[var(--text-primary)] font-medium">{m.score_summary as string || '-'}</span>
                     <span className="chip">{m.match_type as string}</span>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className={`ds-mono text-sm font-bold ${(mp.rating_delta ?? 0) >= 0 ? 'text-[var(--color-success)]' : 'text-[var(--color-danger)]'}`}>
-                      {mp.rating_delta !== null ? `${(mp.rating_delta ?? 0) >= 0 ? '+' : ''}${mp.rating_delta}` : ''}
-                    </span>
-                    <span className="text-xs text-[var(--text-dim)]">{m.played_at ? formatDate(m.played_at as string) : ''}</span>
+                    {hasDelta && (
+                      <span className={`ds-mono text-xs font-bold inline-flex items-center px-2 py-0.5 rounded-full border ${
+                        isPositive
+                          ? 'bg-[var(--bg-accent)] text-[var(--accent)] border-[var(--accent-border)]'
+                          : 'bg-[var(--bg-loss)] text-[var(--loss)] border-[var(--loss-border)]'
+                      }`}>
+                        {isPositive ? '+' : ''}{delta}
+                      </span>
+                    )}
+                    <span className="text-xs text-[var(--text-muted)]">{m.played_at ? formatDate(m.played_at as string) : ''}</span>
                   </div>
                 </div>
               );
             })}
             {(!recentMatches || recentMatches.length === 0) && (
               <div className="text-center py-8">
-                <Trophy className="w-8 h-8 text-[var(--text-dim)] mx-auto mb-2" />
+                <Trophy className="w-8 h-8 text-[var(--text-muted)] mx-auto mb-2" />
                 <p className="text-[var(--text-muted)] text-sm">No matches yet</p>
               </div>
             )}
           </div>
         </div>
       </FadeIn>
+    </div>
     </div>
   );
 }

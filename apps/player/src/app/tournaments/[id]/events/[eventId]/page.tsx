@@ -172,7 +172,7 @@ export default async function EventDetailPage({
 
       {/* Event Header */}
       <FadeIn>
-        <div className="card-elevated rounded-2xl overflow-hidden">
+        <div className="card-elevated overflow-hidden">
           <div className="h-1.5" style={{ background: statusColor }} />
           <div className="p-5">
             <p className="eyebrow mb-1">Event</p>
@@ -219,7 +219,7 @@ export default async function EventDetailPage({
       {/* Bracket View (Single Elimination) */}
       {isSingleElim && allMatches.length > 0 && (
         <FadeIn delay={0.05}>
-          <div className="card-elevated rounded-2xl overflow-hidden">
+          <div className="card-elevated overflow-hidden">
             <div className="flex items-center gap-2 p-4 pb-0 mb-3">
               <Trophy className="w-4 h-4 text-[var(--color-gold)]" />
               <h2 className="display-md">Bracket</h2>
@@ -267,8 +267,8 @@ export default async function EventDetailPage({
                               {!isLastRound && matchIdx % 2 === 0 && matchIdx + 1 < roundMatches.length && (
                                 <div className="absolute border-r border-[var(--border)]" style={{ right: '-16px', top: '50%', height: `${MATCH_H + gap}px` }} />
                               )}
-                              <div className="border border-[var(--border)] rounded-xl overflow-hidden opacity-40">
-                                <div className="p-2.5 text-sm text-[var(--text-muted)] bg-white/[0.02]">
+                              <div className="border border-[var(--border)] overflow-hidden opacity-40">
+                                <div className="p-2.5 text-sm text-[var(--text-muted)] bg-[var(--on-surface-soft)]">
                                   {getEntryName(m, 'a')} (BYE)
                                 </div>
                               </div>
@@ -283,7 +283,7 @@ export default async function EventDetailPage({
                             {!isLastRound && matchIdx % 2 === 0 && matchIdx + 1 < roundMatches.length && (
                               <div className="absolute border-r border-[var(--border)]" style={{ right: '-16px', top: '50%', height: `${MATCH_H + gap}px` }} />
                             )}
-                            <div className="border border-[var(--border)] rounded-xl overflow-hidden card-surface card-interactive">
+                            <div className="border border-[var(--border)] overflow-hidden card-surface card-interactive">
                               {(['a', 'b'] as const).map((side) => {
                                 const name = getEntryName(m, side);
                                 const seed = getEntrySeed(m, side);
@@ -296,7 +296,7 @@ export default async function EventDetailPage({
                                     } ${
                                       won
                                         ? 'match-winner'
-                                        : 'bg-white/[0.02] text-[var(--text-secondary)]'
+                                        : 'bg-[var(--on-surface-soft)] text-[var(--text-secondary)]'
                                     }`}
                                   >
                                     {seed && (
@@ -333,7 +333,7 @@ export default async function EventDetailPage({
       {/* Round Robin View */}
       {!isSingleElim && allMatches.length > 0 && (
         <FadeIn delay={0.05}>
-          <div className="card-elevated rounded-2xl overflow-hidden">
+          <div className="card-elevated overflow-hidden">
             <div className="flex items-center gap-2 p-4 pb-0 mb-3">
               <Swords className="w-4 h-4 text-[var(--ds-accent)]" />
               <h2 className="display-md">Match Results</h2>
@@ -353,16 +353,16 @@ export default async function EventDetailPage({
                       return (
                         <div
                           key={m.id as string}
-                          className="border border-[var(--border)] rounded-xl overflow-hidden"
+                          className="border border-[var(--border)] overflow-hidden"
                         >
                           <div className="flex items-center">
-                            <div className={`flex-1 p-2.5 text-sm truncate ${winA ? 'match-winner' : 'bg-white/[0.02] text-[var(--text-secondary)]'}`}>
+                            <div className={`flex-1 p-2.5 text-sm truncate ${winA ? 'match-winner' : 'bg-[var(--on-surface-soft)] text-[var(--text-secondary)]'}`}>
                               {getEntryName(m, 'a')}{winA && <span className="sr-only"> (Winner)</span>}
                             </div>
-                            <div className="nums px-3 text-xs text-[var(--text-dim)] bg-white/[0.02] py-2.5 border-x border-[var(--border)] shrink-0">
+                            <div className="nums px-3 text-xs text-[var(--text-dim)] bg-[var(--on-surface-soft)] py-2.5 border-x border-[var(--border)] shrink-0">
                               {matchStatus === 'completed' ? scoreStr || 'W/O' : 'vs'}
                             </div>
-                            <div className={`flex-1 p-2.5 text-sm text-right truncate ${winB ? 'match-winner' : 'bg-white/[0.02] text-[var(--text-secondary)]'}`}>
+                            <div className={`flex-1 p-2.5 text-sm text-right truncate ${winB ? 'match-winner' : 'bg-[var(--on-surface-soft)] text-[var(--text-secondary)]'}`}>
                               {getEntryName(m, 'b')}{winB && <span className="sr-only"> (Winner)</span>}
                             </div>
                           </div>
@@ -379,7 +379,7 @@ export default async function EventDetailPage({
 
       {/* Participants / Pairs List */}
       <FadeIn delay={0.1}>
-        <div className="card-elevated rounded-2xl overflow-hidden">
+        <div className="card-elevated overflow-hidden">
           <div className="flex items-center gap-2 p-4 pb-0 mb-3">
             <Users className="w-4 h-4 text-[var(--ds-accent)]" />
             <h2 className="display-md">{doubles ? 'Pairs' : 'Participants'}</h2>
@@ -395,7 +395,7 @@ export default async function EventDetailPage({
                   const revealIdx = pi < 3 ? `reveal-${pi + 1}` : '';
 
                   return (
-                    <div key={p.id as string} className={`reveal ${revealIdx} flex items-center justify-between p-2.5 bg-white/[0.02] rounded-xl border border-[var(--border)] gap-2`}>
+                    <div key={p.id as string} className={`reveal ${revealIdx} flex items-center justify-between p-2.5 bg-[var(--on-surface-soft)] border border-[var(--border)] gap-2`}>
                       <div className="flex items-center gap-2.5 min-w-0">
                         {seed && (
                           <span className="nums text-xs text-[var(--text-muted)] w-5 text-center shrink-0">#{seed}</span>
@@ -429,7 +429,7 @@ export default async function EventDetailPage({
                   const revealIdx = pi < 3 ? `reveal-${pi + 1}` : '';
 
                   return (
-                    <div key={p.id as string} className={`reveal ${revealIdx} flex items-center justify-between p-2.5 bg-white/[0.02] rounded-xl border border-[var(--border)] gap-2`}>
+                    <div key={p.id as string} className={`reveal ${revealIdx} flex items-center justify-between p-2.5 bg-[var(--on-surface-soft)] border border-[var(--border)] gap-2`}>
                       <div className="flex items-center gap-2.5 min-w-0">
                         {seed && (
                           <span className="nums text-xs text-[var(--text-muted)] w-5 text-center shrink-0">#{seed}</span>
@@ -463,7 +463,7 @@ export default async function EventDetailPage({
       {/* Your Matches */}
       {playerParticipantId && allMatches.length > 0 && (
         <FadeIn delay={0.15}>
-          <div className="card-elevated rounded-2xl overflow-hidden">
+          <div className="card-elevated overflow-hidden">
             <div className="flex items-center gap-2 p-4 pb-0 mb-3">
               <Star className="w-4 h-4 text-[var(--color-gold)]" />
               <h2 className="display-md">Your Matches</h2>
@@ -488,12 +488,12 @@ export default async function EventDetailPage({
                   return (
                     <div
                       key={m.id as string}
-                      className={`flex items-center justify-between p-3 rounded-xl border gap-3 ${
+                      className={`flex items-center justify-between p-3 border gap-3 ${
                         done
                           ? won
                             ? 'border-[var(--color-success)]/20 bg-[var(--color-success)]/5'
                             : 'border-[var(--ds-accent)]/20 bg-[var(--ds-accent)]/5'
-                          : 'border-[var(--border)] bg-white/[0.02]'
+                          : 'border-[var(--border)] bg-[var(--on-surface-soft)]'
                       }`}
                     >
                       <div className="min-w-0">
@@ -530,7 +530,7 @@ export default async function EventDetailPage({
       {/* Final Standings */}
       {eventStatus === 'completed' && (
         <FadeIn delay={0.2}>
-          <div className="card-elevated rounded-2xl overflow-hidden">
+          <div className="card-elevated overflow-hidden">
             <div className="flex items-center gap-2 p-4 pb-0 mb-3">
               <Medal className="w-4 h-4 text-[var(--color-gold)]" />
               <h2 className="display-md">Final Standings</h2>
@@ -551,10 +551,10 @@ export default async function EventDetailPage({
                   return (
                     <div
                       key={e.id}
-                      className={`flex items-center justify-between p-2.5 rounded-xl ${
+                      className={`flex items-center justify-between p-2.5 ${
                         pos === 1 ? 'bg-[var(--color-gold)]/5 border border-[var(--color-gold)]/20' :
-                        pos === 2 ? 'bg-white/[0.03] border border-white/[0.06]' :
-                        pos === 3 ? 'bg-white/[0.02] border border-white/[0.04]' :
+                        pos === 2 ? 'bg-[var(--on-surface-soft)] border border-[var(--on-surface-med)]' :
+                        pos === 3 ? 'bg-[var(--on-surface-soft)] border border-[var(--on-surface-soft)]' :
                         'bg-transparent border border-transparent'
                       }`}
                     >

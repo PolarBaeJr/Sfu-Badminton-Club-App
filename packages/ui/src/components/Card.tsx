@@ -14,11 +14,17 @@ export function Card({ children, className, padding = true, interactive = false 
   return (
     <div
       className={cn(
-        'bg-[var(--bg-card)] border border-[var(--border)] rounded-lg transition-colors duration-150',
+        'transition-colors duration-150 rounded-none',
         padding && 'p-6',
-        interactive && 'hover:border-[color-mix(in_srgb,var(--ds-accent)_30%,transparent)] cursor-pointer',
-        className
+        interactive && 'cursor-pointer hover:border-[var(--hairline-strong)]',
+        className,
       )}
+      style={{
+        background: 'var(--surface1)',
+        border: '1px solid var(--hairline)',
+        borderRadius: 0,
+        boxShadow: 'none',
+      }}
     >
       {children}
     </div>

@@ -2,12 +2,11 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import useSWR from 'swr';
-import { Avatar } from '@badminton/ui';
+import { Avatar, PageHero } from '@badminton/ui';
 import Link from 'next/link';
 import { getPostHogClient } from '@/lib/posthog';
 import { getSeasonTier } from '@badminton/shared';
-import { Trophy, Medal, Crown, Search } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { Trophy, Search } from 'lucide-react';
 import type { LeaderboardEntry, TournamentPointsEntry } from './page';
 
 const tabs = [
@@ -17,10 +16,6 @@ const tabs = [
   { id: 'comp_doubles', label: 'Comp Doubles' },
   { id: 'tournament_points', label: 'Tournament Pts' },
 ] as const;
-
-const rankIcons = [Crown, Medal, Trophy];
-const rankColors = ['text-[var(--color-gold)]', 'text-[var(--text-secondary)]', 'text-[var(--color-gold-deep)]'];
-const rankBg = ['bg-[var(--color-gold)]/10 border-[var(--color-gold)]/20', 'bg-[var(--text-secondary)]/10 border-[var(--text-secondary)]/20', 'bg-[var(--color-gold-deep)]/10 border-[var(--color-gold-deep)]/20'];
 
 interface LeaderboardClientProps {
   players: LeaderboardEntry[];
@@ -85,39 +80,33 @@ export function LeaderboardClient({
     : rows;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3 reveal reveal-1">
-        <div className="w-10 h-10 rounded-xl bg-[var(--color-gold)]/10 flex items-center justify-center glow-gold">
-          <Trophy className="w-5 h-5 text-gold" />
-        </div>
-        <div>
-          <p className="eyebrow">Rankings</p>
-          <h1 className="display-lg text-shuttle-white">Leaderboard</h1>
-        </div>
-      </div>
+    <div>
+      <PageHero
+        eyebrow={`${players.length} ranked players`}
+        title="Leaderboard."
+        subtitle="Live ladder for Season 02. ELO updates as matches confirm."
+        watermark="L"
+      />
+      <div className="space-y-6 px-2 md:px-6 py-8">
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-white/[0.03] rounded-xl p-1 border border-white/[0.04] overflow-x-auto scroll-fade-x">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`relative flex-1 py-2.5 px-3 text-sm font-semibold rounded-lg transition-all duration-300 whitespace-nowrap ${
-              activeTab === tab.id
-                ? 'text-white'
-                : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
-            }`}
-          >
-            {activeTab === tab.id && (
-              <motion.div
-                layoutId="leaderboardTab"
-                className="absolute inset-0 bg-gradient-to-r from-[var(--color-gold)]/20 to-[var(--color-gold-deep)]/20 border border-[var(--color-gold)]/20 rounded-lg"
-                transition={{ type: 'spring', bounce: 0.2, duration: 0.5 }}
-              />
-            )}
-            <span className="relative z-10">{tab.label}</span>
-          </button>
-        ))}
+      <div className="flex gap-1 overflow-x-auto scroll-fade-x border-b-[0.5px] border-[var(--border)]">
+        {tabs.map((tab) => {
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-3 py-2.5 text-[13px] font-medium whitespace-nowrap transition-colors duration-150 border-b-2 ${
+                isActive
+                  ? 'bg-[var(--bg-accent)] text-[var(--accent)] border-[var(--accent)]'
+                  : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+              }`}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
       </div>
 
       {/* Search */}
@@ -129,15 +118,15 @@ export function LeaderboardClient({
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           aria-label="Search leaderboard"
-          className="w-full min-h-[40px] bg-[var(--bg-surface)] border border-[var(--border)] rounded-md pl-9 pr-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:border-transparent transition-colors"
+          className="w-full min-h-[40px] bg-[var(--bg-inset)] border-[0.5px] border-[var(--border)] pl-9 pr-3 text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)] transition-colors"
         />
       </div>
 
       {/* Table */}
-      <div className="card-elevated overflow-hidden">
+      <div className="bg-[var(--bg-card)] border-[0.5px] border-[var(--border)] overflow-hidden">
         <div key={activeTab}>
             {/* Header (sticky) */}
-            <div className={`sticky top-0 z-10 bg-[var(--bg-card)]/95 backdrop-blur grid ${isTournamentPoints ? 'grid-cols-[3rem_1fr_5rem]' : 'grid-cols-[3rem_1fr_5rem_4rem_3.5rem] md:grid-cols-[3rem_1fr_5rem_5rem_4rem]'} px-4 py-3 border-b border-[var(--border)] eyebrow`}>
+            <div className={`sticky top-14 z-10 bg-[var(--bg-card)] grid ${isTournamentPoints ? 'grid-cols-[2.5rem_1fr_5rem]' : 'grid-cols-[2.5rem_1fr_5rem_3.5rem] md:grid-cols-[2.5rem_1fr_5rem_5rem_3.5rem]'} px-5 py-2.5 border-b-[0.5px] border-[var(--border)] text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]`}>
               <span>#</span>
               <span>Player</span>
               {isTournamentPoints ? (
@@ -145,14 +134,14 @@ export function LeaderboardClient({
               ) : (
                 <>
                   <span className="text-right">Elo</span>
-                  <span className="text-right">W/L</span>
+                  <span className="text-right hidden md:block">W/L</span>
                   <span className="text-right">Win%</span>
                 </>
               )}
             </div>
 
             {/* Rows */}
-            <div className="divide-y divide-white/[0.04]">
+            <div className="divide-y divide-[var(--border)]">
               {filteredPlayers.map((p, i) => {
                 const elo = isDoubles ? p.ratings?.doubles_elo : p.ratings?.singles_elo;
                 const wins = isDoubles ? p.ratings?.doubles_wins : p.ratings?.singles_wins;
@@ -160,7 +149,8 @@ export function LeaderboardClient({
                 const prov = isDoubles ? p.ratings?.doubles_provisional : p.ratings?.singles_provisional;
                 const total = (wins ?? 0) + (losses ?? 0);
                 const winPct = total > 0 ? Math.round(((wins ?? 0) / total) * 100) : 0;
-                const RankIcon = i < 3 ? rankIcons[i] : null;
+                const isTop3 = i < 3;
+                const isYou = p.id === currentPlayerId;
 
                 return (
                   <div
@@ -173,40 +163,53 @@ export function LeaderboardClient({
                   >
                     <Link
                       href={`/leaderboard/${p.id}`}
-                      aria-current={p.id === currentPlayerId ? 'true' : undefined}
-                      className={`grid ${isTournamentPoints ? 'grid-cols-[3rem_1fr_5rem]' : 'grid-cols-[3rem_1fr_5rem_4rem_3.5rem] md:grid-cols-[3rem_1fr_5rem_5rem_4rem]'} px-4 py-3 items-center transition-colors group border-l-2 ${
-                        p.id === currentPlayerId
-                          ? 'bg-[var(--ds-accent-dim)] border-[var(--ds-accent)] hover:brightness-110'
-                          : i < 3
-                            ? rankBg[i]
-                            : 'border-transparent hover:bg-white/[0.03]'
+                      aria-current={isYou ? 'true' : undefined}
+                      className={`grid ${isTournamentPoints ? 'grid-cols-[2.5rem_1fr_5rem]' : 'grid-cols-[2.5rem_1fr_5rem_3.5rem] md:grid-cols-[2.5rem_1fr_5rem_5rem_3.5rem]'} px-5 py-2.5 items-center transition-colors group border-l-2 ${
+                        isYou
+                          ? 'bg-[var(--bg-accent)]'
+                          : 'border-transparent hover:bg-[var(--bg-card-hover)]'
                       }`}
+                      style={isYou ? { borderLeftColor: 'var(--accent)' } : undefined}
                     >
-                      <span className="flex items-center">
-                        {RankIcon ? (
-                          <RankIcon className={`w-5 h-5 ${rankColors[i]}`} />
-                        ) : (
-                          <span className="ds-mono text-sm text-[var(--text-dim)] font-semibold">{i + 1}</span>
+                      <span className="flex items-center gap-1">
+                        {isTop3 && (
+                          <Trophy
+                            className="w-3.5 h-3.5 shrink-0"
+                            aria-hidden="true"
+                            style={{
+                              color:
+                                i === 0
+                                  ? 'var(--color-gold)'
+                                  : i === 1
+                                    ? 'var(--color-silver)'
+                                    : 'var(--color-bronze)',
+                            }}
+                          />
                         )}
+                        <span className={`nums text-[13px] font-medium ${isTop3 ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}`}>
+                          {i + 1}
+                        </span>
                       </span>
                       <span className="flex items-center gap-2.5 min-w-0">
                         <Avatar name={p.full_name} src={p.avatar_url} size="sm" />
                         <span
-                          className={`truncate font-medium transition-colors group-hover:text-[var(--ds-accent)] ${
-                            i < 3 ? 'ds-display text-base text-shuttle-white' : 'text-sm text-shuttle-white'
-                          } ${p.id === currentPlayerId ? 'text-[var(--ds-accent)]' : ''}`}
+                          className={`truncate text-[16px] font-medium transition-colors ${
+                            isYou ? 'text-[var(--accent)]' : 'text-[var(--text-primary)] group-hover:text-[var(--accent)]'
+                          }`}
                         >
                           {p.full_name}
                         </span>
                         {prov && !isTournamentPoints && (
-                          <span className="chip shrink-0" style={{ fontSize: '0.6rem', padding: '0.125rem 0.4rem' }}>P</span>
+                          <span className="shrink-0 text-[10px] text-[var(--text-faint)] font-medium" title="Provisional">P</span>
                         )}
                       </span>
                       {isTournamentPoints ? (
-                        <span className="text-right ds-mono text-base font-bold gradient-text-gold">{(p as any)._tournamentPoints ?? 0}</span>
+                        <span className={`text-right nums text-[13px] font-medium ${isYou ? 'text-[var(--accent)]' : 'text-[var(--text-primary)]'}`}>
+                          {(p as any)._tournamentPoints ?? 0}
+                        </span>
                       ) : (
                         <>
-                          <span className="text-right ds-mono text-base font-bold text-shuttle-white">
+                          <span className={`text-right nums text-[13px] font-medium ${isYou ? 'text-[var(--accent)]' : 'text-[var(--text-primary)]'}`}>
                             {elo ?? '-'}
                             {(() => {
                               if (!elo) return null;
@@ -220,12 +223,12 @@ export function LeaderboardClient({
                               );
                             })()}
                           </span>
-                          <span className="text-right ds-mono text-sm text-[var(--text-secondary)]">
-                            <span className="text-[var(--color-success)]">{wins ?? 0}</span>
-                            <span className="text-[var(--text-dim)]">-</span>
-                            <span className="text-[var(--color-danger)]">{losses ?? 0}</span>
+                          <span className="text-right nums text-[12px] hidden md:block text-[var(--text-secondary)]">
+                            <span>{wins ?? 0}</span>
+                            <span className="text-[var(--text-faint)]">-</span>
+                            <span>{losses ?? 0}</span>
                           </span>
-                          <span className="text-right ds-mono text-sm text-[var(--text-secondary)] font-medium">{winPct}%</span>
+                          <span className="text-right nums text-[12px] text-[var(--text-secondary)]">{winPct}%</span>
                         </>
                       )}
                     </Link>
@@ -238,12 +241,12 @@ export function LeaderboardClient({
               <div className="flex flex-col items-center justify-center py-16">
                 {searchQuery ? (
                   <>
-                    <Search className="w-10 h-10 text-[var(--text-dim)] mb-3" />
+                    <Search className="w-10 h-10 text-[var(--text-faint)] mb-3" />
                     <p className="text-[var(--text-muted)]">No players found matching &ldquo;{searchQuery}&rdquo;</p>
                   </>
                 ) : (
                   <>
-                    <Trophy className="w-10 h-10 text-[var(--text-dim)] mb-3" />
+                    <Trophy className="w-10 h-10 text-[var(--text-faint)] mb-3" />
                     <p className="text-[var(--text-muted)]">No players ranked yet</p>
                   </>
                 )}
@@ -251,6 +254,7 @@ export function LeaderboardClient({
             )}
         </div>
       </div>
+    </div>
     </div>
   );
 }

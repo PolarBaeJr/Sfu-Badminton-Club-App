@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@badminton/shared/supabase-browser';
-import { Button, Select, Textarea } from '@badminton/ui';
+import { Select, Textarea } from '@badminton/ui';
 import { MATCH_FORMAT_LABELS, previewEloChange } from '@badminton/shared';
 import { createChallenge } from '@/lib/actions';
 import { useRouter } from 'next/navigation';
@@ -18,6 +18,7 @@ import {
   Calendar,
 } from 'lucide-react';
 import Link from 'next/link';
+import { FadeIn } from '@/components/motion-wrapper';
 
 interface PlayerOption {
   id: string;
@@ -136,24 +137,24 @@ export default function NewChallengePage() {
         Back to Challenges
       </Link>
 
-      <div className="reveal">
+      <FadeIn>
         {/* Page header */}
         <div className="flex items-center gap-3 mb-5">
-          <div className="w-11 h-11 rounded-md bg-[var(--ds-accent-dim)] flex items-center justify-center shrink-0">
-            <Swords className="w-5 h-5 text-[var(--ds-accent)]" />
+          <div className="w-10 h-10 bg-[var(--bg-accent)] flex items-center justify-center shrink-0 border-[0.5px] border-[var(--accent-border)]">
+            <Swords className="w-4 h-4 text-[var(--accent)]" />
           </div>
           <div>
-            <p className="eyebrow">Create</p>
-            <h1 className="ds-display text-3xl font-semibold tracking-tight text-[var(--text-primary)]">New Challenge</h1>
+            <p className="text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">Create</p>
+            <h1 className="text-[20px] font-medium text-[var(--text-primary)] mt-1">New Challenge</h1>
           </div>
         </div>
 
-        <div className="card-elevated rounded-xl p-5 bg-court-lines">
+        <div className="bg-[var(--bg-card)] p-5 border-[0.5px] border-[var(--border)]">
           <form onSubmit={handleSubmit} className="space-y-5">
 
             {/* Match Type Toggle */}
             <div>
-              <label className="eyebrow block mb-2">Match Type</label>
+              <label className="block mb-2 text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">Match Type</label>
               <div className="flex gap-2">
                 {(['singles', 'doubles'] as const).map((t) => (
                   <button
@@ -161,21 +162,15 @@ export default function NewChallengePage() {
                     type="button"
                     onClick={() => setType(t)}
                     aria-pressed={type === t}
-                    className={`flex-1 min-h-[40px] rounded-md text-sm font-semibold capitalize transition-all duration-150 press border active:scale-[0.99] ${
+                    className={`flex-1 min-h-[40px] text-[13px] font-medium capitalize transition-colors duration-150 press border-[0.5px] active:scale-[0.99] ${
                       type === t
-                        ? 'bg-[var(--ds-accent-dim)] border-[var(--ds-accent)] text-[var(--ds-accent)]'
-                        : 'bg-white/[0.03] border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:border-[var(--border-hover)]'
+                        ? 'bg-[var(--bg-accent)] border-[var(--accent-border)] text-[var(--accent)] hover:border-[var(--accent)]'
+                        : 'bg-[var(--bg-card)] border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
                     }`}
                   >
-                    {t === 'singles' ? (
-                      <span className="flex items-center justify-center gap-1.5">
-                        <Swords className="w-3.5 h-3.5" /> Singles
-                      </span>
-                    ) : (
-                      <span className="flex items-center justify-center gap-1.5">
-                        <Swords className="w-3.5 h-3.5" /> Doubles
-                      </span>
-                    )}
+                    <span className="flex items-center justify-center gap-1.5">
+                      <Swords className="w-3.5 h-3.5" /> {t === 'singles' ? 'Singles' : 'Doubles'}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -214,43 +209,43 @@ export default function NewChallengePage() {
 
             {/* Rated Toggle */}
             <div>
-              <label className="eyebrow block mb-2">Rating Impact</label>
+              <label className="block mb-2 text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">Rating Impact</label>
               <button
                 type="button"
                 onClick={() => setRated(!rated)}
                 aria-pressed={rated}
-                className={`w-full min-h-[40px] rounded-md text-sm font-semibold flex items-center justify-center gap-2 transition-all duration-150 press border active:scale-[0.99] ${
+                className={`w-full min-h-[40px] text-[13px] font-medium flex items-center justify-center gap-2 transition-colors duration-150 press border-[0.5px] active:scale-[0.99] ${
                   rated
-                    ? 'bg-[var(--color-gold)]/10 border-[var(--color-gold)]/25 text-[var(--color-gold)] glow-gold'
-                    : 'bg-white/[0.03] border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-hover)]'
+                    ? 'bg-[var(--bg-accent)] border-[var(--accent-border)] text-[var(--accent)] hover:border-[var(--accent)]'
+                    : 'bg-[var(--bg-card)] border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
                 }`}
               >
-                <Zap className={`w-4 h-4 transition-transform duration-200 ${rated ? 'scale-110' : ''}`} />
+                <Zap className={`w-3.5 h-3.5 transition-transform duration-200 ${rated ? 'scale-110' : ''}`} />
                 {rated ? 'Rated Match' : 'Casual (No Elo change)'}
               </button>
             </div>
 
             {/* Matchup Preview */}
             {opponent && rated && eloPreview && winProbability !== null && eloGap !== null && (
-              <div className="reveal card-surface rounded-lg p-5 overflow-hidden">
+              <div className="bg-[var(--bg-card)] p-5 border-[0.5px] border-[var(--border)] overflow-hidden">
                 <div className="flex items-center gap-2 mb-4">
                   <Info className="w-3.5 h-3.5 text-[var(--text-muted)]" />
-                  <span className="eyebrow">Matchup Preview</span>
+                  <span className="text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">Matchup Preview</span>
                 </div>
 
                 {/* Win probability bar */}
                 <div className="mb-4">
                   <div className="flex items-baseline justify-between mb-2">
-                    <span className="text-xs text-[var(--text-muted)] uppercase tracking-wider">Win probability</span>
-                    <span className="ds-mono text-2xl font-semibold text-[var(--ds-accent)]">{winProbability}%</span>
+                    <span className="text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">Win probability</span>
+                    <span className="text-[20px] font-medium text-[var(--accent)] tabular-nums">{winProbability}%</span>
                   </div>
                   <div className="relative h-1.5 w-full rounded-full bg-[var(--border)] overflow-hidden">
                     <div
-                      className="absolute inset-y-0 left-0 rounded-full bg-[var(--ds-accent)] transition-[width] duration-300"
+                      className="absolute inset-y-0 left-0 rounded-full bg-[var(--accent)] transition-[width] duration-300"
                       style={{ width: `${winProbability}%` }}
                     />
                   </div>
-                  <div className="mt-1.5 flex items-center justify-between text-[10px] text-[var(--text-dim)] ds-mono uppercase tracking-wide">
+                  <div className="mt-1.5 flex items-center justify-between text-[10px] text-[var(--text-faint)] tabular-nums tracking-[0.04em] uppercase">
                     <span>Elo Δ {eloGap >= 0 ? '+' : ''}{eloGap}</span>
                     <span>Your {myRating} · Opp {oppRating}</span>
                   </div>
@@ -258,18 +253,18 @@ export default function NewChallengePage() {
 
                 {/* Delta split */}
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="flex items-center gap-2 bg-[var(--color-success)]/5 border border-[var(--color-success)]/15 rounded-md px-3 py-2.5">
-                    <TrendingUp className="w-4 h-4 text-[var(--color-success)] shrink-0" />
+                  <div className="flex items-center gap-2 bg-[var(--bg-accent)] border-[0.5px] border-[var(--accent-border)] px-3 py-2.5">
+                    <TrendingUp className="w-3.5 h-3.5 text-[var(--accent)] shrink-0" />
                     <div>
-                      <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wide">On Win</p>
-                      <p className="ds-mono text-base font-bold text-[var(--color-success)]">+{eloPreview.winDelta}</p>
+                      <p className="text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">On Win</p>
+                      <p className="text-[15px] font-medium text-[var(--accent)] tabular-nums">+{eloPreview.winDelta}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 bg-[var(--color-danger)]/5 border border-[var(--color-danger)]/15 rounded-md px-3 py-2.5">
-                    <TrendingDown className="w-4 h-4 text-[var(--color-danger)] shrink-0" />
+                  <div className="flex items-center gap-2 bg-[var(--bg-loss)] border-[0.5px] border-[var(--loss-border)] px-3 py-2.5">
+                    <TrendingDown className="w-3.5 h-3.5 text-[var(--loss)] shrink-0" />
                     <div>
-                      <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wide">On Loss</p>
-                      <p className="ds-mono text-base font-bold text-[var(--color-danger)]">{eloPreview.lossDelta}</p>
+                      <p className="text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">On Loss</p>
+                      <p className="text-[15px] font-medium text-[var(--loss)] tabular-nums">{eloPreview.lossDelta}</p>
                     </div>
                   </div>
                 </div>
@@ -278,7 +273,7 @@ export default function NewChallengePage() {
 
             {/* Scheduled Date/Time */}
             <div>
-              <label className="eyebrow block mb-2">
+              <label className="block mb-2 text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">
                 <span className="flex items-center gap-1.5">
                   <Calendar className="w-3.5 h-3.5" />
                   When to Play (optional)
@@ -292,7 +287,7 @@ export default function NewChallengePage() {
                   value={scheduledDate}
                   onChange={(e) => setScheduledDate(e.target.value)}
                   min={new Date().toISOString().split('T')[0]}
-                  className="bg-[var(--bg-card)] border border-[var(--border)] rounded-md px-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:border-transparent transition-colors min-h-[40px] w-full"
+                  className="bg-[var(--bg-card)] border-[0.5px] border-[var(--border)] px-3 text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:border-transparent transition-colors min-h-[40px] w-full"
                 />
                 <input
                   id="scheduled_time"
@@ -300,7 +295,7 @@ export default function NewChallengePage() {
                   type="time"
                   value={scheduledTime}
                   onChange={(e) => setScheduledTime(e.target.value)}
-                  className="bg-[var(--bg-card)] border border-[var(--border)] rounded-md px-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:border-transparent transition-colors min-h-[40px] w-full"
+                  className="bg-[var(--bg-card)] border-[0.5px] border-[var(--border)] px-3 text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:border-transparent transition-colors min-h-[40px] w-full"
                 />
               </div>
             </div>
@@ -312,18 +307,17 @@ export default function NewChallengePage() {
               placeholder="Any message for your opponent..."
             />
 
-            <Button
+            <button
               type="submit"
               disabled={loading}
-              size="lg"
-              className="w-full"
+              className="press w-full inline-flex items-center justify-center gap-2 min-h-[44px] bg-[var(--bg-accent)] border-[0.5px] border-[var(--accent-border)] text-[var(--accent)] text-[13px] font-medium hover:border-[var(--accent)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {!loading && <Send className="w-4 h-4 mr-2" />}
+              {!loading && <Send className="w-3.5 h-3.5" />}
               Send Challenge
-            </Button>
+            </button>
           </form>
         </div>
-      </div>
+      </FadeIn>
     </div>
   );
 }

@@ -78,19 +78,19 @@ export function AddToCalendarButton({ name, date, location, notes }: AddToCalend
     <div className="relative" ref={menuRef}>
       <button
         onClick={() => setOpen(!open)}
-        className="press flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--bg-card)] border border-white/[0.08] text-xs font-medium text-[var(--text-muted)] hover:text-shuttle-white hover:bg-[var(--bg-elevated)] transition-all duration-200"
+        className="press flex items-center gap-1.5 px-3 py-1.5 bg-[var(--bg-card)] border border-[var(--border)] text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-card-hover)] transition-all duration-200"
       >
         <Calendar className="w-3.5 h-3.5" />
         Add to Calendar
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1 w-48 bg-[var(--bg-elevated)] border border-white/[0.1] rounded-lg shadow-xl z-50 overflow-hidden">
+        <div className="absolute right-0 top-full mt-1 w-48 bg-[var(--bg-card-hover)] border border-[var(--border-strong)] shadow-xl z-50 overflow-hidden">
           <a
             href={getGoogleCalendarUrl({ name, date, location, notes })}
             target="_blank"
             rel="noopener noreferrer"
-            className="press flex items-center gap-2 px-3 py-2.5 min-h-[44px] text-sm text-shuttle-white hover:bg-[var(--bg-card)] transition-colors"
+            className="press flex items-center gap-2 px-3 py-2.5 min-h-[44px] text-sm text-[var(--text-primary)] hover:bg-[var(--bg-card)] transition-colors"
             onClick={() => setOpen(false)}
           >
             <ExternalLink className="w-4 h-4 text-[var(--text-muted)]" />
@@ -98,7 +98,7 @@ export function AddToCalendarButton({ name, date, location, notes }: AddToCalend
           </a>
           <button
             onClick={handleDownloadICS}
-            className="press flex items-center gap-2 px-3 py-2.5 min-h-[44px] text-sm text-shuttle-white hover:bg-[var(--bg-card)] transition-colors w-full text-left"
+            className="press flex items-center gap-2 px-3 py-2.5 min-h-[44px] text-sm text-[var(--text-primary)] hover:bg-[var(--bg-card)] transition-colors w-full text-left"
           >
             <Download className="w-4 h-4 text-[var(--text-muted)]" />
             Download .ics

@@ -3,6 +3,10 @@ node_modules/
 **/node_modules/
 .pnpm-store/
 
+# OS metadata
+.DS_Store
+**/.DS_Store
+
 # builds / caches
 .next/
 **/.next/

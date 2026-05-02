@@ -59,7 +59,7 @@ export default async function AnnouncementsPage() {
         <FadeIn>
           <div className="mb-8 reveal reveal-1">
             <div className="flex items-center gap-3 mb-1">
-              <div className="w-9 h-9 rounded-lg bg-[var(--ds-accent)]/10 flex items-center justify-center">
+              <div className="w-9 h-9 bg-[var(--ds-accent)]/10 flex items-center justify-center">
                 <Megaphone className="w-5 h-5 text-court-red" />
               </div>
               <div>
@@ -74,7 +74,7 @@ export default async function AnnouncementsPage() {
           /* Empty state */
           <FadeIn>
             <div className="flex flex-col items-center justify-center py-24 gap-4">
-              <div className="w-16 h-16 rounded-2xl bg-[var(--bg-card)] border border-[var(--border)] flex items-center justify-center">
+              <div className="w-16 h-16 bg-[var(--bg-card)] border border-[var(--border)] flex items-center justify-center">
                 <Megaphone className="w-8 h-8 text-[var(--text-muted)]" />
               </div>
               <p className="text-[var(--text-muted)] text-sm">No announcements yet. Check back soon.</p>

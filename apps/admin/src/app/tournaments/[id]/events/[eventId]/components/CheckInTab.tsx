@@ -81,7 +81,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
   return (
     <div className="space-y-6">
       {/* Header with progress */}
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
+      <div className=" border border-[var(--border)] bg-[var(--bg-card)] p-6">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="text-xl font-bold text-[var(--text-primary)] flex items-center gap-2">
@@ -223,7 +223,7 @@ function EntryCard({
 
   return (
     <div
-      className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${
+      className={`flex items-center justify-between p-3 border transition-colors ${
         checked
           ? 'bg-[var(--color-success)]/5 border-[var(--color-success)]/20'
           : dimmed

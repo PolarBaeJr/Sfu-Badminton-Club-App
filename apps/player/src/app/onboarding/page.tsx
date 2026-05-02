@@ -1,300 +1,419 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useTransition } from 'react';
 import { completeOnboarding } from '@/lib/actions';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/toast-provider';
-import { Button, Input, Label, Card, CardContent } from '@badminton/ui';
-import { motion, AnimatePresence } from 'framer-motion';
-import {
-  User,
-  Phone,
-  Sparkles,
-  Trophy,
-  Swords,
-  TrendingUp,
-  ChevronRight,
-  ChevronLeft,
-  Loader2,
-  Rocket,
-} from 'lucide-react';
 
-const steps = [
-  { number: 1, title: 'Your Profile', subtitle: 'Tell us about yourself' },
-  { number: 2, title: 'Ready to Play!', subtitle: 'Your journey begins' },
-];
+const TOTAL_STEPS = 3;
 
-const statCards = [
-  { icon: Trophy, label: 'Starting Elo', value: '1200', color: 'var(--color-gold)' },
-  { icon: Swords, label: 'Singles & Doubles', value: 'Both', color: 'var(--ds-accent)' },
-  { icon: TrendingUp, label: 'Rank', value: 'Unranked', color: 'var(--text-secondary)' },
-];
+type Direction = 'forward' | 'back';
 
 export default function OnboardingPage() {
   const [step, setStep] = useState(1);
+  const [direction, setDirection] = useState<Direction>('forward');
+  const [animating, setAnimating] = useState(false);
+
   const [name, setName] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [phone, setPhone] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
+
+  const [, startTransition] = useTransition();
+  const [submitting, setSubmitting] = useState(false);
   const router = useRouter();
   const { toast } = useToast();
 
+  function go(toStep: number) {
+    if (animating) return;
+    if (toStep < 1 || toStep > TOTAL_STEPS) return;
+    setDirection(toStep > step ? 'forward' : 'back');
+    setAnimating(true);
+    // Step transition: 250ms cubic-bezier(0.4,0,0.2,1) per spec
+    setTimeout(() => {
+      setStep(toStep);
+      setAnimating(false);
+    }, 250);
+  }
+
   async function handleComplete() {
-    setLoading(true);
+    if (!acknowledged) return;
+    setSubmitting(true);
     try {
       await completeOnboarding({
         full_name: name,
         display_name: displayName || undefined,
         phone: phone || undefined,
       });
-      router.push('/feed');
+      // Brief delay so the user sees success state before navigating
+      startTransition(() => router.push('/feed'));
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Failed', 'error');
+      toast(err instanceof Error ? err.message : 'Failed to complete onboarding', 'error');
+      setSubmitting(false);
     }
-    setLoading(false);
   }
 
+  const progressPct = (step / TOTAL_STEPS) * 100;
+
+  // Step transition classes (slide ±40px + opacity per spec)
+  const stepStyle: React.CSSProperties = animating
+    ? {
+        opacity: 0,
+        transform: `translateX(${direction === 'forward' ? -40 : 40}px)`,
+        transition: 'opacity 200ms cubic-bezier(0.4,0,0.2,1), transform 200ms cubic-bezier(0.4,0,0.2,1)',
+      }
+    : {
+        opacity: 1,
+        transform: 'translateX(0)',
+        transition: 'opacity 200ms cubic-bezier(0.4,0,0.2,1), transform 200ms cubic-bezier(0.4,0,0.2,1)',
+      };
+
+  const fieldLabel: React.CSSProperties = {
+    display: 'block',
+    fontSize: 9,
+    letterSpacing: '0.18em',
+    textTransform: 'uppercase',
+    color: 'var(--dim)',
+    fontWeight: 700,
+    marginBottom: 8,
+  };
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%',
+    background: '#0D0D0D',
+    border: '1px solid rgba(255,255,255,0.10)',
+    color: '#F0F0F0',
+    fontFamily: 'var(--font-body)',
+    fontSize: 14,
+    padding: '12px 14px',
+    outline: 'none',
+    transition: 'border-color 150ms ease-out',
+    boxSizing: 'border-box',
+  };
+
+  const btnRed: React.CSSProperties = {
+    background: 'var(--red)',
+    color: '#fff',
+    fontFamily: 'var(--font-display)',
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: '0.16em',
+    textTransform: 'uppercase',
+    padding: '12px 18px',
+    border: 0,
+    cursor: 'pointer',
+    transition: 'background 150ms ease-out, opacity 150ms ease-out',
+  };
+
+  const btnBack: React.CSSProperties = {
+    background: 'transparent',
+    color: 'var(--muted)',
+    fontFamily: 'var(--font-display)',
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: '0.16em',
+    textTransform: 'uppercase',
+    border: 0,
+    cursor: 'pointer',
+    padding: '10px 14px',
+    transition: 'color 150ms',
+  };
+
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-12 relative overflow-hidden">
-      {/* Background effects */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-1/3 left-1/3 w-80 h-80 bg-[var(--ds-accent)]/5 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/3 right-1/4 w-64 h-64 bg-[var(--color-gold)]/5 rounded-full blur-3xl" />
+    <div
+      className="fixed inset-0 flex flex-col overflow-y-auto"
+      style={{ background: 'var(--bg)', zIndex: 200 }}
+    >
+      {/* Diagonal grid texture */}
+      <div
+        aria-hidden
+        className="fixed inset-0 pointer-events-none"
+        style={{
+          backgroundImage:
+            'repeating-linear-gradient(45deg, transparent, transparent 39px, rgba(255,255,255,0.03) 39px, rgba(255,255,255,0.03) 40px)',
+          zIndex: 0,
+        }}
+      />
+
+      {/* Progress + step counter */}
+      <div className="relative pt-7 pb-4 text-center" style={{ zIndex: 2 }}>
+        <div
+          className="font-bold uppercase mb-3"
+          style={{ fontSize: 9, letterSpacing: '0.22em', color: 'var(--dim)' }}
+        >
+          Step {step} of {TOTAL_STEPS}
+        </div>
+        <div
+          className="relative mx-auto"
+          style={{ height: 2, background: 'var(--surface2)', maxWidth: 480 }}
+        >
+          <span
+            className="absolute left-0 top-0 bottom-0"
+            style={{
+              background: 'var(--red)',
+              transition: 'width 240ms ease-out',
+              width: `${progressPct}%`,
+            }}
+          />
+        </div>
       </div>
 
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-        className="w-full max-w-md relative z-10"
+      {/* Stage */}
+      <div
+        className="flex-1 flex items-center justify-center px-8 py-10 relative min-h-0"
+        style={{ zIndex: 2 }}
       >
-        {/* Header */}
-        <div className="text-center mb-6">
-          <motion.div
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
-            transition={{ type: 'spring', bounce: 0.5 }}
-            className="w-14 h-14 mx-auto mb-4 rounded-2xl gradient-gold flex items-center justify-center glow-gold"
-          >
-            <Sparkles className="w-7 h-7 text-[#0A0E1A]" />
-          </motion.div>
-          <p className="eyebrow mb-1">New Player</p>
-          <h1 className="display-lg text-shuttle-white">
-            Welcome to the Club
-          </h1>
-        </div>
-
-        {/* Progress Steps */}
-        <div className="flex items-center gap-3 mb-6 px-2">
-          {steps.map((s, i) => (
-            <div key={s.number} className="flex items-center flex-1">
-              <div className="flex items-center gap-2 flex-1">
-                <motion.div
-                  animate={{
-                    backgroundColor: step >= s.number ? 'var(--ds-accent)' : 'var(--on-surface-med)',
-                    scale: step === s.number ? 1.1 : 1,
-                  }}
-                  transition={{ type: 'spring', bounce: 0.4 }}
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0"
+        <div className="w-full" style={{ maxWidth: 520, ...stepStyle }}>
+          {step === 1 && (
+            <>
+              <div className="flex items-center gap-[14px]">
+                <span aria-hidden style={{ width: 3, height: 14, background: 'var(--red)' }} />
+                <span
+                  className="uppercase font-bold"
+                  style={{ fontSize: 10, letterSpacing: '0.25em', color: 'var(--red)' }}
                 >
-                  <span className={step >= s.number ? 'text-white' : 'text-[var(--text-muted)]'}>
-                    {step > s.number ? '✓' : s.number}
-                  </span>
-                </motion.div>
-                <div className="min-w-0">
-                  <p className={`text-xs font-semibold truncate ${step >= s.number ? 'text-shuttle-white' : 'text-[var(--text-muted)]'}`}>
-                    {s.title}
-                  </p>
+                  Welcome
+                </span>
+              </div>
+              <h1
+                style={{
+                  fontFamily: 'var(--font-display)',
+                  fontWeight: 700,
+                  fontSize: 64,
+                  lineHeight: 0.9,
+                  color: 'var(--ink)',
+                  letterSpacing: '-0.02em',
+                  marginTop: 16,
+                }}
+              >
+                You&apos;re in.
+              </h1>
+              <p
+                className="mt-5"
+                style={{ color: 'var(--muted)', fontSize: 14, lineHeight: 1.6, maxWidth: 440 }}
+              >
+                Three quick steps. Then you&apos;re ready to play.
+              </p>
+
+              <div className="mt-7 flex flex-col gap-[14px]">
+                {[
+                  { num: '01', text: <><strong style={{ color: 'var(--ink)', fontWeight: 600 }}>Tell us your name</strong> so other players know who they&apos;re challenging.</> },
+                  { num: '02', text: <><strong style={{ color: 'var(--ink)', fontWeight: 600 }}>Add a phone number</strong> for session reminders. Optional.</> },
+                  { num: '03', text: <><strong style={{ color: 'var(--ink)', fontWeight: 600 }}>Confirm club rules</strong> and you&apos;re on the ladder.</> },
+                ].map((row, i) => (
+                  <div
+                    key={row.num}
+                    className="grid items-center"
+                    style={{
+                      gridTemplateColumns: '32px 1fr',
+                      gap: 16,
+                      padding: '12px 0',
+                      borderTop: i === 0 ? 0 : '1px solid var(--hairline)',
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontFamily: 'var(--font-display)',
+                        fontWeight: 700,
+                        fontSize: 18,
+                        color: 'var(--red)',
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >{row.num}</span>
+                    <span style={{ color: 'var(--text)', fontSize: 13, lineHeight: 1.5 }}>{row.text}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-9 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => go(2)}
+                  disabled={animating}
+                  style={btnRed}
+                >Get started →</button>
+              </div>
+            </>
+          )}
+
+          {step === 2 && (
+            <>
+              <div className="flex items-center gap-[14px]">
+                <span aria-hidden style={{ width: 3, height: 14, background: 'var(--red)' }} />
+                <span
+                  className="uppercase font-bold"
+                  style={{ fontSize: 10, letterSpacing: '0.25em', color: 'var(--red)' }}
+                >
+                  Your profile
+                </span>
+              </div>
+              <h2
+                style={{
+                  fontFamily: 'var(--font-display)',
+                  fontWeight: 700,
+                  fontSize: 48,
+                  lineHeight: 0.9,
+                  color: 'var(--ink)',
+                  letterSpacing: '-0.02em',
+                  marginTop: 16,
+                }}
+              >
+                Who plays.
+              </h2>
+              <p className="mt-4" style={{ color: 'var(--muted)', fontSize: 14, lineHeight: 1.6, maxWidth: 440 }}>
+                Your name is how matches credit you. Display name and phone are optional.
+              </p>
+
+              <div className="mt-6 flex flex-col gap-[18px]">
+                <div>
+                  <label htmlFor="name" style={fieldLabel}>Full name *</label>
+                  <input
+                    id="name"
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="First Last"
+                    required
+                    style={inputStyle}
+                    onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--red)'; }}
+                    onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.10)'; }}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="displayName" style={fieldLabel}>Display name <span style={{ color: 'var(--faint)' }}>(optional)</span></label>
+                  <input
+                    id="displayName"
+                    type="text"
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    placeholder="What people call you on court"
+                    style={inputStyle}
+                    onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--red)'; }}
+                    onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.10)'; }}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="phone" style={fieldLabel}>Phone <span style={{ color: 'var(--faint)' }}>(optional)</span></label>
+                  <input
+                    id="phone"
+                    type="tel"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="For session reminders"
+                    style={inputStyle}
+                    onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--red)'; }}
+                    onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.10)'; }}
+                  />
                 </div>
               </div>
-              {i < steps.length - 1 && (
-                <div className="w-8 mx-2">
-                  <div className="h-[2px] rounded-full overflow-hidden bg-white/[0.06]">
-                    <motion.div
-                      animate={{ width: step > s.number ? '100%' : '0%' }}
-                      transition={{ duration: 0.4 }}
-                      className="h-full bg-[var(--ds-accent)] rounded-full"
-                    />
+
+              <div className="mt-9 flex items-center gap-3">
+                <button type="button" onClick={() => go(1)} disabled={animating} style={btnBack}>← Back</button>
+                <button
+                  type="button"
+                  onClick={() => go(3)}
+                  disabled={animating || name.trim().length < 2}
+                  style={{ ...btnRed, opacity: name.trim().length < 2 ? 0.4 : 1, cursor: name.trim().length < 2 ? 'not-allowed' : 'pointer' }}
+                >Continue →</button>
+              </div>
+            </>
+          )}
+
+          {step === 3 && (
+            <>
+              <div className="flex items-center gap-[14px]">
+                <span aria-hidden style={{ width: 3, height: 14, background: 'var(--red)' }} />
+                <span
+                  className="uppercase font-bold"
+                  style={{ fontSize: 10, letterSpacing: '0.25em', color: 'var(--red)' }}
+                >
+                  Club rules
+                </span>
+              </div>
+              <h2
+                style={{
+                  fontFamily: 'var(--font-display)',
+                  fontWeight: 700,
+                  fontSize: 48,
+                  lineHeight: 0.9,
+                  color: 'var(--ink)',
+                  letterSpacing: '-0.02em',
+                  marginTop: 16,
+                }}
+              >
+                The basics.
+              </h2>
+              <p className="mt-4" style={{ color: 'var(--muted)', fontSize: 14, lineHeight: 1.6, maxWidth: 440 }}>
+                Five things we ask of every player.
+              </p>
+
+              <div className="mt-7 flex flex-col gap-[14px]">
+                {[
+                  { num: '01', text: <><strong style={{ color: 'var(--ink)', fontWeight: 600 }}>Show up.</strong> If you sign up for a session, attend or cancel ≥2h ahead.</> },
+                  { num: '02', text: <><strong style={{ color: 'var(--ink)', fontWeight: 600 }}>Submit scores</strong> within 24h of any rated match — both players confirm.</> },
+                  { num: '03', text: <><strong style={{ color: 'var(--ink)', fontWeight: 600 }}>Dispute respectfully.</strong> Flag the score, don&apos;t argue at court.</> },
+                  { num: '04', text: <><strong style={{ color: 'var(--ink)', fontWeight: 600 }}>Climb honestly.</strong> ELO only counts when both sides agree on the result.</> },
+                  { num: '05', text: <><strong style={{ color: 'var(--ink)', fontWeight: 600 }}>Have fun.</strong> The ranking is real but the club comes first.</> },
+                ].map((row, i) => (
+                  <div
+                    key={row.num}
+                    className="grid items-center"
+                    style={{
+                      gridTemplateColumns: '32px 1fr',
+                      gap: 16,
+                      padding: '12px 0',
+                      borderTop: i === 0 ? 0 : '1px solid var(--hairline)',
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontFamily: 'var(--font-display)',
+                        fontWeight: 700,
+                        fontSize: 18,
+                        color: 'var(--red)',
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >{row.num}</span>
+                    <span style={{ color: 'var(--text)', fontSize: 13, lineHeight: 1.5 }}>{row.text}</span>
                   </div>
-                </div>
-              )}
-            </div>
-          ))}
+                ))}
+              </div>
+
+              <label
+                className="mt-7 flex items-start gap-3 cursor-pointer select-none"
+                style={{ fontSize: 13, color: 'var(--text)' }}
+              >
+                <input
+                  type="checkbox"
+                  checked={acknowledged}
+                  onChange={(e) => setAcknowledged(e.target.checked)}
+                  className="mt-[3px]"
+                  style={{
+                    accentColor: 'var(--red)',
+                    width: 16,
+                    height: 16,
+                  }}
+                />
+                <span>I&apos;ve read these and I&apos;m in.</span>
+              </label>
+
+              <div className="mt-9 flex items-center gap-3">
+                <button type="button" onClick={() => go(2)} disabled={animating || submitting} style={btnBack}>← Back</button>
+                <button
+                  type="button"
+                  onClick={handleComplete}
+                  disabled={!acknowledged || submitting || animating}
+                  style={{
+                    ...btnRed,
+                    opacity: !acknowledged || submitting ? 0.4 : 1,
+                    cursor: !acknowledged || submitting ? 'not-allowed' : 'pointer',
+                  }}
+                >{submitting ? 'Setting up…' : "I'm ready →"}</button>
+              </div>
+            </>
+          )}
         </div>
-
-        {/* Card */}
-        <Card padding={false} className="bg-[var(--bg-card)]/80 border-[var(--border)] backdrop-blur-xl shadow-2xl shadow-black/20">
-          <CardContent className="p-6">
-            <AnimatePresence mode="wait">
-              {step === 1 && (
-                <motion.div
-                  key="step1"
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  transition={{ duration: 0.3 }}
-                  className="space-y-5"
-                >
-                  <div>
-                    <h2 className="text-lg font-bold text-shuttle-white mb-1">Set up your profile</h2>
-                    <p className="text-sm text-[var(--text-secondary)]">This is how other players will see you</p>
-                  </div>
-
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="name" className="text-[var(--text-secondary)] text-sm font-medium">
-                        Full Name <span className="text-[var(--ds-accent)]">*</span>
-                      </Label>
-                      <div className="relative">
-                        <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)]" />
-                        <Input
-                          id="name"
-                          value={name}
-                          onChange={(e) => setName(e.target.value)}
-                          placeholder="Your full name"
-                          className="h-12 pl-10 bg-[var(--on-surface-soft)] border-[var(--border-hover)] text-shuttle-white placeholder:text-[var(--text-dim)] focus:border-[var(--ds-accent)]/50 focus:ring-[var(--ds-accent)]/20"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="displayName" className="text-[var(--text-secondary)] text-sm font-medium">
-                        Display Name <span className="text-[var(--text-muted)]">(optional)</span>
-                      </Label>
-                      <div className="relative">
-                        <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)]" />
-                        <Input
-                          id="displayName"
-                          value={displayName}
-                          onChange={(e) => setDisplayName(e.target.value)}
-                          placeholder="Nickname or gamertag"
-                          className="h-12 pl-10 bg-[var(--on-surface-soft)] border-[var(--border-hover)] text-shuttle-white placeholder:text-[var(--text-dim)] focus:border-[var(--ds-accent)]/50 focus:ring-[var(--ds-accent)]/20"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="phone" className="text-[var(--text-secondary)] text-sm font-medium">
-                        Phone <span className="text-[var(--text-muted)]">(optional)</span>
-                      </Label>
-                      <div className="relative">
-                        <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)]" />
-                        <Input
-                          id="phone"
-                          value={phone}
-                          onChange={(e) => setPhone(e.target.value)}
-                          placeholder="For session reminders"
-                          className="h-12 pl-10 bg-[var(--on-surface-soft)] border-[var(--border-hover)] text-shuttle-white placeholder:text-[var(--text-dim)] focus:border-[var(--ds-accent)]/50 focus:ring-[var(--ds-accent)]/20"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <Button
-                    onClick={() => { if (name.length >= 2) setStep(2); }}
-                    disabled={name.length < 2}
-                    size="lg"
-                    className="w-full h-12 gradient-court text-white font-bold tracking-wide shadow-lg shadow-[var(--ds-accent)]/20 hover:shadow-[var(--ds-accent)]/30 disabled:opacity-40 disabled:shadow-none transition-all duration-300"
-                  >
-                    Continue
-                    <ChevronRight className="w-4 h-4 ml-1" />
-                  </Button>
-                </motion.div>
-              )}
-
-              {step === 2 && (
-                <motion.div
-                  key="step2"
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  transition={{ duration: 0.3 }}
-                  className="space-y-6"
-                >
-                  <div className="text-center">
-                    <motion.div
-                      initial={{ scale: 0, rotate: -180 }}
-                      animate={{ scale: 1, rotate: 0 }}
-                      transition={{ type: 'spring', bounce: 0.5, delay: 0.15 }}
-                      className="w-16 h-16 mx-auto mb-4 rounded-full bg-[var(--ds-accent)]/15 flex items-center justify-center"
-                    >
-                      <Rocket className="w-8 h-8 text-[var(--ds-accent)]" />
-                    </motion.div>
-                    <h2 className="text-xl font-bold text-shuttle-white">
-                      You&apos;re ready, {displayName || name.split(' ')[0]}!
-                    </h2>
-                    <p className="text-sm text-[var(--text-secondary)] mt-2">
-                      Start exploring the club, check into sessions, and challenge other players.
-                    </p>
-                  </div>
-
-                  {/* Starting Stats Cards */}
-                  <div className="grid grid-cols-3 gap-3">
-                    {statCards.map((card, i) => (
-                      <motion.div
-                        key={card.label}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.2 + i * 0.1 }}
-                        className="card-surface p-3 text-center"
-                      >
-                        <card.icon
-                          className="w-5 h-5 mx-auto mb-1.5"
-                          style={{ color: card.color }}
-                        />
-                        <p className="display-md text-shuttle-white nums">
-                          {card.value}
-                        </p>
-                        <p className="eyebrow mt-0.5" style={{ fontSize: '0.6rem' }}>
-                          {card.label}
-                        </p>
-                      </motion.div>
-                    ))}
-                  </div>
-
-                  {/* Tip */}
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 0.5 }}
-                    className="bg-[var(--color-gold)]/5 border border-[var(--color-gold)]/10 rounded-xl p-3 flex items-start gap-2.5"
-                  >
-                    <Trophy className="w-4 h-4 text-[var(--color-gold)] mt-0.5 shrink-0" />
-                    <p className="text-xs text-[var(--text-secondary)]">
-                      <span className="text-[var(--color-gold)] font-semibold">Pro tip:</span>{' '}
-                      Challenge players near your Elo to climb the leaderboard faster!
-                    </p>
-                  </motion.div>
-
-                  <div className="flex gap-3">
-                    <Button
-                      variant="outline"
-                      onClick={() => setStep(1)}
-                      className="h-12 px-5 bg-[var(--on-surface-soft)] border-[var(--border-hover)] hover:bg-[var(--on-surface-med)] text-[var(--text-secondary)]"
-                    >
-                      <ChevronLeft className="w-4 h-4 mr-1" />
-                      Back
-                    </Button>
-                    <Button
-                      onClick={handleComplete}
-                      disabled={loading}
-                      size="lg"
-                      className="flex-1 h-12 gradient-gold text-[var(--bg-primary)] font-black tracking-wide shadow-lg shadow-[var(--color-gold)]/20 hover:shadow-[var(--color-gold)]/30 transition-all duration-300"
-                    >
-                      {loading ? (
-                        <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                      ) : (
-                        <Rocket className="w-4 h-4 mr-2" />
-                      )}
-                      Let&apos;s Go!
-                    </Button>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </CardContent>
-        </Card>
-      </motion.div>
+      </div>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge } from '@badminton/ui';
+import { Card, Badge, PageHero } from '@badminton/ui';
 import { MATCH_FORMAT_LABELS, formatDateTime } from '@badminton/shared';
 import { MatchActions } from './actions';
 import { CreateMatchForm } from './create-match';
@@ -69,22 +69,15 @@ export default async function MatchesPage() {
   });
 
   return (
-    <div className="space-y-8">
-      {/* Page Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--ds-accent)]/10 text-[var(--ds-accent)]">
-            <Target className="w-5 h-5" />
-          </div>
-          <div>
-            <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">MATCHES</h1>
-            <p className="text-sm text-[var(--text-muted)] mt-0.5">
-              Manage match results, disputes, and walkovers
-            </p>
-          </div>
-        </div>
-        <CreateMatchForm players={allPlayers || []} />
-      </div>
+    <div>
+      <PageHero
+        eyebrow={`${(matches?.length ?? 0)} matches`}
+        title="Matches."
+        subtitle="Every score submitted across the club — confirmed, disputed, and pending."
+        watermark="M"
+      />
+      <div className="space-y-8 px-12 py-8">
+        <div className="flex justify-end"><CreateMatchForm players={allPlayers || []} /></div>
 
       {/* Matches Table */}
       <Card padding={false}>
@@ -143,7 +136,7 @@ export default async function MatchesPage() {
                             {matchDisputes.map((d: Record<string, unknown>) => (
                               <div
                                 key={d.id as string}
-                                className="flex items-start gap-1.5 text-xs rounded-md px-2.5 py-1.5 border-l-2 border-[var(--color-danger)] bg-[var(--color-danger)]/5"
+                                className="flex items-start gap-1.5 text-xs px-2.5 py-1.5 border-l-2 border-[var(--color-danger)] bg-[var(--color-danger)]/5"
                               >
                                 <AlertTriangle className="w-3.5 h-3.5 text-[var(--color-danger)] mt-0.5 shrink-0" />
                                 <span className="text-[var(--color-danger)]">
@@ -160,7 +153,7 @@ export default async function MatchesPage() {
                             {matchWalkovers.map((w: Record<string, unknown>) => (
                               <div
                                 key={w.id as string}
-                                className="flex items-start gap-1.5 text-xs rounded-md px-2.5 py-1.5 border-l-2 border-[var(--color-warning)] bg-[var(--color-warning)]/5"
+                                className="flex items-start gap-1.5 text-xs px-2.5 py-1.5 border-l-2 border-[var(--color-warning)] bg-[var(--color-warning)]/5"
                               >
                                 <Clock className="w-3.5 h-3.5 text-[var(--color-warning)] mt-0.5 shrink-0" />
                                 <span className="text-[var(--color-warning)]">
@@ -244,6 +237,7 @@ export default async function MatchesPage() {
           )}
         </div>
       </Card>
+    </div>
     </div>
   );
 }

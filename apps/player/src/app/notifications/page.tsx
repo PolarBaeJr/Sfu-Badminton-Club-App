@@ -10,8 +10,8 @@ const NOTIFICATION_ICON_MAP: Record<string, { icon: typeof Bell; color: string; 
   // Challenge types
   challenge_received: { icon: Swords, color: 'text-[var(--ds-accent)]', bg: 'bg-[var(--ds-accent)]/10' },
   challenge_accepted: { icon: Swords, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
-  challenge_rejected: { icon: Swords, color: 'text-[var(--text-muted)]', bg: 'bg-white/[0.06]' },
-  challenge_cancelled: { icon: Swords, color: 'text-[var(--text-muted)]', bg: 'bg-white/[0.06]' },
+  challenge_rejected: { icon: Swords, color: 'text-[var(--text-muted)]', bg: 'bg-[var(--on-surface-med)]' },
+  challenge_cancelled: { icon: Swords, color: 'text-[var(--text-muted)]', bg: 'bg-[var(--on-surface-med)]' },
   // Result types
   result_pending: { icon: Trophy, color: 'text-gold', bg: 'bg-[var(--color-gold)]/10' },
   result_confirmed: { icon: Trophy, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
@@ -24,7 +24,7 @@ const NOTIFICATION_ICON_MAP: Record<string, { icon: typeof Bell; color: string; 
   announcement: { icon: Megaphone, color: 'text-gold', bg: 'bg-[var(--color-gold)]/10' },
   tournament_update: { icon: Trophy, color: 'text-gold', bg: 'bg-[var(--color-gold)]/10' },
   team_invite: { icon: UserPlus, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
-  system: { icon: Info, color: 'text-[var(--text-muted)]', bg: 'bg-white/[0.06]' },
+  system: { icon: Info, color: 'text-[var(--text-muted)]', bg: 'bg-[var(--on-surface-med)]' },
 };
 
 function getNotificationMeta(type: string) {
@@ -32,7 +32,7 @@ function getNotificationMeta(type: string) {
   if (NOTIFICATION_ICON_MAP[type]) return NOTIFICATION_ICON_MAP[type];
   const prefix = type.split('_')[0] ?? '';
   const prefixMatch = Object.entries(NOTIFICATION_ICON_MAP).find(([key]) => key.startsWith(prefix));
-  return prefixMatch ? prefixMatch[1] : { icon: Bell, color: 'text-[var(--text-muted)]', bg: 'bg-white/[0.06]' };
+  return prefixMatch ? prefixMatch[1] : { icon: Bell, color: 'text-[var(--text-muted)]', bg: 'bg-[var(--on-surface-med)]' };
 }
 
 function getNotificationHref(type: string, metadata: Record<string, unknown> | null): string | null {
@@ -70,7 +70,7 @@ export default async function NotificationsPage() {
       <FadeIn>
         <div className="flex items-center justify-between reveal reveal-1">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[var(--ds-accent)]/10 flex items-center justify-center">
+            <div className="w-10 h-10 bg-[var(--ds-accent)]/10 flex items-center justify-center">
               <Bell className="w-5 h-5 text-court-red" />
             </div>
             <div>
@@ -90,7 +90,7 @@ export default async function NotificationsPage() {
       {/* Unread Section */}
       {unread.length > 0 && (
         <FadeIn delay={0.05}>
-          <div className="card-elevated p-4" style={{ borderColor: 'rgba(239,68,68,0.12)' }}>
+          <div className="card-elevated p-4" style={{ borderColor: 'color-mix(in srgb, var(--color-danger) 12%, transparent)' }}>
             <div className="flex items-center gap-2 mb-3">
               <Bell className="w-4 h-4 text-court-red" />
               <h2 className="eyebrow" style={{ color: 'var(--text-primary)' }}>Unread</h2>
@@ -104,7 +104,7 @@ export default async function NotificationsPage() {
                   <StaggerItem key={n.id}>
                     <NotificationLink notificationId={n.id} href={getNotificationHref(n.type, n.metadata)} isRead={n.read_flag}>
                       <div className="card-surface card-interactive flex items-start gap-3 p-4 border-l-2 border-l-[var(--ds-accent)]">
-                        <div className={`w-9 h-9 rounded-lg ${meta.bg} flex items-center justify-center shrink-0 mt-0.5`}>
+                        <div className={`w-9 h-9 ${meta.bg} flex items-center justify-center shrink-0 mt-0.5`}>
                           <Icon className={`w-4 h-4 ${meta.color}`} />
                         </div>
                         <div className="min-w-0 flex-1">
@@ -149,8 +149,8 @@ export default async function NotificationsPage() {
                 return (
                   <StaggerItem key={n.id}>
                     <NotificationLink notificationId={n.id} href={getNotificationHref(n.type, n.metadata)} isRead={n.read_flag}>
-                      <div className="card-surface flex items-start gap-3 p-4 rounded-xl opacity-60 hover:opacity-80 transition-all duration-200">
-                        <div className={`w-9 h-9 rounded-lg bg-[var(--on-surface-soft)] flex items-center justify-center shrink-0 mt-0.5`}>
+                      <div className="card-surface flex items-start gap-3 p-4 opacity-60 hover:opacity-80 transition-all duration-200">
+                        <div className={`w-9 h-9 bg-[var(--on-surface-soft)] flex items-center justify-center shrink-0 mt-0.5`}>
                           <Icon className="w-4 h-4 text-[var(--text-dim)]" />
                         </div>
                         <div className="min-w-0 flex-1">

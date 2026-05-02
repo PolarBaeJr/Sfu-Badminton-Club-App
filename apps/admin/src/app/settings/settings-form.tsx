@@ -87,7 +87,7 @@ export function SettingsForm({ settings }: { settings: PlatformSetting[] }) {
       </div>
 
       {hasChanges && (
-        <div className="bg-[#F59E0B]/10 border border-[#F59E0B]/20 rounded-lg p-3 text-sm text-[#F59E0B]">
+        <div className="bg-[#F59E0B]/10 border border-[#F59E0B]/20 p-3 text-sm text-[#F59E0B]">
           Warning: Changing platform settings affects all players immediately. Changes are logged in the audit trail.
         </div>
       )}

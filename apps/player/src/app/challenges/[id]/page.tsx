@@ -68,11 +68,11 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
       </Link>
 
       <FadeIn>
-        <div className="card-elevated bg-court-grid bg-noise rounded-2xl overflow-hidden">
+        <div className="card-elevated bg-court-grid bg-noise overflow-hidden">
           {/* Header band */}
           <div className="px-5 pt-5 pb-4 flex items-center justify-between gap-3 border-b border-[var(--border)]">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-xl bg-[var(--ds-accent)]/10 flex items-center justify-center shrink-0 glow-red">
+              <div className="w-10 h-10 bg-[var(--ds-accent)]/10 flex items-center justify-center shrink-0 glow-red">
                 <Swords className="w-5 h-5 text-[var(--ds-accent)]" />
               </div>
               <h1 className="display-md truncate">Challenge Detail</h1>
@@ -91,7 +91,7 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
                 { icon: Zap,    label: 'Rated',   value: challenge.rated_flag ? 'Rated' : 'Casual',                                                   chipClass: challenge.rated_flag ? 'text-[var(--color-gold)]' : 'text-[var(--text-muted)]' },
                 { icon: Clock,  label: 'Created', value: formatRelativeTime(challenge.created_at),                                                    chipClass: 'text-[var(--text-secondary)]' },
               ].map((item) => (
-                <div key={item.label} className="card-surface rounded-xl p-3.5">
+                <div key={item.label} className="card-surface p-3.5">
                   <div className="flex items-center gap-1.5 mb-1.5">
                     <item.icon className={`w-3.5 h-3.5 shrink-0 ${item.chipClass}`} />
                     <span className="eyebrow">{item.label}</span>
@@ -103,7 +103,7 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
 
             {/* Note */}
             {challenge.note && (
-              <div className="card-surface rounded-xl p-4 flex items-start gap-2.5 reveal reveal-2">
+              <div className="card-surface p-4 flex items-start gap-2.5 reveal reveal-2">
                 <MessageSquare className="w-4 h-4 text-[var(--text-muted)] mt-0.5 shrink-0" />
                 <p className="text-sm text-[var(--text-secondary)] leading-relaxed">{challenge.note}</p>
               </div>
@@ -115,7 +115,7 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
                 { label: 'Team A', players: sideA, accentClass: 'text-[var(--ds-accent)]', borderClass: 'border-[var(--ds-accent)]/20' },
                 { label: 'Team B', players: sideB, accentClass: 'text-[var(--color-gold)]',   borderClass: 'border-[var(--color-gold)]/20' },
               ].map((team) => (
-                <div key={team.label} className={`card-surface rounded-xl p-4 border ${team.borderClass}`}>
+                <div key={team.label} className={`card-surface p-4 border ${team.borderClass}`}>
                   <p className={`eyebrow mb-3 ${team.accentClass}`}>{team.label}</p>
                   <div className="space-y-2.5">
                     {team.players.map((cp: Record<string, unknown>) => {
@@ -145,7 +145,7 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
 
             {/* Match Result */}
             {match && (
-              <div className="card-surface rounded-xl p-4 reveal reveal-4">
+              <div className="card-surface p-4 reveal reveal-4">
                 <div className="flex items-center gap-2 mb-3">
                   <Trophy className="w-4 h-4 text-[var(--color-gold)]" />
                   <span className="eyebrow text-[var(--color-gold)]">Match Result</span>

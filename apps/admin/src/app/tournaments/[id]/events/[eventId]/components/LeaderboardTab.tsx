@@ -111,7 +111,7 @@ export function LeaderboardTab({ event, participants, pairs, isDoubles }: Props)
         </Button>
       </div>
 
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+      <div className=" border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
         <table className="w-full">
           <thead>
             <tr className="border-b border-[var(--border)]">

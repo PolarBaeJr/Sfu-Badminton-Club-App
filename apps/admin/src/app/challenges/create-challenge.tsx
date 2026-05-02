@@ -87,7 +87,7 @@ export function CreateChallengeForm({ players }: { players: Player[] }) {
             <span className="text-sm text-[var(--text-secondary)]">Rated</span>
           </div>
 
-          <div className="border border-[var(--border)] rounded-lg p-3 space-y-3">
+          <div className="border border-[var(--border)] p-3 space-y-3">
             <p className="text-xs font-medium text-[var(--text-muted)] uppercase">Side A</p>
             <Select label="Player 1" value={sideA1} onChange={(e) => setSideA1(e.target.value)} options={playerOptions} />
             {type === 'doubles' && (
@@ -95,7 +95,7 @@ export function CreateChallengeForm({ players }: { players: Player[] }) {
             )}
           </div>
 
-          <div className="border border-[var(--border)] rounded-lg p-3 space-y-3">
+          <div className="border border-[var(--border)] p-3 space-y-3">
             <p className="text-xs font-medium text-[var(--text-muted)] uppercase">Side B</p>
             <Select label="Player 1" value={sideB1} onChange={(e) => setSideB1(e.target.value)} options={playerOptions} />
             {type === 'doubles' && (

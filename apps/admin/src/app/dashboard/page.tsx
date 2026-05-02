@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Badge, Avatar } from '@badminton/ui';
+import { Badge, Avatar, PageHero, StatCard } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS } from '@badminton/shared';
 import Link from 'next/link';
 import {
@@ -49,17 +49,20 @@ export default async function DashboardPage() {
   const hasAlerts = (pendingPlayers ?? 0) > 0 || (openDisputes ?? 0) > 0 || (pendingWalkovers ?? 0) > 0;
 
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold font-display text-[var(--text-primary)] tracking-wide">DASHBOARD</h1>
-        <p className="text-sm text-[var(--text-muted)] mt-1">Overview of club activity and action items</p>
-      </div>
+    <div>
+      <PageHero
+        eyebrow="Season 02 · Spring 2026"
+        title="Run your club like a team."
+        subtitle="Approve players, resolve disputes, keep the season moving. Everything that needs your attention, in one place."
+        watermark="S02"
+      />
+      <div className="space-y-8 p-12">
+        {/* spacer wrapper preserves legacy section spacing */}
 
       {/* Alert Banner */}
       {hasAlerts && (
-        <div className="rounded-xl border border-[var(--color-warning)]/20 bg-[var(--color-warning)]/5 p-4 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-[var(--color-warning)]/10 flex items-center justify-center flex-shrink-0">
+        <div className=" border border-[var(--color-warning)]/20 bg-[var(--color-warning)]/5 p-4 flex items-center gap-3">
+          <div className="w-10 h-10 bg-[var(--color-warning)]/10 flex items-center justify-center flex-shrink-0">
             <AlertTriangle className="w-5 h-5 text-[var(--color-warning)]" />
           </div>
           <div className="flex-1">
@@ -77,7 +80,7 @@ export default async function DashboardPage() {
 
       {/* Pending Players */}
       {pendingPlayersList && pendingPlayersList.length > 0 && (
-        <div className="rounded-xl border border-[var(--color-warning)]/20 bg-[var(--bg-card)] overflow-hidden">
+        <div className=" border border-[var(--color-warning)]/20 bg-[var(--bg-card)] overflow-hidden">
           <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between">
             <div className="flex items-center gap-2">
               <UserCheck className="w-4 h-4 text-[var(--color-warning)]" />
@@ -108,9 +111,9 @@ export default async function DashboardPage() {
       {/* Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Link href="/players" className="group">
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-5 hover:border-[var(--border-hover)] transition-all hover:shadow-lg hover:shadow-black/5">
+          <div className=" border border-[var(--border)] bg-[var(--bg-card)] p-5 hover:border-[var(--border-hover)] transition-all hover:shadow-lg hover:shadow-black/5">
             <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 rounded-lg bg-[var(--color-info)]/10 flex items-center justify-center">
+              <div className="w-10 h-10 bg-[var(--color-info)]/10 flex items-center justify-center">
                 <Users className="w-5 h-5 text-[var(--color-info)]" />
               </div>
               <ArrowUpRight className="w-4 h-4 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -121,13 +124,13 @@ export default async function DashboardPage() {
         </Link>
 
         <Link href="/players?tab=attention" className="group">
-          <div className={`rounded-xl border p-5 transition-all hover:shadow-lg hover:shadow-black/5 ${
+          <div className={` border p-5 transition-all hover:shadow-lg hover:shadow-black/5 ${
             (pendingPlayers ?? 0) > 0
               ? 'border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5 hover:border-[var(--color-warning)]/50'
               : 'border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--border-hover)]'
           }`}>
             <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 rounded-lg bg-[var(--color-warning)]/10 flex items-center justify-center">
+              <div className="w-10 h-10 bg-[var(--color-warning)]/10 flex items-center justify-center">
                 <UserCheck className="w-5 h-5 text-[var(--color-warning)]" />
               </div>
               <ArrowUpRight className="w-4 h-4 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -138,13 +141,13 @@ export default async function DashboardPage() {
         </Link>
 
         <Link href="/disputes" className="group">
-          <div className={`rounded-xl border p-5 transition-all hover:shadow-lg hover:shadow-black/5 ${
+          <div className={` border p-5 transition-all hover:shadow-lg hover:shadow-black/5 ${
             (openDisputes ?? 0) > 0
               ? 'border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5 hover:border-[var(--color-danger)]/50'
               : 'border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--border-hover)]'
           }`}>
             <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 rounded-lg bg-[var(--color-danger)]/10 flex items-center justify-center">
+              <div className="w-10 h-10 bg-[var(--color-danger)]/10 flex items-center justify-center">
                 <AlertTriangle className="w-5 h-5 text-[var(--color-danger)]" />
               </div>
               <ArrowUpRight className="w-4 h-4 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -155,13 +158,13 @@ export default async function DashboardPage() {
         </Link>
 
         <Link href="/walkovers" className="group">
-          <div className={`rounded-xl border p-5 transition-all hover:shadow-lg hover:shadow-black/5 ${
+          <div className={` border p-5 transition-all hover:shadow-lg hover:shadow-black/5 ${
             (pendingWalkovers ?? 0) > 0
               ? 'border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5 hover:border-[var(--color-warning)]/50'
               : 'border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--border-hover)]'
           }`}>
             <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 rounded-lg bg-[var(--color-warning)]/10 flex items-center justify-center">
+              <div className="w-10 h-10 bg-[var(--color-warning)]/10 flex items-center justify-center">
                 <Clock className="w-5 h-5 text-[var(--color-warning)]" />
               </div>
               <ArrowUpRight className="w-4 h-4 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -175,7 +178,7 @@ export default async function DashboardPage() {
       {/* Two Column Section */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Active Tournaments */}
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
+        <div className=" border border-[var(--border)] bg-[var(--bg-card)] p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <Trophy className="w-4 h-4 text-[var(--text-muted)]" />
@@ -192,7 +195,7 @@ export default async function DashboardPage() {
         </div>
 
         {/* Active Challenges */}
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
+        <div className=" border border-[var(--border)] bg-[var(--bg-card)] p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <Swords className="w-4 h-4 text-[var(--text-muted)]" />
@@ -210,7 +213,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* Recent Matches */}
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
+      <div className=" border border-[var(--border)] bg-[var(--bg-card)]">
         <div className="flex items-center justify-between p-6 pb-4">
           <div className="flex items-center gap-2">
             <Trophy className="w-4 h-4 text-[var(--text-muted)]" />
@@ -228,7 +231,7 @@ export default async function DashboardPage() {
               const sideB = participants.filter((p: Record<string, unknown>) => p.team_side === 'b');
 
               return (
-                <div key={match.id} className="flex items-center justify-between py-3 border-b border-[var(--border)] last:border-0 hover:bg-white/[0.02] -mx-3 px-3 rounded-lg transition-colors">
+                <div key={match.id} className="flex items-center justify-between py-3 border-b border-[var(--border)] last:border-0 hover:bg-white/[0.02] -mx-3 px-3 transition-colors">
                   <div className="flex items-center gap-3 min-w-0">
                     <span className="text-sm text-[var(--text-primary)] truncate">
                       {sideA.map((p: Record<string, unknown>) => (p.player as Record<string, unknown>)?.full_name).join(' & ')}
@@ -261,6 +264,7 @@ export default async function DashboardPage() {
             )}
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

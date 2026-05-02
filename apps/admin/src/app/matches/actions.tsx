@@ -44,7 +44,7 @@ export function MatchActions({ matchId, resultStatus }: { matchId: string; resul
         trigger={
           <button
             aria-label="Match actions menu"
-            className="p-1.5 rounded-lg hover:bg-[var(--border-hover)] transition-colors text-[var(--text-muted)] hover:text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none"
+            className="p-1.5 hover:bg-[var(--border-hover)] transition-colors text-[var(--text-muted)] hover:text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--ds-accent)] focus-visible:outline-none"
           >
             <MoreVertical className="w-4 h-4" />
           </button>

@@ -15,8 +15,8 @@ export function CheckInButton({ sessionId, isCheckedIn }: CheckInButtonProps) {
 
   if (isCheckedIn) {
     return (
-      <span className="chip chip-success">
-        <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-[0.06em] bg-[var(--bg-accent)] text-[var(--accent)] border border-[var(--accent-border)]">
+        <CheckCircle2 className="w-3 h-3 shrink-0" />
         Checked In
       </span>
     );
@@ -37,7 +37,7 @@ export function CheckInButton({ sessionId, isCheckedIn }: CheckInButtonProps) {
     <button
       onClick={handleCheckIn}
       disabled={loading}
-      className="press gradient-court text-[#0A0A0A] rounded-lg px-4 py-2 text-sm font-semibold min-h-[44px] disabled:opacity-60 disabled:cursor-not-allowed transition-opacity"
+      className="press btn-primary-cta px-4 py-2 text-sm font-semibold min-h-[44px] disabled:opacity-60 disabled:cursor-not-allowed"
     >
       {loading ? 'Checking in...' : 'Check In'}
     </button>

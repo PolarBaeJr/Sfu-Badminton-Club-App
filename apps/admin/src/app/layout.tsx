@@ -1,10 +1,25 @@
 import type { Metadata } from 'next';
+import { Barlow, Barlow_Condensed } from 'next/font/google';
 import './globals.css';
 import { Sidebar } from '@/components/sidebar';
 import { MainContent } from '@/components/main-content';
 import { ToastProvider } from '@/components/toast-provider';
 import { SentryUserInit } from '@/components/sentry-user-init';
 import { getCurrentAdminUser } from '@/lib/supabase-server';
+
+const barlowCondensed = Barlow_Condensed({
+  subsets: ['latin'],
+  weight: ['400', '600', '700', '800'],
+  variable: '--font-barlow-condensed',
+  display: 'swap',
+});
+
+const barlow = Barlow({
+  subsets: ['latin'],
+  weight: ['300', '400', '500', '600', '700'],
+  variable: '--font-barlow',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   title: 'SFU Badminton - Admin',
@@ -23,7 +38,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   }
 
   return (
-    <html lang="en" data-theme="dark" suppressHydrationWarning>
+    <html lang="en" data-theme="dark" suppressHydrationWarning className={`${barlowCondensed.variable} ${barlow.variable}`}>
       <head>
         <script dangerouslySetInnerHTML={{ __html: `
           try {

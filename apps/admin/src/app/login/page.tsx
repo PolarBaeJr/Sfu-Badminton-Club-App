@@ -2,8 +2,6 @@
 
 import { useState } from 'react';
 import { createClient } from '@badminton/shared/supabase-browser';
-import { Button, Input, Card } from '@badminton/ui';
-import { Shield, Mail, Loader2, Globe, CheckCircle2, AlertCircle } from 'lucide-react';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -42,159 +40,230 @@ export default function LoginPage() {
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center relative overflow-hidden"
-      style={{
-        background: 'radial-gradient(ellipse at top, rgba(0,229,160,0.08) 0%, transparent 50%), radial-gradient(ellipse at bottom right, rgba(15,52,96,0.3) 0%, transparent 50%), var(--bg-card)',
-      }}
+      className="fixed inset-0 flex flex-col md:flex-row"
+      style={{ background: 'var(--bg)', zIndex: 200 }}
     >
-      {/* Subtle grid pattern overlay */}
+      {/* Left panel */}
       <div
-        className="absolute inset-0 opacity-[0.03]"
+        className="flex-1 min-w-0 relative overflow-hidden flex flex-col justify-center"
         style={{
-          backgroundImage:
-            'linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)',
-          backgroundSize: '48px 48px',
+          background: '#0A0A0A',
+          padding: '60px',
         }}
-      />
-
-      <div className="relative z-10 w-full max-w-md px-4">
-        {/* Glow effect behind card */}
+      >
         <div
-          className="absolute -inset-4 rounded-3xl opacity-20 blur-2xl"
-          style={{ background: 'linear-gradient(135deg, var(--ds-accent), transparent 60%)' }}
-        />
-
-        <div
-          className="relative w-full overflow-hidden rounded-xl bg-[var(--bg-card)] p-6"
+          aria-hidden
+          className="absolute inset-0 pointer-events-none"
           style={{
-            border: '1px solid rgba(0,229,160,0.15)',
-            boxShadow: '0 0 40px rgba(0,229,160,0.06), 0 8px 32px rgba(0,0,0,0.3)',
+            backgroundImage:
+              'repeating-linear-gradient(45deg, transparent, transparent 39px, rgba(255,255,255,0.03) 39px, rgba(255,255,255,0.03) 40px)',
           }}
-        >
-          {/* Header */}
-          <div className="text-center mb-8 pt-2">
-            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl mb-5" style={{ background: 'rgba(0,229,160,0.12)', border: '1px solid rgba(0,229,160,0.2)' }}>
-              <Shield className="w-7 h-7" style={{ color: 'var(--ds-accent)' }} />
-            </div>
-            <h1
-              className="text-3xl font-bold font-display tracking-[0.2em] mb-1"
-              style={{ color: 'var(--ds-accent)' }}
-            >
-              SFU BADMINTON
-            </h1>
-            <p className="text-sm font-medium tracking-wider uppercase" style={{ color: 'var(--text-muted)' }}>
-              Admin Portal
-            </p>
+        />
+        <div className="relative" style={{ maxWidth: 440 }}>
+          <div className="flex items-center gap-[10px]">
+            <span
+              className="flex items-center justify-center"
+              style={{
+                width: 40, height: 40, background: 'var(--red)', color: '#fff',
+                fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22,
+              }}
+            >S</span>
           </div>
+          <span
+            className="block uppercase font-bold"
+            style={{ marginTop: 12, fontSize: 11, letterSpacing: '0.25em', color: 'var(--red)' }}
+          >
+            SFU Badminton · Admin
+          </span>
+          <h1
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontWeight: 700,
+              fontSize: 72,
+              lineHeight: 0.92,
+              color: '#F0F0F0',
+              letterSpacing: '-0.02em',
+              marginTop: 32,
+            }}
+          >
+            <span className="block">Run your</span>
+            <span className="block">club like</span>
+            <span className="block">a team.</span>
+          </h1>
+          <span
+            className="inline-block uppercase font-bold"
+            style={{ marginTop: 32, fontSize: 10, letterSpacing: '0.2em', color: 'var(--red)' }}
+          >
+            Season 02 · Spring 2026
+          </span>
+        </div>
+        <div
+          className="absolute"
+          style={{ left: 60, bottom: 40, fontSize: 10, color: '#2A2A2A', letterSpacing: '0.06em' }}
+        >
+          © {new Date().getFullYear()} SFU Badminton Club
+        </div>
+      </div>
 
+      {/* Right panel */}
+      <div
+        className="flex-1 min-w-0 flex items-center justify-center overflow-y-auto"
+        style={{
+          background: '#111111',
+          borderLeft: '1px solid rgba(255,255,255,0.06)',
+          padding: '60px 40px',
+        }}
+      >
+        <div className="w-full" style={{ maxWidth: 380 }}>
           {sent ? (
-            <div className="text-center py-6">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full mb-4" style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.2)' }}>
-                <CheckCircle2 className="w-8 h-8 text-[#10B981]" />
-              </div>
-              <p className="text-[#10B981] font-semibold text-lg mb-1">Check your email!</p>
-              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                Magic link sent to{' '}
-                <strong style={{ color: 'var(--text-primary)' }}>{email}</strong>
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {/* Google Login Button */}
-              <button
-                onClick={handleGoogleLogin}
-                disabled={googleLoading}
-                className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl font-medium text-sm transition-all duration-200 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
-                style={{
-                  background: 'var(--bg-elevated)',
-                  border: '1px solid var(--border)',
-                  color: 'var(--text-primary)',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = 'rgba(0,229,160,0.4)';
-                  e.currentTarget.style.boxShadow = '0 0 16px rgba(0,229,160,0.08)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = 'var(--border)';
-                  e.currentTarget.style.boxShadow = 'none';
-                }}
+            <>
+              <span
+                className="uppercase font-bold"
+                style={{ fontSize: 10, letterSpacing: '0.2em', color: 'var(--red)' }}
               >
-                {googleLoading ? (
-                  <Loader2 className="w-5 h-5 animate-spin" style={{ color: 'var(--text-muted)' }} />
-                ) : (
-                  <Globe className="w-5 h-5" style={{ color: 'var(--text-muted)' }} />
-                )}
-                Continue with Google
-              </button>
+                Magic Link Sent
+              </span>
+              <h2
+                style={{
+                  fontFamily: 'var(--font-display)',
+                  fontWeight: 700,
+                  fontSize: 36,
+                  color: '#F0F0F0',
+                  marginTop: 8,
+                  lineHeight: 1,
+                  letterSpacing: '-0.01em',
+                }}
+              >Check your email.</h2>
+              <p style={{ fontSize: 12, color: '#888', lineHeight: 1.6, marginTop: 14 }}>
+                We sent a sign-in link to <strong style={{ color: '#F0F0F0' }}>{email}</strong>.
+                Open it on this device to continue.
+              </p>
+              <button
+                type="button"
+                onClick={() => { setSent(false); setEmail(''); }}
+                className="mt-8 uppercase font-bold"
+                style={{ fontSize: 11, letterSpacing: '0.16em', color: 'var(--muted)', fontFamily: 'var(--font-display)' }}
+              >← Use a different email</button>
+            </>
+          ) : (
+            <>
+              <span
+                className="uppercase font-bold"
+                style={{ fontSize: 10, letterSpacing: '0.2em', color: 'var(--red)' }}
+              >Welcome back</span>
+              <h2
+                style={{
+                  fontFamily: 'var(--font-display)',
+                  fontWeight: 700,
+                  fontSize: 36,
+                  color: '#F0F0F0',
+                  marginTop: 8,
+                  lineHeight: 1,
+                  letterSpacing: '-0.01em',
+                }}
+              >Sign in.</h2>
+              <p style={{ fontSize: 12, color: '#555', lineHeight: 1.6, marginTop: 14, marginBottom: 32 }}>
+                Sign in with a magic link or Google. Admin access is required.
+              </p>
 
-              {/* OR Divider */}
-              <div className="relative flex items-center gap-4">
-                <div className="flex-1 h-px" style={{ background: 'linear-gradient(to right, transparent, var(--border))' }} />
-                <span
-                  className="text-xs font-medium uppercase tracking-widest"
-                  style={{ color: 'var(--text-muted)' }}
-                >
-                  or
-                </span>
-                <div className="flex-1 h-px" style={{ background: 'linear-gradient(to left, transparent, var(--border))' }} />
-              </div>
-
-              {/* Magic Link Form */}
-              <form onSubmit={handleMagicLink} className="space-y-4">
-                <div className="relative">
-                  <Input
-                    label="Email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="admin@sfu.ca"
-                    required
-                  />
-                </div>
-
-                {/* Error State */}
+              <form onSubmit={handleMagicLink}>
+                <label
+                  className="block uppercase font-bold"
+                  style={{ fontSize: 9, letterSpacing: '0.15em', color: '#555', marginBottom: 6 }}
+                >Email</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="admin@sfu.ca"
+                  required
+                  className="w-full outline-none"
+                  style={{
+                    background: '#0D0D0D',
+                    border: `1px solid ${error ? 'var(--red)' : 'rgba(255,255,255,0.10)'}`,
+                    color: '#F0F0F0',
+                    fontFamily: 'var(--font-body)',
+                    fontSize: 13,
+                    fontWeight: 400,
+                    padding: '12px 14px',
+                    transition: 'border-color 150ms ease-out',
+                    marginBottom: error ? 10 : 24,
+                    boxSizing: 'border-box',
+                  }}
+                  onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--red)'; }}
+                  onBlur={(e) => { e.currentTarget.style.borderColor = error ? 'var(--red)' : 'rgba(255,255,255,0.10)'; }}
+                />
                 {error && (
                   <div
-                    className="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm"
                     style={{
-                      background: 'rgba(239,68,68,0.08)',
-                      border: '1px solid rgba(239,68,68,0.2)',
-                      color: '#EF4444',
+                      fontSize: 10,
+                      color: 'var(--red)',
+                      letterSpacing: '0.04em',
+                      marginBottom: 16,
                     }}
-                  >
-                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                    <span>{error}</span>
-                  </div>
+                  >{error}</div>
                 )}
-
-                {/* Submit Button */}
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-semibold text-sm transition-all duration-200 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="w-full uppercase font-bold inline-flex items-center justify-center gap-[10px]"
                   style={{
-                    background: 'var(--ds-accent)',
-                    color: '#0A0A0A',
-                    boxShadow: '0 4px 16px rgba(0,229,160,0.25)',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.boxShadow = '0 4px 24px rgba(0,229,160,0.4)';
-                    e.currentTarget.style.transform = 'translateY(-1px)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,229,160,0.25)';
-                    e.currentTarget.style.transform = 'translateY(0)';
+                    background: 'var(--red)',
+                    color: '#fff',
+                    fontFamily: 'var(--font-display)',
+                    fontSize: 11,
+                    letterSpacing: '0.16em',
+                    padding: '12px 16px',
+                    border: 0,
+                    cursor: loading ? 'not-allowed' : 'pointer',
+                    opacity: loading ? 0.6 : 1,
+                    transition: 'background 150ms ease-out, opacity 150ms ease-out',
                   }}
                 >
-                  {loading ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Mail className="w-4 h-4" />
-                  )}
-                  Send Magic Link
+                  {loading ? 'Sending…' : 'Send magic link'}
                 </button>
               </form>
-            </div>
+
+              {/* OR Divider */}
+              <div className="flex items-center gap-3 my-6">
+                <span className="flex-1 h-px" style={{ background: 'rgba(255,255,255,0.06)' }} />
+                <span
+                  className="uppercase"
+                  style={{ fontSize: 10, letterSpacing: '0.2em', color: 'var(--faint)' }}
+                >or</span>
+                <span className="flex-1 h-px" style={{ background: 'rgba(255,255,255,0.06)' }} />
+              </div>
+
+              <button
+                type="button"
+                onClick={handleGoogleLogin}
+                disabled={googleLoading}
+                className="w-full uppercase font-bold inline-flex items-center justify-center gap-[10px]"
+                style={{
+                  background: 'transparent',
+                  color: 'var(--text)',
+                  fontFamily: 'var(--font-display)',
+                  fontSize: 11,
+                  letterSpacing: '0.16em',
+                  padding: '12px 16px',
+                  border: '1px solid var(--hairline)',
+                  cursor: googleLoading ? 'not-allowed' : 'pointer',
+                  opacity: googleLoading ? 0.6 : 1,
+                  transition: 'border-color 150ms ease-out, color 150ms ease-out',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--hairline-strong)'; e.currentTarget.style.color = 'var(--ink)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--hairline)'; e.currentTarget.style.color = 'var(--text)'; }}
+              >
+                {googleLoading ? 'Redirecting…' : 'Continue with Google'}
+              </button>
+
+              <p
+                className="mt-8"
+                style={{ fontSize: 10, color: '#333', letterSpacing: '0.06em' }}
+              >
+                Admin access is granted by invitation. Contact a club captain to request access.
+              </p>
+            </>
           )}
         </div>
       </div>

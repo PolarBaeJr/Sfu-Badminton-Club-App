@@ -154,10 +154,20 @@ export function ChallengeDetailActions({
       {/* Accept/Reject for pending participants */}
       {myParticipantStatus === 'pending' && ['proposed', 'partially_confirmed'].includes(challengeStatus) && (
         <div className="flex gap-3">
-          <Button onClick={() => handleAction('accept')} loading={loading === 'accept'} className="flex-1" variant="success">
+          <Button
+            onClick={() => handleAction('accept')}
+            loading={loading === 'accept'}
+            variant="success"
+            className="flex-1 !bg-[var(--bg-accent)] !border-[0.5px] !border-[var(--accent-border)] !text-[var(--accent)] hover:!border-[var(--accent)]"
+          >
             Accept
           </Button>
-          <Button onClick={() => handleAction('reject')} loading={loading === 'reject'} className="flex-1" variant="danger">
+          <Button
+            onClick={() => handleAction('reject')}
+            loading={loading === 'reject'}
+            variant="danger"
+            className="flex-1 !bg-[var(--bg-card)] !border-[0.5px] !border-[var(--border)] !text-[var(--text-muted)] hover:!border-[var(--border-strong)]"
+          >
             Reject
           </Button>
         </div>

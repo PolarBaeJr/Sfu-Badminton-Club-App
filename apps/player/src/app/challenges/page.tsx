@@ -1,5 +1,5 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { Badge } from '@badminton/ui';
+import { Badge, PageHero } from '@badminton/ui';
 import { MATCH_FORMAT_LABELS, formatRelativeTime } from '@badminton/shared';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
@@ -39,47 +39,53 @@ export default async function ChallengesPage() {
     return ['completed', 'walkover_confirmed'].includes(c?.status as string);
   }) || [];
 
-  function ChallengeRow({ cp }: { cp: Record<string, unknown> }) {
+  function ChallengeRow({ cp, isIncoming = false }: { cp: Record<string, unknown>; isIncoming?: boolean }) {
     const c = cp.challenge as Record<string, unknown>;
     if (!c) return null;
     const parts = (c.challenge_participants as Record<string, unknown>[]) || [];
     const creator = c.creator as Record<string, unknown>;
 
-    const statusChip: Record<string, string> = {
-      proposed: 'chip chip-gold',
-      partially_confirmed: 'chip chip-gold',
-      accepted: 'chip chip-success',
-      completed: 'chip',
-      disputed: 'chip chip-red',
+    const statusStyle: Record<string, string> = {
+      proposed: 'bg-[var(--bg-accent)] text-[var(--accent)] border-[var(--accent-border)]',
+      partially_confirmed: 'bg-[var(--bg-accent)] text-[var(--accent)] border-[var(--accent-border)]',
+      accepted: 'bg-[var(--bg-accent)] text-[var(--accent)] border-[var(--accent-border)]',
+      completed: 'bg-[var(--bg-card)] text-[var(--text-muted)] border-[var(--border)]',
+      disputed: 'bg-[var(--bg-loss)] text-[var(--loss)] border-[var(--loss-border)]',
     };
 
     return (
       <StaggerItem>
         <Link href={`/challenges/${c.id}`} className="block group">
-          <div className="card-surface card-interactive flex items-center justify-between p-4">
+          <div
+            className={`bg-[var(--bg-card)] hover:bg-[var(--bg-card-hover)] flex items-center justify-between py-[14px] px-[14px] transition-colors duration-150 border-[0.5px] ${
+              isIncoming ? 'border-[var(--accent-border)]' : 'border-[var(--border)]'
+            }`}
+          >
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-xl bg-[var(--ds-accent)]/10 flex items-center justify-center shrink-0">
-                <Swords className="w-5 h-5 text-court-red" />
+              <div className="w-10 h-10 bg-[var(--bg-accent)] flex items-center justify-center shrink-0 border-[0.5px] border-[var(--accent-border)]">
+                <Swords className="w-4 h-4 text-[var(--accent)]" />
               </div>
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm text-shuttle-white font-semibold truncate">{creator?.full_name as string}</span>
-                  <span className="chip">{c.type as string}</span>
-                  {Boolean(c.rated_flag) && <span className="chip chip-gold">Rated</span>}
+                  <span className="text-[13px] text-[var(--text-primary)] font-medium truncate">{creator?.full_name as string}</span>
+                  <span className="text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">{c.type as string}</span>
+                  {Boolean(c.rated_flag) && (
+                    <span className="text-[10px] tracking-[0.04em] uppercase text-[var(--accent)]">Rated</span>
+                  )}
                 </div>
-                <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                <p className="text-[12px] text-[var(--text-muted)] mt-0.5">
                   {MATCH_FORMAT_LABELS[(c.format as string) as keyof typeof MATCH_FORMAT_LABELS]} &middot; {formatRelativeTime(c.created_at as string)}
                 </p>
-                <p className="text-xs text-[var(--text-dim)] mt-0.5 truncate">
+                <p className="text-[12px] text-[var(--text-faint)] mt-0.5 truncate">
                   {parts.map((p) => (p.player as Record<string, unknown>)?.full_name as string).join(' vs ')}
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0 ml-3">
-              <span className={statusChip[c.status as string] || 'chip'}>
+              <span className={`text-[10px] tracking-[0.04em] uppercase px-2 py-0.5 rounded-full border-[0.5px] ${statusStyle[c.status as string] || 'bg-[var(--bg-card)] text-[var(--text-muted)] border-[var(--border)]'}`}>
                 {c.status as string}
               </span>
-              <ChevronRight className="w-4 h-4 text-[var(--text-dim)] group-hover:text-court-red transition-colors" />
+              <ChevronRight className="w-4 h-4 text-[var(--text-faint)] group-hover:text-[var(--accent)] transition-colors" />
             </div>
           </div>
         </Link>
@@ -88,21 +94,20 @@ export default async function ChallengesPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div>
+      <PageHero
+        eyebrow={`${incoming.length} incoming · ${outgoing.length} outgoing`}
+        title="Challenges."
+        subtitle="Issue a challenge, accept or decline incoming proposals. ELO swings are previewed before you commit."
+        watermark="C"
+      />
+      <div className="space-y-6 px-2 md:px-6 py-8">
       <FadeIn>
-        <div className="flex items-center justify-between reveal reveal-1">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[var(--ds-accent)]/10 flex items-center justify-center">
-              <Swords className="w-5 h-5 text-court-red" />
-            </div>
-            <div>
-              <p className="eyebrow">My Challenges</p>
-              <h1 className="display-lg text-shuttle-white">Challenges</h1>
-            </div>
-          </div>
+        <div className="flex justify-end">
           <Link
             href="/challenges/new"
-            className="press flex items-center gap-2 px-4 py-2.5 rounded-xl gradient-court text-[#0A0A0A] font-bold text-sm glow-red hover:opacity-90 transition-opacity"
+            className="press inline-flex items-center gap-2 px-4 py-2 bg-[var(--red)] text-white text-[11px] font-bold uppercase tracking-[0.16em] hover:bg-[var(--red-dark)] transition-colors"
+            style={{ fontFamily: 'var(--font-display)' }}
           >
             <Plus className="w-4 h-4" />
             New
@@ -112,14 +117,14 @@ export default async function ChallengesPage() {
 
       {incoming.length > 0 && (
         <FadeIn delay={0.05}>
-          <div className="card-elevated p-4 border-[var(--color-gold)]/12">
-            <div className="flex items-center gap-2 mb-3">
-              <Zap className="w-4 h-4 text-gold" />
-              <h2 className="eyebrow text-[var(--text-primary)]">Incoming</h2>
-              <span className="ml-auto chip chip-gold">{incoming.length}</span>
+          <div>
+            <div className="flex items-center gap-2 mb-3 px-1">
+              <Zap className="w-4 h-4 text-[var(--accent)]" />
+              <h2 className="text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">Incoming</h2>
+              <span className="ml-auto text-[10px] tracking-[0.04em] uppercase text-[var(--accent)]">{incoming.length}</span>
             </div>
             <StaggerContainer className="space-y-2">
-              {incoming.map((cp) => <ChallengeRow key={cp.id} cp={cp as Record<string, unknown>} />)}
+              {incoming.map((cp) => <ChallengeRow key={cp.id} cp={cp as Record<string, unknown>} isIncoming />)}
             </StaggerContainer>
           </div>
         </FadeIn>
@@ -127,11 +132,11 @@ export default async function ChallengesPage() {
 
       {active.length > 0 && (
         <FadeIn delay={0.1}>
-          <div className="card-elevated p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Clock className="w-4 h-4 text-blue-400" />
-              <h2 className="eyebrow text-[var(--text-primary)]">Active</h2>
-              <span className="ml-auto chip chip-success">{active.length}</span>
+          <div>
+            <div className="flex items-center gap-2 mb-3 px-1">
+              <Clock className="w-4 h-4 text-[var(--text-muted)]" />
+              <h2 className="text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">Active</h2>
+              <span className="ml-auto text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">{active.length}</span>
             </div>
             <StaggerContainer className="space-y-2">
               {active.map((cp) => <ChallengeRow key={cp.id} cp={cp as Record<string, unknown>} />)}
@@ -142,11 +147,11 @@ export default async function ChallengesPage() {
 
       {outgoing.length > 0 && (
         <FadeIn delay={0.15}>
-          <div className="card-elevated p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Swords className="w-4 h-4 text-court-red" />
-              <h2 className="eyebrow text-[var(--text-primary)]">My Challenges</h2>
-              <span className="ml-auto chip chip-red">{outgoing.length}</span>
+          <div>
+            <div className="flex items-center gap-2 mb-3 px-1">
+              <Swords className="w-4 h-4 text-[var(--text-muted)]" />
+              <h2 className="text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">Sent</h2>
+              <span className="ml-auto text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">{outgoing.length}</span>
             </div>
             <StaggerContainer className="space-y-2">
               {outgoing.map((cp) => <ChallengeRow key={cp.id} cp={cp as Record<string, unknown>} />)}
@@ -157,10 +162,10 @@ export default async function ChallengesPage() {
 
       {completed.length > 0 && (
         <FadeIn delay={0.2}>
-          <div className="card-elevated p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <CheckCircle2 className="w-4 h-4 text-[var(--text-muted)]" />
-              <h2 className="eyebrow text-[var(--text-primary)]">Completed</h2>
+          <div>
+            <div className="flex items-center gap-2 mb-3 px-1">
+              <CheckCircle2 className="w-4 h-4 text-[var(--text-faint)]" />
+              <h2 className="text-[10px] tracking-[0.04em] uppercase text-[var(--text-muted)]">Completed</h2>
             </div>
             <StaggerContainer className="space-y-2">
               {completed.map((cp) => <ChallengeRow key={cp.id} cp={cp as Record<string, unknown>} />)}
@@ -171,15 +176,19 @@ export default async function ChallengesPage() {
 
       {(!myChallenges || myChallenges.length === 0) && (
         <FadeIn delay={0.05}>
-          <div className="card-elevated p-12 text-center">
-            <Inbox className="w-12 h-12 text-[var(--text-dim)] mx-auto mb-3" />
-            <p className="text-[var(--text-muted)] mb-3 font-medium">No challenges yet</p>
-            <Link href="/challenges/new" className="press chip chip-red">
+          <div className="py-16 text-center">
+            <Inbox className="w-10 h-10 text-[var(--text-faint)] mx-auto mb-3" />
+            <p className="text-[13px] text-[var(--text-muted)] mb-4">No challenges yet</p>
+            <Link
+              href="/challenges/new"
+              className="press inline-flex items-center gap-2 px-4 py-2 bg-[var(--bg-accent)] border-[0.5px] border-[var(--accent-border)] text-[var(--accent)] text-[13px] font-medium hover:border-[var(--accent)] transition-colors"
+            >
               Create your first challenge
             </Link>
           </div>
         </FadeIn>
       )}
+    </div>
     </div>
   );
 }

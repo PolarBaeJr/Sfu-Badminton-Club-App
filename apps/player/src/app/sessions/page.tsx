@@ -1,5 +1,5 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { Badge } from '@badminton/ui';
+import { Badge, PageHero } from '@badminton/ui';
 import { formatDate } from '@badminton/shared';
 import { redirect } from 'next/navigation';
 import { Calendar, MapPin, FileText, Users } from 'lucide-react';
@@ -41,19 +41,14 @@ export default async function SessionsPage() {
   );
 
   return (
-    <div className="space-y-6 pb-28">
-      {/* Header */}
-      <FadeIn>
-        <div className="flex items-center gap-3 reveal reveal-1">
-          <div className="w-9 h-9 rounded-xl bg-[var(--ds-accent)]/10 flex items-center justify-center">
-            <Calendar className="w-4 h-4 text-court-red" />
-          </div>
-          <div>
-            <p className="eyebrow">Practice</p>
-            <h1 className="display-lg text-shuttle-white">Sessions</h1>
-          </div>
-        </div>
-      </FadeIn>
+    <div>
+      <PageHero
+        eyebrow={`${(openSessions?.length ?? 0)} upcoming · ${(closedSessions?.length ?? 0)} past`}
+        title="Sessions."
+        subtitle="Open play, competitive nights, and league fixtures across SFU courts."
+        watermark="S"
+      />
+      <div className="space-y-6 pb-28 px-2 md:px-6 py-8">
 
       {/* Upcoming Sessions */}
       <FadeIn delay={0.05}>
@@ -75,7 +70,7 @@ export default async function SessionsPage() {
                     <div className="card-surface card-interactive p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-shuttle-white truncate">
+                          <p className="text-sm font-semibold text-[var(--text-primary)] truncate">
                             {session.name ?? 'Practice Session'}
                           </p>
                           <div className="mt-2 space-y-1.5">
@@ -125,8 +120,8 @@ export default async function SessionsPage() {
             </StaggerContainer>
           ) : (
             <div className="card-elevated p-8 flex flex-col items-center justify-center text-center">
-              <Calendar className="w-9 h-9 text-[var(--text-dim)] mb-3" />
-              <p className="text-sm font-semibold text-shuttle-white mb-1">No upcoming sessions</p>
+              <Calendar className="w-9 h-9 text-[var(--text-muted)] mb-3" />
+              <p className="text-sm font-semibold text-[var(--text-primary)] mb-1">No upcoming sessions</p>
               <p className="text-xs text-[var(--text-muted)]">Check back later for new sessions.</p>
             </div>
           )}
@@ -141,10 +136,10 @@ export default async function SessionsPage() {
             <StaggerContainer className="space-y-2">
               {closedSessions.map((session) => (
                 <StaggerItem key={session.id}>
-                  <div className="bg-[var(--bg-card)]/60 border border-white/[0.04] rounded-xl p-3 opacity-60">
+                  <div className="bg-[var(--bg-inset)] border border-[var(--border)] p-3 opacity-60">
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold text-shuttle-white truncate">
+                        <p className="text-xs font-semibold text-[var(--text-primary)] truncate">
                           {session.name ?? 'Practice Session'}
                         </p>
                         <div className="mt-1 flex items-center gap-3">
@@ -171,6 +166,7 @@ export default async function SessionsPage() {
           </div>
         </FadeIn>
       )}
+    </div>
     </div>
   );
 }

@@ -268,7 +268,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
 
       {/* Bye preview */}
       {byes > 0 && event.format !== 'round_robin' && (
-        <div className="flex items-center gap-2 p-3 rounded-lg bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/20">
+        <div className="flex items-center gap-2 p-3 bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/20">
           <AlertTriangle className="w-4 h-4 text-[var(--color-warning)] flex-shrink-0" />
           <span className="text-sm text-[var(--color-warning)]">
             {activeEntries.length} {isDoubles ? 'pairs' : 'players'} → {bracketSize}-slot bracket with {byes} bye{byes > 1 ? 's' : ''}. Seeds #1–{byes} get first-round byes.
@@ -277,7 +277,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
       )}
 
       {/* Participants table */}
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+      <div className=" border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
         <table className="w-full">
           <thead>
             <tr className="border-b border-[var(--border)]">

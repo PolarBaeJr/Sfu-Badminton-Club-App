@@ -65,7 +65,7 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
     <div className="space-y-6">
       {/* Champion card */}
       {ranked.length > 0 && ranked[0].final_position === 1 && (
-        <div className="rounded-xl border-2 border-[#FFD700]/30 bg-gradient-to-r from-[#FFD700]/5 to-transparent p-6 text-center">
+        <div className=" border-2 border-[#FFD700]/30 bg-gradient-to-r from-[#FFD700]/5 to-transparent p-6 text-center">
           <Crown className="w-8 h-8 mx-auto mb-2 text-[#FFD700]" />
           <h2 className="text-2xl font-bold text-[#FFD700] font-display">CHAMPION</h2>
           <p className="text-lg text-[var(--text-primary)] font-semibold mt-1">
@@ -80,7 +80,7 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
       )}
 
       {/* Results table */}
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+      <div className=" border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
         <div className="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between">
           <h3 className="text-sm font-semibold text-[var(--text-primary)] flex items-center gap-2">
             <Medal className="w-4 h-4" /> Final Standings
@@ -154,7 +154,7 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
 
       {/* Match Results with Undo */}
       {event.status !== 'completed' && completedMatchList.length > 0 && (
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+        <div className=" border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
           <div className="px-4 py-3 border-b border-[var(--border)]">
             <h3 className="text-sm font-semibold text-[var(--text-primary)]">Completed Matches</h3>
           </div>

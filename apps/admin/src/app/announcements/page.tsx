@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 
 import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge } from '@badminton/ui';
+import { Card, Badge, PageHero } from '@badminton/ui';
 import { formatRelativeTime } from '@badminton/shared';
 import { CreateAnnouncementForm, AnnouncementCardMenu } from './actions';
 import { Megaphone, Pin } from 'lucide-react';
@@ -57,35 +57,18 @@ export default async function AnnouncementsPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-3">
-          <div
-            className="flex items-center justify-center w-10 h-10 rounded-lg"
-            style={{ backgroundColor: 'var(--ds-accent)', color: '#fff' }}
-          >
-            <Megaphone size={20} />
-          </div>
-          <div>
-            <h1
-              className="text-xl font-bold tracking-widest uppercase"
-              style={{ color: 'var(--text-primary)' }}
-            >
-              Announcements
-            </h1>
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-              Create and manage club announcements
-            </p>
-          </div>
-        </div>
-
-        <CreateAnnouncementForm />
-      </div>
+      <PageHero
+        eyebrow={`${items.length} announcements`}
+        title="Announcements."
+        subtitle="Club-wide communications. Pinned items appear on every player's dashboard."
+        watermark="A"
+      />
+      <div className="px-12 py-8 flex justify-end"><CreateAnnouncementForm /></div>
 
       {/* Announcement List */}
       {items.length === 0 ? (
         <div
-          className="flex flex-col items-center justify-center py-20 gap-3 rounded-xl border"
+          className="flex flex-col items-center justify-center py-20 gap-3 border"
           style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}
         >
           <Megaphone size={40} strokeWidth={1.5} />

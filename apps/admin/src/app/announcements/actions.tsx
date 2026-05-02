@@ -350,7 +350,7 @@ export function AnnouncementCardMenu({ announcement }: AnnouncementCardMenuProps
       <div className="relative" ref={menuRef}>
         <button
           onClick={() => setMenuOpen((v) => !v)}
-          className="flex items-center justify-center w-8 h-8 rounded-md transition-colors"
+          className="flex items-center justify-center w-8 h-8 transition-colors"
           style={{ color: 'var(--text-muted)' }}
           onMouseEnter={(e) =>
             ((e.currentTarget as HTMLButtonElement).style.backgroundColor =
@@ -366,7 +366,7 @@ export function AnnouncementCardMenu({ announcement }: AnnouncementCardMenuProps
 
         {menuOpen && (
           <div
-            className="absolute right-0 top-9 z-50 w-36 rounded-lg border shadow-lg overflow-hidden"
+            className="absolute right-0 top-9 z-50 w-36 border shadow-lg overflow-hidden"
             style={{
               backgroundColor: 'var(--bg-surface)',
               borderColor: 'var(--border)',

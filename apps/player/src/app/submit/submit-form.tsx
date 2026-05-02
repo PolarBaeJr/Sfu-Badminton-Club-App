@@ -122,7 +122,7 @@ export function SubmitForm({
     return (
       <div className="submit-shell">
         <div className="submit-card" style={{ textAlign: 'center' }}>
-          <div className="submit-label" style={{ color: 'var(--color-accent, #00E5A0)' }}>SUBMITTED</div>
+          <div className="submit-label" style={{ color: 'var(--color-accent)' }}>SUBMITTED</div>
           <h1 className="submit-heading">Result recorded</h1>
           <p className="submit-body">
             Your opponent will be asked to confirm the score. Redirecting…

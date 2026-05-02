@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge } from '@badminton/ui';
+import { Card, Badge, PageHero } from '@badminton/ui';
 import { formatDate } from '@badminton/shared';
 import { CreateSessionForm, SessionCardMenu, AttendanceDialog } from './actions';
 import { Calendar, MapPin, FileText } from 'lucide-react';
@@ -38,22 +38,15 @@ export default async function SessionsPage() {
   }
 
   return (
-    <div className="space-y-8">
-      {/* Page Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--ds-accent)]/10">
-            <Calendar className="w-5 h-5 text-[var(--ds-accent)]" />
-          </div>
-          <div>
-            <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">SESSIONS</h1>
-            <p className="text-sm text-[var(--text-muted)] mt-0.5">
-              Schedule and manage club practice sessions
-            </p>
-          </div>
-        </div>
-        <CreateSessionForm />
-      </div>
+    <div>
+      <PageHero
+        eyebrow={`${(sessions?.length ?? 0)} sessions`}
+        title="Sessions."
+        subtitle="Open play, competitive nights, and league fixtures across SFU courts."
+        watermark="S"
+      />
+      <div className="space-y-8 px-12 py-8">
+        <div className="flex justify-end"><CreateSessionForm /></div>
 
       {/* Sessions List */}
       {sessions && sessions.length > 0 ? (
@@ -120,6 +113,7 @@ export default async function SessionsPage() {
           </div>
         </Card>
       )}
+    </div>
     </div>
   );
 }

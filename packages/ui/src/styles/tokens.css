@@ -1,0 +1,36 @@
+/* Source of truth: design-reference/admin-app.html + design-reference/player-app.html.
+   Edit those mockups, then mirror changes here. */
+
+:root {
+  --font-display: var(--font-barlow-condensed), 'Barlow Condensed', sans-serif;
+  --font-body: var(--font-barlow), 'Barlow', sans-serif;
+
+  --bg: #0A0A0A;
+  --surface1: #111111;
+  --surface2: #1A1A1A;
+  --surface3: #232323;
+
+  --hairline: rgba(255,255,255,0.08);
+  --hairline-soft: rgba(255,255,255,0.05);
+  --hairline-strong: rgba(255,255,255,0.14);
+
+  --ink: #F0F0F0;
+  --text: #C8C8C8;
+  --muted: #888888;
+  --dim: #666666;
+  --faint: #444444;
+  --ghost: #333333;
+
+  --red: #CC0000;
+  --red-dark: #990000;
+  --red-tint: rgba(204,0,0,0.10);
+  --red-border: rgba(204,0,0,0.25);
+
+  --green: #4ade80;
+  --amber: #fbbf24;
+}
+
+@keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+body.no-scroll { overflow: hidden; }

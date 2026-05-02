@@ -16,7 +16,7 @@ export default async function TournamentsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3 reveal reveal-1">
-          <div className="w-10 h-10 rounded-xl bg-[var(--color-gold)]/10 flex items-center justify-center">
+          <div className="w-10 h-10 bg-[var(--color-gold)]/10 flex items-center justify-center">
             <Award className="w-5 h-5 text-gold" />
           </div>
           <div>
@@ -43,7 +43,7 @@ export default async function TournamentsPage() {
                           <span className="flex items-center gap-1 text-xs text-[var(--text-muted)] nums"><Users className="w-3 h-3" />{eventCount} event{eventCount !== 1 ? 's' : ''}</span>
                         </div>
                       </div>
-                      <ChevronRight className="w-5 h-5 text-[#475569] group-hover:text-gold transition-colors shrink-0" />
+                      <ChevronRight className="w-5 h-5 text-[var(--text-dim)] group-hover:text-gold transition-colors shrink-0" />
                     </div>
                   </div>
                 </Link>

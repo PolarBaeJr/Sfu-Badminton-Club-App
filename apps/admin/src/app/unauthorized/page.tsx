@@ -27,7 +27,7 @@ export default function UnauthorizedPage() {
         </div>
         <button
           onClick={handleSignOut}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors border border-[var(--border)]"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors border border-[var(--border)]"
         >
           <LogOut className="w-4 h-4" />
           Sign out

@@ -49,7 +49,7 @@ export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registra
         </div>
         <Link
           href={backLink}
-          className="press inline-flex items-center gap-2 px-5 py-3 min-h-[48px] bg-[var(--color-success)]/10 text-[var(--color-success)] text-sm font-bold rounded-xl border border-[var(--color-success)]/25 hover:bg-[var(--color-success)]/20 transition-all duration-200"
+          className="press inline-flex items-center gap-2 px-5 py-3 min-h-[48px] bg-[var(--color-success)]/10 text-[var(--color-success)] text-sm font-bold border border-[var(--color-success)]/25 hover:bg-[var(--color-success)]/20 transition-all duration-200"
         >
           View Event Details
         </Link>

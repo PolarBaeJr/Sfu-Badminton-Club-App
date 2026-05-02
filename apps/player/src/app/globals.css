@@ -1,4 +1,5 @@
 @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700;800;900&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Mono:wght@400;500&family=Syne:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import url('../../../../packages/ui/src/styles/tokens.css');
 
 /* ═══════════════════════════════════════════════════════════
    DESIGN SYSTEM TOKENS (v2 — premium sports analytics dark)
@@ -37,6 +38,42 @@
   --ds-success:        #00E5A0;
 }
 
+/* ═══════════════════════════════════════════════════════════
+   NEON SPORT — design tokens (April 2026 player-app overhaul)
+   Active palette for the player app. Six names (--bg-card,
+   --text-primary, --text-secondary, --text-muted, --border,
+   --border-strong) are also overwritten in [data-theme="dark"]
+   below so the dark theme reflects these values, not legacy ones.
+   ═══════════════════════════════════════════════════════════ */
+:root {
+  /* Surfaces */
+  --bg-base:        #0e1420;
+  --bg-card:        #131d2a;
+  --bg-card-hover:  #172030;
+  --bg-inset:       #0b1219;
+  --bg-accent:      #0f2620;
+  --bg-loss:        #1f1420;
+
+  /* Accents */
+  --accent:         #63b3a0;
+  --accent-border:  #1e4a3a;
+  --loss:           #a07090;
+  --loss-border:    #3a2040;
+
+  /* Text */
+  --text-primary:   #e2e8f0;
+  --text-secondary: #94b8c4;
+  --text-muted:     #4a6070;
+  --text-faint:     #2d4050;
+
+  /* Borders */
+  --border:         #1e2d3d;
+  --border-strong:  #2d4a5a;
+
+  /* Grid texture line color */
+  --grid-line: rgba(99, 179, 160, 0.04);
+}
+
 .ds-mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .ds-display { font-family: var(--font-display); letter-spacing: -0.01em; }
 
@@ -62,22 +99,23 @@
 
 [data-theme="dark"] {
   /* Surfaces */
+  --bg-base:      #0A0E1A;
   --bg-primary:   #0A0E1A;
   --bg-surface:   #111827;
-  --bg-card:      #161B2E;
+  --bg-card:      #131d2a;
   --bg-elevated:  #1C2238;
   --bg-overlay:   rgba(10, 14, 26, 0.72);
 
   /* Text */
-  --text-primary:   #F8FAFC;
-  --text-secondary: #94A3B8;
-  --text-muted:     #64748B;
+  --text-primary:   #e2e8f0;
+  --text-secondary: #94b8c4;
+  --text-muted:     #4a6070;
   --text-dim:       #475569;
 
   /* Borders — layered for depth */
-  --border:        rgba(255, 255, 255, 0.06);
+  --border:        #1e2d3d;
   --border-hover:  rgba(255, 255, 255, 0.14);
-  --border-strong: rgba(255, 255, 255, 0.22);
+  --border-strong: #2d4a5a;
 
   /* Brand — accent (teal) */
   --color-accent:       #00E5A0;
@@ -143,6 +181,7 @@
 
 [data-theme="light"] {
   /* Surfaces — off-white base (#F2F2F2) per brand spec */
+  --bg-base:      #F2F2F2;
   --bg-primary:   #F2F2F2;
   --bg-surface:   #EBEBEB;
   --bg-card:      #FBFBFB;
@@ -240,7 +279,7 @@
 }
 
 html, body {
-  background: var(--bg-primary);
+  background: var(--bg-base);
   color: var(--text-primary);
   font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
   font-feature-settings: "cv11", "ss01", "ss03";
@@ -250,7 +289,11 @@ html, body {
 
 body {
   min-height: 100dvh;
-  background-image: var(--body-grad-1), var(--body-grad-2), var(--body-grad-3);
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
+    var(--body-grad-1), var(--body-grad-2), var(--body-grad-3);
+  background-size: 24px 24px, 24px 24px, auto, auto, auto;
   background-attachment: fixed;
 }
 
@@ -286,7 +329,7 @@ body {
     border-color: var(--border);
   }
   body {
-    background-color: var(--bg-primary);
+    background-color: var(--bg-base);
     color: var(--text-primary);
   }
 
@@ -311,24 +354,24 @@ body {
 
 @layer utilities {
   /* Legacy color utilities */
-  .text-court-red    { color: #00E5A0; }
-  .text-gold         { color: #FCD34D; }
-  .text-shuttle-white { color: #F8FAFC; }
-  .bg-court-red      { background-color: #00E5A0; }
-  .bg-gold           { background-color: #FCD34D; }
+  .text-court-red    { color: var(--ds-accent); }
+  .text-gold         { color: var(--color-gold); }
+  .text-shuttle-white { color: var(--text-primary); }
+  .bg-court-red      { background-color: var(--ds-accent); }
+  .bg-gold           { background-color: var(--color-gold); }
 
   /* Glow effects */
   .glow-red {
     box-shadow:
-      0 0 0 1px rgba(0, 229, 160, 0.25),
-      0 10px 30px -10px rgba(0, 229, 160, 0.45),
-      0 0 80px -10px rgba(0, 229, 160, 0.25);
+      0 0 0 1px color-mix(in srgb, var(--ds-accent) 25%, transparent),
+      0 10px 30px -10px color-mix(in srgb, var(--ds-accent) 45%, transparent),
+      0 0 80px -10px color-mix(in srgb, var(--ds-accent) 25%, transparent);
   }
   .glow-gold {
     box-shadow:
-      0 0 0 1px rgba(252, 211, 77, 0.3),
-      0 10px 30px -10px rgba(252, 211, 77, 0.45),
-      0 0 80px -10px rgba(252, 211, 77, 0.25);
+      0 0 0 1px color-mix(in srgb, var(--color-gold) 30%, transparent),
+      0 10px 30px -10px color-mix(in srgb, var(--color-gold) 45%, transparent),
+      0 0 80px -10px color-mix(in srgb, var(--color-gold) 25%, transparent);
   }
   .glow-soft {
     box-shadow:
@@ -592,10 +635,10 @@ body {
   /* ── Primary CTA button ── */
   .btn-primary-cta {
     background: linear-gradient(135deg, #33EEBA 0%, #00E5A0 50%, #00B37D 100%);
-    color: #0A0A0A;
+    color: var(--ds-bg-base);
     font-weight: 700;
     letter-spacing: 0.03em;
-    box-shadow: 0 4px 20px -4px rgba(0, 229, 160, 0.45);
+    box-shadow: 0 4px 20px -4px color-mix(in srgb, var(--ds-accent) 45%, transparent);
     transition:
       transform var(--dur-fast) var(--ease-out-expo),
       box-shadow var(--dur-fast) var(--ease-out-expo),
@@ -604,7 +647,7 @@ body {
   @media (hover: hover) {
     .btn-primary-cta:hover {
       filter: brightness(1.08);
-      box-shadow: 0 8px 28px -6px rgba(0, 229, 160, 0.6);
+      box-shadow: 0 8px 28px -6px color-mix(in srgb, var(--ds-accent) 60%, transparent);
       transform: translateY(-1px);
     }
   }
@@ -631,7 +674,7 @@ body {
   /* Trophy shimmer (applied to trophy icon wrappers) */
   @keyframes trophy-shimmer {
     0%, 100% { filter: brightness(1); }
-    50%       { filter: brightness(1.35) drop-shadow(0 0 6px rgba(252,211,77,0.7)); }
+    50%       { filter: brightness(1.35) drop-shadow(0 0 6px color-mix(in srgb, var(--color-gold) 70%, transparent)); }
   }
   .icon-trophy-shimmer {
     animation: trophy-shimmer 3s ease-in-out infinite;
@@ -716,7 +759,7 @@ body {
   color: var(--text-muted);
   text-transform: uppercase;
 }
-.submit-label-danger { color: var(--color-danger, #EF4444); }
+.submit-label-danger { color: var(--color-danger); }
 .submit-heading {
   font-family: var(--font-display);
   font-size: var(--text-xl);
@@ -739,9 +782,9 @@ body {
   letter-spacing: 0.08em;
 }
 .submit-error {
-  background: rgba(255, 77, 77, 0.08);
-  border: 1px solid rgba(255, 77, 77, 0.3);
-  color: var(--ds-danger, #FF4D4D);
+  background: var(--bg-loss);
+  border: 1px solid var(--loss-border);
+  color: var(--loss);
   padding: 10px 12px;
   border-radius: 6px;
   font-size: 0.875rem;
@@ -753,7 +796,7 @@ body {
   font-weight: 600;
   font-size: 15px;
   background: var(--ds-accent);
-  color: #0A0A0A;
+  color: var(--ds-bg-base);
   border: none;
   cursor: pointer;
   transition: opacity .15s, transform .15s;
@@ -786,7 +829,7 @@ body {
   text-align: center;
   padding: 8px 10px;
   border-radius: 8px;
-  background: var(--bg-surface);
+  background: var(--bg-card-hover);
   border: 1px solid var(--border);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -806,13 +849,13 @@ body {
 .probability-bar {
   position: relative;
   height: 6px;
-  background: var(--bg-surface);
+  background: var(--bg-card-hover);
   border-radius: 999px;
   overflow: visible;
 }
 .probability-fill {
   height: 100%;
-  background: var(--ds-accent);
+  background: var(--accent);
   border-radius: 999px;
   transition: width .2s ease;
 }
@@ -886,4 +929,23 @@ body {
   font-size: 13px;
   font-weight: 600;
   text-align: center;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   v3 design system — design-reference/player-app.html
+   Tokens imported at top of file (CSS spec); base styles below
+   override legacy body/selection rules via the cascade.
+   ═══════════════════════════════════════════════════════════ */
+* { box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--red);
+  color: white;
 }

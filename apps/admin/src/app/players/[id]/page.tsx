@@ -61,7 +61,7 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
       {/* Stats Grid */}
       {r && (
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-4 gap-4">
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
+          <div className=" border border-[var(--border)] bg-[var(--bg-card)] p-4">
             <div className="flex items-center gap-2 mb-2">
               <Target className="w-4 h-4 text-[var(--ds-accent)]" />
               <span className="text-xs text-[var(--text-muted)] uppercase">Singles Elo</span>
@@ -69,7 +69,7 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
             <p className="text-2xl font-bold font-mono text-[var(--text-primary)]">{r.singles_elo}</p>
             <p className="text-xs text-[var(--text-muted)] mt-1">{r.singles_provisional ? 'Provisional' : 'Established'} · {r.singles_wins}W-{r.singles_losses}L ({getWinRate(r.singles_wins, r.singles_losses)})</p>
           </div>
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
+          <div className=" border border-[var(--border)] bg-[var(--bg-card)] p-4">
             <div className="flex items-center gap-2 mb-2">
               <Swords className="w-4 h-4 text-[var(--color-info)]" />
               <span className="text-xs text-[var(--text-muted)] uppercase">Doubles Elo</span>
@@ -77,7 +77,7 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
             <p className="text-2xl font-bold font-mono text-[var(--text-primary)]">{r.doubles_elo}</p>
             <p className="text-xs text-[var(--text-muted)] mt-1">{r.doubles_provisional ? 'Provisional' : 'Established'} · {r.doubles_wins}W-{r.doubles_losses}L ({getWinRate(r.doubles_wins, r.doubles_losses)})</p>
           </div>
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
+          <div className=" border border-[var(--border)] bg-[var(--bg-card)] p-4">
             <div className="flex items-center gap-2 mb-2">
               <Flame className="w-4 h-4 text-[var(--color-warning)]" />
               <span className="text-xs text-[var(--text-muted)] uppercase">Streaks</span>
@@ -85,7 +85,7 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
             <p className="text-2xl font-bold font-mono text-[var(--text-primary)]">{getStreakDisplay(r.current_singles_streak)}</p>
             <p className="text-xs text-[var(--text-muted)] mt-1">Singles · Best: {r.best_singles_streak}</p>
           </div>
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
+          <div className=" border border-[var(--border)] bg-[var(--bg-card)] p-4">
             <div className="flex items-center gap-2 mb-2">
               <TrendingUp className="w-4 h-4 text-[var(--color-success)]" />
               <span className="text-xs text-[var(--text-muted)] uppercase">Point Diff</span>
@@ -98,13 +98,13 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Edit Form */}
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
+        <div className=" border border-[var(--border)] bg-[var(--bg-card)] p-6">
           <h2 className="text-base font-semibold text-[var(--text-primary)] mb-4">Edit Player</h2>
           <PlayerEditForm player={player} rating={r} />
         </div>
 
         {/* Reliability */}
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
+        <div className=" border border-[var(--border)] bg-[var(--bg-card)] p-6">
           <div className="flex items-center gap-2 mb-4">
             <Shield className="w-4 h-4 text-[var(--text-muted)]" />
             <h2 className="text-base font-semibold text-[var(--text-primary)]">Reliability</h2>
@@ -118,13 +118,13 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
                 { label: 'Late Cancellations', value: reliability.late_cancellations },
                 { label: 'Dispute Involvement', value: reliability.dispute_involvement_count },
               ].map(({ label, value, danger }) => (
-                <div key={label} className="flex justify-between items-center p-2 rounded-lg bg-[var(--bg-elevated)]">
+                <div key={label} className="flex justify-between items-center p-2 bg-[var(--bg-elevated)]">
                   <span className="text-sm text-[var(--text-muted)]">{label}</span>
                   <span className={`text-sm font-mono font-medium ${danger ? 'text-[var(--color-danger)]' : 'text-[var(--text-primary)]'}`}>{value}</span>
                 </div>
               ))}
               {reliability.walkover_flag && (
-                <div className="flex items-center gap-2 p-2 rounded-lg bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/20">
+                <div className="flex items-center gap-2 p-2 bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/20">
                   <AlertTriangle className="w-4 h-4 text-[var(--color-danger)]" />
                   <span className="text-sm font-medium text-[var(--color-danger)]">Flagged for No-Shows</span>
                 </div>
@@ -136,14 +136,14 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
         </div>
 
         {/* Varsity Notes */}
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
+        <div className=" border border-[var(--border)] bg-[var(--bg-card)] p-6">
           <div className="flex items-center gap-2 mb-4">
             <FileText className="w-4 h-4 text-[var(--text-muted)]" />
             <h2 className="text-base font-semibold text-[var(--text-primary)]">Varsity Notes</h2>
           </div>
           <div className="space-y-3">
             {varsityNotes?.map((note) => (
-              <div key={note.id} className="p-3 bg-[var(--bg-elevated)] rounded-lg border border-[var(--border)]">
+              <div key={note.id} className="p-3 bg-[var(--bg-elevated)] border border-[var(--border)]">
                 <p className="text-sm text-[var(--text-secondary)]">{note.note}</p>
                 <p className="text-xs text-[var(--text-muted)] mt-2">
                   {(note.author as Record<string, unknown>)?.full_name as string} &middot; {new Date(note.created_at).toLocaleDateString()}
@@ -158,7 +158,7 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
       </div>
 
       {/* Recent Matches */}
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
+      <div className=" border border-[var(--border)] bg-[var(--bg-card)]">
         <div className="flex items-center gap-2 p-6 pb-4">
           <Trophy className="w-4 h-4 text-[var(--text-muted)]" />
           <h2 className="text-base font-semibold text-[var(--text-primary)]">Recent Matches</h2>
@@ -168,7 +168,7 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
             const m = mp.match as Record<string, unknown> | null;
             if (!m) return null;
             return (
-              <div key={mp.id} className="flex items-center justify-between py-3 border-b border-[var(--border)] last:border-0 hover:bg-white/[0.02] -mx-3 px-3 rounded-lg transition-colors">
+              <div key={mp.id} className="flex items-center justify-between py-3 border-b border-[var(--border)] last:border-0 hover:bg-white/[0.02] -mx-3 px-3 transition-colors">
                 <div className="flex items-center gap-3">
                   <Badge variant={mp.win_flag ? 'success' : 'danger'}>
                     {mp.win_flag ? 'W' : 'L'}

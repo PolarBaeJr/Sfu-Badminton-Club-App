@@ -57,7 +57,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-[var(--ds-accent)]/10 flex items-center justify-center">
+            <div className="w-10 h-10 bg-[var(--ds-accent)]/10 flex items-center justify-center">
               <Trophy className="w-5 h-5 text-[var(--ds-accent)]" />
             </div>
             <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">{tournament.name}</h1>
@@ -96,8 +96,8 @@ export default async function TournamentDetailPage({ params }: { params: Promise
           {events?.map((ev) => {
             const statusColor = TOURNAMENT_EVENT_STATUS_COLORS[ev.status as keyof typeof TOURNAMENT_EVENT_STATUS_COLORS] ?? '#6B7280';
             return (
-              <Link key={ev.id} href={`/tournaments/${id}/events/${ev.id}`} className="block group focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none rounded-xl">
-                <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-5 hover:border-[var(--ds-accent)]/30 transition-all">
+              <Link key={ev.id} href={`/tournaments/${id}/events/${ev.id}`} className="block group focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
+                <div className=" border border-[var(--border)] bg-[var(--bg-card)] p-5 hover:border-[var(--ds-accent)]/30 transition-all">
                   <div className="flex items-start justify-between mb-3">
                     <h3 className="text-base font-semibold text-[var(--text-primary)] group-hover:text-[var(--ds-accent)] transition-colors">
                       {TOURNAMENT_EVENT_TYPE_LABELS[ev.event_type as keyof typeof TOURNAMENT_EVENT_TYPE_LABELS] ?? ev.event_type}
@@ -127,7 +127,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
         </div>
 
         {(!events || events.length === 0) && (
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-8 text-center">
+          <div className=" border border-[var(--border)] bg-[var(--bg-card)] p-8 text-center">
             <Swords className="w-8 h-8 mx-auto mb-3 text-[var(--text-muted)] opacity-50" />
             <p className="text-sm text-[var(--text-muted)]">
               No events yet. {tournament.status === 'draft' ? 'Add events to this tournament to get started.' : ''}

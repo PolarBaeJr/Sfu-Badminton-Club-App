@@ -11,12 +11,25 @@ import { QrRedirectHandler } from '@/components/qr-redirect-handler';
 import { NotificationCountsProvider } from '@/components/notification-badges';
 import { SWRProvider } from '@/components/swr-provider';
 import { ProfileProvider, type Profile } from '@/components/profile-provider';
+import { SidebarNav } from '@/components/sidebar-nav';
 import { createServerSupabaseClient } from '@/lib/supabase-server';
-import { DM_Sans } from "next/font/google";
+import { Barlow, Barlow_Condensed } from "next/font/google";
 import { headers } from 'next/headers';
 import { cn } from "@/lib/utils";
 
-const dmSans = DM_Sans({subsets:['latin'],variable:'--font-sans',weight:['400','500','600','700']});
+const barlowCondensed = Barlow_Condensed({
+  subsets: ['latin'],
+  weight: ['400', '600', '700', '800'],
+  variable: '--font-barlow-condensed',
+  display: 'swap',
+});
+
+const barlow = Barlow({
+  subsets: ['latin'],
+  weight: ['300', '400', '500', '600', '700'],
+  variable: '--font-barlow',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   title: 'SFU Badminton Club',
@@ -68,7 +81,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     : null;
 
   return (
-    <html lang="en" suppressHydrationWarning data-theme="dark" className={cn("font-sans", dmSans.variable)}>
+    <html lang="en" suppressHydrationWarning data-theme="dark" className={cn(barlowCondensed.variable, barlow.variable)}>
       <head>
         <meta name="theme-color" content="#0A0E1A" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -83,7 +96,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           } catch(e) { document.documentElement.setAttribute('data-theme', 'dark'); }
         `}} />
       </head>
-      <body>
+      <body style={{ background: 'var(--bg-base)' }}>
         <SWRProvider>
           <ProfileProvider initial={initialProfile}>
             <PostHogProvider>
@@ -98,9 +111,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 />
                 <NotificationCountsProvider isAuthed={!!playerId}>
                   <OfflineBanner />
-                  <TopBar />
-                  <main className="max-w-7xl mx-auto px-4 py-6 pb-24 md:pb-6">
-                    {children}
+                  <SidebarNav />
+                  <div className="md:hidden"><TopBar /></div>
+                  <main className="min-w-0 md:ml-[200px]" style={{ animation: 'fadeUp 240ms ease-out' }}>
+                    <div className="max-w-[900px] mx-auto px-6 py-6 pb-24 md:pb-6">
+                      {children}
+                    </div>
                   </main>
                   <BottomNav />
                 </NotificationCountsProvider>

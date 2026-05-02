@@ -90,7 +90,7 @@ export function AnnouncementItem({ announcement, isRead }: AnnouncementItemProps
         <div className="flex items-start gap-3">
           {/* Type icon */}
           <div
-            className={`mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md ${config.bg}`}
+            className={`mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center ${config.bg}`}
           >
             <TypeIcon className="h-3.5 w-3.5" style={{ color: config.color }} />
           </div>

@@ -21,7 +21,7 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
 
   if (allMatches.length === 0) {
     return (
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-8 text-center">
+      <div className=" border border-[var(--border)] bg-[var(--bg-card)] p-8 text-center">
         <Trophy className="w-8 h-8 mx-auto mb-3 text-[var(--text-muted)] opacity-50" />
         <p className="text-sm text-[var(--text-muted)]">Bracket not generated yet.</p>
       </div>
@@ -67,7 +67,7 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
 
   return (
     <>
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4 overflow-x-auto" role="region" aria-label="Tournament bracket">
+      <div className=" border border-[var(--border)] bg-[var(--bg-card)] p-4 overflow-x-auto" role="region" aria-label="Tournament bracket">
         <div className="flex gap-6 min-w-fit" role="table" aria-label="Bracket rounds">
           {roundNumbers.map((roundNum) => {
             const roundMatches = rounds[roundNum]!.sort((a: any, b: any) => a.bracket_position - b.bracket_position);
@@ -92,7 +92,7 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                       key={m.id}
                       role="row"
                       aria-label={`Match ${m.match_number ?? ''}: ${getEntryName(aId)} vs ${getEntryName(bId)}${isCompleted ? `, winner: ${getEntryName(winnerId)}` : ''}`}
-                      className={`rounded-lg border overflow-hidden transition-all ${
+                      className={` border overflow-hidden transition-all ${
                         isReady && isLive
                           ? 'border-[var(--ds-accent)]/40 shadow-[0_0_8px_rgba(0,229,160,0.15)]'
                           : isBye
