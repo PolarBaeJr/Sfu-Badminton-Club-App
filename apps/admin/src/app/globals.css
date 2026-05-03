@@ -88,13 +88,13 @@
   --popover: var(--surface2);
   --popover-foreground: var(--ink);
   --primary: var(--red);
-  --primary-foreground: #ffffff;
+  --primary-foreground: #F2F2F2;
   --secondary: var(--surface2);
   --secondary-foreground: var(--ink);
   --muted-bg: var(--surface2);
   --muted-foreground: var(--muted);
   --destructive: var(--red);
-  --destructive-foreground: #ffffff;
+  --destructive-foreground: #F2F2F2;
   --input: var(--hairline);
   --ring: var(--red);
   --radius: 0;
@@ -128,7 +128,7 @@ input, select, textarea { font-family: inherit; }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: #2a2a2a; }
 ::-webkit-scrollbar-thumb:hover { background: var(--hairline-strong); }
-::selection { background: var(--red); color: #fff; }
+::selection { background: var(--red); color: #F2F2F2; }
 
 :focus-visible {
   outline: 2px solid var(--red);
@@ -192,14 +192,14 @@ input, select, textarea { font-family: inherit; }
   line-height: 1;
   transition: background 150ms ease-out, color 150ms ease-out, border-color 150ms ease-out;
 }
-.btn-red    { background: var(--red); color: #fff; }
+.btn-red    { background: var(--red); color: #F2F2F2; }
 .btn-red:hover { background: var(--red-dark); }
 .btn-ghost  { background: transparent; color: var(--text); border: 1px solid var(--hairline); }
 .btn-ghost:hover { border-color: var(--text); color: var(--ink); }
 .btn-dark   { background: var(--surface2); color: var(--ink); border: 1px solid var(--hairline); }
 .btn-dark:hover { border-color: var(--text); }
 .btn-danger { background: transparent; color: var(--red); border: 1px solid var(--red); }
-.btn-danger:hover { background: var(--red); color: #fff; }
+.btn-danger:hover { background: var(--red); color: #F2F2F2; }
 
 /* ── Badges ──────────────────────────────────────────────── */
 .badge {
@@ -654,7 +654,7 @@ textarea.field { font-family: var(--font-body); resize: vertical; min-height: 80
 .auth-mark-sq {
   width: 40px; height: 40px; background: var(--red);
   display: flex; align-items: center; justify-content: center;
-  color: #fff; font-family: var(--font-display);
+  color: #F2F2F2; font-family: var(--font-display);
   font-weight: 700; font-size: 22px;
 }
 .auth-club {
@@ -728,7 +728,7 @@ textarea.field { font-family: var(--font-body); resize: vertical; min-height: 80
 }
 .auth-forgot:hover { color: var(--red); }
 .auth-btn {
-  width: 100%; background: var(--red); color: #fff;
+  width: 100%; background: var(--red); color: #F2F2F2;
   font-family: var(--font-display); font-weight: 700;
   font-size: 12px; letter-spacing: 0.15em; text-transform: uppercase;
   padding: 14px; border: 0; border-radius: 0;
@@ -751,7 +751,7 @@ textarea.field { font-family: var(--font-body); resize: vertical; min-height: 80
   width: 14px; height: 14px; background: var(--red);
   display: inline-flex; align-items: center; justify-content: center;
   font-family: var(--font-display); font-weight: 700;
-  font-size: 8px; color: #fff;
+  font-size: 8px; color: #F2F2F2;
 }
 .auth-divider {
   position: relative; margin: 28px 0;

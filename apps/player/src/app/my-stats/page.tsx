@@ -1,7 +1,8 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { Avatar, Eyebrow, SectionLabel, StatusPill } from '@/components/v2/atoms';
+import { SectionLabel } from '@/components/v2/atoms-layout';
+import { Avatar, Eyebrow, StatusPill } from '@/components/v2/atoms-display';
 import { DPageHead } from '@/components/desktop/page-shell';
 
 export default async function MyStatsPage() {
@@ -103,9 +104,9 @@ export default async function MyStatsPage() {
           position: 'relative',
           overflow: 'hidden',
           flexShrink: 0,
-          background: 'linear-gradient(160deg, #1a1a1a 0%, #2a1410 50%, #181818 100%)',
+          background: 'linear-gradient(160deg, var(--surface2) 0%, #2a1410 50%, var(--surface1) 100%)',
           padding: '24px 24px 28px',
-          borderBottom: '1px solid #303030',
+          borderBottom: '1px solid var(--hairline)',
         }}
       >
         <div
@@ -115,7 +116,7 @@ export default async function MyStatsPage() {
             right: -40,
             width: 240,
             height: 240,
-            background: 'radial-gradient(circle, rgba(218,41,28,0.20) 0%, transparent 70%)',
+            background: 'radial-gradient(circle, rgba(204,0,0,0.20) 0%, transparent 70%)',
           }}
         />
         <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 16 }}>
@@ -149,7 +150,7 @@ export default async function MyStatsPage() {
       {/* ELO Trend */}
       <section style={{ padding: '20px 24px 8px' }}>
         <SectionLabel>Singles ELO · Last {Math.min(trend.length, 6)} matches</SectionLabel>
-        <div style={{ background: '#222', border: '1px solid #303030', padding: 20 }}>
+        <div style={{ background: 'var(--surface1)', border: '1px solid var(--hairline)', padding: 20 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
             <span
               style={{
@@ -166,7 +167,7 @@ export default async function MyStatsPage() {
                 style={{
                   fontSize: 12,
                   fontWeight: 700,
-                  color: trendDelta >= 0 ? '#03904a' : '#da291c',
+                  color: trendDelta >= 0 ? 'var(--green)' : 'var(--red)',
                 }}
               >
                 {trendDelta >= 0 ? '+' : ''}
@@ -176,7 +177,7 @@ export default async function MyStatsPage() {
             <span
               style={{
                 fontSize: 10,
-                color: '#666',
+                color: 'var(--dim)',
                 letterSpacing: '0.65px',
                 textTransform: 'uppercase',
                 fontWeight: 600,
@@ -195,7 +196,7 @@ export default async function MyStatsPage() {
                     y1="25"
                     x2="100"
                     y2="25"
-                    stroke="#303030"
+                    stroke="var(--hairline)"
                     strokeWidth="0.5"
                     strokeDasharray="1,2"
                     vectorEffect="non-scaling-stroke"
@@ -205,16 +206,16 @@ export default async function MyStatsPage() {
                     y1="75"
                     x2="100"
                     y2="75"
-                    stroke="#303030"
+                    stroke="var(--hairline)"
                     strokeWidth="0.5"
                     strokeDasharray="1,2"
                     vectorEffect="non-scaling-stroke"
                   />
-                  <polyline points={`0,100 ${points} 100,100`} fill="rgba(218,41,28,0.12)" />
+                  <polyline points={`0,100 ${points} 100,100`} fill="rgba(204,0,0,0.12)" />
                   <polyline
                     points={points}
                     fill="none"
-                    stroke="#da291c"
+                    stroke="var(--red)"
                     strokeWidth="2"
                     vectorEffect="non-scaling-stroke"
                     strokeLinecap="round"
@@ -228,8 +229,8 @@ export default async function MyStatsPage() {
                     top: 0,
                     width: 8,
                     height: 8,
-                    background: '#da291c',
-                    boxShadow: '0 0 0 3px rgba(218,41,28,0.25)',
+                    background: 'var(--red)',
+                    boxShadow: '0 0 0 3px rgba(204,0,0,0.25)',
                     transform: 'translate(50%, -50%)',
                   }}
                 />
@@ -240,7 +241,7 @@ export default async function MyStatsPage() {
                   justifyContent: 'space-between',
                   marginTop: 10,
                   fontSize: 9,
-                  color: '#666',
+                  color: 'var(--dim)',
                   fontWeight: 600,
                   letterSpacing: '1px',
                   textTransform: 'uppercase',
@@ -253,7 +254,7 @@ export default async function MyStatsPage() {
               </div>
             </>
           ) : (
-            <div style={{ marginTop: 16, fontSize: 12, color: '#969696', textAlign: 'center', padding: '20px 0' }}>
+            <div style={{ marginTop: 16, fontSize: 12, color: 'var(--text)', textAlign: 'center', padding: '20px 0' }}>
               Play a few matches to see your trend.
             </div>
           )}
@@ -268,8 +269,8 @@ export default async function MyStatsPage() {
             display: 'grid',
             gridTemplateColumns: '1fr 1fr',
             gap: 1,
-            background: '#303030',
-            border: '1px solid #303030',
+            background: 'var(--hairline)',
+            border: '1px solid var(--hairline)',
           }}
         >
           {[
@@ -283,14 +284,14 @@ export default async function MyStatsPage() {
               value: streak > 0 ? `+${streak}` : streak < 0 ? `${streak}` : '0',
             },
           ].map((s) => (
-            <div key={s.label} style={{ background: '#222', padding: '16px 18px' }}>
+            <div key={s.label} style={{ background: 'var(--surface1)', padding: '16px 18px' }}>
               <div
                 style={{
                   fontSize: 9,
                   fontWeight: 600,
                   letterSpacing: '1.4px',
                   textTransform: 'uppercase',
-                  color: '#969696',
+                  color: 'var(--text)',
                 }}
               >
                 {s.label}
@@ -315,7 +316,7 @@ export default async function MyStatsPage() {
       {/* Account list */}
       <section style={{ padding: '12px 24px 24px' }}>
         <SectionLabel>Account</SectionLabel>
-        <div style={{ background: '#222', border: '1px solid #303030' }}>
+        <div style={{ background: 'var(--surface1)', border: '1px solid var(--hairline)' }}>
           {(
             [
               { label: 'Edit Profile', view: 'profile' },
@@ -339,8 +340,8 @@ export default async function MyStatsPage() {
                 textAlign: 'left',
                 background: 'transparent',
                 border: 'none',
-                borderTop: i === 0 ? 'none' : '1px solid #303030',
-                color: item.danger ? '#da291c' : '#fff',
+                borderTop: i === 0 ? 'none' : '1px solid var(--hairline)',
+                color: item.danger ? 'var(--red)' : 'var(--ink)',
                 fontFamily: 'inherit',
                 fontSize: 13,
                 fontWeight: 600,
@@ -357,8 +358,8 @@ export default async function MyStatsPage() {
                 {item.badge && (
                   <span
                     style={{
-                      background: '#da291c',
-                      color: '#fff',
+                      background: 'var(--red)',
+                      color: 'var(--ink)',
                       fontSize: 9,
                       fontWeight: 700,
                       padding: '2px 6px',
@@ -368,7 +369,7 @@ export default async function MyStatsPage() {
                     {item.badge}
                   </span>
                 )}
-                <span style={{ color: '#666', fontSize: 18 }}>›</span>
+                <span style={{ color: 'var(--dim)', fontSize: 18 }}>›</span>
               </span>
             </Link>
           ))}
@@ -412,11 +413,11 @@ export default async function MyStatsPage() {
               <polyline
                 points={sparkPoints}
                 fill="none"
-                stroke="#da291c"
+                stroke="var(--red)"
                 strokeWidth="2"
                 vectorEffect="non-scaling-stroke"
               />
-              {sparkEnd && <circle cx={sparkEnd.x} cy={sparkEnd.y} r="4" fill="#da291c" />}
+              {sparkEnd && <circle cx={sparkEnd.x} cy={sparkEnd.y} r="4" fill="var(--red)" />}
             </svg>
           ) : (
             <div style={{ color: 'var(--text-faint)', fontSize: 12, padding: '20px 0' }}>

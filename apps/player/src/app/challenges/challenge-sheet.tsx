@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@badminton/shared/supabase-browser';
 import { createChallenge } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
-import { Avatar, CTAButton, Eyebrow } from '@/components/v2/atoms';
+import { CTAButton } from '@/components/v2/atoms-form';
+import { Avatar, Eyebrow } from '@/components/v2/atoms-display';
 
 type Candidate = {
   id: string;
@@ -113,7 +114,7 @@ export function ChallengeSheet({
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0,0,0,0.6)',
+        background: 'rgba(10,10,10,0.6)',
         zIndex: 200,
         display: 'flex',
         alignItems: 'flex-end',
@@ -124,8 +125,8 @@ export function ChallengeSheet({
         onClick={(e) => e.stopPropagation()}
         style={{
           width: '100%',
-          background: '#181818',
-          borderTop: '1px solid #303030',
+          background: 'var(--surface1)',
+          borderTop: '1px solid var(--hairline)',
           maxHeight: '90%',
           display: 'flex',
           flexDirection: 'column',
@@ -135,7 +136,7 @@ export function ChallengeSheet({
         <div
           style={{
             padding: '16px 24px',
-            borderBottom: '1px solid #303030',
+            borderBottom: '1px solid var(--hairline)',
             display: 'flex',
             alignItems: 'center',
             gap: 12,
@@ -155,8 +156,8 @@ export function ChallengeSheet({
               width: 36,
               height: 36,
               background: 'transparent',
-              border: '1px solid #303030',
-              color: '#fff',
+              border: '1px solid var(--hairline)',
+              color: '#F2F2F2',
               fontSize: 18,
               cursor: 'pointer',
               fontFamily: 'inherit',
@@ -175,9 +176,9 @@ export function ChallengeSheet({
                 style={{
                   width: '100%',
                   height: 44,
-                  background: '#222',
-                  border: '1px solid #303030',
-                  color: '#fff',
+                  background: 'var(--surface1)',
+                  border: '1px solid var(--hairline)',
+                  color: '#F2F2F2',
                   padding: '0 14px',
                   fontSize: 12,
                   fontWeight: 600,
@@ -189,15 +190,15 @@ export function ChallengeSheet({
                 }}
               />
               {!loaded ? (
-                <div style={{ textAlign: 'center', padding: 40, color: '#969696', fontSize: 12 }}>
+                <div style={{ textAlign: 'center', padding: 40, color: 'var(--text)', fontSize: 12 }}>
                   Loading…
                 </div>
               ) : filtered.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: 40, color: '#969696', fontSize: 12 }}>
+                <div style={{ textAlign: 'center', padding: 40, color: 'var(--text)', fontSize: 12 }}>
                   No players found.
                 </div>
               ) : (
-                <div style={{ background: '#222', border: '1px solid #303030' }}>
+                <div style={{ background: 'var(--surface1)', border: '1px solid var(--hairline)' }}>
                   {filtered.slice(0, 20).map((p, i) => (
                     <button
                       key={p.id}
@@ -211,8 +212,8 @@ export function ChallengeSheet({
                         padding: '12px 16px',
                         background: 'transparent',
                         border: 'none',
-                        borderTop: i === 0 ? 'none' : '1px solid #303030',
-                        color: '#fff',
+                        borderTop: i === 0 ? 'none' : '1px solid var(--hairline)',
+                        color: '#F2F2F2',
                         fontFamily: 'inherit',
                         cursor: 'pointer',
                         display: 'flex',
@@ -227,7 +228,7 @@ export function ChallengeSheet({
                         <div
                           style={{
                             fontSize: 10,
-                            color: '#666',
+                            color: 'var(--dim)',
                             letterSpacing: '0.65px',
                             textTransform: 'uppercase',
                             fontWeight: 600,
@@ -236,7 +237,7 @@ export function ChallengeSheet({
                           ELO {p.singles_elo ?? '—'}
                         </div>
                       </div>
-                      <span style={{ color: '#666', fontSize: 18 }}>›</span>
+                      <span style={{ color: 'var(--dim)', fontSize: 18 }}>›</span>
                     </button>
                   ))}
                 </div>
@@ -247,9 +248,9 @@ export function ChallengeSheet({
               {opponent && (
                 <div
                   style={{
-                    background: '#222',
-                    border: '1px solid #303030',
-                    borderLeft: '3px solid #da291c',
+                    background: 'var(--surface1)',
+                    border: '1px solid var(--hairline)',
+                    borderLeft: '3px solid var(--red)',
                     padding: 24,
                     marginBottom: 20,
                     textAlign: 'center',
@@ -264,7 +265,7 @@ export function ChallengeSheet({
                   <div
                     style={{
                       fontSize: 11,
-                      color: '#969696',
+                      color: 'var(--text)',
                       letterSpacing: '0.65px',
                       textTransform: 'uppercase',
                       fontWeight: 600,
@@ -281,7 +282,7 @@ export function ChallengeSheet({
                   fontWeight: 600,
                   letterSpacing: '1.6px',
                   textTransform: 'uppercase',
-                  color: '#969696',
+                  color: 'var(--text)',
                   marginBottom: 12,
                 }}
               >
@@ -297,9 +298,9 @@ export function ChallengeSheet({
                       onClick={() => setType(t)}
                       style={{
                         padding: '14px',
-                        background: active ? '#da291c' : '#222',
-                        color: '#fff',
-                        border: active ? 'none' : '1px solid #303030',
+                        background: active ? 'var(--red)' : 'var(--surface1)',
+                        color: '#F2F2F2',
+                        border: active ? 'none' : '1px solid var(--hairline)',
                         fontSize: 12,
                         fontWeight: 700,
                         letterSpacing: '1.4px',

@@ -42,7 +42,7 @@ export default async function TournamentsPage() {
             alignItems: 'center',
             justifyContent: 'center',
           }}>
-            <Trophy size={20} style={{ color: 'white' }} />
+            <Trophy size={20} style={{ color: '#F2F2F2' }} />
           </div>
           <div>
             <h1 style={{ fontSize: '1.875rem', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>TOURNAMENTS</h1>

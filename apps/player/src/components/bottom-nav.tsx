@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useNotificationCounts } from '@/components/notification-badges';
-import { ShuttleMark } from '@/components/v2/atoms';
+import { ShuttleMark } from '@/components/v2/atoms-display';
 
 type IconName = 'home' | 'trophy' | 'shuttle' | 'calendar' | 'user';
 
@@ -61,8 +61,8 @@ export function BottomNav() {
     <nav
       style={{
         flexShrink: 0,
-        borderTop: '1px solid #303030',
-        background: '#181818',
+        borderTop: '1px solid var(--hairline)',
+        background: 'var(--surface1)',
         padding: '8px 8px calc(8px + env(safe-area-inset-bottom, 14px)) 8px',
         display: 'grid',
         gridTemplateColumns: 'repeat(5, 1fr)',
@@ -91,11 +91,11 @@ export function BottomNav() {
                 alignItems: 'center',
                 gap: 4,
                 position: 'relative',
-                color: active ? '#da291c' : '#666',
+                color: active ? 'var(--red)' : 'var(--dim)',
               }}
             >
               <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <ShuttleMark size={20} color={active ? '#da291c' : '#666'} />
+                <ShuttleMark size={20} color={active ? 'var(--red)' : 'var(--dim)'} />
                 {showBadge && (
                   <span
                     style={{
@@ -105,14 +105,14 @@ export function BottomNav() {
                       minWidth: 16,
                       height: 16,
                       padding: '0 4px',
-                      background: '#da291c',
-                      color: '#fff',
+                      background: 'var(--red)',
+                      color: '#F2F2F2',
                       fontSize: 9,
                       fontWeight: 700,
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      border: '2px solid #181818',
+                      border: '2px solid var(--surface1)',
                     }}
                   >
                     {incomingChallenges > 9 ? '9+' : incomingChallenges}
@@ -123,7 +123,7 @@ export function BottomNav() {
                 style={{
                   fontSize: 9,
                   fontWeight: 700,
-                  color: active ? '#da291c' : '#666',
+                  color: active ? 'var(--red)' : 'var(--dim)',
                   letterSpacing: '1.4px',
                   textTransform: 'uppercase',
                 }}
@@ -133,7 +133,7 @@ export function BottomNav() {
             </Link>
           );
         }
-        const c = active ? '#fff' : '#666';
+        const c = active ? 'var(--ink)' : 'var(--dim)';
         return (
           <Link
             key={t.href}

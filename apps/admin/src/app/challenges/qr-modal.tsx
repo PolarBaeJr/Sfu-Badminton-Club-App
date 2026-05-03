@@ -63,6 +63,7 @@ export function QrModalButton({ challengeId, status, hasExistingQr, hasMatch }: 
     QRCode.toCanvas(canvasRef.current, qr.url, {
       width: 280,
       margin: 1,
+      // Pure black/white required for reliable camera-based QR scanning.
       color: { dark: '#000000', light: '#FFFFFF' },
       errorCorrectionLevel: 'M',
     }).catch(() => {
@@ -147,6 +148,7 @@ export function QrModalButton({ challengeId, status, hasExistingQr, hasMatch }: 
               <div
                 className="mx-auto"
                 style={{
+                  // Pure white "quiet zone" required for reliable QR scanning.
                   background: '#FFFFFF',
                   padding: 16,
                   width: 312,

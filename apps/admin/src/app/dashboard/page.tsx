@@ -117,7 +117,7 @@ export default async function DashboardPage() {
             href="/disputes"
             style={{
               background: 'var(--red)',
-              color: '#fff',
+              color: '#F2F2F2',
               padding: '10px 16px',
               fontFamily: 'var(--font-body)',
               fontSize: 11,

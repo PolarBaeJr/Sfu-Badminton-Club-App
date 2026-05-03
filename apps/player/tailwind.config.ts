@@ -9,6 +9,12 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        // Non-negotiable: never pure white / pure black.
+        // Override Tailwind's built-in palette so utilities like text-white,
+        // bg-white/N, bg-black/N, shadow-black/N resolve to safe values.
+        white: '#F2F2F2',
+        black: '#0A0A0A',
+
         // shadcn/ui CSS variable colors
         border: 'var(--border)',
         input: 'var(--input)',
@@ -57,28 +63,10 @@ const config: Config = {
         sm: 'calc(var(--radius) - 4px)',
       },
       fontFamily: {
+        // Aligned with CLAUDE.md source of truth.
         display: ['Barlow Condensed', 'sans-serif'],
-        body: ['DM Sans', 'sans-serif'],
+        body: ['Barlow', 'sans-serif'],
         mono: ['JetBrains Mono', 'monospace'],
-      },
-      animation: {
-        'shuttle-float': 'shuttleFloat 3s ease-in-out infinite',
-        'pulse-glow': 'pulseGlow 2s ease-in-out infinite',
-        'slide-up': 'slideUp 0.5s ease-out',
-      },
-      keyframes: {
-        shuttleFloat: {
-          '0%, 100%': { transform: 'translateY(0px) rotate(0deg)' },
-          '50%': { transform: 'translateY(-10px) rotate(5deg)' },
-        },
-        pulseGlow: {
-          '0%, 100%': { opacity: '0.4' },
-          '50%': { opacity: '1' },
-        },
-        slideUp: {
-          '0%': { transform: 'translateY(20px)', opacity: '0' },
-          '100%': { transform: 'translateY(0)', opacity: '1' },
-        },
       },
     },
   },

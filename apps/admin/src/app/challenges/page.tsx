@@ -99,7 +99,7 @@ export default async function ChallengesPage() {
             justifyContent: 'center',
             opacity: 0.9,
           }}>
-            <Swords size={24} style={{ color: 'white' }} />
+            <Swords size={24} style={{ color: '#F2F2F2' }} />
           </div>
           <div>
             <h1 style={{

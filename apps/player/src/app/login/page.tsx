@@ -2,13 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@badminton/shared/supabase-browser';
-import {
-  AuthShell,
-  AuthHeader,
-  AuthField,
-  CTAButton,
-  ShuttleMark,
-} from '@/components/v2/atoms';
+import { AuthHeader, AuthShell } from '@/components/v2/atoms-layout';
+import { AuthField, CTAButton } from '@/components/v2/atoms-form';
+import { ShuttleMark } from '@/components/v2/atoms-display';
 
 type View = 'signin' | 'forgot' | 'sent';
 
@@ -104,14 +100,14 @@ export default function LoginPage() {
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 36 }}>
-            <ShuttleMark size={22} color="#da291c" />
+            <ShuttleMark size={22} color="var(--red)" />
             <span
               style={{
                 fontSize: 11,
                 fontWeight: 700,
                 letterSpacing: '2.5px',
                 textTransform: 'uppercase',
-                color: '#da291c',
+                color: 'var(--red)',
               }}
             >
               SFU Badminton
@@ -123,7 +119,7 @@ export default function LoginPage() {
               fontWeight: 700,
               letterSpacing: '2.4px',
               textTransform: 'uppercase',
-              color: '#da291c',
+              color: 'var(--red)',
             }}
           >
             Welcome back
@@ -144,7 +140,7 @@ export default function LoginPage() {
           <div
             style={{
               fontSize: 13,
-              color: '#969696',
+              color: 'var(--text)',
               lineHeight: 1.55,
               marginTop: 14,
               marginBottom: 32,
@@ -178,7 +174,7 @@ export default function LoginPage() {
                   fontWeight: 600,
                   letterSpacing: '1.5px',
                   textTransform: 'uppercase',
-                  color: errors.password ? '#da291c' : '#666',
+                  color: errors.password ? 'var(--red)' : 'var(--dim)',
                 }}
               >
                 Password
@@ -189,7 +185,7 @@ export default function LoginPage() {
                 style={{
                   background: 'transparent',
                   border: 0,
-                  color: '#969696',
+                  color: 'var(--text)',
                   fontSize: 10,
                   fontWeight: 600,
                   letterSpacing: '0.06em',
@@ -208,9 +204,9 @@ export default function LoginPage() {
               placeholder="••••••••"
               style={{
                 width: '100%',
-                background: '#181818',
-                border: '1px solid ' + (errors.password ? '#da291c' : '#303030'),
-                color: '#fff',
+                background: 'var(--surface1)',
+                border: '1px solid ' + (errors.password ? 'var(--red)' : 'var(--hairline)'),
+                color: 'var(--ink)',
                 fontSize: 14,
                 fontWeight: 500,
                 padding: '13px 14px',
@@ -227,7 +223,7 @@ export default function LoginPage() {
                 top: 32,
                 background: 'transparent',
                 border: 0,
-                color: '#969696',
+                color: 'var(--text)',
                 fontSize: 10,
                 fontWeight: 600,
                 letterSpacing: '0.08em',
@@ -242,7 +238,7 @@ export default function LoginPage() {
               <div
                 style={{
                   fontSize: 10,
-                  color: '#da291c',
+                  color: 'var(--red)',
                   marginTop: 6,
                   fontWeight: 600,
                 }}
@@ -257,17 +253,17 @@ export default function LoginPage() {
           </CTAButton>
 
           {errors.general && (
-            <div style={{ fontSize: 10, color: '#da291c', marginTop: 12, fontWeight: 600 }}>
+            <div style={{ fontSize: 10, color: 'var(--red)', marginTop: 12, fontWeight: 600 }}>
               ↑ {errors.general}
             </div>
           )}
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '24px 0' }}>
-            <div style={{ flex: 1, height: 1, background: '#303030' }} />
-            <span style={{ fontSize: 9, color: '#666', letterSpacing: '0.18em', fontWeight: 600 }}>
+            <div style={{ flex: 1, height: 1, background: 'var(--hairline)' }} />
+            <span style={{ fontSize: 9, color: 'var(--dim)', letterSpacing: '0.18em', fontWeight: 600 }}>
               OR
             </span>
-            <div style={{ flex: 1, height: 1, background: '#303030' }} />
+            <div style={{ flex: 1, height: 1, background: 'var(--hairline)' }} />
           </div>
 
           <button
@@ -277,8 +273,8 @@ export default function LoginPage() {
             style={{
               width: '100%',
               background: 'transparent',
-              color: '#fff',
-              border: '1px solid #303030',
+              color: 'var(--ink)',
+              border: '1px solid var(--hairline)',
               padding: '14px',
               fontSize: 11,
               fontWeight: 700,
@@ -297,14 +293,14 @@ export default function LoginPage() {
               style={{
                 width: 16,
                 height: 16,
-                background: '#da291c',
+                background: 'var(--red)',
                 display: 'inline-flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 fontFamily: 'JetBrains Mono, monospace',
                 fontWeight: 700,
                 fontSize: 9,
-                color: '#fff',
+                color: 'var(--ink)',
               }}
             >
               S
@@ -317,7 +313,7 @@ export default function LoginPage() {
               marginTop: 'auto',
               paddingTop: 28,
               fontSize: 12,
-              color: '#969696',
+              color: 'var(--text)',
               textAlign: 'center',
             }}
           >
@@ -325,7 +321,7 @@ export default function LoginPage() {
             <a
               href="/onboarding"
               style={{
-                color: '#da291c',
+                color: 'var(--red)',
                 fontSize: 12,
                 fontWeight: 700,
                 textDecoration: 'none',
@@ -381,7 +377,7 @@ export default function LoginPage() {
               {loading ? 'Sending…' : 'Send Reset Link'}
             </CTAButton>
             {errors.general && (
-              <div style={{ fontSize: 10, color: '#da291c', marginTop: 12, fontWeight: 600 }}>
+              <div style={{ fontSize: 10, color: 'var(--red)', marginTop: 12, fontWeight: 600 }}>
                 ↑ {errors.general}
               </div>
             )}
@@ -410,7 +406,7 @@ export default function LoginPage() {
             width: 56,
             height: 56,
             border: '1px solid #4ade80',
-            color: '#4ade80',
+            color: 'var(--green)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -426,13 +422,13 @@ export default function LoginPage() {
         <div
           style={{
             fontSize: 13,
-            color: '#969696',
+            color: 'var(--text)',
             lineHeight: 1.55,
             marginTop: 12,
             maxWidth: 280,
           }}
         >
-          If <strong style={{ color: '#fff' }}>{email || forgotEmail}</strong> matches a club account, a reset link is on
+          If <strong style={{ color: 'var(--ink)' }}>{email || forgotEmail}</strong> matches a club account, a reset link is on
           its way. It&apos;s good for 1 hour.
         </div>
         <div style={{ marginTop: 36, width: '100%' }}>

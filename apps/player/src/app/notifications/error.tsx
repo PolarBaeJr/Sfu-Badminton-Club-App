@@ -33,7 +33,7 @@ export default function Error({ error, reset }: { error: Error; reset: () => voi
           style={{
             marginTop: 18,
             background: 'var(--red)',
-            color: '#fff',
+            color: '#F2F2F2',
             border: 0,
             padding: '10px 16px',
             fontSize: 11,

@@ -4,7 +4,8 @@ import { useState, useEffect, useMemo } from 'react';
 import useSWR from 'swr';
 import Link from 'next/link';
 import { getPostHogClient } from '@/lib/posthog';
-import { Avatar, ScreenHeader, SectionLabel } from '@/components/v2/atoms';
+import { ScreenHeader, SectionLabel } from '@/components/v2/atoms-layout';
+import { Avatar } from '@/components/v2/atoms-display';
 import { DPageHead } from '@/components/desktop/page-shell';
 import type { LeaderboardEntry } from './page';
 
@@ -67,7 +68,7 @@ export function LeaderboardClient({
             display: 'grid',
             gridTemplateColumns: '1fr 1fr',
             gap: 0,
-            border: '1px solid #303030',
+            border: '1px solid var(--hairline)',
           }}
         >
           {([
@@ -82,8 +83,8 @@ export function LeaderboardClient({
                 onClick={() => setTab(t.id)}
                 style={{
                   padding: '12px',
-                  background: active ? '#da291c' : 'transparent',
-                  color: active ? '#fff' : '#969696',
+                  background: active ? 'var(--red)' : 'transparent',
+                  color: active ? '#F2F2F2' : 'var(--text)',
                   border: 'none',
                   cursor: 'pointer',
                   fontSize: 11,
@@ -123,7 +124,7 @@ export function LeaderboardClient({
                     display: 'flex',
                     flexDirection: 'column',
                     alignItems: 'center',
-                    color: '#fff',
+                    color: '#F2F2F2',
                     textDecoration: 'none',
                     animation: `fadeUp 400ms ${i * 80}ms ease both`,
                   }}
@@ -144,7 +145,7 @@ export function LeaderboardClient({
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
                       whiteSpace: 'nowrap',
-                      color: isMe ? '#da291c' : '#fff',
+                      color: isMe ? 'var(--red)' : '#F2F2F2',
                     }}
                   >
                     {p.full_name.split(' ')[0]}
@@ -152,7 +153,7 @@ export function LeaderboardClient({
                   <div
                     style={{
                       fontSize: 11,
-                      color: '#969696',
+                      color: 'var(--text)',
                       fontFamily: 'JetBrains Mono, monospace',
                       fontWeight: 600,
                       textAlign: 'center',
@@ -164,13 +165,13 @@ export function LeaderboardClient({
                     style={{
                       height: h,
                       width: '100%',
-                      background: place === 1 ? '#da291c' : '#303030',
+                      background: place === 1 ? 'var(--red)' : 'var(--hairline)',
                       marginTop: 8,
                       display: 'flex',
                       alignItems: 'flex-start',
                       justifyContent: 'center',
                       paddingTop: 12,
-                      color: place === 1 ? '#fff' : '#969696',
+                      color: place === 1 ? '#F2F2F2' : 'var(--text)',
                       fontSize: 28,
                       fontWeight: 700,
                       fontFamily: 'JetBrains Mono, monospace',
@@ -189,7 +190,7 @@ export function LeaderboardClient({
       <div style={{ padding: '20px 24px 0' }}>
         <SectionLabel>The rest</SectionLabel>
         {rest.length > 0 ? (
-          <div style={{ background: '#222', border: '1px solid #303030' }}>
+          <div style={{ background: 'var(--surface1)', border: '1px solid var(--hairline)' }}>
             {rest.map((p, i) => {
               const isMe = p.id === currentPlayerId;
               return (
@@ -201,10 +202,10 @@ export function LeaderboardClient({
                     display: 'flex',
                     alignItems: 'center',
                     gap: 12,
-                    borderTop: i === 0 ? 'none' : '1px solid #303030',
-                    color: '#fff',
+                    borderTop: i === 0 ? 'none' : '1px solid var(--hairline)',
+                    color: '#F2F2F2',
                     textDecoration: 'none',
-                    background: isMe ? 'rgba(218,41,28,0.08)' : 'transparent',
+                    background: isMe ? 'rgba(204,0,0,0.08)' : 'transparent',
                   }}
                 >
                   <span
@@ -212,7 +213,7 @@ export function LeaderboardClient({
                       width: 22,
                       fontSize: 13,
                       fontWeight: 700,
-                      color: isMe ? '#da291c' : '#666',
+                      color: isMe ? 'var(--red)' : 'var(--dim)',
                       fontFamily: 'JetBrains Mono, monospace',
                     }}
                   >
@@ -224,7 +225,7 @@ export function LeaderboardClient({
                       style={{
                         fontSize: 13,
                         fontWeight: 600,
-                        color: isMe ? '#da291c' : '#fff',
+                        color: isMe ? 'var(--red)' : '#F2F2F2',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
@@ -236,7 +237,7 @@ export function LeaderboardClient({
                       <div
                         style={{
                           fontSize: 10,
-                          color: '#666',
+                          color: 'var(--dim)',
                           letterSpacing: '0.65px',
                           textTransform: 'uppercase',
                           fontWeight: 600,
@@ -266,9 +267,9 @@ export function LeaderboardClient({
               padding: '32px 24px',
               textAlign: 'center',
               fontSize: 12,
-              color: '#969696',
-              background: '#222',
-              border: '1px solid #303030',
+              color: 'var(--text)',
+              background: 'var(--surface1)',
+              border: '1px solid var(--hairline)',
             }}
           >
             No more players ranked yet.

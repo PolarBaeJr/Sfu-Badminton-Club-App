@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { CTAButton } from '@/components/v2/atoms';
+import { CTAButton } from '@/components/v2/atoms-form';
 import { ChallengeSheet } from './challenge-sheet';
 
 export function NewChallengeButton() {
@@ -28,8 +28,8 @@ export function SuggestedChallengeButton({ opponentId }: { opponentId: string })
           height: 34,
           marginTop: 'auto',
           background: 'transparent',
-          border: '1px solid #da291c',
-          color: '#da291c',
+          border: '1px solid var(--red)',
+          color: 'var(--red)',
           fontSize: 10,
           fontWeight: 700,
           letterSpacing: '1.4px',

@@ -1,6 +1,7 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
-import { Avatar, ScreenHeader, Pill, EmptyState } from '@/components/v2/atoms';
+import { ScreenHeader } from '@/components/v2/atoms-layout';
+import { Avatar, EmptyState, Pill } from '@/components/v2/atoms-display';
 import { CheckInButton } from './check-in-button';
 import { SESSION_SELECT_FIELDS } from '@/lib/queries/sessions';
 import { DPageHead, DPanel } from '@/components/desktop/page-shell';
@@ -80,9 +81,9 @@ export default async function SessionsPage() {
               <div
                 key={s.id}
                 style={{
-                  background: '#222',
-                  border: '1px solid #303030',
-                  borderLeft: isFeatured ? '3px solid #da291c' : '3px solid transparent',
+                  background: 'var(--surface1)',
+                  border: '1px solid var(--hairline)',
+                  borderLeft: isFeatured ? '3px solid var(--red)' : '3px solid transparent',
                   overflow: 'hidden',
                 }}
               >
@@ -94,7 +95,7 @@ export default async function SessionsPage() {
                         fontWeight: 700,
                         letterSpacing: '1.6px',
                         textTransform: 'uppercase',
-                        color: isFeatured ? '#da291c' : '#969696',
+                        color: isFeatured ? 'var(--red)' : 'var(--text)',
                       }}
                     >
                       {formatDateLine(
@@ -105,9 +106,9 @@ export default async function SessionsPage() {
                     </span>
                     {isFeatured && (
                       <Pill
-                        color="#da291c"
-                        bg="rgba(218,41,28,0.12)"
-                        border="1px solid rgba(218,41,28,0.35)"
+                        color="var(--red)"
+                        bg="rgba(204,0,0,0.12)"
+                        border="1px solid rgba(204,0,0,0.35)"
                       >
                         Featured
                       </Pill>
@@ -116,7 +117,7 @@ export default async function SessionsPage() {
                   <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: '-0.2px', lineHeight: 1.2 }}>
                     {s.name ?? 'Practice Session'}
                   </div>
-                  <div style={{ fontSize: 12, color: '#969696', marginTop: 4 }}>{s.location}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text)', marginTop: 4 }}>{s.location}</div>
 
                   <div style={{ marginTop: 14 }}>
                     <div
@@ -127,7 +128,7 @@ export default async function SessionsPage() {
                         fontWeight: 600,
                         letterSpacing: '0.65px',
                         textTransform: 'uppercase',
-                        color: '#969696',
+                        color: 'var(--text)',
                         marginBottom: 6,
                       }}
                     >
@@ -136,12 +137,12 @@ export default async function SessionsPage() {
                       </span>
                       <span>{pct}% full</span>
                     </div>
-                    <div style={{ height: 4, background: '#181818', overflow: 'hidden' }}>
+                    <div style={{ height: 4, background: 'var(--surface1)', overflow: 'hidden' }}>
                       <div
                         style={{
                           height: '100%',
                           width: `${pct}%`,
-                          background: '#da291c',
+                          background: 'var(--red)',
                           transition: 'width 240ms ease',
                         }}
                       />
@@ -153,7 +154,7 @@ export default async function SessionsPage() {
                       {attendees.map((p, i) => (
                         <div
                           key={i}
-                          style={{ marginLeft: i === 0 ? 0 : -8, border: '2px solid #222' }}
+                          style={{ marginLeft: i === 0 ? 0 : -8, border: '2px solid var(--surface1)' }}
                         >
                           <Avatar
                             name={p.full_name ?? ''}

@@ -11,7 +11,7 @@ import { QrRedirectHandler } from '@/components/qr-redirect-handler';
 import { NotificationCountsProvider } from '@/components/notification-badges';
 import { SWRProvider } from '@/components/swr-provider';
 import { ProfileProvider, type Profile } from '@/components/profile-provider';
-import { StatusBar } from '@/components/v2/atoms';
+import { StatusBar } from '@/components/v2/atoms-layout';
 import { createServerSupabaseClient } from '@/lib/supabase-server';
 import { Inter, JetBrains_Mono } from 'next/font/google';
 import { headers } from 'next/headers';
@@ -82,7 +82,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="en" suppressHydrationWarning className={`${inter.variable} ${jetbrains.variable}`}>
       <head>
-        <meta name="theme-color" content="#0d0d0d" />
+        <meta name="theme-color" content="#0A0A0A" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
       </head>

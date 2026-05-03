@@ -1,13 +1,8 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import {
-  Avatar,
-  ScreenHeader,
-  SectionLabel,
-  Pill,
-  EmptyState,
-} from '@/components/v2/atoms';
+import { ScreenHeader, SectionLabel } from '@/components/v2/atoms-layout';
+import { Avatar, EmptyState, Pill } from '@/components/v2/atoms-display';
 import { formatRelative, formatScheduled } from '@badminton/shared';
 import { InlineChallengeActions } from './inline-actions';
 import { NewChallengeButton, SuggestedChallengeButton } from './sheet-controls';
@@ -97,9 +92,9 @@ export default async function ChallengesPage() {
               <div
                 key={cp_id}
                 style={{
-                  background: '#222',
-                  border: '1px solid #303030',
-                  borderLeft: '3px solid #da291c',
+                  background: 'var(--surface1)',
+                  border: '1px solid var(--hairline)',
+                  borderLeft: '3px solid var(--red)',
                   padding: 16,
                   marginBottom: 8,
                   display: 'flex',
@@ -115,7 +110,7 @@ export default async function ChallengesPage() {
                     display: 'flex',
                     alignItems: 'center',
                     gap: 12,
-                    color: '#fff',
+                    color: '#F2F2F2',
                     textDecoration: 'none',
                   }}
                 >
@@ -126,7 +121,7 @@ export default async function ChallengesPage() {
                   />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 700 }}>{c.creator?.full_name}</div>
-                    <div style={{ fontSize: 11, color: '#969696', marginTop: 2 }}>
+                    <div style={{ fontSize: 11, color: 'var(--text)', marginTop: 2 }}>
                       {c.type} · {c.scheduled_at ? formatScheduled(c.scheduled_at) : formatRelative(c.created_at)}
                     </div>
                   </div>
@@ -154,21 +149,21 @@ export default async function ChallengesPage() {
                 key={cp_id}
                 href={`/challenges/${c.id}`}
                 style={{
-                  background: '#222',
-                  border: '1px solid #303030',
+                  background: 'var(--surface1)',
+                  border: '1px solid var(--hairline)',
                   padding: 16,
                   marginBottom: 8,
                   display: 'flex',
                   alignItems: 'center',
                   gap: 12,
-                  color: '#fff',
+                  color: '#F2F2F2',
                   textDecoration: 'none',
                 }}
               >
                 <Avatar name={oppName} src={opponents[0]?.avatar_url} size={44} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 700 }}>{oppName}</div>
-                  <div style={{ fontSize: 11, color: '#969696', marginTop: 2 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text)', marginTop: 2 }}>
                     {c.type} · {c.scheduled_at ? formatScheduled(c.scheduled_at) : formatRelative(c.created_at)}
                   </div>
                 </div>
@@ -199,8 +194,8 @@ export default async function ChallengesPage() {
                 style={{
                   width: 160,
                   flexShrink: 0,
-                  background: '#222',
-                  border: '1px solid #303030',
+                  background: 'var(--surface1)',
+                  border: '1px solid var(--hairline)',
                   padding: '20px 16px',
                   display: 'flex',
                   flexDirection: 'column',
@@ -225,7 +220,7 @@ export default async function ChallengesPage() {
                   <div
                     style={{
                       fontSize: 10,
-                      color: '#969696',
+                      color: 'var(--text)',
                       letterSpacing: '0.65px',
                       textTransform: 'uppercase',
                       fontWeight: 600,
@@ -355,37 +350,37 @@ function labelForStatus(status: string): { text: string; color: string; bg: stri
     case 'proposed':
       return {
         text: 'Awaiting',
-        color: '#f59e0b',
-        bg: 'rgba(245,158,11,0.12)',
-        border: 'rgba(245,158,11,0.35)',
+        color: 'var(--warning)',
+        bg: 'rgba(251,191,36,0.12)',
+        border: 'rgba(251,191,36,0.35)',
       };
     case 'accepted':
     case 'partially_confirmed':
       return {
         text: 'Accepted',
-        color: '#03904a',
-        bg: 'rgba(3,144,74,0.12)',
-        border: 'rgba(3,144,74,0.35)',
+        color: 'var(--green)',
+        bg: 'rgba(74,222,128,0.12)',
+        border: 'rgba(74,222,128,0.35)',
       };
     case 'completed':
     case 'walkover_confirmed':
       return {
         text: 'Done',
-        color: '#969696',
+        color: 'var(--text)',
         bg: 'rgba(255,255,255,0.05)',
         border: 'rgba(255,255,255,0.15)',
       };
     case 'disputed':
       return {
         text: 'Disputed',
-        color: '#da291c',
-        bg: 'rgba(218,41,28,0.12)',
-        border: 'rgba(218,41,28,0.35)',
+        color: 'var(--red)',
+        bg: 'rgba(204,0,0,0.12)',
+        border: 'rgba(204,0,0,0.35)',
       };
     default:
       return {
         text: status,
-        color: '#969696',
+        color: 'var(--text)',
         bg: 'rgba(255,255,255,0.05)',
         border: 'rgba(255,255,255,0.15)',
       };

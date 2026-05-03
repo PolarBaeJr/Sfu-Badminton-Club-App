@@ -645,7 +645,7 @@ const btnRedStyle: React.CSSProperties = {
   textTransform: 'uppercase',
   padding: '10px 16px',
   background: 'var(--red)',
-  color: '#fff',
+  color: '#F2F2F2',
   border: 0,
   cursor: 'pointer',
   lineHeight: 1,

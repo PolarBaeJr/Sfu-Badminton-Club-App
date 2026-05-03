@@ -73,8 +73,8 @@ export function AvatarUpload({ playerId, playerName, currentUrl, onUploaded }: A
         className="relative group cursor-pointer min-h-[56px] min-w-[56px]"
       >
         <Avatar name={playerName} src={avatarUrl} size="lg" />
-        <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-          <span className="text-white text-xs font-medium">
+        <div className="absolute inset-0 rounded-full bg-[var(--bg)]/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+          <span className="text-[#F2F2F2] text-xs font-medium">
             {uploading ? 'Uploading...' : 'Change'}
           </span>
         </div>

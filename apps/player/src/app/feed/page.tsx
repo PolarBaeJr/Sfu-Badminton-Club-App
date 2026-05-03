@@ -1,13 +1,9 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import {
-  Avatar,
-  Card,
-  Eyebrow,
-  SectionLabel,
-  ActionTile,
-} from '@/components/v2/atoms';
+import { Card, SectionLabel } from '@/components/v2/atoms-layout';
+import { ActionTile } from '@/components/v2/atoms-form';
+import { Avatar, Eyebrow } from '@/components/v2/atoms-display';
 import { formatRelative } from '@badminton/shared';
 import { SESSION_SELECT_FIELDS } from '@/lib/queries/sessions';
 import { FeedDesktopView } from './desktop-view';
@@ -202,9 +198,9 @@ export default async function FeedPage() {
           position: 'relative',
           overflow: 'hidden',
           flexShrink: 0,
-          background: '#181818',
+          background: 'var(--surface1)',
           padding: '20px 24px 24px',
-          borderBottom: '1px solid #303030',
+          borderBottom: '1px solid var(--hairline)',
           animation: 'fadeUp 360ms ease both',
         }}
       >
@@ -215,7 +211,7 @@ export default async function FeedPage() {
             right: -80,
             width: 280,
             height: 280,
-            background: 'radial-gradient(circle, rgba(218,41,28,0.16) 0%, transparent 65%)',
+            background: 'radial-gradient(circle, rgba(204,0,0,0.16) 0%, transparent 65%)',
             pointerEvents: 'none',
           }}
         />
@@ -237,7 +233,7 @@ export default async function FeedPage() {
                   fontWeight: 700,
                   letterSpacing: '1.4px',
                   textTransform: 'uppercase',
-                  color: '#969696',
+                  color: 'var(--text)',
                 }}
               >
                 {greeting}
@@ -253,8 +249,8 @@ export default async function FeedPage() {
               width: 36,
               height: 36,
               background: 'transparent',
-              border: '1px solid #303030',
-              color: '#fff',
+              border: '1px solid var(--hairline)',
+              color: '#F2F2F2',
               cursor: 'pointer',
               position: 'relative',
               display: 'flex',
@@ -276,7 +272,7 @@ export default async function FeedPage() {
                   right: 6,
                   width: 6,
                   height: 6,
-                  background: '#da291c',
+                  background: 'var(--red)',
                 }}
               />
             )}
@@ -291,7 +287,7 @@ export default async function FeedPage() {
               fontWeight: 700,
               letterSpacing: '1.6px',
               textTransform: 'uppercase',
-              color: '#da291c',
+              color: 'var(--red)',
             }}
           >
             Singles ELO {ratings?.singles_elo != null && `· Rank #${myRank}`}
@@ -316,7 +312,7 @@ export default async function FeedPage() {
                   gap: 4,
                   fontSize: 13,
                   fontWeight: 700,
-                  color: delta >= 0 ? '#03904a' : '#da291c',
+                  color: delta >= 0 ? 'var(--green)' : 'var(--red)',
                 }}
               >
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
@@ -327,7 +323,7 @@ export default async function FeedPage() {
               </span>
             )}
           </div>
-          <div style={{ fontSize: 11, color: '#969696', marginTop: 6, fontWeight: 500 }}>
+          <div style={{ fontSize: 11, color: 'var(--text)', marginTop: 6, fontWeight: 500 }}>
             {totalWins} wins · {totalMatches} matches · Season 02
           </div>
         </div>
@@ -339,8 +335,8 @@ export default async function FeedPage() {
             gridTemplateColumns: '1fr 1fr 1fr',
             gap: 1,
             marginTop: 22,
-            background: '#303030',
-            border: '1px solid #303030',
+            background: 'var(--hairline)',
+            border: '1px solid var(--hairline)',
           }}
         >
           {[
@@ -348,14 +344,14 @@ export default async function FeedPage() {
             { label: 'Win Rate', value: totalMatches > 0 ? `${winRate}%` : '—' },
             { label: 'Streak', value: streak > 0 ? `+${streak}` : streak < 0 ? `${streak}` : '0' },
           ].map((s) => (
-            <div key={s.label} style={{ background: '#181818', padding: '12px 12px' }}>
+            <div key={s.label} style={{ background: 'var(--surface1)', padding: '12px 12px' }}>
               <div
                 style={{
                   fontSize: 9,
                   fontWeight: 600,
                   letterSpacing: '1.4px',
                   textTransform: 'uppercase',
-                  color: '#969696',
+                  color: 'var(--text)',
                 }}
               >
                 {s.label}
@@ -446,12 +442,12 @@ export default async function FeedPage() {
                 display: 'block',
                 width: '100%',
                 textAlign: 'left',
-                background: '#222',
-                border: '1px solid #303030',
-                borderLeft: '3px solid #da291c',
+                background: 'var(--surface1)',
+                border: '1px solid var(--hairline)',
+                borderLeft: '3px solid var(--red)',
                 padding: 20,
                 cursor: 'pointer',
-                color: '#fff',
+                color: '#F2F2F2',
                 textDecoration: 'none',
               }}
             >
@@ -462,13 +458,13 @@ export default async function FeedPage() {
                     fontWeight: 700,
                     letterSpacing: '1.6px',
                     textTransform: 'uppercase',
-                    color: '#da291c',
+                    color: 'var(--red)',
                   }}
                 >
                   {formatSessionDateOnly(nextSession.date as string)}
                   {timeLabel && (
                     <>
-                      <span style={{ color: '#666', margin: '0 6px' }}>·</span>
+                      <span style={{ color: 'var(--dim)', margin: '0 6px' }}>·</span>
                       {timeLabel}
                     </>
                   )}
@@ -477,7 +473,7 @@ export default async function FeedPage() {
               <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: '-0.2px', lineHeight: 1.2 }}>
                 {nextSession.name ?? 'Practice Session'}
               </div>
-              <div style={{ fontSize: 12, color: '#969696', marginTop: 4 }}>{nextSession.location}</div>
+              <div style={{ fontSize: 12, color: 'var(--text)', marginTop: 4 }}>{nextSession.location}</div>
               <div
                 style={{
                   marginTop: 14,
@@ -491,7 +487,7 @@ export default async function FeedPage() {
                     {pile.map((p, i) => (
                       <div
                         key={i}
-                        style={{ marginLeft: i === 0 ? 0 : -10, border: '2px solid #222' }}
+                        style={{ marginLeft: i === 0 ? 0 : -10, border: '2px solid var(--surface1)' }}
                       >
                         <Avatar
                           name={p.full_name ?? ''}
@@ -504,7 +500,7 @@ export default async function FeedPage() {
                   <span
                     style={{
                       fontSize: 11,
-                      color: '#969696',
+                      color: 'var(--text)',
                       fontWeight: 600,
                       letterSpacing: '0.65px',
                       textTransform: 'uppercase',
@@ -515,8 +511,8 @@ export default async function FeedPage() {
                 </div>
                 <span
                   style={{
-                    background: '#da291c',
-                    color: '#fff',
+                    background: 'var(--red)',
+                    color: '#F2F2F2',
                     padding: '6px 14px',
                     fontSize: 10,
                     fontWeight: 700,
@@ -536,7 +532,7 @@ export default async function FeedPage() {
       {topRanked.length > 0 && (
         <section style={{ padding: '12px 24px' }}>
           <SectionLabel action="Full board →">Top 5 · Singles</SectionLabel>
-          <div style={{ background: '#222', border: '1px solid #303030' }}>
+          <div style={{ background: 'var(--surface1)', border: '1px solid var(--hairline)' }}>
             {topRanked.map((p, i) => (
               <Link
                 key={p.id}
@@ -546,8 +542,8 @@ export default async function FeedPage() {
                   display: 'flex',
                   alignItems: 'center',
                   gap: 12,
-                  borderTop: i === 0 ? 'none' : '1px solid #303030',
-                  color: '#fff',
+                  borderTop: i === 0 ? 'none' : '1px solid var(--hairline)',
+                  color: '#F2F2F2',
                   textDecoration: 'none',
                 }}
               >
@@ -556,7 +552,7 @@ export default async function FeedPage() {
                     width: 22,
                     fontSize: 13,
                     fontWeight: 700,
-                    color: i < 3 ? '#da291c' : '#666',
+                    color: i < 3 ? 'var(--red)' : 'var(--dim)',
                     fontFamily: 'JetBrains Mono, monospace',
                   }}
                 >
@@ -578,7 +574,7 @@ export default async function FeedPage() {
                   <div
                     style={{
                       fontSize: 10,
-                      color: '#666',
+                      color: 'var(--dim)',
                       letterSpacing: '0.65px',
                       textTransform: 'uppercase',
                       fontWeight: 600,
@@ -601,7 +597,7 @@ export default async function FeedPage() {
         <section style={{ padding: '12px 24px 24px' }}>
           <SectionLabel>Latest Result</SectionLabel>
           <Card padding={20}>
-            <Eyebrow color={recentMatch.result_status === 'confirmed' ? '#03904a' : '#f59e0b'}>
+            <Eyebrow color={recentMatch.result_status === 'confirmed' ? 'var(--green)' : 'var(--warning)'}>
               {recentMatch.result_status === 'confirmed' ? '✓ Confirmed' : '⏳ Pending'} ·{' '}
               {formatRelative(recentMatch.played_at)}
             </Eyebrow>
@@ -628,7 +624,7 @@ export default async function FeedPage() {
                     fontSize: 12,
                     fontWeight: 600,
                     marginTop: 8,
-                    color: recentWin ? '#03904a' : '#fff',
+                    color: recentWin ? 'var(--green)' : '#F2F2F2',
                     textAlign: 'center',
                   }}
                 >
@@ -637,7 +633,7 @@ export default async function FeedPage() {
                 <div
                   style={{
                     fontSize: 9,
-                    color: '#969696',
+                    color: 'var(--text)',
                     letterSpacing: '1.4px',
                     textTransform: 'uppercase',
                     fontWeight: 700,
@@ -652,7 +648,7 @@ export default async function FeedPage() {
                 style={{
                   fontSize: 28,
                   fontWeight: 700,
-                  color: '#da291c',
+                  color: 'var(--red)',
                   fontFamily: 'JetBrains Mono, monospace',
                   alignSelf: 'center',
                 }}
@@ -673,7 +669,7 @@ export default async function FeedPage() {
                     fontSize: 12,
                     fontWeight: 600,
                     marginTop: 8,
-                    color: !recentWin ? '#03904a' : '#fff',
+                    color: !recentWin ? 'var(--green)' : '#F2F2F2',
                     textAlign: 'center',
                   }}
                 >
@@ -682,7 +678,7 @@ export default async function FeedPage() {
                 <div
                   style={{
                     fontSize: 9,
-                    color: '#969696',
+                    color: 'var(--text)',
                     letterSpacing: '1.4px',
                     textTransform: 'uppercase',
                     fontWeight: 700,
@@ -698,7 +694,7 @@ export default async function FeedPage() {
               style={{
                 marginTop: 16,
                 padding: '10px 14px',
-                background: '#181818',
+                background: 'var(--surface1)',
                 textAlign: 'center',
                 fontSize: 14,
                 fontWeight: 700,
@@ -712,7 +708,7 @@ export default async function FeedPage() {
               style={{
                 marginTop: 12,
                 fontSize: 10,
-                color: '#969696',
+                color: 'var(--text)',
                 textAlign: 'center',
                 letterSpacing: '0.65px',
                 textTransform: 'uppercase',

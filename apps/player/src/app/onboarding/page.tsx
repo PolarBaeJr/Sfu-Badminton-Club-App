@@ -4,12 +4,8 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { completeOnboarding } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
-import {
-  AuthShell,
-  AuthHeader,
-  AuthField,
-  CTAButton,
-} from '@/components/v2/atoms';
+import { AuthHeader, AuthShell } from '@/components/v2/atoms-layout';
+import { AuthField, CTAButton } from '@/components/v2/atoms-form';
 
 const TOTAL_STEPS = 5;
 
@@ -125,8 +121,8 @@ export default function OnboardingPage() {
               display: 'flex',
               flexDirection: 'column',
               gap: 1,
-              background: '#303030',
-              border: '1px solid #303030',
+              background: 'var(--hairline)',
+              border: '1px solid var(--hairline)',
             }}
           >
             {[
@@ -139,7 +135,7 @@ export default function OnboardingPage() {
               <div
                 key={r.n}
                 style={{
-                  background: '#1a1a1a',
+                  background: 'var(--surface2)',
                   padding: '14px 16px',
                   display: 'flex',
                   alignItems: 'center',
@@ -151,7 +147,7 @@ export default function OnboardingPage() {
                     fontFamily: 'JetBrains Mono, monospace',
                     fontSize: 11,
                     fontWeight: 700,
-                    color: '#da291c',
+                    color: 'var(--red)',
                     letterSpacing: '0.06em',
                   }}
                 >
@@ -159,7 +155,7 @@ export default function OnboardingPage() {
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13, fontWeight: 700 }}>{r.l}</div>
-                  <div style={{ fontSize: 11, color: '#969696', marginTop: 2 }}>{r.d}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text)', marginTop: 2 }}>{r.d}</div>
                 </div>
               </div>
             ))}
@@ -213,13 +209,13 @@ export default function OnboardingPage() {
               style={{
                 marginTop: 16,
                 fontSize: 11,
-                color: '#666',
+                color: 'var(--dim)',
                 textAlign: 'center',
                 lineHeight: 1.55,
               }}
             >
               By continuing you agree to the club&apos;s{' '}
-              <span style={{ color: '#969696', textDecoration: 'underline' }}>Code of Conduct</span>.
+              <span style={{ color: 'var(--text)', textDecoration: 'underline' }}>Code of Conduct</span>.
             </div>
           </div>
         </div>
@@ -295,15 +291,15 @@ export default function OnboardingPage() {
                     setErrs({});
                   }}
                   style={{
-                    background: active ? 'rgba(218,41,28,0.10)' : '#1a1a1a',
-                    border: '1px solid ' + (active ? '#da291c' : '#303030'),
+                    background: active ? 'rgba(204,0,0,0.10)' : 'var(--surface2)',
+                    border: '1px solid ' + (active ? 'var(--red)' : 'var(--hairline)'),
                     padding: '14px 16px',
                     textAlign: 'left',
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     gap: 14,
-                    color: '#fff',
+                    color: 'var(--ink)',
                     fontFamily: 'inherit',
                   }}
                 >
@@ -311,7 +307,7 @@ export default function OnboardingPage() {
                     style={{
                       width: 18,
                       height: 18,
-                      border: '1.5px solid ' + (active ? '#da291c' : '#666'),
+                      border: '1.5px solid ' + (active ? 'var(--red)' : 'var(--dim)'),
                       borderRadius: '50%',
                       flexShrink: 0,
                       position: 'relative',
@@ -322,7 +318,7 @@ export default function OnboardingPage() {
                         style={{
                           position: 'absolute',
                           inset: 3,
-                          background: '#da291c',
+                          background: 'var(--red)',
                           borderRadius: '50%',
                         }}
                       />
@@ -330,7 +326,7 @@ export default function OnboardingPage() {
                   </div>
                   <div>
                     <div style={{ fontSize: 14, fontWeight: 700 }}>{s.t}</div>
-                    <div style={{ fontSize: 11, color: '#969696', marginTop: 3, lineHeight: 1.4 }}>
+                    <div style={{ fontSize: 11, color: 'var(--text)', marginTop: 3, lineHeight: 1.4 }}>
                       {s.d}
                     </div>
                   </div>
@@ -339,7 +335,7 @@ export default function OnboardingPage() {
             })}
           </div>
           {errs.skill && (
-            <div style={{ fontSize: 10, color: '#da291c', marginTop: 10, fontWeight: 600 }}>
+            <div style={{ fontSize: 10, color: 'var(--red)', marginTop: 10, fontWeight: 600 }}>
               ↑ {errs.skill}
             </div>
           )}
@@ -376,7 +372,7 @@ export default function OnboardingPage() {
                 fontWeight: 600,
                 letterSpacing: '1.5px',
                 textTransform: 'uppercase',
-                color: errs.plays ? '#da291c' : '#666',
+                color: errs.plays ? 'var(--red)' : 'var(--dim)',
                 marginBottom: 8,
               }}
             >
@@ -394,9 +390,9 @@ export default function OnboardingPage() {
                       setErrs({});
                     }}
                     style={{
-                      background: active ? '#da291c' : '#1a1a1a',
-                      border: '1px solid ' + (active ? '#da291c' : '#303030'),
-                      color: '#fff',
+                      background: active ? 'var(--red)' : 'var(--surface2)',
+                      border: '1px solid ' + (active ? 'var(--red)' : 'var(--hairline)'),
+                      color: 'var(--ink)',
                       padding: '14px',
                       fontSize: 12,
                       fontWeight: 700,
@@ -412,7 +408,7 @@ export default function OnboardingPage() {
               })}
             </div>
             {errs.plays && (
-              <div style={{ fontSize: 10, color: '#da291c', marginTop: 8, fontWeight: 600 }}>
+              <div style={{ fontSize: 10, color: 'var(--red)', marginTop: 8, fontWeight: 600 }}>
                 ↑ {errs.plays}
               </div>
             )}
@@ -424,7 +420,7 @@ export default function OnboardingPage() {
                   fontWeight: 600,
                   letterSpacing: '1.5px',
                   textTransform: 'uppercase',
-                  color: '#666',
+                  color: 'var(--dim)',
                   marginBottom: 8,
                 }}
               >
@@ -437,9 +433,9 @@ export default function OnboardingPage() {
                 rows={3}
                 style={{
                   width: '100%',
-                  background: '#181818',
-                  border: '1px solid #303030',
-                  color: '#fff',
+                  background: 'var(--surface1)',
+                  border: '1px solid var(--hairline)',
+                  color: 'var(--ink)',
                   fontSize: 13,
                   padding: '12px 14px',
                   resize: 'none',
@@ -456,13 +452,13 @@ export default function OnboardingPage() {
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 padding: '14px 16px',
-                background: '#1a1a1a',
-                border: '1px solid #303030',
+                background: 'var(--surface2)',
+                border: '1px solid var(--hairline)',
               }}
             >
               <div>
                 <div style={{ fontSize: 13, fontWeight: 700 }}>Notifications</div>
-                <div style={{ fontSize: 11, color: '#969696', marginTop: 2 }}>
+                <div style={{ fontSize: 11, color: 'var(--text)', marginTop: 2 }}>
                   Challenges, sessions &amp; match results.
                 </div>
               </div>
@@ -473,7 +469,7 @@ export default function OnboardingPage() {
                   width: 40,
                   height: 22,
                   borderRadius: 0,
-                  background: notif ? '#da291c' : '#303030',
+                  background: notif ? 'var(--red)' : 'var(--hairline)',
                   border: 0,
                   position: 'relative',
                   cursor: 'pointer',
@@ -487,7 +483,7 @@ export default function OnboardingPage() {
                     left: notif ? 20 : 2,
                     width: 18,
                     height: 18,
-                    background: '#fff',
+                    background: '#F2F2F2',
                     transition: 'left 160ms',
                   }}
                 />
@@ -540,7 +536,7 @@ export default function OnboardingPage() {
             fontWeight: 700,
             letterSpacing: '2.4px',
             textTransform: 'uppercase',
-            color: '#da291c',
+            color: 'var(--red)',
             marginTop: 22,
           }}
         >
@@ -562,13 +558,13 @@ export default function OnboardingPage() {
         <div
           style={{
             fontSize: 13,
-            color: '#969696',
+            color: 'var(--text)',
             lineHeight: 1.55,
             marginTop: 14,
             maxWidth: 300,
           }}
         >
-          We sent a verification link to <strong style={{ color: '#fff' }}>{email}</strong>. Tap it to unlock match
+          We sent a verification link to <strong style={{ color: 'var(--ink)' }}>{email}</strong>. Tap it to unlock match
           logging — you can browse the app meanwhile.
         </div>
         <div
@@ -578,18 +574,18 @@ export default function OnboardingPage() {
             display: 'grid',
             gridTemplateColumns: 'repeat(3, 1fr)',
             gap: 1,
-            background: '#303030',
-            border: '1px solid #303030',
+            background: 'var(--hairline)',
+            border: '1px solid var(--hairline)',
           }}
         >
-          <div style={{ background: '#1a1a1a', padding: 14 }}>
+          <div style={{ background: 'var(--surface2)', padding: 14 }}>
             <div
               style={{
                 fontSize: 9,
                 fontWeight: 600,
                 letterSpacing: '1.4px',
                 textTransform: 'uppercase',
-                color: '#666',
+                color: 'var(--dim)',
               }}
             >
               Starting ELO
@@ -605,14 +601,14 @@ export default function OnboardingPage() {
               {STARTING_ELO[skill || 'casual'] ?? 1500}
             </div>
           </div>
-          <div style={{ background: '#1a1a1a', padding: 14 }}>
+          <div style={{ background: 'var(--surface2)', padding: 14 }}>
             <div
               style={{
                 fontSize: 9,
                 fontWeight: 600,
                 letterSpacing: '1.4px',
                 textTransform: 'uppercase',
-                color: '#666',
+                color: 'var(--dim)',
               }}
             >
               Format
@@ -629,14 +625,14 @@ export default function OnboardingPage() {
               {plays || '—'}
             </div>
           </div>
-          <div style={{ background: '#1a1a1a', padding: 14 }}>
+          <div style={{ background: 'var(--surface2)', padding: 14 }}>
             <div
               style={{
                 fontSize: 9,
                 fontWeight: 600,
                 letterSpacing: '1.4px',
                 textTransform: 'uppercase',
-                color: '#666',
+                color: 'var(--dim)',
               }}
             >
               Status

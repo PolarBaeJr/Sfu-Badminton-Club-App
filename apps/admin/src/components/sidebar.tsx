@@ -87,7 +87,7 @@ export function Sidebar({ userEmail = null }: Props = {}) {
               style={{
                 width: 28, height: 28,
                 background: 'var(--red)',
-                color: '#fff',
+                color: '#F2F2F2',
                 fontFamily: 'var(--font-display)',
                 fontWeight: 800,
                 fontSize: 16,
@@ -275,7 +275,7 @@ export function Sidebar({ userEmail = null }: Props = {}) {
               className="flex items-center justify-center"
               style={{
                 width: 28, height: 28,
-                background: 'var(--red)', color: '#fff',
+                background: 'var(--red)', color: '#F2F2F2',
                 fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 16,
               }}
             >S</span>
