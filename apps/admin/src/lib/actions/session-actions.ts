@@ -1,9 +1,8 @@
 'use server';
 
-import * as Sentry from '@sentry/nextjs';
 import { createAdminClient, getAuthenticatedAdmin } from '../supabase-server';
 import { revalidatePath } from 'next/cache';
-import { toClientError } from '@badminton/shared';
+import { toClientError, logError } from '@badminton/shared';
 
 export async function createSession(data: {
   name: string;
@@ -47,9 +46,7 @@ export async function createSession(data: {
     new_value: data,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'session_created' },
-    });
+    logError('audit_log_write', auditError, { action_type: 'session_created' });
   }
 
   revalidatePath('/sessions');
@@ -88,9 +85,7 @@ export async function updateSession(sessionId: string, data: {
     new_value: data,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'session_updated', sessionId },
-    });
+    logError('audit_log_write', auditError, { action_type: 'session_updated', sessionId });
   }
 
   revalidatePath('/sessions');
@@ -114,9 +109,7 @@ export async function archiveSession(sessionId: string) {
     new_value: { status: 'closed' },
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'session_archived', sessionId },
-    });
+    logError('audit_log_write', auditError, { action_type: 'session_archived', sessionId });
   }
 
   revalidatePath('/sessions');
@@ -141,9 +134,7 @@ export async function deleteSession(sessionId: string) {
     old_value: old,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'session_deleted', sessionId },
-    });
+    logError('audit_log_write', auditError, { action_type: 'session_deleted', sessionId });
   }
 
   revalidatePath('/sessions');

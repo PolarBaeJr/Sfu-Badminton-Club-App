@@ -1,8 +1,7 @@
 'use server';
 
-import * as Sentry from '@sentry/nextjs';
 import { createAdminClient, getAuthenticatedAdmin } from '../supabase-server';
-import { isDoublesEvent, nextPowerOf2, getRoundName } from '@badminton/shared';
+import { isDoublesEvent, nextPowerOf2, getRoundName, logError } from '@badminton/shared';
 import {
   logAudit,
   notifyPlayers,
@@ -57,7 +56,7 @@ export async function generateSingleEliminationBracket(eventId: string) {
       ))
     );
     for (const r of seedResults) {
-      if (r.status === 'rejected') Sentry.captureException(r.reason);
+      if (r.status === 'rejected') logError('tournament.bracket', r.reason);
     }
   } else {
     entries.sort((a, b) => (a.seed ?? 999) - (b.seed ?? 999));
@@ -105,7 +104,7 @@ export async function generateSingleEliminationBracket(eventId: string) {
       }).select('id').single();
 
       if (error) {
-        Sentry.captureException(error);
+        logError('tournament.bracket', error);
         throw new Error(`Failed to create match: ${error.message}`);
       }
 
@@ -200,7 +199,7 @@ export async function generateSingleEliminationBracket(eventId: string) {
       ))
     );
     for (const r of numberResults) {
-      if (r.status === 'rejected') Sentry.captureException(r.reason);
+      if (r.status === 'rejected') logError('tournament.bracket', r.reason);
     }
   }
 

@@ -1,8 +1,7 @@
 'use server';
 
-import * as Sentry from '@sentry/nextjs';
 import { createAdminClient, getAuthenticatedAdmin } from '../supabase-server';
-import { isDoublesEvent, getMaxGamesForFormat } from '@badminton/shared';
+import { isDoublesEvent, getMaxGamesForFormat, logError } from '@badminton/shared';
 import type {
   TournamentEventType,
   TournamentMatchFormat,
@@ -70,7 +69,7 @@ export async function enterMatchResult(
   }).eq('id', matchId);
 
   if (error) {
-    Sentry.captureException(error);
+    logError('tournament.scoring', error);
     throw new Error(error.message);
   }
 
@@ -429,7 +428,7 @@ export async function undoMatchResult(matchId: string) {
     .eq('id', matchId);
 
   if (error) {
-    Sentry.captureException(error);
+    logError('tournament.scoring', error);
     throw new Error(error.message);
   }
 

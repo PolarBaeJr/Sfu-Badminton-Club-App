@@ -1,9 +1,8 @@
 'use server';
 
-import * as Sentry from '@sentry/nextjs';
 import { createAdminClient, getAuthenticatedAdmin } from '../supabase-server';
 import { revalidatePath } from 'next/cache';
-import { toClientError } from '@badminton/shared';
+import { toClientError, logError } from '@badminton/shared';
 
 export async function createAnnouncement(data: {
   title: string;
@@ -40,9 +39,7 @@ export async function createAnnouncement(data: {
     new_value: data,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'announcement_created' },
-    });
+    logError('audit_log_write', auditError, { action_type: 'announcement_created' });
   }
 
   revalidatePath('/announcements');
@@ -86,9 +83,7 @@ export async function updateAnnouncement(announcementId: string, data: {
     new_value: data,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'announcement_updated', announcementId },
-    });
+    logError('audit_log_write', auditError, { action_type: 'announcement_updated', announcementId });
   }
 
   revalidatePath('/announcements');
@@ -113,9 +108,7 @@ export async function deleteAnnouncement(announcementId: string) {
     old_value: old,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'announcement_deleted', announcementId },
-    });
+    logError('audit_log_write', auditError, { action_type: 'announcement_deleted', announcementId });
   }
 
   revalidatePath('/announcements');

@@ -1,6 +1,5 @@
 import 'server-only';
 import { cache } from 'react';
-import { setUser as sentrySetUser } from '@sentry/nextjs';
 import {
   createServerSupabaseClient,
   createServiceRoleClient,
@@ -37,7 +36,6 @@ export const getAuthenticatedAdmin = cache(async () => {
   if (!player) throw new Error('No player record found');
   if (player.role !== 'admin') throw new Error('Admin access required');
 
-  sentrySetUser({ id: player.id });
   return player;
 });
 

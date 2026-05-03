@@ -1,9 +1,8 @@
 'use server';
 
-import * as Sentry from '@sentry/nextjs';
 import { createAdminClient, getAuthenticatedAdmin } from '../supabase-server';
 import { revalidatePath } from 'next/cache';
-import { toClientError } from '@badminton/shared';
+import { toClientError, logError } from '@badminton/shared';
 
 export async function confirmWalkover(walkoverId: string, notes: string) {
   const admin = await getAuthenticatedAdmin();
@@ -16,9 +15,7 @@ export async function confirmWalkover(walkoverId: string, notes: string) {
   });
 
   if (error) {
-    Sentry.captureException(new Error(`Walkover confirmation failed: ${error.message}`), {
-      extra: { walkoverId },
-    });
+    logError('walkover_confirm', error, { walkoverId });
     throw toClientError(error, 'admin.action');
   }
 
@@ -30,9 +27,7 @@ export async function confirmWalkover(walkoverId: string, notes: string) {
     reason: notes,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'walkover_confirmed', walkoverId },
-    });
+    logError('audit_log_write', auditError, { action_type: 'walkover_confirmed', walkoverId });
   }
 
   revalidatePath('/walkovers');
@@ -72,9 +67,7 @@ export async function rejectWalkover(walkoverId: string, notes: string) {
     reason: notes,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'walkover_rejected', walkoverId },
-    });
+    logError('audit_log_write', auditError, { action_type: 'walkover_rejected', walkoverId });
   }
 
   revalidatePath('/walkovers');

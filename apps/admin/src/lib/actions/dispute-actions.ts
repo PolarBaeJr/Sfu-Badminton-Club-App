@@ -1,10 +1,9 @@
 'use server';
 
-import * as Sentry from '@sentry/nextjs';
 import { createAdminClient, getAuthenticatedAdmin } from '../supabase-server';
 import { revalidatePath } from 'next/cache';
 import type { DisputeResolveInput } from '@badminton/shared';
-import { toClientError } from '@badminton/shared';
+import { toClientError, logError } from '@badminton/shared';
 import { voidMatch, convertMatchToCasual } from './match-actions';
 
 export async function resolveDispute(data: DisputeResolveInput) {
@@ -29,9 +28,7 @@ export async function resolveDispute(data: DisputeResolveInput) {
       p_confirmed_by: admin.id,
     });
     if (error) {
-      Sentry.captureException(new Error(`Match confirmation failed during dispute resolution: ${error.message}`), {
-        extra: { disputeId: data.dispute_id, matchId: dispute.match_id },
-      });
+      logError('match_confirm_dispute', error, { disputeId: data.dispute_id, matchId: dispute.match_id });
       throw toClientError(error, 'admin.action');
     }
   }
@@ -58,9 +55,7 @@ export async function resolveDispute(data: DisputeResolveInput) {
     reason: data.resolution_note,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'dispute_resolved', disputeId: data.dispute_id },
-    });
+    logError('audit_log_write', auditError, { action_type: 'dispute_resolved', disputeId: data.dispute_id });
   }
 
   revalidatePath('/disputes');

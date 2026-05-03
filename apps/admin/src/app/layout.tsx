@@ -4,7 +4,6 @@ import './globals.css';
 import { Sidebar } from '@/components/sidebar';
 import { MainContent } from '@/components/main-content';
 import { ToastProvider } from '@/components/toast-provider';
-import { SentryUserInit } from '@/components/sentry-user-init';
 import { getCurrentAdminUser } from '@/lib/supabase-server';
 
 const barlowCondensed = Barlow_Condensed({
@@ -52,7 +51,6 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       </head>
       <body suppressHydrationWarning className="antialiased">
         <ToastProvider>
-          <SentryUserInit playerId={null} />
           <Sidebar userEmail={userEmail} />
           <MainContent>
             {children}

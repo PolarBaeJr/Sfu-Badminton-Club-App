@@ -4,8 +4,9 @@
  * Supabase/Postgres errors frequently leak schema hints, constraint names,
  * and internal identifiers when `error.message` is thrown back to the client.
  * These helpers normalise that into a short generic message while keeping the
- * full raw error in Sentry for debugging.
+ * full raw error logged via the canonical structured logger.
  */
+import { logError } from './log';
 
 type RawError = { message?: string; code?: string; details?: string; hint?: string } | Error | unknown;
 
@@ -28,11 +29,12 @@ function extract(e: RawError): { code?: string; message?: string } {
 }
 
 /**
- * Convert an arbitrary error to a safe client-facing Error.
- * Logs the raw error to Sentry when available so internals stay observable.
+ * Convert an arbitrary error to a safe client-facing Error. Logs the raw
+ * error via the structured logger so internals stay observable in platform
+ * log aggregators.
  *
  * @param err   the caught / returned error
- * @param label short action identifier (e.g. 'player.update') for Sentry tags
+ * @param label short action identifier (e.g. 'player.update') used as the log label
  * @param fallback user-visible fallback message
  */
 export function toClientError(
@@ -42,19 +44,9 @@ export function toClientError(
 ): Error {
   const { code, message } = extract(err);
 
-  // Sentry: best-effort, don't fail if @sentry/nextjs isn't loaded.
-  try {
-    // Dynamic require so this file stays framework-agnostic.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const Sentry = require('@sentry/nextjs');
-    if (Sentry?.captureException) {
-      Sentry.captureException(err instanceof Error ? err : new Error(message || 'unknown'), {
-        tags: { action: label, pg_code: code || 'none' },
-      });
-    }
-  } catch {
-    // ignore — Sentry not configured
-  }
+  logError(label, err instanceof Error ? err : new Error(message || 'unknown'), {
+    pg_code: code || 'none',
+  });
 
   if (code && PG_CODE_MESSAGES[code]) {
     return new Error(PG_CODE_MESSAGES[code]);

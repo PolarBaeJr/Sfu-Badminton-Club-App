@@ -3,7 +3,6 @@
 // to be an async function — these helpers include constants, sync utilities,
 // and internal-only async functions.
 
-import * as Sentry from '@sentry/nextjs';
 import { revalidatePath } from 'next/cache';
 import { createAdminClient } from '../supabase-server';
 import {
@@ -11,6 +10,7 @@ import {
   getKFactor,
   getFormatWeight,
   isDoublesEvent,
+  logError,
 } from '@badminton/shared';
 import type {
   TournamentEventType,
@@ -56,7 +56,7 @@ export async function notifyPlayers(
     if (error) throw error;
   } catch (err) {
     // Notifications are best-effort — never let a failure break the parent action.
-    Sentry.captureException(err);
+    logError('tournament.helpers', err);
   }
 }
 
@@ -201,7 +201,7 @@ export async function applyTournamentMatchElo(matchId: string) {
         .eq('player_id', c.playerId))
     );
     for (const r of updateResults) {
-      if (r.status === 'rejected') Sentry.captureException(r.reason);
+      if (r.status === 'rejected') logError('tournament.helpers', r.reason);
     }
   } else {
     const winnerId = match.winner_participant_id;
@@ -265,7 +265,7 @@ export async function applyTournamentMatchElo(matchId: string) {
         .eq('id', loserId),
     ]);
     for (const r of updateResults) {
-      if (r.status === 'rejected') Sentry.captureException(r.reason);
+      if (r.status === 'rejected') logError('tournament.helpers', r.reason);
     }
 
     snapshotEntries.push({ player_id: winnerP.player_id, before: winnerElo, after: winResult.newRating, delta: winResult.delta });
@@ -296,7 +296,7 @@ export async function reverseEloSnapshot(
     .select(`player_id, ${ratingColumn}`)
     .in('player_id', playerIds);
   if (fetchErr) {
-    Sentry.captureException(fetchErr);
+    logError('tournament.helpers', fetchErr);
     return;
   }
 
@@ -333,6 +333,6 @@ export async function reverseEloSnapshot(
 
   const results = await Promise.allSettled(updatePromises);
   for (const r of results) {
-    if (r.status === 'rejected') Sentry.captureException(r.reason);
+    if (r.status === 'rejected') logError('tournament.helpers', r.reason);
   }
 }

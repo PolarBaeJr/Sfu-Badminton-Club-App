@@ -1,9 +1,8 @@
 'use server';
 
-import * as Sentry from '@sentry/nextjs';
 import { createAdminClient, getAuthenticatedAdmin } from '../supabase-server';
 import { revalidatePath } from 'next/cache';
-import { toClientError } from '@badminton/shared';
+import { toClientError, logError } from '@badminton/shared';
 
 export async function createSeason(data: { name: string; start_date: string; end_date?: string }) {
   const admin = await getAuthenticatedAdmin();
@@ -26,9 +25,7 @@ export async function createSeason(data: { name: string; start_date: string; end
     new_value: data,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'season_created' },
-    });
+    logError('audit_log_write', auditError, { action_type: 'season_created' });
   }
 
   revalidatePath('/seasons');
@@ -50,9 +47,7 @@ export async function setActiveSeason(seasonId: string) {
     target_id: seasonId,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'season_activated', seasonId },
-    });
+    logError('audit_log_write', auditError, { action_type: 'season_activated', seasonId });
   }
 
   revalidatePath('/seasons');
@@ -76,9 +71,7 @@ export async function endSeason(seasonId: string) {
     target_id: seasonId,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'season_ended', seasonId },
-    });
+    logError('audit_log_write', auditError, { action_type: 'season_ended', seasonId });
   }
 
   revalidatePath('/seasons');

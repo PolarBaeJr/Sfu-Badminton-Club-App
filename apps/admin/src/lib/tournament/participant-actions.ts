@@ -1,8 +1,7 @@
 'use server';
 
-import * as Sentry from '@sentry/nextjs';
 import { createAdminClient, getAuthenticatedAdmin } from '../supabase-server';
-import { isDoublesEvent, calculateTeamRating } from '@badminton/shared';
+import { isDoublesEvent, calculateTeamRating, logError } from '@badminton/shared';
 import {
   logAudit,
   revalidateEventPaths,
@@ -63,7 +62,7 @@ export async function addParticipantToEvent(eventId: string, playerId: string) {
 
   if (error) {
     if (error.code === '23505') throw new Error('Player already registered for this event');
-    Sentry.captureException(error);
+    logError('tournament.participant', error);
     throw new Error(error.message);
   }
 
@@ -97,7 +96,7 @@ export async function removeParticipantFromEvent(participantId: string) {
 
   const { error } = await adminClient.from('tournament_participants').delete().eq('id', participantId);
   if (error) {
-    Sentry.captureException(error);
+    logError('tournament.participant', error);
     throw new Error(error.message);
   }
 
@@ -128,7 +127,7 @@ export async function updateParticipantSeed(participantId: string, seedNumber: n
     .eq('id', participantId);
 
   if (error) {
-    Sentry.captureException(error);
+    logError('tournament.participant', error);
     throw new Error(error.message);
   }
 
@@ -153,7 +152,7 @@ export async function updatePairSeed(pairId: string, seedNumber: number | null) 
     .eq('id', pairId);
 
   if (error) {
-    Sentry.captureException(error);
+    logError('tournament.participant', error);
     throw new Error(error.message);
   }
 
@@ -231,7 +230,7 @@ export async function checkInParticipant(participantId: string) {
     .eq('id', participantId);
 
   if (error) {
-    Sentry.captureException(error);
+    logError('tournament.participant', error);
     throw new Error(error.message);
   }
 
@@ -252,7 +251,7 @@ export async function markParticipantNoShow(participantId: string) {
     .single();
 
   if (error) {
-    Sentry.captureException(error);
+    logError('tournament.participant', error);
     throw new Error(error.message);
   }
   const ctx = extractEventContext(data);
@@ -270,7 +269,7 @@ export async function withdrawParticipant(participantId: string, reason?: string
     .single();
 
   if (error) {
-    Sentry.captureException(error);
+    logError('tournament.participant', error);
     throw new Error(error.message);
   }
   const ctx = extractEventContext(data);
@@ -288,7 +287,7 @@ export async function disqualifyParticipant(participantId: string, reason?: stri
     .single();
 
   if (error) {
-    Sentry.captureException(error);
+    logError('tournament.participant', error);
     throw new Error(error.message);
   }
   const ctx = extractEventContext(data);
@@ -351,7 +350,7 @@ export async function addPairToEvent(eventId: string, player1Id: string, player2
 
   if (error) {
     if (error.code === '23505') throw new Error('This pair is already registered');
-    Sentry.captureException(error);
+    logError('tournament.participant', error);
     throw new Error(error.message);
   }
 
@@ -385,7 +384,7 @@ export async function removePairFromEvent(pairId: string) {
 
   const { error } = await adminClient.from('tournament_pairs').delete().eq('id', pairId);
   if (error) {
-    Sentry.captureException(error);
+    logError('tournament.participant', error);
     throw new Error(error.message);
   }
 
@@ -407,7 +406,7 @@ export async function checkInPair(pairId: string) {
     .single();
 
   if (error) {
-    Sentry.captureException(error);
+    logError('tournament.participant', error);
     throw new Error(error.message);
   }
 
@@ -426,7 +425,7 @@ export async function markPairNoShow(pairId: string) {
     .single();
 
   if (error) {
-    Sentry.captureException(error);
+    logError('tournament.participant', error);
     throw new Error(error.message);
   }
   const ctx = extractEventContext(data);
@@ -453,7 +452,7 @@ export async function bulkCheckIn(eventId: string, type: 'participants' | 'pairs
     .eq('status', 'registered');
 
   if (error) {
-    Sentry.captureException(error);
+    logError('tournament.participant', error);
     throw new Error(error.message);
   }
 
@@ -477,7 +476,7 @@ export async function lockDraw(eventId: string) {
     .eq('id', eventId);
 
   if (error) {
-    Sentry.captureException(error);
+    logError('tournament.participant', error);
     throw new Error(error.message);
   }
 
@@ -503,7 +502,7 @@ export async function unlockDraw(eventId: string) {
     .eq('id', eventId);
 
   if (error) {
-    Sentry.captureException(error);
+    logError('tournament.participant', error);
     throw new Error(error.message);
   }
 
@@ -537,7 +536,7 @@ export async function clearSeeds(eventId: string) {
     .eq('event_id', eventId);
 
   if (error) {
-    Sentry.captureException(error);
+    logError('tournament.participant', error);
     throw new Error(error.message);
   }
 

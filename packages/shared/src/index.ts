@@ -6,6 +6,7 @@ export * from './utils/helpers';
 export * from './utils/theme';
 export * from './utils/rate-limit';
 export * from './utils/safe-error';
+export * from './utils/log';
 export * from './validators/schemas';
 export * from './email/templates';
 export * from './email/sender';

@@ -1,9 +1,8 @@
 'use server';
 
-import * as Sentry from '@sentry/nextjs';
 import { createAdminClient, getAuthenticatedAdmin } from '../supabase-server';
 import { revalidatePath } from 'next/cache';
-import { toClientError } from '@badminton/shared';
+import { toClientError, logError } from '@badminton/shared';
 
 export async function voidMatch(matchId: string, reason: string) {
   const admin = await getAuthenticatedAdmin();
@@ -11,9 +10,7 @@ export async function voidMatch(matchId: string, reason: string) {
 
   const { error: reverseError } = await adminClient.rpc('reverse_match_result', { p_match_id: matchId });
   if (reverseError) {
-    Sentry.captureException(new Error(`Elo reversal failed: ${reverseError.message}`), {
-      extra: { matchId, action: 'void_match' },
-    });
+    logError('elo_reverse_void', reverseError, { matchId, action: 'void_match' });
     throw new Error(reverseError.message);
   }
 
@@ -32,9 +29,7 @@ export async function voidMatch(matchId: string, reason: string) {
     reason,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'match_voided', matchId },
-    });
+    logError('audit_log_write', auditError, { action_type: 'match_voided', matchId });
   }
 
   revalidatePath('/matches');
@@ -46,9 +41,7 @@ export async function convertMatchToCasual(matchId: string, reason: string) {
 
   const { error: reverseError } = await adminClient.rpc('reverse_match_result', { p_match_id: matchId });
   if (reverseError) {
-    Sentry.captureException(new Error(`Elo reversal failed: ${reverseError.message}`), {
-      extra: { matchId, action: 'convert_to_casual' },
-    });
+    logError('elo_reverse_convert_casual', reverseError, { matchId, action: 'convert_to_casual' });
     throw new Error(reverseError.message);
   }
 
@@ -67,9 +60,7 @@ export async function convertMatchToCasual(matchId: string, reason: string) {
     reason,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'match_converted_casual', matchId },
-    });
+    logError('audit_log_write', auditError, { action_type: 'match_converted_casual', matchId });
   }
 
   revalidatePath('/matches');
@@ -165,9 +156,7 @@ export async function adminCreateMatch(data: {
       p_confirmed_by: admin.id,
     });
     if (eloError) {
-      Sentry.captureException(new Error(`Elo application failed for admin match: ${eloError.message}`), {
-        extra: { matchId: match.id },
-      });
+      logError('elo_apply_admin_match', eloError, { matchId: match.id });
     }
   }
 
@@ -179,9 +168,7 @@ export async function adminCreateMatch(data: {
     new_value: { ...data, score_summary: scoreSummary },
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'match_admin_created', matchId: match.id },
-    });
+    logError('audit_log_write', auditError, { action_type: 'match_admin_created', matchId: match.id });
   }
 
   revalidatePath('/matches');

@@ -1,6 +1,5 @@
 'use server';
 
-import * as Sentry from '@sentry/nextjs';
 import { createAdminClient, getAuthenticatedAdmin } from '../supabase-server';
 import { revalidatePath } from 'next/cache';
 import type {
@@ -10,6 +9,7 @@ import type {
   TournamentSeedingMethod,
   TournamentEventStatus,
 } from '@badminton/shared';
+import { logError } from '@badminton/shared';
 import { logAudit, revalidateEventPaths } from './_helpers';
 
 export async function createTournamentEvent(
@@ -39,7 +39,7 @@ export async function createTournamentEvent(
   }).select().single();
 
   if (error) {
-    Sentry.captureException(error);
+    logError('tournament.event', error);
     throw new Error(error.message);
   }
 
@@ -77,7 +77,7 @@ export async function updateTournamentEvent(
     .eq('id', eventId);
 
   if (error) {
-    Sentry.captureException(error);
+    logError('tournament.event', error);
     throw new Error(error.message);
   }
 
@@ -102,7 +102,7 @@ export async function deleteTournamentEvent(eventId: string) {
 
   const { error } = await adminClient.from('tournament_events').delete().eq('id', eventId);
   if (error) {
-    Sentry.captureException(error);
+    logError('tournament.event', error);
     throw new Error(error.message);
   }
 
@@ -149,7 +149,7 @@ export async function setEventStatus(eventId: string, status: TournamentEventSta
     .eq('id', eventId);
 
   if (error) {
-    Sentry.captureException(error);
+    logError('tournament.event', error);
     throw new Error(error.message);
   }
 

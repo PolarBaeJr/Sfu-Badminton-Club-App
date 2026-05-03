@@ -1,10 +1,9 @@
 'use server';
 
-import * as Sentry from '@sentry/nextjs';
 import { createAdminClient, getAuthenticatedAdmin } from '../supabase-server';
 import { revalidatePath } from 'next/cache';
 import type { AdminPlayerUpdateInput } from '@badminton/shared';
-import { toClientError } from '@badminton/shared';
+import { toClientError, logError } from '@badminton/shared';
 
 export async function approvePlayer(playerId: string, status: 'competitive' | 'recreational', reason: string) {
   const admin = await getAuthenticatedAdmin();
@@ -32,9 +31,7 @@ export async function approvePlayer(playerId: string, status: 'competitive' | 'r
     reason,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'player_approved', playerId },
-    });
+    logError('audit_log_write', auditError, { action_type: 'player_approved', playerId });
   }
 
   revalidatePath('/players');
@@ -64,7 +61,7 @@ export async function createPlayer(data: {
   }).select().single();
 
   if (error) {
-    Sentry.captureException(error);
+    logError('player.create', error);
     throw toClientError(error, 'admin.action');
   }
 
@@ -125,9 +122,7 @@ export async function updatePlayer(playerId: string, data: AdminPlayerUpdateInpu
     reason: data.reason,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'player_updated', playerId },
-    });
+    logError('audit_log_write', auditError, { action_type: 'player_updated', playerId });
   }
 
   revalidatePath('/players');
@@ -156,9 +151,7 @@ export async function removePlayer(playerId: string, reason: string) {
     reason,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'player_removed', playerId },
-    });
+    logError('audit_log_write', auditError, { action_type: 'player_removed', playerId });
   }
 
   revalidatePath('/players');

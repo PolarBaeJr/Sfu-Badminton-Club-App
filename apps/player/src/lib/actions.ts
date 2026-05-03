@@ -1,10 +1,9 @@
 'use server';
 
-import * as Sentry from '@sentry/nextjs';
 import { createServerSupabaseClient, createServiceRoleClient, getCurrentPlayer } from './supabase-server';
 import { revalidatePath } from 'next/cache';
 import type { ChallengeCreateInput, MatchResultInput, WalkoverReportInput } from '@badminton/shared';
-import { getFormatWeight, getEventMultiplier, MATCH_FORMAT_LABELS, rateLimit, toClientError } from '@badminton/shared';
+import { getFormatWeight, getEventMultiplier, MATCH_FORMAT_LABELS, rateLimit, toClientError, logError } from '@badminton/shared';
 import type { Database } from '@badminton/shared/database';
 
 type PlayerPreferencesRow = Database['public']['Tables']['player_preferences']['Row'];
@@ -54,7 +53,6 @@ async function requirePlayer() {
   if (!player) throw new Error('Not authenticated');
   if (player.status === 'pending_approval') throw new Error('Account pending approval');
   if (player.status === 'suspended') throw new Error('Account suspended');
-  Sentry.setUser({ id: player.id });
   return player;
 }
 
@@ -681,9 +679,7 @@ export async function confirmMatchResult(matchId: string) {
   });
 
   if (error) {
-    Sentry.captureException(new Error(`Match confirmation failed: ${error.message}`), {
-      extra: { matchId, playerId: player.id },
-    });
+    logError('player.match_confirm', error, { matchId, playerId: player.id });
     throw toClientError(error, 'player.action');
   }
 
@@ -927,7 +923,7 @@ export async function updatePlayerPreferences(
 // for a single transactional surface and to simplify error handling.
 //
 // If the auth.admin.deleteUser call fails AFTER the players row has
-// been anonymized, we log to Sentry and return success anyway — the
+// been anonymized, we log via the structured logger and return success anyway — the
 // user-visible result (account anonymized, session ends) is achieved.
 // An orphan auth.users row is a server-side cleanup task, not a UX
 // issue.
@@ -967,10 +963,7 @@ export async function deleteAccount(): Promise<{ success: true }> {
   if (updateError) {
     // Anonymization failed — abort BEFORE deleting the auth user. Better
     // to leave the account intact than to strand the auth identity.
-    Sentry.captureException(updateError, {
-      tags: { action: 'deleteAccount', step: 'anonymize' },
-      extra: { player_id: player.id },
-    });
+    logError('account.delete.anonymize', updateError, { player_id: player.id });
     throw toClientError(updateError, 'account.delete');
   }
 
@@ -980,9 +973,9 @@ export async function deleteAccount(): Promise<{ success: true }> {
   const { error: deleteError } = await admin.auth.admin.deleteUser(userId);
 
   if (deleteError) {
-    Sentry.captureException(deleteError, {
-      tags: { action: 'deleteAccount', step: 'auth-delete' },
-      extra: { player_id: player.id, user_id: userId },
+    logError('account.delete.auth_delete', deleteError, {
+      player_id: player.id,
+      user_id: userId,
     });
     // Intentionally swallowed: the players row is already anonymized
     // and the client will sign out + redirect after this returns.

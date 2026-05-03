@@ -1,9 +1,8 @@
 'use server';
 
-import * as Sentry from '@sentry/nextjs';
 import { createAdminClient, getAuthenticatedAdmin } from '../supabase-server';
 import { revalidatePath } from 'next/cache';
-import { toClientError } from '@badminton/shared';
+import { toClientError, logError } from '@badminton/shared';
 import { generateQrToken } from '@badminton/shared/qr-token';
 import { QR_EXPIRES_IN_DAYS, type GeneratedQr } from './challenge-types';
 
@@ -69,9 +68,7 @@ export async function adminCreateChallenge(data: {
     new_value: data,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'challenge_admin_created', challengeId: challenge.id },
-    });
+    logError('audit_log_write', auditError, { action_type: 'challenge_admin_created', challengeId: challenge.id });
   }
 
   revalidatePath('/challenges');
@@ -198,9 +195,7 @@ export async function forceExpireChallenge(challengeId: string, reason: string) 
     reason,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'challenge_force_expired', challengeId },
-    });
+    logError('audit_log_write', auditError, { action_type: 'challenge_force_expired', challengeId });
   }
 
   revalidatePath('/challenges');

@@ -7,7 +7,16 @@ const state = vi.hoisted(() => ({
   player: null as { id: string; role: string } | null,
 }));
 
-const sentrySetUser = vi.hoisted(() => vi.fn());
+// `server-only` is a runtime fence that errors in client bundles; under vitest
+// (Node) we just need it to resolve to an empty module.
+vi.mock('server-only', () => ({}));
+
+// `react.cache` is provided by the React server runtime and isn't available in
+// the vitest Node environment; pass through to the underlying function.
+vi.mock('react', async () => {
+  const actual = await vi.importActual<typeof import('react')>('react');
+  return { ...actual, cache: <T extends (...args: unknown[]) => unknown>(fn: T): T => fn };
+});
 
 vi.mock('next/headers', () => ({
   cookies: async () => ({
@@ -36,45 +45,36 @@ vi.mock('@supabase/supabase-js', () => ({
   }),
 }));
 
-vi.mock('@sentry/nextjs', () => ({
-  setUser: sentrySetUser,
-}));
-
 // Import the module under test AFTER mocks are registered.
 import { getAuthenticatedAdmin } from '../supabase-server';
 
 beforeEach(() => {
   state.user = null;
   state.player = null;
-  sentrySetUser.mockClear();
 });
 
 describe('getAuthenticatedAdmin', () => {
   it('throws when there is no authenticated user', async () => {
     state.user = null;
     await expect(getAuthenticatedAdmin()).rejects.toThrow('Not authenticated');
-    expect(sentrySetUser).not.toHaveBeenCalled();
   });
 
   it('throws when the user has no matching player row', async () => {
     state.user = { id: 'user-1' };
     state.player = null;
     await expect(getAuthenticatedAdmin()).rejects.toThrow('No player record found');
-    expect(sentrySetUser).not.toHaveBeenCalled();
   });
 
   it('throws when the player is not an admin', async () => {
     state.user = { id: 'user-1' };
     state.player = { id: 'player-1', role: 'player' };
     await expect(getAuthenticatedAdmin()).rejects.toThrow('Admin access required');
-    expect(sentrySetUser).not.toHaveBeenCalled();
   });
 
-  it('returns the player and tags Sentry when the player is an admin', async () => {
+  it('returns the player when they are an admin', async () => {
     state.user = { id: 'user-1' };
     state.player = { id: 'player-1', role: 'admin' };
     const result = await getAuthenticatedAdmin();
     expect(result).toEqual(state.player);
-    expect(sentrySetUser).toHaveBeenCalledWith({ id: 'player-1' });
   });
 });

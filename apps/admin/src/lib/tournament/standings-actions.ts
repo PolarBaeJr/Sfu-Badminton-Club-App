@@ -1,8 +1,7 @@
 'use server';
 
-import * as Sentry from '@sentry/nextjs';
 import { createAdminClient, getAuthenticatedAdmin } from '../supabase-server';
-import { isDoublesEvent, PLACEMENT_BONUSES } from '@badminton/shared';
+import { isDoublesEvent, PLACEMENT_BONUSES, logError } from '@badminton/shared';
 import {
   logAudit,
   notifyPlayers,
@@ -172,7 +171,7 @@ export async function applyPlacementBonuses(eventId: string) {
         )
       );
       for (const r of results) {
-        if (r.status === 'rejected') Sentry.captureException(r.reason);
+        if (r.status === 'rejected') logError('tournament.standings', r.reason);
       }
     }
   } else {
@@ -206,7 +205,7 @@ export async function applyPlacementBonuses(eventId: string) {
       }
       const results = await Promise.allSettled(promises);
       for (const r of results) {
-        if (r.status === 'rejected') Sentry.captureException(r.reason);
+        if (r.status === 'rejected') logError('tournament.standings', r.reason);
       }
     }
   }
@@ -290,7 +289,7 @@ export async function finalizeEvent(eventId: string) {
       )
     );
     for (const r of positionResults) {
-      if (r.status === 'rejected') Sentry.captureException(r.reason);
+      if (r.status === 'rejected') logError('tournament.standings', r.reason);
     }
   }
 
@@ -338,7 +337,7 @@ export async function finalizeEvent(eventId: string) {
       )
     );
     for (const r of pointsResults) {
-      if (r.status === 'rejected') Sentry.captureException(r.reason);
+      if (r.status === 'rejected') logError('tournament.standings', r.reason);
     }
   }
 

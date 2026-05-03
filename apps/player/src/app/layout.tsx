@@ -6,7 +6,6 @@ import { ToastProvider } from '@/components/toast-provider';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { PostHogProvider } from '@/components/posthog-provider';
 import { PostHogIdentify } from '@/components/posthog-identify';
-import { SentryUserInit } from '@/components/sentry-user-init';
 import { QrRedirectHandler } from '@/components/qr-redirect-handler';
 import { NotificationCountsProvider } from '@/components/notification-badges';
 import { SWRProvider } from '@/components/swr-provider';
@@ -91,7 +90,6 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <ProfileProvider initial={initialProfile}>
             <PostHogProvider>
               <ToastProvider>
-                <SentryUserInit playerId={playerId} />
                 <QrRedirectHandler isAuthed={isAuthed} />
                 <PostHogIdentify
                   playerId={playerId}

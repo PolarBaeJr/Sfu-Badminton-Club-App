@@ -1,9 +1,8 @@
 'use server';
 
-import * as Sentry from '@sentry/nextjs';
 import { createAdminClient, getAuthenticatedAdmin } from '../supabase-server';
 import { revalidatePath } from 'next/cache';
-import { toClientError } from '@badminton/shared';
+import { toClientError, logError } from '@badminton/shared';
 
 export async function createTournament(data: {
   name: string;
@@ -46,9 +45,7 @@ export async function createTournament(data: {
     new_value: data,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'tournament_created' },
-    });
+    logError('audit_log_write', auditError, { action_type: 'tournament_created' });
   }
 
   revalidatePath('/tournaments');
@@ -73,9 +70,7 @@ export async function updateTournamentStatus(tournamentId: string, status: strin
     new_value: { status },
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'tournament_status_changed', tournamentId },
-    });
+    logError('audit_log_write', auditError, { action_type: 'tournament_status_changed', tournamentId });
   }
 
   revalidatePath('/tournaments');
@@ -121,9 +116,7 @@ export async function updateTournament(tournamentId: string, data: {
     new_value: data,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'tournament_updated', tournamentId },
-    });
+    logError('audit_log_write', auditError, { action_type: 'tournament_updated', tournamentId });
   }
 
   revalidatePath('/tournaments');
@@ -148,9 +141,7 @@ export async function archiveTournament(tournamentId: string) {
     new_value: { status: 'archived' },
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'tournament_archived', tournamentId },
-    });
+    logError('audit_log_write', auditError, { action_type: 'tournament_archived', tournamentId });
   }
 
   revalidatePath('/tournaments');
@@ -176,9 +167,7 @@ export async function deleteTournament(tournamentId: string) {
     old_value: old,
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'tournament_deleted', tournamentId },
-    });
+    logError('audit_log_write', auditError, { action_type: 'tournament_deleted', tournamentId });
   }
 
   revalidatePath('/tournaments');
@@ -208,9 +197,7 @@ export async function addTournamentParticipant(tournamentId: string, playerId: s
     new_value: { player_id: playerId, seed, partner_id: partnerId },
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'tournament_participant_added', tournamentId },
-    });
+    logError('audit_log_write', auditError, { action_type: 'tournament_participant_added', tournamentId });
   }
 
   revalidatePath(`/tournaments/${tournamentId}`);
@@ -231,9 +218,7 @@ export async function removeTournamentParticipant(participantId: string, tournam
     new_value: { participant_id: participantId },
   });
   if (auditError) {
-    Sentry.captureException(new Error(`Audit log write failed: ${auditError.message}`), {
-      extra: { action: 'tournament_participant_removed', tournamentId },
-    });
+    logError('audit_log_write', auditError, { action_type: 'tournament_participant_removed', tournamentId });
   }
 
   revalidatePath(`/tournaments/${tournamentId}`);
