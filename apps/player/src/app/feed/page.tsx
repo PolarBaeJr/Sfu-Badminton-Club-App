@@ -721,6 +721,25 @@ export default async function FeedPage() {
               {recentMatchRow?.rating_delta != null && ` · ELO ${recentMatchRow.rating_delta > 0 ? '+' : ''}${recentMatchRow.rating_delta}`}
             </div>
           </Card>
+          {/* Phase 8: discoverability for the full match history surface
+              that mobile users couldn't otherwise reach without going
+              through the desktop sidebar. */}
+          <div style={{ marginTop: 12, textAlign: 'center' }}>
+            <Link
+              href="/my-matches"
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: '0.16em',
+                textTransform: 'uppercase',
+                color: 'var(--red)',
+                textDecoration: 'none',
+                padding: '8px 12px',
+              }}
+            >
+              View match history →
+            </Link>
+          </div>
         </section>
       )}
       </div>{/* /.m-only */}

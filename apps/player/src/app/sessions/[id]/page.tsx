@@ -1,10 +1,18 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
 import { notFound, redirect } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { ScreenHeader, SectionLabel } from '@/components/v2/atoms-layout';
 import { Avatar, EmptyState, Pill } from '@/components/v2/atoms-display';
 import { CheckInButton } from '../check-in-button';
-import { SessionAttendeeGrid } from './attendee-grid';
+
+// SessionAttendeeGrid pulls ChallengeSheet (a 300+ kB client island) into
+// the bundle. Lazy-load it so the detail page's First Load reflects only
+// what's needed before the user actually taps an attendee.
+const SessionAttendeeGrid = dynamic(
+  () => import('./attendee-grid').then((m) => m.SessionAttendeeGrid),
+  { ssr: false }
+);
 
 // TODO: Phase 10 — scope session reads + attendee resolution by
 // organization_id once multi-club is supported.

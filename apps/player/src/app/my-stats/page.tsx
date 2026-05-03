@@ -416,6 +416,9 @@ export default async function MyStatsPage() {
           {(
             [
               { label: 'Edit Profile', view: 'profile' },
+              // Phase 8: surface match history on mobile (no bottom-nav slot
+              // for it; this Account row is the discoverable entry point).
+              { label: 'Match History', href: '/my-matches' as const },
               {
                 label: 'Notifications',
                 view: 'notifications',
@@ -425,11 +428,11 @@ export default async function MyStatsPage() {
               { label: 'Privacy & Visibility', view: 'privacy' },
               { label: 'Help & Feedback', view: 'help' },
               { label: 'Sign Out', view: 'signout', danger: true as const },
-            ] as Array<{ label: string; view: string; badge?: string; danger?: true }>
+            ] as Array<{ label: string; view?: string; href?: string; badge?: string; danger?: true }>
           ).map((item, i) => (
             <Link
               key={item.label}
-              href={`/settings?view=${item.view}`}
+              href={item.href ?? `/settings?view=${item.view}`}
               style={{
                 width: '100%',
                 padding: '16px 18px',
