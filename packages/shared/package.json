@@ -9,6 +9,7 @@
     "./qr-token": "./src/lib/qr-token.ts",
     "./supabase-browser": "./src/lib/supabase-browser.ts",
     "./supabase-server": "./src/lib/supabase-server.ts",
+    "./database": "./src/database.types.ts",
     "./env": "./src/lib/env.ts"
   },
   "scripts": {

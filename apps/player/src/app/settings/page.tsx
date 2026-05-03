@@ -1,13 +1,25 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useCallback, useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@badminton/shared/supabase-browser';
-import { updateProfile, updatePreferences } from '@/lib/actions';
+import {
+  updateProfile,
+  updatePreferences,
+  getPlayerPreferences,
+  updatePlayerPreferences,
+} from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { isPushSupported, isPushEnabled, subscribeToPush, unsubscribeFromPush } from '@/lib/push-client';
 import { MobileSettings } from './mobile-settings';
 import { DesktopSettings } from './desktop-settings';
+import type { Database } from '@badminton/shared/database';
+
+type PlayerPreferencesRow = Database['public']['Tables']['player_preferences']['Row'];
+type PlayerPreferencesUpdate = Database['public']['Tables']['player_preferences']['Update'];
+
+// TODO: Phase 10 — when the platform supports multiple clubs, scope the
+// preferences fetch by (player_id, organization_id).
 
 /**
  * Thin shell that owns all state + handlers. Renders both <MobileSettings>
@@ -77,11 +89,15 @@ function SettingsContent() {
       } = await supabase.auth.getUser();
       if (!user) return;
 
-      const { data } = await supabase
-        .from('players')
-        .select('*')
-        .eq('user_id', user.id)
-        .single();
+      // Player profile (legacy columns) and player_preferences (new normalized
+      // table from Phase 2) fetched in parallel.
+      const [{ data }, prefsResult] = await Promise.all([
+        supabase.from('players').select('*').eq('user_id', user.id).single(),
+        getPlayerPreferences().then(
+          (p) => ({ ok: true as const, p }),
+          (e) => ({ ok: false as const, e: e as Error })
+        ),
+      ]);
       if (!data || cancelled) return;
 
       setPlayerId(data.id);
@@ -91,22 +107,59 @@ function SettingsContent() {
       setPhone(data.phone ?? '');
       setEmail((data.email as string | null) ?? user.email ?? '');
       setAvatarUrl(data.avatar_url ?? null);
-      setShowOnLeaderboard(!data.hide_from_leaderboard);
+      // showActivity stays on the legacy players column — no matching
+      // column in player_preferences (flagged in Phase 4 report).
       setShowActivity(data.show_activity_status !== false);
       setDominantHand((data.dominant_hand as 'left' | 'right' | 'ambidextrous' | null) ?? '');
       setYearsPlaying((data.years_playing as string | null) ?? '');
       setFavouriteShot((data.favourite_shot as string | null) ?? '');
 
-      // Hydrate desktop-only prefs from notification_preferences JSONB
-      const prefs = (data.notification_preferences as Record<string, unknown> | null) ?? {};
-      if (prefs.defaultFormat === 'singles' || prefs.defaultFormat === 'doubles') {
-        setDefaultFormat(prefs.defaultFormat);
+      // ── Hydrate from player_preferences (source of truth) ───────────
+      // If the fetch failed, fall back to legacy players columns + JSONB so
+      // the settings surface still loads.
+      if (prefsResult.ok) {
+        const pp = prefsResult.p;
+        // Notifications (push)
+        setPushChallenges(pp.notify_new_challenge);
+        setPushMatches(pp.notify_match_result);
+        setPushSessions(pp.notify_session_reminder);
+        setPushWeekly(pp.notify_weekly_recap_push);
+        setPushAnnounce(pp.notify_league_announcements);
+        // Notifications (email)
+        setEmailRecap(pp.notify_weekly_recap_email);
+        setEmailSeason(pp.notify_season_updates);
+        setEmailMarketing(pp.notify_tournaments_events);
+        // Match prefs
+        setAutoAccept(pp.auto_accept_challenges);
+        setOpenDoubles(pp.open_to_doubles);
+        setCrossSkill(pp.cross_skill_matches);
+        setMatchReminders(pp.submission_reminders);
+        // Privacy
+        setShowOnLeaderboard(pp.show_on_leaderboard);
+        setShowRecord(pp.show_win_loss_record);
+        setShowHistory(pp.show_match_history);
+        setDiscoverable(pp.discoverable);
+        // Match logging — a player-preference column maps directly to the
+        // desktop "Default Format" segmented control too.
+        if (pp.default_match_type === 'singles' || pp.default_match_type === 'doubles') {
+          setDefaultFormat(pp.default_match_type);
+        }
+        // available_days seeds the desktop preferredDays multi-select
+        if (Array.isArray(pp.available_days)) {
+          setPreferredDays(pp.available_days);
+        }
+      } else {
+        // Legacy fallback path — should rarely fire (Phase 2 backfill seeds
+        // the row for every player) but keeps the surface usable on outage.
+        setShowOnLeaderboard(!data.hide_from_leaderboard);
       }
+
+      // ── Hydrate desktop-only orphans from legacy JSONB ──────────────
+      // leaderboardDefault and emailChannel have no matching player_preferences
+      // column. Phase 4 leaves them on legacy storage; flagged in report.
+      const prefs = (data.notification_preferences as Record<string, unknown> | null) ?? {};
       if (prefs.leaderboardDefault === 'singles' || prefs.leaderboardDefault === 'doubles') {
         setLeaderboardDefault(prefs.leaderboardDefault);
-      }
-      if (Array.isArray(prefs.preferredDays)) {
-        setPreferredDays(prefs.preferredDays.filter((d): d is string => typeof d === 'string'));
       }
       if (typeof prefs.emailChannel === 'boolean') {
         setEmailChannel(prefs.emailChannel);
@@ -121,6 +174,30 @@ function SettingsContent() {
       cancelled = true;
     };
   }, []);
+
+  // ── Optimistic toggle helper ──────────────────────────────────────
+  // Wrap a (boolean setter, current value, column) into a function with the
+  // same `(next: boolean) => void` signature MobileSettings/DesktopSettings
+  // already expect. Updates local state immediately, fires the action in the
+  // background, reverts + toasts on error. The captured `current` is the
+  // value at render time, which is exactly the value just before the toggle.
+  const persistedToggle = useCallback(
+    <K extends keyof PlayerPreferencesUpdate>(
+      column: K,
+      current: boolean,
+      setter: (v: boolean) => void
+    ) =>
+      (next: boolean) => {
+        setter(next);
+        void updatePlayerPreferences({ [column]: next } as PlayerPreferencesUpdate).catch(
+          (err: unknown) => {
+            setter(current);
+            toast(err instanceof Error ? err.message : "Couldn't save", 'error');
+          }
+        );
+      },
+    [toast]
+  );
 
   async function handleSaveProfile() {
     setSaving(true);
@@ -209,6 +286,28 @@ function SettingsContent() {
 
   const onBack = () => router.push('/my-stats');
 
+  // Persistence wrappers — same `(v: boolean) => void` signature as the
+  // raw setters, but each toggle now writes to player_preferences with
+  // optimistic UX + revert-on-error. The captured `current` value is
+  // the value at this render, which is exactly the value just before
+  // the toggle fires.
+  const setPushChallengesP   = persistedToggle('notify_new_challenge',         pushChallenges, setPushChallenges);
+  const setPushMatchesP      = persistedToggle('notify_match_result',          pushMatches,    setPushMatches);
+  const setPushSessionsP     = persistedToggle('notify_session_reminder',      pushSessions,   setPushSessions);
+  const setPushWeeklyP       = persistedToggle('notify_weekly_recap_push',     pushWeekly,     setPushWeekly);
+  const setPushAnnounceP     = persistedToggle('notify_league_announcements',  pushAnnounce,   setPushAnnounce);
+  const setEmailRecapP       = persistedToggle('notify_weekly_recap_email',    emailRecap,     setEmailRecap);
+  const setEmailSeasonP      = persistedToggle('notify_season_updates',        emailSeason,    setEmailSeason);
+  const setEmailMarketingP   = persistedToggle('notify_tournaments_events',    emailMarketing, setEmailMarketing);
+  const setAutoAcceptP       = persistedToggle('auto_accept_challenges',       autoAccept,     setAutoAccept);
+  const setOpenDoublesP      = persistedToggle('open_to_doubles',              openDoubles,    setOpenDoubles);
+  const setCrossSkillP       = persistedToggle('cross_skill_matches',          crossSkill,     setCrossSkill);
+  const setMatchRemindersP   = persistedToggle('submission_reminders',         matchReminders, setMatchReminders);
+  const setShowOnLeaderboardP = persistedToggle('show_on_leaderboard',         showOnLeaderboard, setShowOnLeaderboard);
+  const setShowRecordP       = persistedToggle('show_win_loss_record',         showRecord,     setShowRecord);
+  const setShowHistoryP      = persistedToggle('show_match_history',           showHistory,    setShowHistory);
+  const setDiscoverableP     = persistedToggle('discoverable',                 discoverable,   setDiscoverable);
+
   return (
     <>
       <div className="m-only">
@@ -228,37 +327,37 @@ function SettingsContent() {
           pushEnabled={pushEnabled}
           handlePushToggle={handlePushToggle}
           pushChallenges={pushChallenges}
-          setPushChallenges={setPushChallenges}
+          setPushChallenges={setPushChallengesP}
           pushMatches={pushMatches}
-          setPushMatches={setPushMatches}
+          setPushMatches={setPushMatchesP}
           pushSessions={pushSessions}
-          setPushSessions={setPushSessions}
+          setPushSessions={setPushSessionsP}
           pushWeekly={pushWeekly}
-          setPushWeekly={setPushWeekly}
+          setPushWeekly={setPushWeeklyP}
           pushAnnounce={pushAnnounce}
-          setPushAnnounce={setPushAnnounce}
+          setPushAnnounce={setPushAnnounceP}
           emailRecap={emailRecap}
-          setEmailRecap={setEmailRecap}
+          setEmailRecap={setEmailRecapP}
           emailSeason={emailSeason}
-          setEmailSeason={setEmailSeason}
+          setEmailSeason={setEmailSeasonP}
           emailMarketing={emailMarketing}
-          setEmailMarketing={setEmailMarketing}
+          setEmailMarketing={setEmailMarketingP}
           autoAccept={autoAccept}
-          setAutoAccept={setAutoAccept}
+          setAutoAccept={setAutoAcceptP}
           openDoubles={openDoubles}
-          setOpenDoubles={setOpenDoubles}
+          setOpenDoubles={setOpenDoublesP}
           crossSkill={crossSkill}
-          setCrossSkill={setCrossSkill}
+          setCrossSkill={setCrossSkillP}
           matchReminders={matchReminders}
-          setMatchReminders={setMatchReminders}
+          setMatchReminders={setMatchRemindersP}
           showOnLeaderboard={showOnLeaderboard}
-          setShowOnLeaderboard={setShowOnLeaderboard}
+          setShowOnLeaderboard={setShowOnLeaderboardP}
           showRecord={showRecord}
-          setShowRecord={setShowRecord}
+          setShowRecord={setShowRecordP}
           showHistory={showHistory}
-          setShowHistory={setShowHistory}
+          setShowHistory={setShowHistoryP}
           discoverable={discoverable}
-          setDiscoverable={setDiscoverable}
+          setDiscoverable={setDiscoverableP}
           dominantHand={dominantHand}
           setDominantHand={setDominantHand}
           yearsPlaying={yearsPlaying}
@@ -281,32 +380,32 @@ function SettingsContent() {
           setDisplayName={setDisplayName}
           email={email}
           showOnLeaderboard={showOnLeaderboard}
-          setShowOnLeaderboard={setShowOnLeaderboard}
+          setShowOnLeaderboard={setShowOnLeaderboardP}
           showRecord={showRecord}
-          setShowRecord={setShowRecord}
+          setShowRecord={setShowRecordP}
           showHistory={showHistory}
-          setShowHistory={setShowHistory}
+          setShowHistory={setShowHistoryP}
           discoverable={discoverable}
-          setDiscoverable={setDiscoverable}
+          setDiscoverable={setDiscoverableP}
           pushChallenges={pushChallenges}
-          setPushChallenges={setPushChallenges}
+          setPushChallenges={setPushChallengesP}
           pushMatches={pushMatches}
-          setPushMatches={setPushMatches}
+          setPushMatches={setPushMatchesP}
           pushSessions={pushSessions}
-          setPushSessions={setPushSessions}
+          setPushSessions={setPushSessionsP}
           pushAnnounce={pushAnnounce}
-          setPushAnnounce={setPushAnnounce}
+          setPushAnnounce={setPushAnnounceP}
           emailRecap={emailRecap}
-          setEmailRecap={setEmailRecap}
+          setEmailRecap={setEmailRecapP}
           pushSupported={pushSupported}
           pushEnabled={pushEnabled}
           handlePushToggle={handlePushToggle}
           autoAccept={autoAccept}
-          setAutoAccept={setAutoAccept}
+          setAutoAccept={setAutoAcceptP}
           openDoubles={openDoubles}
-          setOpenDoubles={setOpenDoubles}
+          setOpenDoubles={setOpenDoublesP}
           crossSkill={crossSkill}
-          setCrossSkill={setCrossSkill}
+          setCrossSkill={setCrossSkillP}
           defaultFormat={defaultFormat}
           setDefaultFormat={setDefaultFormat}
           leaderboardDefault={leaderboardDefault}

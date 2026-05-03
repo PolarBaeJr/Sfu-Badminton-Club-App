@@ -5,6 +5,10 @@ import { createServerSupabaseClient, createServiceRoleClient, getCurrentPlayer }
 import { revalidatePath } from 'next/cache';
 import type { ChallengeCreateInput, MatchResultInput, WalkoverReportInput } from '@badminton/shared';
 import { getFormatWeight, getEventMultiplier, MATCH_FORMAT_LABELS, rateLimit, toClientError } from '@badminton/shared';
+import type { Database } from '@badminton/shared/database';
+
+type PlayerPreferencesRow = Database['public']['Tables']['player_preferences']['Row'];
+type PlayerPreferencesUpdate = Database['public']['Tables']['player_preferences']['Update'];
 
 // Small helper: throttle sensitive actions per player. Uses the in-memory
 // limiter from @badminton/shared (best-effort on serverless — swap for Upstash
@@ -824,9 +828,91 @@ export async function updateProfile(data: {
   revalidatePath('/settings');
 }
 
+// ============================================================
+// Player preferences — backed by the player_preferences table
+// (Phase 2). Strongly typed against the generated Database type.
+//
+// Reads return the player's preferences row. Phase 2 backfill +
+// auto-create trigger guarantee a row exists for every player; the
+// defensive INSERT below handles a never-supposed-to-happen race
+// rather than throwing an opaque error in the UI.
+//
+// Writes apply a partial patch over the row. We rely on RLS (Phase 2
+// policies permit own-row INSERT/UPDATE) — no service role needed.
+// player_id, created_at, updated_at are always derived from the
+// authenticated session and the table defaults, never from caller input.
+//
+// TODO: Phase 10 — once the platform supports multiple clubs, scope
+// the preferences row by (player_id, organization_id).
+// ============================================================
+
+export async function getPlayerPreferences(): Promise<PlayerPreferencesRow> {
+  const player = await requirePlayer();
+  const supabase = await createServerSupabaseClient();
+
+  const { data, error } = await supabase
+    .from('player_preferences')
+    .select('*')
+    .eq('player_id', player.id)
+    .maybeSingle();
+
+  if (error) throw toClientError(error, 'pref.get');
+  if (data) return data as PlayerPreferencesRow;
+
+  // Should be unreachable per Phase 2 backfill + auto-create trigger,
+  // but materialize a default row if it ever isn't.
+  const { data: created, error: insertError } = await supabase
+    .from('player_preferences')
+    .insert({ player_id: player.id })
+    .select('*')
+    .single();
+
+  if (insertError || !created) {
+    throw toClientError(insertError ?? new Error('preferences row missing'), 'pref.get');
+  }
+  return created as PlayerPreferencesRow;
+}
+
+export async function updatePlayerPreferences(
+  patch: PlayerPreferencesUpdate
+): Promise<PlayerPreferencesRow> {
+  const player = await requirePlayer();
+  enforceLimit(player.id, 'pref-update', 60, 60_000);
+
+  // Strip caller-provided values for fields the server owns.
+  const {
+    player_id: _player_id,
+    created_at: _created_at,
+    updated_at: _updated_at,
+    ...safe
+  } = patch;
+
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from('player_preferences')
+    .update(safe)
+    .eq('player_id', player.id)
+    .select('*')
+    .single();
+
+  if (error || !data) {
+    throw toClientError(error ?? new Error('update returned no row'), 'pref.update');
+  }
+  revalidatePath('/settings');
+  return data as PlayerPreferencesRow;
+}
+
+// ============================================================
+// Legacy preferences JSONB — players.notification_preferences
+// ============================================================
 // Persists arbitrary preference keys into players.notification_preferences (JSONB).
 // Used by Settings → Preferences/Notifications/Challenges/Account tabs to save
 // toggles and segmented controls that don't have their own column yet.
+//
+// Status: still in use for the desktop-only orphans
+// (leaderboardDefault, emailChannel) that don't have a player_preferences
+// column. Notification + privacy + match-pref toggles now write to
+// player_preferences via updatePlayerPreferences.
 export async function updatePreferences(prefs: Record<string, unknown>) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
