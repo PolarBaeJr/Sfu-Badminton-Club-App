@@ -4,19 +4,27 @@
   "description": "Challenge, compete, and climb the ranks",
   "start_url": "/feed",
   "display": "standalone",
-  "background_color": "#16213E",
-  "theme_color": "#E94560",
+  "background_color": "#0A0A0A",
+  "theme_color": "#CC0000",
   "orientation": "portrait",
   "icons": [
     {
       "src": "/icon-192.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     },
     {
       "src": "/icon-512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
     }
   ]
 }
