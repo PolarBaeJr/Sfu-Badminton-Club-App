@@ -22,10 +22,12 @@ export default async function LeaderboardPage() {
   const supabase = await createServerSupabaseClient();
 
   const [playerResult, currentPlayer] = await Promise.all([
+    // TODO: Phase 10 — scope by organization_id once multi-club is supported.
     supabase
       .from('players')
       .select('id, full_name, avatar_url, status, ratings(*)')
       .eq('active_flag', true)
+      .is('deleted_at', null)
       .not('status', 'in', '("pending_approval","suspended")'),
     getCurrentPlayer(),
   ]);

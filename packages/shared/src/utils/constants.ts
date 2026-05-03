@@ -14,6 +14,26 @@ export const MATCH_FORMAT_LABELS: Record<MatchFormat, string> = {
   single_11: '1 Game to 11',
 };
 
+// Canonical ordered options for any UI selecting a match format. Both apps
+// consume this — challenge creation form, settings → default score format,
+// admin match-entry form, etc. The labels reuse MATCH_FORMAT_LABELS above so
+// there's a single source of truth for the human-readable strings.
+//
+// Ordered by frequency: bo3_21 is the standard tournament format and the
+// app-wide default; single_21 is a common informal play format; the two
+// shorter games come last.
+export const MATCH_FORMAT_OPTIONS: ReadonlyArray<{
+  readonly value: MatchFormat;
+  readonly label: string;
+}> = [
+  { value: 'bo3_21', label: MATCH_FORMAT_LABELS.bo3_21 },
+  { value: 'single_21', label: MATCH_FORMAT_LABELS.single_21 },
+  { value: 'single_15', label: MATCH_FORMAT_LABELS.single_15 },
+  { value: 'single_11', label: MATCH_FORMAT_LABELS.single_11 },
+] as const;
+
+export const DEFAULT_MATCH_FORMAT: MatchFormat = 'bo3_21';
+
 export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   rated_challenge: 'Rated Challenge',
   casual: 'Casual Match',

@@ -46,10 +46,12 @@ export default async function FeedPage() {
       .order('date', { ascending: true })
       .limit(1)
       .maybeSingle(),
+    // TODO: Phase 10 — scope by organization_id once multi-club is supported.
     supabase
       .from('players')
       .select('id, full_name, avatar_url, ratings(singles_elo, singles_wins, singles_losses)')
       .eq('active_flag', true)
+      .is('deleted_at', null)
       .not('status', 'in', '("pending_approval","suspended")'),
     supabase
       .from('match_participants')

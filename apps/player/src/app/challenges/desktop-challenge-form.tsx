@@ -2,7 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { previewEloSwing } from '@badminton/shared';
+import {
+  previewEloSwing,
+  MATCH_FORMAT_OPTIONS,
+  DEFAULT_MATCH_FORMAT,
+} from '@badminton/shared';
+import type { MatchFormat } from '@badminton/shared';
 import { createChallenge } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 
@@ -24,7 +29,8 @@ export function DesktopChallengeForm({
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [oppId, setOppId] = useState<string>('');
-  const [format, setFormat] = useState<'singles' | 'doubles'>('singles');
+  const [type, setType] = useState<'singles' | 'doubles'>('singles');
+  const [matchFormat, setMatchFormat] = useState<MatchFormat>(DEFAULT_MATCH_FORMAT);
   const [submitting, setSubmitting] = useState(false);
   const [date, setDate] = useState('');
   const [time, setTime] = useState('19:00');
@@ -45,9 +51,9 @@ export function DesktopChallengeForm({
     setSubmitting(true);
     try {
       await createChallenge({
-        type: format === 'singles' ? 'singles' : 'doubles',
+        type,
         rated_flag: true,
-        format: 'bo3_21',
+        format: matchFormat,
         event_type: 'rated_challenge',
         opponent_id: oppId,
         scheduled_date: date || undefined,
@@ -100,23 +106,37 @@ export function DesktopChallengeForm({
             </div>
           </div>
           <div>
-            <label className="d-form-label">Format</label>
+            <label className="d-form-label">Type</label>
             <div className="d-pair-toggle">
               <button
                 type="button"
-                className={format === 'singles' ? 'd-active' : ''}
-                onClick={() => setFormat('singles')}
+                className={type === 'singles' ? 'd-active' : ''}
+                onClick={() => setType('singles')}
               >
                 Singles
               </button>
               <button
                 type="button"
-                className={format === 'doubles' ? 'd-active' : ''}
-                onClick={() => setFormat('doubles')}
+                className={type === 'doubles' ? 'd-active' : ''}
+                onClick={() => setType('doubles')}
               >
                 Doubles
               </button>
             </div>
+          </div>
+          <div>
+            <label className="d-form-label">Format</label>
+            <select
+              className="d-field"
+              value={matchFormat}
+              onChange={(e) => setMatchFormat(e.target.value as MatchFormat)}
+            >
+              {MATCH_FORMAT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
             <label className="d-form-label">Date</label>

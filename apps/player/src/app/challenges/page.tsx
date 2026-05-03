@@ -37,10 +37,12 @@ export default async function ChallengesPage() {
       .eq('player_id', player.id)
       .order('created_at', { ascending: false, referencedTable: 'challenges' })
       .limit(40),
+    // TODO: Phase 10 — scope by organization_id once multi-club is supported.
     supabase
       .from('players')
       .select('id, full_name, avatar_url, ratings(singles_elo)')
       .eq('active_flag', true)
+      .is('deleted_at', null)
       .neq('id', player.id)
       .not('status', 'in', '("pending_approval","suspended")')
       .limit(20),

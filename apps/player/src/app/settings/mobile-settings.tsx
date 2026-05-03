@@ -1,10 +1,48 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import { type useRouter } from 'next/navigation';
+import { MATCH_FORMAT_OPTIONS } from '@badminton/shared';
+import type { MatchFormat } from '@badminton/shared';
 import { SectionLabel } from '@/components/v2/atoms-layout';
 import { CTAButton, SettingsGroup, SettingsRow, SettingsToggle } from '@/components/v2/atoms-form';
 import { Avatar } from '@/components/v2/atoms-display';
+
+const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+// Match-prefs editable inputs share this base style — same surface, hairline,
+// padding, and font as the existing read-only SettingsRow values so the
+// transition from "static text" to "editable" is visually consistent.
+const textFieldStyle: CSSProperties = {
+  width: '100%',
+  background: 'var(--surface1)',
+  border: '1px solid var(--hairline)',
+  color: 'var(--ink)',
+  padding: '11px 12px',
+  fontSize: 13,
+  fontFamily: 'inherit',
+  boxSizing: 'border-box',
+};
+
+function FieldBlock({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div
+        style={{
+          fontSize: 10,
+          fontWeight: 600,
+          letterSpacing: '1.6px',
+          textTransform: 'uppercase',
+          color: 'var(--text)',
+          marginBottom: 8,
+        }}
+      >
+        {label}
+      </div>
+      {children}
+    </div>
+  );
+}
 
 const TITLES: Record<string, string> = {
   profile: 'Edit Profile',
@@ -124,6 +162,18 @@ interface MobileSettingsProps {
   setYearsPlaying: (v: string) => void;
   favouriteShot: string;
   setFavouriteShot: (v: string) => void;
+
+  // Match preferences (Phase 5 — wired to player_preferences columns)
+  availableDays: string[];
+  setAvailableDays: (v: string[]) => void;
+  availableHoursStart: string;
+  setAvailableHoursStart: (v: string) => void;
+  availableHoursEnd: string;
+  setAvailableHoursEnd: (v: string) => void;
+  homeCourt: string;
+  setHomeCourt: (v: string) => void;
+  defaultScoreFormat: MatchFormat;
+  setDefaultScoreFormat: (v: MatchFormat) => void;
 
   saving: boolean;
   signingOut: boolean;
@@ -376,11 +426,78 @@ export function MobileSettings(p: MobileSettingsProps) {
         <>
           <div style={{ padding: '20px 24px 8px' }}>
             <SectionLabel>Availability</SectionLabel>
-            <SettingsGroup>
-              <SettingsRow label="Available days" value="Mon – Fri" />
-              <SettingsRow label="Available hours" value="5 PM – 10 PM" />
-              <SettingsRow label="Home court" value="SFU Burnaby" />
-            </SettingsGroup>
+
+            {/* Available days — 7 chips, multi-select. Each toggle persists
+                immediately via setAvailableDays (chip on/off is a clear
+                user intent, no debounce needed). */}
+            <FieldBlock label="Available days">
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6 }}>
+                {WEEK_DAYS.map((day) => {
+                  const active = p.availableDays.includes(day);
+                  return (
+                    <button
+                      key={day}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() =>
+                        p.setAvailableDays(
+                          active
+                            ? p.availableDays.filter((d) => d !== day)
+                            : [...p.availableDays, day]
+                        )
+                      }
+                      style={{
+                        padding: '10px 0',
+                        background: active ? 'var(--red)' : 'var(--surface1)',
+                        color: active ? '#F2F2F2' : 'var(--text)',
+                        border: active ? 'none' : '1px solid var(--hairline)',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        letterSpacing: '0.08em',
+                        textTransform: 'uppercase',
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                      }}
+                    >
+                      {day}
+                    </button>
+                  );
+                })}
+              </div>
+            </FieldBlock>
+
+            {/* Available hours — two side-by-side time pickers, debounced
+                500ms each so we don't spam saves while the picker is open. */}
+            <FieldBlock label="Available hours">
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 8, alignItems: 'center' }}>
+                <input
+                  type="time"
+                  value={p.availableHoursStart}
+                  onChange={(e) => p.setAvailableHoursStart(e.target.value)}
+                  aria-label="Available hours start"
+                  style={textFieldStyle}
+                />
+                <span style={{ color: 'var(--dim)', fontSize: 13 }}>to</span>
+                <input
+                  type="time"
+                  value={p.availableHoursEnd}
+                  onChange={(e) => p.setAvailableHoursEnd(e.target.value)}
+                  aria-label="Available hours end"
+                  style={textFieldStyle}
+                />
+              </div>
+            </FieldBlock>
+
+            <FieldBlock label="Home court">
+              <input
+                type="text"
+                value={p.homeCourt}
+                onChange={(e) => p.setHomeCourt(e.target.value)}
+                placeholder="e.g. SFU Burnaby"
+                maxLength={80}
+                style={textFieldStyle}
+              />
+            </FieldBlock>
           </div>
           <div style={{ padding: '0 24px 8px' }}>
             <SectionLabel>Challenge preferences</SectionLabel>
@@ -398,9 +515,24 @@ export function MobileSettings(p: MobileSettingsProps) {
           </div>
           <div style={{ padding: '0 24px 24px' }}>
             <SectionLabel>Match logging</SectionLabel>
+
+            {/* Score format — select wired to MATCH_FORMAT_OPTIONS so the
+                values match the match_format enum the challenge form uses. */}
+            <FieldBlock label="Default score format">
+              <select
+                value={p.defaultScoreFormat}
+                onChange={(e) => p.setDefaultScoreFormat(e.target.value as MatchFormat)}
+                style={textFieldStyle}
+              >
+                {MATCH_FORMAT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </FieldBlock>
+
             <SettingsGroup>
-              <SettingsRow label="Default match type" value="Singles" />
-              <SettingsRow label="Score format" value="Best of 3 to 21" />
               <SettingsRow label="Submission reminders" hint="Nudge me to log scheduled matches.">
                 <SettingsToggle on={p.matchReminders} onChange={() => p.setMatchReminders(!p.matchReminders)} />
               </SettingsRow>

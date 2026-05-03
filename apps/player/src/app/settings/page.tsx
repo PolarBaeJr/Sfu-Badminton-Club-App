@@ -1,8 +1,10 @@
 'use client';
 
-import { useCallback, useState, useEffect, Suspense } from 'react';
+import { useCallback, useRef, useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@badminton/shared/supabase-browser';
+import { DEFAULT_MATCH_FORMAT } from '@badminton/shared';
+import type { MatchFormat } from '@badminton/shared';
 import {
   updateProfile,
   updatePreferences,
@@ -78,6 +80,14 @@ function SettingsContent() {
   const [preferredDays, setPreferredDays] = useState<string[]>(['Fri', 'Sat']);
   const [emailChannel, setEmailChannel] = useState(true);
 
+  // Match prefs newly wired in Phase 5 (player_preferences-backed). The state
+  // here is the single source of truth; mobile settings reads + writes via
+  // the persisted setters defined further below.
+  const [availableHoursStart, setAvailableHoursStart] = useState('17:00');
+  const [availableHoursEnd, setAvailableHoursEnd] = useState('22:00');
+  const [homeCourt, setHomeCourt] = useState('');
+  const [defaultScoreFormat, setDefaultScoreFormat] = useState<MatchFormat>(DEFAULT_MATCH_FORMAT);
+
   const [saving, setSaving] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -146,10 +156,22 @@ function SettingsContent() {
         if (pp.default_match_type === 'singles' || pp.default_match_type === 'doubles') {
           setDefaultFormat(pp.default_match_type);
         }
-        // available_days seeds the desktop preferredDays multi-select
+        // available_days seeds the shared mobile + desktop multi-select.
         if (Array.isArray(pp.available_days)) {
           setPreferredDays(pp.available_days);
         }
+        // Phase 5 mobile orphans now hydrated from player_preferences.
+        if (typeof pp.available_hours_start === 'string') {
+          // Postgres TIME columns serialize as 'HH:MM:SS' — trim to 'HH:MM' for the input control.
+          setAvailableHoursStart(pp.available_hours_start.slice(0, 5));
+        }
+        if (typeof pp.available_hours_end === 'string') {
+          setAvailableHoursEnd(pp.available_hours_end.slice(0, 5));
+        }
+        setHomeCourt(pp.home_court ?? '');
+        // CHECK constraint after migration 00024 guarantees one of the four
+        // match_format values; cast is safe.
+        setDefaultScoreFormat(pp.default_score_format as MatchFormat);
       } else {
         // Legacy fallback path — should rarely fire (Phase 2 backfill seeds
         // the row for every player) but keeps the surface usable on outage.
@@ -200,6 +222,56 @@ function SettingsContent() {
       },
     [toast]
   );
+
+  // ── Non-boolean field persistence ─────────────────────────────────
+  // persistField — fire-and-forget save for selects + chip toggles where the
+  // user expects an immediate write (no debounce, no rollback — the UI value
+  // already reflects the intent before this is called).
+  const persistField = useCallback(
+    <K extends keyof PlayerPreferencesUpdate>(
+      column: K,
+      value: PlayerPreferencesUpdate[K]
+    ) => {
+      void updatePlayerPreferences({ [column]: value } as PlayerPreferencesUpdate).catch(
+        (err: unknown) => {
+          toast(err instanceof Error ? err.message : "Couldn't save", 'error');
+        }
+      );
+    },
+    [toast]
+  );
+
+  // persistDebounced — for free-typed text and time pickers. Coalesces
+  // bursts of changes into a single save 500ms after the last keystroke.
+  // One handle per column lets multiple fields debounce in parallel.
+  const debounceHandles = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const persistDebounced = useCallback(
+    <K extends keyof PlayerPreferencesUpdate>(
+      column: K,
+      value: PlayerPreferencesUpdate[K],
+      delay = 500
+    ) => {
+      const key = column as string;
+      const existing = debounceHandles.current.get(key);
+      if (existing) clearTimeout(existing);
+      const handle = setTimeout(() => {
+        debounceHandles.current.delete(key);
+        persistField(column, value);
+      }, delay);
+      debounceHandles.current.set(key, handle);
+    },
+    [persistField]
+  );
+
+  // Cleanup any pending debounce timers on unmount so a save doesn't fire
+  // against a stale state after navigation away from settings.
+  useEffect(() => {
+    const handles = debounceHandles.current;
+    return () => {
+      handles.forEach((h) => clearTimeout(h));
+      handles.clear();
+    };
+  }, []);
 
   async function handleSaveProfile() {
     setSaving(true);
@@ -340,6 +412,30 @@ function SettingsContent() {
   const setShowHistoryP      = persistedToggle('show_match_history',           showHistory,    setShowHistory);
   const setDiscoverableP     = persistedToggle('discoverable',                 discoverable,   setDiscoverable);
 
+  // Phase 5 mobile orphans — persisted setters wrapping the raw state setters.
+  // Chips + selects fire immediately; time inputs + the home court text input
+  // debounce 500ms so we save once per pause-in-typing.
+  const setAvailableDaysP = (next: string[]) => {
+    setPreferredDays(next);
+    persistField('available_days', next);
+  };
+  const setAvailableHoursStartP = (next: string) => {
+    setAvailableHoursStart(next);
+    persistDebounced('available_hours_start', next);
+  };
+  const setAvailableHoursEndP = (next: string) => {
+    setAvailableHoursEnd(next);
+    persistDebounced('available_hours_end', next);
+  };
+  const setHomeCourtP = (next: string) => {
+    setHomeCourt(next);
+    persistDebounced('home_court', next);
+  };
+  const setDefaultScoreFormatP = (next: MatchFormat) => {
+    setDefaultScoreFormat(next);
+    persistField('default_score_format', next);
+  };
+
   return (
     <>
       <div className="m-only">
@@ -396,6 +492,16 @@ function SettingsContent() {
           setYearsPlaying={setYearsPlaying}
           favouriteShot={favouriteShot}
           setFavouriteShot={setFavouriteShot}
+          availableDays={preferredDays}
+          setAvailableDays={setAvailableDaysP}
+          availableHoursStart={availableHoursStart}
+          setAvailableHoursStart={setAvailableHoursStartP}
+          availableHoursEnd={availableHoursEnd}
+          setAvailableHoursEnd={setAvailableHoursEndP}
+          homeCourt={homeCourt}
+          setHomeCourt={setHomeCourtP}
+          defaultScoreFormat={defaultScoreFormat}
+          setDefaultScoreFormat={setDefaultScoreFormatP}
           saving={saving}
           signingOut={signingOut}
           deleting={deleting}

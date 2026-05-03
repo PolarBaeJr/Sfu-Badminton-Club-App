@@ -715,8 +715,14 @@ export async function disputeMatchResult(matchId: string, reason: string, catego
     status: 'open',
   });
 
-  // Email admins about dispute
-  const { data: admins } = await supabase.from('players').select('email').eq('role', 'admin');
+  // Email admins about dispute. Skip soft-deleted admin accounts so we
+  // don't blast email to anonymized inboxes.
+  // TODO: Phase 10 — scope by organization_id once multi-club is supported.
+  const { data: admins } = await supabase
+    .from('players')
+    .select('email')
+    .eq('role', 'admin')
+    .is('deleted_at', null);
   const { data: matchData } = await supabase.from('matches').select('score_summary').eq('id', matchId).single();
   for (const admin of admins || []) {
     if (admin.email) {
@@ -776,8 +782,13 @@ export async function reportWalkover(input: WalkoverReportInput) {
 
   await supabase.from('challenges').update({ status: 'walkover_pending' }).eq('id', input.challenge_id);
 
-  // Email admins about walkover
-  const { data: admins } = await supabase.from('players').select('email').eq('role', 'admin');
+  // Email admins about walkover. Skip soft-deleted admin accounts.
+  // TODO: Phase 10 — scope by organization_id once multi-club is supported.
+  const { data: admins } = await supabase
+    .from('players')
+    .select('email')
+    .eq('role', 'admin')
+    .is('deleted_at', null);
   const { data: forfeitPlayer } = await supabase.from('players').select('full_name').eq('id', input.forfeit_player_id).single();
   for (const admin of admins || []) {
     if (admin.email) {

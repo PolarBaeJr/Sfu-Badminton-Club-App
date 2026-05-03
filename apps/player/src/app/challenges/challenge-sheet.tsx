@@ -1,12 +1,50 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@badminton/shared/supabase-browser';
+import {
+  MATCH_FORMAT_OPTIONS,
+  DEFAULT_MATCH_FORMAT,
+} from '@badminton/shared';
+import type { MatchFormat } from '@badminton/shared';
 import { createChallenge } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { CTAButton } from '@/components/v2/atoms-form';
 import { Avatar, Eyebrow } from '@/components/v2/atoms-display';
+
+const NOTE_MAX = 280;
+
+// Shared field styling for the step-2 inputs. Matches the existing
+// search input that opens step 1 — same font, same padding, same border
+// treatment so the form reads as a single visual unit.
+const fieldStyle: CSSProperties = {
+  width: '100%',
+  background: 'var(--surface1)',
+  border: '1px solid var(--hairline)',
+  color: 'var(--ink)',
+  padding: '12px 14px',
+  fontSize: 13,
+  fontFamily: 'inherit',
+  boxSizing: 'border-box',
+};
+
+function FieldLabel({ children }: { children: ReactNode }) {
+  return (
+    <div
+      style={{
+        fontSize: 10,
+        fontWeight: 600,
+        letterSpacing: '1.6px',
+        textTransform: 'uppercase',
+        color: 'var(--text)',
+        marginBottom: 8,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
 
 type Candidate = {
   id: string;
@@ -30,6 +68,10 @@ export function ChallengeSheet({
   const [search, setSearch] = useState('');
   const [opponent, setOpponent] = useState<Candidate | null>(null);
   const [type, setType] = useState<'singles' | 'doubles'>('singles');
+  const [matchFormat, setMatchFormat] = useState<MatchFormat>(DEFAULT_MATCH_FORMAT);
+  const [date, setDate] = useState('');
+  const [time, setTime] = useState('');
+  const [note, setNote] = useState('');
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -39,6 +81,10 @@ export function ChallengeSheet({
       setStep(0);
       setOpponent(null);
       setType('singles');
+      setMatchFormat(DEFAULT_MATCH_FORMAT);
+      setDate('');
+      setTime('');
+      setNote('');
       setSearch('');
       return;
     }
@@ -50,10 +96,12 @@ export function ChallengeSheet({
       } = await supabase.auth.getUser();
       if (!user || cancelled) return;
       const { data: me } = await supabase.from('players').select('id').eq('user_id', user.id).single();
+      // TODO: Phase 10 — scope by organization_id once multi-club is supported.
       const { data } = await supabase
         .from('players')
         .select('id, full_name, avatar_url, ratings(singles_elo)')
         .eq('active_flag', true)
+        .is('deleted_at', null)
         .not('status', 'in', '("pending_approval","suspended","inactive")')
         .neq('id', me?.id ?? '')
         .limit(40);
@@ -95,9 +143,12 @@ export function ChallengeSheet({
       await createChallenge({
         type,
         rated_flag: true,
-        format: 'bo3_21',
+        format: matchFormat,
         event_type: 'rated_challenge',
         opponent_id: opponent.id,
+        scheduled_date: date || undefined,
+        scheduled_time: time || undefined,
+        note: note.trim() || undefined,
       });
       toast('Challenge sent', 'success');
       router.refresh();
@@ -314,6 +365,72 @@ export function ChallengeSheet({
                   );
                 })}
               </div>
+
+              <FieldLabel>Score format</FieldLabel>
+              <select
+                value={matchFormat}
+                onChange={(e) => setMatchFormat(e.target.value as MatchFormat)}
+                style={fieldStyle}
+              >
+                {MATCH_FORMAT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 16 }}>
+                <div>
+                  <FieldLabel>Date — optional</FieldLabel>
+                  <input
+                    type="date"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    style={fieldStyle}
+                  />
+                </div>
+                <div>
+                  <FieldLabel>Time — optional</FieldLabel>
+                  <input
+                    type="time"
+                    value={time}
+                    onChange={(e) => setTime(e.target.value)}
+                    style={fieldStyle}
+                  />
+                </div>
+              </div>
+
+              <div style={{ marginTop: 16 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'baseline',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <FieldLabel>Message — optional</FieldLabel>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      color: note.length > NOTE_MAX ? 'var(--red)' : 'var(--dim)',
+                      fontFamily: 'JetBrains Mono, monospace',
+                      letterSpacing: '0.04em',
+                    }}
+                    aria-live="polite"
+                  >
+                    {note.length}/{NOTE_MAX}
+                  </span>
+                </div>
+                <textarea
+                  value={note}
+                  onChange={(e) => setNote(e.target.value.slice(0, NOTE_MAX))}
+                  rows={3}
+                  placeholder="Court A or B? Bring extra shuttles?"
+                  style={{ ...fieldStyle, resize: 'vertical', minHeight: 72 }}
+                />
+              </div>
+
+              <div style={{ height: 20 }} />
               <CTAButton size="lg" full disabled={submitting} onClick={send}>
                 {submitting ? 'Sending…' : 'Send Challenge →'}
               </CTAButton>
