@@ -291,7 +291,7 @@ export default function OnboardingPage() {
                     setErrs({});
                   }}
                   style={{
-                    background: active ? 'rgba(204,0,0,0.10)' : 'var(--surface2)',
+                    background: active ? 'rgba(var(--red-rgb), 0.10)' : 'var(--surface2)',
                     border: '1px solid ' + (active ? 'var(--red)' : 'var(--hairline)'),
                     padding: '14px 16px',
                     textAlign: 'left',

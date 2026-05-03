@@ -213,7 +213,7 @@ export default async function FeedPage() {
             right: -80,
             width: 280,
             height: 280,
-            background: 'radial-gradient(circle, rgba(204,0,0,0.16) 0%, transparent 65%)',
+            background: 'radial-gradient(circle, rgba(var(--red-rgb), 0.16) 0%, transparent 65%)',
             pointerEvents: 'none',
           }}
         />

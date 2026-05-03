@@ -444,8 +444,8 @@ function labelForStatus(status: string): { text: string; color: string; bg: stri
       return {
         text: 'Disputed',
         color: 'var(--red)',
-        bg: 'rgba(204,0,0,0.12)',
-        border: 'rgba(204,0,0,0.35)',
+        bg: 'rgba(var(--red-rgb), 0.12)',
+        border: 'rgba(var(--red-rgb), 0.35)',
       };
     default:
       return {

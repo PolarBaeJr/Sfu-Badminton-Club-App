@@ -32,8 +32,11 @@
   --faint:  #444444;
   --ghost:  #333333;
 
-  /* Brand */
+  /* Brand. --red-rgb lets us interpolate the brand color in rgba()/color-mix
+     contexts (atmospheric tints, sparkline fills) without losing the palette
+     swap at the mobile breakpoint. */
   --red:        #CC0000;
+  --red-rgb:    204, 0, 0;
   --red-dark:   #A30000;
   --red-tint:   rgba(204,0,0,0.10);
   --red-tint-2: rgba(204,0,0,0.16);
@@ -113,6 +116,77 @@
   --input: var(--hairline);
   --ring: var(--red);
   --radius: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   MOBILE PALETTE OVERRIDE (<1024px)
+   The two design HTML files (Player+App+v2.html mobile vs
+   player-app.html desktop) use *different* tokens by intent:
+   mobile is Inter + bright #da291c on #181818 surfaces, desktop
+   is Barlow + deeper #CC0000 on #111. The defaults above are the
+   desktop palette (also used during SSR — desktop is the safer
+   default for unknown clients). At <1024px we swap to the mobile
+   palette so phone-frame screens match Player+App+v2.html exactly.
+
+   Hard overrides per CLAUDE.md (apply to both palettes):
+     - never pure white → use #F2F2F2
+     - never pure black → use the palette base (mobile #181818, desktop #0A0A0A)
+   These are the literal hex substitutions; tinted hairlines /
+   overlays via rgba(255,255,255,...) are unaffected.
+   ═══════════════════════════════════════════════════════════ */
+@media (max-width: 1023px) {
+  :root {
+    /* Type — Inter is loaded via next/font/google in layout.tsx and
+       exposes itself as --font-inter on <html>. */
+    --font-display: var(--font-inter), 'Inter', -apple-system, system-ui, sans-serif;
+    --font-body:    var(--font-inter), 'Inter', -apple-system, system-ui, sans-serif;
+    /* mono stays as JetBrains Mono — both palettes share it */
+
+    /* Surfaces — mobile design uses #181818 as the device chrome, #222
+       for cards (vs desktop's #111/#1A1A1A). The page background and
+       the hero/header surface end up the same color on mobile (#181818)
+       which is correct per design — cards lift via #222 + #303030 hairline. */
+    --bg:        #181818;
+    --surface1:  #181818;
+    --surface2:  #222222;
+    --surface3:  #2a2a2a;
+
+    /* Borders — solid #303030 on mobile (more visible than rgba on the
+       darker surfaces) vs rgba on desktop (subtle hairlines on #111). */
+    --hairline:        #303030;
+    --hairline-soft:   #2a2a2a;
+    --hairline-strong: #404040;
+
+    /* Text — mobile design uses #fff for ink (we override to #F2F2F2 per
+       the hard rule), #969696 body, #666 muted/dim, #444 faint. */
+    --ink:    #F2F2F2;
+    --text:   #969696;
+    --muted:  #666666;
+    --dim:    #666666;
+    --faint:  #444444;
+    --ghost:  #333333;
+
+    /* Brand — mobile bright #da291c (vs desktop deep #CC0000). The --red-rgb
+       flips too so atmospheric tints in inline styles
+       (rgba(var(--red-rgb), 0.16)) pick up the right hue. */
+    --red:        #da291c;
+    --red-rgb:    218, 41, 28;
+    --red-dark:   #b01e0a;
+    --red-tint:   rgba(218,41,28,0.10);
+    --red-tint-2: rgba(218,41,28,0.16);
+    --red-border: rgba(218,41,28,0.30);
+
+    /* Semantic — mobile design uses deeper greens/ambers for higher contrast
+       on the brighter mobile surfaces. */
+    --green:        #03904a;
+    --amber:        #f59e0b;
+    --warning:      #f59e0b;
+    --success:      #03904a;
+    --success-tint: rgba(3,144,74,0.10);
+    --success-bd:   rgba(3,144,74,0.30);
+    --warning-tint: rgba(245,158,11,0.10);
+    --warning-bd:   rgba(245,158,11,0.30);
+  }
 }
 
 @tailwind base;
@@ -1274,12 +1348,14 @@ a { color: inherit; text-decoration: none; }
 .gradient-gold { background: var(--warning); }
 .glow-red, .glow-gold, .glow-soft { box-shadow: none; }
 
-/* Reduced motion */
+/* Reduced motion. Hard cutoff per Phase 10 spec — no near-zero durations,
+   just turn animations and transitions off entirely so users with the OS
+   preference set don't see any motion (including the ignition-flash, the
+   pulseDot, slideUp, fadeUp, etc.). */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    animation: none !important;
+    transition: none !important;
   }
 }
 

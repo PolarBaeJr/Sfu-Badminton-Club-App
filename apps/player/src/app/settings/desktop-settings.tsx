@@ -555,8 +555,8 @@ function DangerZone({
       {open && (
         <div
           style={{
-            background: 'rgba(204,0,0,0.06)',
-            border: '1px solid rgba(204,0,0,0.30)',
+            background: 'rgba(var(--red-rgb), 0.06)',
+            border: '1px solid rgba(var(--red-rgb), 0.30)',
             padding: '20px 22px',
             display: 'flex',
             flexDirection: 'column',

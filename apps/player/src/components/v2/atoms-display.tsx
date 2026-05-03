@@ -136,15 +136,15 @@ const STATUS_COLOR_MAP: Record<string, { c: string; bg: string; bd: string }> = 
   approved:     { c: 'var(--green)', bg: 'rgba(3,144,74,0.12)',   bd: 'rgba(3,144,74,0.35)' },
   pending:      { c: 'var(--warning)', bg: 'rgba(245,158,11,0.12)', bd: 'rgba(245,158,11,0.35)' },
   pending_approval: { c: 'var(--warning)', bg: 'rgba(245,158,11,0.12)', bd: 'rgba(245,158,11,0.35)' },
-  disputed:     { c: 'var(--red)', bg: 'rgba(204,0,0,0.12)',  bd: 'rgba(204,0,0,0.35)' },
-  competitive:  { c: 'var(--red)', bg: 'rgba(204,0,0,0.12)',  bd: 'rgba(204,0,0,0.35)' },
+  disputed:     { c: 'var(--red)', bg: 'rgba(var(--red-rgb), 0.12)',  bd: 'rgba(var(--red-rgb), 0.35)' },
+  competitive:  { c: 'var(--red)', bg: 'rgba(var(--red-rgb), 0.12)',  bd: 'rgba(var(--red-rgb), 0.35)' },
   recreational: { c: 'var(--text)', bg: 'rgba(255,255,255,0.05)', bd: 'rgba(255,255,255,0.15)' },
   session:      { c: 'var(--info)', bg: 'rgba(76,152,185,0.12)', bd: 'rgba(76,152,185,0.35)' },
   match:        { c: 'var(--green)', bg: 'rgba(3,144,74,0.12)',   bd: 'rgba(3,144,74,0.35)' },
   announce:     { c: 'var(--ink)',    bg: 'rgba(255,255,255,0.06)', bd: 'rgba(255,255,255,0.18)' },
   open:         { c: 'var(--green)', bg: 'rgba(3,144,74,0.12)',   bd: 'rgba(3,144,74,0.35)' },
   closed:       { c: 'var(--text)', bg: 'rgba(255,255,255,0.05)', bd: 'rgba(255,255,255,0.15)' },
-  featured:     { c: 'var(--red)', bg: 'rgba(204,0,0,0.12)',  bd: 'rgba(204,0,0,0.35)' },
+  featured:     { c: 'var(--red)', bg: 'rgba(var(--red-rgb), 0.12)',  bd: 'rgba(var(--red-rgb), 0.35)' },
 };
 
 const FALLBACK_STATUS = { c: 'var(--text)', bg: 'rgba(255,255,255,0.05)', bd: 'rgba(255,255,255,0.15)' };

@@ -21,7 +21,7 @@ const CTA_VARIANTS: Record<CTAVariant, { bg: string; c: string; bd: string }> = 
   primary: { bg: 'var(--red)', c: '#F2F2F2', bd: 'none' },
   ghost:   { bg: 'transparent', c: '#F2F2F2', bd: '1px solid rgba(255,255,255,0.4)' },
   light:   { bg: '#F2F2F2', c: 'var(--surface1)', bd: 'none' },
-  danger:  { bg: 'transparent', c: 'var(--red)', bd: '1px solid rgba(204,0,0,0.5)' },
+  danger:  { bg: 'transparent', c: 'var(--red)', bd: '1px solid rgba(var(--red-rgb), 0.5)' },
 };
 
 export function CTAButton({
@@ -103,7 +103,7 @@ export function ActionTile({
         style={{
           width: 36,
           height: 36,
-          background: primary ? 'rgba(255,255,255,0.15)' : 'rgba(204,0,0,0.12)',
+          background: primary ? 'rgba(255,255,255,0.15)' : 'rgba(var(--red-rgb), 0.12)',
           color: primary ? '#F2F2F2' : 'var(--red)',
           display: 'flex',
           alignItems: 'center',
@@ -166,7 +166,7 @@ export function SettingsToggle({ on, onChange }: { on: boolean; onChange: () => 
       style={{
         width: 44,
         height: 26,
-        background: on ? 'rgba(204,0,0,0.15)' : 'var(--surface2)',
+        background: on ? 'rgba(var(--red-rgb), 0.15)' : 'var(--surface2)',
         border: on ? '1px solid var(--red)' : '1px solid var(--hairline)',
         position: 'relative',
         cursor: 'pointer',

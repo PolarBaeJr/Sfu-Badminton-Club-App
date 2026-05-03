@@ -108,8 +108,8 @@ export default async function SessionsPage() {
                     {isFeatured && (
                       <Pill
                         color="var(--red)"
-                        bg="rgba(204,0,0,0.12)"
-                        border="1px solid rgba(204,0,0,0.35)"
+                        bg="rgba(var(--red-rgb), 0.12)"
+                        border="1px solid rgba(var(--red-rgb), 0.35)"
                       >
                         Featured
                       </Pill>

@@ -205,7 +205,7 @@ export function LeaderboardClient({
                     borderTop: i === 0 ? 'none' : '1px solid var(--hairline)',
                     color: '#F2F2F2',
                     textDecoration: 'none',
-                    background: isMe ? 'rgba(204,0,0,0.08)' : 'transparent',
+                    background: isMe ? 'rgba(var(--red-rgb), 0.08)' : 'transparent',
                   }}
                 >
                   <span

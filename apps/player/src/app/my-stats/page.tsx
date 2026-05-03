@@ -170,7 +170,7 @@ export default async function MyStatsPage() {
             right: -40,
             width: 240,
             height: 240,
-            background: 'radial-gradient(circle, rgba(204,0,0,0.20) 0%, transparent 70%)',
+            background: 'radial-gradient(circle, rgba(var(--red-rgb), 0.20) 0%, transparent 70%)',
           }}
         />
         <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 16 }}>
@@ -265,7 +265,7 @@ export default async function MyStatsPage() {
                     strokeDasharray="1,2"
                     vectorEffect="non-scaling-stroke"
                   />
-                  <polyline points={`0,100 ${points} 100,100`} fill="rgba(204,0,0,0.12)" />
+                  <polyline points={`0,100 ${points} 100,100`} fill="rgba(var(--red-rgb), 0.12)" />
                   <polyline
                     points={points}
                     fill="none"
@@ -284,7 +284,7 @@ export default async function MyStatsPage() {
                     width: 8,
                     height: 8,
                     background: 'var(--red)',
-                    boxShadow: '0 0 0 3px rgba(204,0,0,0.25)',
+                    boxShadow: '0 0 0 3px rgba(var(--red-rgb), 0.25)',
                     transform: 'translate(50%, -50%)',
                   }}
                 />
