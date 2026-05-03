@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { type useRouter } from 'next/navigation';
 import { SectionLabel } from '@/components/v2/atoms-layout';
 import { CTAButton, SettingsGroup, SettingsRow, SettingsToggle } from '@/components/v2/atoms-form';
@@ -12,7 +13,10 @@ const TITLES: Record<string, string> = {
   privacy: 'Privacy & Visibility',
   help: 'Help & Feedback',
   signout: 'Sign Out',
+  'delete-confirm': 'Delete Account',
 };
+
+const DELETE_CONFIRM_PHRASE = 'DELETE';
 
 function SettingsHeader({ title, onBack }: { title: string; onBack: () => void }) {
   return (
@@ -123,9 +127,11 @@ interface MobileSettingsProps {
 
   saving: boolean;
   signingOut: boolean;
+  deleting: boolean;
   handleSaveProfile: () => void;
   handleSavePrivacy: () => Promise<void>;
   handleSignOut: () => void;
+  handleDeleteAccount: () => void;
 }
 
 export function MobileSettings(p: MobileSettingsProps) {
@@ -462,7 +468,11 @@ export function MobileSettings(p: MobileSettingsProps) {
               <SettingsRow label="Download my data" hint="Export every match, every score, every rating change.">
                 <span style={{ color: 'var(--dim)', fontSize: 18 }}>›</span>
               </SettingsRow>
-              <SettingsRow label="Delete account" hint="Removes you from the ladder. Match history is anonymized.">
+              <SettingsRow
+                label="Delete account"
+                hint="Removes you from the ladder. Match history is anonymized."
+                onClick={() => p.router.push('/settings?view=delete-confirm')}
+              >
                 <span style={{ color: 'var(--red)', fontSize: 11, fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase' }}>
                   Delete
                 </span>
@@ -543,6 +553,138 @@ export function MobileSettings(p: MobileSettingsProps) {
           </div>
         </div>
       )}
+
+      {p.view === 'delete-confirm' && (
+        <DeleteAccountConfirm
+          deleting={p.deleting}
+          onCancel={p.onBack}
+          onConfirm={p.handleDeleteAccount}
+        />
+      )}
     </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// DeleteAccountConfirm — full-screen surface in the phone-frame.
+// User must type DELETE exactly to enable the destructive button.
+// Prevents accidental deletes on rage-tap and on rendered-screenshot
+// auto-tap scenarios.
+// ─────────────────────────────────────────────────────────────────
+function DeleteAccountConfirm({
+  deleting,
+  onCancel,
+  onConfirm,
+}: {
+  deleting: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const [typed, setTyped] = useState('');
+  const ready = typed === DELETE_CONFIRM_PHRASE && !deleting;
+
+  return (
+    <div style={{ padding: '32px 24px 24px', textAlign: 'center' }}>
+      <div
+        style={{
+          width: 56,
+          height: 56,
+          margin: '0 auto',
+          background: 'rgba(204,0,0,0.12)',
+          border: '1px solid rgba(204,0,0,0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 30,
+          color: 'var(--red)',
+          fontFamily: 'JetBrains Mono, monospace',
+        }}
+      >
+        !
+      </div>
+      <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.4px', marginTop: 18 }}>
+        Delete account?
+      </div>
+      <div
+        style={{
+          fontSize: 13,
+          color: 'var(--text)',
+          marginTop: 10,
+          lineHeight: 1.5,
+          maxWidth: 300,
+          margin: '10px auto 0',
+        }}
+      >
+        This permanently deletes your sign-in, profile photo, bio, and ranking.
+        Match history stays intact under the name &ldquo;Deleted Player&rdquo;.{' '}
+        <strong style={{ color: 'var(--ink)' }}>This cannot be undone.</strong>
+      </div>
+
+      <div style={{ marginTop: 28, textAlign: 'left' }}>
+        <label
+          htmlFor="delete-confirm-input"
+          style={{
+            display: 'block',
+            fontSize: 9,
+            fontWeight: 600,
+            letterSpacing: '1.5px',
+            textTransform: 'uppercase',
+            color: 'var(--dim)',
+            marginBottom: 6,
+          }}
+        >
+          Type {DELETE_CONFIRM_PHRASE} to confirm
+        </label>
+        <input
+          id="delete-confirm-input"
+          type="text"
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          autoComplete="off"
+          autoCapitalize="characters"
+          spellCheck={false}
+          aria-describedby="delete-confirm-hint"
+          style={{
+            width: '100%',
+            background: 'var(--surface1)',
+            border: '1px solid ' + (ready ? 'var(--red)' : 'var(--hairline)'),
+            color: 'var(--ink)',
+            fontSize: 14,
+            fontWeight: 600,
+            letterSpacing: '0.1em',
+            padding: '13px 14px',
+            boxSizing: 'border-box',
+            fontFamily: 'JetBrains Mono, monospace',
+            textTransform: 'uppercase',
+          }}
+        />
+        <div
+          id="delete-confirm-hint"
+          style={{
+            fontSize: 10,
+            color: 'var(--dim)',
+            marginTop: 6,
+            letterSpacing: '0.04em',
+          }}
+        >
+          Case-sensitive. Must match exactly.
+        </div>
+      </div>
+
+      <div style={{ marginTop: 28, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <CTAButton
+          size="lg"
+          full
+          variant="danger"
+          disabled={!ready}
+          onClick={onConfirm}
+        >
+          {deleting ? 'Deleting…' : 'Permanently delete account'}
+        </CTAButton>
+        <CTAButton variant="ghost" size="md" full onClick={onCancel}>
+          Cancel
+        </CTAButton>
+      </div>
+    </div>
   );
 }

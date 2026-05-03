@@ -8,6 +8,7 @@ import {
   updatePreferences,
   getPlayerPreferences,
   updatePlayerPreferences,
+  deleteAccount,
 } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { isPushSupported, isPushEnabled, subscribeToPush, unsubscribeFromPush } from '@/lib/push-client';
@@ -79,6 +80,7 @@ function SettingsContent() {
 
   const [saving, setSaving] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -281,7 +283,37 @@ function SettingsContent() {
     setSigningOut(true);
     const supabase = createClient();
     await supabase.auth.signOut();
+    // Drop any cached client state that survives sign-out: the QR redirect
+    // hint stored on /login by the auth flow, and any router cache holding
+    // an authed payload that the layout would otherwise re-use.
+    try {
+      sessionStorage.removeItem('qr_redirect');
+    } catch {
+      /* sessionStorage may be unavailable in some embedded contexts */
+    }
     router.push('/login');
+    router.refresh();
+  }
+
+  async function handleDeleteAccount() {
+    setDeleting(true);
+    try {
+      await deleteAccount();
+      // Account anonymized + auth.users row deleted server-side. Sign out
+      // locally to drop the client session/cookies and bounce to /login.
+      const supabase = createClient();
+      await supabase.auth.signOut();
+      try {
+        sessionStorage.removeItem('qr_redirect');
+      } catch {
+        /* no-op */
+      }
+      router.push('/login');
+      router.refresh();
+    } catch (err) {
+      setDeleting(false);
+      toast(err instanceof Error ? err.message : 'Could not delete account', 'error');
+    }
   }
 
   const onBack = () => router.push('/my-stats');
@@ -366,9 +398,11 @@ function SettingsContent() {
           setFavouriteShot={setFavouriteShot}
           saving={saving}
           signingOut={signingOut}
+          deleting={deleting}
           handleSaveProfile={handleSaveProfile}
           handleSavePrivacy={handleSavePrivacy}
           handleSignOut={handleSignOut}
+          handleDeleteAccount={handleDeleteAccount}
         />
       </div>
       <div className="d-only">
@@ -416,10 +450,12 @@ function SettingsContent() {
           setEmailChannel={setEmailChannel}
           saving={saving}
           signingOut={signingOut}
+          deleting={deleting}
           handleSaveProfile={handleSaveProfile}
           handleSavePrivacy={handleSavePrivacy}
           handleSavePreferences={handleSavePreferences}
           handleSignOut={handleSignOut}
+          handleDeleteAccount={handleDeleteAccount}
         />
       </div>
     </>

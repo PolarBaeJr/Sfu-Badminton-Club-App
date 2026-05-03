@@ -903,6 +903,89 @@ export async function updatePlayerPreferences(
 }
 
 // ============================================================
+// Account lifecycle — self-delete (Phase 4.5)
+//
+// Anonymizes the players row (display_name, email, avatar_url, bio,
+// phone, deleted_at) so foreign-key references in matches / challenges
+// / ratings stay intact and opponent history is preserved. Then
+// hard-deletes the auth.users row via the admin API so the user can
+// never sign in again.
+//
+// Service role is required for auth.admin.deleteUser; the soft-delete
+// UPDATE could go through RLS but uses the same service-role client
+// for a single transactional surface and to simplify error handling.
+//
+// If the auth.admin.deleteUser call fails AFTER the players row has
+// been anonymized, we log to Sentry and return success anyway — the
+// user-visible result (account anonymized, session ends) is achieved.
+// An orphan auth.users row is a server-side cleanup task, not a UX
+// issue.
+//
+// Rate-limited to 3 attempts per 24h per player to prevent griefing.
+//
+// TODO: Phase 10 — notify org admin when a member deletes their account.
+// ============================================================
+
+export async function deleteAccount(): Promise<{ success: true }> {
+  const player = await requirePlayer();
+  enforceLimit(player.id, 'delete-account', 3, 24 * 60 * 60_000);
+
+  const userId = (player as { user_id?: string | null }).user_id;
+  if (!userId) {
+    // Defensive: every player row should have a user_id FK to auth.users.
+    throw new Error('Account is not linked to a sign-in identity.');
+  }
+
+  const admin = createServiceRoleClient();
+
+  // 1. Anonymize the players row. PII is cleared; deleted_at is the
+  //    canonical "this account is gone" marker. The row itself stays so
+  //    matches/challenges/ratings keep their FKs.
+  const { error: updateError } = await admin
+    .from('players')
+    .update({
+      display_name: 'Deleted Player',
+      email: null,
+      avatar_url: null,
+      bio: null,
+      phone: null,
+      deleted_at: new Date().toISOString(),
+    })
+    .eq('id', player.id);
+
+  if (updateError) {
+    // Anonymization failed — abort BEFORE deleting the auth user. Better
+    // to leave the account intact than to strand the auth identity.
+    Sentry.captureException(updateError, {
+      tags: { action: 'deleteAccount', step: 'anonymize' },
+      extra: { player_id: player.id },
+    });
+    throw toClientError(updateError, 'account.delete');
+  }
+
+  // 2. Hard-delete the auth.users row. If this fails after step 1, the
+  //    user-visible state is still "account anonymized + signed out" so
+  //    we log and proceed.
+  const { error: deleteError } = await admin.auth.admin.deleteUser(userId);
+
+  if (deleteError) {
+    Sentry.captureException(deleteError, {
+      tags: { action: 'deleteAccount', step: 'auth-delete' },
+      extra: { player_id: player.id, user_id: userId },
+    });
+    // Intentionally swallowed: the players row is already anonymized
+    // and the client will sign out + redirect after this returns.
+  }
+
+  trackServerEvent(player.id, 'account_deleted', {
+    player_id: player.id,
+    auth_delete_failed: !!deleteError,
+  });
+
+  return { success: true };
+}
+
+// ============================================================
 // Legacy preferences JSONB — players.notification_preferences
 // ============================================================
 // Persists arbitrary preference keys into players.notification_preferences (JSONB).

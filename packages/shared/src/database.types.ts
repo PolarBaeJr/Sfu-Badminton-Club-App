@@ -857,6 +857,7 @@ export type Database = {
           avatar_url: string | null
           bio: string | null
           created_at: string
+          deleted_at: string | null
           display_name: string | null
           dominant_hand: string | null
           eligibility_flag: boolean
@@ -887,6 +888,7 @@ export type Database = {
           avatar_url?: string | null
           bio?: string | null
           created_at?: string
+          deleted_at?: string | null
           display_name?: string | null
           dominant_hand?: string | null
           eligibility_flag?: boolean
@@ -917,6 +919,7 @@ export type Database = {
           avatar_url?: string | null
           bio?: string | null
           created_at?: string
+          deleted_at?: string | null
           display_name?: string | null
           dominant_hand?: string | null
           eligibility_flag?: boolean

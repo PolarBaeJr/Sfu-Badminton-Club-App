@@ -3,6 +3,8 @@
 import { DPageHead } from '@/components/desktop/page-shell';
 import { useState } from 'react';
 
+const DELETE_CONFIRM_PHRASE = 'DELETE';
+
 type Tab = 'profile' | 'preferences' | 'notifications' | 'challenges' | 'account';
 
 interface DesktopSettingsProps {
@@ -50,10 +52,12 @@ interface DesktopSettingsProps {
   setEmailChannel: (v: boolean) => void;
   saving: boolean;
   signingOut: boolean;
+  deleting: boolean;
   handleSaveProfile: () => void;
   handleSavePrivacy: () => void;
   handleSavePreferences: () => void;
   handleSignOut: () => void;
+  handleDeleteAccount: () => void;
 }
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -486,9 +490,135 @@ export function DesktopSettings(p: DesktopSettingsProps) {
                 {p.signingOut ? 'Signing out…' : 'Sign Out'}
               </button>
             </div>
+
+            <DangerZone deleting={p.deleting} onDelete={p.handleDeleteAccount} />
           </div>
         </div>
       </div>
     </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// DangerZone — desktop equivalent of the mobile DeleteAccountConfirm
+// view. Inline expansion: clicking the Delete account button reveals
+// the type-DELETE gate; clicking Cancel collapses it. Same phrase
+// constant keeps mobile/desktop in lockstep.
+// ─────────────────────────────────────────────────────────────────
+function DangerZone({
+  deleting,
+  onDelete,
+}: {
+  deleting: boolean;
+  onDelete: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState('');
+  const ready = typed === DELETE_CONFIRM_PHRASE && !deleting;
+
+  return (
+    <div
+      style={{
+        marginTop: 32,
+        paddingTop: 24,
+        borderTop: '1px solid var(--hairline)',
+      }}
+    >
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: '0.16em',
+          textTransform: 'uppercase',
+          color: 'var(--red)',
+          marginBottom: 12,
+        }}
+      >
+        Danger zone
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--text)', marginBottom: 16, maxWidth: 520, lineHeight: 1.55 }}>
+        Permanently deletes your sign-in, profile photo, bio, and ranking. Match
+        history stays intact under the name &ldquo;Deleted Player&rdquo;. This
+        cannot be undone.
+      </p>
+
+      {!open && (
+        <button
+          type="button"
+          className="d-btn d-btn-danger"
+          onClick={() => setOpen(true)}
+        >
+          Delete account
+        </button>
+      )}
+
+      {open && (
+        <div
+          style={{
+            background: 'rgba(204,0,0,0.06)',
+            border: '1px solid rgba(204,0,0,0.30)',
+            padding: '20px 22px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 14,
+          }}
+        >
+          <label
+            htmlFor="desktop-delete-confirm"
+            style={{
+              fontSize: 9,
+              fontWeight: 700,
+              letterSpacing: '0.18em',
+              textTransform: 'uppercase',
+              color: 'var(--red)',
+            }}
+          >
+            Type {DELETE_CONFIRM_PHRASE} to confirm
+          </label>
+          <input
+            id="desktop-delete-confirm"
+            type="text"
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+            style={{
+              background: 'var(--surface1)',
+              border: '1px solid ' + (ready ? 'var(--red)' : 'var(--hairline)'),
+              color: 'var(--ink)',
+              fontSize: 13,
+              fontWeight: 600,
+              letterSpacing: '0.1em',
+              padding: '10px 12px',
+              fontFamily: 'JetBrains Mono, monospace',
+              textTransform: 'uppercase',
+              maxWidth: 280,
+            }}
+          />
+          <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+            <button
+              type="button"
+              className="d-btn d-btn-red"
+              disabled={!ready}
+              onClick={onDelete}
+              style={{ opacity: ready ? 1 : 0.5 }}
+            >
+              {deleting ? 'Deleting…' : 'Permanently delete account'}
+            </button>
+            <button
+              type="button"
+              className="d-btn d-btn-ghost"
+              onClick={() => {
+                setOpen(false);
+                setTyped('');
+              }}
+              disabled={deleting}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
