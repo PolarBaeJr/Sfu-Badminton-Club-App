@@ -1080,6 +1080,131 @@ a { color: inherit; text-decoration: none; }
 }
 
 /* ═══════════════════════════════════════════════════════════
+   AUTH SPLIT-SCREEN (≥1024px) — brand left, form right
+   Used by /login on desktop. Mirrors the admin app's auth split
+   pattern with player tokens. The mobile/tablet phone-frame
+   layout (above) handles all viewports below 1024px.
+   ═══════════════════════════════════════════════════════════ */
+.auth-split-root {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: var(--bg);
+  display: flex;
+}
+.auth-split-left {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  position: relative;
+  overflow: hidden;
+  padding: 60px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.auth-split-left::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: repeating-linear-gradient(45deg, transparent, transparent 39px, rgba(255,255,255,0.03) 39px, rgba(255,255,255,0.03) 40px);
+  pointer-events: none;
+}
+.auth-split-left::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 30% 20%, rgba(204,0,0,0.18) 0%, transparent 55%);
+  pointer-events: none;
+}
+.auth-split-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+  z-index: 2;
+}
+.auth-split-mark {
+  width: 40px; height: 40px;
+  background: var(--red);
+  display: flex; align-items: center; justify-content: center;
+  color: #F2F2F2;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 22px;
+}
+.auth-split-club {
+  font-family: var(--font-body);
+  font-size: 11px;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: var(--red);
+  font-weight: 700;
+}
+.auth-split-headline {
+  position: relative;
+  z-index: 2;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 72px;
+  line-height: 0.92;
+  color: var(--ink);
+  letter-spacing: -0.02em;
+  margin-top: 32px;
+}
+.auth-split-headline span { display: block; }
+.auth-split-tagline {
+  position: relative;
+  z-index: 2;
+  margin-top: 24px;
+  max-width: 420px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.auth-split-stat-row {
+  position: relative;
+  z-index: 2;
+  margin-top: 36px;
+  display: inline-flex;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--red);
+  font-weight: 700;
+}
+.auth-split-foot {
+  position: absolute;
+  left: 60px; bottom: 36px;
+  font-size: 10px;
+  color: var(--ghost);
+  letter-spacing: 0.06em;
+  z-index: 2;
+}
+.auth-split-right {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface1);
+  border-left: 1px solid var(--hairline-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 40px;
+  overflow-y: auto;
+}
+.auth-split-form { width: 100%; max-width: 380px; }
+
+/* Below 1024 the split is hidden; above 1024 the phone frame is hidden.
+   These two halves are mutually exclusive and pair with the existing
+   .auth-stage / .auth-phone media queries above. */
+.auth-split-only { display: none; }
+.auth-phone-only { display: block; }
+@media (min-width: 1024px) {
+  .auth-split-only { display: block; }
+  .auth-phone-only { display: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════
    COMPATIBILITY SHIMS (for legacy @badminton/ui components)
    ═══════════════════════════════════════════════════════════ */
 .eyebrow {
