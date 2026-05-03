@@ -4,7 +4,7 @@ import { redirect } from 'next/navigation';
 import { ScreenHeader, SectionLabel } from '@/components/v2/atoms-layout';
 import { Avatar, EmptyState, Pill } from '@/components/v2/atoms-display';
 import { formatRelative, formatScheduled } from '@badminton/shared';
-import { InlineChallengeActions } from './inline-actions';
+import { InlineChallengeActions, type ChallengeCardMode } from './inline-actions';
 import { NewChallengeButton, SuggestedChallengeButton } from './sheet-controls';
 import { DPageHead } from '@/components/desktop/page-shell';
 import { DesktopChallengeForm } from './desktop-challenge-form';
@@ -23,6 +23,40 @@ type Challenge = {
     player: { id: string; full_name: string; avatar_url: string | null } | null;
   }>;
 };
+
+// Compute the inline-actions mode for a sent challenge from its current
+// status. Incoming-pending is computed at the call site (the page already
+// filters incoming separately).
+function modeForSent(status: string): ChallengeCardMode {
+  switch (status) {
+    case 'proposed':
+    case 'partially_confirmed':
+      return 'sent-pending';
+    case 'accepted':
+      return 'active';
+    case 'disputed':
+      return 'disputed';
+    case 'completed':
+    case 'walkover_confirmed':
+    case 'cancelled':
+    case 'rejected':
+    case 'expired':
+      return 'completed';
+    default:
+      return 'completed';
+  }
+}
+
+// Derive the opposing player's UUID from a challenge's participants list.
+// For singles this is unambiguous; for doubles we pick the first opponent
+// (good enough for the inline no-show button — the detail page lets you
+// pick explicitly if both sides need to be flagged).
+function opponentIdFor(challenge: Challenge, myPlayerId: string): string | null {
+  for (const p of challenge.challenge_participants) {
+    if (p.player && p.player.id !== myPlayerId) return p.player.id;
+  }
+  return null;
+}
 
 export default async function ChallengesPage() {
   const player = await getCurrentPlayer();
@@ -128,7 +162,10 @@ export default async function ChallengesPage() {
                     </div>
                   </div>
                 </Link>
-                <InlineChallengeActions challengeId={c.id} />
+                <InlineChallengeActions
+                  challengeId={c.id}
+                  mode="incoming-pending"
+                />
               </div>
             );
           })}
@@ -146,10 +183,11 @@ export default async function ChallengesPage() {
               .filter((p): p is { id: string; full_name: string; avatar_url: string | null } => p != null && p.id !== player.id);
             const oppName = opponents[0]?.full_name ?? 'Awaiting';
             const statusLabel = labelForStatus(c.status);
+            const mode = modeForSent(c.status);
+            const oppId = opponentIdFor(c, player.id);
             return (
-              <Link
+              <div
                 key={cp_id}
-                href={`/challenges/${c.id}`}
                 style={{
                   background: 'var(--surface1)',
                   border: '1px solid var(--hairline)',
@@ -158,25 +196,43 @@ export default async function ChallengesPage() {
                   display: 'flex',
                   alignItems: 'center',
                   gap: 12,
-                  color: '#F2F2F2',
-                  textDecoration: 'none',
                 }}
               >
-                <Avatar name={oppName} src={opponents[0]?.avatar_url} size={44} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700 }}>{oppName}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text)', marginTop: 2 }}>
-                    {c.type} · {c.scheduled_at ? formatScheduled(c.scheduled_at) : formatRelative(c.created_at)}
-                  </div>
-                </div>
-                <Pill
-                  color={statusLabel.color}
-                  bg={statusLabel.bg}
-                  border={`1px solid ${statusLabel.border}`}
+                <Link
+                  href={`/challenges/${c.id}`}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    color: '#F2F2F2',
+                    textDecoration: 'none',
+                  }}
                 >
-                  {statusLabel.text}
-                </Pill>
-              </Link>
+                  <Avatar name={oppName} src={opponents[0]?.avatar_url} size={44} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>{oppName}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text)', marginTop: 2 }}>
+                      {c.type} · {c.scheduled_at ? formatScheduled(c.scheduled_at) : formatRelative(c.created_at)}
+                    </div>
+                  </div>
+                </Link>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  <Pill
+                    color={statusLabel.color}
+                    bg={statusLabel.bg}
+                    border={`1px solid ${statusLabel.border}`}
+                  >
+                    {statusLabel.text}
+                  </Pill>
+                  <InlineChallengeActions
+                    challengeId={c.id}
+                    mode={mode}
+                    opponentId={oppId}
+                  />
+                </div>
+              </div>
             );
           })}
         </section>
@@ -278,7 +334,10 @@ export default async function ChallengesPage() {
                     </div>
                   </div>
                   <div className="d-ch-card-actions">
-                    <InlineChallengeActions challengeId={c.id} />
+                    <InlineChallengeActions
+                      challengeId={c.id}
+                      mode="incoming-pending"
+                    />
                   </div>
                 </div>
               );
@@ -296,6 +355,8 @@ export default async function ChallengesPage() {
                 .filter((p): p is { id: string; full_name: string; avatar_url: string | null } => p != null && p.id !== player.id);
               const oppNames = opponents.map((o) => o.full_name).join(' / ') || 'Awaiting';
               const statusLabel = labelForStatus(c.status);
+              const mode = modeForSent(c.status);
+              const oppId = opponentIdFor(c, player.id);
               return (
                 <div key={cp_id} className="d-ch-card">
                   <div>
@@ -305,7 +366,14 @@ export default async function ChallengesPage() {
                     </div>
                     <div className="d-ch-status">● {statusLabel.text}</div>
                   </div>
-                  <div className="d-ch-card-actions">
+                  <div className="d-ch-card-actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <InlineChallengeActions
+                      challengeId={c.id}
+                      mode={mode}
+                      opponentId={oppId}
+                    />
+                    {/* Always keep the View affordance — detail page is where
+                        full match history + dispute resolution lives. */}
                     <Link href={`/challenges/${c.id}`} className="d-btn d-btn-ghost">
                       View
                     </Link>

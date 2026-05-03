@@ -23,18 +23,33 @@ export default async function MyStatsPage() {
       }
     | null;
 
-  // Compute rank + unread notifications in parallel
-  const [{ data: allRanked }, { count: unreadNotifs }] = await Promise.all([
+  // TODO: Phase 10 — scope by organization_id once multi-club is supported.
+  const [
+    { data: allRanked },
+    { count: unreadNotifs },
+    { data: activeSeason },
+    { data: myParticipations },
+  ] = await Promise.all([
     supabase
       .from('players')
       .select('id, ratings(singles_elo)')
       .eq('active_flag', true)
+      .is('deleted_at', null)
       .not('status', 'in', '("pending_approval","suspended")'),
     supabase
       .from('notifications')
       .select('*', { count: 'exact', head: true })
       .eq('player_id', player.id)
       .eq('read_flag', false),
+    supabase
+      .from('seasons')
+      .select('name, start_date')
+      .eq('active_flag', true)
+      .maybeSingle(),
+    // First leg of the most-played-opponent computation: every match this
+    // player has participated in. Second leg (opponents-of-those-matches)
+    // happens below since it needs the match_id list.
+    supabase.from('match_participants').select('match_id').eq('player_id', player.id),
   ]);
   const myRank =
     1 +
@@ -55,6 +70,45 @@ export default async function MyStatsPage() {
 
   const trend = buildTrend((r?.singles_elo as number | null) ?? 1500, lastSingles ?? []);
   const points = trend.length >= 2 ? buildPolyline(trend) : '';
+
+  // Most-played opponent — count opponents across this player's matches.
+  // Second query of the two-step computation; cheap when the player has
+  // played < a few hundred matches (which any real player will be for years).
+  const myMatchIds = (myParticipations ?? [])
+    .map((m) => m.match_id as string | null)
+    .filter((id): id is string => id != null);
+  const { data: opponentRows } = myMatchIds.length
+    ? await supabase
+        .from('match_participants')
+        .select('player_id, players:players(full_name, deleted_at)')
+        .in('match_id', myMatchIds)
+        .neq('player_id', player.id)
+    : { data: [] as Array<{ player_id: string; players: { full_name: string; deleted_at: string | null } | null }> };
+
+  const opponentCounts = new Map<string, { name: string; count: number }>();
+  for (const row of opponentRows ?? []) {
+    const opp = row.players as { full_name: string; deleted_at: string | null } | null;
+    if (!opp) continue;
+    // Soft-deleted opponents collapse to a single "Deleted Player" tally rather
+    // than disappearing — they were real opponents at the time, the count
+    // shouldn't lie.
+    const displayName = opp.deleted_at ? 'Deleted Player' : opp.full_name;
+    const key = (row.player_id as string) ?? displayName;
+    const prev = opponentCounts.get(key);
+    opponentCounts.set(key, { name: displayName, count: (prev?.count ?? 0) + 1 });
+  }
+  const mostPlayedOpponent =
+    [...opponentCounts.values()].sort((a, b) => b.count - a.count)[0] ?? null;
+
+  const longestWinStreak = r?.best_singles_streak ?? 0;
+  const seasonName = (activeSeason?.name as string | null) ?? 'Current season';
+  const seasonStartDate = activeSeason?.start_date
+    ? new Date(activeSeason.start_date as string).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      })
+    : null;
 
   const sw = r?.singles_wins ?? 0;
   const sl = r?.singles_losses ?? 0;
@@ -313,6 +367,48 @@ export default async function MyStatsPage() {
         </div>
       </section>
 
+      {/* Season recap — Phase 6. Three additions: longest win streak,
+          most played opponent, season footer. */}
+      <section style={{ padding: '12px 24px' }}>
+        <SectionLabel>Season recap</SectionLabel>
+        <div
+          style={{
+            background: 'var(--surface1)',
+            border: '1px solid var(--hairline)',
+            padding: 18,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 14,
+          }}
+        >
+          <RecapRow
+            label="Longest win streak"
+            value={longestWinStreak > 0 ? `${longestWinStreak} W` : '—'}
+          />
+          <RecapRow
+            label="Most played opponent"
+            value={
+              mostPlayedOpponent
+                ? `${mostPlayedOpponent.name} · ${mostPlayedOpponent.count} match${mostPlayedOpponent.count === 1 ? '' : 'es'}`
+                : '—'
+            }
+          />
+          <div
+            style={{
+              fontSize: 11,
+              color: 'var(--dim)',
+              letterSpacing: '0.04em',
+              borderTop: '1px solid var(--hairline)',
+              paddingTop: 12,
+            }}
+          >
+            {seasonName}
+            {seasonStartDate ? ` · started ${seasonStartDate}` : ''} · {totalMatches} match
+            {totalMatches === 1 ? '' : 'es'} played
+          </div>
+        </div>
+      </section>
+
       {/* Account list */}
       <section style={{ padding: '12px 24px 24px' }}>
         <SectionLabel>Account</SectionLabel>
@@ -458,8 +554,69 @@ export default async function MyStatsPage() {
             )}
           </div>
         </div>
+
+        {/* Season recap — desktop counterpart. */}
+        <div className="d-achievements" style={{ paddingTop: 0 }}>
+          <div className="d-ach-label">Season recap</div>
+          <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap' }}>
+            <DesktopRecapStat
+              label="Longest win streak"
+              value={longestWinStreak > 0 ? `${longestWinStreak} W` : '—'}
+            />
+            <DesktopRecapStat
+              label="Most played opponent"
+              value={
+                mostPlayedOpponent
+                  ? `${mostPlayedOpponent.name} · ${mostPlayedOpponent.count}`
+                  : '—'
+              }
+            />
+            <DesktopRecapStat
+              label="Season"
+              value={
+                seasonStartDate
+                  ? `${seasonName} · since ${seasonStartDate}`
+                  : seasonName
+              }
+            />
+            <DesktopRecapStat
+              label="Matches played"
+              value={String(totalMatches)}
+            />
+          </div>
+        </div>
       </div>
     </>
+  );
+}
+
+function RecapRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 16 }}>
+      <span
+        style={{
+          fontSize: 10,
+          fontWeight: 600,
+          letterSpacing: '1.6px',
+          textTransform: 'uppercase',
+          color: 'var(--text)',
+        }}
+      >
+        {label}
+      </span>
+      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)', textAlign: 'right' }}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function DesktopRecapStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="d-spark-stat">
+      <span className="d-lbl">{label}</span>
+      <span className="d-val">{value}</span>
+    </div>
   );
 }
 

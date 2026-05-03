@@ -1,4 +1,5 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { ScreenHeader } from '@/components/v2/atoms-layout';
 import { Avatar, EmptyState, Pill } from '@/components/v2/atoms-display';
@@ -164,6 +165,20 @@ export default async function SessionsPage() {
                         </div>
                       ))}
                     </div>
+                    <Link
+                      href={`/sessions/${s.id}`}
+                      style={{
+                        fontSize: 10,
+                        color: 'var(--text)',
+                        textDecoration: 'none',
+                        letterSpacing: '0.16em',
+                        textTransform: 'uppercase',
+                        fontWeight: 700,
+                        padding: '8px 4px',
+                      }}
+                    >
+                      Details →
+                    </Link>
                     <CheckInButton sessionId={s.id} isCheckedIn={isGoing} />
                   </div>
                 </div>
@@ -197,7 +212,12 @@ export default async function SessionsPage() {
               return (
                 <div key={s.id} className="d-session-row">
                   <div className="d-session-name" data-label="Session">
-                    {s.name ?? 'Practice Session'}
+                    <Link
+                      href={`/sessions/${s.id}`}
+                      style={{ color: 'inherit', textDecoration: 'none' }}
+                    >
+                      {s.name ?? 'Practice Session'}
+                    </Link>
                   </div>
                   <div className="d-session-cell" data-label="Time">
                     {formatDateLine(s.date as string, sd.start_time, sd.end_time)}
@@ -244,7 +264,12 @@ export default async function SessionsPage() {
               return (
                 <div key={s.id} className="d-session-row d-past">
                   <div className="d-session-name" data-label="Session">
-                    {s.name ?? 'Practice Session'}
+                    <Link
+                      href={`/sessions/${s.id}`}
+                      style={{ color: 'inherit', textDecoration: 'none' }}
+                    >
+                      {s.name ?? 'Practice Session'}
+                    </Link>
                   </div>
                   <div className="d-session-cell" data-label="Date">
                     {formatDateLine(s.date as string, sd.start_time, sd.end_time)}
@@ -261,9 +286,13 @@ export default async function SessionsPage() {
                     </span>
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <span className="d-view-all" style={{ color: 'var(--text-secondary)' }}>
+                    <Link
+                      href={`/sessions/${s.id}`}
+                      className="d-view-all"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
                       Recap →
-                    </span>
+                    </Link>
                   </div>
                 </div>
               );
