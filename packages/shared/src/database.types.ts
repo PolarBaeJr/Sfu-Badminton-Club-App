@@ -631,31 +631,37 @@ export type Database = {
       }
       notifications: {
         Row: {
+          action_url: string | null
           body: string | null
           created_at: string
           id: string
           metadata: Json | null
           player_id: string
+          read_at: string | null
           read_flag: boolean
           title: string
           type: Database["public"]["Enums"]["notification_type"]
         }
         Insert: {
+          action_url?: string | null
           body?: string | null
           created_at?: string
           id?: string
           metadata?: Json | null
           player_id: string
+          read_at?: string | null
           read_flag?: boolean
           title: string
           type: Database["public"]["Enums"]["notification_type"]
         }
         Update: {
+          action_url?: string | null
           body?: string | null
           created_at?: string
           id?: string
           metadata?: Json | null
           player_id?: string
+          read_at?: string | null
           read_flag?: boolean
           title?: string
           type?: Database["public"]["Enums"]["notification_type"]
@@ -2232,6 +2238,13 @@ export type Database = {
         | "tournament_match_result"
         | "tournament_event_completed"
         | "tournament_checkin_open"
+        | "session_starting"
+        | "session_full"
+        | "win_streak"
+        | "weekly_recap"
+        | "league_announcement"
+        | "season_starting"
+        | "season_ending"
       participant_role:
         | "challenger"
         | "opponent"
@@ -2458,6 +2471,13 @@ export const Constants = {
         "tournament_match_result",
         "tournament_event_completed",
         "tournament_checkin_open",
+        "session_starting",
+        "session_full",
+        "win_streak",
+        "weekly_recap",
+        "league_announcement",
+        "season_starting",
+        "season_ending",
       ],
       participant_role: [
         "challenger",

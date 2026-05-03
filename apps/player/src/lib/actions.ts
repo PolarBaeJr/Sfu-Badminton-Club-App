@@ -1125,18 +1125,25 @@ export async function completeOnboarding(data: {
 export async function markNotificationRead(notificationId: string) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
+  // Phase 7: also set read_at so we can show "read 12 minutes ago" later
+  // and so analytics can compare delivered-vs-read latency.
   await supabase
     .from('notifications')
-    .update({ read_flag: true })
+    .update({ read_flag: true, read_at: new Date().toISOString() })
     .eq('id', notificationId)
-    .eq('player_id', player.id);
+    .eq('player_id', player.id)
+    .is('read_at', null);
   revalidatePath('/notifications');
 }
 
 export async function markAllNotificationsRead() {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
-  await supabase.from('notifications').update({ read_flag: true }).eq('player_id', player.id).eq('read_flag', false);
+  await supabase
+    .from('notifications')
+    .update({ read_flag: true, read_at: new Date().toISOString() })
+    .eq('player_id', player.id)
+    .eq('read_flag', false);
   revalidatePath('/notifications');
 }
 

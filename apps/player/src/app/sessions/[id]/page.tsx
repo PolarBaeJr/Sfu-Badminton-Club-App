@@ -60,10 +60,12 @@ export default async function SessionDetailPage({
   if (error || !rawSession) notFound();
   const session = rawSession as unknown as SessionRow;
 
-  const sessionDate = new Date(session.date);
+  // A session is "past" once it's actually ended. Prefer end_time as the
+  // truth (combined with the date for an absolute Date); fall back to the
+  // session date alone (compared to today) when end_time is null on older
+  // sessions seeded before the 00021 design-gap columns existed.
   const now = new Date();
-  const isPast =
-    session.status !== 'open' || sessionDate.getTime() < now.getTime() - 6 * 60 * 60_000;
+  const isPast = computeIsPast(session.date, session.end_time, session.status, now);
 
   // Filter out soft-deleted attendees + sort by singles ELO desc.
   const attendanceRows = session.session_attendance ?? [];
@@ -263,6 +265,32 @@ function DesktopBackLink() {
       </Link>
     </div>
   );
+}
+
+// Truth: a session is past once its end_time has elapsed. If end_time is
+// null (legacy data), compare the session's date column to today's date —
+// anything before today is past. status != 'open' (cancelled / archived /
+// closed) is also past.
+function computeIsPast(
+  isoDate: string,
+  endTime: string | null,
+  status: string,
+  now: Date
+): boolean {
+  if (status !== 'open') return true;
+  if (endTime) {
+    // end_time is 'HH:MM:SS' clock time on the session's date.
+    const [h, m, s] = endTime.split(':').map((p) => parseInt(p, 10) || 0);
+    const ends = new Date(isoDate);
+    ends.setHours(h ?? 0, m ?? 0, s ?? 0, 0);
+    return ends.getTime() < now.getTime();
+  }
+  // Fallback: same-day or future is "active"; previous day is "past".
+  const d = new Date(isoDate);
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime() < today.getTime();
 }
 
 // "Fri Mar 14 · 7:00 – 9:00 PM" — falls back gracefully when start/end_time
