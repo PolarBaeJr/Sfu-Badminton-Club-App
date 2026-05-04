@@ -118,7 +118,33 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         </SWRProvider>
         <script
           dangerouslySetInnerHTML={{
-            __html: `if ('serviceWorker' in navigator) { window.addEventListener('load', function() { navigator.serviceWorker.register('/sw.js').catch(function() {}); }); }`,
+            // Only register the service worker in production. In dev, Next.js
+            // hot-rebuilds change the webpack chunk hashes on every save and
+            // the SW's cacheFirst strategy for /_next/static/* serves stale
+            // runtime + module-ID maps that don't match the new chunks,
+            // causing `Cannot read properties of undefined (reading 'call')`
+            // at options.factory in webpack.js. If a developer machine has
+            // the SW registered from a prior session, unregister it and
+            // purge caches on next page load — the kill switch self-heals.
+            __html: `
+              if ('serviceWorker' in navigator) {
+                var isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+                if (isLocal) {
+                  navigator.serviceWorker.getRegistrations().then(function (regs) {
+                    regs.forEach(function (r) { r.unregister(); });
+                  });
+                  if (window.caches && caches.keys) {
+                    caches.keys().then(function (keys) {
+                      keys.forEach(function (k) { caches.delete(k); });
+                    });
+                  }
+                } else {
+                  window.addEventListener('load', function () {
+                    navigator.serviceWorker.register('/sw.js').catch(function () {});
+                  });
+                }
+              }
+            `,
           }}
         />
       </body>

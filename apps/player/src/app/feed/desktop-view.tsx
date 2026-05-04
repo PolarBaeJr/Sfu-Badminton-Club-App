@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { previewEloSwing } from '@badminton/shared';
 import { DStat, DPanel } from '@/components/desktop/page-shell';
+import { NextCardActions } from './next-card-actions';
 
 type Ratings = {
   singles_elo: number | null;
@@ -20,6 +21,7 @@ type FiveRow = {
     match_type: string;
     result_status: string;
   } | null;
+  opponent_name: string | null;
 };
 
 type NextChallenge = {
@@ -39,52 +41,57 @@ type NextChallenge = {
 };
 
 interface FeedDesktopViewProps {
-  greeting: string;
-  desktopGreetTitle: string;
+  seasonLabel: string;
   myRank: number;
   myElo: number;
   ratings: Ratings | null;
-  delta: number | null;
+  singlesSeasonDelta: number;
+  doublesSeasonDelta: number;
   totalMatches: number;
   totalWins: number;
   winRate: number;
+  rankDeltaLabel: string;
   recentFive: FiveRow[];
   nextChallenge: NextChallenge | null;
 }
 
 /**
- * Desktop variant of the player feed page (player-app.html design).
- * Rendered alongside the mobile variant; visibility controlled by the
- * `.d-only` / `.m-only` CSS classes in globals.css at the 1024px breakpoint.
+ * Desktop variant of /feed (player-app.html dashboard). Visibility is
+ * .d-only — toggled at the 1024px breakpoint by globals.css.
+ *
+ * Hero copy is hardcoded per Phase 10 Decision #1 ("Born on the court.") —
+ * the dynamic time-of-day greeting was dropped to match the design exactly.
+ * Watermark is the literal "A1" from the design (not the player's initials
+ * or rank — confirmed in the audit pass).
  */
 export function FeedDesktopView({
-  greeting,
-  desktopGreetTitle,
+  seasonLabel,
   myRank,
   myElo,
   ratings,
-  delta,
+  singlesSeasonDelta,
+  doublesSeasonDelta,
   totalMatches,
   totalWins,
   winRate,
+  rankDeltaLabel,
   recentFive,
   nextChallenge,
 }: FeedDesktopViewProps) {
   return (
     <div className="d-only">
+      {/* HERO ─ matches player-app.html lines 797-805 exactly. */}
       <div className="d-hero">
-        <div className="d-hero-watermark">
-          {myRank > 0 && myRank <= 99 ? `#${myRank}` : 'A1'}
-        </div>
+        <div className="d-hero-watermark">A1</div>
         <div className="d-hero-inner">
           <div className="d-tag-row">
             <span className="d-red-line" />
-            <span className="d-micro d-micro-red">{`Season 02 · ${greeting}`}</span>
+            <span className="d-micro d-micro-red">{seasonLabel}</span>
           </div>
           <h1>
-            {desktopGreetTitle.split(' ').slice(0, -1).join(' ')}
+            Born on the
             <br />
-            {desktopGreetTitle.split(' ').slice(-1)}
+            court.
           </h1>
           <p>
             ELO that moves with every match. Sessions you can join on the fly. Challenges that end
@@ -93,30 +100,38 @@ export function FeedDesktopView({
         </div>
       </div>
 
+      {/* STATS GRID ─ 4-up. Rank / Singles ELO / Doubles ELO / Win Rate.
+          ELO deltas are SEASON-net (sum of every rating change since the
+          active season started), not last-match deltas. */}
       <div className="d-stats-grid">
         <DStat
           label="Rank"
           value={ratings?.singles_elo != null ? `#${myRank}` : '—'}
-          delta={
-            myRank === 1
-              ? 'Top of the club'
-              : myRank <= 3
-              ? 'Podium'
-              : myRank <= 10
-              ? 'Top 10'
-              : 'Climbing'
-          }
+          delta={rankDeltaLabel}
         />
         <DStat
           label="Singles ELO"
           value={ratings?.singles_elo ?? '—'}
-          delta={delta != null ? `${delta >= 0 ? '+' : ''}${delta} last match` : 'No matches yet'}
-          deltaTone={delta != null ? (delta >= 0 ? 'up' : 'down') : 'neutral'}
+          delta={
+            singlesSeasonDelta !== 0
+              ? `${singlesSeasonDelta >= 0 ? '+' : ''}${singlesSeasonDelta} this season`
+              : 'No matches yet'
+          }
+          deltaTone={
+            singlesSeasonDelta > 0 ? 'up' : singlesSeasonDelta < 0 ? 'down' : 'neutral'
+          }
         />
         <DStat
           label="Doubles ELO"
           value={ratings?.doubles_elo ?? '—'}
-          delta={`${ratings?.doubles_wins ?? 0}W · ${ratings?.doubles_losses ?? 0}L`}
+          delta={
+            doublesSeasonDelta !== 0
+              ? `${doublesSeasonDelta >= 0 ? '+' : ''}${doublesSeasonDelta} this season`
+              : 'No matches yet'
+          }
+          deltaTone={
+            doublesSeasonDelta > 0 ? 'up' : doublesSeasonDelta < 0 ? 'down' : 'neutral'
+          }
         />
         <DStat
           label="Win Rate"
@@ -125,6 +140,9 @@ export function FeedDesktopView({
         />
       </div>
 
+      {/* NEXT CHALLENGE ─ rendered only when an incoming pending challenge
+          exists. Hidden entirely when there isn't one (per Decision #3 —
+          empty grids look broken). */}
       {nextChallenge && nextChallenge.participants?.length > 0 && (() => {
         const oppParticipant = nextChallenge.participants.find((p) => p.role !== 'challenger');
         const opp = oppParticipant?.players;
@@ -159,14 +177,14 @@ export function FeedDesktopView({
               </div>
             </div>
             <div className="d-next-card-actions">
-              <Link href={`/challenges/${nextChallenge.id}`} className="d-btn d-btn-red">
-                View
-              </Link>
+              <NextCardActions challengeId={nextChallenge.id} />
             </div>
           </div>
         );
       })()}
 
+      {/* RECENT MATCHES ─ 6-column table with Opponent. Empty state covers
+          the no-history case without breaking the panel chrome. */}
       <DPanel
         label="Recent Matches"
         sublabel="/ Last 5"
@@ -181,6 +199,7 @@ export function FeedDesktopView({
             <thead>
               <tr>
                 <th>Date</th>
+                <th>Opponent</th>
                 <th>Format</th>
                 <th>Score</th>
                 <th>Result</th>
@@ -191,7 +210,7 @@ export function FeedDesktopView({
               {recentFive.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={6}
                     style={{ color: 'var(--text-faint)', textAlign: 'center', padding: '32px 24px' }}
                   >
                     No matches yet — log your first one!
@@ -208,6 +227,7 @@ export function FeedDesktopView({
                   return (
                     <tr key={row.id}>
                       <td className="d-td-date">{date}</td>
+                      <td className="d-td-name">{row.opponent_name ?? '—'}</td>
                       <td className="d-td-date" style={{ textTransform: 'capitalize' }}>
                         {m.match_type}
                       </td>

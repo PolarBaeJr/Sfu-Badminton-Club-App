@@ -1,5 +1,8 @@
-const STATIC_CACHE = 'sfu-static-v1';
-const PAGES_CACHE = 'sfu-pages-v1';
+// Bumped v1→v2 to evict stale Phase-10-era webpack chunk caches in any
+// browser that registered the previous SW. The activate handler below
+// deletes any cache name not in ALLOWED_CACHES on the next activation.
+const STATIC_CACHE = 'sfu-static-v2';
+const PAGES_CACHE = 'sfu-pages-v2';
 const ALLOWED_CACHES = [STATIC_CACHE, PAGES_CACHE];
 
 function isStaticAsset(url) {
@@ -14,11 +17,9 @@ function isNetworkOnly(url) {
   if (url.origin === self.location.origin) {
     if (url.pathname.startsWith('/auth/')) return true;
     if (url.pathname.startsWith('/api/')) return true;
-    if (url.pathname.startsWith('/monitoring')) return true;
   }
   const host = url.hostname;
   if (host.endsWith('.supabase.co')) return true;
-  if (host.endsWith('.sentry.io') || host.endsWith('.ingest.sentry.io')) return true;
   if (host.endsWith('posthog.com') || host.endsWith('i.posthog.com')) return true;
   return false;
 }

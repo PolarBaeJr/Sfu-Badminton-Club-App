@@ -27,6 +27,9 @@ export default async function FeedPage() {
     | RatingRow
     | null;
 
+  // Greeting eyebrow on the mobile hero — design uses time-of-day copy.
+  // Desktop hero is hardcoded "Born on the court." per Phase 10 Decision #1
+  // and pulls the season string from `activeSeason` below instead.
   const greetingHour = new Date().getHours();
   const greeting =
     greetingHour < 12 ? 'Good morning' : greetingHour < 18 ? 'Good afternoon' : 'Good evening';
@@ -37,6 +40,7 @@ export default async function FeedPage() {
     { data: recentMatchesRaw },
     { data: recentDelta },
     { count: unreadNotifs },
+    { data: activeSeason },
   ] = await Promise.all([
     supabase
       .from('sessions')
@@ -71,6 +75,9 @@ export default async function FeedPage() {
       .select('*', { count: 'exact', head: true })
       .eq('player_id', player.id)
       .eq('read_flag', false),
+    // Active season feeds the desktop hero eyebrow ("Season 02 · Spring 2026"
+    // pulled from DB; falls back to the literal label below when no row exists).
+    supabase.from('seasons').select('name, start_date').eq('active_flag', true).maybeSingle(),
   ]);
 
   // Build leaderboard top-5 (singles)
@@ -140,10 +147,14 @@ export default async function FeedPage() {
   const opponentName = opponent?.full_name ?? 'Opponent';
   const opponentAvatar = opponent?.avatar_url ?? null;
 
-  // ── Pull last 5 confirmed matches for the desktop "Recent Matches" panel
+  // ── Pull last 5 confirmed matches for the desktop "Recent Matches" panel.
+  // Includes opponent name via a nested participant select — the Opponent
+  // column on the desktop table needs the player's name, not just an id.
   const { data: recentFiveRaw } = await supabase
     .from('match_participants')
-    .select('id, win_flag, rating_delta, match:matches(id, score_summary, played_at, match_type, result_status)')
+    .select(
+      'id, win_flag, rating_delta, match:matches(id, score_summary, played_at, match_type, result_status, match_participants(player_id, players(full_name)))'
+    )
     .eq('player_id', player.id)
     .order('created_at', { ascending: false, referencedTable: 'matches' })
     .limit(5);
@@ -153,27 +164,63 @@ export default async function FeedPage() {
     win_flag: boolean | null;
     rating_delta: number | null;
     match: { id: string; score_summary: string; played_at: string; match_type: string; result_status: string } | null;
+    opponent_name: string | null;
   };
   const recentFive = (recentFiveRaw ?? []).map((r): FiveRow => {
-    const m = r.match as unknown;
+    const m = r.match as unknown as
+      | (FiveRow['match'] & {
+          match_participants?: Array<{
+            player_id: string;
+            players:
+              | { full_name: string }
+              | { full_name: string }[]
+              | null;
+          }>;
+        })
+      | { match_participants?: never }[]
+      | null;
+    const matchObj = (Array.isArray(m) ? m[0] : m) ?? null;
+    // Find the first participant that isn't the current player and surface their
+    // display name. Doubles will pick the first opponent — the spec column is
+    // "Opponent" (singular), so we don't paginate the second one in this view.
+    let opponent_name: string | null = null;
+    if (matchObj && 'match_participants' in matchObj && matchObj.match_participants) {
+      const opp = matchObj.match_participants.find((mp) => mp.player_id !== player.id);
+      const oppPlayer = opp ? (Array.isArray(opp.players) ? opp.players[0] : opp.players) : null;
+      opponent_name = oppPlayer?.full_name ?? null;
+    }
     return {
       id: r.id,
       win_flag: r.win_flag,
       rating_delta: r.rating_delta,
-      match: (Array.isArray(m) ? m[0] : m) ?? null,
+      match: matchObj as FiveRow['match'],
+      opponent_name,
     };
   });
 
-  // ── Pull a "Next Challenge" for the desktop next-card
-  const { data: nextChallengeRaw } = await supabase
-    .from('challenges')
-    .select('id, format, scheduled_at, created_at, status, participants:challenge_participants(role, players(full_name, ratings(singles_elo, doubles_elo)))')
-    .eq('status', 'pending')
-    .order('created_at', { ascending: false })
+  // ── Pull the player's incoming pending challenge for the desktop next-card.
+  // Scoped via challenge_participants so we only see ones addressed TO the
+  // player (not ones they sent), with confirmation_status='pending' so we only
+  // surface ones that need a decision. RLS would have stopped sent-but-not-
+  // mine challenges, but the previous global query also surfaced the player's
+  // own outgoing challenges — wrong target for the Accept/Decline UI.
+  const { data: nextChallengeRow } = await supabase
+    .from('challenge_participants')
+    .select(
+      'challenge:challenges!inner(id, format, scheduled_at, created_at, status, created_by, participants:challenge_participants(role, players(full_name, ratings(singles_elo, doubles_elo))))'
+    )
+    .eq('player_id', player.id)
+    .eq('confirmation_status', 'pending')
+    .neq('challenges.created_by', player.id)
+    .order('created_at', { ascending: false, referencedTable: 'challenges' })
     .limit(1)
     .maybeSingle();
 
-  const nextChallenge = nextChallengeRaw as unknown as
+  const nextChallenge = (
+    Array.isArray(nextChallengeRow?.challenge)
+      ? nextChallengeRow?.challenge[0]
+      : nextChallengeRow?.challenge
+  ) as unknown as
     | {
         id: string;
         format: string | null;
@@ -185,8 +232,51 @@ export default async function FeedPage() {
       }
     | null;
 
+  // ── Season-net ELO deltas for the desktop stats grid. Sums every
+  //    rating_delta the player has earned since the active season started,
+  //    split into singles vs doubles. JS-side filter keeps the SQL simple
+  //    and the row count is bounded by matches-per-player-per-season.
+  const seasonStart = activeSeason?.start_date as string | undefined;
+  let singlesSeasonDelta = 0;
+  let doublesSeasonDelta = 0;
+  if (seasonStart) {
+    const { data: seasonRows } = await supabase
+      .from('match_participants')
+      .select('rating_delta, match:matches(played_at, match_type)')
+      .eq('player_id', player.id);
+    for (const row of seasonRows ?? []) {
+      const m = row.match as { played_at: string; match_type: string } | { played_at: string; match_type: string }[] | null;
+      const mObj = Array.isArray(m) ? m[0] : m;
+      if (!mObj) continue;
+      if (mObj.played_at < seasonStart) continue;
+      const d = row.rating_delta ?? 0;
+      if (mObj.match_type === 'singles') singlesSeasonDelta += d;
+      else if (mObj.match_type === 'doubles') doublesSeasonDelta += d;
+    }
+  }
+
+  // Season label for the desktop hero eyebrow. Falls back to the design's
+  // literal when no active season exists in the DB (fresh dev environments).
+  const seasonName = (activeSeason?.name as string | null) ?? 'Season 02';
+  const seasonLabel = seasonName.toLowerCase().includes('season')
+    ? `${seasonName} · Spring 2026`
+    : `Season 02 · ${seasonName}`;
+
+  // Rank delta caption for the desktop Rank stat. #1 reads "Top of the club";
+  // anyone else reads "N from #1" with the ELO gap to the top player.
+  const topElo =
+    (topPlayersRaw ?? [])
+      .map((p) => {
+        const rr = (Array.isArray(p.ratings) ? p.ratings[0] : p.ratings) as
+          | { singles_elo: number | null }
+          | null;
+        return rr?.singles_elo ?? 0;
+      })
+      .sort((a, b) => b - a)[0] ?? 0;
+  const rankGap = topElo - (ratings?.singles_elo ?? 0);
+  const rankDeltaLabel = myRank === 1 ? 'Top of the club' : `${rankGap} from #1`;
+
   const myElo = ratings?.singles_elo ?? 1200;
-  const desktopGreetTitle = greeting === 'Good morning' ? 'Set the pace.' : greeting === 'Good afternoon' ? 'Stay on the climb.' : 'Close out strong.';
 
   return (
     <>
@@ -453,6 +543,9 @@ export default async function FeedPage() {
                 textDecoration: 'none',
               }}
             >
+              {/* Date eyebrow + 3px dot separator + muted time, per design.
+                  Three inline spans (not a single concatenated label) so the
+                  dot stays geometrically centered between them at any width. */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                 <span
                   style={{
@@ -464,13 +557,31 @@ export default async function FeedPage() {
                   }}
                 >
                   {formatSessionDateOnly(nextSession.date as string)}
-                  {timeLabel && (
-                    <>
-                      <span style={{ color: 'var(--dim)', margin: '0 6px' }}>·</span>
-                      {timeLabel}
-                    </>
-                  )}
                 </span>
+                {timeLabel && (
+                  <>
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        width: 3,
+                        height: 3,
+                        background: 'var(--dim)',
+                        borderRadius: '50%',
+                        flexShrink: 0,
+                      }}
+                    />
+                    <span
+                      style={{
+                        fontSize: 10,
+                        color: 'var(--text)',
+                        fontWeight: 600,
+                        letterSpacing: '1px',
+                      }}
+                    >
+                      {timeLabel}
+                    </span>
+                  </>
+                )}
               </div>
               <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: '-0.2px', lineHeight: 1.2 }}>
                 {nextSession.name ?? 'Practice Session'}
@@ -747,7 +858,20 @@ export default async function FeedPage() {
       {/* ════════════════════════════════════════════════════
           DESKTOP VIEW (≥1024px) — sidebar + main from player-app.html
           ════════════════════════════════════════════════════ */}
-      <FeedDesktopView greeting={greeting} desktopGreetTitle={desktopGreetTitle} myRank={myRank} myElo={myElo} ratings={ratings} delta={delta} totalMatches={totalMatches} totalWins={totalWins} winRate={winRate} recentFive={recentFive} nextChallenge={nextChallenge} />
+      <FeedDesktopView
+        seasonLabel={seasonLabel}
+        myRank={myRank}
+        myElo={myElo}
+        ratings={ratings}
+        singlesSeasonDelta={singlesSeasonDelta}
+        doublesSeasonDelta={doublesSeasonDelta}
+        totalMatches={totalMatches}
+        totalWins={totalWins}
+        winRate={winRate}
+        rankDeltaLabel={rankDeltaLabel}
+        recentFive={recentFive}
+        nextChallenge={nextChallenge}
+      />
     </>
   );
 }
