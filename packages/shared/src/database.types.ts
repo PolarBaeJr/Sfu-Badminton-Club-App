@@ -12,6 +12,31 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.4"
   }
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
   public: {
     Tables: {
       announcement_reads: {
@@ -205,6 +230,7 @@ export type Database = {
           qr_generated_at: string | null
           qr_token: string | null
           rated_flag: boolean
+          scheduled_at: string | null
           scheduled_date: string | null
           scheduled_time: string | null
           session_id: string | null
@@ -225,6 +251,7 @@ export type Database = {
           qr_generated_at?: string | null
           qr_token?: string | null
           rated_flag?: boolean
+          scheduled_at?: string | null
           scheduled_date?: string | null
           scheduled_time?: string | null
           session_id?: string | null
@@ -245,6 +272,7 @@ export type Database = {
           qr_generated_at?: string | null
           qr_token?: string | null
           rated_flag?: boolean
+          scheduled_at?: string | null
           scheduled_date?: string | null
           scheduled_time?: string | null
           session_id?: string | null
@@ -2026,6 +2054,23 @@ export type Database = {
       }
     }
     Views: {
+      leaderboard_trends: {
+        Row: {
+          match_type: Database["public"]["Enums"]["match_type_enum"] | null
+          player_id: string | null
+          sample_size: number | null
+          trend_sum: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_participants_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_attendance_counts: {
         Row: {
           count: number | null
@@ -2401,6 +2446,9 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {
       announcement_audience: [
