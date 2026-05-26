@@ -49,6 +49,8 @@ export function LeaderboardClient({
       elo: tab === 'singles' ? p.ratings?.singles_elo ?? null : p.ratings?.doubles_elo ?? null,
       wins: tab === 'singles' ? p.ratings?.singles_wins ?? 0 : p.ratings?.doubles_wins ?? 0,
       losses: tab === 'singles' ? p.ratings?.singles_losses ?? 0 : p.ratings?.doubles_losses ?? 0,
+      trend: tab === 'singles' ? p.singles_trend : p.doubles_trend,
+      trend_n: tab === 'singles' ? p.singles_trend_n : p.doubles_trend_n,
       rank: i + 1,
     }));
   }, [tab, players]);
@@ -330,25 +332,42 @@ export function LeaderboardClient({
                   const pct = total > 0 ? Math.round((p.wins / total) * 100) : 0;
                   const rankClass =
                     p.rank <= 3 ? 'd-rank-top' : p.rank <= 8 ? 'd-rank-mid' : 'd-rank-low';
+
+                  // Trend: sum of last ≤5 rating_delta in this format. Render arrow + signed value.
+                  // No matches in format → em-dash alone (neutral). Net 0 → "— 0" (neutral).
+                  let trendCell: React.ReactNode;
+                  let trendClass: string;
+                  if (p.trend_n === 0 || p.trend == null) {
+                    trendCell = '—';
+                    trendClass = 'd-trend-flat';
+                  } else if (p.trend > 0) {
+                    trendCell = `↑ +${p.trend}`;
+                    trendClass = 'd-trend-up';
+                  } else if (p.trend < 0) {
+                    trendCell = `↓ −${Math.abs(p.trend)}`;
+                    trendClass = 'd-trend-down';
+                  } else {
+                    trendCell = '— 0';
+                    trendClass = 'd-trend-flat';
+                  }
+
                   return (
                     <tr key={p.id} className={isMe ? 'd-you-row' : ''}>
-                      <td className={`d-td-rank ${rankClass}`}>{p.rank}</td>
+                      <td className={`d-td-rank ${rankClass}`}>{String(p.rank).padStart(2, '0')}</td>
                       <td className="d-td-name">
                         <Link
                           href={`/leaderboard/${p.id}`}
                           style={{ color: 'inherit', textDecoration: 'none' }}
                         >
                           {p.full_name}
-                          {isMe && <span className="d-you-tag">· you</span>}
+                          {isMe && <span className="d-you-tag">(You)</span>}
                         </Link>
                       </td>
                       <td className="d-td-elo">{p.elo ?? '—'}</td>
                       <td className="d-td-num">{p.wins}</td>
                       <td className="d-td-num">{p.losses}</td>
                       <td className="d-td-num">{total > 0 ? `${pct}%` : '—'}</td>
-                      <td className={pct >= 60 ? 'd-trend-up' : pct >= 40 ? 'd-trend-flat' : 'd-trend-down'}>
-                        {pct >= 60 ? '↑' : pct >= 40 ? '→' : '↓'}
-                      </td>
+                      <td className={trendClass}>{trendCell}</td>
                     </tr>
                   );
                 })
