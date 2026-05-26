@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@badminton/shared/supabase-browser';
 import {
@@ -131,6 +132,7 @@ export function ChallengeSheet({
   }, [open, presetOpponentId]);
 
   if (!open) return null;
+  if (typeof document === 'undefined') return null;
 
   const filtered = candidates.filter((c) =>
     c.full_name.toLowerCase().includes(search.trim().toLowerCase())
@@ -159,14 +161,14 @@ export function ChallengeSheet({
     setSubmitting(false);
   }
 
-  return (
+  return createPortal(
     <div
       onClick={onClose}
       style={{
         position: 'fixed',
         inset: 0,
         background: 'rgba(10,10,10,0.6)',
-        zIndex: 200,
+        zIndex: 1000,
         display: 'flex',
         alignItems: 'flex-end',
         animation: 'fadeIn 200ms ease both',
@@ -442,6 +444,7 @@ export function ChallengeSheet({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

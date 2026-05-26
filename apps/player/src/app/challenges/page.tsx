@@ -88,10 +88,21 @@ export default async function ChallengesPage() {
     challenge: cp.challenge as unknown as Challenge | null,
   }));
 
-  const incoming = myChallenges.filter(
-    (cp) => cp.challenge && cp.challenge.created_by !== player.id && cp.confirmation_status === 'pending'
-  );
-  const sent = myChallenges.filter((cp) => cp.challenge && cp.challenge.created_by === player.id);
+  // PostgREST's .order(..., { referencedTable: 'challenges' }) sorts the
+  // embedded join, not the parent challenge_participants rows, so the outer
+  // list came back in insertion order (oldest first). Sort client-side by
+  // the challenge's created_at descending so newest challenges land on top.
+  const byChallengeCreatedDesc = (
+    a: { challenge: Challenge | null },
+    b: { challenge: Challenge | null },
+  ) => (b.challenge?.created_at ?? '').localeCompare(a.challenge?.created_at ?? '');
+
+  const incoming = myChallenges
+    .filter((cp) => cp.challenge && cp.challenge.created_by !== player.id && cp.confirmation_status === 'pending')
+    .sort(byChallengeCreatedDesc);
+  const sent = myChallenges
+    .filter((cp) => cp.challenge && cp.challenge.created_by === player.id)
+    .sort(byChallengeCreatedDesc);
 
   // Sort suggested by ELO closeness to my singles ELO
   const myElo = ((player.ratings as { singles_elo?: number } | null)?.singles_elo) ?? 1500;

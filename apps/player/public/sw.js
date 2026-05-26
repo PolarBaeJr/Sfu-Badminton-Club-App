@@ -1,8 +1,9 @@
-// Bumped v1→v2 to evict stale Phase-10-era webpack chunk caches in any
-// browser that registered the previous SW. The activate handler below
-// deletes any cache name not in ALLOWED_CACHES on the next activation.
-const STATIC_CACHE = 'sfu-static-v2';
-const PAGES_CACHE = 'sfu-pages-v2';
+// v3: pages switch from stale-while-revalidate to network-first so that
+// server-revalidated content (e.g. a newly created challenge) shows on the
+// next navigation instead of after two reloads. Cache version bump forces
+// the activate handler below to evict v2 page caches.
+const STATIC_CACHE = 'sfu-static-v3';
+const PAGES_CACHE = 'sfu-pages-v3';
 const ALLOWED_CACHES = [STATIC_CACHE, PAGES_CACHE];
 
 function isStaticAsset(url) {
@@ -38,7 +39,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (url.origin === self.location.origin) {
-    event.respondWith(staleWhileRevalidate(req));
+    event.respondWith(networkFirst(req));
     return;
   }
 
@@ -60,16 +61,16 @@ async function cacheFirst(req) {
   }
 }
 
-async function staleWhileRevalidate(req) {
+async function networkFirst(req) {
   const cache = await caches.open(PAGES_CACHE);
-  const cached = await cache.match(req);
-  const networkPromise = fetch(req)
-    .then((res) => {
-      if (res.ok) cache.put(req, res.clone());
-      return res;
-    })
-    .catch(() => cached);
-  return cached || networkPromise;
+  try {
+    const res = await fetch(req);
+    if (res.ok) cache.put(req, res.clone());
+    return res;
+  } catch {
+    const cached = await cache.match(req);
+    return cached || Response.error();
+  }
 }
 
 self.addEventListener('push', (event) => {
