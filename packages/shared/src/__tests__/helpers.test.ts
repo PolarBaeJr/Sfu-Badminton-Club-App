@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
+import { formatDate } from '../utils/date';
 import {
   isAdmin,
   getWinRate,
   getPointDifferential,
   getStreakDisplay,
   cn,
-  formatDate,
   formatRelativeTime,
 } from '../utils/helpers';
 import type { UserRole } from '../types/database';
