@@ -1,6 +1,6 @@
 -- ============================================================
 -- 00017_security_hardening.sql
--- Additional defense-in-depth from the CLAUDE-SECURITY.md audit:
+-- Additional defense-in-depth from the security audit:
 --   * Immutable audit_logs (no UPDATE/DELETE by anyone except via service role)
 --   * Unique (match_id, player_id) on match_participants (H4 — prevents a
 --     submitter from inserting the same player twice in one match)

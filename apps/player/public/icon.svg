@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- Red brand square — never pure black/white per CLAUDE.md hard overrides -->
+  <!-- Red brand square — never pure black/white per design token hard overrides -->
   <rect width="1024" height="1024" fill="#CC0000"/>
   <!-- Shuttlecock mark scaled from the design's ShuttleMark
        (apps/player/src/components/v2/atoms-display.tsx:11-22).

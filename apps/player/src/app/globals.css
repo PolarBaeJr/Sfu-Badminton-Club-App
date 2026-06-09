@@ -2,7 +2,7 @@
 
 /* ═══════════════════════════════════════════════════════════
    PLAYER APP — single reconciled token sheet
-   Source of truth: CLAUDE.md (Barlow Condensed + Barlow,
+   Source of truth: the design token sheet (Barlow Condensed + Barlow,
    #CC0000, #0A0A0A/#111/#1A1A1A, --ink #F0F0F0,
    --green #4ade80, --amber #fbbf24, hairline rgba(255,255,255,0.08))
    Non-negotiable: no pure white (use #F2F2F2), no pure black (use #0A0A0A)
@@ -24,7 +24,7 @@
   --hairline-soft:   rgba(255,255,255,0.06);
   --hairline-strong: rgba(255,255,255,0.14);
 
-  /* Text — --ink #F0F0F0 explicit per CLAUDE.md */
+  /* Text — --ink #F0F0F0 explicit per the design token sheet */
   --ink:    #F0F0F0;
   --text:   #C8C8C8;
   --muted:  #888888;
@@ -128,7 +128,7 @@
    default for unknown clients). At <1024px we swap to the mobile
    palette so phone-frame screens match Player+App+v2.html exactly.
 
-   Hard overrides per CLAUDE.md (apply to both palettes):
+   Hard overrides per the design token sheet (apply to both palettes):
      - never pure white → use #F2F2F2
      - never pure black → use the palette base (mobile #181818, desktop #0A0A0A)
    These are the literal hex substitutions; tinted hairlines /

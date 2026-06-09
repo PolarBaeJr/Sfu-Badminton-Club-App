@@ -63,7 +63,7 @@ const config: Config = {
         sm: 'calc(var(--radius) - 4px)',
       },
       fontFamily: {
-        // Aligned with CLAUDE.md source of truth.
+        // Aligned with the design token sheet (source of truth).
         display: ['Barlow Condensed', 'sans-serif'],
         body: ['Barlow', 'sans-serif'],
         mono: ['JetBrains Mono', 'monospace'],
