@@ -69,7 +69,7 @@ export default async function ChallengesPage() {
       .from('challenge_participants')
       .select('id, confirmation_status, challenge:challenges(id, status, type, rated_flag, format, created_by, created_at, scheduled_at, creator:players!challenges_created_by_fkey(full_name, avatar_url), challenge_participants(player:players(id, full_name, avatar_url)))')
       .eq('player_id', player.id)
-      .order('created_at', { ascending: false, referencedTable: 'challenges' })
+      .order('created_at', { ascending: false })
       .limit(40),
     // TODO: Phase 10 — scope by organization_id once multi-club is supported.
     supabase

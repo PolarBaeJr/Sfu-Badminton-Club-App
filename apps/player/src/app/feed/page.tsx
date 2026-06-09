@@ -61,7 +61,10 @@ export default async function FeedPage() {
       .from('match_participants')
       .select('id, win_flag, rating_delta, match:matches(id, score_summary, played_at, match_type, result_status, match_participants(player_id, players(full_name, avatar_url)))')
       .eq('player_id', player.id)
-      .order('created_at', { ascending: false, referencedTable: 'matches' })
+      // match_participants.created_at is mirrored from matches.played_at at insert (migration 00029);
+      // played_at is immutable per 00018, so sorting the participant rows directly is faithful.
+      // Revisit if played_at editing (admin back-dating) is ever added.
+      .order('created_at', { ascending: false })
       .limit(1),
     supabase
       .from('match_participants')
@@ -156,7 +159,7 @@ export default async function FeedPage() {
       'id, win_flag, rating_delta, match:matches(id, score_summary, played_at, match_type, result_status, match_participants(player_id, players(full_name)))'
     )
     .eq('player_id', player.id)
-    .order('created_at', { ascending: false, referencedTable: 'matches' })
+    .order('created_at', { ascending: false })
     .limit(5);
 
   type FiveRow = {
@@ -212,7 +215,7 @@ export default async function FeedPage() {
     .eq('player_id', player.id)
     .eq('confirmation_status', 'pending')
     .neq('challenges.created_by', player.id)
-    .order('created_at', { ascending: false, referencedTable: 'challenges' })
+    .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
 

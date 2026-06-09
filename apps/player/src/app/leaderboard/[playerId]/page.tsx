@@ -30,7 +30,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
     supabase.from('match_participants')
       .select('*, match:matches(score_summary, played_at, match_type, format, result_status, winner_side)')
       .eq('player_id', playerId)
-      .order('created_at', { ascending: false, referencedTable: 'matches' })
+      .order('created_at', { ascending: false })
       .limit(10),
     supabase.from('head_to_head_stats')
       .select('*')

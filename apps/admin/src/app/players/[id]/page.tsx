@@ -23,7 +23,7 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
     supabase.from('match_participants')
       .select('*, match:matches(*, match_games(*))')
       .eq('player_id', id)
-      .order('created_at', { ascending: false, referencedTable: 'matches' })
+      .order('created_at', { ascending: false })
       .limit(10),
     supabase.from('varsity_notes').select('*, author:players!varsity_notes_author_id_fkey(full_name)').eq('player_id', id).order('created_at', { ascending: false }),
   ]);

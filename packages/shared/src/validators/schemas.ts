@@ -32,7 +32,10 @@ export const matchResultSchema = z.object({
     game_number: z.number().int().positive(),
     side_a_score: z.number().int().min(0),
     side_b_score: z.number().int().min(0),
-  })).min(1).max(3),
+  })
+    .refine((g) => g.side_a_score !== g.side_b_score, 'Game must have a winner')
+    .refine((g) => Math.max(g.side_a_score, g.side_b_score) >= 11, 'Game must reach the format minimum (11)')
+  ).min(1).max(3),
   completed: z.boolean(),
 });
 

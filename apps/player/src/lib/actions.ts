@@ -118,6 +118,7 @@ export async function createChallenge(input: ChallengeCreateInput) {
   const player = await requirePlayer();
   enforceLimit(player.id, 'challenge.create', 20, 60 * 60_000);
   const supabase = await createServerSupabaseClient();
+  const svc = createServiceRoleClient();
 
   // Validate via DB function
   const { data: validation } = await supabase.rpc('validate_challenge_creation', {
@@ -177,14 +178,15 @@ export async function createChallenge(input: ChallengeCreateInput) {
   const { error: partError } = await supabase.from('challenge_participants').insert(participants);
   if (partError) throw toClientError(partError, 'player.action');
 
-  // Create notification for opponent
-  await supabase.from('notifications').insert({
+  // Create notification for opponent (svc: notifications has no INSERT policy for authenticated)
+  const { error: notifErr } = await svc.from('notifications').insert({
     player_id: input.opponent_id,
     type: 'challenge_received',
     title: 'New Challenge',
     body: `${player.full_name} has challenged you!`,
     metadata: { challenge_id: challenge.id },
   });
+  if (notifErr) logError('notification.insert', notifErr);
 
   // Send email
   const { data: opponent } = await supabase.from('players').select('email').eq('id', input.opponent_id).single();
@@ -213,6 +215,7 @@ export async function createChallenge(input: ChallengeCreateInput) {
 export async function acceptChallenge(challengeId: string) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
+  const svc = createServiceRoleClient();
 
   const { data: existing } = await supabase.from('challenges').select('created_by').eq('id', challengeId).single();
   if (!existing) throw new Error('Challenge not found');
@@ -234,22 +237,25 @@ export async function acceptChallenge(challengeId: string) {
 
   const allAccepted = participants?.every((p) => p.confirmation_status === 'accepted');
 
-  if (allAccepted) {
-    await supabase.from('challenges').update({ status: 'accepted' }).eq('id', challengeId);
-  } else {
-    await supabase.from('challenges').update({ status: 'partially_confirmed' }).eq('id', challengeId);
-  }
+  // svc: the opponent (non-creator) runs this, but challenges_update_own restricts UPDATE to the
+  // creator — auth-bound would be silently RLS-denied, leaving the challenge stuck in 'proposed'.
+  const { error: statusErr } = await svc
+    .from('challenges')
+    .update({ status: allAccepted ? 'accepted' : 'partially_confirmed' })
+    .eq('id', challengeId);
+  if (statusErr) throw toClientError(statusErr, 'challenge.status');
 
   // Notify challenger
   const { data: challenge } = await supabase.from('challenges').select('created_by').eq('id', challengeId).single();
   if (challenge) {
-    await supabase.from('notifications').insert({
+    const { error: notifErr } = await svc.from('notifications').insert({
       player_id: challenge.created_by,
       type: 'challenge_accepted',
       title: 'Challenge Accepted',
       body: `${player.full_name} accepted your challenge!`,
       metadata: { challenge_id: challengeId },
     });
+    if (notifErr) logError('notification.insert', notifErr);
 
     // Send email
     const { data: creator } = await supabase.from('players').select('email').eq('id', challenge.created_by).single();
@@ -267,28 +273,36 @@ export async function acceptChallenge(challengeId: string) {
 export async function rejectChallenge(challengeId: string) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
+  const svc = createServiceRoleClient();
 
   const { data: existing } = await supabase.from('challenges').select('created_by').eq('id', challengeId).single();
   if (!existing) throw new Error('Challenge not found');
   if (existing.created_by === player.id) throw new Error('Cannot reject your own challenge');
 
-  await supabase
+  const { error: partErr } = await supabase
     .from('challenge_participants')
     .update({ confirmation_status: 'rejected', responded_at: new Date().toISOString() })
     .eq('challenge_id', challengeId)
     .eq('player_id', player.id);
+  if (partErr) throw toClientError(partErr, 'player.action');
 
-  await supabase.from('challenges').update({ status: 'rejected' }).eq('id', challengeId);
+  // svc: the opponent (non-creator) runs this; challenges_update_own restricts UPDATE to the creator.
+  const { error: statusErr } = await svc
+    .from('challenges')
+    .update({ status: 'rejected' })
+    .eq('id', challengeId);
+  if (statusErr) throw toClientError(statusErr, 'challenge.status');
 
   const { data: challengeData } = await supabase.from('challenges').select('created_by').eq('id', challengeId).single();
   if (challengeData) {
-    await supabase.from('notifications').insert({
+    const { error: notifErr } = await svc.from('notifications').insert({
       player_id: challengeData.created_by,
       type: 'challenge_rejected',
       title: 'Challenge Rejected',
       body: `${player.full_name} rejected your challenge.`,
       metadata: { challenge_id: challengeId },
     });
+    if (notifErr) logError('notification.insert', notifErr);
 
     // Send email
     const { data: creator } = await supabase.from('players').select('email').eq('id', challengeData.created_by).single();
@@ -306,6 +320,7 @@ export async function rejectChallenge(challengeId: string) {
 export async function cancelChallenge(challengeId: string) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
+  const svc = createServiceRoleClient();
 
   const { data: challenge } = await supabase
     .from('challenges')
@@ -326,7 +341,7 @@ export async function cancelChallenge(challengeId: string) {
   ) || [];
 
   if (otherParticipants.length > 0) {
-    await supabase.from('notifications').insert(
+    const { error: notifErr } = await svc.from('notifications').insert(
       otherParticipants.map((cp) => ({
         player_id: cp.player_id,
         type: 'challenge_cancelled',
@@ -335,6 +350,7 @@ export async function cancelChallenge(challengeId: string) {
         metadata: { challenge_id: challengeId },
       }))
     );
+    if (notifErr) logError('notification.insert', notifErr);
   }
 
   trackServerEvent(player.id, 'challenge_cancelled', {
@@ -363,6 +379,7 @@ export async function submitQrMatchResult(
     throw new Error('Invalid match result.');
   }
   const supabase = await createServerSupabaseClient();
+  const svc = createServiceRoleClient();
 
   const { data: challenge } = await supabase
     .from('challenges')
@@ -418,7 +435,12 @@ export async function submitQrMatchResult(
     .select()
     .single();
 
-  if (matchError) throw toClientError(matchError, 'player.qr.submit');
+  if (matchError) {
+    if ((matchError as { code?: string }).code === '23505') {
+      throw new Error('This match has already been submitted. Please refresh to see the latest status.');
+    }
+    throw toClientError(matchError, 'player.qr.submit');
+  }
 
   const isDoubles = challenge.type === 'doubles';
   const matchParticipants = challenge.challenge_participants.map((cp: Record<string, unknown>) => {
@@ -457,8 +479,9 @@ export async function submitQrMatchResult(
     };
   });
 
-  await supabase.from('match_participants').insert(matchParticipants);
-  await supabase.from('match_games').insert(
+  const { error: mpErr } = await supabase.from('match_participants').insert(matchParticipants);
+  if (mpErr) throw toClientError(mpErr, 'player.qr.submit');
+  const { error: mgErr } = await supabase.from('match_games').insert(
     input.games.map((g) => ({
       match_id: match.id,
       game_number: g.game_number,
@@ -466,24 +489,28 @@ export async function submitQrMatchResult(
       side_b_score: g.side_b_score,
     })),
   );
+  if (mgErr) throw toClientError(mgErr, 'player.qr.submit');
 
-  // Stamp the QR submission marker.
-  await supabase
+  // Stamp the QR submission marker and revoke the token. svc: the opponent (non-creator) submits,
+  // but challenges_update_own restricts UPDATE to the creator — auth-bound would silently fail.
+  const { error: chErr } = await svc
     .from('challenges')
-    .update({ submitted_via: 'qr' })
+    .update({ submitted_via: 'qr', qr_token: null })
     .eq('id', challengeId);
+  if (chErr) logError('challenge.qr.stamp', chErr);
 
   const otherPlayers = challenge.challenge_participants.filter(
     (cp: Record<string, unknown>) => cp.player_id !== player.id,
   );
   for (const cp of otherPlayers) {
-    await supabase.from('notifications').insert({
+    const { error: notifErr } = await svc.from('notifications').insert({
       player_id: cp.player_id as string,
       type: 'result_pending',
       title: 'Confirm Match Result',
       body: `${player.full_name} submitted a result via QR. Please confirm.`,
       metadata: { match_id: match.id, challenge_id: challengeId },
     });
+    if (notifErr) logError('notification.insert', notifErr);
     const { data: otherPlayer } = await supabase
       .from('players')
       .select('email')
@@ -519,6 +546,7 @@ export async function submitMatchResult(
     throw new Error('Invalid match result.');
   }
   const supabase = await createServerSupabaseClient();
+  const svc = createServiceRoleClient();
 
   const { data: challenge } = await supabase
     .from('challenges')
@@ -573,7 +601,12 @@ export async function submitMatchResult(
     .select()
     .single();
 
-  if (matchError) throw toClientError(matchError, 'player.action');
+  if (matchError) {
+    if ((matchError as { code?: string }).code === '23505') {
+      throw new Error('This match has already been submitted. Please refresh to see the latest status.');
+    }
+    throw toClientError(matchError, 'player.action');
+  }
 
   // Add match participants with pre-ratings
   const isDoubles = challenge.type === 'doubles';
@@ -616,7 +649,8 @@ export async function submitMatchResult(
     };
   });
 
-  await supabase.from('match_participants').insert(matchParticipants);
+  const { error: mpErr } = await supabase.from('match_participants').insert(matchParticipants);
+  if (mpErr) throw toClientError(mpErr, 'player.action');
 
   // Add match games
   const gameRows = input.games.map((g) => ({
@@ -625,20 +659,22 @@ export async function submitMatchResult(
     side_a_score: g.side_a_score,
     side_b_score: g.side_b_score,
   }));
-  await supabase.from('match_games').insert(gameRows);
+  const { error: mgErr } = await supabase.from('match_games').insert(gameRows);
+  if (mgErr) throw toClientError(mgErr, 'player.action');
 
   // Notify other participants to confirm
   const otherPlayers = challenge.challenge_participants.filter(
     (cp: Record<string, unknown>) => cp.player_id !== player.id
   );
   for (const cp of otherPlayers) {
-    await supabase.from('notifications').insert({
+    const { error: notifErr } = await svc.from('notifications').insert({
       player_id: cp.player_id as string,
       type: 'result_pending',
       title: 'Confirm Match Result',
       body: `${player.full_name} submitted a result. Please confirm.`,
       metadata: { match_id: match.id, challenge_id: challengeId },
     });
+    if (notifErr) logError('notification.insert', notifErr);
 
     // Send email
     const { data: otherPlayer } = await supabase.from('players').select('email').eq('id', cp.player_id as string).single();
@@ -701,15 +737,19 @@ export async function disputeMatchResult(matchId: string, reason: string, catego
     .eq('match_id', matchId);
   if (!mp?.some((row) => row.player_id === player.id)) throw new Error('Not a participant');
 
-  await supabase.from('matches').update({ result_status: 'disputed' }).eq('id', matchId);
+  // matches_update is participant-scoped, so the auth-bound update is permitted (the disputer is a
+  // participant) — but it was unchecked; surface failures on this rating-sensitive path.
+  const { error: matchErr } = await supabase.from('matches').update({ result_status: 'disputed' }).eq('id', matchId);
+  if (matchErr) throw toClientError(matchErr, 'player.action');
 
-  await supabase.from('disputes').insert({
+  const { error: dispErr } = await supabase.from('disputes').insert({
     match_id: matchId,
     opened_by: player.id,
     reason_category: category,
     description: reason,
     status: 'open',
   });
+  if (dispErr) throw toClientError(dispErr, 'player.action');
 
   // Email admins about dispute. Skip soft-deleted admin accounts so we
   // don't blast email to anonymized inboxes.
@@ -765,6 +805,7 @@ export async function reportWalkover(input: WalkoverReportInput) {
   const player = await requirePlayer();
   enforceLimit(player.id, 'walkover.report', 5, 60 * 60_000);
   const supabase = await createServerSupabaseClient();
+  const svc = createServiceRoleClient();
 
   const { error } = await supabase.from('walkovers').insert({
     challenge_id: input.challenge_id,
@@ -776,7 +817,13 @@ export async function reportWalkover(input: WalkoverReportInput) {
 
   if (error) throw toClientError(error, 'player.action');
 
-  await supabase.from('challenges').update({ status: 'walkover_pending' }).eq('id', input.challenge_id);
+  // svc: a non-creator participant may report a walkover, but challenges_update_own restricts UPDATE
+  // to the creator — auth-bound would be silently RLS-denied.
+  const { error: statusErr } = await svc
+    .from('challenges')
+    .update({ status: 'walkover_pending' })
+    .eq('id', input.challenge_id);
+  if (statusErr) throw toClientError(statusErr, 'challenge.status');
 
   // Email admins about walkover. Skip soft-deleted admin accounts.
   // TODO: Phase 10 — scope by organization_id once multi-club is supported.

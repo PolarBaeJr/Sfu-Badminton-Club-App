@@ -27,7 +27,7 @@ export default async function MyMatchesPage() {
     .from('match_participants')
     .select('id, win_flag, rating_delta, match:matches(id, score_summary, played_at, match_type, result_status)')
     .eq('player_id', player.id)
-    .order('created_at', { ascending: false, referencedTable: 'matches' })
+    .order('created_at', { ascending: false })
     .limit(200);
 
   const rows: MatchRow[] = (rawRows ?? []).map((r) => {

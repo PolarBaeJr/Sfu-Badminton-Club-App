@@ -122,6 +122,36 @@ describe('matchResultSchema', () => {
       }).success,
     ).toBe(false);
   });
+  it('rejects a tied game (no winner)', () => {
+    expect(
+      matchResultSchema.safeParse({
+        match_id: UUID_A,
+        winner_side: 'a',
+        games: [{ game_number: 1, side_a_score: 21, side_b_score: 21 }],
+        completed: true,
+      }).success,
+    ).toBe(false);
+  });
+  it('rejects a game that never reached the format minimum (11)', () => {
+    expect(
+      matchResultSchema.safeParse({
+        match_id: UUID_A,
+        winner_side: 'a',
+        games: [{ game_number: 1, side_a_score: 5, side_b_score: 2 }],
+        completed: true,
+      }).success,
+    ).toBe(false);
+  });
+  it('accepts an 11-point game (single_11 floor)', () => {
+    expect(
+      matchResultSchema.safeParse({
+        match_id: UUID_A,
+        winner_side: 'a',
+        games: [{ game_number: 1, side_a_score: 11, side_b_score: 0 }],
+        completed: true,
+      }).success,
+    ).toBe(true);
+  });
 });
 
 describe('disputeSchema', () => {
