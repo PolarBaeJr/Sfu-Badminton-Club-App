@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // available before the mocked module factories run.
 const state = vi.hoisted(() => ({
   user: null as { id: string } | null,
-  player: null as { id: string; role: string } | null,
+  player: null as { id: string; role: string; status?: string; deleted_at?: string | null } | null,
 }));
 
 // `server-only` is a runtime fence that errors in client bundles; under vitest
@@ -71,9 +71,21 @@ describe('getAuthenticatedAdmin', () => {
     await expect(getAuthenticatedAdmin()).rejects.toThrow('Admin access required');
   });
 
-  it('returns the player when they are an admin', async () => {
+  it('throws when the admin is suspended (stale privilege)', async () => {
     state.user = { id: 'user-1' };
-    state.player = { id: 'player-1', role: 'admin' };
+    state.player = { id: 'player-1', role: 'admin', status: 'suspended', deleted_at: null };
+    await expect(getAuthenticatedAdmin()).rejects.toThrow('Admin access required');
+  });
+
+  it('throws when the admin account is soft-deleted (stale privilege)', async () => {
+    state.user = { id: 'user-1' };
+    state.player = { id: 'player-1', role: 'admin', status: 'recreational', deleted_at: '2026-06-01T00:00:00Z' };
+    await expect(getAuthenticatedAdmin()).rejects.toThrow('Admin access required');
+  });
+
+  it('returns the player when they are an admin in good standing', async () => {
+    state.user = { id: 'user-1' };
+    state.player = { id: 'player-1', role: 'admin', status: 'recreational', deleted_at: null };
     const result = await getAuthenticatedAdmin();
     expect(result).toEqual(state.player);
   });

@@ -1,24 +1,13 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
-// Admin role cache: short-lived signed cookie. We cache (user_id + isAdmin)
-// for 15 minutes to avoid one Supabase RPC roundtrip per protected request.
-// Cache busts whenever the user_id changes (re-login) or the cookie expires.
-const ADMIN_ROLE_COOKIE = 'sfu_admin_role';
-const ADMIN_ROLE_TTL_SECONDS = 15 * 60;
-
-function readRoleCookie(value: string | undefined, currentUserId: string): boolean | null {
-  if (!value) return null;
-  try {
-    const [storedUserId, storedFlag] = value.split('|');
-    if (storedUserId !== currentUserId) return null; // user changed; invalidate
-    if (storedFlag === 'admin') return true;
-    if (storedFlag === 'denied') return false;
-    return null;
-  } catch {
-    return null;
-  }
-}
+// Legacy admin-role cache cookie. It was plaintext "<uid>|admin" and acted as
+// a forgeable trust boundary (2026-06-09 audit C2) — any authenticated player
+// could send a crafted value and skip the is_admin check. The cache is gone:
+// every protected request now re-verifies role + account standing against the
+// database (cheap at this club's traffic — one RPC + one own-row select).
+// The constant remains only so lingering cookies get expired off clients.
+const LEGACY_ADMIN_ROLE_COOKIE = 'sfu_admin_role';
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -58,30 +47,41 @@ export async function middleware(request: NextRequest) {
   }
 
   if (user && !isPublicRoute) {
-    // Cache hit: trust the signed cookie if user_id matches.
-    const cached = readRoleCookie(request.cookies.get(ADMIN_ROLE_COOKIE)?.value, user.id);
-    let isAdmin: boolean;
+    // Re-verify on every request: role via the SECURITY DEFINER RPC, account
+    // standing via the caller's own row (status/deleted_at are in the
+    // column-safe grant from 00032). No cache — a demoted, suspended, or
+    // deleted admin loses access on their next request.
+    const [{ data: roleOk }, { data: standing }] = await Promise.all([
+      supabase.rpc('is_admin', { p_user_id: user.id }),
+      supabase
+        .from('players')
+        .select('status, deleted_at')
+        .eq('user_id', user.id)
+        .single(),
+    ]);
 
-    if (cached !== null) {
-      isAdmin = cached;
-    } else {
-      // Cache miss: hit the RPC, then write the result back to a 15-min cookie.
-      const { data } = await supabase.rpc('is_admin', { p_user_id: user.id });
-      isAdmin = !!data;
-      supabaseResponse.cookies.set(ADMIN_ROLE_COOKIE, `${user.id}|${isAdmin ? 'admin' : 'denied'}`, {
-        httpOnly: true,
-        sameSite: 'lax',
-        secure: process.env.NODE_ENV === 'production',
-        maxAge: ADMIN_ROLE_TTL_SECONDS,
-        path: '/',
-      });
-    }
+    const isAdmin =
+      !!roleOk &&
+      !!standing &&
+      standing.status !== 'suspended' &&
+      standing.deleted_at === null;
 
     if (!isAdmin) {
       const url = request.nextUrl.clone();
       url.pathname = '/unauthorized';
       return NextResponse.redirect(url);
     }
+  }
+
+  // Expire the legacy role-cache cookie wherever it still exists.
+  if (request.cookies.get(LEGACY_ADMIN_ROLE_COOKIE)) {
+    supabaseResponse.cookies.set(LEGACY_ADMIN_ROLE_COOKIE, '', {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: 0,
+      path: '/',
+    });
   }
 
   return supabaseResponse;

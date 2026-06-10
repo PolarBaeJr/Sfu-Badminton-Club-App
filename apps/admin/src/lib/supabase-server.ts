@@ -20,7 +20,8 @@ export const createAdminClient = createServiceRoleClient;
 
 // Wrapped in `cache()` so server actions / pages that share a render dedupe
 // the auth.getUser + admin lookup pair to one round-trip per request.
-// Selecting only the columns actually used by callers (id, role, email, full_name).
+// Selecting only the columns actually used by callers (id, role, email,
+// full_name) plus the account-standing columns the gate checks.
 export const getAuthenticatedAdmin = cache(async () => {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -29,12 +30,17 @@ export const getAuthenticatedAdmin = cache(async () => {
   const adminClient = createAdminClient();
   const { data: player } = await adminClient
     .from('players')
-    .select('id, role, email, full_name, user_id')
+    .select('id, role, email, full_name, user_id, status, deleted_at')
     .eq('user_id', user.id)
     .single();
 
   if (!player) throw new Error('No player record found');
   if (player.role !== 'admin') throw new Error('Admin access required');
+  // Stale-privilege guard: role alone is not enough — a suspended or
+  // soft-deleted account must not keep admin powers.
+  if (player.status === 'suspended' || player.deleted_at != null) {
+    throw new Error('Admin access required');
+  }
 
   return player;
 });
