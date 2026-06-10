@@ -808,6 +808,30 @@ export async function reportWalkover(input: WalkoverReportInput) {
   const supabase = await createServerSupabaseClient();
   const svc = createServiceRoleClient();
 
+  // Authz guard: the only DB-side check is walkovers_insert
+  // (reported_by = self), so without this any player could flip an
+  // unrelated challenge to walkover_pending and forfeit a stranger.
+  // Both the caller and the forfeited player must be participants of an
+  // accepted (forfeitable) challenge.
+  const { data: challenge } = await svc
+    .from('challenges')
+    .select('id, status, challenge_participants(player_id)')
+    .eq('id', input.challenge_id)
+    .single();
+
+  if (!challenge) throw new Error('Challenge not found');
+  if (challenge.status !== 'accepted') {
+    throw new Error('Walkovers can only be reported on accepted challenges.');
+  }
+  const participantIds = (challenge.challenge_participants as { player_id: string }[] | null)
+    ?.map((cp) => cp.player_id) ?? [];
+  if (!participantIds.includes(player.id)) {
+    throw new Error('You are not a participant of this challenge.');
+  }
+  if (!participantIds.includes(input.forfeit_player_id)) {
+    throw new Error('Forfeited player is not a participant of this challenge.');
+  }
+
   const { error } = await supabase.from('walkovers').insert({
     challenge_id: input.challenge_id,
     reported_by: player.id,
