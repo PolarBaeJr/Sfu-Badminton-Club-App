@@ -22,7 +22,10 @@ export const getCurrentPlayer = cache(async () => {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const { data: player } = await supabase
+  // Service role for the row read: direct players SELECT is column-restricted
+  // for authenticated (00032) and callers need the full own row (email, phone,
+  // preferences). Keyed strictly on the verified auth user id.
+  const { data: player } = await createServiceRoleClient()
     .from('players')
     .select('*, ratings(*)')
     .eq('user_id', user.id)

@@ -104,7 +104,9 @@ function SettingsContent() {
       // Player profile (legacy columns) and player_preferences (new normalized
       // table from Phase 2) fetched in parallel.
       const [{ data }, prefsResult] = await Promise.all([
-        supabase.from('players').select('*').eq('user_id', user.id).single(),
+        // players_self (00032): definer view returning only the caller's own
+        // row with all columns — direct players SELECT is column-restricted.
+        supabase.from('players_self').select('*').eq('user_id', user.id).single(),
         getPlayerPreferences().then(
           (p) => ({ ok: true as const, p }),
           (e) => ({ ok: false as const, e: e as Error })

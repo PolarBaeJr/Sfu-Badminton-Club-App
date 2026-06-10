@@ -14,7 +14,7 @@ export async function GET() {
     const supabase = await createServerSupabaseClient();
     const { error } = await supabase
       .from('players')
-      .select('*', { head: true, count: 'exact' })
+      .select('id', { head: true, count: 'exact' })
       .limit(1);
 
     if (error) {

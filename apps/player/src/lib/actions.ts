@@ -189,7 +189,7 @@ export async function createChallenge(input: ChallengeCreateInput) {
   if (notifErr) logError('notification.insert', notifErr);
 
   // Send email
-  const { data: opponent } = await supabase.from('players').select('email').eq('id', input.opponent_id).single();
+  const { data: opponent } = await svc.from('players').select('email').eq('id', input.opponent_id).single();
   if (opponent?.email) {
     const formatLabel = MATCH_FORMAT_LABELS[input.format as keyof typeof MATCH_FORMAT_LABELS] || input.format;
     sendChallengeReceivedEmail(opponent.email, player.full_name, formatLabel, input.type, challenge.id).catch(() => {});
@@ -258,7 +258,7 @@ export async function acceptChallenge(challengeId: string) {
     if (notifErr) logError('notification.insert', notifErr);
 
     // Send email
-    const { data: creator } = await supabase.from('players').select('email').eq('id', challenge.created_by).single();
+    const { data: creator } = await svc.from('players').select('email').eq('id', challenge.created_by).single();
     if (creator?.email) {
       sendChallengeAcceptedEmail(creator.email, player.full_name, challengeId).catch(() => {});
     }
@@ -305,7 +305,7 @@ export async function rejectChallenge(challengeId: string) {
     if (notifErr) logError('notification.insert', notifErr);
 
     // Send email
-    const { data: creator } = await supabase.from('players').select('email').eq('id', challengeData.created_by).single();
+    const { data: creator } = await svc.from('players').select('email').eq('id', challengeData.created_by).single();
     if (creator?.email) {
       sendChallengeRejectedEmail(creator.email, player.full_name, challengeId).catch(() => {});
     }
@@ -383,7 +383,7 @@ export async function submitQrMatchResult(
 
   const { data: challenge } = await supabase
     .from('challenges')
-    .select('*, challenge_participants(*, player:players(*, ratings(*)))')
+    .select('*, challenge_participants(*, player:players(id, ratings(singles_elo, doubles_elo)))')
     .eq('id', challengeId)
     .single();
 
@@ -511,7 +511,7 @@ export async function submitQrMatchResult(
       metadata: { match_id: match.id, challenge_id: challengeId },
     });
     if (notifErr) logError('notification.insert', notifErr);
-    const { data: otherPlayer } = await supabase
+    const { data: otherPlayer } = await svc
       .from('players')
       .select('email')
       .eq('id', cp.player_id as string)
@@ -550,7 +550,7 @@ export async function submitMatchResult(
 
   const { data: challenge } = await supabase
     .from('challenges')
-    .select('*, challenge_participants(*, player:players(*, ratings(*)))')
+    .select('*, challenge_participants(*, player:players(id, ratings(singles_elo, doubles_elo)))')
     .eq('id', challengeId)
     .single();
 
@@ -677,7 +677,7 @@ export async function submitMatchResult(
     if (notifErr) logError('notification.insert', notifErr);
 
     // Send email
-    const { data: otherPlayer } = await supabase.from('players').select('email').eq('id', cp.player_id as string).single();
+    const { data: otherPlayer } = await svc.from('players').select('email').eq('id', cp.player_id as string).single();
     if (otherPlayer?.email) {
       const score = input.games.map((g) => `${g.side_a_score}-${g.side_b_score}`).join(', ');
       sendResultPendingEmail(otherPlayer.email, player.full_name, score, match.id).catch(() => {});
@@ -754,7 +754,8 @@ export async function disputeMatchResult(matchId: string, reason: string, catego
   // Email admins about dispute. Skip soft-deleted admin accounts so we
   // don't blast email to anonymized inboxes.
   // TODO: Phase 10 — scope by organization_id once multi-club is supported.
-  const { data: admins } = await supabase
+  const svc = createServiceRoleClient();
+  const { data: admins } = await svc
     .from('players')
     .select('email')
     .eq('role', 'admin')
@@ -827,7 +828,7 @@ export async function reportWalkover(input: WalkoverReportInput) {
 
   // Email admins about walkover. Skip soft-deleted admin accounts.
   // TODO: Phase 10 — scope by organization_id once multi-club is supported.
-  const { data: admins } = await supabase
+  const { data: admins } = await svc
     .from('players')
     .select('email')
     .eq('role', 'admin')
@@ -1051,7 +1052,7 @@ export async function updatePreferences(prefs: Record<string, unknown>) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 
-  const { data: current } = await supabase
+  const { data: current } = await createServiceRoleClient()
     .from('players')
     .select('notification_preferences')
     .eq('id', player.id)

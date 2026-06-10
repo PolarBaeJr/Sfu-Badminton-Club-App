@@ -25,7 +25,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
     { data: recentMatches },
     { data: h2hStats },
   ] = await Promise.all([
-    supabase.from('players').select('*').eq('id', playerId).single(),
+    supabase.from('players').select('id, full_name, status').eq('id', playerId).single(),
     supabase.from('ratings').select('*').eq('player_id', playerId).single(),
     supabase.from('match_participants')
       .select('*, match:matches(score_summary, played_at, match_type, format, result_status, winner_side)')
