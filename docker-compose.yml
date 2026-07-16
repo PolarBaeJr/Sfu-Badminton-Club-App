@@ -1,3 +1,9 @@
+# Pi deploy: joins the external `edge` network; proxy-manager routes by the
+# proxy.* labels below. Set PROXY_DOMAIN in .env when the club domain arrives.
+networks:
+  edge:
+    external: true
+
 services:
   player:
     build:
@@ -20,6 +26,13 @@ services:
     ports:
       - "3011:3000"
     restart: unless-stopped
+    networks: [edge, default]
+    labels:
+      proxy.enable:     "true"
+      proxy.host:       "${PROXY_DOMAIN:-badminton.polardev.org}"
+      proxy.port:       "3000"
+      proxy.service:    "badminton-player"
+      proxy.unscalable: "true"
     healthcheck:
       # node -e fetch(): the slim runtime image has no curl/wget
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
@@ -47,6 +60,15 @@ services:
     ports:
       - "3010:3001"
     restart: unless-stopped
+    networks: [edge, default]
+    labels:
+      proxy.enable:     "true"
+      proxy.host:       "${PROXY_DOMAIN:-badminton.polardev.org}"
+      # admin is served under /admin (Next.js basePath), same domain as player
+      proxy.path:       "/admin"
+      proxy.port:       "3001"
+      proxy.service:    "badminton-admin"
+      proxy.unscalable: "true"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
