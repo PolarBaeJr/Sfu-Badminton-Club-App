@@ -9,6 +9,7 @@ import {
   sendWalkoverReportedEmail,
   getFormatWeight,
   getEventMultiplier,
+  pickOne,
   matchResultSchema,
   disputeSchema,
   walkoverReportSchema,
@@ -89,7 +90,7 @@ export async function submitMatchResult(challengeId: string, input: MatchResultI
   const isDoubles = challenge.type === 'doubles';
   const matchParticipants = challenge.challenge_participants.map((cp: Record<string, unknown>) => {
     const playerData = cp.player as Record<string, unknown>;
-    const ratingsData = Array.isArray(playerData?.ratings) ? playerData.ratings[0] : playerData?.ratings;
+    const ratingsData = pickOne(playerData?.ratings);
     const preRating = isDoubles
       ? ((ratingsData as Record<string, unknown>)?.doubles_elo as number) ?? 1200
       : ((ratingsData as Record<string, unknown>)?.singles_elo as number) ?? 1200;

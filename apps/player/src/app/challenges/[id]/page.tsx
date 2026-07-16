@@ -1,5 +1,5 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { MATCH_FORMAT_LABELS, formatRelativeTime } from '@badminton/shared';
+import { MATCH_FORMAT_LABELS, formatRelativeTime, pickOne } from '@badminton/shared';
 import { notFound, redirect } from 'next/navigation';
 import { ChallengeDetailActions } from './actions';
 import { ArrowLeft, Clock, Zap, Trophy, MessageSquare, Crosshair } from 'lucide-react';
@@ -42,10 +42,6 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
   const sideA = participants.filter((cp) => cp.team_side === 'a');
   const sideB = participants.filter((cp) => cp.team_side === 'b');
 
-  function pickPerson(p: Participant['player']) {
-    if (!p) return null;
-    return Array.isArray(p) ? (p[0] ?? null) : p;
-  }
 
   return (
     <div data-screen-label="Challenge Detail" style={{ maxWidth: 720, margin: '0 auto' }}>
@@ -155,7 +151,7 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
                     <div className="muted" style={{ fontSize: 12, fontStyle: 'italic' }}>No players yet.</div>
                   ) : (
                     team.players.map((cp) => {
-                      const p = pickPerson(cp.player);
+                      const p = pickOne(cp.player);
                       return (
                         <div key={cp.id} className="row" style={{ gap: 10 }}>
                           <AvatarChip name={p?.full_name ?? '?'} id={p?.id ?? cp.id} size="sm" />
@@ -208,7 +204,7 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
                 <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)', display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {match.match_participants.map((mp: Record<string, unknown>) => {
                     const p = mp.player as { full_name?: string } | { full_name?: string }[] | null;
-                    const person = Array.isArray(p) ? p[0] : p;
+                    const person = pickOne(p);
                     const delta = mp.rating_delta as number | null;
                     return (
                       <div key={mp.id as string} className="row" style={{ gap: 10 }}>

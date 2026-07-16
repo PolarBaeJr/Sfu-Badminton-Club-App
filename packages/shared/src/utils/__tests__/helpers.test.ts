@@ -8,6 +8,7 @@ import {
   getPointDifferential,
   getStreakDisplay,
   cn,
+  pickOne,
 } from '../helpers';
 import type { UserRole } from '../../types/database';
 
@@ -157,6 +158,31 @@ describe('getStreakDisplay', () => {
 
   it('handles a single loss streak', () => {
     expect(getStreakDisplay(-1)).toBe('L1');
+  });
+});
+
+describe('pickOne', () => {
+  it('returns null for null', () => {
+    expect(pickOne(null)).toBeNull();
+  });
+
+  it('returns null for undefined', () => {
+    expect(pickOne(undefined)).toBeNull();
+  });
+
+  it('returns the value when given a plain object', () => {
+    const person = { id: '1', full_name: 'Alice' };
+    expect(pickOne(person)).toBe(person);
+  });
+
+  it('returns the first element when given an array', () => {
+    const a = { id: '1' };
+    const b = { id: '2' };
+    expect(pickOne([a, b])).toBe(a);
+  });
+
+  it('returns null for an empty array', () => {
+    expect(pickOne([])).toBeNull();
   });
 });
 

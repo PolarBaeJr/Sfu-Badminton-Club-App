@@ -1,5 +1,5 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { MATCH_FORMAT_LABELS, formatRelativeTime, getWinRate, unwrap } from '@badminton/shared';
+import { MATCH_FORMAT_LABELS, formatRelativeTime, getWinRate, pickOne, unwrap } from '@badminton/shared';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { Plus, ChevronRight, Crosshair, Filter } from 'lucide-react';
@@ -21,11 +21,6 @@ type MatchRow = {
   match_participants: ParticipantRow[] | null;
 };
 
-function pickPerson(p: Person | Person[] | null): Person | null {
-  if (!p) return null;
-  return Array.isArray(p) ? (p[0] ?? null) : p;
-}
-
 function weekNumber(d: Date) {
   const start = new Date(d.getFullYear(), 0, 1);
   const diff = (d.getTime() - start.getTime()) / 86_400_000;
@@ -37,7 +32,7 @@ export default async function FeedPage() {
   if (!player) redirect('/login');
 
   const supabase = await createServerSupabaseClient();
-  const r = Array.isArray(player.ratings) ? player.ratings[0] : player.ratings;
+  const r = pickOne(player.ratings);
 
   const [
     pendingChallengesRes,
@@ -89,7 +84,7 @@ export default async function FeedPage() {
   const top = (topRatings || [])
     .map((row) => {
       const raw = row.player as unknown as (Person & { hide_from_leaderboard?: boolean }) | (Person & { hide_from_leaderboard?: boolean })[] | null;
-      const person = Array.isArray(raw) ? (raw[0] ?? null) : raw;
+      const person = pickOne(raw);
       if (!person || person.hide_from_leaderboard) return null;
       return { person, elo: row.singles_elo as number };
     })
@@ -308,20 +303,20 @@ export default async function FeedPage() {
             recentMatches.map((m) => {
               const participants = m.match_participants ?? [];
               const me = participants.find((p) => {
-                const person = pickPerson(p.player);
+                const person = pickOne(p.player);
                 return person?.id === player.id;
               });
               const opponents = participants.filter((p) => {
-                const person = pickPerson(p.player);
+                const person = pickOne(p.player);
                 return person?.id !== player.id && p.team_side !== me?.team_side;
               });
               const partner = participants.find((p) => {
-                const person = pickPerson(p.player);
+                const person = pickOne(p.player);
                 return person?.id !== player.id && p.team_side === me?.team_side;
               });
-              const opponent = pickPerson(opponents[0]?.player ?? null);
-              const opponentPartner = pickPerson(opponents[1]?.player ?? null);
-              const partnerPerson = pickPerson(partner?.player ?? null);
+              const opponent = pickOne(opponents[0]?.player ?? null);
+              const opponentPartner = pickOne(opponents[1]?.player ?? null);
+              const partnerPerson = pickOne(partner?.player ?? null);
 
               const formatLabel = MATCH_FORMAT_LABELS[m.format as keyof typeof MATCH_FORMAT_LABELS] || m.format;
               const isWin = me?.win_flag === true;

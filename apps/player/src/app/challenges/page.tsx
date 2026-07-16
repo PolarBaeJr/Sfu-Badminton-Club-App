@@ -2,6 +2,7 @@ import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-ser
 import {
   MATCH_FORMAT_LABELS,
   formatRelativeTime,
+  pickOne,
   CHALLENGE_STATUS_LABEL,
   CHALLENGE_STATUS_TAG,
 } from '@badminton/shared';
@@ -41,11 +42,6 @@ export default async function ChallengesPage() {
     if (!c) return null;
     return Array.isArray(c) ? (c[0] ?? null) : (c as Challenge);
   }
-  function pickPerson(p: { id: string; full_name: string } | { id: string; full_name: string }[] | null) {
-    if (!p) return null;
-    return Array.isArray(p) ? (p[0] ?? null) : p;
-  }
-
   const all = (myChallenges ?? []).map((cp) => ({ cp, c: pickChallenge(cp) })).filter((x): x is { cp: CP; c: Challenge } => Boolean(x.c));
 
   const incoming = all.filter(({ cp, c }) => c.created_by !== player.id && cp.confirmation_status === 'pending');
@@ -55,10 +51,10 @@ export default async function ChallengesPage() {
   const archived = all.filter(({ c }) => ['rejected', 'cancelled'].includes(c.status));
 
   function ChallengeCard({ c }: { c: Challenge }) {
-    const creator = pickPerson(c.creator);
+    const creator = pickOne(c.creator);
     const isMine = c.created_by === player.id;
     const opponentParticipants = c.challenge_participants
-      .map((p) => ({ ...p, person: pickPerson(p.player) }))
+      .map((p) => ({ ...p, person: pickOne(p.player) }))
       .filter((p) => p.person);
     const youSide = opponentParticipants.find((p) => p.person?.id === player.id)?.team_side;
     const opponents = opponentParticipants.filter((p) => p.team_side !== youSide);

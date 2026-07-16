@@ -58,6 +58,14 @@ export function cn(...classes: (string | boolean | undefined | null)[]): string 
   return classes.filter(Boolean).join(' ');
 }
 
+// Supabase embeds a joined relation as either an object or a one-element
+// array depending on how it infers the relationship cardinality — normalize
+// to object-or-null.
+export function pickOne<T>(value: T | T[] | null | undefined): T | null {
+  if (value == null) return null;
+  return Array.isArray(value) ? (value[0] ?? null) : value;
+}
+
 export type SeasonTier = 'Bronze' | 'Silver' | 'Gold' | 'Platinum' | 'Diamond' | 'Elite';
 
 const TIER_THRESHOLDS: { tier: SeasonTier; min: number; color: string; bg: string }[] = [

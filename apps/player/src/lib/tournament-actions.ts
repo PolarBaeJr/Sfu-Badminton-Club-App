@@ -1,16 +1,9 @@
 'use server';
 
-import { createServiceRoleClient, getCurrentPlayer } from './supabase-server';
+import { createServiceRoleClient } from './supabase-server';
 import { revalidatePath } from 'next/cache';
 import { isDoublesEvent } from '@badminton/shared';
-
-async function requirePlayer() {
-  const player = await getCurrentPlayer();
-  if (!player) throw new Error('Not authenticated');
-  if (player.status === 'pending_approval') throw new Error('Account pending approval');
-  if (player.status === 'suspended') throw new Error('Account suspended');
-  return player;
-}
+import { requirePlayer } from './actions/_shared';
 
 // Revalidate every surface that surfaces tournament_participants /
 // tournament_pairs after a register/withdraw/check-in. The event detail

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Button, Avatar } from '@badminton/ui';
 import { Download, ArrowUpDown } from 'lucide-react';
+import { getName } from './entry-name';
 
 interface Props {
   event: Record<string, unknown>;
@@ -150,11 +151,4 @@ export function LeaderboardTab({ event, participants, pairs, isDoubles }: Props)
       </div>
     </div>
   );
-}
-
-function getName(entry: any, isDoubles: boolean): string {
-  if (isDoubles) {
-    return entry.pair_name ?? `${entry.player1?.full_name ?? '?'} / ${entry.player2?.full_name ?? '?'}`;
-  }
-  return entry.player?.full_name ?? 'Unknown';
 }

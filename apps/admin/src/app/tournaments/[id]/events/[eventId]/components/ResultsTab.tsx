@@ -8,6 +8,7 @@ import { undoMatchResult } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { Crown, TrendingUp, TrendingDown, Medal, Undo2 } from 'lucide-react';
+import { getName } from './entry-name';
 
 interface Props {
   event: Record<string, unknown>;
@@ -192,11 +193,4 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
       </Dialog>
     </div>
   );
-}
-
-function getName(entry: any, isDoubles: boolean): string {
-  if (isDoubles) {
-    return entry.pair_name ?? `${entry.player1?.full_name ?? '?'} / ${entry.player2?.full_name ?? '?'}`;
-  }
-  return entry.player?.full_name ?? 'Unknown';
 }
