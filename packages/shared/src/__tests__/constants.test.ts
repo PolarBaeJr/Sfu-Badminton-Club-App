@@ -284,6 +284,7 @@ describe('nextPowerOf2', () => {
     expect(nextPowerOf2(15)).toBe(16);
     expect(nextPowerOf2(17)).toBe(32);
     expect(nextPowerOf2(33)).toBe(64);
+    expect(nextPowerOf2(100)).toBe(128);
   });
 
   it('handles typical tournament bracket sizes', () => {

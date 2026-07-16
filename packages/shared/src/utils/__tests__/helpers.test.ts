@@ -9,12 +9,7 @@ import {
   getStreakDisplay,
   cn,
 } from '../helpers';
-import {
-  isDoublesEvent,
-  getRoundName,
-  nextPowerOf2,
-  getMaxGamesForFormat,
-} from '../constants';
+import type { UserRole } from '../../types/database';
 
 describe('formatDate', () => {
   it('formats an ISO date string', () => {
@@ -77,6 +72,12 @@ describe('isAdmin', () => {
   it('returns false for player role', () => {
     expect(isAdmin('player')).toBe(false);
   });
+
+  it('covers all UserRole values', () => {
+    const roles: UserRole[] = ['player', 'admin'];
+    const results = roles.map(isAdmin);
+    expect(results).toEqual([false, true]);
+  });
 });
 
 describe('getWinRate', () => {
@@ -97,8 +98,20 @@ describe('getWinRate', () => {
     expect(getWinRate(2, 1)).toBe('67%');
   });
 
+  it('calculates correct percentage for mixed record', () => {
+    expect(getWinRate(3, 1)).toBe('75%');
+  });
+
   it('calculates 50% win rate', () => {
     expect(getWinRate(5, 5)).toBe('50%');
+  });
+
+  it('handles a single win', () => {
+    expect(getWinRate(1, 0)).toBe('100%');
+  });
+
+  it('handles a single loss', () => {
+    expect(getWinRate(0, 1)).toBe('0%');
   });
 });
 
@@ -114,6 +127,15 @@ describe('getPointDifferential', () => {
   it('returns +0 for equal points', () => {
     expect(getPointDifferential(50, 50)).toBe('+0');
   });
+
+  it('handles large differentials', () => {
+    expect(getPointDifferential(1000, 200)).toBe('+800');
+    expect(getPointDifferential(200, 1000)).toBe('-800');
+  });
+
+  it('handles zero scored and zero allowed', () => {
+    expect(getPointDifferential(0, 0)).toBe('+0');
+  });
 });
 
 describe('getStreakDisplay', () => {
@@ -128,11 +150,19 @@ describe('getStreakDisplay', () => {
   it('displays dash for no streak', () => {
     expect(getStreakDisplay(0)).toBe('-');
   });
+
+  it('handles a single win streak', () => {
+    expect(getStreakDisplay(1)).toBe('W1');
+  });
+
+  it('handles a single loss streak', () => {
+    expect(getStreakDisplay(-1)).toBe('L1');
+  });
 });
 
 describe('cn', () => {
   it('joins class names', () => {
-    expect(cn('foo', 'bar')).toBe('foo bar');
+    expect(cn('foo', 'bar', 'baz')).toBe('foo bar baz');
   });
 
   it('filters out falsy values', () => {
@@ -143,140 +173,17 @@ describe('cn', () => {
     expect(cn(false, undefined, null)).toBe('');
   });
 
+  it('returns empty string with no arguments', () => {
+    expect(cn()).toBe('');
+  });
+
   it('handles a single class', () => {
     expect(cn('only')).toBe('only');
   });
-});
 
-describe('isDoublesEvent', () => {
-  it('returns true for mens_doubles', () => {
-    expect(isDoublesEvent('mens_doubles')).toBe(true);
-  });
-
-  it('returns true for womens_doubles', () => {
-    expect(isDoublesEvent('womens_doubles')).toBe(true);
-  });
-
-  it('returns true for mixed_doubles', () => {
-    expect(isDoublesEvent('mixed_doubles')).toBe(true);
-  });
-
-  it('returns true for open_doubles', () => {
-    expect(isDoublesEvent('open_doubles')).toBe(true);
-  });
-
-  it('returns false for mens_singles', () => {
-    expect(isDoublesEvent('mens_singles')).toBe(false);
-  });
-
-  it('returns false for womens_singles', () => {
-    expect(isDoublesEvent('womens_singles')).toBe(false);
-  });
-
-  it('returns false for open_singles', () => {
-    expect(isDoublesEvent('open_singles')).toBe(false);
-  });
-});
-
-describe('getRoundName', () => {
-  it('returns Final for the last round', () => {
-    expect(getRoundName(4, 4)).toBe('Final');
-  });
-
-  it('returns Semi-Final for the second-to-last round', () => {
-    expect(getRoundName(3, 4)).toBe('Semi-Final');
-  });
-
-  it('returns Quarter-Final for the third-to-last round', () => {
-    expect(getRoundName(2, 4)).toBe('Quarter-Final');
-  });
-
-  it('returns Round of 16 for a 4-round bracket first round', () => {
-    expect(getRoundName(1, 4)).toBe('Round of 16');
-  });
-
-  it('handles a 5-round bracket', () => {
-    expect(getRoundName(5, 5)).toBe('Final');
-    expect(getRoundName(4, 5)).toBe('Semi-Final');
-    expect(getRoundName(3, 5)).toBe('Quarter-Final');
-    expect(getRoundName(2, 5)).toBe('Round of 16');
-    expect(getRoundName(1, 5)).toBe('Round of 32');
-  });
-
-  it('handles a 2-round bracket', () => {
-    expect(getRoundName(2, 2)).toBe('Final');
-    expect(getRoundName(1, 2)).toBe('Semi-Final');
-  });
-
-  it('handles a single-round bracket (just the final)', () => {
-    expect(getRoundName(1, 1)).toBe('Final');
-  });
-});
-
-describe('getMaxGamesForFormat', () => {
-  it('returns 3 for best_of_3_to_21', () => {
-    expect(getMaxGamesForFormat('best_of_3_to_21')).toBe(3);
-  });
-
-  it('returns 1 for one_game_21', () => {
-    expect(getMaxGamesForFormat('one_game_21')).toBe(1);
-  });
-
-  it('returns 1 for one_game_15', () => {
-    expect(getMaxGamesForFormat('one_game_15')).toBe(1);
-  });
-
-  it('returns 1 for one_game_11', () => {
-    expect(getMaxGamesForFormat('one_game_11')).toBe(1);
-  });
-});
-
-describe('nextPowerOf2', () => {
-  it('returns 1 for 0', () => {
-    expect(nextPowerOf2(0)).toBe(1);
-  });
-
-  it('returns 1 for 1', () => {
-    expect(nextPowerOf2(1)).toBe(1);
-  });
-
-  it('returns 2 for 2', () => {
-    expect(nextPowerOf2(2)).toBe(2);
-  });
-
-  it('returns 4 for 3', () => {
-    expect(nextPowerOf2(3)).toBe(4);
-  });
-
-  it('returns 8 for 5', () => {
-    expect(nextPowerOf2(5)).toBe(8);
-  });
-
-  it('returns 8 for 7', () => {
-    expect(nextPowerOf2(7)).toBe(8);
-  });
-
-  it('returns 8 for 8 (already a power of 2)', () => {
-    expect(nextPowerOf2(8)).toBe(8);
-  });
-
-  it('returns 16 for 9', () => {
-    expect(nextPowerOf2(9)).toBe(16);
-  });
-
-  it('returns 16 for 16', () => {
-    expect(nextPowerOf2(16)).toBe(16);
-  });
-
-  it('returns 32 for 17', () => {
-    expect(nextPowerOf2(17)).toBe(32);
-  });
-
-  it('returns 64 for 33', () => {
-    expect(nextPowerOf2(33)).toBe(64);
-  });
-
-  it('returns 128 for 100', () => {
-    expect(nextPowerOf2(100)).toBe(128);
+  it('supports conditional classes via boolean expressions', () => {
+    const isActive = true;
+    const isDisabled = false;
+    expect(cn('base', isActive && 'active', isDisabled && 'disabled')).toBe('base active');
   });
 });

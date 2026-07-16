@@ -7,14 +7,18 @@ node_modules/
 .next/
 **/.next/
 .turbo/
+**/.turbo/
 dist/
 build/
+.vercel
 
 # env files
 .env
 .env.*
 **/.env
 **/.env.*
+!.env.example
+!.env.*.example
 
 # logs
 npm-debug.log*
@@ -25,11 +29,5 @@ pnpm-debug.log*
 # TypeScript
 *.tsbuildinfo
 
-.turbo/
-**/.turbo/
-.next/
-**/.next/
-node_modules/
-**/node_modules/
-.vercel
-.env*.local
+# local notes
+.claude-handoff.md

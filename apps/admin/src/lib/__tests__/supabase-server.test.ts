@@ -53,21 +53,22 @@ describe('getAuthenticatedAdmin', () => {
   it('throws when there is no authenticated user', async () => {
     state.user = null;
     await expect(getAuthenticatedAdmin()).rejects.toThrow('Not authenticated');
-    expect(sentrySetUser).not.toHaveBeenCalled();
+    // Failure paths clear any stale Sentry user context.
+    expect(sentrySetUser).toHaveBeenCalledWith(null);
   });
 
   it('throws when the user has no matching player row', async () => {
     state.user = { id: 'user-1' };
     state.player = null;
     await expect(getAuthenticatedAdmin()).rejects.toThrow('No player record found');
-    expect(sentrySetUser).not.toHaveBeenCalled();
+    expect(sentrySetUser).toHaveBeenCalledWith(null);
   });
 
   it('throws when the player is not an admin', async () => {
     state.user = { id: 'user-1' };
     state.player = { id: 'player-1', role: 'player' };
     await expect(getAuthenticatedAdmin()).rejects.toThrow('Admin access required');
-    expect(sentrySetUser).not.toHaveBeenCalled();
+    expect(sentrySetUser).toHaveBeenCalledWith(null);
   });
 
   it('returns the player and tags Sentry when the player is an admin', async () => {
