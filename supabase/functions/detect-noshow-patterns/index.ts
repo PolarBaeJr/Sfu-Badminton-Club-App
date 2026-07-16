@@ -2,13 +2,14 @@
 // Flags players with 3+ no-shows in rolling 30 days for admin review
 // Auto-suspends at configurable threshold
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { requireCronSecret } from '../_shared/auth.ts';
+import { createServiceClient, jsonResponse } from '../_shared/client.ts';
 
-Deno.serve(async (_req) => {
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  );
+Deno.serve(async (req) => {
+  const denied = requireCronSecret(req);
+  if (denied) return denied;
+
+  const supabase = createServiceClient();
 
   // Get thresholds from platform_settings
   const { data: setting } = await supabase
@@ -33,7 +34,7 @@ Deno.serve(async (_req) => {
 
   if (error) {
     console.error('detect-noshow-patterns error:', error);
-    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+    return jsonResponse({ error: error.message }, 500);
   }
 
   // Count per player
@@ -117,7 +118,5 @@ Deno.serve(async (_req) => {
   }
 
   console.log(`Flagged ${flagged}, suspended ${suspended}`);
-  return new Response(JSON.stringify({ flagged, suspended }), {
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return jsonResponse({ flagged, suspended });
 });

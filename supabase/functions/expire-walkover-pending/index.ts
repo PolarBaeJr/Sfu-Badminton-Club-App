@@ -1,17 +1,19 @@
 // Runs hourly via cron
 // Auto-escalates walkover reports unreviewed past 48 hours to admin alert
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { requireCronSecret } from '../_shared/auth.ts';
+import { createServiceClient, jsonResponse } from '../_shared/client.ts';
+import { WALKOVER_REVIEW_HOURS } from '../_shared/constants.ts';
 
-Deno.serve(async (_req) => {
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  );
+Deno.serve(async (req) => {
+  const denied = requireCronSecret(req);
+  if (denied) return denied;
 
-  const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  const supabase = createServiceClient();
 
-  // Find pending walkovers older than 48h
+  const cutoff = new Date(Date.now() - WALKOVER_REVIEW_HOURS * 60 * 60 * 1000).toISOString();
+
+  // Find pending walkovers older than the review window
   const { data: stale, error } = await supabase
     .from('walkovers')
     .select('id, challenge_id, forfeit_player_id, walkover_type, reported_at')
@@ -20,7 +22,7 @@ Deno.serve(async (_req) => {
 
   if (error) {
     console.error('expire-walkover-pending error:', error);
-    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+    return jsonResponse({ error: error.message }, 500);
   }
 
   if (stale && stale.length > 0) {
@@ -36,7 +38,7 @@ Deno.serve(async (_req) => {
           player_id: admin.id,
           type: 'admin_alert',
           title: 'Stale Walkover Report',
-          body: `Walkover report unreviewed for 48+ hours. Type: ${w.walkover_type}`,
+          body: `Walkover report unreviewed for ${WALKOVER_REVIEW_HOURS}+ hours. Type: ${w.walkover_type}`,
           metadata: { walkover_id: w.id },
         }))
       );
@@ -45,7 +47,5 @@ Deno.serve(async (_req) => {
   }
 
   console.log(`Found ${stale?.length ?? 0} stale walkover reports`);
-  return new Response(JSON.stringify({ stale: stale?.length ?? 0 }), {
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return jsonResponse({ stale: stale?.length ?? 0 });
 });

@@ -1,13 +1,14 @@
 // Invoked on-demand (typically at season end)
 // Writes final standings to season_snapshots table
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { requireCronSecret } from '../_shared/auth.ts';
+import { createServiceClient, jsonResponse } from '../_shared/client.ts';
 
-Deno.serve(async (_req) => {
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  );
+Deno.serve(async (req) => {
+  const denied = requireCronSecret(req);
+  if (denied) return denied;
+
+  const supabase = createServiceClient();
 
   // Get current active season
   const { data: season } = await supabase
@@ -17,7 +18,7 @@ Deno.serve(async (_req) => {
     .single();
 
   if (!season) {
-    return new Response(JSON.stringify({ error: 'No active season' }), { status: 400 });
+    return jsonResponse({ error: 'No active season' }, 400);
   }
 
   // Check if snapshot already exists
@@ -28,7 +29,7 @@ Deno.serve(async (_req) => {
     .limit(1);
 
   if (existing && existing.length > 0) {
-    return new Response(JSON.stringify({ error: 'Snapshot already exists for this season' }), { status: 409 });
+    return jsonResponse({ error: 'Snapshot already exists for this season' }, 409);
   }
 
   // Get all ratings with player info (ratings table has no season_id — one row per player)
@@ -38,7 +39,7 @@ Deno.serve(async (_req) => {
 
   if (error) {
     console.error('capture-season-snapshot error:', error);
-    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+    return jsonResponse({ error: error.message }, 500);
   }
 
   // Build ranked snapshots (exclude provisional players from ranking)
@@ -77,7 +78,7 @@ Deno.serve(async (_req) => {
 
     if (insertError) {
       console.error('capture-season-snapshot insert error:', insertError);
-      return new Response(JSON.stringify({ error: insertError.message }), { status: 500 });
+      return jsonResponse({ error: insertError.message }, 500);
     }
   }
 
@@ -92,7 +93,5 @@ Deno.serve(async (_req) => {
   });
 
   console.log(`Captured ${snapshots.length} player snapshots for season ${season.name}`);
-  return new Response(JSON.stringify({ captured: snapshots.length, season: season.name }), {
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return jsonResponse({ captured: snapshots.length, season: season.name });
 });

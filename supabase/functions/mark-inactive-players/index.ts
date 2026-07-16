@@ -1,13 +1,15 @@
 // Runs daily via cron
 // Marks players inactive after 45 days without a rated match or session check-in
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { requireCronSecret } from '../_shared/auth.ts';
+import { createServiceClient, jsonResponse } from '../_shared/client.ts';
+import { INACTIVITY_DAYS } from '../_shared/constants.ts';
 
-Deno.serve(async (_req) => {
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  );
+Deno.serve(async (req) => {
+  const denied = requireCronSecret(req);
+  if (denied) return denied;
+
+  const supabase = createServiceClient();
 
   // Get threshold from platform_settings
   const { data: setting } = await supabase
@@ -16,7 +18,7 @@ Deno.serve(async (_req) => {
     .eq('key', 'inactivity_rules')
     .single();
 
-  const thresholdDays: number = (setting?.value as Record<string, number>)?.inactive_threshold_days ?? 45;
+  const thresholdDays: number = (setting?.value as Record<string, number>)?.inactive_threshold_days ?? INACTIVITY_DAYS;
   const cutoff = new Date(Date.now() - thresholdDays * 24 * 60 * 60 * 1000).toISOString();
 
   // Find active players whose last_active_at is past the threshold
@@ -30,7 +32,7 @@ Deno.serve(async (_req) => {
 
   if (error) {
     console.error('mark-inactive-players error:', error);
-    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+    return jsonResponse({ error: error.message }, 500);
   }
 
   // Log to audit
@@ -48,7 +50,5 @@ Deno.serve(async (_req) => {
   }
 
   console.log(`Marked ${toMark?.length ?? 0} players inactive`);
-  return new Response(JSON.stringify({ marked_inactive: toMark?.length ?? 0 }), {
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return jsonResponse({ marked_inactive: toMark?.length ?? 0 });
 });

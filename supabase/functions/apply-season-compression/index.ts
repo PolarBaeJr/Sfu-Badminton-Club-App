@@ -1,13 +1,15 @@
 // Invoked on-demand (typically at season end)
 // Applies soft Elo compression toward 1200 using configurable factor
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { requireCronSecret } from '../_shared/auth.ts';
+import { createServiceClient, jsonResponse } from '../_shared/client.ts';
+import { DEFAULT_ELO } from '../_shared/constants.ts';
 
-Deno.serve(async (_req) => {
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  );
+Deno.serve(async (req) => {
+  const denied = requireCronSecret(req);
+  if (denied) return denied;
+
+  const supabase = createServiceClient();
 
   const { data: setting } = await supabase
     .from('platform_settings')
@@ -16,7 +18,7 @@ Deno.serve(async (_req) => {
     .single();
 
   const compressionFactor: number = (setting?.value as Record<string, number>)?.compression_factor ?? 0.15;
-  const baseline = 1200;
+  const baseline = DEFAULT_ELO;
 
   // Get all player ratings (ratings table has no season_id — one row per player)
   const { data: ratings, error } = await supabase
@@ -25,7 +27,7 @@ Deno.serve(async (_req) => {
 
   if (error) {
     console.error('apply-season-compression error:', error);
-    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+    return jsonResponse({ error: error.message }, 500);
   }
 
   let updated = 0;
@@ -59,7 +61,5 @@ Deno.serve(async (_req) => {
   }
 
   console.log(`Compressed ${updated} ratings`);
-  return new Response(JSON.stringify({ updated, compression_factor: compressionFactor }), {
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return jsonResponse({ updated, compression_factor: compressionFactor });
 });

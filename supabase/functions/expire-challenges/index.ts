@@ -1,13 +1,14 @@
 // Runs hourly via cron
 // Auto-expires challenges past 72 hours with status 'proposed' or 'partially_confirmed'
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { requireCronSecret } from '../_shared/auth.ts';
+import { createServiceClient, jsonResponse } from '../_shared/client.ts';
 
-Deno.serve(async (_req) => {
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  );
+Deno.serve(async (req) => {
+  const denied = requireCronSecret(req);
+  if (denied) return denied;
+
+  const supabase = createServiceClient();
 
   const { data: expired, error } = await supabase
     .from('challenges')
@@ -18,7 +19,7 @@ Deno.serve(async (_req) => {
 
   if (error) {
     console.error('expire-challenges error:', error);
-    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+    return jsonResponse({ error: error.message }, 500);
   }
 
   // Notify creators of expired challenges
@@ -54,7 +55,5 @@ Deno.serve(async (_req) => {
   }
 
   console.log(`Expired ${expired?.length ?? 0} challenges`);
-  return new Response(JSON.stringify({ expired: expired?.length ?? 0 }), {
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return jsonResponse({ expired: expired?.length ?? 0 });
 });

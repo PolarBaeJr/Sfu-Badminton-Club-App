@@ -1,13 +1,14 @@
 // Runs daily via cron
 // Notifies players of upcoming sessions they are registered to attend
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { requireCronSecret } from '../_shared/auth.ts';
+import { createServiceClient, jsonResponse } from '../_shared/client.ts';
 
-Deno.serve(async (_req) => {
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  );
+Deno.serve(async (req) => {
+  const denied = requireCronSecret(req);
+  if (denied) return denied;
+
+  const supabase = createServiceClient();
 
   // Find sessions scheduled for tomorrow
   const tomorrow = new Date();
@@ -22,7 +23,7 @@ Deno.serve(async (_req) => {
 
   if (error) {
     console.error('send-session-reminders error:', error);
-    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+    return jsonResponse({ error: error.message }, 500);
   }
 
   let notifCount = 0;
@@ -51,7 +52,5 @@ Deno.serve(async (_req) => {
   }
 
   console.log(`Sent ${notifCount} session reminders`);
-  return new Response(JSON.stringify({ notifications_sent: notifCount }), {
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return jsonResponse({ notifications_sent: notifCount });
 });

@@ -1,13 +1,14 @@
 // Runs daily via cron
 // Notifies players of challenges awaiting their response (accepted but unplayed, past agreed date)
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { requireCronSecret } from '../_shared/auth.ts';
+import { createServiceClient, jsonResponse } from '../_shared/client.ts';
 
-Deno.serve(async (_req) => {
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  );
+Deno.serve(async (req) => {
+  const denied = requireCronSecret(req);
+  if (denied) return denied;
+
+  const supabase = createServiceClient();
 
   // Find accepted challenges with a scheduled_date that has passed
   const { data: overdue, error } = await supabase
@@ -19,7 +20,7 @@ Deno.serve(async (_req) => {
 
   if (error) {
     console.error('send-challenge-reminders error:', error);
-    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+    return jsonResponse({ error: error.message }, 500);
   }
 
   // Find pending challenges (proposed/partially_confirmed) expiring in next 12 hours
@@ -76,7 +77,5 @@ Deno.serve(async (_req) => {
   }
 
   console.log(`Sent ${notifCount} challenge reminders`);
-  return new Response(JSON.stringify({ notifications_sent: notifCount }), {
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return jsonResponse({ notifications_sent: notifCount });
 });
