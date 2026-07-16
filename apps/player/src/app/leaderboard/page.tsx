@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { getPostHogClient } from '@/lib/posthog';
 import { Search, Crosshair, ChevronRight } from 'lucide-react';
 import { AvatarChip, PageHeader } from '@badminton/ui';
@@ -46,6 +47,7 @@ export default function LeaderboardPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const router = useRouter();
 
   useEffect(() => {
     const ph = getPostHogClient();
@@ -105,7 +107,8 @@ export default function LeaderboardPage() {
         .select('id, full_name, status, hide_from_leaderboard, ratings(*)')
         .eq('active_flag', true)
         .eq('hide_from_leaderboard', false)
-        .not('status', 'in', '("pending_approval","suspended")');
+        .not('status', 'in', '("pending_approval","suspended")')
+        .limit(200);
 
       if (activeTab.startsWith('comp_')) query = query.eq('status', 'competitive');
 
@@ -134,11 +137,20 @@ export default function LeaderboardPage() {
     }
     load();
 
+    // Debounce realtime refetches: rating updates arrive in bursts (one per
+    // participant), so wait for a quiet period before reloading.
+    let refetchTimer: ReturnType<typeof setTimeout> | null = null;
     const channel = supabase
       .channel('ratings-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ratings' }, () => load())
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'ratings' }, () => {
+        if (refetchTimer) clearTimeout(refetchTimer);
+        refetchTimer = setTimeout(() => load(), 2500);
+      })
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    return () => {
+      if (refetchTimer) clearTimeout(refetchTimer);
+      supabase.removeChannel(channel);
+    };
   }, [activeTab]);
 
   const isDoubles = activeTab.includes('doubles');
@@ -368,7 +380,7 @@ export default function LeaderboardPage() {
                         <tr
                           key={p.id}
                           className={'row-hover' + (isMeRow ? ' me' : '')}
-                          onClick={() => { window.location.href = `/leaderboard/${p.id}`; }}
+                          onClick={() => { router.push(`/leaderboard/${p.id}`); }}
                         >
                           <td className="num" style={{ fontSize: 16, fontWeight: 600, color: i < 3 ? 'var(--red)' : 'var(--ink)' }}>
                             #{i + 1}
@@ -403,7 +415,7 @@ export default function LeaderboardPage() {
                               className="btn btn-sm btn-ghost"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                window.location.href = `/challenges/new?opponent=${p.id}`;
+                                router.push(`/challenges/new?opponent=${p.id}`);
                               }}
                               type="button"
                             >

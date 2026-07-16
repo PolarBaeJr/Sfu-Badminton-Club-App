@@ -32,8 +32,9 @@ export default async function PlayersPage({
 
   let query = supabase
     .from('players')
-    .select('*, ratings(*)')
-    .order('created_at', { ascending: false });
+    .select('id, full_name, email, avatar_url, status, role, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses)')
+    .order('created_at', { ascending: false })
+    .limit(500);
 
   if (tab === 'competitive') {
     // Show all active players (not recreational, suspended, or pending)
