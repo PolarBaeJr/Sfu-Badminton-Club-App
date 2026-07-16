@@ -35,7 +35,7 @@ export async function markAnnouncementRead(announcementId: string) {
     .select('id')
     .eq('announcement_id', announcementId)
     .eq('player_id', player.id)
-    .single();
+    .maybeSingle();
 
   if (existing) return;
 

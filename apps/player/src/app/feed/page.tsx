@@ -1,5 +1,5 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { MATCH_FORMAT_LABELS, formatRelativeTime, getWinRate } from '@badminton/shared';
+import { MATCH_FORMAT_LABELS, formatRelativeTime, getWinRate, unwrap } from '@badminton/shared';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { Plus, ChevronRight, Crosshair, Filter } from 'lucide-react';
@@ -40,9 +40,9 @@ export default async function FeedPage() {
   const r = Array.isArray(player.ratings) ? player.ratings[0] : player.ratings;
 
   const [
-    { data: pendingChallenges },
-    { data: matchParticipations },
-    { data: topRatings },
+    pendingChallengesRes,
+    matchParticipationsRes,
+    topRatingsRes,
   ] = await Promise.all([
     supabase
       .from('challenge_participants')
@@ -67,6 +67,10 @@ export default async function FeedPage() {
       .order('singles_elo', { ascending: false })
       .limit(20),
   ]);
+
+  const pendingChallenges = unwrap(pendingChallengesRes);
+  const matchParticipations = unwrap(matchParticipationsRes);
+  const topRatings = unwrap(topRatingsRes);
 
   const singlesWinRate = r ? getWinRate(r.singles_wins, r.singles_losses) : '—';
   const singlesStreak = (r as Record<string, unknown> | null | undefined)?.current_singles_streak as number | undefined;

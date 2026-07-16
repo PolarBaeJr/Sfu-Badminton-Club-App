@@ -1,17 +1,19 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge } from '@badminton/ui';
-import { formatRelativeTime } from '@badminton/shared';
+import { formatRelativeTime, unwrap } from '@badminton/shared';
 import { DisputeActions } from './actions';
 import { AlertTriangle, User, MessageSquare, CheckCircle2, Scale } from 'lucide-react';
 
 export default async function DisputesPage() {
   const supabase = createAdminClient();
 
-  const { data: disputes } = await supabase
-    .from('disputes')
-    .select('*, opener:players!disputes_opened_by_fkey(full_name), match:matches(score_summary, match_type, format)')
-    .order('created_at', { ascending: false });
+  const disputes = unwrap(
+    await supabase
+      .from('disputes')
+      .select('*, opener:players!disputes_opened_by_fkey(full_name), match:matches(score_summary, match_type, format)')
+      .order('created_at', { ascending: false })
+  );
 
   const openCount = disputes?.filter((d) => d.status === 'open').length ?? 0;
 

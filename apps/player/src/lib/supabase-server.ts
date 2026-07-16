@@ -49,7 +49,7 @@ export async function getCurrentPlayer() {
     .from('players')
     .select('*, ratings(*)')
     .eq('user_id', user.id)
-    .single();
+    .maybeSingle();
 
   return player;
 }

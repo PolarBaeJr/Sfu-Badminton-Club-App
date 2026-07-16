@@ -54,7 +54,7 @@ export async function getAuthenticatedAdmin() {
     .from('players')
     .select('*')
     .eq('user_id', user.id)
-    .single();
+    .maybeSingle();
 
   if (!player) {
     Sentry.setUser(null);

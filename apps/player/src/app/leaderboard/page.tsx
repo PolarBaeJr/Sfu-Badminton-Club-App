@@ -44,6 +44,7 @@ export default function LeaderboardPage() {
   const [players, setPlayers] = useState<LeaderboardEntry[]>([]);
   const [meId, setMeId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
@@ -57,7 +58,7 @@ export default function LeaderboardPage() {
     async function loadMe() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const { data: p } = await supabase.from('players').select('id').eq('user_id', user.id).single();
+      const { data: p } = await supabase.from('players').select('id').eq('user_id', user.id).maybeSingle();
       setMeId(p?.id ?? null);
     }
     loadMe();
@@ -70,11 +71,19 @@ export default function LeaderboardPage() {
       setLoading(true);
 
       if (activeTab === 'tournament_points') {
-        const { data: parts } = await supabase
+        const { data: parts, error: partsError } = await supabase
           .from('tournament_participants')
           .select('player_id, points, player:players!player_id(id, full_name, status, hide_from_leaderboard)')
           .not('status', 'in', '("withdrawn","disqualified")')
           .gt('points', 0);
+
+        if (partsError) {
+          setLoadError(partsError.message);
+          setPlayers([]);
+          setLoading(false);
+          return;
+        }
+        setLoadError(null);
 
         const totals: Record<string, { player: LeaderboardEntry; total: number }> = {};
         for (const p of parts ?? []) {
@@ -100,7 +109,15 @@ export default function LeaderboardPage() {
 
       if (activeTab.startsWith('comp_')) query = query.eq('status', 'competitive');
 
-      const { data } = await query;
+      const { data, error } = await query;
+
+      if (error) {
+        setLoadError(error.message);
+        setPlayers([]);
+        setLoading(false);
+        return;
+      }
+      setLoadError(null);
 
       const sorted = (data || [])
         .map((p) => ({ ...p, ratings: (Array.isArray(p.ratings) ? p.ratings[0] : p.ratings) as Ratings | null }))
@@ -315,6 +332,8 @@ export default function LeaderboardPage() {
             </div>
             {loading ? (
               <div className="empty">Loading rankings…</div>
+            ) : loadError ? (
+              <div className="empty">Couldn&apos;t load rankings: {loadError}</div>
             ) : filtered.length === 0 ? (
               <div className="empty">
                 {searchQuery ? `No players match "${searchQuery}".` : 'No ranked players yet.'}

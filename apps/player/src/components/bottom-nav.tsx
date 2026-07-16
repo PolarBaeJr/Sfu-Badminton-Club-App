@@ -25,7 +25,7 @@ export function BottomNav() {
     async function checkUnread() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const { data: player } = await supabase.from('players').select('id').eq('user_id', user.id).single();
+      const { data: player } = await supabase.from('players').select('id').eq('user_id', user.id).maybeSingle();
       if (!player) return;
 
       const { count: totalAnnouncements } = await supabase

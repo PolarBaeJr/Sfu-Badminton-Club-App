@@ -8,6 +8,8 @@ import {
   TOURNAMENT_EVENT_STATUS_COLORS,
   TOURNAMENT_MATCH_FORMAT_LABELS,
   getRoundName,
+  unwrap,
+  unwrapMaybe,
 } from '@badminton/shared';
 import type {
   TournamentEventType,
@@ -29,18 +31,20 @@ export default async function EventDetailPage({
   const { id: tournamentId, eventId } = await params;
   const supabase = await createServerSupabaseClient();
 
-  const { data: tournament } = await supabase
+  const tournamentRes = await supabase
     .from('tournaments')
     .select('*')
     .eq('id', tournamentId)
-    .single();
+    .maybeSingle();
+  const tournament = unwrapMaybe(tournamentRes);
   if (!tournament) notFound();
 
-  const { data: event } = await supabase
+  const eventRes = await supabase
     .from('tournament_events')
     .select('*')
     .eq('id', eventId)
-    .single();
+    .maybeSingle();
+  const event = unwrapMaybe(eventRes);
   if (!event) notFound();
 
   const eventType   = event.event_type as TournamentEventType;
@@ -53,41 +57,48 @@ export default async function EventDetailPage({
   let pairs: Array<Record<string, unknown>> = [];
 
   if (doubles) {
-    const { data } = await supabase
-      .from('tournament_pairs')
-      .select('*, player1:players!tournament_pairs_player1_id_fkey(full_name, avatar_url), player2:players!tournament_pairs_player2_id_fkey(full_name, avatar_url)')
-      .eq('event_id', eventId)
-      .order('seed_number');
-    pairs = (data as Array<Record<string, unknown>>) ?? [];
+    const data = unwrap(
+      await supabase
+        .from('tournament_pairs')
+        .select('*, player1:players!tournament_pairs_player1_id_fkey(full_name, avatar_url), player2:players!tournament_pairs_player2_id_fkey(full_name, avatar_url)')
+        .eq('event_id', eventId)
+        .order('seed_number')
+    );
+    pairs = data as Array<Record<string, unknown>>;
   } else {
-    const { data } = await supabase
-      .from('tournament_participants')
-      .select('*, player:players!player_id(full_name, avatar_url)')
-      .eq('event_id', eventId)
-      .order('seed_number');
-    participants = (data as Array<Record<string, unknown>>) ?? [];
+    const data = unwrap(
+      await supabase
+        .from('tournament_participants')
+        .select('*, player:players!player_id(full_name, avatar_url)')
+        .eq('event_id', eventId)
+        .order('seed_number')
+    );
+    participants = data as Array<Record<string, unknown>>;
   }
 
-  const { data: matches } = await supabase
-    .from('tournament_matches')
-    .select('*')
-    .eq('event_id', eventId)
-    .order('round_number')
-    .order('bracket_position');
+  const matches = unwrap(
+    await supabase
+      .from('tournament_matches')
+      .select('*')
+      .eq('event_id', eventId)
+      .order('round_number')
+      .order('bracket_position')
+  );
 
-  const allMatches = (matches as Array<Record<string, unknown>>) ?? [];
+  const allMatches = matches as Array<Record<string, unknown>>;
 
   const currentPlayer = await getCurrentPlayer();
   let playerRegistration: { status: string } | null = null;
   let playerParticipantId: string | null = null;
 
   if (currentPlayer && !doubles) {
-    const { data: reg } = await supabase
+    const regRes = await supabase
       .from('tournament_participants')
       .select('id, status')
       .eq('event_id', eventId)
       .eq('player_id', currentPlayer.id)
-      .single();
+      .maybeSingle();
+    const reg = unwrapMaybe(regRes);
     if (reg) {
       playerRegistration = { status: reg.status };
       playerParticipantId = reg.id;

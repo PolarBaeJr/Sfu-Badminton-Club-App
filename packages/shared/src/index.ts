@@ -6,6 +6,7 @@ export * from './utils/helpers';
 export * from './utils/tags';
 export * from './utils/theme';
 export * from './utils/rate-limit';
+export * from './utils/supabase-helpers';
 export * from './validators/schemas';
 export * from './validators/parse';
 export * from './email/templates';

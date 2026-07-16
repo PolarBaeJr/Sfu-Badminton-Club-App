@@ -39,7 +39,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         .from('players')
         .select('id, full_name, status, ratings(singles_elo, doubles_elo)')
         .eq('user_id', user.id)
-        .single();
+        .maybeSingle();
       playerName = player?.full_name ?? '';
       playerId = player?.id ?? null;
       playerStatus = player?.status ?? null;

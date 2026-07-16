@@ -29,7 +29,7 @@ vi.mock('@supabase/supabase-js', () => ({
     from: (_table: string) => ({
       select: (_cols: string) => ({
         eq: (_col: string, _val: string) => ({
-          single: async () => ({ data: state.player }),
+          maybeSingle: async () => ({ data: state.player }),
         }),
       }),
     }),

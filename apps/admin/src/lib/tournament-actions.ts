@@ -285,7 +285,7 @@ export async function addParticipantToEvent(eventId: string, playerId: string) {
   }
 
   // Get or create player's ratings record
-  let { data: rating } = await adminClient.from('ratings').select('singles_elo').eq('player_id', playerId).single();
+  let { data: rating } = await adminClient.from('ratings').select('singles_elo').eq('player_id', playerId).maybeSingle();
   if (!rating) {
     // Player has no ratings record — create one with defaults
     const { data: newRating } = await adminClient.from('ratings').insert({

@@ -1,6 +1,6 @@
 import { createAdminClient } from '@/lib/supabase-server';
 import { Badge, Card, Avatar } from '@badminton/ui';
-import { PLAYER_STATUS_LABELS } from '@badminton/shared';
+import { PLAYER_STATUS_LABELS, unwrap } from '@badminton/shared';
 import Link from 'next/link';
 import { PlayerActions } from './player-actions';
 import { AddPlayerButton } from './add-player-button';
@@ -48,7 +48,7 @@ export default async function PlayersPage({
     query = query.ilike('full_name', `%${params.search}%`);
   }
 
-  const { data: players } = await query;
+  const players = unwrap(await query);
 
   // Count for tabs — competitive catches all active players not in other tabs
   const { count: compCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).not('status', 'in', '("recreational","suspended","pending_approval")');

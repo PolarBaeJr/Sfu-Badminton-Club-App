@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge } from '@badminton/ui';
-import { MATCH_FORMAT_LABELS, formatDateTime } from '@badminton/shared';
+import { MATCH_FORMAT_LABELS, formatDateTime, unwrap } from '@badminton/shared';
 import { MatchActions } from './actions';
 import { CreateMatchForm } from './create-match';
 import {
@@ -18,31 +18,39 @@ import {
 export default async function MatchesPage() {
   const supabase = createAdminClient();
 
-  const { data: matches } = await supabase
-    .from('matches')
-    .select('*, match_participants(*, player:players(full_name)), match_games(*)')
-    .order('created_at', { ascending: false })
-    .limit(50);
+  const matches = unwrap(
+    await supabase
+      .from('matches')
+      .select('*, match_participants(*, player:players(full_name)), match_games(*)')
+      .order('created_at', { ascending: false })
+      .limit(50)
+  );
 
   // Get all active players for the create match form
-  const { data: allPlayers } = await supabase
-    .from('players')
-    .select('id, full_name')
-    .eq('active_flag', true)
-    .neq('status', 'pending_approval')
-    .order('full_name');
+  const allPlayers = unwrap(
+    await supabase
+      .from('players')
+      .select('id, full_name')
+      .eq('active_flag', true)
+      .neq('status', 'pending_approval')
+      .order('full_name')
+  );
 
   // Fetch disputes and walkovers inline
   const matchIds = matches?.map(m => m.id) || [];
-  const { data: disputes } = await supabase
-    .from('disputes')
-    .select('*, opener:players!disputes_opened_by_fkey(full_name)')
-    .in('match_id', matchIds.length > 0 ? matchIds : ['00000000-0000-0000-0000-000000000000']);
+  const disputes = unwrap(
+    await supabase
+      .from('disputes')
+      .select('*, opener:players!disputes_opened_by_fkey(full_name)')
+      .in('match_id', matchIds.length > 0 ? matchIds : ['00000000-0000-0000-0000-000000000000'])
+  );
 
-  const { data: walkovers } = await supabase
-    .from('walkovers')
-    .select('*, forfeit:players!walkovers_forfeit_player_id_fkey(full_name)')
-    .in('challenge_id', matches?.map(m => m.challenge_id).filter(Boolean) || ['00000000-0000-0000-0000-000000000000']);
+  const walkovers = unwrap(
+    await supabase
+      .from('walkovers')
+      .select('*, forfeit:players!walkovers_forfeit_player_id_fkey(full_name)')
+      .in('challenge_id', matches?.map(m => m.challenge_id).filter(Boolean) || ['00000000-0000-0000-0000-000000000000'])
+  );
 
   const disputesByMatch = new Map<string, typeof disputes>();
   disputes?.forEach(d => {

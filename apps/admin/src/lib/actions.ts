@@ -69,7 +69,7 @@ export async function createPlayer(data: {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
-  const { data: existing } = await adminClient.from('players').select('id').eq('email', data.email).single();
+  const { data: existing } = await adminClient.from('players').select('id').eq('email', data.email).maybeSingle();
   if (existing) throw new Error('A player with this email already exists');
 
   const { data: player, error } = await adminClient.from('players').insert({
