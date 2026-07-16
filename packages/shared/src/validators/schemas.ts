@@ -44,17 +44,56 @@ export const challengeCreateSchema = z.object({
   note: z.string().max(500).optional(),
 });
 
+const matchGameSchema = z.object({
+  game_number: z.number().int().positive(),
+  side_a_score: z.number().int().min(0).max(30),
+  side_b_score: z.number().int().min(0).max(30),
+});
+
+// Server-side integrity checks mirroring apply_match_result: no tied games,
+// and the claimed winner must have won a strict majority of the games.
+const refineGamesMatchWinner = (
+  games: z.infer<typeof matchGameSchema>[],
+  winnerSide: 'a' | 'b',
+  ctx: z.RefinementCtx,
+  gamesPath: string,
+  winnerPath: string
+) => {
+  let aWins = 0;
+  let bWins = 0;
+  games.forEach((g, i) => {
+    if (g.side_a_score === g.side_b_score) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Game scores cannot be tied',
+        path: [gamesPath, i],
+      });
+    } else if (g.side_a_score > g.side_b_score) {
+      aWins++;
+    } else {
+      bWins++;
+    }
+  });
+  const winnerGames = winnerSide === 'a' ? aWins : bWins;
+  const loserGames = winnerSide === 'a' ? bWins : aWins;
+  if (winnerGames <= loserGames) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'winner_side does not match game scores',
+      path: [winnerPath],
+    });
+  }
+};
+
 // match_id is intentionally absent: submitMatchResult creates the match from challengeId,
 // so the caller cannot have a match_id at submit time. confirmMatchResult / disputeMatchResult
 // take the matchId as a separate argument.
 export const matchResultSchema = z.object({
   winner_side: z.enum(['a', 'b']),
-  games: z.array(z.object({
-    game_number: z.number().int().positive(),
-    side_a_score: z.number().int().min(0),
-    side_b_score: z.number().int().min(0),
-  })).min(1).max(3),
+  games: z.array(matchGameSchema).min(1).max(3),
   completed: z.boolean(),
+}).superRefine((val, ctx) => {
+  refineGamesMatchWinner(val.games, val.winner_side, ctx, 'games', 'winner_side');
 });
 
 export const disputeSchema = z.object({
@@ -106,11 +145,11 @@ export const disputeResolveSchema = z.object({
   resolution_type: z.enum(['accepted', 'edited', 'voided', 'converted_to_casual']),
   resolution_note: z.string().min(2),
   edited_winner_side: z.enum(['a', 'b']).optional(),
-  edited_games: z.array(z.object({
-    game_number: z.number().int().positive(),
-    side_a_score: z.number().int().min(0),
-    side_b_score: z.number().int().min(0),
-  })).optional(),
+  edited_games: z.array(matchGameSchema).optional(),
+}).superRefine((val, ctx) => {
+  if (val.edited_games && val.edited_games.length > 0 && val.edited_winner_side) {
+    refineGamesMatchWinner(val.edited_games, val.edited_winner_side, ctx, 'edited_games', 'edited_winner_side');
+  }
 });
 
 export type LoginInput = z.infer<typeof loginSchema>;

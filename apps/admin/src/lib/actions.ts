@@ -814,7 +814,9 @@ export async function adminCreateMatch(data: {
     played_at: new Date().toISOString(),
     submitted_by: admin.id,
     confirmed_by: admin.id,
-    result_status: 'confirmed',
+    // Rated matches must start as pending_confirmation: apply_match_result
+    // rejects anything else, then flips the status to confirmed itself.
+    result_status: data.rated_flag ? 'pending_confirmation' : 'confirmed',
     season_id: activeSeason.data?.id || null,
     admin_note: data.admin_note || null,
   }).select().single();
@@ -877,6 +879,7 @@ export async function adminCreateMatch(data: {
       Sentry.captureException(new Error(`Elo application failed for admin match: ${eloError.message}`), {
         extra: { matchId: match.id },
       });
+      throw new Error(eloError.message);
     }
   }
 

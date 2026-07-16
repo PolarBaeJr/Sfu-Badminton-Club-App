@@ -9,12 +9,16 @@ import {
   sendWalkoverReportedEmail,
   getFormatWeight,
   getEventMultiplier,
+  matchResultSchema,
   type MatchResultInput,
   type WalkoverReportInput,
 } from '@badminton/shared';
 import { requirePlayer, getPlayerProps, trackServerEvent } from './_shared';
 
 export async function submitMatchResult(challengeId: string, input: MatchResultInput) {
+  const parsed = matchResultSchema.safeParse(input);
+  if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? 'Invalid match result');
+
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 
@@ -32,8 +36,8 @@ export async function submitMatchResult(challengeId: string, input: MatchResultI
   );
   if (!isParticipant) throw new Error('Not a participant');
 
-  // Guard against double-submission. matches.challenge_id has no unique constraint
-  // yet, so we rely on this check until the migration lands.
+  // Guard against double-submission. The matches_challenge_id_unique index
+  // (migration 00020) is the hard backstop; this pre-check gives a friendlier error.
   const { data: existingMatch } = await supabase
     .from('matches')
     .select('id')

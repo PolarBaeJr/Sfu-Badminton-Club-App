@@ -118,6 +118,57 @@ describe('matchResultSchema', () => {
       }).success,
     ).toBe(false);
   });
+  it('rejects a score above 30', () => {
+    expect(
+      matchResultSchema.safeParse({
+        winner_side: 'a',
+        games: [{ game_number: 1, side_a_score: 31, side_b_score: 15 }],
+        completed: true,
+      }).success,
+    ).toBe(false);
+  });
+  it('rejects a tied game', () => {
+    expect(
+      matchResultSchema.safeParse({
+        winner_side: 'a',
+        games: [{ game_number: 1, side_a_score: 21, side_b_score: 21 }],
+        completed: true,
+      }).success,
+    ).toBe(false);
+  });
+  it('rejects a winner_side that did not win a majority of games', () => {
+    expect(
+      matchResultSchema.safeParse({
+        winner_side: 'b',
+        games: [game],
+        completed: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      matchResultSchema.safeParse({
+        winner_side: 'b',
+        games: [
+          { game_number: 1, side_a_score: 21, side_b_score: 15 },
+          { game_number: 2, side_a_score: 15, side_b_score: 21 },
+          { game_number: 3, side_a_score: 21, side_b_score: 19 },
+        ],
+        completed: true,
+      }).success,
+    ).toBe(false);
+  });
+  it('accepts a valid bo3 result where the winner took 2 of 3 games', () => {
+    expect(
+      matchResultSchema.safeParse({
+        winner_side: 'a',
+        games: [
+          { game_number: 1, side_a_score: 21, side_b_score: 15 },
+          { game_number: 2, side_a_score: 15, side_b_score: 21 },
+          { game_number: 3, side_a_score: 21, side_b_score: 19 },
+        ],
+        completed: true,
+      }).success,
+    ).toBe(true);
+  });
 });
 
 describe('disputeSchema', () => {
@@ -249,6 +300,16 @@ describe('walkoverReportSchema', () => {
       }).success,
     ).toBe(false);
   });
+  it('does not require games (walkovers legitimately have none)', () => {
+    expect(
+      walkoverReportSchema.safeParse({
+        challenge_id: UUID_A,
+        forfeit_player_id: UUID_B,
+        walkover_type: 'no_show',
+        notice_hours: 2,
+      }).success,
+    ).toBe(true);
+  });
 });
 
 describe('disputeResolveSchema', () => {
@@ -270,5 +331,38 @@ describe('disputeResolveSchema', () => {
         resolution_note: 'ok',
       }).success,
     ).toBe(false);
+  });
+  it('rejects edited games with a tied game', () => {
+    expect(
+      disputeResolveSchema.safeParse({
+        dispute_id: UUID_A,
+        resolution_type: 'edited',
+        resolution_note: 'ok',
+        edited_winner_side: 'a',
+        edited_games: [{ game_number: 1, side_a_score: 21, side_b_score: 21 }],
+      }).success,
+    ).toBe(false);
+  });
+  it('rejects an edited_winner_side that did not win a majority of edited games', () => {
+    expect(
+      disputeResolveSchema.safeParse({
+        dispute_id: UUID_A,
+        resolution_type: 'edited',
+        resolution_note: 'ok',
+        edited_winner_side: 'b',
+        edited_games: [{ game_number: 1, side_a_score: 21, side_b_score: 15 }],
+      }).success,
+    ).toBe(false);
+  });
+  it('accepts a consistent edited resolution', () => {
+    expect(
+      disputeResolveSchema.safeParse({
+        dispute_id: UUID_A,
+        resolution_type: 'edited',
+        resolution_note: 'ok',
+        edited_winner_side: 'a',
+        edited_games: [{ game_number: 1, side_a_score: 21, side_b_score: 15 }],
+      }).success,
+    ).toBe(true);
   });
 });
