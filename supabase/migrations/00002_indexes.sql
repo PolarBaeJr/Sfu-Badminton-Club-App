@@ -47,6 +47,11 @@ CREATE INDEX idx_matches_season ON matches(season_id);
 CREATE INDEX idx_matches_rated ON matches(rated_flag);
 CREATE INDEX idx_matches_created_at ON matches(created_at);
 
+-- One match per challenge (double-submission guard used by
+-- apps/player/src/lib/actions/matches.ts).
+CREATE UNIQUE INDEX matches_challenge_id_unique
+  ON matches(challenge_id) WHERE challenge_id IS NOT NULL;
+
 -- Match Participants
 CREATE INDEX idx_match_parts_match ON match_participants(match_id);
 CREATE INDEX idx_match_parts_player ON match_participants(player_id);
@@ -64,9 +69,9 @@ CREATE INDEX idx_walkovers_forfeit ON walkovers(forfeit_player_id);
 CREATE INDEX idx_tournaments_season ON tournaments(season_id);
 CREATE INDEX idx_tournaments_status ON tournaments(status);
 
--- Tournament Participants
-CREATE INDEX idx_tournament_parts_tournament ON tournament_participants(tournament_id);
-CREATE INDEX idx_tournament_parts_player ON tournament_participants(player_id);
+-- Legacy Tournament Participants
+CREATE INDEX idx_tournament_parts_tournament ON legacy_tournament_participants(tournament_id);
+CREATE INDEX idx_tournament_parts_player ON legacy_tournament_participants(player_id);
 
 -- Disputes
 CREATE INDEX idx_disputes_match ON disputes(match_id);
@@ -98,3 +103,50 @@ CREATE INDEX idx_snapshots_player ON season_snapshots(player_id);
 -- Reliability
 CREATE INDEX idx_reliability_player ON reliability_metrics(player_id);
 CREATE INDEX idx_reliability_noshows ON reliability_metrics(no_shows);
+
+-- Announcements / Push Subscriptions
+CREATE INDEX idx_push_subscriptions_player ON push_subscriptions(player_id) WHERE active = TRUE;
+CREATE INDEX idx_announcements_status ON announcements(status, created_at DESC);
+CREATE INDEX idx_announcement_reads_player ON announcement_reads(player_id);
+
+-- Tournament system
+CREATE INDEX idx_tournament_events_tournament ON tournament_events(tournament_id);
+CREATE INDEX idx_tournament_participants_event ON tournament_participants(event_id);
+CREATE INDEX idx_tournament_participants_player ON tournament_participants(player_id);
+CREATE INDEX idx_tournament_pairs_event ON tournament_pairs(event_id);
+CREATE INDEX idx_tournament_matches_event ON tournament_matches(event_id);
+CREATE INDEX idx_tournament_matches_round ON tournament_matches(event_id, round_number);
+CREATE INDEX idx_tournament_audit_event ON tournament_audit_log(event_id);
+
+-- Composite indexes for tournament filter hot paths.
+--
+-- Many tournament server actions filter rows by `event_id` AND `status` (or
+-- `final_position`). The single-column event_id indexes already exist, but
+-- Postgres still has to scan every row in the matched event to apply the
+-- secondary predicate. These composites let the planner satisfy both
+-- predicates from the index alone, which matters for finalize / leaderboard
+-- / list pages on large events.
+
+-- Singles participants — used by:
+--   apps/admin/src/lib/tournament-actions.ts (capacity checks, finalize loops)
+--   apps/admin/src/app/tournaments/[id]/page.tsx (per-event count aggregation)
+CREATE INDEX idx_tournament_participants_event_status
+  ON tournament_participants(event_id, status);
+
+CREATE INDEX idx_tournament_participants_event_final_position
+  ON tournament_participants(event_id, final_position)
+  WHERE final_position IS NOT NULL;
+
+-- Doubles pairs — same access pattern as participants.
+CREATE INDEX idx_tournament_pairs_event_status
+  ON tournament_pairs(event_id, status);
+
+CREATE INDEX idx_tournament_pairs_event_final_position
+  ON tournament_pairs(event_id, final_position)
+  WHERE final_position IS NOT NULL;
+
+-- Matches — finalize() filters by event_id + status to find unfinished matches,
+-- and the bracket UI filters by event_id + round_number (already covered by
+-- idx_tournament_matches_round). Add an event+status composite for the rest.
+CREATE INDEX idx_tournament_matches_event_status
+  ON tournament_matches(event_id, status);

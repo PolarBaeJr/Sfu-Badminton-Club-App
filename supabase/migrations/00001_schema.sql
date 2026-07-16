@@ -1,5 +1,10 @@
 -- ============================================================
--- 00001_schema.sql — All tables with constraints and foreign keys
+-- 00001_schema.sql — Extensions, enums, and all tables
+--
+-- Consolidated baseline (squash of the former 00001-00022 chain).
+-- Enums carry their FINAL values (post-00011 simplification and
+-- 00010 tournament notification additions); tables include all
+-- later column additions (tournament_matches.elo_snapshot, etc.).
 -- ============================================================
 
 -- Enable required extensions
@@ -11,20 +16,15 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 -- ============================================================
 
 CREATE TYPE player_status AS ENUM (
-  'eligible_competitive',
-  'competitive_associate',
+  'competitive',
   'recreational',
-  'alumni_external',
-  'suspended',
-  'inactive',
-  'pending_approval'
+  'pending_approval',
+  'suspended'
 );
 
 CREATE TYPE user_role AS ENUM (
   'player',
-  'moderator',
-  'admin',
-  'coach_executive'
+  'admin'
 );
 
 CREATE TYPE match_format AS ENUM (
@@ -93,7 +93,7 @@ CREATE TYPE tournament_type AS ENUM ('internal', 'open_official', 'invitational'
 
 CREATE TYPE tournament_format AS ENUM ('singles', 'doubles', 'mixed_event');
 
-CREATE TYPE tournament_status AS ENUM ('draft', 'active', 'completed');
+CREATE TYPE tournament_status AS ENUM ('draft', 'active', 'completed', 'archived');
 
 CREATE TYPE dispute_reason AS ENUM (
   'score_wrong',
@@ -134,7 +134,12 @@ CREATE TYPE notification_type AS ENUM (
   'walkover_confirmed',
   'opponent_withdrew',
   'admin_alert',
-  'general'
+  'general',
+  'tournament_bracket_published',
+  'tournament_match_ready',
+  'tournament_match_result',
+  'tournament_event_completed',
+  'tournament_checkin_open'
 );
 
 -- ============================================================
@@ -281,8 +286,12 @@ CREATE TABLE tournaments (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Tournament Participants
-CREATE TABLE tournament_participants (
+-- Legacy Tournament Participants
+-- Pre-event-system participant table (originally named
+-- tournament_participants, renamed when the event-based tournament
+-- system replaced it). Still read/written by the admin app's legacy
+-- tournament management (apps/admin/src/lib/actions.ts).
+CREATE TABLE legacy_tournament_participants (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   tournament_id UUID NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
   player_id UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
@@ -541,6 +550,146 @@ CREATE TABLE push_subscriptions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_push_subscriptions_player ON push_subscriptions(player_id) WHERE active = TRUE;
-CREATE INDEX idx_announcements_status ON announcements(status, created_at DESC);
-CREATE INDEX idx_announcement_reads_player ON announcement_reads(player_id);
+-- =============================================
+-- TOURNAMENT SYSTEM
+-- Event-based tournament management with
+-- multi-event support, check-in, brackets, and round robin
+-- =============================================
+
+-- Tournament Events — each tournament can have multiple events
+-- (e.g., Men's Singles + Women's Doubles in same tournament)
+CREATE TABLE tournament_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tournament_id UUID NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL CHECK (event_type IN (
+    'mens_singles', 'womens_singles', 'open_singles',
+    'mens_doubles', 'womens_doubles', 'mixed_doubles', 'open_doubles'
+  )),
+  format TEXT NOT NULL CHECK (format IN ('single_elimination', 'round_robin')),
+  match_format TEXT NOT NULL DEFAULT 'best_of_3_to_21'
+    CHECK (match_format IN ('best_of_3_to_21', 'one_game_21', 'one_game_15', 'one_game_11')),
+  max_participants INT,
+  seeding_method TEXT NOT NULL DEFAULT 'elo'
+    CHECK (seeding_method IN ('elo', 'manual', 'random')),
+  elo_multiplier DECIMAL(4,2) DEFAULT 1.25,
+  placement_bonus_enabled BOOLEAN DEFAULT true,
+  draw_locked BOOLEAN DEFAULT false,
+  status TEXT NOT NULL DEFAULT 'registration'
+    CHECK (status IN ('registration', 'checkin', 'bracket_generated', 'live', 'completed')),
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Tournament Participants (Singles)
+CREATE TABLE tournament_participants (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id UUID NOT NULL REFERENCES tournament_events(id) ON DELETE CASCADE,
+  player_id UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  seed_number INT,
+  status TEXT NOT NULL DEFAULT 'registered'
+    CHECK (status IN ('registered', 'checked_in', 'withdrawn', 'disqualified', 'no_show')),
+  checked_in_at TIMESTAMPTZ,
+  checked_in_by UUID REFERENCES players(id),
+  final_position INT,
+  elo_before INT,
+  elo_after INT,
+  elo_change INT,
+  points INT DEFAULT 0,
+  added_by UUID REFERENCES players(id),
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(event_id, player_id)
+);
+
+-- Tournament Pairs (Doubles)
+CREATE TABLE tournament_pairs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id UUID NOT NULL REFERENCES tournament_events(id) ON DELETE CASCADE,
+  player1_id UUID NOT NULL REFERENCES players(id),
+  player2_id UUID NOT NULL REFERENCES players(id),
+  pair_name TEXT,
+  seed_number INT,
+  status TEXT NOT NULL DEFAULT 'registered'
+    CHECK (status IN ('registered', 'checked_in', 'withdrawn', 'disqualified', 'no_show')),
+  checked_in_at TIMESTAMPTZ,
+  checked_in_by UUID REFERENCES players(id),
+  final_position INT,
+  combined_elo INT,
+  points INT DEFAULT 0,
+  added_by UUID REFERENCES players(id),
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(event_id, player1_id, player2_id)
+);
+
+-- Tournament Matches — covers both singles and doubles matches
+CREATE TABLE tournament_matches (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id UUID NOT NULL REFERENCES tournament_events(id) ON DELETE CASCADE,
+  round_number INT NOT NULL,
+  round_name TEXT,
+  bracket_position INT NOT NULL,
+  match_number INT,
+
+  -- Singles participants
+  participant_a_id UUID REFERENCES tournament_participants(id),
+  participant_b_id UUID REFERENCES tournament_participants(id),
+
+  -- Doubles participants
+  pair_a_id UUID REFERENCES tournament_pairs(id),
+  pair_b_id UUID REFERENCES tournament_pairs(id),
+
+  -- Result
+  winner_participant_id UUID REFERENCES tournament_participants(id),
+  winner_pair_id UUID REFERENCES tournament_pairs(id),
+  loser_participant_id UUID REFERENCES tournament_participants(id),
+  loser_pair_id UUID REFERENCES tournament_pairs(id),
+
+  -- Scores stored as JSON array of games
+  -- e.g., [{"a": 21, "b": 18}, {"a": 15, "b": 21}, {"a": 21, "b": 19}]
+  scores JSONB,
+
+  -- Progression — where winner goes next
+  winner_to_match_id UUID REFERENCES tournament_matches(id),
+  winner_to_position TEXT CHECK (winner_to_position IN ('a', 'b')),
+
+  -- Scheduling
+  court TEXT,
+  scheduled_time TIMESTAMPTZ,
+
+  -- Status
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'ready', 'live', 'completed', 'walkover', 'disputed', 'voided')),
+
+  -- Special outcomes
+  walkover_winner TEXT CHECK (walkover_winner IN ('a', 'b')),
+  walkover_reason TEXT,
+
+  -- Audit
+  result_entered_by UUID REFERENCES players(id),
+  result_entered_at TIMESTAMPTZ,
+  is_bye BOOLEAN DEFAULT false,
+
+  -- Notes
+  notes TEXT,
+
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now(),
+
+  -- Elo snapshot captured when a match result is applied, so that undoMatchResult
+  -- and editMatchResult can perfectly reverse Elo changes (including doubles).
+  -- Shape: {"players":[{"player_id":"...","discipline":"singles|doubles","before":1234,"after":1245,"delta":11}], ...}
+  elo_snapshot JSONB
+);
+
+-- Tournament Audit Log
+CREATE TABLE tournament_audit_log (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tournament_id UUID REFERENCES tournaments(id),
+  event_id UUID REFERENCES tournament_events(id),
+  match_id UUID REFERENCES tournament_matches(id),
+  action TEXT NOT NULL,
+  performed_by UUID REFERENCES players(id),
+  details JSONB,
+  created_at TIMESTAMPTZ DEFAULT now()
+);

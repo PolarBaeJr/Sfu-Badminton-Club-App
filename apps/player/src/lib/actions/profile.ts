@@ -59,9 +59,9 @@ export async function completeOnboarding(data: { full_name: string; display_name
 
     if (error) throw new Error(error.message);
   } else {
-    // create_player_with_rating (migration 00021) inserts the player and
-    // ratings rows in one transaction. Its internal guard mirrors the
-    // players_self_insert RLS policy (00018): user_id = auth.uid(),
+    // create_player_with_rating (migration 00003_functions.sql) inserts the
+    // player and ratings rows in one transaction. Its internal guard mirrors
+    // the players_self_insert RLS policy (00005_rls.sql): user_id = auth.uid(),
     // status = 'pending_approval', role = 'player'.
     const { error } = await supabase.rpc('create_player_with_rating', {
       p_user_id: user.id,

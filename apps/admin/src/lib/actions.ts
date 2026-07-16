@@ -72,8 +72,8 @@ export async function createPlayer(data: {
   const { data: existing } = await adminClient.from('players').select('id').eq('email', data.email).maybeSingle();
   if (existing) throw new Error('A player with this email already exists');
 
-  // create_player_with_rating (migration 00021) inserts the player and
-  // ratings rows in one transaction.
+  // create_player_with_rating (migration 00003_functions.sql) inserts the
+  // player and ratings rows in one transaction.
   const { data: playerId, error } = await adminClient.rpc('create_player_with_rating', {
     p_user_id: null,
     p_email: data.email,

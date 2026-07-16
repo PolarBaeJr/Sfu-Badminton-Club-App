@@ -1,5 +1,11 @@
 -- ============================================================
--- 00003_functions.sql — Core database functions
+-- 00003_functions.sql — Database functions (final bodies)
+--
+-- Consolidated baseline: exactly one definition per function.
+-- Every SECURITY DEFINER function pins search_path to
+-- "public, pg_temp" inline so a malicious role cannot hijack
+-- unqualified object references via a crafted search_path
+-- (CVE-2018-1058 class issue).
 -- ============================================================
 
 -- Helper: Get format weight
@@ -39,23 +45,25 @@ BEGIN
     SELECT 1 FROM players WHERE user_id = p_user_id AND role = 'admin'
   );
 END;
-$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp;
 
 -- Helper: Check if player is admin or coach
 CREATE OR REPLACE FUNCTION is_admin_or_coach(p_user_id UUID)
 RETURNS BOOLEAN AS $$
 BEGIN
+  -- user_role was simplified to player/admin; 'coach_executive' no longer exists
+  -- (the old IN ('admin','coach_executive') literal errored at runtime post-simplification)
   RETURN EXISTS (
-    SELECT 1 FROM players WHERE user_id = p_user_id AND role IN ('admin', 'coach_executive')
+    SELECT 1 FROM players WHERE user_id = p_user_id AND role = 'admin'
   );
 END;
-$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp;
 
 -- Helper: Get player_id from user_id
 CREATE OR REPLACE FUNCTION get_player_id(p_user_id UUID)
 RETURNS UUID AS $$
   SELECT id FROM players WHERE user_id = p_user_id LIMIT 1;
-$$ LANGUAGE sql STABLE SECURITY DEFINER;
+$$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp;
 
 -- ============================================================
 -- CORE: Elo Calculation
@@ -67,208 +75,249 @@ CREATE OR REPLACE FUNCTION calculate_elo_update(
   p_k_factor INTEGER,
   p_format_weight NUMERIC,
   p_event_multiplier NUMERIC,
-  p_actual NUMERIC, -- 1.0 win, 0.0 loss
-  p_elo_weight_override NUMERIC DEFAULT NULL
-)
-RETURNS INTEGER AS $$
+  p_won BOOLEAN
+) RETURNS TABLE(new_rating INTEGER, delta INTEGER, expected NUMERIC) AS $$
 DECLARE
   v_expected NUMERIC;
-  v_delta NUMERIC;
-  v_weight NUMERIC;
+  v_actual NUMERIC;
+  v_delta INTEGER;
 BEGIN
-  v_expected := 1.0 / (1.0 + POWER(10.0, (p_opponent_rating::NUMERIC - p_player_rating::NUMERIC) / 400.0));
-  v_weight := COALESCE(p_elo_weight_override, 1.0);
-  v_delta := p_k_factor * p_format_weight * p_event_multiplier * v_weight * (p_actual - v_expected);
-  RETURN ROUND(v_delta);
+  v_expected := 1.0 / (1.0 + POWER(10, (p_opponent_rating - p_player_rating)::NUMERIC / 400));
+  v_actual := CASE WHEN p_won THEN 1.0 ELSE 0.0 END;
+  v_delta := ROUND(p_k_factor * p_format_weight * p_event_multiplier * (v_actual - v_expected));
+
+  RETURN QUERY SELECT
+    (p_player_rating + v_delta)::INTEGER AS new_rating,
+    v_delta AS delta,
+    v_expected AS expected;
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
 -- ============================================================
--- CORE: Apply Match Result (atomic transaction)
+-- Update head-to-head stats after a match
 -- ============================================================
+CREATE OR REPLACE FUNCTION update_head_to_head(p_match_id UUID) RETURNS VOID AS $$
+DECLARE
+  v_match RECORD;
+  v_side_a UUID[];
+  v_side_b UUID[];
+  v_pa UUID;
+  v_pb UUID;
+BEGIN
+  SELECT * INTO v_match FROM matches WHERE id = p_match_id;
 
+  SELECT ARRAY_AGG(player_id) INTO v_side_a FROM match_participants WHERE match_id = p_match_id AND team_side = 'a';
+  SELECT ARRAY_AGG(player_id) INTO v_side_b FROM match_participants WHERE match_id = p_match_id AND team_side = 'b';
+
+  FOREACH v_pa IN ARRAY v_side_a LOOP
+    FOREACH v_pb IN ARRAY v_side_b LOOP
+      INSERT INTO head_to_head_stats (player_a_id, player_b_id, match_type, total_matches, player_a_wins, player_b_wins)
+      VALUES (LEAST(v_pa, v_pb), GREATEST(v_pa, v_pb), v_match.match_type, 1,
+              CASE WHEN (v_match.winner_side = 'a' AND v_pa < v_pb) OR (v_match.winner_side = 'b' AND v_pa > v_pb) THEN 1 ELSE 0 END,
+              CASE WHEN (v_match.winner_side = 'b' AND v_pa < v_pb) OR (v_match.winner_side = 'a' AND v_pa > v_pb) THEN 1 ELSE 0 END)
+      ON CONFLICT (player_a_id, player_b_id, match_type)
+      DO UPDATE SET
+        total_matches = head_to_head_stats.total_matches + 1,
+        player_a_wins = head_to_head_stats.player_a_wins +
+          CASE WHEN (v_match.winner_side = 'a' AND v_pa < v_pb) OR (v_match.winner_side = 'b' AND v_pa > v_pb) THEN 1 ELSE 0 END,
+        player_b_wins = head_to_head_stats.player_b_wins +
+          CASE WHEN (v_match.winner_side = 'b' AND v_pa < v_pb) OR (v_match.winner_side = 'a' AND v_pa > v_pb) THEN 1 ELSE 0 END,
+        last_played_at = NOW(),
+        updated_at = NOW();
+    END LOOP;
+  END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================================================
+-- CORE: Apply Match Result (atomic Elo update)
+--
+-- The winner is derived server-side from match_games instead of
+-- trusting the client-supplied winner_side — except for walkover
+-- matches, which legitimately have no games (their winner_side is
+-- computed by apply_walkover_result, opposite the forfeiting
+-- player). matches.elo_weight_override carries the reduced
+-- walkover weighting (0.50 withdrawal < 24h, 0.75 no-show) and is
+-- NULL (weight 1.0) for all normal matches.
+-- ============================================================
 CREATE OR REPLACE FUNCTION apply_match_result(
   p_match_id UUID,
   p_confirmed_by UUID
-)
-RETURNS VOID AS $$
+) RETURNS VOID AS $$
 DECLARE
   v_match RECORD;
   v_participant RECORD;
-  v_team_a_rating NUMERIC;
-  v_team_b_rating NUMERIC;
-  v_team_a_count INTEGER;
-  v_team_b_count INTEGER;
-  v_delta INTEGER;
-  v_actual NUMERIC;
   v_opponent_rating INTEGER;
-  v_is_doubles BOOLEAN;
-  v_k INTEGER;
-  v_match_type TEXT;
+  v_k_factor INTEGER;
+  v_format_weight NUMERIC;
+  v_event_mult NUMERIC;
+  v_won BOOLEAN;
+  v_new_rating INTEGER;
+  v_delta INTEGER;
+  v_games_a INTEGER;
+  v_games_b INTEGER;
+  v_derived_winner team_side;
+  v_elo_field TEXT;
+  v_matches_field TEXT;
+  v_wins_field TEXT;
+  v_losses_field TEXT;
+  v_prov_field TEXT;
+  v_streak_field TEXT;
+  v_best_streak_field TEXT;
+  v_pts_scored_field TEXT;
+  v_pts_allowed_field TEXT;
+  v_games_won_field TEXT;
+  v_games_lost_field TEXT;
 BEGIN
-  -- Lock the match row
+  -- Lock and fetch match
   SELECT * INTO v_match FROM matches WHERE id = p_match_id FOR UPDATE;
-
-  IF v_match IS NULL THEN
-    RAISE EXCEPTION 'Match not found';
+  IF v_match IS NULL THEN RAISE EXCEPTION 'Match not found'; END IF;
+  IF v_match.result_status != 'pending_confirmation' THEN RAISE EXCEPTION 'Match not pending confirmation'; END IF;
+  IF v_match.event_type = 'casual' THEN
+    -- Casual matches: just confirm, no Elo changes
+    UPDATE matches SET result_status = 'confirmed', confirmed_by = p_confirmed_by, updated_at = NOW() WHERE id = p_match_id;
+    UPDATE challenges SET status = 'completed', updated_at = NOW() WHERE id = v_match.challenge_id;
+    RETURN;
   END IF;
 
-  IF v_match.result_status = 'confirmed' THEN
-    RAISE EXCEPTION 'Match already confirmed';
-  END IF;
-
-  IF NOT v_match.completed_flag THEN
-    RAISE EXCEPTION 'Match not completed';
-  END IF;
-
-  IF v_match.winner_side IS NULL THEN
-    RAISE EXCEPTION 'No winner set';
-  END IF;
-
-  v_is_doubles := v_match.match_type = 'doubles';
-
-  -- Calculate team average ratings
-  SELECT COALESCE(AVG(mp.pre_rating), 1200), COUNT(*)
-  INTO v_team_a_rating, v_team_a_count
-  FROM match_participants mp WHERE mp.match_id = p_match_id AND mp.team_side = 'a';
-
-  SELECT COALESCE(AVG(mp.pre_rating), 1200), COUNT(*)
-  INTO v_team_b_rating, v_team_b_count
-  FROM match_participants mp WHERE mp.match_id = p_match_id AND mp.team_side = 'b';
-
-  -- Only apply Elo if rated and not casual
-  IF v_match.rated_flag AND v_match.event_type != 'casual' THEN
-    -- Update each participant
-    FOR v_participant IN
-      SELECT mp.*, r.singles_elo, r.doubles_elo,
-             r.singles_k_factor, r.doubles_k_factor,
-             r.singles_provisional, r.doubles_provisional,
-             r.singles_matches_played, r.doubles_matches_played
-      FROM match_participants mp
-      JOIN ratings r ON r.player_id = mp.player_id
-      WHERE mp.match_id = p_match_id
-    LOOP
-      -- Determine actual result
-      IF v_participant.team_side = v_match.winner_side THEN
-        v_actual := 1.0;
-      ELSE
-        v_actual := 0.0;
-      END IF;
-
-      -- Determine opponent rating (team average)
-      IF v_participant.team_side = 'a' THEN
-        v_opponent_rating := ROUND(v_team_b_rating);
-      ELSE
-        v_opponent_rating := ROUND(v_team_a_rating);
-      END IF;
-
-      -- Get K factor
-      IF v_is_doubles THEN
-        v_k := v_participant.doubles_k_factor;
-      ELSE
-        v_k := v_participant.singles_k_factor;
-      END IF;
-
-      -- Calculate delta
-      v_delta := calculate_elo_update(
-        v_participant.pre_rating,
-        v_opponent_rating,
-        v_k,
-        v_match.format_weight,
-        v_match.event_multiplier,
-        v_actual,
-        v_match.elo_weight_override
-      );
-
-      -- Update match_participants
-      UPDATE match_participants
-      SET post_rating = v_participant.pre_rating + v_delta,
-          rating_delta = v_delta,
-          win_flag = (v_actual = 1.0)
-      WHERE id = v_participant.id;
-
-      -- Update ratings table
-      IF v_is_doubles THEN
-        UPDATE ratings SET
-          doubles_elo = doubles_elo + v_delta,
-          doubles_matches_played = doubles_matches_played + 1,
-          doubles_wins = doubles_wins + (CASE WHEN v_actual = 1.0 THEN 1 ELSE 0 END),
-          doubles_losses = doubles_losses + (CASE WHEN v_actual = 0.0 THEN 1 ELSE 0 END),
-          doubles_points_scored = doubles_points_scored + v_participant.points_scored,
-          doubles_points_allowed = doubles_points_allowed + v_participant.points_allowed,
-          doubles_games_won = doubles_games_won + v_participant.games_won,
-          doubles_games_lost = doubles_games_lost + v_participant.games_lost,
-          doubles_provisional = (doubles_matches_played + 1 < 8),
-          doubles_k_factor = CASE WHEN doubles_matches_played + 1 >= 8 THEN 18 ELSE 32 END,
-          current_doubles_streak = CASE
-            WHEN v_actual = 1.0 THEN GREATEST(current_doubles_streak, 0) + 1
-            ELSE LEAST(current_doubles_streak, 0) - 1
-          END,
-          best_doubles_streak = GREATEST(best_doubles_streak,
-            CASE WHEN v_actual = 1.0 THEN GREATEST(current_doubles_streak, 0) + 1 ELSE best_doubles_streak END
-          ),
-          updated_at = NOW()
-        WHERE player_id = v_participant.player_id;
-      ELSE
-        UPDATE ratings SET
-          singles_elo = singles_elo + v_delta,
-          singles_matches_played = singles_matches_played + 1,
-          singles_wins = singles_wins + (CASE WHEN v_actual = 1.0 THEN 1 ELSE 0 END),
-          singles_losses = singles_losses + (CASE WHEN v_actual = 0.0 THEN 1 ELSE 0 END),
-          singles_points_scored = singles_points_scored + v_participant.points_scored,
-          singles_points_allowed = singles_points_allowed + v_participant.points_allowed,
-          singles_games_won = singles_games_won + v_participant.games_won,
-          singles_games_lost = singles_games_lost + v_participant.games_lost,
-          singles_provisional = (singles_matches_played + 1 < 8),
-          singles_k_factor = CASE WHEN singles_matches_played + 1 >= 8 THEN 24 ELSE 40 END,
-          current_singles_streak = CASE
-            WHEN v_actual = 1.0 THEN GREATEST(current_singles_streak, 0) + 1
-            ELSE LEAST(current_singles_streak, 0) - 1
-          END,
-          best_singles_streak = GREATEST(best_singles_streak,
-            CASE WHEN v_actual = 1.0 THEN GREATEST(current_singles_streak, 0) + 1 ELSE best_singles_streak END
-          ),
-          updated_at = NOW()
-        WHERE player_id = v_participant.player_id;
-      END IF;
-
-      -- Update last_active_at
-      UPDATE players SET last_active_at = NOW() WHERE id = v_participant.player_id;
-    END LOOP;
+  IF v_match.walkover_type IS NOT NULL THEN
+    -- Walkover matches have no games; winner_side is derived server-side
+    -- by apply_walkover_result (opposite the forfeiting player).
+    IF v_match.winner_side IS NULL THEN
+      RAISE EXCEPTION 'No winner set for walkover match';
+    END IF;
+    v_derived_winner := v_match.winner_side;
   ELSE
-    -- Non-rated: just mark win/loss flags
-    UPDATE match_participants
-    SET win_flag = (team_side = v_match.winner_side),
-        post_rating = pre_rating,
-        rating_delta = 0
+    -- Derive the winner from the recorded games rather than trusting the
+    -- client-supplied winner_side. Tied games count for neither side.
+    SELECT
+      COUNT(*) FILTER (WHERE side_a_score > side_b_score),
+      COUNT(*) FILTER (WHERE side_b_score > side_a_score)
+    INTO v_games_a, v_games_b
+    FROM match_games
     WHERE match_id = p_match_id;
+
+    IF COALESCE(v_games_a, 0) + COALESCE(v_games_b, 0) = 0 THEN
+      RAISE EXCEPTION 'No decisive games recorded for match';
+    END IF;
+    IF v_games_a = v_games_b THEN
+      RAISE EXCEPTION 'Games won are tied; cannot derive winner';
+    END IF;
+
+    v_derived_winner := CASE WHEN v_games_a > v_games_b THEN 'a'::team_side ELSE 'b'::team_side END;
+
+    IF v_match.winner_side IS DISTINCT FROM v_derived_winner THEN
+      RAISE EXCEPTION 'winner_side does not match game scores';
+    END IF;
   END IF;
+
+  -- Set field names based on match type
+  IF v_match.match_type = 'singles' THEN
+    v_elo_field := 'singles_elo'; v_matches_field := 'singles_matches_played';
+    v_wins_field := 'singles_wins'; v_losses_field := 'singles_losses';
+    v_prov_field := 'singles_provisional'; v_streak_field := 'current_singles_streak';
+    v_best_streak_field := 'best_singles_streak';
+    v_pts_scored_field := 'singles_points_scored'; v_pts_allowed_field := 'singles_points_allowed';
+    v_games_won_field := 'singles_games_won'; v_games_lost_field := 'singles_games_lost';
+  ELSE
+    v_elo_field := 'doubles_elo'; v_matches_field := 'doubles_matches_played';
+    v_wins_field := 'doubles_wins'; v_losses_field := 'doubles_losses';
+    v_prov_field := 'doubles_provisional'; v_streak_field := 'current_doubles_streak';
+    v_best_streak_field := 'best_doubles_streak';
+    v_pts_scored_field := 'doubles_points_scored'; v_pts_allowed_field := 'doubles_points_allowed';
+    v_games_won_field := 'doubles_games_won'; v_games_lost_field := 'doubles_games_lost';
+  END IF;
+
+  v_format_weight := v_match.format_weight;
+  -- elo_weight_override carries the reduced walkover weighting
+  -- (0.50 withdrawal < 24h, 0.75 no-show); NULL for normal matches.
+  v_event_mult := v_match.event_multiplier * COALESCE(v_match.elo_weight_override, 1.0);
+
+  -- Process each participant
+  FOR v_participant IN
+    SELECT mp.*, r.singles_elo, r.doubles_elo, r.singles_provisional, r.doubles_provisional,
+           r.singles_matches_played, r.doubles_matches_played
+    FROM match_participants mp
+    JOIN ratings r ON r.player_id = mp.player_id
+    WHERE mp.match_id = p_match_id
+  LOOP
+    v_won := (v_participant.team_side = v_derived_winner);
+
+    -- Get opponent average rating
+    SELECT CASE WHEN v_match.match_type = 'singles' THEN AVG(r2.singles_elo) ELSE AVG(r2.doubles_elo) END
+    INTO v_opponent_rating
+    FROM match_participants mp2
+    JOIN ratings r2 ON r2.player_id = mp2.player_id
+    WHERE mp2.match_id = p_match_id AND mp2.team_side != v_participant.team_side;
+
+    -- K-factor
+    IF v_match.match_type = 'singles' THEN
+      v_k_factor := CASE WHEN v_participant.singles_provisional OR v_participant.singles_matches_played < 8 THEN 40 ELSE 24 END;
+    ELSE
+      v_k_factor := CASE WHEN v_participant.doubles_provisional OR v_participant.doubles_matches_played < 8 THEN 32 ELSE 18 END;
+    END IF;
+
+    -- Calculate Elo delta
+    SELECT cu.new_rating, cu.delta INTO v_new_rating, v_delta
+    FROM calculate_elo_update(v_participant.pre_rating, v_opponent_rating, v_k_factor, v_format_weight, v_event_mult, v_won) cu;
+
+    -- Update match_participants
+    UPDATE match_participants SET
+      post_rating = v_new_rating,
+      rating_delta = v_delta,
+      win_flag = v_won
+    WHERE id = v_participant.id;
+
+    -- Update ratings table using dynamic SQL
+    EXECUTE format(
+      'UPDATE ratings SET %I = $1, %I = %I + 1, %I = CASE WHEN $2 THEN %I + 1 ELSE %I END, %I = CASE WHEN NOT $2 THEN %I + 1 ELSE %I END, %I = $3 + COALESCE(%I, 0), %I = $4 + COALESCE(%I, 0), %I = $5 + COALESCE(%I, 0), %I = $6 + COALESCE(%I, 0), %I = CASE WHEN $2 THEN GREATEST(COALESCE(%I, 0) + 1, 1) ELSE LEAST(COALESCE(%I, 0) - 1, -1) END, %I = CASE WHEN %I + 1 >= 8 THEN FALSE ELSE %I END, updated_at = NOW() WHERE player_id = $7',
+      v_elo_field,
+      v_matches_field, v_matches_field,
+      v_wins_field, v_wins_field, v_wins_field,
+      v_losses_field, v_losses_field, v_losses_field,
+      v_pts_scored_field, v_pts_scored_field,
+      v_pts_allowed_field, v_pts_allowed_field,
+      v_games_won_field, v_games_won_field,
+      v_games_lost_field, v_games_lost_field,
+      v_streak_field, v_streak_field, v_streak_field,
+      v_prov_field, v_matches_field, v_prov_field
+    ) USING v_new_rating, v_won, v_participant.points_scored, v_participant.points_allowed, v_participant.games_won, v_participant.games_lost, v_participant.player_id;
+
+    -- Update reliability
+    UPDATE reliability_metrics SET
+      matches_completed = matches_completed + 1,
+      updated_at = NOW()
+    WHERE player_id = v_participant.player_id;
+  END LOOP;
 
   -- Update match status
   UPDATE matches SET
     result_status = 'confirmed',
     confirmed_by = p_confirmed_by,
+    completed_flag = TRUE,
     updated_at = NOW()
   WHERE id = p_match_id;
 
-  -- Update challenge status if linked
-  IF v_match.challenge_id IS NOT NULL THEN
-    UPDATE challenges SET status = 'completed', updated_at = NOW()
-    WHERE id = v_match.challenge_id;
-  END IF;
+  -- Update challenge status
+  UPDATE challenges SET status = 'completed', updated_at = NOW() WHERE id = v_match.challenge_id;
 
-  -- Update reliability metrics
-  UPDATE reliability_metrics SET
-    matches_completed = matches_completed + 1,
-    updated_at = NOW()
-  WHERE player_id IN (SELECT player_id FROM match_participants WHERE match_id = p_match_id);
+  -- Update head_to_head stats
+  PERFORM update_head_to_head(p_match_id);
+
+  -- Audit
+  INSERT INTO audit_logs (actor_id, action_type, target_type, target_id, reason)
+  VALUES (p_confirmed_by, 'match_confirmed', 'match', p_match_id, 'Match result confirmed and Elo applied');
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql;
 
 -- ============================================================
 -- Apply Walkover Result
+--
+-- Inserts the walkover match as 'pending_confirmation' when ELO
+-- will be applied, because apply_match_result rejects any other
+-- status and then flips it to 'confirmed' itself. Unrated / zero
+-- weight walkovers go straight to result_status = 'walkover'.
 -- ============================================================
-
 CREATE OR REPLACE FUNCTION apply_walkover_result(
   p_walkover_id UUID,
   p_admin_id UUID,
@@ -279,15 +328,9 @@ DECLARE
   v_walkover RECORD;
   v_challenge RECORD;
   v_elo_weight NUMERIC;
+  v_apply_elo BOOLEAN;
   v_match_id UUID;
   v_winner_side team_side;
-  v_participant RECORD;
-  v_team_a_rating NUMERIC;
-  v_team_b_rating NUMERIC;
-  v_delta INTEGER;
-  v_actual NUMERIC;
-  v_opponent_rating INTEGER;
-  v_k INTEGER;
   v_is_doubles BOOLEAN;
 BEGIN
   SELECT * INTO v_walkover FROM walkovers WHERE id = p_walkover_id FOR UPDATE;
@@ -306,6 +349,8 @@ BEGIN
     v_elo_weight := 0.75;
   END IF;
 
+  v_apply_elo := v_elo_weight > 0 AND v_challenge.rated_flag;
+
   -- Create a match record for the walkover
   v_is_doubles := v_challenge.type = 'doubles';
 
@@ -316,7 +361,9 @@ BEGIN
 
   IF v_winner_side = 'a' THEN v_winner_side := 'b'; ELSE v_winner_side := 'a'; END IF;
 
-  -- Create match
+  -- Create match. When ELO applies the row starts as pending_confirmation
+  -- because apply_match_result rejects any other status, then flips it to
+  -- 'confirmed' itself.
   INSERT INTO matches (
     challenge_id, session_id, season_id, match_type, event_type,
     rated_flag, format, format_weight, event_multiplier,
@@ -329,7 +376,9 @@ BEGIN
     v_challenge.rated_flag AND v_elo_weight > 0,
     v_challenge.format, get_format_weight(v_challenge.format),
     get_event_multiplier(v_challenge.event_type),
-    TRUE, v_winner_side, 'walkover', v_walkover.walkover_type,
+    TRUE, v_winner_side,
+    CASE WHEN v_apply_elo THEN 'pending_confirmation'::result_status ELSE 'walkover'::result_status END,
+    v_walkover.walkover_type,
     v_walkover.forfeit_player_id, v_walkover.notice_hours, v_elo_weight, NOW()
   ) RETURNING id INTO v_match_id;
 
@@ -342,7 +391,7 @@ BEGIN
   WHERE cp.challenge_id = v_walkover.challenge_id;
 
   -- Apply Elo if weight > 0
-  IF v_elo_weight > 0 AND v_challenge.rated_flag THEN
+  IF v_apply_elo THEN
     PERFORM apply_match_result(v_match_id, p_admin_id);
   ELSE
     -- Just mark participants
@@ -399,103 +448,80 @@ BEGIN
     AND player_id != v_walkover.forfeit_player_id
   );
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 -- ============================================================
--- Validate Challenge Creation
+-- Validate challenge creation
 -- ============================================================
-
 CREATE OR REPLACE FUNCTION validate_challenge_creation(
   p_creator_id UUID,
   p_opponent_id UUID,
-  p_type match_type_enum,
+  p_type TEXT,
   p_partner_id UUID DEFAULT NULL,
   p_opponent_partner_id UUID DEFAULT NULL
-)
-RETURNS JSONB AS $$
+) RETURNS JSONB AS $$
 DECLARE
+  v_errors TEXT[] := '{}';
   v_active_count INTEGER;
-  v_existing_count INTEGER;
-  v_creator_status player_status;
-  v_opponent_status player_status;
-  v_creator_elo INTEGER;
-  v_opponent_elo INTEGER;
-  v_elo_range INTEGER;
-  v_errors JSONB := '[]'::JSONB;
+  v_repeat_count INTEGER;
+  v_creator_status TEXT;
+  v_opponent_status TEXT;
 BEGIN
   -- Check creator status
   SELECT status INTO v_creator_status FROM players WHERE id = p_creator_id;
   IF v_creator_status IN ('suspended', 'inactive', 'pending_approval') THEN
-    v_errors := v_errors || jsonb_build_array('Creator is not eligible to create challenges');
+    v_errors := array_append(v_errors, 'Your account cannot create challenges');
   END IF;
 
   -- Check opponent status
   SELECT status INTO v_opponent_status FROM players WHERE id = p_opponent_id;
   IF v_opponent_status IN ('suspended', 'inactive', 'pending_approval') THEN
-    v_errors := v_errors || jsonb_build_array('Opponent is not eligible for challenges');
+    v_errors := array_append(v_errors, 'Opponent cannot accept challenges');
   END IF;
 
-  -- Check active outgoing challenge limit (max 3)
-  SELECT COUNT(*) INTO v_active_count
-  FROM challenges
-  WHERE created_by = p_creator_id
-  AND status IN ('proposed', 'partially_confirmed', 'accepted');
+  -- Self-challenge check
+  IF p_creator_id = p_opponent_id THEN
+    v_errors := array_append(v_errors, 'Cannot challenge yourself');
+  END IF;
+
+  -- Active challenge cap (max 3)
+  SELECT COUNT(*) INTO v_active_count FROM challenges
+  WHERE created_by = p_creator_id AND status IN ('proposed', 'partially_confirmed', 'accepted');
   IF v_active_count >= 3 THEN
-    v_errors := v_errors || jsonb_build_array('Maximum 3 active challenges reached');
+    v_errors := array_append(v_errors, 'Maximum 3 active challenges reached');
   END IF;
 
-  -- Check duplicate challenge (max 1 active against same opponent)
-  IF p_type = 'singles' THEN
-    SELECT COUNT(*) INTO v_existing_count
-    FROM challenges c
-    JOIN challenge_participants cp1 ON cp1.challenge_id = c.id AND cp1.player_id = p_creator_id
-    JOIN challenge_participants cp2 ON cp2.challenge_id = c.id AND cp2.player_id = p_opponent_id
-    WHERE c.status IN ('proposed', 'partially_confirmed', 'accepted')
-    AND c.type = 'singles';
-  ELSE
-    SELECT COUNT(*) INTO v_existing_count
-    FROM challenges c
-    WHERE c.status IN ('proposed', 'partially_confirmed', 'accepted')
-    AND c.type = 'doubles'
-    AND c.id IN (
-      SELECT challenge_id FROM challenge_participants WHERE player_id = p_creator_id
-    )
-    AND c.id IN (
-      SELECT challenge_id FROM challenge_participants WHERE player_id = p_opponent_id
-    );
+  -- Repeat opponent in 7 days (max 2)
+  SELECT COUNT(*) INTO v_repeat_count FROM matches m
+  JOIN match_participants mp1 ON mp1.match_id = m.id AND mp1.player_id = p_creator_id
+  JOIN match_participants mp2 ON mp2.match_id = m.id AND mp2.player_id = p_opponent_id AND mp2.team_side != mp1.team_side
+  WHERE m.played_at > NOW() - INTERVAL '7 days' AND m.match_type = p_type::match_type_enum;
+  IF v_repeat_count >= 2 THEN
+    v_errors := array_append(v_errors, 'Maximum 2 rated matches vs same opponent in 7 days');
   END IF;
 
-  IF v_existing_count > 0 THEN
-    v_errors := v_errors || jsonb_build_array('Active challenge already exists against this opponent');
-  END IF;
-
-  -- Check Elo range for singles (get from platform_settings)
-  IF p_type = 'singles' THEN
-    SELECT COALESCE((value->>'elo_range')::INTEGER, 150)
-    INTO v_elo_range FROM platform_settings WHERE key = 'challenge_rules';
-
-    SELECT singles_elo INTO v_creator_elo FROM ratings WHERE player_id = p_creator_id;
-    SELECT singles_elo INTO v_opponent_elo FROM ratings WHERE player_id = p_opponent_id;
-
-    IF ABS(COALESCE(v_creator_elo, 1200) - COALESCE(v_opponent_elo, 1200)) > v_elo_range THEN
-      v_errors := v_errors || jsonb_build_array('Opponent is outside recommended Elo range');
+  -- Doubles partner checks
+  IF p_type = 'doubles' THEN
+    IF p_partner_id IS NULL OR p_opponent_partner_id IS NULL THEN
+      v_errors := array_append(v_errors, 'Doubles requires a partner for each side');
+    END IF;
+    IF p_partner_id = p_creator_id OR p_partner_id = p_opponent_id OR p_opponent_partner_id = p_creator_id THEN
+      v_errors := array_append(v_errors, 'Duplicate player in challenge');
     END IF;
   END IF;
 
-  RETURN jsonb_build_object('valid', jsonb_array_length(v_errors) = 0, 'errors', v_errors);
+  RETURN jsonb_build_object('valid', array_length(v_errors, 1) IS NULL, 'errors', to_jsonb(v_errors));
 END;
-$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
+$$ LANGUAGE plpgsql;
 
 -- ============================================================
--- Check Session Caps
+-- Check session caps
 -- ============================================================
-
 CREATE OR REPLACE FUNCTION check_session_caps(
   p_player_id UUID,
   p_session_id UUID,
-  p_match_type match_type_enum
-)
-RETURNS BOOLEAN AS $$
+  p_match_type TEXT
+) RETURNS BOOLEAN AS $$
 DECLARE
   v_count INTEGER;
 BEGIN
@@ -503,245 +529,44 @@ BEGIN
   FROM matches m
   JOIN match_participants mp ON mp.match_id = m.id
   WHERE mp.player_id = p_player_id
-  AND m.session_id = p_session_id
-  AND m.match_type = p_match_type
-  AND m.rated_flag = TRUE
-  AND m.result_status IN ('confirmed', 'pending_confirmation');
-
-  RETURN v_count < 3;
-END;
-$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
-
--- ============================================================
--- Check Repeat Opponent Caps
--- ============================================================
-
-CREATE OR REPLACE FUNCTION check_repeat_opponent_caps(
-  p_player_id UUID,
-  p_opponent_id UUID,
-  p_match_type match_type_enum
-)
-RETURNS BOOLEAN AS $$
-DECLARE
-  v_count INTEGER;
-BEGIN
-  IF p_match_type = 'singles' THEN
-    SELECT COUNT(*) INTO v_count
-    FROM matches m
-    JOIN match_participants mp1 ON mp1.match_id = m.id AND mp1.player_id = p_player_id
-    JOIN match_participants mp2 ON mp2.match_id = m.id AND mp2.player_id = p_opponent_id
-    WHERE m.match_type = 'singles'
+    AND m.session_id = p_session_id
+    AND m.match_type = p_match_type::match_type_enum
     AND m.rated_flag = TRUE
-    AND m.result_status = 'confirmed'
-    AND m.played_at >= NOW() - INTERVAL '7 days';
-    RETURN v_count < 2;
-  END IF;
+    AND m.result_status IN ('confirmed', 'pending_confirmation');
 
-  -- For doubles, check is done at application level with all 4 players
-  RETURN TRUE;
+  RETURN v_count < 3; -- MAX_RATED_PER_SESSION = 3
 END;
-$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
+$$ LANGUAGE plpgsql;
 
 -- ============================================================
--- Check Doubles Repeat Caps (all 4 players same combo)
+-- Reverse match result (admin function)
 -- ============================================================
-
-CREATE OR REPLACE FUNCTION check_doubles_repeat_caps(
-  p_team_a_ids UUID[],
-  p_team_b_ids UUID[]
-)
-RETURNS BOOLEAN AS $$
-DECLARE
-  v_count INTEGER;
-  v_all_ids UUID[];
-BEGIN
-  v_all_ids := p_team_a_ids || p_team_b_ids;
-
-  SELECT COUNT(*) INTO v_count
-  FROM matches m
-  WHERE m.match_type = 'doubles'
-  AND m.rated_flag = TRUE
-  AND m.result_status = 'confirmed'
-  AND m.played_at >= NOW() - INTERVAL '7 days'
-  AND (
-    SELECT array_agg(mp.player_id ORDER BY mp.player_id)
-    FROM match_participants mp WHERE mp.match_id = m.id
-  ) = (SELECT array_agg(u ORDER BY u) FROM unnest(v_all_ids) u);
-
-  RETURN v_count < 2;
-END;
-$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
-
--- ============================================================
--- Season Compression
--- ============================================================
-
-CREATE OR REPLACE FUNCTION calculate_season_compression(p_factor NUMERIC DEFAULT 0.1)
-RETURNS VOID AS $$
-BEGIN
-  UPDATE ratings SET
-    singles_elo = singles_elo - ROUND((singles_elo - 1200) * p_factor)::INTEGER,
-    doubles_elo = doubles_elo - ROUND((doubles_elo - 1200) * p_factor)::INTEGER,
-    updated_at = NOW();
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- ============================================================
--- Capture Season Snapshot
--- ============================================================
-
-CREATE OR REPLACE FUNCTION capture_season_snapshot(p_season_id UUID)
-RETURNS VOID AS $$
-BEGIN
-  INSERT INTO season_snapshots (
-    player_id, season_id, final_singles_elo, final_doubles_elo,
-    singles_rank, doubles_rank,
-    singles_matches_played, doubles_matches_played,
-    singles_wins, singles_losses, doubles_wins, doubles_losses
-  )
-  SELECT
-    r.player_id, p_season_id, r.singles_elo, r.doubles_elo,
-    ROW_NUMBER() OVER (ORDER BY r.singles_elo DESC),
-    ROW_NUMBER() OVER (ORDER BY r.doubles_elo DESC),
-    r.singles_matches_played, r.doubles_matches_played,
-    r.singles_wins, r.singles_losses, r.doubles_wins, r.doubles_losses
-  FROM ratings r
-  JOIN players p ON p.id = r.player_id
-  WHERE p.active_flag = TRUE
-  ON CONFLICT (player_id, season_id) DO UPDATE SET
-    final_singles_elo = EXCLUDED.final_singles_elo,
-    final_doubles_elo = EXCLUDED.final_doubles_elo,
-    singles_rank = EXCLUDED.singles_rank,
-    doubles_rank = EXCLUDED.doubles_rank,
-    singles_matches_played = EXCLUDED.singles_matches_played,
-    doubles_matches_played = EXCLUDED.doubles_matches_played,
-    singles_wins = EXCLUDED.singles_wins,
-    singles_losses = EXCLUDED.singles_losses,
-    doubles_wins = EXCLUDED.doubles_wins,
-    doubles_losses = EXCLUDED.doubles_losses,
-    captured_at = NOW();
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- ============================================================
--- Reverse Match Result (for admin void/edit)
--- ============================================================
-
-CREATE OR REPLACE FUNCTION reverse_match_result(p_match_id UUID)
-RETURNS VOID AS $$
+CREATE OR REPLACE FUNCTION reverse_match_result(p_match_id UUID) RETURNS VOID AS $$
 DECLARE
   v_match RECORD;
   v_participant RECORD;
-  v_is_doubles BOOLEAN;
+  v_elo_field TEXT;
 BEGIN
   SELECT * INTO v_match FROM matches WHERE id = p_match_id;
-  IF v_match IS NULL OR v_match.result_status NOT IN ('confirmed', 'walkover') THEN
-    RAISE EXCEPTION 'Match not confirmed, cannot reverse';
-  END IF;
+  IF v_match IS NULL THEN RAISE EXCEPTION 'Match not found'; END IF;
+  IF v_match.result_status != 'confirmed' THEN RAISE EXCEPTION 'Can only reverse confirmed matches'; END IF;
 
-  v_is_doubles := v_match.match_type = 'doubles';
+  v_elo_field := CASE WHEN v_match.match_type = 'singles' THEN 'singles_elo' ELSE 'doubles_elo' END;
 
-  FOR v_participant IN
-    SELECT * FROM match_participants WHERE match_id = p_match_id
-  LOOP
-    IF v_participant.rating_delta IS NOT NULL AND v_match.rated_flag THEN
-      IF v_is_doubles THEN
-        UPDATE ratings SET
-          doubles_elo = doubles_elo - v_participant.rating_delta,
-          doubles_matches_played = GREATEST(doubles_matches_played - 1, 0),
-          doubles_wins = GREATEST(doubles_wins - (CASE WHEN v_participant.win_flag THEN 1 ELSE 0 END), 0),
-          doubles_losses = GREATEST(doubles_losses - (CASE WHEN NOT v_participant.win_flag THEN 1 ELSE 0 END), 0),
-          doubles_points_scored = GREATEST(doubles_points_scored - v_participant.points_scored, 0),
-          doubles_points_allowed = GREATEST(doubles_points_allowed - v_participant.points_allowed, 0),
-          doubles_games_won = GREATEST(doubles_games_won - v_participant.games_won, 0),
-          doubles_games_lost = GREATEST(doubles_games_lost - v_participant.games_lost, 0),
-          doubles_provisional = (GREATEST(doubles_matches_played - 1, 0) < 8),
-          doubles_k_factor = CASE WHEN GREATEST(doubles_matches_played - 1, 0) < 8 THEN 32 ELSE 18 END,
-          updated_at = NOW()
-        WHERE player_id = v_participant.player_id;
-      ELSE
-        UPDATE ratings SET
-          singles_elo = singles_elo - v_participant.rating_delta,
-          singles_matches_played = GREATEST(singles_matches_played - 1, 0),
-          singles_wins = GREATEST(singles_wins - (CASE WHEN v_participant.win_flag THEN 1 ELSE 0 END), 0),
-          singles_losses = GREATEST(singles_losses - (CASE WHEN NOT v_participant.win_flag THEN 1 ELSE 0 END), 0),
-          singles_points_scored = GREATEST(singles_points_scored - v_participant.points_scored, 0),
-          singles_points_allowed = GREATEST(singles_points_allowed - v_participant.points_allowed, 0),
-          singles_games_won = GREATEST(singles_games_won - v_participant.games_won, 0),
-          singles_games_lost = GREATEST(singles_games_lost - v_participant.games_lost, 0),
-          singles_provisional = (GREATEST(singles_matches_played - 1, 0) < 8),
-          singles_k_factor = CASE WHEN GREATEST(singles_matches_played - 1, 0) < 8 THEN 40 ELSE 24 END,
-          updated_at = NOW()
-        WHERE player_id = v_participant.player_id;
-      END IF;
-    END IF;
+  -- Reverse each participant's rating
+  FOR v_participant IN SELECT * FROM match_participants WHERE match_id = p_match_id AND rating_delta IS NOT NULL LOOP
+    EXECUTE format('UPDATE ratings SET %I = %I - $1, updated_at = NOW() WHERE player_id = $2', v_elo_field, v_elo_field)
+    USING v_participant.rating_delta, v_participant.player_id;
   END LOOP;
 
-  -- Reset match participants
-  UPDATE match_participants SET
-    post_rating = NULL,
-    rating_delta = NULL,
-    win_flag = NULL
-  WHERE match_id = p_match_id;
+  -- Mark match as voided
+  UPDATE matches SET result_status = 'voided', updated_at = NOW() WHERE id = p_match_id;
+
+  -- Audit
+  INSERT INTO audit_logs (actor_id, action_type, target_type, target_id, reason)
+  VALUES (NULL, 'match_reversed', 'match', p_match_id, 'Match result reversed by admin');
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- ============================================================
--- Update Head to Head Stats
--- ============================================================
-
-CREATE OR REPLACE FUNCTION update_head_to_head(p_match_id UUID)
-RETURNS VOID AS $$
-DECLARE
-  v_match RECORD;
-  v_player_a UUID;
-  v_player_b UUID;
-  v_a_won BOOLEAN;
-  v_a_points INTEGER;
-  v_b_points INTEGER;
-  v_sorted_a UUID;
-  v_sorted_b UUID;
-BEGIN
-  SELECT * INTO v_match FROM matches WHERE id = p_match_id;
-  IF v_match.match_type != 'singles' THEN RETURN; END IF;
-
-  SELECT player_id, points_scored INTO v_player_a, v_a_points
-  FROM match_participants WHERE match_id = p_match_id AND team_side = 'a' LIMIT 1;
-
-  SELECT player_id, points_scored INTO v_player_b, v_b_points
-  FROM match_participants WHERE match_id = p_match_id AND team_side = 'b' LIMIT 1;
-
-  IF v_player_a IS NULL OR v_player_b IS NULL THEN RETURN; END IF;
-
-  -- Sort IDs
-  IF v_player_a < v_player_b THEN
-    v_sorted_a := v_player_a; v_sorted_b := v_player_b;
-  ELSE
-    v_sorted_a := v_player_b; v_sorted_b := v_player_a;
-    -- Swap points too
-    v_a_points := v_b_points;
-    SELECT points_scored INTO v_b_points FROM match_participants WHERE match_id = p_match_id AND player_id = v_sorted_b;
-    SELECT points_scored INTO v_a_points FROM match_participants WHERE match_id = p_match_id AND player_id = v_sorted_a;
-  END IF;
-
-  v_a_won := (v_match.winner_side = 'a' AND v_sorted_a = v_player_a) OR
-             (v_match.winner_side = 'b' AND v_sorted_a = v_player_b);
-
-  INSERT INTO head_to_head_stats (player_a_id, player_b_id, match_type, total_matches, player_a_wins, player_b_wins, player_a_points, player_b_points, last_played_at)
-  VALUES (v_sorted_a, v_sorted_b, 'singles', 1,
-    CASE WHEN v_a_won THEN 1 ELSE 0 END,
-    CASE WHEN v_a_won THEN 0 ELSE 1 END,
-    v_a_points, v_b_points, NOW())
-  ON CONFLICT (player_a_id, player_b_id, match_type) DO UPDATE SET
-    total_matches = head_to_head_stats.total_matches + 1,
-    player_a_wins = head_to_head_stats.player_a_wins + CASE WHEN v_a_won THEN 1 ELSE 0 END,
-    player_b_wins = head_to_head_stats.player_b_wins + CASE WHEN v_a_won THEN 0 ELSE 1 END,
-    player_a_points = head_to_head_stats.player_a_points + v_a_points,
-    player_b_points = head_to_head_stats.player_b_points + v_b_points,
-    last_played_at = NOW(),
-    updated_at = NOW();
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql;
 
 -- ============================================================
 -- Update Partnership Stats
@@ -818,4 +643,88 @@ BEGIN
       updated_at = NOW();
   END LOOP;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+-- ============================================================
+-- Atomic increment helper for reliability metrics to avoid
+-- read-modify-write race conditions in createChallenge.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION increment_challenges_issued(p_player_id UUID)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  INSERT INTO reliability_metrics (player_id, challenges_issued)
+  VALUES (p_player_id, 1)
+  ON CONFLICT (player_id)
+  DO UPDATE SET
+    challenges_issued = reliability_metrics.challenges_issued + 1,
+    updated_at = NOW();
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION increment_challenges_issued(UUID) TO authenticated;
+
+-- ============================================================
+-- Atomic player + initial ratings creation. Replaces the two-step
+-- inserts in player onboarding (apps/player/src/lib/actions/profile.ts)
+-- and admin createPlayer (apps/admin/src/lib/actions.ts), where a failed
+-- second insert could leave a player without a ratings row.
+--
+-- Note: trigger_init_player_records (00004_triggers.sql) only fires on
+-- UPDATE OF status (pending_approval -> active), never on INSERT, so this
+-- function must insert the ratings row itself. The trigger's later insert
+-- uses ON CONFLICT (player_id) DO NOTHING, so no double-insert occurs.
+--
+-- The ratings defaults (1200/1200, provisional, K 40/40) mirror what both
+-- call sites inserted before this function existed. onboarding_completed
+-- is TRUE only for self-onboarding (p_user_id present): admin-created
+-- placeholder players have no auth user and have not onboarded.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION create_player_with_rating(
+  p_user_id uuid,
+  p_email text,
+  p_full_name text,
+  p_display_name text DEFAULT NULL,
+  p_phone text DEFAULT NULL,
+  p_status player_status DEFAULT 'pending_approval',
+  p_role user_role DEFAULT 'player'
+) RETURNS uuid AS $$
+DECLARE
+  v_player_id uuid;
+BEGIN
+  -- Mirror the self-onboarding RLS intent of players_self_insert
+  -- (00005_rls.sql): a regular user may only create their own pending
+  -- player row; anything else requires the service role.
+  IF NOT (
+    auth.role() = 'service_role'
+    OR (
+      p_user_id IS NOT NULL
+      AND p_user_id = auth.uid()
+      AND p_status = 'pending_approval'
+      AND p_role = 'player'
+    )
+  ) THEN
+    RAISE EXCEPTION 'Not authorized to create this player';
+  END IF;
+
+  INSERT INTO players (user_id, email, full_name, display_name, phone, status, role, onboarding_completed)
+  VALUES (p_user_id, p_email, p_full_name, p_display_name, p_phone, p_status, p_role, p_user_id IS NOT NULL)
+  RETURNING id INTO v_player_id;
+
+  INSERT INTO ratings (
+    player_id, singles_elo, doubles_elo,
+    singles_provisional, doubles_provisional,
+    singles_k_factor, doubles_k_factor
+  ) VALUES (v_player_id, 1200, 1200, TRUE, TRUE, 40, 40);
+
+  RETURN v_player_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+REVOKE ALL ON FUNCTION create_player_with_rating(uuid, text, text, text, text, player_status, user_role) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION create_player_with_rating(uuid, text, text, text, text, player_status, user_role) TO authenticated, service_role;

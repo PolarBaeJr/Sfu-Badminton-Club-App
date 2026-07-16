@@ -40,7 +40,7 @@ export async function submitMatchResult(challengeId: string, input: MatchResultI
   if (!isParticipant) throw new Error('Not a participant');
 
   // Guard against double-submission. The matches_challenge_id_unique index
-  // (migration 00020) is the hard backstop; this pre-check gives a friendlier error.
+  // (migration 00002_indexes.sql) is the hard backstop; this pre-check gives a friendlier error.
   const { data: existingMatch } = await supabase
     .from('matches')
     .select('id')

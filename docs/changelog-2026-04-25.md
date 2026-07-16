@@ -52,7 +52,10 @@ already exploitable in prod before the session started.
   of `calculateEloUpdate`); `previewEloChange` now accepts
   `matchesPlayed` so K-factor is correct for brand-new players. —
   `d4b8489`
-- **Migrations 00017 / 00018**:
+- **Migrations 00017 / 00018** (since squashed into the consolidated
+  00001–00007 baseline; the ELO dedupe now lives in
+  `00003_functions.sql`, the self-onboarding policies in
+  `00005_rls.sql`):
   - `00017_dedupe_elo_functions.sql` — drops the dead numeric-actual
     overload of `calculate_elo_update` left over from 00003 (00008
     redefined it with a boolean signature; both overloads coexisted).
