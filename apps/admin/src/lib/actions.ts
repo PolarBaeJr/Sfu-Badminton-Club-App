@@ -72,43 +72,33 @@ export async function createPlayer(data: {
   const { data: existing } = await adminClient.from('players').select('id').eq('email', data.email).maybeSingle();
   if (existing) throw new Error('A player with this email already exists');
 
-  const { data: player, error } = await adminClient.from('players').insert({
-    full_name: data.full_name,
-    email: data.email,
-    display_name: data.full_name,
-    status: data.status || 'recreational',
-    role: data.role || 'player',
-    active_flag: true,
-    onboarding_completed: false,
-  }).select().single();
+  // create_player_with_rating (migration 00021) inserts the player and
+  // ratings rows in one transaction.
+  const { data: playerId, error } = await adminClient.rpc('create_player_with_rating', {
+    p_user_id: null,
+    p_email: data.email,
+    p_full_name: data.full_name,
+    p_display_name: data.full_name,
+    p_status: data.status || 'recreational',
+    p_role: data.role || 'player',
+  });
 
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
   }
 
-  // Create initial ratings row
-  await adminClient.from('ratings').insert({
-    player_id: player.id,
-    singles_elo: 1200,
-    doubles_elo: 1200,
-    singles_provisional: true,
-    doubles_provisional: true,
-    singles_k_factor: 40,
-    doubles_k_factor: 40,
-  });
-
   await adminClient.from('audit_logs').insert({
     actor_id: admin.id,
     action_type: 'player_created',
     target_type: 'player',
-    target_id: player.id,
+    target_id: playerId,
     new_value: { full_name: data.full_name, email: data.email, status: data.status },
     reason: 'Manual admin creation',
   });
 
   revalidatePath('/players');
-  return player;
+  return playerId;
 }
 
 export async function updatePlayer(playerId: string, data: AdminPlayerUpdateInput) {

@@ -59,40 +59,19 @@ export async function completeOnboarding(data: { full_name: string; display_name
 
     if (error) throw new Error(error.message);
   } else {
-    // RLS policy `players_self_insert` (00018) enforces that
-    // user_id = auth.uid(), status = 'pending_approval', and role = 'player',
-    // so the regular client is sufficient — no service role bypass required.
-    const insert: Record<string, unknown> = {
-      user_id: user.id,
-      email: user.email!,
-      full_name: data.full_name,
-      onboarding_completed: true,
-      status: 'pending_approval',
-      role: 'player',
-    };
-    if (data.display_name) insert.display_name = data.display_name;
-    if (data.phone) insert.phone = data.phone;
-
-    const { data: newPlayer, error } = await supabase
-      .from('players')
-      .insert(insert)
-      .select('id')
-      .single();
+    // create_player_with_rating (migration 00021) inserts the player and
+    // ratings rows in one transaction. Its internal guard mirrors the
+    // players_self_insert RLS policy (00018): user_id = auth.uid(),
+    // status = 'pending_approval', role = 'player'.
+    const { error } = await supabase.rpc('create_player_with_rating', {
+      p_user_id: user.id,
+      p_email: user.email!,
+      p_full_name: data.full_name,
+      p_display_name: data.display_name || null,
+      p_phone: data.phone || null,
+    });
 
     if (error) throw new Error(error.message);
-
-    if (newPlayer) {
-      const { error: ratingsError } = await supabase.from('ratings').insert({
-        player_id: newPlayer.id,
-        singles_elo: 1200,
-        doubles_elo: 1200,
-        singles_provisional: true,
-        doubles_provisional: true,
-        singles_k_factor: 40,
-        doubles_k_factor: 40,
-      });
-      if (ratingsError) throw new Error(ratingsError.message);
-    }
   }
 
   revalidatePath('/');
