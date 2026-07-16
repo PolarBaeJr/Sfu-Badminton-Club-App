@@ -12,15 +12,16 @@ import {
   updatePairSeed,
   clearSeeds,
 } from '@/lib/tournament-actions';
-import { nextPowerOf2 } from '@badminton/shared';
+import { nextPowerOf2, pickOne } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil } from 'lucide-react';
+import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';
 
 interface Props {
-  event: Record<string, unknown>;
-  participants: unknown[];
-  pairs: unknown[];
+  event: TournamentEventRow;
+  participants: ParticipantWithPlayer[];
+  pairs: PairWithPlayers[];
   allPlayers: Array<{ id: string; full_name: string }>;
   isDoubles: boolean;
 }
@@ -138,8 +139,8 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   const { toast } = useToast();
   const router = useRouter();
 
-  const entries = isDoubles ? pairs : participants;
-  const activeEntries = (entries as any[]).filter((e: any) => !['withdrawn', 'disqualified'].includes(e.status));
+  const entries: Array<ParticipantWithPlayer | PairWithPlayers> = isDoubles ? pairs : participants;
+  const activeEntries = entries.filter((e) => !['withdrawn', 'disqualified'].includes(e.status));
   const bracketSize = nextPowerOf2(activeEntries.length);
   const byes = bracketSize - activeEntries.length;
   const canModify = event.status === 'registration';
@@ -152,9 +153,9 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     try {
       if (isDoubles) {
         if (!player2Id) { toast('Select both players', 'error'); setLoading(false); return; }
-        await addPairToEvent(event.id as string, playerId, player2Id);
+        await addPairToEvent(event.id, playerId, player2Id);
       } else {
-        await addParticipantToEvent(event.id as string, playerId);
+        await addParticipantToEvent(event.id, playerId);
       }
       toast('Added successfully', 'success');
       setAddOpen(false);
@@ -186,7 +187,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   async function handleAutoSeed() {
     setLoading(true);
     try {
-      await autoSeedEventByElo(event.id as string);
+      await autoSeedEventByElo(event.id);
       toast('Auto-seeded by Elo', 'success');
       router.refresh();
     } catch (err) {
@@ -209,13 +210,13 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   }
 
   const usedSeeds = new Set(
-    (entries as any[]).map((e: any) => e.seed_number).filter((s: number | null) => s != null) as number[]
+    entries.map((e) => e.seed_number).filter((s): s is number => s != null)
   );
 
   const registeredPlayerIds = new Set(
     isDoubles
-      ? (pairs as any[]).flatMap((p: any) => [p.player1_id, p.player2_id])
-      : (participants as any[]).map((p: any) => p.player_id)
+      ? pairs.flatMap((p) => [p.player1_id, p.player2_id])
+      : participants.map((p) => p.player_id)
   );
 
   const availablePlayers = allPlayers.filter(p => !registeredPlayerIds.has(p.id));
@@ -245,7 +246,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               <Button size="sm" variant="ghost" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={async () => {
                 setLoading(true);
                 try {
-                  await clearSeeds(event.id as string);
+                  await clearSeeds(event.id);
                   toast('Seeds cleared', 'success');
                   router.refresh();
                 } catch (err) {
@@ -299,7 +300,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
           </thead>
           <tbody>
             {isDoubles ? (
-              (pairs as any[]).map((pair: any) => (
+              pairs.map((pair) => (
                 <tr key={pair.id} className="border-b border-[var(--border)] last:border-b-0 hover:bg-[var(--bg-elevated)] transition-colors">
                   <td className="px-4 py-3">
                     <SeedCell
@@ -334,9 +335,9 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                 </tr>
               ))
             ) : (
-              (participants as any[]).map((p: any) => {
+              participants.map((p) => {
                 const player = p.player;
-                const ratings = Array.isArray(player?.ratings) ? player.ratings[0] : player?.ratings;
+                const ratings = pickOne(player?.ratings);
                 const elo = ratings?.singles_elo ?? p.elo_before ?? '-';
                 return (
                   <tr key={p.id} className="border-b border-[var(--border)] last:border-b-0 hover:bg-[var(--bg-elevated)] transition-colors">

@@ -4,6 +4,7 @@ import { TOURNAMENT_EVENT_TYPE_LABELS, isDoublesEvent } from '@badminton/shared'
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { EventControlCenter } from './components/EventControlCenter';
+import type { ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';
 
 export default async function EventPage({
   params,
@@ -22,8 +23,8 @@ export default async function EventPage({
   const doubles = isDoublesEvent(event.event_type);
 
   // Fetch participants or pairs
-  let participants: unknown[] = [];
-  let pairs: unknown[] = [];
+  let participants: ParticipantWithPlayer[] = [];
+  let pairs: PairWithPlayers[] = [];
 
   if (doubles) {
     const { data } = await supabase

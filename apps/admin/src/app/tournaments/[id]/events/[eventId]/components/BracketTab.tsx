@@ -5,18 +5,26 @@ import { Button, Badge } from '@badminton/ui';
 import { getRoundName } from '@badminton/shared';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
 import { Trophy, ChevronRight } from 'lucide-react';
+import { getName } from './entry-name';
+import type {
+  TournamentEventRow,
+  TournamentMatchRow,
+  ParticipantWithPlayer,
+  PairWithPlayers,
+  GameScore,
+} from '@/lib/tournament-types';
 
 interface Props {
-  event: Record<string, unknown>;
-  matches: unknown[];
-  participants: unknown[];
-  pairs: unknown[];
+  event: TournamentEventRow;
+  matches: TournamentMatchRow[];
+  participants: ParticipantWithPlayer[];
+  pairs: PairWithPlayers[];
   isDoubles: boolean;
 }
 
 export function BracketTab({ event, matches, participants, pairs, isDoubles }: Props) {
-  const [scoreMatch, setScoreMatch] = useState<any>(null);
-  const allMatches = matches as any[];
+  const [scoreMatch, setScoreMatch] = useState<TournamentMatchRow | null>(null);
+  const allMatches = matches;
   const isLive = event.status === 'live' || event.status === 'bracket_generated';
 
   if (allMatches.length === 0) {
@@ -29,7 +37,7 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
   }
 
   // Group matches by round
-  const rounds: Record<number, any[]> = {};
+  const rounds: Record<number, TournamentMatchRow[]> = {};
   for (const m of allMatches) {
     if (!rounds[m.round_number]) rounds[m.round_number] = [];
     rounds[m.round_number]!.push(m);
@@ -40,18 +48,19 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
   // Build name lookup
   const nameMap: Record<string, string> = {};
   if (isDoubles) {
-    for (const p of pairs as any[]) {
-      nameMap[p.id] = p.pair_name ?? `${p.player1?.full_name ?? '?'} / ${p.player2?.full_name ?? '?'}`;
+    for (const p of pairs) {
+      nameMap[p.id] = getName(p, isDoubles);
     }
   } else {
-    for (const p of participants as any[]) {
-      nameMap[p.id] = p.player?.full_name ?? 'Unknown';
+    for (const p of participants) {
+      nameMap[p.id] = getName(p, isDoubles);
     }
   }
 
   // Seed lookup
   const seedMap: Record<string, number> = {};
-  for (const p of (isDoubles ? pairs : participants) as any[]) {
+  const entries: Array<ParticipantWithPlayer | PairWithPlayers> = isDoubles ? pairs : participants;
+  for (const p of entries) {
     if (p.seed_number) seedMap[p.id] = p.seed_number;
   }
 
@@ -70,7 +79,7 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
       <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4 overflow-x-auto" role="region" aria-label="Tournament bracket">
         <div className="flex gap-6 min-w-fit" role="table" aria-label="Bracket rounds">
           {roundNumbers.map((roundNum) => {
-            const roundMatches = rounds[roundNum]!.sort((a: any, b: any) => a.bracket_position - b.bracket_position);
+            const roundMatches = rounds[roundNum]!.sort((a, b) => a.bracket_position - b.bracket_position);
             const roundName = roundMatches[0]?.round_name ?? getRoundName(roundNum, totalRounds);
 
             return (
@@ -78,7 +87,7 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                 <h3 className="text-xs font-bold text-[var(--text-muted)] text-center uppercase tracking-wider mb-2" role="columnheader">
                   {roundName}
                 </h3>
-                {roundMatches.map((m: any) => {
+                {roundMatches.map((m) => {
                   const aId = isDoubles ? m.pair_a_id : m.participant_a_id;
                   const bId = isDoubles ? m.pair_b_id : m.participant_b_id;
                   const winnerId = isDoubles ? m.winner_pair_id : m.winner_participant_id;
@@ -129,7 +138,7 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                         </div>
                         {m.scores && (
                           <span className="font-mono text-xs text-[var(--text-muted)] ml-2">
-                            {(m.scores as any[]).map((g: any) => `${g.a}-${g.b}`).join(', ')}
+                            {(m.scores as GameScore[]).map((g) => `${g.a}-${g.b}`).join(', ')}
                           </span>
                         )}
                       </div>
@@ -158,7 +167,7 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                         </div>
                         {m.scores && (
                           <span className="font-mono text-xs text-[var(--text-muted)] ml-2">
-                            {(m.scores as any[]).map((g: any) => `${g.b}-${g.a}`).join(', ')}
+                            {(m.scores as GameScore[]).map((g) => `${g.b}-${g.a}`).join(', ')}
                           </span>
                         )}
                       </div>

@@ -9,6 +9,13 @@ import {
 } from '@badminton/shared';
 import type { TournamentEventType, TournamentEventStatus } from '@badminton/shared';
 import { Trophy, Users, CheckCircle, BarChart3, Settings, Swords, ListOrdered } from 'lucide-react';
+import type {
+  TournamentRow,
+  TournamentEventRow,
+  TournamentMatchRow,
+  ParticipantWithPlayer,
+  PairWithPlayers,
+} from '@/lib/tournament-types';
 import { EventHeader } from './EventHeader';
 import { ParticipantsTab } from './ParticipantsTab';
 import { CheckInTab } from './CheckInTab';
@@ -20,11 +27,11 @@ import { LeaderboardTab } from './LeaderboardTab';
 type TabId = 'participants' | 'checkin' | 'bracket' | 'results' | 'leaderboard';
 
 interface Props {
-  tournament: Record<string, unknown>;
-  event: Record<string, unknown>;
-  participants: unknown[];
-  pairs: unknown[];
-  matches: unknown[];
+  tournament: TournamentRow;
+  event: TournamentEventRow;
+  participants: ParticipantWithPlayer[];
+  pairs: PairWithPlayers[];
+  matches: TournamentMatchRow[];
   allPlayers: Array<{ id: string; full_name: string }>;
   isDoubles: boolean;
 }
@@ -32,7 +39,7 @@ interface Props {
 export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, isDoubles }: Props) {
   const status = event.status as TournamentEventStatus;
   const eventType = event.event_type as TournamentEventType;
-  const format = event.format as string;
+  const format = event.format;
 
   // Determine available tabs based on status
   const tabs: Array<{ id: TabId; label: string; icon: React.ReactNode }> = [
@@ -61,11 +68,11 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
   const [activeTab, setActiveTab] = useState<TabId>(defaultTab);
 
   // Stats
-  const entries = isDoubles ? pairs : participants;
+  const entries: Array<ParticipantWithPlayer | PairWithPlayers> = isDoubles ? pairs : participants;
   const totalEntries = entries.length;
-  const checkedIn = entries.filter((e: any) => e.status === 'checked_in').length;
-  const totalMatches = (matches as any[]).length;
-  const completedMatches = (matches as any[]).filter((m: any) =>
+  const checkedIn = entries.filter((e) => e.status === 'checked_in').length;
+  const totalMatches = matches.length;
+  const completedMatches = matches.filter((m) =>
     m.status === 'completed' || m.status === 'walkover' || m.is_bye
   ).length;
 

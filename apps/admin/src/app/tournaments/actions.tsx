@@ -15,7 +15,7 @@ interface TournamentData {
   format: string;
   start_date: string;
   end_date: string | null;
-  bracket_size: number;
+  bracket_size: number | null;
   event_multiplier: number;
   placement_bonus_enabled: boolean;
   status: string;

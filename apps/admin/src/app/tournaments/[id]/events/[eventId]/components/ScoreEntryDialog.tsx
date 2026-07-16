@@ -7,10 +7,11 @@ import type { TournamentMatchFormat, MatchFormat } from '@badminton/shared';
 import { enterMatchResult, enterWalkover, voidMatch } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
+import type { TournamentEventRow, TournamentMatchRow } from '@/lib/tournament-types';
 
 interface Props {
-  match: any;
-  event: Record<string, unknown>;
+  match: TournamentMatchRow;
+  event: TournamentEventRow;
   nameMap: Record<string, string>;
   seedMap: Record<string, number>;
   isDoubles: boolean;
@@ -32,10 +33,10 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, on
 
   const aId = isDoubles ? match.pair_a_id : match.participant_a_id;
   const bId = isDoubles ? match.pair_b_id : match.participant_b_id;
-  const nameA = nameMap[aId] ?? 'Side A';
-  const nameB = nameMap[bId] ?? 'Side B';
-  const seedA = seedMap[aId];
-  const seedB = seedMap[bId];
+  const nameA = nameMap[aId ?? ''] ?? 'Side A';
+  const nameB = nameMap[bId ?? ''] ?? 'Side B';
+  const seedA = seedMap[aId ?? ''];
+  const seedB = seedMap[bId ?? ''];
 
   const [games, setGames] = useState<Array<{ a: string; b: string }>>(
     Array.from({ length: maxGames === 1 ? 1 : 2 }, () => ({ a: '', b: '' }))

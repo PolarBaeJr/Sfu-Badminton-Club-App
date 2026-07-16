@@ -9,12 +9,19 @@ import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { Crown, TrendingUp, TrendingDown, Medal, Undo2 } from 'lucide-react';
 import { getName } from './entry-name';
+import type {
+  TournamentEventRow,
+  TournamentMatchRow,
+  ParticipantWithPlayer,
+  PairWithPlayers,
+  GameScore,
+} from '@/lib/tournament-types';
 
 interface Props {
-  event: Record<string, unknown>;
-  participants: unknown[];
-  pairs: unknown[];
-  matches: unknown[];
+  event: TournamentEventRow;
+  participants: ParticipantWithPlayer[];
+  pairs: PairWithPlayers[];
+  matches: TournamentMatchRow[];
   isDoubles: boolean;
 }
 
@@ -33,10 +40,10 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
   const { toast } = useToast();
   const router = useRouter();
 
-  const entries = (isDoubles ? pairs : participants) as any[];
+  const entries: Array<ParticipantWithPlayer | PairWithPlayers> = isDoubles ? pairs : participants;
   const eventType = event.event_type as TournamentEventType;
   const bonuses = isDoubles ? PLACEMENT_BONUSES.doubles : PLACEMENT_BONUSES.singles;
-  const completedMatchList = (matches as any[]).filter((m: any) => m.status === 'completed' || m.status === 'walkover');
+  const completedMatchList = matches.filter((m) => m.status === 'completed' || m.status === 'walkover');
 
   async function handleUndo() {
     if (!undoConfirmId) return;
@@ -54,27 +61,31 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
 
   // Sort by final position
   const ranked = entries
-    .filter((e: any) => e.final_position)
-    .sort((a: any, b: any) => a.final_position - b.final_position);
+    .filter((e) => e.final_position)
+    .sort((a, b) => (a.final_position ?? 0) - (b.final_position ?? 0));
 
-  const unranked = entries.filter((e: any) => !e.final_position);
+  const unranked = entries.filter((e) => !e.final_position);
 
-  const totalMatches = (matches as any[]).length;
-  const completedMatches = (matches as any[]).filter((m: any) => m.status === 'completed' || m.status === 'walkover').length;
+  const totalMatches = matches.length;
+  const completedMatches = matches.filter((m) => m.status === 'completed' || m.status === 'walkover').length;
+
+  const champion = ranked[0];
+  // Singles-only Elo fields — only read when !isDoubles.
+  const championSingles = champion as ParticipantWithPlayer | undefined;
 
   return (
     <div className="space-y-6">
       {/* Champion card */}
-      {ranked.length > 0 && ranked[0].final_position === 1 && (
+      {champion && champion.final_position === 1 && (
         <div className="rounded-xl border-2 border-[#FFD700]/30 bg-gradient-to-r from-[#FFD700]/5 to-transparent p-6 text-center">
           <Crown className="w-8 h-8 mx-auto mb-2 text-[#FFD700]" />
           <h2 className="text-2xl font-bold text-[#FFD700] font-display">CHAMPION</h2>
           <p className="text-lg text-[var(--text-primary)] font-semibold mt-1">
-            {getName(ranked[0], isDoubles)}
+            {getName(champion, isDoubles)}
           </p>
-          {!isDoubles && ranked[0].elo_change !== null && (
+          {!isDoubles && championSingles && championSingles.elo_change !== null && (
             <p className="text-sm text-[var(--color-success)] mt-1">
-              Elo: {ranked[0].elo_before} → {ranked[0].elo_after} ({ranked[0].elo_change > 0 ? '+' : ''}{ranked[0].elo_change})
+              Elo: {championSingles.elo_before} → {championSingles.elo_after} ({championSingles.elo_change > 0 ? '+' : ''}{championSingles.elo_change})
             </p>
           )}
         </div>
@@ -105,8 +116,10 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
             </tr>
           </thead>
           <tbody>
-            {ranked.map((e: any) => {
-              const pos = e.final_position;
+            {ranked.map((e) => {
+              // Singles-only Elo fields — only read when !isDoubles.
+              const p = e as ParticipantWithPlayer;
+              const pos = e.final_position as number;
               const label = POSITION_LABELS[pos] ?? `#${pos}`;
               const color = POSITION_COLORS[pos] ?? 'var(--text-muted)';
               const bonus = pos === 1 ? bonuses.champion
@@ -121,18 +134,18 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
                   </td>
                   <td className="px-4 py-2.5">
                     <div className="flex items-center gap-2">
-                      {!isDoubles && <Avatar name={e.player?.full_name ?? ''} src={e.player?.avatar_url} size="sm" />}
+                      {!isDoubles && <Avatar name={p.player?.full_name ?? ''} src={p.player?.avatar_url} size="sm" />}
                       <span className="text-sm font-medium text-[var(--text-primary)]">{getName(e, isDoubles)}</span>
                     </div>
                   </td>
                   {!isDoubles && (
                     <>
-                      <td className="px-3 py-2.5 text-sm text-center font-mono text-[var(--text-muted)]">{e.elo_before ?? '-'}</td>
-                      <td className="px-3 py-2.5 text-sm text-center font-mono text-[var(--text-primary)]">{e.elo_after ?? '-'}</td>
+                      <td className="px-3 py-2.5 text-sm text-center font-mono text-[var(--text-muted)]">{p.elo_before ?? '-'}</td>
+                      <td className="px-3 py-2.5 text-sm text-center font-mono text-[var(--text-primary)]">{p.elo_after ?? '-'}</td>
                       <td className="px-3 py-2.5 text-sm text-center font-mono">
-                        {e.elo_change !== null && e.elo_change !== undefined ? (
-                          <span className={e.elo_change > 0 ? 'text-[var(--color-success)]' : e.elo_change < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--text-muted)]'}>
-                            <span className="sr-only">{e.elo_change > 0 ? 'Gained' : e.elo_change < 0 ? 'Lost' : 'No change'}: </span>{e.elo_change > 0 ? '+' : ''}{e.elo_change}
+                        {p.elo_change !== null && p.elo_change !== undefined ? (
+                          <span className={p.elo_change > 0 ? 'text-[var(--color-success)]' : p.elo_change < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--text-muted)]'}>
+                            <span className="sr-only">{p.elo_change > 0 ? 'Gained' : p.elo_change < 0 ? 'Lost' : 'No change'}: </span>{p.elo_change > 0 ? '+' : ''}{p.elo_change}
                           </span>
                         ) : '-'}
                       </td>
@@ -160,9 +173,9 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
             <h3 className="text-sm font-semibold text-[var(--text-primary)]">Completed Matches</h3>
           </div>
           <div className="divide-y divide-[var(--border)]">
-            {completedMatchList.map((m: any) => {
-              const scores = (m.scores as Array<{ a: number; b: number }>) ?? [];
-              const scoreStr = scores.map((s: { a: number; b: number }) => `${s.a}-${s.b}`).join(', ');
+            {completedMatchList.map((m) => {
+              const scores = (m.scores as GameScore[] | null) ?? [];
+              const scoreStr = scores.map((s) => `${s.a}-${s.b}`).join(', ');
               return (
                 <div key={m.id} className="px-4 py-2.5 flex items-center justify-between">
                   <div className="text-sm text-[var(--text-primary)]">

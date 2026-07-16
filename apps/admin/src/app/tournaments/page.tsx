@@ -1,15 +1,16 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge } from '@badminton/ui';
-import { formatDate } from '@badminton/shared';
+import { formatDate, pickOne } from '@badminton/shared';
 import { CreateTournamentForm, TournamentMenu } from './actions';
+import type { TournamentWithEventCount } from '@/lib/tournament-types';
 import Link from 'next/link';
 import { Trophy, Users, Calendar, Zap, Archive } from 'lucide-react';
 
 export default async function TournamentsPage() {
   const supabase = createAdminClient();
 
-  let tournaments: any[] | null = null;
+  let tournaments: TournamentWithEventCount[] | null = null;
   const { data: tournamentsWithEvents } = await supabase
     .from('tournaments')
     .select('*, tournament_events(count)')
@@ -85,8 +86,8 @@ export default async function TournamentsPage() {
   );
 }
 
-function TournamentCard({ t }: { t: any }) {
-  const eventCount = Array.isArray(t.tournament_events) ? t.tournament_events[0]?.count ?? 0 : (t.tournament_events as any)?.count ?? 0;
+function TournamentCard({ t }: { t: TournamentWithEventCount }) {
+  const eventCount = pickOne(t.tournament_events)?.count ?? 0;
 
   return (
     <Link href={`/tournaments/${t.id}`} style={{ textDecoration: 'none' }}>

@@ -4,11 +4,12 @@ import { useState } from 'react';
 import { Button, Avatar } from '@badminton/ui';
 import { Download, ArrowUpDown } from 'lucide-react';
 import { getName } from './entry-name';
+import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';
 
 interface Props {
-  event: Record<string, unknown>;
-  participants: unknown[];
-  pairs: unknown[];
+  event: TournamentEventRow;
+  participants: ParticipantWithPlayer[];
+  pairs: PairWithPlayers[];
   isDoubles: boolean;
 }
 
@@ -19,21 +20,25 @@ export function LeaderboardTab({ event, participants, pairs, isDoubles }: Props)
   const [sortField, setSortField] = useState<SortField>('position');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
 
-  const entries = (isDoubles ? pairs : participants) as any[];
+  const entries: Array<ParticipantWithPlayer | PairWithPlayers> = isDoubles ? pairs : participants;
 
   const ranked = entries
-    .filter((e: any) => e.final_position != null)
-    .map((e: any, idx: number) => ({
-      id: e.id,
-      rank: e.final_position as number,
-      name: getName(e, isDoubles),
-      seed: e.seed_number as number | null,
-      position: e.final_position as number,
-      points: e.points as number ?? 0,
-      elo_change: isDoubles ? null : (e.elo_change as number | null),
-      elo_before: isDoubles ? null : (e.elo_before as number | null),
-      elo_after: isDoubles ? null : (e.elo_after as number | null),
-    }));
+    .filter((e) => e.final_position != null)
+    .map((e) => {
+      // Singles-only Elo fields — only read when !isDoubles.
+      const p = e as ParticipantWithPlayer;
+      return {
+        id: e.id,
+        rank: e.final_position as number,
+        name: getName(e, isDoubles),
+        seed: e.seed_number,
+        position: e.final_position as number,
+        points: e.points ?? 0,
+        elo_change: isDoubles ? null : p.elo_change,
+        elo_before: isDoubles ? null : p.elo_before,
+        elo_after: isDoubles ? null : p.elo_after,
+      };
+    });
 
   // Sort
   ranked.sort((a, b) => {
@@ -79,7 +84,7 @@ export function LeaderboardTab({ event, participants, pairs, isDoubles }: Props)
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    const eventName = (event.event_type as string || 'event').replace(/[^a-z0-9]/gi, '-');
+    const eventName = (event.event_type || 'event').replace(/[^a-z0-9]/gi, '-');
     a.download = `leaderboard-${eventName}.csv`;
     a.click();
     URL.revokeObjectURL(url);
