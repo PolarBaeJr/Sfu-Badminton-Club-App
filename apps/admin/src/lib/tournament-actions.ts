@@ -1915,7 +1915,7 @@ export async function finalizeEvent(eventId: string) {
 // Round Robin Standings (utility)
 // ============================================================
 
-export async function computeRoundRobinStandings(eventId: string) {
+async function computeRoundRobinStandings(eventId: string) {
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();

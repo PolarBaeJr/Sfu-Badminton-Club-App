@@ -28,6 +28,8 @@ export const profileSchema = z.object({
   display_name: displayNameSchema,
   phone: phoneSchema,
   bio: z.string().max(500).optional(),
+  hide_from_leaderboard: z.boolean().optional(),
+  show_activity_status: z.boolean().optional(),
 });
 
 export const challengeCreateSchema = z.object({
@@ -107,7 +109,9 @@ export const disputeSchema = z.object({
 export const sessionCreateSchema = z.object({
   name: z.string().min(2),
   date: z.string(),
+  time: isoTimeSchema,
   location: z.string().min(2),
+  notes: z.string().max(500).optional(),
   season_id: z.string().uuid().optional(),
 });
 
@@ -152,6 +156,38 @@ export const disputeResolveSchema = z.object({
   }
 });
 
+export const adminPlayerCreateSchema = z.object({
+  full_name: z.string().min(2, 'Name must be at least 2 characters').max(80),
+  email: z.string().email('Invalid email address'),
+  status: z.enum([
+    'competitive', 'recreational', 'suspended', 'pending_approval',
+  ]).optional(),
+  role: z.enum(['player', 'admin']).optional(),
+});
+
+export const adminMatchCreateSchema = z.object({
+  match_type: z.enum(['singles', 'doubles']),
+  format: z.enum(['bo3_21', 'single_21', 'single_15', 'single_11']),
+  rated_flag: z.boolean(),
+  side_a_players: z.array(z.string().uuid()).min(1).max(2),
+  side_b_players: z.array(z.string().uuid()).min(1).max(2),
+  winner_side: z.enum(['a', 'b']),
+  games: z.array(matchGameSchema).min(1).max(3),
+  admin_note: z.string().max(500).optional(),
+});
+
+export const announcementSchema = z.object({
+  title: z.string().min(1, 'Title is required').max(200),
+  body: z.string().min(1, 'Body is required').max(5000),
+  type: z.enum(['info', 'warning', 'urgent', 'event']),
+  target_audience: z.enum(['all', 'competitive', 'recreational', 'eligible_only']),
+  pinned: z.boolean(),
+  send_push: z.boolean(),
+  status: z.enum(['draft', 'published']),
+  // Edit forms round-trip the stored timestamptz, so this is looser than isoDateSchema.
+  expires_at: z.string().optional(),
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type ProfileInput = z.infer<typeof profileSchema>;
 export type ChallengeCreateInput = z.infer<typeof challengeCreateSchema>;
@@ -162,3 +198,6 @@ export type TournamentCreateInput = z.infer<typeof tournamentCreateSchema>;
 export type AdminPlayerUpdateInput = z.infer<typeof adminPlayerUpdateSchema>;
 export type WalkoverReportInput = z.infer<typeof walkoverReportSchema>;
 export type DisputeResolveInput = z.infer<typeof disputeResolveSchema>;
+export type AdminPlayerCreateInput = z.infer<typeof adminPlayerCreateSchema>;
+export type AdminMatchCreateInput = z.infer<typeof adminMatchCreateSchema>;
+export type AnnouncementInput = z.infer<typeof announcementSchema>;

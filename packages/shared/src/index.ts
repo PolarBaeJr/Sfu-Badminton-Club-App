@@ -7,5 +7,6 @@ export * from './utils/tags';
 export * from './utils/theme';
 export * from './utils/rate-limit';
 export * from './validators/schemas';
+export * from './validators/parse';
 export * from './email/templates';
 export * from './email/sender';

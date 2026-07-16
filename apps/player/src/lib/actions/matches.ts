@@ -10,6 +10,9 @@ import {
   getFormatWeight,
   getEventMultiplier,
   matchResultSchema,
+  disputeSchema,
+  walkoverReportSchema,
+  parseOrThrow,
   type MatchResultInput,
   type WalkoverReportInput,
 } from '@badminton/shared';
@@ -207,6 +210,7 @@ export async function confirmMatchResult(matchId: string) {
 }
 
 export async function disputeMatchResult(matchId: string, reason: string, category: string) {
+  parseOrThrow(disputeSchema, { match_id: matchId, reason_category: category, description: reason });
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 
@@ -243,6 +247,7 @@ export async function disputeMatchResult(matchId: string, reason: string, catego
 }
 
 export async function reportWalkover(input: WalkoverReportInput) {
+  parseOrThrow(walkoverReportSchema, input);
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 

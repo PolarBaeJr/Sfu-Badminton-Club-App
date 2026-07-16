@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { profileSchema, parseOrThrow } from '@badminton/shared';
 import { createServerSupabaseClient, getCurrentPlayer } from '../supabase-server';
 import { requirePlayer } from './_shared';
 
@@ -12,6 +13,7 @@ export async function updateProfile(data: {
   hide_from_leaderboard?: boolean;
   show_activity_status?: boolean;
 }) {
+  parseOrThrow(profileSchema, data);
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 
@@ -35,6 +37,7 @@ export async function updateProfile(data: {
 }
 
 export async function completeOnboarding(data: { full_name: string; display_name?: string; phone?: string }) {
+  parseOrThrow(profileSchema, data);
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');

@@ -8,11 +8,14 @@ import {
   sendChallengeAcceptedEmail,
   sendChallengeRejectedEmail,
   MATCH_FORMAT_LABELS,
+  challengeCreateSchema,
+  parseOrThrow,
   type ChallengeCreateInput,
 } from '@badminton/shared';
 import { requirePlayer, getPlayerProps, trackServerEvent } from './_shared';
 
 export async function createChallenge(input: ChallengeCreateInput) {
+  parseOrThrow(challengeCreateSchema, input);
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 

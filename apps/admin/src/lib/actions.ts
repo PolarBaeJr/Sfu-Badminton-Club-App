@@ -3,9 +3,17 @@
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient, getAuthenticatedAdmin } from './supabase-server';
 import { revalidatePath } from 'next/cache';
-import type {
-  AdminPlayerUpdateInput,
-  DisputeResolveInput,
+import {
+  parseOrThrow,
+  adminPlayerCreateSchema,
+  adminPlayerUpdateSchema,
+  adminMatchCreateSchema,
+  disputeResolveSchema,
+  tournamentCreateSchema,
+  sessionCreateSchema,
+  announcementSchema,
+  type AdminPlayerUpdateInput,
+  type DisputeResolveInput,
 } from '@badminton/shared';
 
 async function getAdminPlayer() {
@@ -57,6 +65,7 @@ export async function createPlayer(data: {
   status: string;
   role?: string;
 }) {
+  parseOrThrow(adminPlayerCreateSchema, data);
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
@@ -103,6 +112,7 @@ export async function createPlayer(data: {
 }
 
 export async function updatePlayer(playerId: string, data: AdminPlayerUpdateInput) {
+  parseOrThrow(adminPlayerUpdateSchema, data);
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
@@ -256,6 +266,7 @@ export async function convertMatchToCasual(matchId: string, reason: string) {
 // ============================================================
 
 export async function resolveDispute(data: DisputeResolveInput) {
+  parseOrThrow(disputeResolveSchema, data);
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
@@ -456,6 +467,7 @@ export async function createTournament(data: {
   event_multiplier: number;
   placement_bonus_enabled: boolean;
 }) {
+  parseOrThrow(tournamentCreateSchema, data);
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
@@ -792,6 +804,7 @@ export async function adminCreateMatch(data: {
   games: { game_number: number; side_a_score: number; side_b_score: number }[];
   admin_note?: string;
 }) {
+  parseOrThrow(adminMatchCreateSchema, data);
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
   const { getFormatWeight } = await import('@badminton/shared');
@@ -992,6 +1005,7 @@ export async function createSession(data: {
   location: string;
   notes?: string;
 }) {
+  parseOrThrow(sessionCreateSchema, data);
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
@@ -1136,6 +1150,7 @@ export async function createAnnouncement(data: {
   status: 'draft' | 'published';
   expires_at?: string;
 }) {
+  parseOrThrow(announcementSchema, data);
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
@@ -1180,6 +1195,7 @@ export async function updateAnnouncement(announcementId: string, data: {
   status: 'draft' | 'published';
   expires_at?: string;
 }) {
+  parseOrThrow(announcementSchema, data);
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
