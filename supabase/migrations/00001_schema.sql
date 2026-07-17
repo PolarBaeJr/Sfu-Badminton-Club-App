@@ -171,6 +171,8 @@ CREATE TABLE players (
   onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE,
   avatar_url TEXT,
   bio TEXT,
+  -- Executive-team title shown on the public /exec page (e.g. 'President').
+  exec_title TEXT,
   profile_visibility TEXT NOT NULL DEFAULT 'public',
   hide_from_leaderboard BOOLEAN NOT NULL DEFAULT FALSE,
   show_activity_status BOOLEAN NOT NULL DEFAULT TRUE,
@@ -220,9 +222,17 @@ CREATE TABLE seasons (
   start_date DATE NOT NULL,
   end_date DATE,
   active_flag BOOLEAN NOT NULL DEFAULT FALSE,
+  -- Flat per-status club fees (cents) charged for this season. Players owe the
+  -- amount matching their status; exec/fee_exempt players are excluded.
+  competitive_fee_cents INTEGER NOT NULL DEFAULT 0,
+  recreational_fee_cents INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Session training track: which player status a session is aimed at.
+-- 'all' sessions are open to everyone.
+CREATE TYPE session_group AS ENUM ('competitive', 'recreational', 'all');
 
 -- Sessions
 CREATE TABLE sessions (
@@ -233,6 +243,7 @@ CREATE TABLE sessions (
   location TEXT NOT NULL,
   host_player_id UUID REFERENCES players(id) ON DELETE SET NULL,
   status session_status NOT NULL DEFAULT 'open',
+  track session_group NOT NULL DEFAULT 'all',
   notes TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -520,31 +531,23 @@ CREATE TABLE reliability_metrics (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Terms — billing periods (e.g. '2026 Summer') that club fees attach to.
-CREATE TABLE terms (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  label TEXT NOT NULL UNIQUE,
-  season TEXT NOT NULL CHECK (season IN ('Spring','Summer','Fall')),
-  year INTEGER NOT NULL,
-  default_fee_cents INTEGER NOT NULL DEFAULT 0,
-  active BOOLEAN NOT NULL DEFAULT FALSE,
-  sort_order INTEGER NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(season, year)
-);
-
--- Club Fees — one row per (player, term) tracking club-fee payment.
+-- Club Fees — one row per (player, season) tracking club-fee payment.
 -- Purely administrative: no effect on gameplay, ratings, or leaderboards.
+-- A row is either for a real player (player_id set, manual_name null) or a
+-- manual entry for someone who paid without an account (manual_name set,
+-- player_id null). The CHECK enforces exactly one of the two.
 CREATE TABLE club_fees (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  player_id UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
-  term_id UUID NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
+  player_id UUID REFERENCES players(id) ON DELETE CASCADE,
+  manual_name TEXT,
+  season_id UUID NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
   amount_cents INTEGER,
   paid_at TIMESTAMPTZ,
   marked_by UUID REFERENCES players(id),
   method TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(player_id, term_id)
+  CHECK (num_nonnulls(player_id, manual_name) = 1),
+  UNIQUE(player_id, season_id)
 );
 
 -- Reinstatement Fees — one-off fees charged to lift a player ban.

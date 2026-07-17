@@ -11,7 +11,9 @@ import {
   walkoverReportSchema,
   disputeResolveSchema,
   feeMarkSchema,
-  termSchema,
+  seasonFeeSchema,
+  sessionGroupSchema,
+  manualFeeSchema,
   feeTierSchema,
   tournamentFeeMarkSchema,
   reinstatementSchema,
@@ -322,14 +324,14 @@ describe('walkoverReportSchema', () => {
 describe('feeMarkSchema', () => {
   it('accepts a minimal valid input', () => {
     expect(
-      feeMarkSchema.safeParse({ player_id: UUID_A, term_id: UUID_B }).success,
+      feeMarkSchema.safeParse({ player_id: UUID_A, season_id: UUID_B }).success,
     ).toBe(true);
   });
   it('accepts optional amount_cents and method', () => {
     expect(
       feeMarkSchema.safeParse({
         player_id: UUID_A,
-        term_id: UUID_B,
+        season_id: UUID_B,
         amount_cents: 1500,
         method: 'e-transfer',
       }).success,
@@ -337,51 +339,89 @@ describe('feeMarkSchema', () => {
   });
   it('rejects a non-UUID player_id', () => {
     expect(
-      feeMarkSchema.safeParse({ player_id: 'not-a-uuid', term_id: UUID_B }).success,
+      feeMarkSchema.safeParse({ player_id: 'not-a-uuid', season_id: UUID_B }).success,
     ).toBe(false);
   });
-  it('rejects a non-UUID term_id', () => {
-    expect(feeMarkSchema.safeParse({ player_id: UUID_A, term_id: 'not-a-uuid' }).success).toBe(false);
+  it('rejects a non-UUID season_id', () => {
+    expect(feeMarkSchema.safeParse({ player_id: UUID_A, season_id: 'not-a-uuid' }).success).toBe(false);
   });
   it('rejects a non-positive or fractional amount_cents', () => {
     expect(
-      feeMarkSchema.safeParse({ player_id: UUID_A, term_id: UUID_B, amount_cents: 0 }).success,
+      feeMarkSchema.safeParse({ player_id: UUID_A, season_id: UUID_B, amount_cents: 0 }).success,
     ).toBe(false);
     expect(
-      feeMarkSchema.safeParse({ player_id: UUID_A, term_id: UUID_B, amount_cents: -100 }).success,
+      feeMarkSchema.safeParse({ player_id: UUID_A, season_id: UUID_B, amount_cents: -100 }).success,
     ).toBe(false);
     expect(
-      feeMarkSchema.safeParse({ player_id: UUID_A, term_id: UUID_B, amount_cents: 15.5 }).success,
+      feeMarkSchema.safeParse({ player_id: UUID_A, season_id: UUID_B, amount_cents: 15.5 }).success,
     ).toBe(false);
   });
   it('rejects a method longer than 40 chars', () => {
     expect(
       feeMarkSchema.safeParse({
         player_id: UUID_A,
-        term_id: UUID_B,
+        season_id: UUID_B,
         method: 'x'.repeat(41),
       }).success,
     ).toBe(false);
   });
 });
 
-describe('termSchema', () => {
-  const base = {
-    label: '2026 Summer',
-    season: 'Summer' as const,
-    year: 2026,
-    default_fee_cents: 1500,
-    active: true,
-    sort_order: 0,
-  };
-  it('accepts a valid term', () => {
-    expect(termSchema.safeParse(base).success).toBe(true);
+describe('seasonFeeSchema', () => {
+  it('accepts non-negative integer fees', () => {
+    expect(
+      seasonFeeSchema.safeParse({ competitive_fee_cents: 4000, recreational_fee_cents: 0 }).success,
+    ).toBe(true);
   });
-  it('rejects an unknown season', () => {
-    expect(termSchema.safeParse({ ...base, season: 'Winter' }).success).toBe(false);
+  it('rejects a negative fee', () => {
+    expect(
+      seasonFeeSchema.safeParse({ competitive_fee_cents: -1, recreational_fee_cents: 0 }).success,
+    ).toBe(false);
   });
-  it('rejects a negative default_fee_cents', () => {
-    expect(termSchema.safeParse({ ...base, default_fee_cents: -1 }).success).toBe(false);
+  it('rejects a fractional fee', () => {
+    expect(
+      seasonFeeSchema.safeParse({ competitive_fee_cents: 40.5, recreational_fee_cents: 0 }).success,
+    ).toBe(false);
+  });
+});
+
+describe('sessionGroupSchema', () => {
+  it('accepts the known groups', () => {
+    expect(sessionGroupSchema.safeParse('competitive').success).toBe(true);
+    expect(sessionGroupSchema.safeParse('recreational').success).toBe(true);
+    expect(sessionGroupSchema.safeParse('all').success).toBe(true);
+  });
+  it('rejects an unknown group', () => {
+    expect(sessionGroupSchema.safeParse('varsity').success).toBe(false);
+  });
+});
+
+describe('manualFeeSchema', () => {
+  it('accepts a name against a season', () => {
+    expect(
+      manualFeeSchema.safeParse({ season_id: UUID_A, manual_name: 'Jane Doe' }).success,
+    ).toBe(true);
+  });
+  it('accepts optional amount_cents and method', () => {
+    expect(
+      manualFeeSchema.safeParse({
+        season_id: UUID_A,
+        manual_name: 'Jane Doe',
+        amount_cents: 2500,
+        method: 'cash',
+      }).success,
+    ).toBe(true);
+  });
+  it('rejects an empty name', () => {
+    expect(manualFeeSchema.safeParse({ season_id: UUID_A, manual_name: '' }).success).toBe(false);
+  });
+  it('rejects a name longer than 80 chars', () => {
+    expect(
+      manualFeeSchema.safeParse({ season_id: UUID_A, manual_name: 'x'.repeat(81) }).success,
+    ).toBe(false);
+  });
+  it('rejects a non-UUID season_id', () => {
+    expect(manualFeeSchema.safeParse({ season_id: 'nope', manual_name: 'Jane' }).success).toBe(false);
   });
 });
 

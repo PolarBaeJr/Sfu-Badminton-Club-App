@@ -40,6 +40,20 @@ export async function createServerSupabaseClient() {
   );
 }
 
+// The active season's public info (name + per-status fees), or null if none is
+// active. Uses the anon-safe get_active_season() RPC so it works the same in
+// authenticated and logged-out contexts.
+export async function getActiveSeason(): Promise<{
+  id: string;
+  name: string;
+  competitive_fee_cents: number;
+  recreational_fee_cents: number;
+} | null> {
+  const supabase = await createServerSupabaseClient();
+  const { data } = await supabase.rpc('get_active_season');
+  return data?.[0] ?? null;
+}
+
 export async function getCurrentPlayer() {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();

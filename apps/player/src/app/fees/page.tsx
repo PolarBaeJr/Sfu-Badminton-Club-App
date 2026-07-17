@@ -1,11 +1,10 @@
-import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getCurrentPlayer, getActiveSeason } from '@/lib/supabase-server';
 import { unwrap, unwrapMaybe } from '@badminton/shared';
 import { redirect } from 'next/navigation';
 import { PageHeader } from '@badminton/ui';
 
 // The player supabase client is untyped, so column-list selects resolve to
 // `never` — annotate the unwrap helpers with the row shape we expect.
-type TermRow = { id: string; label: string; default_fee_cents: number };
 type ClubFeeRow = { amount_cents: number | null; paid_at: string | null };
 type EventRefRow = { event: { tournament_id: string } | { tournament_id: string }[] | null };
 type TournamentRow = { id: string; name: string };
@@ -42,22 +41,25 @@ export default async function FeesPage() {
   const supabase = await createServerSupabaseClient();
   const exempt = player.is_exec || player.fee_exempt;
 
-  // Club dues — active term + this player's paid row for it.
-  const termRes = exempt
-    ? null
-    : await supabase.from('terms').select('id, label, default_fee_cents').eq('active', true).maybeSingle();
-  const term = termRes ? unwrapMaybe<TermRow>(termRes) : null;
-  const clubFeeRes = term
+  // Club dues — active season + this player's paid row for it. The amount owed
+  // follows the player's status (competitive vs recreational season fee).
+  const season = exempt ? null : await getActiveSeason();
+  const seasonFeeCents = season
+    ? player.status === 'competitive'
+      ? season.competitive_fee_cents
+      : season.recreational_fee_cents
+    : null;
+  const clubFeeRes = season
     ? await supabase
         .from('club_fees')
         .select('amount_cents, paid_at')
         .eq('player_id', player.id)
-        .eq('term_id', term.id)
+        .eq('season_id', season.id)
         .maybeSingle()
     : null;
   const clubFee = clubFeeRes ? unwrapMaybe<ClubFeeRow>(clubFeeRes) : null;
   const clubPaid = clubFee?.paid_at != null;
-  const clubOwedCents = clubPaid ? clubFee?.amount_cents ?? null : term?.default_fee_cents ?? null;
+  const clubOwedCents = clubPaid ? clubFee?.amount_cents ?? null : seasonFeeCents;
 
   // Competition dues — tournaments the player is entered in (singles + doubles).
   const competitionRows: { id: string; name: string; owedCents: number | null; paid: boolean }[] = [];
@@ -169,7 +171,7 @@ export default async function FeesPage() {
               <div className="card-head">
                 <h3 className="card-title">Club dues</h3>
               </div>
-              {term ? (
+              {season ? (
                 <div
                   className="row"
                   style={{
@@ -181,13 +183,13 @@ export default async function FeesPage() {
                   }}
                 >
                   <div>
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>{term.label}</div>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>{season.name}</div>
                     <div className="mono muted" style={{ fontSize: 11 }}>{money(clubOwedCents)}</div>
                   </div>
                   <StatusPill paid={clubPaid} />
                 </div>
               ) : (
-                <p className="muted" style={{ fontSize: 13 }}>No active term — nothing due.</p>
+                <p className="muted" style={{ fontSize: 13 }}>No active season — nothing due.</p>
               )}
             </div>
 

@@ -3,6 +3,7 @@
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
+import { parseOrThrow, seasonFeeSchema, type SeasonFeeInput } from '@badminton/shared';
 import { getAdminPlayer } from './_shared';
 
 export async function createSeason(data: { name: string; start_date: string; end_date?: string }) {
@@ -27,6 +28,39 @@ export async function createSeason(data: { name: string; start_date: string; end
   });
 
   revalidatePath('/seasons');
+}
+
+export async function updateSeasonFees(seasonId: string, fees: SeasonFeeInput) {
+  parseOrThrow(seasonFeeSchema, fees);
+  const admin = await getAdminPlayer();
+  const adminClient = createAdminClient();
+
+  const { data: old } = await adminClient
+    .from('seasons')
+    .select('competitive_fee_cents, recreational_fee_cents')
+    .eq('id', seasonId)
+    .single();
+
+  const { error } = await adminClient
+    .from('seasons')
+    .update({
+      competitive_fee_cents: fees.competitive_fee_cents,
+      recreational_fee_cents: fees.recreational_fee_cents,
+    })
+    .eq('id', seasonId);
+  if (error) throw new Error(error.message);
+
+  await logAdminAudit(adminClient, {
+    actor_id: admin.id,
+    action_type: 'season_fees_updated',
+    target_type: 'season',
+    target_id: seasonId,
+    old_value: old,
+    new_value: fees,
+  }, { seasonId });
+
+  revalidatePath('/seasons');
+  revalidatePath('/fees');
 }
 
 export async function setActiveSeason(seasonId: string) {

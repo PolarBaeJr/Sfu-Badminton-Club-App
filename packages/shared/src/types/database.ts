@@ -110,6 +110,7 @@ export interface Player {
   onboarding_completed: boolean;
   avatar_url: string | null;
   bio: string | null;
+  exec_title: string | null;
   joined_at: string;
   last_active_at: string;
   created_at: string;
@@ -153,9 +154,13 @@ export interface Season {
   start_date: string;
   end_date: string | null;
   active_flag: boolean;
+  competitive_fee_cents: number;
+  recreational_fee_cents: number;
   created_at: string;
   updated_at: string;
 }
+
+export type SessionGroup = 'competitive' | 'recreational' | 'all';
 
 export interface Session {
   id: string;
@@ -165,6 +170,7 @@ export interface Session {
   location: string;
   host_player_id: string | null;
   status: SessionStatus;
+  track: SessionGroup;
   notes: string | null;
   created_at: string;
   updated_at: string;
@@ -420,21 +426,11 @@ export interface ReliabilityMetrics {
   updated_at: string;
 }
 
-export interface Term {
-  id: string;
-  label: string;
-  season: 'Spring' | 'Summer' | 'Fall';
-  year: number;
-  default_fee_cents: number;
-  active: boolean;
-  sort_order: number;
-  created_at: string;
-}
-
 export interface ClubFee {
   id: string;
-  player_id: string;
-  term_id: string;
+  player_id: string | null;
+  manual_name: string | null;
+  season_id: string;
   amount_cents: number | null;
   paid_at: string | null;
   marked_by: string | null;

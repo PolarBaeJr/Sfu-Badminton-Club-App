@@ -29,10 +29,12 @@ export function TopBar({
   playerName,
   unreadCount,
   isAuthenticated,
+  activeSeasonName,
 }: {
   playerName: string;
   unreadCount: number;
   isAuthenticated: boolean;
+  activeSeasonName?: string;
 }) {
   const pathname = usePathname();
   const initials = (playerName || 'You')
@@ -50,7 +52,7 @@ export function TopBar({
           <div className="brand-mark">SB</div>
           <div className="brand-wrap">
             <div>SFU Badminton</div>
-            <div className="brand-sub">Club · Season 26</div>
+            {activeSeasonName && <div className="brand-sub">{activeSeasonName}</div>}
           </div>
         </Link>
 

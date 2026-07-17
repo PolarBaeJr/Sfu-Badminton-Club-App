@@ -12,7 +12,6 @@
 //   - sessions.ts      — session CRUD
 //   - announcements.ts — announcement CRUD
 //   - fees.ts          — exec/exempt player flags + club-fee tracking
-//   - terms.ts         — fee terms CRUD + active-term selection
 //   - tournament-fees.ts — tournament fee tiers + per-player entry-fee tracking
 //   - reinstatement.ts — player ban / reinstatement (with reinstatement fee)
 //   - varsity.ts       — varsity notes
@@ -53,6 +52,7 @@ export {
 
 export {
   createSeason,
+  updateSeasonFees,
   setActiveSeason,
   endSeason,
 } from './actions/seasons';
@@ -74,14 +74,9 @@ export {
   updatePlayerFlags,
   markFeePaid,
   markFeeUnpaid,
+  addManualFee,
+  removeManualFee,
 } from './actions/fees';
-
-export {
-  createTerm,
-  updateTerm,
-  setActiveTerm,
-  deleteTerm,
-} from './actions/terms';
 
 export {
   createFeeTier,

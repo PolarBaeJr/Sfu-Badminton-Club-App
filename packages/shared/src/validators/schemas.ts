@@ -178,18 +178,25 @@ export const adminMatchCreateSchema = z.object({
 
 export const feeMarkSchema = z.object({
   player_id: z.string().uuid(),
-  term_id: z.string().uuid(),
+  season_id: z.string().uuid(),
   amount_cents: z.number().int().positive().optional(),
   method: z.string().max(40).optional(),
 });
 
-export const termSchema = z.object({
-  label: z.string().min(1).max(60),
-  season: z.enum(['Spring', 'Summer', 'Fall']),
-  year: z.number().int(),
-  default_fee_cents: z.number().int().min(0),
-  active: z.boolean(),
-  sort_order: z.number().int(),
+export const seasonFeeSchema = z.object({
+  competitive_fee_cents: z.number().int().min(0),
+  recreational_fee_cents: z.number().int().min(0),
+});
+
+export const sessionGroupSchema = z.enum(['competitive', 'recreational', 'all']);
+
+// A manual fee entry: someone who paid the club fee without an account. The
+// admin records just a name against the active season.
+export const manualFeeSchema = z.object({
+  season_id: z.string().uuid(),
+  manual_name: z.string().min(1).max(80),
+  amount_cents: z.number().int().positive().optional(),
+  method: z.string().max(40).optional(),
 });
 
 export const feeTierSchema = z.object({
@@ -249,7 +256,9 @@ export type AdminPlayerCreateInput = z.infer<typeof adminPlayerCreateSchema>;
 export type AdminMatchCreateInput = z.infer<typeof adminMatchCreateSchema>;
 export type AnnouncementInput = z.infer<typeof announcementSchema>;
 export type FeeMarkInput = z.infer<typeof feeMarkSchema>;
-export type TermInput = z.infer<typeof termSchema>;
+export type SeasonFeeInput = z.infer<typeof seasonFeeSchema>;
+export type SessionGroupInput = z.infer<typeof sessionGroupSchema>;
+export type ManualFeeInput = z.infer<typeof manualFeeSchema>;
 export type FeeTierInput = z.infer<typeof feeTierSchema>;
 export type TournamentFeeMarkInput = z.infer<typeof tournamentFeeMarkSchema>;
 export type ReinstatementInput = z.infer<typeof reinstatementSchema>;

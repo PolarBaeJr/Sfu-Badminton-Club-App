@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge } from '@badminton/ui';
 import { formatDate } from '@badminton/shared';
-import { CreateSeasonForm, SeasonActions } from './actions';
+import { CreateSeasonForm, SeasonActions, SeasonFeesEditor } from './actions';
 import { Medal, Calendar, CheckCircle2, XCircle, Clock } from 'lucide-react';
 
 export default async function SeasonsPage() {
@@ -49,6 +49,9 @@ export default async function SeasonsPage() {
                   </th>
                   <th className="px-5 py-3.5 text-left text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
                     Status
+                  </th>
+                  <th className="px-5 py-3.5 text-left text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
+                    Fees
                   </th>
                   <th className="px-5 py-3.5 text-right text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
                     Actions
@@ -109,6 +112,13 @@ export default async function SeasonsPage() {
                           </span>
                         </Badge>
                       )}
+                    </td>
+                    <td className="px-5 py-4">
+                      <SeasonFeesEditor
+                        seasonId={s.id}
+                        competitiveFeeCents={s.competitive_fee_cents ?? 0}
+                        recreationalFeeCents={s.recreational_fee_cents ?? 0}
+                      />
                     </td>
                     <td className="px-5 py-4 text-right">
                       <SeasonActions seasonId={s.id} isActive={s.active_flag} />

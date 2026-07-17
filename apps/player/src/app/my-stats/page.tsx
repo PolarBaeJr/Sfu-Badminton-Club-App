@@ -1,4 +1,4 @@
-import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getCurrentPlayer, getActiveSeason } from '@/lib/supabase-server';
 import { getWinRate, getOverallRecord, getStreakDisplay, getPointDifferential, formatDate } from '@badminton/shared';
 import { redirect } from 'next/navigation';
 import { AvatarChip, PageHeader } from '@badminton/ui';
@@ -8,6 +8,7 @@ export default async function MyStatsPage() {
   if (!player) redirect('/login');
 
   const supabase = await createServerSupabaseClient();
+  const activeSeason = await getActiveSeason();
   const r = Array.isArray(player.ratings) ? player.ratings[0] : player.ratings;
 
   const [reliabilityRes, recentMatchesRes, h2hRes, partnersRes] = await Promise.all([
@@ -59,7 +60,7 @@ export default async function MyStatsPage() {
   return (
     <div data-screen-label="My Stats">
       <PageHeader
-        eyebrow="PLAYER PROFILE · SEASON 26"
+        eyebrow={activeSeason ? `PLAYER PROFILE · ${activeSeason.name.toUpperCase()}` : 'PLAYER PROFILE'}
         title="My stats"
         sub="Your complete ledger across singles and doubles. Match history, head-to-head records, partnerships, and reliability."
       />

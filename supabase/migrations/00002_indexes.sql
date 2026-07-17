@@ -19,6 +19,7 @@ CREATE INDEX idx_ratings_player ON ratings(player_id);
 CREATE INDEX idx_sessions_date ON sessions(date);
 CREATE INDEX idx_sessions_status ON sessions(status);
 CREATE INDEX idx_sessions_season ON sessions(season_id);
+CREATE INDEX idx_sessions_group ON sessions(track);
 
 -- Session Attendance
 CREATE INDEX idx_attendance_session ON session_attendance(session_id);
@@ -104,10 +105,9 @@ CREATE INDEX idx_snapshots_player ON season_snapshots(player_id);
 CREATE INDEX idx_reliability_player ON reliability_metrics(player_id);
 CREATE INDEX idx_reliability_noshows ON reliability_metrics(no_shows);
 
--- Club Fees (fee-collection list is filtered by term)
-CREATE INDEX idx_club_fees_term ON club_fees(term_id);
+-- Club Fees (fee-collection list is filtered by season)
+CREATE INDEX idx_club_fees_season ON club_fees(season_id);
 CREATE INDEX idx_club_fees_player ON club_fees(player_id);
-CREATE INDEX idx_terms_active ON terms(active);
 CREATE INDEX idx_tournament_fee_tiers_tournament ON tournament_fee_tiers(tournament_id);
 CREATE UNIQUE INDEX uq_tournament_fee_tiers_default ON tournament_fee_tiers(tournament_id) WHERE is_default;
 CREATE INDEX idx_tournament_fees_tournament ON tournament_fees(tournament_id);

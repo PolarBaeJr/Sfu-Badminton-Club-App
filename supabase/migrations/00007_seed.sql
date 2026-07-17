@@ -3,6 +3,7 @@
 -- ============================================================
 -- Commented out for production — clean tables on reset.
 
--- Seed the current billing term (uncomment for local development):
--- INSERT INTO terms (label, season, year, default_fee_cents, active, sort_order)
---   VALUES ('2026 Summer','Summer',2026,1500,TRUE,0);
+-- Seed the current active season with per-status club fees
+-- (uncomment for local development):
+-- INSERT INTO seasons (name, start_date, active_flag, competitive_fee_cents, recreational_fee_cents)
+--   VALUES ('Season 27', CURRENT_DATE, TRUE, 4000, 2500);

@@ -1,43 +1,42 @@
+import Link from 'next/link';
 import { createAdminClient } from '@/lib/supabase-server';
 import { Badge, Card, Avatar, EmptyState } from '@badminton/ui';
-import { unwrap } from '@badminton/shared';
-import type { Term } from '@badminton/shared';
-import { TermSelector, FeeActions } from './fee-actions';
-import { TermsManager } from './terms-manager';
+import { unwrap, unwrapMaybe } from '@badminton/shared';
+import type { Season } from '@badminton/shared';
+import { FeeActions, AddManualFee, RemoveManualFee } from './fee-actions';
 
-export default async function FeesPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ term?: string }>;
-}) {
-  const params = await searchParams;
+export default async function FeesPage() {
   const supabase = createAdminClient();
 
-  const terms = unwrap(
+  const season = unwrapMaybe<Season>(
     await supabase
-      .from('terms')
-      .select('id, label, season, year, default_fee_cents, active, sort_order, created_at')
-      .order('year', { ascending: false })
-      .order('sort_order')
-  ) as Term[];
+      .from('seasons')
+      .select('id, name, competitive_fee_cents, recreational_fee_cents')
+      .eq('active_flag', true)
+      .maybeSingle()
+  );
 
-  if (terms.length === 0) {
+  if (!season) {
     return (
       <div className="space-y-6">
         <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">FEES</h1>
         <Card>
           <EmptyState
-            title="No terms yet"
-            description="Create a term to start tracking club fees."
+            title="No active season"
+            description="Club fees follow the active season. Create and activate a season to start tracking fees."
+            action={
+              <Link href="/seasons" className="text-[var(--color-accent)] font-medium">
+                Go to Seasons
+              </Link>
+            }
           />
         </Card>
-        <TermsManager terms={terms} />
       </div>
     );
   }
 
-  const selectedTerm =
-    terms.find((t) => t.id === params.term) ?? terms.find((t) => t.active) ?? terms[0]!;
+  const feeForStatus = (status: string) =>
+    status === 'competitive' ? season.competitive_fee_cents : season.recreational_fee_cents;
 
   // Fee-collection list: active players (competitive/recreational) who are
   // neither exec nor fee-exempt.
@@ -54,19 +53,28 @@ export default async function FeesPage({
   const fees = unwrap(
     await supabase
       .from('club_fees')
-      .select('player_id, amount_cents, paid_at, method')
-      .eq('term_id', selectedTerm.id)
+      .select('id, player_id, manual_name, amount_cents, paid_at, method')
+      .eq('season_id', season.id)
   );
-  const feeByPlayer = new Map(fees.map((f) => [f.player_id, f]));
+  const feeByPlayer = new Map(
+    fees.filter((f) => f.player_id != null).map((f) => [f.player_id, f])
+  );
+  const manualFees = fees.filter((f) => f.manual_name != null);
 
-  const paidCount = players.filter((p) => feeByPlayer.get(p.id)?.paid_at).length;
-  const outstandingCount = players.length - paidCount;
+  const paidPlayers = players.filter((p) => feeByPlayer.get(p.id)?.paid_at).length;
+  const paidCount = paidPlayers + manualFees.length;
+  const outstandingCount = players.length - paidPlayers;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">FEES</h1>
-        <TermSelector terms={terms} selectedId={selectedTerm.id} />
+        <div>
+          <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">FEES</h1>
+          <p className="text-sm text-[var(--text-muted)] mt-1">
+            {season.name} · Competitive ${(season.competitive_fee_cents / 100).toFixed(2)} · Recreational ${(season.recreational_fee_cents / 100).toFixed(2)}
+          </p>
+        </div>
+        <AddManualFee seasonId={season.id} seasonName={season.name} />
       </div>
 
       {/* Summary */}
@@ -124,24 +132,49 @@ export default async function FeesPage({
                       <FeeActions
                         playerId={player.id}
                         playerName={player.full_name}
-                        termId={selectedTerm.id}
-                        termLabel={selectedTerm.label}
-                        defaultFeeCents={selectedTerm.default_fee_cents}
+                        seasonId={season.id}
+                        seasonName={season.name}
+                        defaultFeeCents={feeForStatus(player.status)}
                         paid={paid}
                       />
                     </td>
                   </tr>
                 );
               })}
+              {manualFees.map((fee) => (
+                <tr key={fee.id} className="hover:bg-[var(--border-hover)] transition-colors">
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <Avatar name={fee.manual_name} size="sm" />
+                      <div>
+                        <p className="text-sm font-medium text-[var(--text-primary)]">{fee.manual_name}</p>
+                        <p className="text-xs text-[var(--text-muted)]">Manual entry</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <Badge variant="success">Paid</Badge>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <span className="font-mono text-[var(--text-primary)]">
+                      {fee.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">
+                    {fee.method || '-'}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <RemoveManualFee id={fee.id} name={fee.manual_name} />
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
-        {players.length === 0 && (
-          <p className="text-center text-[var(--text-muted)] py-8">No players owe fees for this term</p>
+        {players.length === 0 && manualFees.length === 0 && (
+          <p className="text-center text-[var(--text-muted)] py-8">No players owe fees for this season</p>
         )}
       </Card>
-
-      <TermsManager terms={terms} />
     </div>
   );
 }

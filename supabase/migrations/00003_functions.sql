@@ -65,6 +65,38 @@ RETURNS UUID AS $$
   SELECT id FROM players WHERE user_id = p_user_id LIMIT 1;
 $$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp;
 
+-- Helper: Coarse admin-console access level for a user.
+-- Returns 'admin' for full admins, 'exec' for executive-team members, or NULL
+-- for everyone else. is_admin (which RLS depends on) is intentionally left
+-- untouched; this powers the exec RBAC layer in the admin app.
+CREATE OR REPLACE FUNCTION admin_access_level(p_user_id UUID)
+RETURNS TEXT AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM players WHERE user_id = p_user_id AND role = 'admin') THEN
+    RETURN 'admin';
+  ELSIF EXISTS (SELECT 1 FROM players WHERE user_id = p_user_id AND is_exec = TRUE) THEN
+    RETURN 'exec';
+  ELSE
+    RETURN NULL;
+  END IF;
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp;
+
+GRANT EXECUTE ON FUNCTION admin_access_level(UUID) TO authenticated;
+
+-- Helper: The current active season (with its per-status fees). Anon-safe so
+-- the logged-out login page can show the season name; exposes only public
+-- season fields.
+CREATE OR REPLACE FUNCTION get_active_season()
+RETURNS TABLE(id uuid, name text, competitive_fee_cents int, recreational_fee_cents int) AS $$
+  SELECT id, name, competitive_fee_cents, recreational_fee_cents
+  FROM seasons
+  WHERE active_flag = TRUE
+  LIMIT 1;
+$$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp;
+
+GRANT EXECUTE ON FUNCTION get_active_season() TO anon, authenticated;
+
 -- ============================================================
 -- CORE: Elo Calculation
 -- ============================================================

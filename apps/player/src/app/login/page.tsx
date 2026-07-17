@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Mail, CheckCircle2, ChevronRight, Loader2 } from 'lucide-react';
 
@@ -26,6 +26,21 @@ export default function LoginPage() {
   const [sent, setSent] = useState(false);
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
+  const [seasonName, setSeasonName] = useState('');
+
+  // The login page is logged-out, so it can't read the seasons table under RLS.
+  // The anon-safe get_active_season() RPC surfaces just the season name.
+  useEffect(() => {
+    (async () => {
+      try {
+        const supabase = createClient();
+        const { data } = await supabase.rpc('get_active_season');
+        setSeasonName(data?.[0]?.name ?? '');
+      } catch {
+        // No active season / offline — fall back to no suffix.
+      }
+    })();
+  }, []);
 
   async function handleGoogleLogin() {
     setGoogleLoading(true);
@@ -123,7 +138,9 @@ export default function LoginPage() {
           <div className="brand-mark">SB</div>
           <div className="brand-wrap">
             <div>SFU Badminton</div>
-            <div className="brand-sub" style={{ color: 'rgba(255,255,255,.5)' }}>Club · Season 26</div>
+            {seasonName && (
+              <div className="brand-sub" style={{ color: 'rgba(255,255,255,.5)' }}>{seasonName}</div>
+            )}
           </div>
         </div>
 
@@ -160,7 +177,7 @@ export default function LoginPage() {
         <div className="row" style={{ gap: 24, fontSize: 12, color: 'rgba(255,255,255,.5)', position: 'relative', zIndex: 2, fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: '.1em' }}>
           <span>Est. 2011</span>
           <span>Lorne Davies Complex · Burnaby BC</span>
-          <span>Season 26</span>
+          {seasonName && <span>{seasonName}</span>}
         </div>
       </div>
 

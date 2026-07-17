@@ -9,7 +9,7 @@ import { OfflineBanner } from '@/components/OfflineBanner';
 import { PostHogProvider } from '@/components/posthog-provider';
 import { PostHogIdentify } from '@/components/posthog-identify';
 import { SentryUserInit } from '@/components/sentry-user-init';
-import { createServerSupabaseClient } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getActiveSeason } from '@/lib/supabase-server';
 import { Inter, Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import { cn } from "@/lib/utils";
 
@@ -50,6 +50,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   let singlesElo: number | null = null;
   let doublesElo: number | null = null;
   let unreadCount = 0;
+  let activeSeasonName = '';
+
+  try {
+    activeSeasonName = (await getActiveSeason())?.name ?? '';
+  } catch {
+    // No active season
+  }
 
   try {
     const supabase = await createServerSupabaseClient();
@@ -109,7 +116,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               doublesElo={doublesElo}
             />
             <OfflineBanner />
-            <TopBar playerName={playerName} unreadCount={unreadCount} isAuthenticated={isAuthenticated} />
+            <TopBar playerName={playerName} unreadCount={unreadCount} isAuthenticated={isAuthenticated} activeSeasonName={activeSeasonName} />
             <main className="page pb-safe-nav md:pb-7">
               {children}
             </main>
