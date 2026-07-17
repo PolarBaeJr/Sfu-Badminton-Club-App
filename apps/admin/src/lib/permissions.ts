@@ -22,9 +22,18 @@ export const SECTION_ACCESS: { [pathPrefix: string]: AccessLevel } = {
   '/challenges': 'admin',
 };
 
+// Admin-only sub-routes that sit *under* an exec-allowed section and would
+// otherwise inherit its access via prefix match. Tournament entry fees live at
+// /tournaments/<id>/fees — execs run tournaments, but all money handling is
+// admin-only. Checked before prefix matching.
+const ADMIN_ONLY_PATTERNS: RegExp[] = [
+  /^\/tournaments\/[^/]+\/fees(\/|$)/,
+];
+
 // Resolve a pathname to the access level its section requires (longest-prefix
 // match). Unmatched paths default to admin-only.
 function requiredLevel(pathname: string): AccessLevel {
+  if (ADMIN_ONLY_PATTERNS.some((re) => re.test(pathname))) return 'admin';
   let best = '';
   for (const prefix of Object.keys(SECTION_ACCESS)) {
     if ((pathname === prefix || pathname.startsWith(prefix + '/')) && prefix.length > best.length) {

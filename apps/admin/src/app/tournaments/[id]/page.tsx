@@ -1,4 +1,4 @@
-import { createAdminClient } from '@/lib/supabase-server';
+import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
 import { Card, Badge } from '@badminton/ui';
 import { formatDate, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS } from '@badminton/shared';
 import { notFound } from 'next/navigation';
@@ -10,6 +10,12 @@ import { TournamentStatusControls } from './tournament-status-controls';
 export default async function TournamentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const supabase = createAdminClient();
+
+  // Viewer role: tournament fees are admin-only, so only admins see the Fees
+  // link (execs run tournaments but not money handling). Middleware already
+  // guarantees an exec-or-admin reaches this page.
+  const viewer = await getAuthenticatedExecOrAdmin();
+  const isAdmin = viewer.role === 'admin';
 
   const { data: tournament } = await supabase.from('tournaments').select('*').eq('id', id).single();
   if (!tournament) notFound();
@@ -78,10 +84,12 @@ export default async function TournamentDetailPage({ params }: { params: Promise
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <Link href={`/tournaments/${id}/fees`} className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--color-accent)] transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none rounded">
-            <DollarSign className="w-4 h-4" />
-            Fees
-          </Link>
+          {isAdmin && (
+            <Link href={`/tournaments/${id}/fees`} className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--color-accent)] transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none rounded">
+              <DollarSign className="w-4 h-4" />
+              Fees
+            </Link>
+          )}
           <TournamentStatusControls tournamentId={id} status={tournament.status} />
         </div>
       </div>

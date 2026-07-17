@@ -1,4 +1,4 @@
-import { createAdminClient } from '@/lib/supabase-server';
+import { createAdminClient, getAuthenticatedAdmin } from '@/lib/supabase-server';
 import { Card, Badge, Avatar } from '@badminton/ui';
 import { unwrap } from '@badminton/shared';
 import type { TournamentFeeTier, TournamentFee, Player } from '@badminton/shared';
@@ -9,6 +9,8 @@ import { TournamentFeeActions } from './tournament-fee-actions';
 
 export default async function TournamentFeesPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  // Money handling is admin-only — defense in depth beyond the middleware gate.
+  await getAuthenticatedAdmin();
   const supabase = createAdminClient();
 
   const { data: tournament } = await supabase.from('tournaments').select('id, name').eq('id', id).single();
