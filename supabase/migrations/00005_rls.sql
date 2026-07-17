@@ -30,6 +30,10 @@ ALTER TABLE season_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reliability_metrics ENABLE ROW LEVEL SECURITY;
 ALTER TABLE club_fees ENABLE ROW LEVEL SECURITY;
+ALTER TABLE terms ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tournament_fee_tiers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tournament_fees ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reinstatement_fees ENABLE ROW LEVEL SECURITY;
 ALTER TABLE announcements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE announcement_reads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY;
@@ -361,6 +365,19 @@ CREATE POLICY club_fees_select_own ON club_fees FOR SELECT TO authenticated
 
 CREATE POLICY club_fees_admin ON club_fees FOR ALL TO authenticated
   USING (is_admin(auth.uid()));
+
+-- ============================================================
+-- TERMS / TOURNAMENT FEES / REINSTATEMENT FEES — Admin-managed
+-- ============================================================
+
+CREATE POLICY terms_select ON terms FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY terms_admin  ON terms FOR ALL TO authenticated USING (is_admin(auth.uid()));
+CREATE POLICY tft_select ON tournament_fee_tiers FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY tft_admin  ON tournament_fee_tiers FOR ALL TO authenticated USING (is_admin(auth.uid()));
+CREATE POLICY tf_select_own ON tournament_fees FOR SELECT TO authenticated USING (player_id = get_player_id(auth.uid()));
+CREATE POLICY tf_admin ON tournament_fees FOR ALL TO authenticated USING (is_admin(auth.uid()));
+CREATE POLICY rf_select_own ON reinstatement_fees FOR SELECT TO authenticated USING (player_id = get_player_id(auth.uid()));
+CREATE POLICY rf_admin ON reinstatement_fees FOR ALL TO authenticated USING (is_admin(auth.uid()));
 
 -- ============================================================
 -- ANNOUNCEMENTS

@@ -55,12 +55,12 @@ export async function markFeePaid(input: FeeMarkInput) {
     .from('club_fees')
     .upsert({
       player_id: input.player_id,
-      period: input.period,
+      term_id: input.term_id,
       paid_at: new Date().toISOString(),
       marked_by: admin.id,
       amount_cents: input.amount_cents ?? null,
       method: input.method ?? null,
-    }, { onConflict: 'player_id,period' })
+    }, { onConflict: 'player_id,term_id' })
     .select('id')
     .single();
   if (error) throw new Error(error.message);
@@ -72,7 +72,7 @@ export async function markFeePaid(input: FeeMarkInput) {
     target_id: fee.id,
     new_value: {
       player_id: input.player_id,
-      period: input.period,
+      term_id: input.term_id,
       amount_cents: input.amount_cents ?? null,
       method: input.method ?? null,
     },

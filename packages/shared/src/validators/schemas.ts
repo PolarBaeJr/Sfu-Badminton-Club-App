@@ -178,9 +178,44 @@ export const adminMatchCreateSchema = z.object({
 
 export const feeMarkSchema = z.object({
   player_id: z.string().uuid(),
-  period: z.string().min(1).max(40),
+  term_id: z.string().uuid(),
   amount_cents: z.number().int().positive().optional(),
   method: z.string().max(40).optional(),
+});
+
+export const termSchema = z.object({
+  label: z.string().min(1).max(60),
+  season: z.enum(['Spring', 'Summer', 'Fall']),
+  year: z.number().int(),
+  default_fee_cents: z.number().int().min(0),
+  active: z.boolean(),
+  sort_order: z.number().int(),
+});
+
+export const feeTierSchema = z.object({
+  tournament_id: z.string().uuid(),
+  name: z.string().min(1).max(40),
+  amount_cents: z.number().int().min(0),
+  is_default: z.boolean(),
+});
+
+export const tournamentFeeMarkSchema = z.object({
+  tournament_id: z.string().uuid(),
+  player_id: z.string().uuid(),
+  tier_id: z.string().uuid().optional(),
+  amount_cents: z.number().int().nonnegative().optional(),
+  method: z.string().max(40).optional(),
+});
+
+export const reinstatementSchema = z.object({
+  player_id: z.string().uuid(),
+  amount_cents: z.number().int().nonnegative().optional(),
+  method: z.string().max(40).optional(),
+});
+
+export const banSchema = z.object({
+  player_id: z.string().uuid(),
+  reason: z.string().min(2),
 });
 
 export const playerFlagsSchema = z.object({
@@ -214,4 +249,9 @@ export type AdminPlayerCreateInput = z.infer<typeof adminPlayerCreateSchema>;
 export type AdminMatchCreateInput = z.infer<typeof adminMatchCreateSchema>;
 export type AnnouncementInput = z.infer<typeof announcementSchema>;
 export type FeeMarkInput = z.infer<typeof feeMarkSchema>;
+export type TermInput = z.infer<typeof termSchema>;
+export type FeeTierInput = z.infer<typeof feeTierSchema>;
+export type TournamentFeeMarkInput = z.infer<typeof tournamentFeeMarkSchema>;
+export type ReinstatementInput = z.infer<typeof reinstatementSchema>;
+export type BanInput = z.infer<typeof banSchema>;
 export type PlayerFlagsInput = z.infer<typeof playerFlagsSchema>;

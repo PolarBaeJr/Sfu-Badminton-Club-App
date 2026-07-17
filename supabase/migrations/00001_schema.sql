@@ -164,6 +164,10 @@ CREATE TABLE players (
   -- the fee-collection list.
   is_exec BOOLEAN NOT NULL DEFAULT FALSE,
   fee_exempt BOOLEAN NOT NULL DEFAULT FALSE,
+  is_banned BOOLEAN NOT NULL DEFAULT FALSE,
+  banned_at TIMESTAMPTZ,
+  banned_by UUID REFERENCES players(id),
+  ban_reason TEXT,
   onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE,
   avatar_url TEXT,
   bio TEXT,
@@ -516,18 +520,43 @@ CREATE TABLE reliability_metrics (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Club Fees — one row per (player, period) tracking club-fee payment.
+-- Terms — billing periods (e.g. '2026 Summer') that club fees attach to.
+CREATE TABLE terms (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  label TEXT NOT NULL UNIQUE,
+  season TEXT NOT NULL CHECK (season IN ('Spring','Summer','Fall')),
+  year INTEGER NOT NULL,
+  default_fee_cents INTEGER NOT NULL DEFAULT 0,
+  active BOOLEAN NOT NULL DEFAULT FALSE,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(season, year)
+);
+
+-- Club Fees — one row per (player, term) tracking club-fee payment.
 -- Purely administrative: no effect on gameplay, ratings, or leaderboards.
 CREATE TABLE club_fees (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   player_id UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
-  period TEXT NOT NULL, -- e.g. '2026 Summer'
+  term_id UUID NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
   amount_cents INTEGER,
   paid_at TIMESTAMPTZ,
   marked_by UUID REFERENCES players(id),
   method TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(player_id, period)
+  UNIQUE(player_id, term_id)
+);
+
+-- Reinstatement Fees — one-off fees charged to lift a player ban.
+CREATE TABLE reinstatement_fees (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  player_id UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  amount_cents INTEGER,
+  paid_at TIMESTAMPTZ,
+  marked_by UUID REFERENCES players(id),
+  method TEXT,
+  ban_reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Announcements
@@ -640,6 +669,32 @@ CREATE TABLE tournament_pairs (
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT now(),
   UNIQUE(event_id, player1_id, player2_id)
+);
+
+-- Tournament Fee Tiers — per-tournament fee options (e.g. member vs guest).
+CREATE TABLE tournament_fee_tiers (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tournament_id UUID NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  is_default BOOLEAN NOT NULL DEFAULT FALSE,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(tournament_id, name)
+);
+
+-- Tournament Fees — one row per (tournament, player) tracking entry-fee payment.
+CREATE TABLE tournament_fees (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tournament_id UUID NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+  player_id UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  tier_id UUID REFERENCES tournament_fee_tiers(id) ON DELETE SET NULL,
+  amount_cents INTEGER,
+  paid_at TIMESTAMPTZ,
+  marked_by UUID REFERENCES players(id),
+  method TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(tournament_id, player_id)
 );
 
 -- Tournament Matches — covers both singles and doubles matches

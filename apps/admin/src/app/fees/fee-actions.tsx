@@ -44,7 +44,7 @@ export function FeeActions({ playerId, playerName, period, paid }: FeeActionsPro
         const dollars = amount ? parseFloat(amount) : undefined;
         await markFeePaid({
           player_id: playerId,
-          period,
+          term_id: period,
           amount_cents: dollars ? Math.round(dollars * 100) : undefined,
           method: method || undefined,
         });

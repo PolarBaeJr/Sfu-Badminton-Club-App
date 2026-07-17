@@ -104,8 +104,16 @@ CREATE INDEX idx_snapshots_player ON season_snapshots(player_id);
 CREATE INDEX idx_reliability_player ON reliability_metrics(player_id);
 CREATE INDEX idx_reliability_noshows ON reliability_metrics(no_shows);
 
--- Club Fees (fee-collection list is filtered by period)
-CREATE INDEX idx_club_fees_period ON club_fees(period);
+-- Club Fees (fee-collection list is filtered by term)
+CREATE INDEX idx_club_fees_term ON club_fees(term_id);
+CREATE INDEX idx_club_fees_player ON club_fees(player_id);
+CREATE INDEX idx_terms_active ON terms(active);
+CREATE INDEX idx_tournament_fee_tiers_tournament ON tournament_fee_tiers(tournament_id);
+CREATE UNIQUE INDEX uq_tournament_fee_tiers_default ON tournament_fee_tiers(tournament_id) WHERE is_default;
+CREATE INDEX idx_tournament_fees_tournament ON tournament_fees(tournament_id);
+CREATE INDEX idx_tournament_fees_player ON tournament_fees(player_id);
+CREATE INDEX idx_reinstatement_fees_player ON reinstatement_fees(player_id);
+CREATE INDEX idx_players_banned ON players(is_banned) WHERE is_banned;
 
 -- Announcements / Push Subscriptions
 CREATE INDEX idx_push_subscriptions_player ON push_subscriptions(player_id) WHERE active = TRUE;

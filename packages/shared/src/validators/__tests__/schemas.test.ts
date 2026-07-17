@@ -11,6 +11,11 @@ import {
   walkoverReportSchema,
   disputeResolveSchema,
   feeMarkSchema,
+  termSchema,
+  feeTierSchema,
+  tournamentFeeMarkSchema,
+  reinstatementSchema,
+  banSchema,
   playerFlagsSchema,
 } from '../schemas';
 
@@ -317,14 +322,14 @@ describe('walkoverReportSchema', () => {
 describe('feeMarkSchema', () => {
   it('accepts a minimal valid input', () => {
     expect(
-      feeMarkSchema.safeParse({ player_id: UUID_A, period: '2026 Summer' }).success,
+      feeMarkSchema.safeParse({ player_id: UUID_A, term_id: UUID_B }).success,
     ).toBe(true);
   });
   it('accepts optional amount_cents and method', () => {
     expect(
       feeMarkSchema.safeParse({
         player_id: UUID_A,
-        period: '2026 Summer',
+        term_id: UUID_B,
         amount_cents: 1500,
         method: 'e-transfer',
       }).success,
@@ -332,36 +337,114 @@ describe('feeMarkSchema', () => {
   });
   it('rejects a non-UUID player_id', () => {
     expect(
-      feeMarkSchema.safeParse({ player_id: 'not-a-uuid', period: '2026 Summer' }).success,
+      feeMarkSchema.safeParse({ player_id: 'not-a-uuid', term_id: UUID_B }).success,
     ).toBe(false);
   });
-  it('rejects an empty period', () => {
-    expect(feeMarkSchema.safeParse({ player_id: UUID_A, period: '' }).success).toBe(false);
-  });
-  it('rejects a period longer than 40 chars', () => {
-    expect(
-      feeMarkSchema.safeParse({ player_id: UUID_A, period: 'x'.repeat(41) }).success,
-    ).toBe(false);
+  it('rejects a non-UUID term_id', () => {
+    expect(feeMarkSchema.safeParse({ player_id: UUID_A, term_id: 'not-a-uuid' }).success).toBe(false);
   });
   it('rejects a non-positive or fractional amount_cents', () => {
     expect(
-      feeMarkSchema.safeParse({ player_id: UUID_A, period: '2026 Summer', amount_cents: 0 }).success,
+      feeMarkSchema.safeParse({ player_id: UUID_A, term_id: UUID_B, amount_cents: 0 }).success,
     ).toBe(false);
     expect(
-      feeMarkSchema.safeParse({ player_id: UUID_A, period: '2026 Summer', amount_cents: -100 }).success,
+      feeMarkSchema.safeParse({ player_id: UUID_A, term_id: UUID_B, amount_cents: -100 }).success,
     ).toBe(false);
     expect(
-      feeMarkSchema.safeParse({ player_id: UUID_A, period: '2026 Summer', amount_cents: 15.5 }).success,
+      feeMarkSchema.safeParse({ player_id: UUID_A, term_id: UUID_B, amount_cents: 15.5 }).success,
     ).toBe(false);
   });
   it('rejects a method longer than 40 chars', () => {
     expect(
       feeMarkSchema.safeParse({
         player_id: UUID_A,
-        period: '2026 Summer',
+        term_id: UUID_B,
         method: 'x'.repeat(41),
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('termSchema', () => {
+  const base = {
+    label: '2026 Summer',
+    season: 'Summer' as const,
+    year: 2026,
+    default_fee_cents: 1500,
+    active: true,
+    sort_order: 0,
+  };
+  it('accepts a valid term', () => {
+    expect(termSchema.safeParse(base).success).toBe(true);
+  });
+  it('rejects an unknown season', () => {
+    expect(termSchema.safeParse({ ...base, season: 'Winter' }).success).toBe(false);
+  });
+  it('rejects a negative default_fee_cents', () => {
+    expect(termSchema.safeParse({ ...base, default_fee_cents: -1 }).success).toBe(false);
+  });
+});
+
+describe('feeTierSchema', () => {
+  const base = {
+    tournament_id: UUID_A,
+    name: 'Member',
+    amount_cents: 500,
+    is_default: true,
+  };
+  it('accepts a valid tier', () => {
+    expect(feeTierSchema.safeParse(base).success).toBe(true);
+  });
+  it('rejects an empty name', () => {
+    expect(feeTierSchema.safeParse({ ...base, name: '' }).success).toBe(false);
+  });
+  it('rejects a negative amount_cents', () => {
+    expect(feeTierSchema.safeParse({ ...base, amount_cents: -1 }).success).toBe(false);
+  });
+});
+
+describe('tournamentFeeMarkSchema', () => {
+  it('accepts a minimal valid input', () => {
+    expect(
+      tournamentFeeMarkSchema.safeParse({ tournament_id: UUID_A, player_id: UUID_B }).success,
+    ).toBe(true);
+  });
+  it('accepts an amount_cents of 0', () => {
+    expect(
+      tournamentFeeMarkSchema.safeParse({
+        tournament_id: UUID_A,
+        player_id: UUID_B,
+        amount_cents: 0,
+      }).success,
+    ).toBe(true);
+  });
+  it('rejects a non-UUID player_id', () => {
+    expect(
+      tournamentFeeMarkSchema.safeParse({ tournament_id: UUID_A, player_id: 'x' }).success,
+    ).toBe(false);
+  });
+});
+
+describe('reinstatementSchema', () => {
+  it('accepts a minimal valid input', () => {
+    expect(reinstatementSchema.safeParse({ player_id: UUID_A }).success).toBe(true);
+  });
+  it('accepts an amount_cents of 0', () => {
+    expect(
+      reinstatementSchema.safeParse({ player_id: UUID_A, amount_cents: 0 }).success,
+    ).toBe(true);
+  });
+  it('rejects a non-UUID player_id', () => {
+    expect(reinstatementSchema.safeParse({ player_id: 'x' }).success).toBe(false);
+  });
+});
+
+describe('banSchema', () => {
+  it('accepts a valid ban', () => {
+    expect(banSchema.safeParse({ player_id: UUID_A, reason: 'Repeated no-shows' }).success).toBe(true);
+  });
+  it('rejects a reason shorter than 2 chars', () => {
+    expect(banSchema.safeParse({ player_id: UUID_A, reason: 'x' }).success).toBe(false);
   });
 });
 

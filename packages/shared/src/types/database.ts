@@ -103,6 +103,10 @@ export interface Player {
   active_flag: boolean;
   is_exec: boolean;
   fee_exempt: boolean;
+  is_banned: boolean;
+  banned_at: string | null;
+  banned_by: string | null;
+  ban_reason: string | null;
   onboarding_completed: boolean;
   avatar_url: string | null;
   bio: string | null;
@@ -416,10 +420,54 @@ export interface ReliabilityMetrics {
   updated_at: string;
 }
 
+export interface Term {
+  id: string;
+  label: string;
+  season: 'Spring' | 'Summer' | 'Fall';
+  year: number;
+  default_fee_cents: number;
+  active: boolean;
+  sort_order: number;
+  created_at: string;
+}
+
 export interface ClubFee {
   id: string;
   player_id: string;
-  period: string;
+  term_id: string;
+  amount_cents: number | null;
+  paid_at: string | null;
+  marked_by: string | null;
+  method: string | null;
+  created_at: string;
+}
+
+export interface ReinstatementFee {
+  id: string;
+  player_id: string;
+  amount_cents: number | null;
+  paid_at: string | null;
+  marked_by: string | null;
+  method: string | null;
+  ban_reason: string | null;
+  created_at: string;
+}
+
+export interface TournamentFeeTier {
+  id: string;
+  tournament_id: string;
+  name: string;
+  amount_cents: number;
+  is_default: boolean;
+  sort_order: number;
+  created_at: string;
+}
+
+export interface TournamentFee {
+  id: string;
+  tournament_id: string;
+  player_id: string;
+  tier_id: string | null;
   amount_cents: number | null;
   paid_at: string | null;
   marked_by: string | null;
