@@ -12,7 +12,7 @@ import {
   parseOrThrow,
   type ChallengeCreateInput,
 } from '@badminton/shared';
-import { requirePlayer, getPlayerProps, trackServerEvent } from './_shared';
+import { requirePlayer, getPlayerProps, trackServerEvent, notifyPlayers } from './_shared';
 
 export async function createChallenge(input: ChallengeCreateInput) {
   parseOrThrow(challengeCreateSchema, input);
@@ -75,13 +75,21 @@ export async function createChallenge(input: ChallengeCreateInput) {
   const { error: partError } = await supabase.from('challenge_participants').insert(participants);
   if (partError) throw new Error(partError.message);
 
-  await supabase.from('notifications').insert({
-    player_id: input.opponent_id,
-    type: 'challenge_received',
-    title: 'New Challenge',
-    body: `${player.full_name} has challenged you!`,
-    metadata: { challenge_id: challenge.id },
-  });
+  await notifyPlayers(
+    supabase,
+    [{
+      player_id: input.opponent_id,
+      type: 'challenge_received',
+      title: 'New Challenge',
+      body: `${player.full_name} has challenged you!`,
+      metadata: { challenge_id: challenge.id },
+    }],
+    {
+      title: 'New Challenge',
+      body: `${player.full_name} has challenged you!`,
+      url: `/challenges/${challenge.id}`,
+    }
+  );
 
   const { data: opponent } = await supabase.from('players').select('email').eq('id', input.opponent_id).single();
   if (opponent?.email) {
@@ -143,13 +151,21 @@ export async function acceptChallenge(challengeId: string) {
     .update({ status: allAccepted ? 'accepted' : 'partially_confirmed' })
     .eq('id', challengeId);
 
-  await supabase.from('notifications').insert({
-    player_id: challenge.created_by,
-    type: 'challenge_accepted',
-    title: 'Challenge Accepted',
-    body: `${player.full_name} accepted your challenge!`,
-    metadata: { challenge_id: challengeId },
-  });
+  await notifyPlayers(
+    supabase,
+    [{
+      player_id: challenge.created_by,
+      type: 'challenge_accepted',
+      title: 'Challenge Accepted',
+      body: `${player.full_name} accepted your challenge!`,
+      metadata: { challenge_id: challengeId },
+    }],
+    {
+      title: 'Challenge Accepted',
+      body: `${player.full_name} accepted your challenge!`,
+      url: `/challenges/${challengeId}`,
+    }
+  );
 
   const { data: creator } = await supabase.from('players').select('email').eq('id', challenge.created_by).single();
   if (creator?.email) {

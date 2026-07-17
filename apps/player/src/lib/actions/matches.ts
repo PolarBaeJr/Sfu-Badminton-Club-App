@@ -17,7 +17,7 @@ import {
   type MatchResultInput,
   type WalkoverReportInput,
 } from '@badminton/shared';
-import { requirePlayer, getPlayerProps, trackServerEvent } from './_shared';
+import { requirePlayer, getPlayerProps, trackServerEvent, notifyPlayers } from './_shared';
 
 export async function submitMatchResult(challengeId: string, input: MatchResultInput) {
   const parsed = matchResultSchema.safeParse(input);
@@ -145,14 +145,20 @@ export async function submitMatchResult(challengeId: string, input: MatchResultI
   const otherPlayerIds = otherPlayers.map((cp) => cp.player_id as string);
 
   if (otherPlayerIds.length > 0) {
-    await supabase.from('notifications').insert(
+    await notifyPlayers(
+      supabase,
       otherPlayerIds.map((pid) => ({
         player_id: pid,
         type: 'result_pending',
         title: 'Confirm Match Result',
         body: `${player.full_name} submitted a result. Please confirm.`,
         metadata: { match_id: match.id, challenge_id: challengeId },
-      }))
+      })),
+      {
+        title: 'Confirm Match Result',
+        body: `${player.full_name} submitted a result. Please confirm.`,
+        url: `/challenges/${challengeId}`,
+      }
     );
 
     const { data: emails } = await supabase
@@ -290,6 +296,23 @@ export async function reportWalkover(input: WalkoverReportInput) {
   // Service-role for the same RLS reason as acceptChallenge.
   const adminClient = createServiceRoleClient();
   await adminClient.from('challenges').update({ status: 'walkover_pending' }).eq('id', input.challenge_id);
+
+  const otherParticipants = cps.filter((cp) => cp.player_id !== player.id);
+  await notifyPlayers(
+    supabase,
+    otherParticipants.map((cp) => ({
+      player_id: cp.player_id,
+      type: 'walkover_reported',
+      title: 'Walkover Reported',
+      body: `${player.full_name} reported a ${input.walkover_type === 'withdrawal' ? 'withdrawal' : 'no-show'} for your challenge.`,
+      metadata: { challenge_id: input.challenge_id },
+    })),
+    {
+      title: 'Walkover Reported',
+      body: `${player.full_name} reported a ${input.walkover_type === 'withdrawal' ? 'withdrawal' : 'no-show'} for your challenge.`,
+      url: `/challenges/${input.challenge_id}`,
+    }
+  );
 
   const [adminsRes, forfeitRes] = await Promise.all([
     supabase.from('players').select('email').eq('role', 'admin'),
