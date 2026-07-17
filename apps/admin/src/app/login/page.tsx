@@ -1,16 +1,39 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase-browser';
 import { Button, Input, Card } from '@badminton/ui';
 import { Shield, Mail, Loader2, Globe, CheckCircle2, AlertCircle } from 'lucide-react';
 
 export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState('');
+  // The player and admin apps share one auth cookie on this domain. If an admin
+  // is already signed in (e.g. via the player app), forward them straight in
+  // instead of making them sign in a second time.
+  const [checkingSession, setCheckingSession] = useState(true);
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth
+      .getSession()
+      .then(async ({ data: { session } }) => {
+        if (session) {
+          const { data: isAdmin } = await supabase.rpc('is_admin', { p_user_id: session.user.id });
+          if (isAdmin) {
+            router.replace('/dashboard');
+            return;
+          }
+        }
+        setCheckingSession(false);
+      })
+      .catch(() => setCheckingSession(false));
+  }, [router]);
 
   async function handleGoogleLogin() {
     setGoogleLoading(true);
@@ -38,6 +61,14 @@ export default function LoginPage() {
     if (authError) setError(authError.message);
     else setSent(true);
     setLoading(false);
+  }
+
+  if (checkingSession) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg-card)' }}>
+        <Loader2 className="w-6 h-6 animate-spin" style={{ color: 'var(--color-accent)' }} />
+      </div>
+    );
   }
 
   return (
