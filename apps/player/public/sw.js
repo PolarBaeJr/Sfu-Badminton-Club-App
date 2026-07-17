@@ -1,11 +1,14 @@
-const CACHE_NAME = 'sfu-badminton-v1';
+const CACHE_NAME = 'sfu-badminton-v2';
 
-// Network-first caching strategy
+// Network-first caching strategy (same-origin GETs only)
 self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
+  if (new URL(event.request.url).origin !== self.location.origin) return;
+
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        if (response.ok && event.request.method === 'GET') {
+        if (response.ok) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => {
             cache.put(event.request, clone);

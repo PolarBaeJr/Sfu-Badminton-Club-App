@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 export const dynamic = 'force-dynamic';
@@ -21,6 +21,25 @@ export const metadata: Metadata = {
   title: 'SFU Badminton Club',
   description: 'Challenge, compete, and climb the ranks',
   manifest: '/manifest.json',
+  icons: {
+    icon: [
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+    ],
+    apple: '/apple-touch-icon.png',
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'SFU Badminton',
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#FAF8F5' },
+    { media: '(prefers-color-scheme: dark)', color: '#0D0B0A' },
+  ],
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
@@ -67,10 +86,6 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       className={cn("font-sans", inter.variable, spaceGrotesk.variable, jetbrainsMono.variable)}
     >
       <head>
-        <meta name="theme-color" content="#FAF8F5" media="(prefers-color-scheme: light)" />
-        <meta name="theme-color" content="#0D0B0A" media="(prefers-color-scheme: dark)" />
-        <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <script dangerouslySetInnerHTML={{ __html: `
           try {
             var t = localStorage.getItem('theme') || 'light';
