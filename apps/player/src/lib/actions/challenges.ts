@@ -76,7 +76,6 @@ export async function createChallenge(input: ChallengeCreateInput) {
   if (partError) throw new Error(partError.message);
 
   await notifyPlayers(
-    supabase,
     [{
       player_id: input.opponent_id,
       type: 'challenge_received',
@@ -152,7 +151,6 @@ export async function acceptChallenge(challengeId: string) {
     .eq('id', challengeId);
 
   await notifyPlayers(
-    supabase,
     [{
       player_id: challenge.created_by,
       type: 'challenge_accepted',
@@ -207,13 +205,15 @@ export async function rejectChallenge(challengeId: string) {
   const adminClient = createServiceRoleClient();
   await adminClient.from('challenges').update({ status: 'rejected' }).eq('id', challengeId);
 
-  await supabase.from('notifications').insert({
+  // Service-role via notifyPlayers — notifications RLS blocks direct inserts
+  // for other players.
+  await notifyPlayers([{
     player_id: challenge.created_by,
     type: 'challenge_rejected',
     title: 'Challenge Rejected',
     body: `${player.full_name} rejected your challenge.`,
     metadata: { challenge_id: challengeId },
-  });
+  }]);
 
   const { data: creator } = await supabase.from('players').select('email').eq('id', challenge.created_by).single();
   if (creator?.email) {
@@ -248,17 +248,17 @@ export async function cancelChallenge(challengeId: string) {
     (cp) => cp.player_id !== player.id
   ) || [];
 
-  if (otherParticipants.length > 0) {
-    await supabase.from('notifications').insert(
-      otherParticipants.map((cp) => ({
-        player_id: cp.player_id,
-        type: 'challenge_cancelled',
-        title: 'Challenge Cancelled',
-        body: `${player.full_name} cancelled the challenge.`,
-        metadata: { challenge_id: challengeId },
-      }))
-    );
-  }
+  // Service-role via notifyPlayers — notifications RLS blocks direct inserts
+  // for other players.
+  await notifyPlayers(
+    otherParticipants.map((cp) => ({
+      player_id: cp.player_id,
+      type: 'challenge_cancelled',
+      title: 'Challenge Cancelled',
+      body: `${player.full_name} cancelled the challenge.`,
+      metadata: { challenge_id: challengeId },
+    }))
+  );
 
   trackServerEvent(player.id, 'challenge_cancelled', {
     ...getPlayerProps(player),

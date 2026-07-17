@@ -146,7 +146,6 @@ export async function submitMatchResult(challengeId: string, input: MatchResultI
 
   if (otherPlayerIds.length > 0) {
     await notifyPlayers(
-      supabase,
       otherPlayerIds.map((pid) => ({
         player_id: pid,
         type: 'result_pending',
@@ -299,7 +298,6 @@ export async function reportWalkover(input: WalkoverReportInput) {
 
   const otherParticipants = cps.filter((cp) => cp.player_id !== player.id);
   await notifyPlayers(
-    supabase,
     otherParticipants.map((cp) => ({
       player_id: cp.player_id,
       type: 'walkover_reported',

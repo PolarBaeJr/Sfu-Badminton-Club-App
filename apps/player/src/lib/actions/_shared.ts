@@ -4,7 +4,6 @@
 // 'use server' boundary lets us keep `getPlayerProps` synchronous.
 import * as Sentry from '@sentry/nextjs';
 import { PostHog } from 'posthog-node';
-import type { SupabaseClient } from '@supabase/supabase-js';
 import { sendPushToPlayers, type PushPayload } from '@badminton/shared/src/push/send';
 import { getCurrentPlayer, createServiceRoleClient } from '../supabase-server';
 
@@ -61,16 +60,17 @@ interface NotificationRow {
 
 // Inserts in-app notification rows and (optionally) fires web push to the same
 // players. Both are best-effort: failures go to Sentry, never fail the action.
-// Push uses the service-role client — push_subscriptions RLS only lets players
-// read their own rows, and we're sending to *other* players here.
+// Both use the service-role client: notifications RLS has no INSERT policy for
+// authenticated users (we insert rows for *other* players), and
+// push_subscriptions RLS only lets players read their own rows.
 export async function notifyPlayers(
-  supabase: SupabaseClient,
   notificationRows: NotificationRow[],
   pushPayload?: PushPayload
 ) {
   if (notificationRows.length === 0) return;
 
-  const { error } = await supabase.from('notifications').insert(notificationRows);
+  const serviceClient = createServiceRoleClient();
+  const { error } = await serviceClient.from('notifications').insert(notificationRows);
   if (error) {
     Sentry.captureException(new Error(`Notification insert failed: ${error.message}`), {
       extra: { type: notificationRows[0]?.type, playerIds: notificationRows.map((r) => r.player_id) },
@@ -79,7 +79,7 @@ export async function notifyPlayers(
 
   if (pushPayload) {
     const playerIds = notificationRows.map((r) => r.player_id);
-    sendPushToPlayers(createServiceRoleClient(), playerIds, pushPayload).catch((err) => {
+    sendPushToPlayers(serviceClient, playerIds, pushPayload).catch((err) => {
       Sentry.captureException(err, { extra: { push: notificationRows[0]?.type, playerIds } });
     });
   }

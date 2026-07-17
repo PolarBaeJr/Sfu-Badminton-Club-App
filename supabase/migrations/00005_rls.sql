@@ -264,6 +264,12 @@ CREATE POLICY disputes_admin ON disputes FOR ALL TO authenticated
 -- NOTIFICATIONS
 -- ============================================================
 
+-- INSERT is intentionally default-deny for authenticated users: player
+-- actions create notifications for OTHER players (challenges, match
+-- submissions), which no self-scoped policy could allow. All inserts go
+-- through the service-role client via notifyPlayers
+-- (apps/player/src/lib/actions/_shared.ts), which bypasses RLS.
+
 -- Players see only their own
 CREATE POLICY notifications_select ON notifications FOR SELECT TO authenticated
   USING (player_id = get_player_id(auth.uid()));
