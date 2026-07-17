@@ -11,6 +11,66 @@ const steps = [
   { number: 2, title: 'Confirm' },
 ];
 
+// Defined at module scope (NOT inside OnboardingPage): a component declared
+// inside the page body gets a new identity on every render, so React would
+// unmount/remount the input on each keystroke and the field would lose focus.
+function Field({
+  id,
+  label,
+  optional,
+  icon: Icon,
+  value,
+  onChange,
+  placeholder,
+  inputMode,
+}: {
+  id: string;
+  label: string;
+  optional?: boolean;
+  icon: React.ElementType;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  inputMode?: 'tel' | 'text';
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <label
+        htmlFor={id}
+        className="mono muted"
+        style={{ fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase' }}
+      >
+        {label} {optional ? <span className="muted">(optional)</span> : <span style={{ color: 'var(--red)' }}>*</span>}
+      </label>
+      <div style={{ position: 'relative' }}>
+        <Icon
+          size={16}
+          className="text-[var(--mute)]"
+          style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)' }}
+        />
+        <input
+          id={id}
+          value={value}
+          inputMode={inputMode}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          style={{
+            width: '100%',
+            padding: '12px 14px 12px 38px',
+            borderRadius: 10,
+            border: '1px solid var(--line)',
+            background: 'var(--surface)',
+            fontSize: 14,
+            transition: 'border .15s',
+          }}
+          onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--ink)')}
+          onBlur={(e) => (e.currentTarget.style.borderColor = 'var(--line)')}
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function OnboardingPage() {
   const [step, setStep] = useState(1);
   const [name, setName] = useState('');
@@ -33,63 +93,6 @@ export default function OnboardingPage() {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
     setLoading(false);
-  }
-
-  function Field({
-    id,
-    label,
-    optional,
-    icon: Icon,
-    value,
-    onChange,
-    placeholder,
-    inputMode,
-  }: {
-    id: string;
-    label: string;
-    optional?: boolean;
-    icon: React.ElementType;
-    value: string;
-    onChange: (v: string) => void;
-    placeholder: string;
-    inputMode?: 'tel' | 'text';
-  }) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <label
-          htmlFor={id}
-          className="mono muted"
-          style={{ fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase' }}
-        >
-          {label} {optional ? <span className="muted">(optional)</span> : <span style={{ color: 'var(--red)' }}>*</span>}
-        </label>
-        <div style={{ position: 'relative' }}>
-          <Icon
-            size={16}
-            className="text-[var(--mute)]"
-            style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)' }}
-          />
-          <input
-            id={id}
-            value={value}
-            inputMode={inputMode}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder={placeholder}
-            style={{
-              width: '100%',
-              padding: '12px 14px 12px 38px',
-              borderRadius: 10,
-              border: '1px solid var(--line)',
-              background: 'var(--surface)',
-              fontSize: 14,
-              transition: 'border .15s',
-            }}
-            onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--ink)')}
-            onBlur={(e) => (e.currentTarget.style.borderColor = 'var(--line)')}
-          />
-        </div>
-      </div>
-    );
   }
 
   return (
