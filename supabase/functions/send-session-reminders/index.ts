@@ -3,6 +3,7 @@
 
 import { requireCronSecret } from '../_shared/auth.ts';
 import { createServiceClient, jsonResponse } from '../_shared/client.ts';
+import { sendPushToPlayers } from '../_shared/push.ts';
 
 Deno.serve(async (req) => {
   const denied = requireCronSecret(req);
@@ -29,13 +30,14 @@ Deno.serve(async (req) => {
   let notifCount = 0;
 
   if (sessions && sessions.length > 0) {
-    const reminders = (sessions as Array<{
+    const typedSessions = sessions as Array<{
       id: string;
       name: string | null;
       date: string;
       location: string;
       session_attendance: Array<{ player_id: string }>;
-    }>).flatMap((s) =>
+    }>;
+    const reminders = typedSessions.flatMap((s) =>
       s.session_attendance.map((a) => ({
         player_id: a.player_id,
         type: 'session_reminder',
@@ -48,6 +50,18 @@ Deno.serve(async (req) => {
     if (reminders.length > 0) {
       await supabase.from('notifications').insert(reminders);
       notifCount = reminders.length;
+
+      for (const s of typedSessions) {
+        await sendPushToPlayers(
+          supabase,
+          s.session_attendance.map((a) => a.player_id),
+          {
+            title: 'Session Tomorrow',
+            body: `${s.name || 'Session'} at ${s.location} is tomorrow (${s.date}).`,
+            url: '/sessions',
+          }
+        );
+      }
     }
   }
 

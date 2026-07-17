@@ -3,6 +3,7 @@
 
 import { requireCronSecret } from '../_shared/auth.ts';
 import { createServiceClient, jsonResponse } from '../_shared/client.ts';
+import { sendPushToPlayers } from '../_shared/push.ts';
 import { WALKOVER_REVIEW_HOURS } from '../_shared/constants.ts';
 
 Deno.serve(async (req) => {
@@ -43,6 +44,15 @@ Deno.serve(async (req) => {
         }))
       );
       await supabase.from('notifications').insert(alerts);
+
+      const adminIds = admins.map((admin: { id: string }) => admin.id);
+      for (const m of stale as Array<{ id: string; format: string }>) {
+        await sendPushToPlayers(supabase, adminIds, {
+          title: 'Stale Match Confirmation',
+          body: `${m.format} match awaiting confirmation for ${WALKOVER_REVIEW_HOURS}+ hours.`,
+          url: '/notifications',
+        });
+      }
     }
   }
 

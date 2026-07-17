@@ -34,6 +34,25 @@ request is rejected — so the secret MUST be set before deploying.
    supabase functions deploy
    ```
 
+## Web push (VAPID) secrets
+
+The reminder/alert functions (`send-session-reminders`,
+`send-challenge-reminders`, `send-stale-confirmation-alerts`) also send web
+push notifications via `_shared/push.ts`. Set the VAPID secrets — the same
+values used by the Next.js apps:
+
+```sh
+supabase secrets set \
+  NEXT_PUBLIC_VAPID_PUBLIC_KEY=... \
+  VAPID_PRIVATE_KEY=... \
+  VAPID_EMAIL=...
+```
+
+If the secrets are unset, push sending is a silent no-op — the in-app
+notification inserts still run. Note that web push only works for clients
+served from an HTTPS origin (service worker requirement), so it activates
+for real once the club domain lands.
+
 ## refresh-leaderboards was deleted
 
 The `refresh-leaderboards` function was removed from this repo. Complete the
@@ -50,3 +69,5 @@ removal on the hosted project:
 - `client.ts` — `createServiceClient()` and `jsonResponse(body, status)`
 - `constants.ts` — Deno cannot import the npm workspace; keep in sync with
   `packages/shared/src/utils/constants.ts`
+- `push.ts` — `sendPushToPlayers(supabase, playerIds, payload)`; keep in sync
+  with `packages/shared/src/push/send.ts`

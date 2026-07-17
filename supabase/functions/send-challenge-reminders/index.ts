@@ -3,6 +3,7 @@
 
 import { requireCronSecret } from '../_shared/auth.ts';
 import { createServiceClient, jsonResponse } from '../_shared/client.ts';
+import { sendPushToPlayers } from '../_shared/push.ts';
 
 Deno.serve(async (req) => {
   const denied = requireCronSecret(req);
@@ -36,10 +37,11 @@ Deno.serve(async (req) => {
 
   // Remind participants of overdue accepted challenges
   if (overdue && overdue.length > 0) {
-    const reminders = (overdue as Array<{
+    const typedOverdue = overdue as Array<{
       id: string;
       challenge_participants: Array<{ player_id: string; role: string }>;
-    }>).flatMap((c) =>
+    }>;
+    const reminders = typedOverdue.flatMap((c) =>
       c.challenge_participants.map((cp) => ({
         player_id: cp.player_id,
         type: 'general',
@@ -51,15 +53,28 @@ Deno.serve(async (req) => {
     if (reminders.length > 0) {
       await supabase.from('notifications').insert(reminders);
       notifCount += reminders.length;
+
+      for (const c of typedOverdue) {
+        await sendPushToPlayers(
+          supabase,
+          c.challenge_participants.map((cp) => cp.player_id),
+          {
+            title: 'Unplayed Challenge',
+            body: 'You have an accepted challenge that is past its scheduled date. Please play it or cancel.',
+            url: `/challenges/${c.id}`,
+          }
+        );
+      }
     }
   }
 
   // Remind pending participants of challenges expiring soon
   if (expiringSoon && expiringSoon.length > 0) {
-    const urgentReminders = (expiringSoon as Array<{
+    const typedExpiring = expiringSoon as Array<{
       id: string;
       challenge_participants: Array<{ player_id: string; confirmation_status: string }>;
-    }>).flatMap((c) =>
+    }>;
+    const urgentReminders = typedExpiring.flatMap((c) =>
       c.challenge_participants
         .filter((cp) => cp.confirmation_status === 'pending')
         .map((cp) => ({
@@ -73,6 +88,17 @@ Deno.serve(async (req) => {
     if (urgentReminders.length > 0) {
       await supabase.from('notifications').insert(urgentReminders);
       notifCount += urgentReminders.length;
+
+      for (const c of typedExpiring) {
+        const pendingIds = c.challenge_participants
+          .filter((cp) => cp.confirmation_status === 'pending')
+          .map((cp) => cp.player_id);
+        await sendPushToPlayers(supabase, pendingIds, {
+          title: 'Challenge Expiring Soon',
+          body: 'A challenge awaiting your response expires in less than 12 hours.',
+          url: `/challenges/${c.id}`,
+        });
+      }
     }
   }
 
