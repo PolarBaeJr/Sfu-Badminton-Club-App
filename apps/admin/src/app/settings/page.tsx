@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 import { createAdminClient, getAuthenticatedAdmin } from '@/lib/supabase-server';
 import { Card } from '@badminton/ui';
 import { SettingsForm } from './settings-form';
-import { Settings, User, Mail, Shield, Sliders, Info, ExternalLink } from 'lucide-react';
+import { Settings, User, Mail, Shield, Sliders, Info } from 'lucide-react';
 
 export default async function SettingsPage() {
   let player: Awaited<ReturnType<typeof getAuthenticatedAdmin>> | null = null;
@@ -89,13 +89,6 @@ export default async function SettingsPage() {
           <div className="flex items-center justify-between p-3 rounded-lg bg-[var(--bg-elevated)]">
             <span className="text-[var(--text-muted)]">App Version</span>
             <span className="font-mono text-xs bg-[var(--color-accent)]/10 text-[var(--color-accent)] px-2 py-0.5 rounded-full">v0.0.1</span>
-          </div>
-          <div className="flex items-center justify-between p-3 rounded-lg bg-[var(--bg-elevated)]">
-            <span className="text-[var(--text-muted)]">Supabase</span>
-            <span className="text-[var(--text-primary)] font-mono text-xs truncate max-w-[250px] flex items-center gap-1.5">
-              {process.env.NEXT_PUBLIC_SUPABASE_URL}
-              <ExternalLink className="w-3 h-3 text-[var(--text-muted)]" />
-            </span>
           </div>
         </div>
       </div>
