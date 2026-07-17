@@ -137,7 +137,7 @@ export default function LoginPage() {
 
         <div className="row" style={{ gap: 24, fontSize: 12, color: 'rgba(255,255,255,.5)', position: 'relative', zIndex: 2, fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: '.1em' }}>
           <span>Est. 2011</span>
-          <span>SRC Gym · Burnaby BC</span>
+          <span>Lorne Davies Complex · Burnaby BC</span>
           <span>Season 26</span>
         </div>
       </div>
