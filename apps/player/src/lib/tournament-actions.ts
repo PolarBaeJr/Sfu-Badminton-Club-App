@@ -17,6 +17,9 @@ function revalidateTournamentPaths(tournamentId: string, eventId: string) {
 
 export async function registerForEvent(eventId: string) {
   const player = await requirePlayer();
+  if (player.is_banned) {
+    throw new Error('Your account is suspended pending a reinstatement fee. Contact an admin to be reinstated.');
+  }
   const service = createServiceRoleClient();
 
   // Parallelize the three independent reads needed before we can validate.
@@ -81,6 +84,9 @@ export async function withdrawFromEvent(eventId: string) {
 
 export async function selfCheckIn(eventId: string) {
   const player = await requirePlayer();
+  if (player.is_banned) {
+    throw new Error('Your account is suspended pending a reinstatement fee. Contact an admin to be reinstated.');
+  }
   const service = createServiceRoleClient();
 
   // Parallel reads — event status and player participation row are independent.

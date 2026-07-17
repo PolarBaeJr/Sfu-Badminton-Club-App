@@ -6,6 +6,7 @@ import { Input, Textarea, Switch, PageHeader } from '@badminton/ui';
 import { updateProfile } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { isPushSupported, isPushEnabled, subscribeToPush, unsubscribeFromPush } from '@/lib/push-client';
 import { AvatarUpload } from '@/components/AvatarUpload';
 import {
@@ -22,6 +23,8 @@ import {
   Save,
   Palette,
   Loader2,
+  Receipt,
+  ChevronRight,
 } from 'lucide-react';
 
 type Theme = 'light' | 'dark' | 'system';
@@ -196,6 +199,24 @@ export default function SettingsPage() {
                 {loading ? 'Saving…' : saved ? 'Saved' : 'Save profile'}
               </button>
             </form>
+          </Section>
+
+          <Section icon={Receipt} title="Fees & Dues">
+            <Link
+              href="/fees"
+              className="row"
+              style={{
+                justifyContent: 'space-between',
+                padding: 12,
+                background: 'var(--surface-2)',
+                borderRadius: 10,
+                textDecoration: 'none',
+                color: 'inherit',
+              }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 500 }}>View what I owe</span>
+              <ChevronRight size={16} className="text-[var(--mute)]" />
+            </Link>
           </Section>
 
           <Section icon={Palette} title="Appearance">
