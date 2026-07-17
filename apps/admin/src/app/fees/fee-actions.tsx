@@ -2,38 +2,45 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button, Dialog, Input } from '@badminton/ui';
+import { Button, Dialog, Input, Select } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { markFeePaid, markFeeUnpaid } from '@/lib/actions';
 
-export function PeriodSelector({ period }: { period: string }) {
-  const [value, setValue] = useState(period);
+interface TermOption {
+  id: string;
+  label: string;
+  default_fee_cents: number;
+}
+
+export function TermSelector({ terms, selectedId }: { terms: TermOption[]; selectedId: string }) {
   const router = useRouter();
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (value.trim()) router.push(`/fees?period=${encodeURIComponent(value.trim())}`);
-  }
-
   return (
-    <form onSubmit={handleSubmit} className="flex items-end gap-2">
-      <Input label="Period" value={value} onChange={(e) => setValue(e.target.value)} placeholder="e.g. 2026 Summer" />
-      <Button type="submit" variant="ghost">Go</Button>
-    </form>
+    <Select
+      label="Term"
+      value={selectedId}
+      onChange={(e) => router.push(`/fees?term=${encodeURIComponent(e.target.value)}`)}
+      options={terms.map((t) => ({
+        value: t.id,
+        label: `${t.label} — $${(t.default_fee_cents / 100).toFixed(2)}`,
+      }))}
+    />
   );
 }
 
 interface FeeActionsProps {
   playerId: string;
   playerName: string;
-  period: string;
+  termId: string;
+  termLabel: string;
+  defaultFeeCents: number;
   paid: boolean;
 }
 
-export function FeeActions({ playerId, playerName, period, paid }: FeeActionsProps) {
+export function FeeActions({ playerId, playerName, termId, termLabel, defaultFeeCents, paid }: FeeActionsProps) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
-  const [amount, setAmount] = useState('');
+  const [amount, setAmount] = useState((defaultFeeCents / 100).toFixed(2));
   const [method, setMethod] = useState('');
   const { toast } = useToast();
   const router = useRouter();
@@ -44,13 +51,12 @@ export function FeeActions({ playerId, playerName, period, paid }: FeeActionsPro
         const dollars = amount ? parseFloat(amount) : undefined;
         await markFeePaid({
           player_id: playerId,
-          term_id: period,
+          term_id: termId,
           amount_cents: dollars ? Math.round(dollars * 100) : undefined,
           method: method || undefined,
         });
         toast('Fee marked as paid', 'success');
         setOpen(false);
-        setAmount('');
         setMethod('');
         router.refresh();
       } catch (err) {
@@ -62,7 +68,7 @@ export function FeeActions({ playerId, playerName, period, paid }: FeeActionsPro
   function handleMarkUnpaid() {
     startTransition(async () => {
       try {
-        await markFeeUnpaid(playerId, period);
+        await markFeeUnpaid(playerId, termId);
         toast('Fee marked as unpaid', 'success');
         router.refresh();
       } catch (err) {
@@ -81,11 +87,11 @@ export function FeeActions({ playerId, playerName, period, paid }: FeeActionsPro
 
   return (
     <>
-      <Button variant="ghost" size="sm" onClick={() => setOpen(true)}>Mark Paid</Button>
+      <Button variant="ghost" size="sm" onClick={() => { setAmount((defaultFeeCents / 100).toFixed(2)); setOpen(true); }}>Mark Paid</Button>
       <Dialog open={open} onClose={() => setOpen(false)} title={`Mark Fee Paid — ${playerName}`}>
         <div className="space-y-4">
           <p className="text-sm text-[var(--text-secondary)]">
-            Period: <strong className="text-[var(--text-primary)]">{period}</strong>
+            Term: <strong className="text-[var(--text-primary)]">{termLabel}</strong>
           </p>
           <div className="flex gap-2">
             <Input label="Amount $ (optional)" type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 15.00" />

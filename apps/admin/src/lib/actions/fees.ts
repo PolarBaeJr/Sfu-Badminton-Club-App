@@ -51,6 +51,18 @@ export async function markFeePaid(input: FeeMarkInput) {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
+  // Snapshot the amount: use the explicit input if given, else fall back to the
+  // term's default fee so the paid row records what was actually owed.
+  let amountCents = input.amount_cents ?? null;
+  if (amountCents == null) {
+    const { data: term } = await adminClient
+      .from('terms')
+      .select('default_fee_cents')
+      .eq('id', input.term_id)
+      .single();
+    amountCents = term?.default_fee_cents ?? null;
+  }
+
   const { data: fee, error } = await adminClient
     .from('club_fees')
     .upsert({
@@ -58,7 +70,7 @@ export async function markFeePaid(input: FeeMarkInput) {
       term_id: input.term_id,
       paid_at: new Date().toISOString(),
       marked_by: admin.id,
-      amount_cents: input.amount_cents ?? null,
+      amount_cents: amountCents,
       method: input.method ?? null,
     }, { onConflict: 'player_id,term_id' })
     .select('id')
@@ -73,7 +85,7 @@ export async function markFeePaid(input: FeeMarkInput) {
     new_value: {
       player_id: input.player_id,
       term_id: input.term_id,
-      amount_cents: input.amount_cents ?? null,
+      amount_cents: amountCents,
       method: input.method ?? null,
     },
   }, { playerId: input.player_id });
@@ -81,15 +93,15 @@ export async function markFeePaid(input: FeeMarkInput) {
   revalidatePath('/fees');
 }
 
-export async function markFeeUnpaid(playerId: string, period: string) {
+export async function markFeeUnpaid(playerId: string, termId: string) {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
   const { data: oldFee } = await adminClient
     .from('club_fees')
-    .select('id, player_id, period, amount_cents, paid_at, method')
+    .select('id, player_id, term_id, amount_cents, paid_at, method')
     .eq('player_id', playerId)
-    .eq('period', period)
+    .eq('term_id', termId)
     .single();
   if (!oldFee) throw new Error('Fee record not found');
 

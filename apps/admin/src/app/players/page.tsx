@@ -32,7 +32,7 @@ export default async function PlayersPage({
 
   let query = supabase
     .from('players')
-    .select('id, full_name, email, avatar_url, status, role, is_exec, fee_exempt, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses)')
+    .select('id, full_name, email, avatar_url, status, role, is_exec, fee_exempt, is_banned, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses)')
     .order('created_at', { ascending: false })
     .limit(500);
 
@@ -133,6 +133,7 @@ export default async function PlayersPage({
                         </Badge>
                         {player.is_exec && <Badge variant="info">Exec</Badge>}
                         {player.fee_exempt && <Badge variant="neutral">Fee Exempt</Badge>}
+                        {player.is_banned && <Badge variant="danger">Banned</Badge>}
                       </div>
                     </td>
                     <td className="px-4 py-3 text-right">
@@ -152,6 +153,7 @@ export default async function PlayersPage({
                     <td className="px-4 py-3 text-right">
                       <div className="flex gap-1 justify-end">
                         <PlayerActions mode="edit" playerId={player.id} playerData={player} />
+                        <PlayerActions mode="ban" playerId={player.id} playerName={player.full_name} playerData={player} />
                         <PlayerActions mode="delete" playerId={player.id} playerName={player.full_name} />
                       </div>
                     </td>

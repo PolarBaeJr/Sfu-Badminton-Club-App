@@ -4,10 +4,10 @@ import { useState, useTransition } from 'react';
 import { Button, Dialog, Input, Select, Switch, Textarea } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { updatePlayer, updatePlayerFlags, removePlayer } from '@/lib/actions';
+import { updatePlayer, updatePlayerFlags, removePlayer, banPlayer, reinstatePlayer } from '@/lib/actions';
 
 interface Props {
-  mode: 'edit' | 'delete';
+  mode: 'edit' | 'delete' | 'ban';
   playerId: string;
   playerName?: string;
   playerData?: Record<string, unknown>;
@@ -36,8 +36,12 @@ export function PlayerActions({ mode, playerId, playerName, playerData }: Props)
   const [doublesElo, setDoublesElo] = useState('');
   const [reason, setReason] = useState('');
   const [confirmName, setConfirmName] = useState('');
+  const [banReason, setBanReason] = useState('');
+  const [reinstateAmount, setReinstateAmount] = useState('');
+  const [reinstateMethod, setReinstateMethod] = useState('');
   const { toast } = useToast();
   const router = useRouter();
+  const isBanned = Boolean(playerData?.is_banned);
 
   function handleEdit() {
     startTransition(async () => {
@@ -73,6 +77,84 @@ export function PlayerActions({ mode, playerId, playerName, playerData }: Props)
         toast(err instanceof Error ? err.message : 'Failed to remove player', 'error');
       }
     });
+  }
+
+  function handleBan() {
+    startTransition(async () => {
+      try {
+        await banPlayer({ player_id: playerId, reason: banReason });
+        toast('Player banned', 'success');
+        setOpen(false);
+        setBanReason('');
+        router.refresh();
+      } catch (err) {
+        toast(err instanceof Error ? err.message : 'Failed to ban player', 'error');
+      }
+    });
+  }
+
+  function handleReinstate() {
+    startTransition(async () => {
+      try {
+        const dollars = reinstateAmount ? parseFloat(reinstateAmount) : undefined;
+        await reinstatePlayer({
+          player_id: playerId,
+          amount_cents: dollars != null && !Number.isNaN(dollars) ? Math.round(dollars * 100) : undefined,
+          method: reinstateMethod || undefined,
+        });
+        toast('Player reinstated', 'success');
+        setOpen(false);
+        setReinstateAmount('');
+        setReinstateMethod('');
+        router.refresh();
+      } catch (err) {
+        toast(err instanceof Error ? err.message : 'Failed to reinstate player', 'error');
+      }
+    });
+  }
+
+  if (mode === 'ban') {
+    if (isBanned) {
+      return (
+        <>
+          <Button variant="ghost" size="sm" onClick={() => setOpen(true)}>Reinstate</Button>
+          <Dialog open={open} onClose={() => setOpen(false)} title="Reinstate Player">
+            <div className="space-y-4">
+              <p className="text-[var(--text-secondary)]">
+                Lift the ban on <strong className="text-[var(--text-primary)]">{playerName}</strong>. Recording an amount is optional (leave blank for a free reinstatement).
+              </p>
+              <div className="flex gap-2">
+                <Input label="Amount $ (optional)" type="number" step="0.01" min="0" value={reinstateAmount} onChange={(e) => setReinstateAmount(e.target.value)} placeholder="e.g. 20.00" />
+                <Input label="Method (optional)" value={reinstateMethod} onChange={(e) => setReinstateMethod(e.target.value)} placeholder="e.g. e-transfer, cash" />
+              </div>
+              <div className="flex gap-2">
+                <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+                <Button onClick={handleReinstate} loading={isPending} className="flex-1">Reinstate</Button>
+              </div>
+            </div>
+          </Dialog>
+        </>
+      );
+    }
+    return (
+      <>
+        <Button variant="danger" size="sm" onClick={() => setOpen(true)}>Ban</Button>
+        <Dialog open={open} onClose={() => setOpen(false)} title="Ban Player">
+          <div className="space-y-4">
+            <p className="text-[var(--text-secondary)]">
+              Ban <strong className="text-[var(--text-primary)]">{playerName}</strong>. They will need to be reinstated (with an optional fee) to return.
+            </p>
+            <Textarea label="Reason" value={banReason} onChange={(e) => setBanReason(e.target.value)} placeholder="Why is this player being banned?" />
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+              <Button variant="danger" onClick={handleBan} loading={isPending} className="flex-1" disabled={banReason.trim().length < 2}>
+                Ban Player
+              </Button>
+            </div>
+          </div>
+        </Dialog>
+      </>
+    );
   }
 
   if (mode === 'edit') {

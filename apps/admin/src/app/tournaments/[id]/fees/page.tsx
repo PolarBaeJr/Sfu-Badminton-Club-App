@@ -1,62 +1,75 @@
 import { createAdminClient } from '@/lib/supabase-server';
-import { Badge, Card, Avatar, EmptyState } from '@badminton/ui';
+import { Card, Badge, Avatar } from '@badminton/ui';
 import { unwrap } from '@badminton/shared';
-import type { Term } from '@badminton/shared';
-import { TermSelector, FeeActions } from './fee-actions';
-import { TermsManager } from './terms-manager';
+import type { TournamentFeeTier, TournamentFee, Player } from '@badminton/shared';
+import { notFound } from 'next/navigation';
+import { ArrowLeft } from 'lucide-react';
+import Link from 'next/link';
+import { TournamentFeeActions } from './tournament-fee-actions';
 
-export default async function FeesPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ term?: string }>;
-}) {
-  const params = await searchParams;
+export default async function TournamentFeesPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const supabase = createAdminClient();
 
-  const terms = unwrap(
-    await supabase
-      .from('terms')
-      .select('id, label, season, year, default_fee_cents, active, sort_order, created_at')
-      .order('year', { ascending: false })
-      .order('sort_order')
-  ) as Term[];
+  const { data: tournament } = await supabase.from('tournaments').select('id, name').eq('id', id).single();
+  if (!tournament) notFound();
 
-  if (terms.length === 0) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">FEES</h1>
-        <Card>
-          <EmptyState
-            title="No terms yet"
-            description="Create a term to start tracking club fees."
-          />
-        </Card>
-        <TermsManager terms={terms} />
-      </div>
-    );
+  const tiers = unwrap(
+    await supabase
+      .from('tournament_fee_tiers')
+      .select('id, tournament_id, name, amount_cents, is_default, sort_order, created_at')
+      .eq('tournament_id', id)
+      .order('sort_order')
+  ) as TournamentFeeTier[];
+  const tierById = new Map(tiers.map((t) => [t.id, t]));
+  const defaultTier = tiers.find((t) => t.is_default) ?? null;
+
+  // Owed list: every player entered in any of this tournament's events, from
+  // both singles participants and doubles pairs, excluding withdrawn entries.
+  const events = unwrap(
+    await supabase.from('tournament_events').select('id').eq('tournament_id', id)
+  );
+  const eventIds = events.map((e) => e.id);
+
+  const playerIds = new Set<string>();
+  if (eventIds.length > 0) {
+    const [participants, pairs] = await Promise.all([
+      supabase
+        .from('tournament_participants')
+        .select('player_id')
+        .in('event_id', eventIds)
+        .neq('status', 'withdrawn'),
+      supabase
+        .from('tournament_pairs')
+        .select('player1_id, player2_id')
+        .in('event_id', eventIds)
+        .neq('status', 'withdrawn'),
+    ]);
+    for (const row of participants.data ?? []) playerIds.add(row.player_id);
+    for (const row of pairs.data ?? []) {
+      playerIds.add(row.player1_id);
+      playerIds.add(row.player2_id);
+    }
   }
 
-  const selectedTerm =
-    terms.find((t) => t.id === params.term) ?? terms.find((t) => t.active) ?? terms[0]!;
-
-  // Fee-collection list: active players (competitive/recreational) who are
-  // neither exec nor fee-exempt.
-  const players = unwrap(
-    await supabase
-      .from('players')
-      .select('id, full_name, email, avatar_url, status')
-      .in('status', ['competitive', 'recreational'])
-      .eq('is_exec', false)
-      .eq('fee_exempt', false)
-      .order('full_name')
-  );
+  const players = playerIds.size > 0
+    ? (unwrap(
+        await supabase
+          .from('players')
+          .select('id, full_name, email, avatar_url')
+          .in('id', Array.from(playerIds))
+          .eq('is_exec', false)
+          .eq('fee_exempt', false)
+          .order('full_name')
+      ) as Pick<Player, 'id' | 'full_name' | 'email' | 'avatar_url'>[])
+    : [];
 
   const fees = unwrap(
     await supabase
-      .from('club_fees')
-      .select('player_id, amount_cents, paid_at, method')
-      .eq('term_id', selectedTerm.id)
-  );
+      .from('tournament_fees')
+      .select('player_id, tier_id, amount_cents, paid_at, method')
+      .eq('tournament_id', id)
+  ) as Pick<TournamentFee, 'player_id' | 'tier_id' | 'amount_cents' | 'paid_at' | 'method'>[];
   const feeByPlayer = new Map(fees.map((f) => [f.player_id, f]));
 
   const paidCount = players.filter((p) => feeByPlayer.get(p.id)?.paid_at).length;
@@ -64,10 +77,16 @@ export default async function FeesPage({
 
   return (
     <div className="space-y-6">
+      <Link href={`/tournaments/${id}`} className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--color-accent)] transition-colors rounded">
+        <ArrowLeft className="w-4 h-4" />
+        Back to Tournament
+      </Link>
+
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">FEES</h1>
-        <TermSelector terms={terms} selectedId={selectedTerm.id} />
+        <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">{tournament.name} — Fees</h1>
       </div>
+
+      <TournamentFeeActions mode="tiers" tournamentId={id} tiers={tiers} />
 
       {/* Summary */}
       <div className="grid grid-cols-2 gap-4">
@@ -89,6 +108,7 @@ export default async function FeesPage({
               <tr className="border-b border-[var(--border)]">
                 <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Player</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Tier</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase">Amount</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Method</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase">Actions</th>
@@ -98,6 +118,8 @@ export default async function FeesPage({
               {players.map((player) => {
                 const fee = feeByPlayer.get(player.id);
                 const paid = Boolean(fee?.paid_at);
+                const tier = fee?.tier_id ? tierById.get(fee.tier_id) : null;
+                const owedCents = fee?.amount_cents ?? defaultTier?.amount_cents ?? null;
                 return (
                   <tr key={player.id} className="hover:bg-[var(--border-hover)] transition-colors">
                     <td className="px-4 py-3">
@@ -112,21 +134,24 @@ export default async function FeesPage({
                     <td className="px-4 py-3">
                       <Badge variant={paid ? 'success' : 'warning'}>{paid ? 'Paid' : 'Unpaid'}</Badge>
                     </td>
+                    <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">
+                      {tier?.name ?? defaultTier?.name ?? '-'}
+                    </td>
                     <td className="px-4 py-3 text-right">
                       <span className="font-mono text-[var(--text-primary)]">
-                        {paid && fee?.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}
+                        {owedCents != null ? `$${(owedCents / 100).toFixed(2)}` : '-'}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">
                       {(paid && fee?.method) || '-'}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <FeeActions
+                      <TournamentFeeActions
+                        mode="mark"
+                        tournamentId={id}
                         playerId={player.id}
                         playerName={player.full_name}
-                        termId={selectedTerm.id}
-                        termLabel={selectedTerm.label}
-                        defaultFeeCents={selectedTerm.default_fee_cents}
+                        tiers={tiers}
                         paid={paid}
                       />
                     </td>
@@ -137,11 +162,9 @@ export default async function FeesPage({
           </table>
         </div>
         {players.length === 0 && (
-          <p className="text-center text-[var(--text-muted)] py-8">No players owe fees for this term</p>
+          <p className="text-center text-[var(--text-muted)] py-8">No players owe fees for this tournament</p>
         )}
       </Card>
-
-      <TermsManager terms={terms} />
     </div>
   );
 }

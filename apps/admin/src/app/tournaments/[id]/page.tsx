@@ -2,7 +2,7 @@ import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge } from '@badminton/ui';
 import { formatDate, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS } from '@badminton/shared';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, Trophy, Users, Calendar, Zap, Crown, Plus, Swords } from 'lucide-react';
+import { ArrowLeft, Trophy, Users, Calendar, Zap, Crown, Plus, Swords, DollarSign } from 'lucide-react';
 import Link from 'next/link';
 import { CreateEventButton } from './create-event';
 import { TournamentStatusControls } from './tournament-status-controls';
@@ -77,7 +77,13 @@ export default async function TournamentDetailPage({ params }: { params: Promise
             {tournament.placement_bonus_enabled && <Badge variant="default">Placement Bonuses</Badge>}
           </div>
         </div>
-        <TournamentStatusControls tournamentId={id} status={tournament.status} />
+        <div className="flex items-center gap-3">
+          <Link href={`/tournaments/${id}/fees`} className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--color-accent)] transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none rounded">
+            <DollarSign className="w-4 h-4" />
+            Fees
+          </Link>
+          <TournamentStatusControls tournamentId={id} status={tournament.status} />
+        </div>
       </div>
 
       {/* Events Section */}
