@@ -44,6 +44,6 @@ export const config = {
   // PWA assets (manifest, service worker, icons) must stay public —
   // an auth redirect here breaks installability and SW registration.
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|icon-192.png|icon-512.png|apple-touch-icon.png).*)',
+    '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|icon-192.png|icon-512.png|apple-touch-icon.png|email/).*)',
   ],
 };
