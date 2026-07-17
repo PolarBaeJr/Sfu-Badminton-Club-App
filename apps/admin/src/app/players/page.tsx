@@ -1,6 +1,6 @@
 import { createAdminClient } from '@/lib/supabase-server';
 import { Badge, Card, Avatar } from '@badminton/ui';
-import { PLAYER_STATUS_LABELS, unwrap } from '@badminton/shared';
+import { PLAYER_STATUS_LABELS, getWinRate, unwrap } from '@badminton/shared';
 import Link from 'next/link';
 import { PlayerActions } from './player-actions';
 import { AddPlayerButton } from './add-player-button';
@@ -140,10 +140,10 @@ export default async function PlayersPage({
                       {r?.doubles_provisional && <span className="text-xs text-[var(--text-muted)] ml-1">P</span>}
                     </td>
                     <td className="px-4 py-3 text-right text-sm text-[var(--text-secondary)]">
-                      {r ? `${r.singles_wins}-${r.singles_losses}` : '-'}
+                      {r ? `${r.singles_wins}-${r.singles_losses}${r.singles_wins + r.singles_losses > 0 ? ` (${getWinRate(r.singles_wins, r.singles_losses)})` : ''}` : '-'}
                     </td>
                     <td className="px-4 py-3 text-right text-sm text-[var(--text-secondary)]">
-                      {r ? `${r.doubles_wins}-${r.doubles_losses}` : '-'}
+                      {r ? `${r.doubles_wins}-${r.doubles_losses}${r.doubles_wins + r.doubles_losses > 0 ? ` (${getWinRate(r.doubles_wins, r.doubles_losses)})` : ''}` : '-'}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex gap-1 justify-end">

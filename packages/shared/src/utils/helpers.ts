@@ -43,6 +43,31 @@ export function getWinRate(wins: number, losses: number): string {
   return `${Math.round((wins / total) * 100)}%`;
 }
 
+// null (not 0) when no games played, so sorts can push unplayed records to
+// the bottom instead of treating them as genuine 0% win rates.
+export function getWinRateNumeric(wins: number, losses: number): number | null {
+  const total = wins + losses;
+  if (total === 0) return null;
+  return wins / total;
+}
+
+export function getOverallRecord(r: {
+  singles_wins: number;
+  singles_losses: number;
+  doubles_wins: number;
+  doubles_losses: number;
+}): { wins: number; losses: number; played: number; winRate: string; winRateNumeric: number | null } {
+  const wins = r.singles_wins + r.doubles_wins;
+  const losses = r.singles_losses + r.doubles_losses;
+  return {
+    wins,
+    losses,
+    played: wins + losses,
+    winRate: getWinRate(wins, losses),
+    winRateNumeric: getWinRateNumeric(wins, losses),
+  };
+}
+
 export function getPointDifferential(scored: number, allowed: number): string {
   const diff = scored - allowed;
   return diff >= 0 ? `+${diff}` : `${diff}`;

@@ -5,6 +5,8 @@ import {
   formatRelativeTime,
   isAdmin,
   getWinRate,
+  getWinRateNumeric,
+  getOverallRecord,
   getPointDifferential,
   getStreakDisplay,
   cn,
@@ -113,6 +115,55 @@ describe('getWinRate', () => {
 
   it('handles a single loss', () => {
     expect(getWinRate(0, 1)).toBe('0%');
+  });
+});
+
+describe('getWinRateNumeric', () => {
+  it('returns null when no matches played', () => {
+    expect(getWinRateNumeric(0, 0)).toBeNull();
+  });
+
+  it('returns 1 for all wins', () => {
+    expect(getWinRateNumeric(10, 0)).toBe(1);
+  });
+
+  it('returns 0 for all losses', () => {
+    expect(getWinRateNumeric(0, 10)).toBe(0);
+  });
+
+  it('returns an unrounded fraction for a mixed record', () => {
+    expect(getWinRateNumeric(3, 1)).toBe(0.75);
+  });
+
+  it('does not round repeating fractions', () => {
+    expect(getWinRateNumeric(1, 2)).toBeCloseTo(1 / 3, 10);
+  });
+});
+
+describe('getOverallRecord', () => {
+  it('returns zeros, 0%, and null rate when no matches played', () => {
+    const result = getOverallRecord({ singles_wins: 0, singles_losses: 0, doubles_wins: 0, doubles_losses: 0 });
+    expect(result).toEqual({ wins: 0, losses: 0, played: 0, winRate: '0%', winRateNumeric: null });
+  });
+
+  it('combines singles and doubles into an overall record', () => {
+    const result = getOverallRecord({ singles_wins: 3, singles_losses: 1, doubles_wins: 2, doubles_losses: 2 });
+    expect(result.wins).toBe(5);
+    expect(result.losses).toBe(3);
+    expect(result.played).toBe(8);
+    expect(result.winRate).toBe('63%');
+    expect(result.winRateNumeric).toBe(5 / 8);
+  });
+
+  it('handles all wins across both formats', () => {
+    const result = getOverallRecord({ singles_wins: 4, singles_losses: 0, doubles_wins: 6, doubles_losses: 0 });
+    expect(result).toEqual({ wins: 10, losses: 0, played: 10, winRate: '100%', winRateNumeric: 1 });
+  });
+
+  it('rounds the formatted rate like getWinRate (1 win in 3 games)', () => {
+    const result = getOverallRecord({ singles_wins: 1, singles_losses: 1, doubles_wins: 0, doubles_losses: 1 });
+    expect(result.winRate).toBe('33%');
+    expect(result.winRateNumeric).toBeCloseTo(1 / 3, 10);
   });
 });
 

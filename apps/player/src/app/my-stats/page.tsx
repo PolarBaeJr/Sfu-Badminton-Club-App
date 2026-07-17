@@ -1,5 +1,5 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { getWinRate, getStreakDisplay, getPointDifferential, formatDate } from '@badminton/shared';
+import { getWinRate, getOverallRecord, getStreakDisplay, getPointDifferential, formatDate } from '@badminton/shared';
 import { redirect } from 'next/navigation';
 import { AvatarChip, PageHeader } from '@badminton/ui';
 
@@ -44,7 +44,12 @@ export default async function MyStatsPage() {
 
   const singlesPlayed = (r?.singles_wins ?? 0) + (r?.singles_losses ?? 0);
   const doublesPlayed = (r?.doubles_wins ?? 0) + (r?.doubles_losses ?? 0);
-  const totalPlayed = singlesPlayed + doublesPlayed;
+  const { played: totalPlayed } = getOverallRecord({
+    singles_wins: r?.singles_wins ?? 0,
+    singles_losses: r?.singles_losses ?? 0,
+    doubles_wins: r?.doubles_wins ?? 0,
+    doubles_losses: r?.doubles_losses ?? 0,
+  });
   const singlesPct = totalPlayed > 0 ? Math.round((singlesPlayed / totalPlayed) * 100) : 0;
   const doublesPct = totalPlayed > 0 ? 100 - singlesPct : 0;
 

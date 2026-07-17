@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import { getPostHogClient } from '@/lib/posthog';
 import { Search, Crosshair, ChevronRight } from 'lucide-react';
 import { AvatarChip, PageHeader } from '@badminton/ui';
+import { getWinRate, getWinRateNumeric } from '@badminton/shared';
 
 type Ratings = {
   singles_elo: number;
@@ -32,6 +33,8 @@ type LeaderboardEntry = {
 
 type CategoryId = 'open_singles' | 'open_doubles' | 'comp_singles' | 'comp_doubles' | 'tournament_points';
 
+type SortId = 'elo' | 'win_rate';
+
 const tabs: { id: CategoryId; label: string; short: string }[] = [
   { id: 'open_singles',      label: 'Open Singles',     short: 'Open S.' },
   { id: 'open_doubles',      label: 'Open Doubles',     short: 'Open D.' },
@@ -40,8 +43,18 @@ const tabs: { id: CategoryId; label: string; short: string }[] = [
   { id: 'tournament_points', label: 'Tournament Pts',   short: 'TPts' },
 ];
 
+const sortOptions: { id: SortId; label: string }[] = [
+  { id: 'elo',      label: 'ELO' },
+  { id: 'win_rate', label: 'Win %' },
+];
+
+// Records with fewer than this many games sort below established ones when
+// ranking by win rate (a 1-0 record shouldn't outrank a 20-5 one).
+const MIN_GAMES_FOR_WIN_RATE_RANK = 5;
+
 export default function LeaderboardPage() {
   const [activeTab, setActiveTab] = useState<CategoryId>('open_singles');
+  const [sortBy, setSortBy] = useState<SortId>('elo');
   const [players, setPlayers] = useState<LeaderboardEntry[]>([]);
   const [meId, setMeId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -161,24 +174,43 @@ export default function LeaderboardPage() {
     [players, searchQuery]
   );
 
+  const ranked = useMemo(() => {
+    if (isTpts || sortBy !== 'win_rate') return filtered;
+    const record = (p: LeaderboardEntry) => {
+      const r = p.ratings;
+      const wins = r ? (isDoubles ? r.doubles_wins : r.singles_wins) : 0;
+      const losses = r ? (isDoubles ? r.doubles_losses : r.singles_losses) : 0;
+      const rate = getWinRateNumeric(wins, losses);
+      // Tiers: established (≥5 games) first, small samples next, unplayed (null rate) last.
+      const tier = rate === null ? 2 : wins + losses < MIN_GAMES_FOR_WIN_RATE_RANK ? 1 : 0;
+      return { rate, tier };
+    };
+    return [...filtered].sort((a, b) => {
+      const ra = record(a);
+      const rb = record(b);
+      if (ra.tier !== rb.tier) return ra.tier - rb.tier;
+      return (rb.rate ?? 0) - (ra.rate ?? 0);
+    });
+  }, [filtered, sortBy, isDoubles, isTpts]);
+
   const meIndex = useMemo(
-    () => filtered.findIndex((p) => p.id === meId),
-    [filtered, meId]
+    () => ranked.findIndex((p) => p.id === meId),
+    [ranked, meId]
   );
-  const me = meIndex >= 0 ? filtered[meIndex] : null;
+  const me = meIndex >= 0 ? ranked[meIndex] : null;
   const myElo = me?.ratings ? (isDoubles ? me.ratings.doubles_elo : me.ratings.singles_elo) : null;
-  const aboveMe = meIndex > 0 ? filtered[meIndex - 1] : null;
+  const aboveMe = meIndex > 0 ? ranked[meIndex - 1] : null;
   const aboveMeElo = aboveMe?.ratings ? (isDoubles ? aboveMe.ratings.doubles_elo : aboveMe.ratings.singles_elo) : null;
   const eloToNext = myElo !== null && aboveMeElo !== null ? aboveMeElo - myElo : null;
 
-  const top3 = filtered.slice(0, 3);
+  const top3 = ranked.slice(0, 3);
 
   return (
     <div data-screen-label="Leaderboard">
       <PageHeader
         eyebrow="RANKINGS · LIVE"
         title="Leaderboard"
-        sub={`ELO updates after every confirmed match. ${filtered.length} ranked players in ${tabs.find((t) => t.id === activeTab)?.label}.`}
+        sub={`ELO updates after every confirmed match. ${ranked.length} ranked players in ${tabs.find((t) => t.id === activeTab)?.label}.`}
         actions={
           <div
             className="row"
@@ -278,7 +310,9 @@ export default function LeaderboardPage() {
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center' }}>
                       <div className="mono" style={{ fontWeight: 700, fontSize: 18 }}>{elo}</div>
                       {!isTpts && (
-                        <div className="mono muted" style={{ fontSize: 11 }}>{wins}–{losses}</div>
+                        <div className="mono muted" style={{ fontSize: 11 }}>
+                          {wins}–{losses}{wins + losses > 0 ? ` · ${getWinRate(wins, losses)}` : ''}
+                        </div>
                       )}
                     </div>
                   </Link>
@@ -338,15 +372,29 @@ export default function LeaderboardPage() {
               <div>
                 <h3 className="card-title">{tabs.find((t) => t.id === activeTab)?.label} · Full Ladder</h3>
                 <div className="card-sub">
-                  Sorted by {isTpts ? 'points' : 'ELO'} · {filtered.length} of {players.length}
+                  Sorted by {isTpts ? 'points' : sortBy === 'win_rate' ? 'win rate' : 'ELO'} · {ranked.length} of {players.length}
                 </div>
               </div>
+              {!isTpts && (
+                <div className="chips">
+                  {sortOptions.map((s) => (
+                    <button
+                      key={s.id}
+                      className={'filter-chip' + (sortBy === s.id ? ' active' : '')}
+                      onClick={() => setSortBy(s.id)}
+                      type="button"
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             {loading ? (
               <div className="empty">Loading rankings…</div>
             ) : loadError ? (
               <div className="empty">Couldn&apos;t load rankings: {loadError}</div>
-            ) : filtered.length === 0 ? (
+            ) : ranked.length === 0 ? (
               <div className="empty">
                 {searchQuery ? `No players match "${searchQuery}".` : 'No ranked players yet.'}
               </div>
@@ -365,13 +413,12 @@ export default function LeaderboardPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map((p, i) => {
+                    {ranked.map((p, i) => {
                       const r = p.ratings;
                       const elo = r ? (isDoubles ? r.doubles_elo : r.singles_elo) : (p._tournamentPoints ?? 0);
                       const wins = r ? (isDoubles ? r.doubles_wins : r.singles_wins) : 0;
                       const losses = r ? (isDoubles ? r.doubles_losses : r.singles_losses) : 0;
                       const total = wins + losses;
-                      const pct = total > 0 ? Math.round((wins / total) * 100) : 0;
                       const streak = r ? (isDoubles ? r.current_doubles_streak : r.current_singles_streak) : 0;
                       const prov = r ? (isDoubles ? r.doubles_provisional : r.singles_provisional) : false;
                       const isMeRow = p.id === meId;
@@ -398,7 +445,11 @@ export default function LeaderboardPage() {
                           </td>
                           <td className="num" style={{ fontWeight: 600, fontSize: 14, textAlign: 'right' }}>{elo}</td>
                           {!isTpts && <td className="num muted" style={{ textAlign: 'right' }}>{wins}–{losses}</td>}
-                          {!isTpts && <td className="num" style={{ textAlign: 'right' }}>{pct}%</td>}
+                          {!isTpts && (
+                            <td className="num" style={{ textAlign: 'right' }}>
+                              {total > 0 ? getWinRate(wins, losses) : <span className="muted">—</span>}
+                            </td>
+                          )}
                           {!isTpts && (
                             <td className="num" style={{ textAlign: 'right' }}>
                               {typeof streak === 'number' && streak !== 0 ? (
