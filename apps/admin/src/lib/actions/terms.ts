@@ -6,10 +6,15 @@ import { revalidatePath } from 'next/cache';
 import { parseOrThrow, termSchema, type TermInput } from '@badminton/shared';
 import { getAdminPlayer } from './_shared';
 
-export async function createTerm(input: TermInput) {
+export async function createTerm(input: TermInput): Promise<string> {
   parseOrThrow(termSchema, input);
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
+
+  // One active term at a time: if this new term is active, clear the others first.
+  if (input.active) {
+    await adminClient.from('terms').update({ active: false }).neq('id', '00000000-0000-0000-0000-000000000000');
+  }
 
   const { data: term, error } = await adminClient
     .from('terms')
@@ -34,6 +39,7 @@ export async function createTerm(input: TermInput) {
   });
 
   revalidatePath('/fees');
+  return term.id as string;
 }
 
 export async function updateTerm(id: string, input: Partial<TermInput>) {
