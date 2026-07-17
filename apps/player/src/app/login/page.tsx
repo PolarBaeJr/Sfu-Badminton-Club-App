@@ -4,6 +4,20 @@ import { useState } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Mail, CheckCircle2, ChevronRight, Loader2 } from 'lucide-react';
 
+// Supabase auth errors reach the client as raw strings; a gateway 503 arrives
+// with a "{}" body and rate limits phrase themselves oddly. Map both to
+// something a human can act on instead of leaking the raw payload.
+function friendlyAuthError(message: string): string {
+  const msg = (message ?? '').trim();
+  if (!msg || msg === '{}' || msg === '[object Object]') {
+    return 'Something went wrong reaching the server — please try again in a moment.';
+  }
+  if (/rate|after \d|security purposes|too many/i.test(msg)) {
+    return 'Too many attempts — please wait a moment before trying again.';
+  }
+  return msg;
+}
+
 export default function LoginPage() {
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
@@ -21,7 +35,7 @@ export default function LoginPage() {
       options: { redirectTo: `${window.location.origin}/auth/callback` },
     });
     if (authError) {
-      setError(authError.message);
+      setError(friendlyAuthError(authError.message));
       setGoogleLoading(false);
     }
   }
@@ -36,7 +50,7 @@ export default function LoginPage() {
       options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
     });
     if (authError) {
-      setError(authError.message.includes('rate') ? 'Too many attempts — please wait before trying again' : authError.message);
+      setError(friendlyAuthError(authError.message));
     } else {
       setSent(true);
     }
