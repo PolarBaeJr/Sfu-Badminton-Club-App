@@ -243,11 +243,19 @@ BEGIN
   LOOP
     v_won := (v_participant.team_side = v_derived_winner);
 
-    -- Get opponent average rating
-    SELECT CASE WHEN v_match.match_type = 'singles' THEN AVG(r2.singles_elo) ELSE AVG(r2.doubles_elo) END
+    -- Get opponent average rating from the PRE-match snapshot
+    -- (match_participants.pre_rating), NOT the live ratings table.
+    -- Reading live ratings here is order-dependent: this loop writes
+    -- each participant's new rating in-place, so whichever participant
+    -- is processed second would see the opponent's ALREADY-UPDATED
+    -- rating, producing asymmetric deltas (e.g. winner +20 / loser -19).
+    -- pre_rating already encodes the correct field (singles_elo vs
+    -- doubles_elo) chosen at participant-insert time by match_type, so
+    -- no match_type branch is needed. Singles: the other player's
+    -- pre_rating; doubles: AVG of the two opposing players' pre_ratings.
+    SELECT AVG(mp2.pre_rating)
     INTO v_opponent_rating
     FROM match_participants mp2
-    JOIN ratings r2 ON r2.player_id = mp2.player_id
     WHERE mp2.match_id = p_match_id AND mp2.team_side != v_participant.team_side;
 
     -- K-factor
@@ -301,8 +309,17 @@ BEGIN
   -- Update challenge status
   UPDATE challenges SET status = 'completed', updated_at = NOW() WHERE id = v_match.challenge_id;
 
-  -- Update head_to_head stats
-  PERFORM update_head_to_head(p_match_id);
+  -- NOTE: head_to_head_stats is intentionally NOT updated here.
+  -- The UPDATE ... SET result_status = 'confirmed' above fires the
+  -- on_match_confirmed AFTER UPDATE trigger (00004_triggers.sql), which
+  -- is the single owner of both update_head_to_head() and
+  -- update_partnership_stats(). Every confirmation path that applies Elo
+  -- (normal player confirm, apply_walkover_result, adminCreateMatch,
+  -- resolveDispute accepted/edited) routes through this function and
+  -- therefore through that UPDATE, so the trigger fires exactly once per
+  -- confirmed rated match. Calling update_head_to_head() explicitly here
+  -- as well would double-count every match (partnership_stats is already
+  -- trigger-only and correct; this keeps h2h consistent with it).
 
   -- Audit
   INSERT INTO audit_logs (actor_id, action_type, target_type, target_id, reason)

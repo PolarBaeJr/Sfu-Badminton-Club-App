@@ -45,6 +45,9 @@ services:
     labels:
       proxy.enable:     "true"
       proxy.host:       "${PROXY_DOMAIN:-badminton-staging.polardev.org}"
+      # Explicit "/" so the player is a real path-prefix group, not a host
+      # catch-all that pools with the admin backend (admin's /admin wins).
+      proxy.path:       "/"
       proxy.port:       "3000"
       proxy.service:    "badminton-staging-player"
       proxy.unscalable: "true"

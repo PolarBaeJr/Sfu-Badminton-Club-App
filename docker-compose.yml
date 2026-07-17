@@ -34,6 +34,10 @@ services:
     labels:
       proxy.enable:     "true"
       proxy.host:       "${PROXY_DOMAIN:-badminton.polardev.org}"
+      # Explicit "/" (not empty) so the player is a real path-prefix group;
+      # admin's longer "/admin" wins longest-prefix. An empty path here makes
+      # the player a host catch-all that pools with the admin backend.
+      proxy.path:       "/"
       proxy.port:       "3000"
       proxy.service:    "badminton-player"
       proxy.unscalable: "true"
