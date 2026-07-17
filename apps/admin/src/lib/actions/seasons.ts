@@ -4,10 +4,10 @@ import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import { parseOrThrow, seasonFeeSchema, type SeasonFeeInput } from '@badminton/shared';
-import { getAdminPlayer } from './_shared';
+import { getAdminPlayer, getExecOrAdmin } from './_shared';
 
 export async function createSeason(data: { name: string; start_date: string; end_date?: string }) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: season, error } = await adminClient.from('seasons').insert({
@@ -64,7 +64,7 @@ export async function updateSeasonFees(seasonId: string, fees: SeasonFeeInput) {
 }
 
 export async function setActiveSeason(seasonId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   // Deactivate all seasons first
@@ -84,7 +84,7 @@ export async function setActiveSeason(seasonId: string) {
 }
 
 export async function endSeason(seasonId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { error } = await adminClient.from('seasons').update({

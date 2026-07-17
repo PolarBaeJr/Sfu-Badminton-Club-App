@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import { canAccess, type AccessLevel } from '@/lib/permissions';
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -40,8 +41,8 @@ export async function middleware(request: NextRequest) {
     }
 
     if (user && !isPublicRoute) {
-      const { data: isAdmin } = await supabase.rpc('is_admin', { p_user_id: user.id });
-      if (!isAdmin) {
+      const { data: level } = await supabase.rpc('admin_access_level', { p_user_id: user.id });
+      if (!canAccess((level as AccessLevel | null) ?? null, request.nextUrl.pathname)) {
         const url = request.nextUrl.clone();
         url.pathname = '/unauthorized';
         return NextResponse.redirect(url);

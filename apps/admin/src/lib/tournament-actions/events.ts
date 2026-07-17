@@ -11,7 +11,7 @@ import type {
   TournamentSeedingMethod,
   TournamentEventStatus,
 } from '@badminton/shared';
-import { getAdminPlayer, revalidateEventPaths } from './_internal';
+import { getExecOrAdmin, revalidateEventPaths } from './_internal';
 
 // ============================================================
 // Event Management
@@ -29,7 +29,7 @@ export async function createTournamentEvent(
     placement_bonus_enabled?: boolean;
   }
 ) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data, error } = await adminClient.from('tournament_events').insert({
@@ -70,7 +70,7 @@ export async function updateTournamentEvent(
     placement_bonus_enabled?: boolean;
   }
 ) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
@@ -98,7 +98,7 @@ export async function updateTournamentEvent(
 }
 
 export async function deleteTournamentEvent(eventId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
@@ -122,7 +122,7 @@ export async function deleteTournamentEvent(eventId: string) {
 }
 
 export async function setEventStatus(eventId: string, status: TournamentEventStatus) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();

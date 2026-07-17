@@ -5,7 +5,7 @@ import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { isDoublesEvent, nextPowerOf2, getRoundName } from '@badminton/shared';
 import {
-  getAdminPlayer,
+  getExecOrAdmin,
   revalidateEventPaths,
   notifyPlayers,
   getStandardSeedPositions,
@@ -16,7 +16,7 @@ import {
 // ============================================================
 
 export async function generateSingleEliminationBracket(eventId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
@@ -255,7 +255,7 @@ export async function generateSingleEliminationBracket(eventId: string) {
 // ============================================================
 
 export async function generateRoundRobinMatches(eventId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
@@ -362,7 +362,7 @@ export async function generateRoundRobinMatches(eventId: string) {
 // ============================================================
 
 export async function lockDraw(eventId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
@@ -388,7 +388,7 @@ export async function lockDraw(eventId: string) {
 }
 
 export async function unlockDraw(eventId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();

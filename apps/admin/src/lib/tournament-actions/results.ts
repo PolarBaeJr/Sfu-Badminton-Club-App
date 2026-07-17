@@ -6,7 +6,7 @@ import { logAudit } from '../audit';
 import { isDoublesEvent, getMaxGamesForFormat } from '@badminton/shared';
 import type { TournamentEventType, TournamentMatchFormat } from '@badminton/shared';
 import {
-  getAdminPlayer,
+  getExecOrAdmin,
   revalidateEventPaths,
   notifyPlayers,
   applyTournamentMatchElo,
@@ -22,7 +22,7 @@ export async function enterMatchResult(
   scores: Array<{ a: number; b: number }>,
   winnerSide: 'a' | 'b'
 ) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')
@@ -146,7 +146,7 @@ export async function enterWalkover(
   winnerPosition: 'a' | 'b',
   reason: string
 ) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')
@@ -228,7 +228,7 @@ export async function enterWalkover(
 }
 
 export async function voidMatch(matchId: string, reason: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')
@@ -263,7 +263,7 @@ export async function editMatchResult(
   newScores: Array<{ a: number; b: number }>,
   newWinnerSide: 'a' | 'b'
 ) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')
@@ -346,7 +346,7 @@ export async function editMatchResult(
 // ============================================================
 
 export async function undoMatchResult(matchId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')

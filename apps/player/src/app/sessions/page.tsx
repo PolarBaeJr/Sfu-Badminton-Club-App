@@ -17,11 +17,13 @@ export default async function SessionsPage() {
       .from('sessions')
       .select('*')
       .eq('status', 'open')
+      .in('track', [player.status, 'all'])
       .order('date', { ascending: false }),
     supabase
       .from('sessions')
       .select('*')
       .eq('status', 'closed')
+      .in('track', [player.status, 'all'])
       .order('date', { ascending: false })
       .limit(10),
     supabase

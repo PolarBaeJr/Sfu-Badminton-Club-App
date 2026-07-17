@@ -68,3 +68,34 @@ export async function getAuthenticatedAdmin() {
   Sentry.setUser({ id: player.id });
   return player;
 }
+
+// Broader gate than getAuthenticatedAdmin: permits full admins OR execs.
+// Used by exec-allowed domain actions (matches, sessions, tournaments,
+// announcements, seasons). Admin-only actions keep getAuthenticatedAdmin.
+export async function getAuthenticatedExecOrAdmin() {
+  const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    Sentry.setUser(null);
+    throw new Error('Not authenticated');
+  }
+
+  const adminClient = createAdminClient();
+  const { data: player } = await adminClient
+    .from('players')
+    .select('*')
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  if (!player) {
+    Sentry.setUser(null);
+    throw new Error('No player record found');
+  }
+  if (player.role !== 'admin' && player.is_exec !== true) {
+    Sentry.setUser(null);
+    throw new Error('Admin or exec access required');
+  }
+
+  Sentry.setUser({ id: player.id });
+  return player;
+}

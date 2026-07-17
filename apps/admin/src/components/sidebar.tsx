@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
+import { canAccess, type AccessLevel } from '@/lib/permissions';
 
 const navSections = [
   {
@@ -48,6 +49,8 @@ export function Sidebar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [accessLevel, setAccessLevel] = useState<AccessLevel | null>(null);
+  const [accessLoaded, setAccessLoaded] = useState(false);
 
   // Don't render sidebar on public routes
   const isPublicRoute =
@@ -60,11 +63,16 @@ export function Sidebar() {
     setMobileOpen(false);
   }, [pathname]);
 
-  // Load user email
+  // Load user email + access level (drives nav filtering for execs)
   useEffect(() => {
     const supabase = createClient();
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (user) setUserEmail(user.email ?? null);
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (user) {
+        setUserEmail(user.email ?? null);
+        const { data: level } = await supabase.rpc('admin_access_level', { p_user_id: user.id });
+        setAccessLevel((level as AccessLevel | null) ?? null);
+      }
+      setAccessLoaded(true);
     });
   }, []);
 
@@ -92,13 +100,21 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 py-3 overflow-y-auto space-y-4">
-        {navSections.map((section) => (
+        {navSections.map((section) => {
+          // Until the access level resolves, show everything (avoids an empty-nav
+          // flash for the common admin case); once loaded, hide sections execs
+          // can't reach. The server action is the real boundary — this is cosmetic.
+          const visibleItems = section.items.filter(
+            (item) => !accessLoaded || canAccess(accessLevel, item.href)
+          );
+          if (visibleItems.length === 0) return null;
+          return (
           <div key={section.title}>
             <p className="px-5 mb-1.5 text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-widest">
               {section.title}
             </p>
             <div className="space-y-0.5 px-2">
-              {section.items.map((item) => {
+              {visibleItems.map((item) => {
                 const isActive = pathname.startsWith(item.href);
                 const Icon = item.icon;
                 return (
@@ -122,7 +138,8 @@ export function Sidebar() {
               })}
             </div>
           </div>
-        ))}
+          );
+        })}
       </nav>
 
       {/* Footer — user info + logout */}

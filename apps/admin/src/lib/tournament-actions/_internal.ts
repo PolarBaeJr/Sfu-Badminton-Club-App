@@ -16,7 +16,7 @@ import type {
   MatchFormat,
 } from '@badminton/shared';
 
-export { getAdminPlayer } from '../actions/_shared';
+export { getExecOrAdmin } from '../actions/_shared';
 
 // Revalidate both the tournament page and the event detail page so admin UIs
 // reflect mutations immediately. Pass eventId whenever it is in scope.

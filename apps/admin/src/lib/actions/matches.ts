@@ -5,14 +5,14 @@ import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import { parseOrThrow, adminMatchCreateSchema } from '@badminton/shared';
-import { getAdminPlayer } from './_shared';
+import { getExecOrAdmin } from './_shared';
 
 // ============================================================
 // Match Management
 // ============================================================
 
 export async function voidMatch(matchId: string, reason: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   // Reverse Elo
@@ -43,7 +43,7 @@ export async function voidMatch(matchId: string, reason: string) {
 }
 
 export async function convertMatchToCasual(matchId: string, reason: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { error: reverseError } = await adminClient.rpc('reverse_match_result', { p_match_id: matchId });
@@ -87,7 +87,7 @@ export async function adminCreateMatch(data: {
   admin_note?: string;
 }) {
   parseOrThrow(adminMatchCreateSchema, data);
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
   const { getFormatWeight } = await import('@badminton/shared');
 
@@ -205,7 +205,7 @@ export async function adminCreateChallenge(data: {
   scheduled_time?: string;
   note?: string;
 }) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const eventType = data.rated_flag ? 'rated_challenge' : 'casual';
@@ -263,7 +263,7 @@ export async function adminCreateChallenge(data: {
 }
 
 export async function forceExpireChallenge(challengeId: string, reason: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { error } = await adminClient

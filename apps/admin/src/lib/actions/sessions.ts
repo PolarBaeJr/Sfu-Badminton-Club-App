@@ -3,8 +3,8 @@
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
-import { parseOrThrow, sessionCreateSchema } from '@badminton/shared';
-import { getAdminPlayer } from './_shared';
+import { parseOrThrow, sessionCreateSchema, sessionGroupSchema, type SessionGroupInput } from '@badminton/shared';
+import { getExecOrAdmin } from './_shared';
 
 export async function createSession(data: {
   name: string;
@@ -12,9 +12,10 @@ export async function createSession(data: {
   time?: string;
   location: string;
   notes?: string;
+  track: SessionGroupInput;
 }) {
   parseOrThrow(sessionCreateSchema, data);
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const activeSeason = await adminClient.from('seasons').select('id').eq('active_flag', true).single();
@@ -27,6 +28,7 @@ export async function createSession(data: {
     location: data.location,
     notes: data.notes || null,
     status: 'open',
+    track: data.track,
     season_id: activeSeason.data?.id || null,
     host_player_id: admin.id,
   }).select().single();
@@ -51,8 +53,10 @@ export async function updateSession(sessionId: string, data: {
   time?: string;
   location: string;
   notes?: string;
+  track: SessionGroupInput;
 }) {
-  const admin = await getAdminPlayer();
+  parseOrThrow(sessionGroupSchema, data.track);
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('sessions').select('*').eq('id', sessionId).single();
@@ -64,6 +68,7 @@ export async function updateSession(sessionId: string, data: {
     date: sessionDate,
     location: data.location,
     notes: data.notes || null,
+    track: data.track,
   }).eq('id', sessionId);
 
   if (error) throw new Error(error.message);
@@ -81,7 +86,7 @@ export async function updateSession(sessionId: string, data: {
 }
 
 export async function archiveSession(sessionId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('sessions').select('status').eq('id', sessionId).single();
@@ -102,7 +107,7 @@ export async function archiveSession(sessionId: string) {
 }
 
 export async function deleteSession(sessionId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('sessions').select('*').eq('id', sessionId).single();

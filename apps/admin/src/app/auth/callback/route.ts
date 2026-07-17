@@ -53,11 +53,11 @@ export async function GET(request: Request) {
     return NextResponse.redirect(`${origin}/login`);
   }
 
-  // Check if user has admin role
+  // Check if user has admin or exec access
   const { data: { user } } = await supabase.auth.getUser();
   if (user) {
-    const { data: isAdmin } = await supabase.rpc('is_admin', { p_user_id: user.id });
-    if (!isAdmin) {
+    const { data: level } = await supabase.rpc('admin_access_level', { p_user_id: user.id });
+    if (!level) {
       // Build the unauthorized redirect *first* so the signOut clear-cookie headers
       // land on the response that actually goes to the browser.
       const unauthorized = NextResponse.redirect(`${origin}/unauthorized`);

@@ -63,6 +63,9 @@ export default async function SessionsPage() {
                     <Badge variant={session.status === 'open' ? 'success' : 'neutral'}>
                       {session.status === 'open' ? 'Open' : 'Closed'}
                     </Badge>
+                    <Badge variant={session.track === 'competitive' ? 'info' : session.track === 'recreational' ? 'warning' : 'neutral'}>
+                      {session.track === 'competitive' ? 'Competitive' : session.track === 'recreational' ? 'Recreational' : 'All'}
+                    </Badge>
                   </div>
 
                   {/* Date + Location */}

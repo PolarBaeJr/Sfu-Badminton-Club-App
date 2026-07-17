@@ -5,7 +5,7 @@ import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { calculateTeamRating, isDoublesEvent } from '@badminton/shared';
 import {
-  getAdminPlayer,
+  getExecOrAdmin,
   revalidateEventPaths,
   extractEventContext,
   participantContextSelect,
@@ -17,7 +17,7 @@ import {
 // ============================================================
 
 export async function addParticipantToEvent(eventId: string, playerId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
@@ -84,7 +84,7 @@ export async function addParticipantToEvent(eventId: string, playerId: string) {
 }
 
 export async function removeParticipantFromEvent(participantId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: participant } = await adminClient.from('tournament_participants')
@@ -117,7 +117,7 @@ export async function removeParticipantFromEvent(participantId: string) {
 }
 
 export async function checkInParticipant(participantId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: participant } = await adminClient.from('tournament_participants')
@@ -145,7 +145,7 @@ export async function checkInParticipant(participantId: string) {
 }
 
 export async function markParticipantNoShow(participantId: string) {
-  await getAdminPlayer();
+  await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data, error } = await adminClient.from('tournament_participants')
@@ -163,7 +163,7 @@ export async function markParticipantNoShow(participantId: string) {
 }
 
 export async function withdrawParticipant(participantId: string, reason?: string) {
-  await getAdminPlayer();
+  await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data, error } = await adminClient.from('tournament_participants')
@@ -181,7 +181,7 @@ export async function withdrawParticipant(participantId: string, reason?: string
 }
 
 export async function disqualifyParticipant(participantId: string, reason?: string) {
-  await getAdminPlayer();
+  await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data, error } = await adminClient.from('tournament_participants')
@@ -203,7 +203,7 @@ export async function disqualifyParticipant(participantId: string, reason?: stri
 // ============================================================
 
 export async function addPairToEvent(eventId: string, player1Id: string, player2Id: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
@@ -272,7 +272,7 @@ export async function addPairToEvent(eventId: string, player1Id: string, player2
 }
 
 export async function removePairFromEvent(pairId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: pair } = await adminClient.from('tournament_pairs')
@@ -297,7 +297,7 @@ export async function removePairFromEvent(pairId: string) {
 }
 
 export async function checkInPair(pairId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data, error } = await adminClient.from('tournament_pairs')
@@ -320,7 +320,7 @@ export async function checkInPair(pairId: string) {
 }
 
 export async function markPairNoShow(pairId: string) {
-  await getAdminPlayer();
+  await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data, error } = await adminClient.from('tournament_pairs')
@@ -342,7 +342,7 @@ export async function markPairNoShow(pairId: string) {
 // ============================================================
 
 export async function bulkCheckIn(eventId: string, type: 'participants' | 'pairs') {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const table = type === 'pairs' ? 'tournament_pairs' : 'tournament_participants';

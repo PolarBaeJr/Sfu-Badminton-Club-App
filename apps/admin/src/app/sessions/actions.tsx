@@ -1,10 +1,17 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Button, Dialog, Input } from '@badminton/ui';
+import { Button, Dialog, Input, Select } from '@badminton/ui';
 import { createSession, updateSession, archiveSession, deleteSession } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { MoreVertical, Users } from 'lucide-react';
+import type { SessionGroupInput } from '@badminton/shared';
+
+const TRACK_OPTIONS = [
+  { value: 'all', label: 'All players' },
+  { value: 'competitive', label: 'Competitive' },
+  { value: 'recreational', label: 'Recreational' },
+];
 
 // ---------------------------------------------------------------------------
 // AttendanceDialog
@@ -70,6 +77,7 @@ export function CreateSessionForm() {
   const [time, setTime] = useState('');
   const [location, setLocation] = useState('');
   const [notes, setNotes] = useState('');
+  const [track, setTrack] = useState<SessionGroupInput>('all');
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
@@ -77,10 +85,10 @@ export function CreateSessionForm() {
     e.preventDefault();
     setLoading(true);
     try {
-      await createSession({ name, date, time: time || undefined, location, notes: notes || undefined });
+      await createSession({ name, date, time: time || undefined, location, notes: notes || undefined, track });
       toast('Session created', 'success');
       setOpen(false);
-      setName(''); setDate(''); setTime(''); setLocation(''); setNotes('');
+      setName(''); setDate(''); setTime(''); setLocation(''); setNotes(''); setTrack('all');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
@@ -96,6 +104,7 @@ export function CreateSessionForm() {
           <Input label="Date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
           <Input label="Time (optional)" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
           <Input label="Location" value={location} onChange={(e) => setLocation(e.target.value)} required placeholder="e.g. SFU Gym A" />
+          <Select label="Track" options={TRACK_OPTIONS} value={track} onChange={(e) => setTrack(e.target.value as SessionGroupInput)} />
           <Input label="Notes (optional)" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Any additional info..." />
           <div className="flex gap-2">
             <Button type="submit" loading={loading}>Create</Button>
@@ -115,6 +124,7 @@ interface SessionCardMenuProps {
     location: string;
     notes: string | null;
     status: string;
+    track: SessionGroupInput;
   };
 }
 
@@ -128,6 +138,7 @@ export function SessionCardMenu({ session }: SessionCardMenuProps) {
   );
   const [location, setLocation] = useState(session.location);
   const [notes, setNotes] = useState(session.notes || '');
+  const [track, setTrack] = useState<SessionGroupInput>(session.track);
   const [loading, setLoading] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
@@ -148,7 +159,7 @@ export function SessionCardMenu({ session }: SessionCardMenuProps) {
     e.preventDefault();
     setLoading(true);
     try {
-      await updateSession(session.id, { name, date, time: time || undefined, location, notes: notes || undefined });
+      await updateSession(session.id, { name, date, time: time || undefined, location, notes: notes || undefined, track });
       toast('Session updated', 'success');
       setEditOpen(false);
     } catch (err) {
@@ -226,6 +237,7 @@ export function SessionCardMenu({ session }: SessionCardMenuProps) {
           <Input label="Date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
           <Input label="Time (optional)" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
           <Input label="Location" value={location} onChange={(e) => setLocation(e.target.value)} required placeholder="e.g. SFU Gym A" />
+          <Select label="Track" options={TRACK_OPTIONS} value={track} onChange={(e) => setTrack(e.target.value as SessionGroupInput)} />
           <Input label="Notes (optional)" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Any additional info..." />
           <div className="flex gap-2">
             <Button type="submit" loading={loading}>Save Changes</Button>

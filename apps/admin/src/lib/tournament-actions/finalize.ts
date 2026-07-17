@@ -5,7 +5,7 @@ import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { PLACEMENT_BONUSES, isDoublesEvent } from '@badminton/shared';
 import {
-  getAdminPlayer,
+  getExecOrAdmin,
   revalidateEventPaths,
   notifyPlayers,
   computeRoundRobinStandings,
@@ -16,7 +16,7 @@ import {
 // ============================================================
 
 export async function applyPlacementBonuses(eventId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
@@ -124,7 +124,7 @@ export async function applyPlacementBonuses(eventId: string) {
 }
 
 export async function finalizeEvent(eventId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();

@@ -4,7 +4,7 @@ import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import { parseOrThrow, announcementSchema } from '@badminton/shared';
-import { getAdminPlayer } from './_shared';
+import { getExecOrAdmin } from './_shared';
 
 export async function createAnnouncement(data: {
   title: string;
@@ -17,7 +17,7 @@ export async function createAnnouncement(data: {
   expires_at?: string;
 }) {
   parseOrThrow(announcementSchema, data);
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: announcement, error } = await adminClient.from('announcements').insert({
@@ -57,7 +57,7 @@ export async function updateAnnouncement(announcementId: string, data: {
   expires_at?: string;
 }) {
   parseOrThrow(announcementSchema, data);
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('announcements').select('*').eq('id', announcementId).single();
@@ -88,7 +88,7 @@ export async function updateAnnouncement(announcementId: string, data: {
 }
 
 export async function deleteAnnouncement(announcementId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('announcements').select('*').eq('id', announcementId).single();

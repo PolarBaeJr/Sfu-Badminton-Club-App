@@ -4,7 +4,7 @@ import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import { parseOrThrow, tournamentCreateSchema } from '@badminton/shared';
-import { getAdminPlayer } from './_shared';
+import { getExecOrAdmin } from './_shared';
 
 export async function createTournament(data: {
   name: string;
@@ -18,7 +18,7 @@ export async function createTournament(data: {
   placement_bonus_enabled: boolean;
 }) {
   parseOrThrow(tournamentCreateSchema, data);
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const activeSeason = await adminClient.from('seasons').select('id').eq('active_flag', true).single();
@@ -53,7 +53,7 @@ export async function createTournament(data: {
 }
 
 export async function updateTournamentStatus(tournamentId: string, status: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('tournaments').select('status').eq('id', tournamentId).single();
@@ -85,7 +85,7 @@ export async function updateTournament(tournamentId: string, data: {
   event_multiplier: number;
   placement_bonus_enabled: boolean;
 }) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('tournaments').select('*').eq('id', tournamentId).single();
@@ -118,7 +118,7 @@ export async function updateTournament(tournamentId: string, data: {
 }
 
 export async function archiveTournament(tournamentId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('tournaments').select('status').eq('id', tournamentId).single();
@@ -139,7 +139,7 @@ export async function archiveTournament(tournamentId: string) {
 }
 
 export async function deleteTournament(tournamentId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('tournaments').select('*').eq('id', tournamentId).single();
@@ -163,7 +163,7 @@ export async function deleteTournament(tournamentId: string) {
 }
 
 export async function addTournamentParticipant(tournamentId: string, playerId: string, seed: number | null, partnerId?: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   // Try new table name first, fall back to old if migration hasn't run
@@ -200,7 +200,7 @@ export async function addTournamentParticipant(tournamentId: string, playerId: s
 }
 
 export async function removeTournamentParticipant(participantId: string, tournamentId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   // Try new table name first, fall back to old if migration hasn't run

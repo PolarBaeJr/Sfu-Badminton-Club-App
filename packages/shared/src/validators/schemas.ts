@@ -106,6 +106,8 @@ export const disputeSchema = z.object({
   description: z.string().min(10, 'Description must be at least 10 characters'),
 });
 
+export const sessionGroupSchema = z.enum(['competitive', 'recreational', 'all']);
+
 export const sessionCreateSchema = z.object({
   name: z.string().min(2),
   date: z.string(),
@@ -113,6 +115,7 @@ export const sessionCreateSchema = z.object({
   location: z.string().min(2),
   notes: z.string().max(500).optional(),
   season_id: z.string().uuid().optional(),
+  track: sessionGroupSchema.default('all'),
 });
 
 export const tournamentCreateSchema = z.object({
@@ -187,8 +190,6 @@ export const seasonFeeSchema = z.object({
   competitive_fee_cents: z.number().int().min(0),
   recreational_fee_cents: z.number().int().min(0),
 });
-
-export const sessionGroupSchema = z.enum(['competitive', 'recreational', 'all']);
 
 // A manual fee entry: someone who paid the club fee without an account. The
 // admin records just a name against the active season.
