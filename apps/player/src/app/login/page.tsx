@@ -24,6 +24,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [sent, setSent] = useState(false);
+  const [code, setCode] = useState('');
   const [error, setError] = useState('');
 
   async function handleGoogleLogin() {
@@ -64,6 +65,27 @@ export default function LoginPage() {
       setSent(true);
     }
     setLoading(false);
+  }
+
+  // Verify the 6-digit code from the email. Codes (unlike links) survive
+  // corporate email link-scanners (e.g. SFU/Microsoft Safe Links) that would
+  // otherwise pre-fetch and consume a one-time magic-link before the user clicks.
+  async function handleVerifyCode(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    const supabase = createClient();
+    const { error: authError } = await supabase.auth.verifyOtp({
+      email,
+      token: code.trim(),
+      type: 'email',
+    });
+    if (authError) {
+      setError(friendlyAuthError(authError.message));
+      setLoading(false);
+    } else {
+      window.location.href = '/auth/post-login';
+    }
   }
 
   return (
@@ -190,29 +212,62 @@ export default function LoginPage() {
         </div>
 
         {sent ? (
-          <div className="card-base" style={{ textAlign: 'center', padding: 32 }}>
-            <div
-              style={{
-                width: 56,
-                height: 56,
-                margin: '0 auto 14px',
-                borderRadius: 999,
-                background: 'var(--red-wash)',
-                display: 'grid',
-                placeItems: 'center',
-              }}
-            >
-              <CheckCircle2 size={28} style={{ color: 'var(--red)' }} />
+          <div className="card-base" style={{ padding: 28 }}>
+            <div style={{ textAlign: 'center' }}>
+              <div
+                style={{
+                  width: 56,
+                  height: 56,
+                  margin: '0 auto 14px',
+                  borderRadius: 999,
+                  background: 'var(--red-wash)',
+                  display: 'grid',
+                  placeItems: 'center',
+                }}
+              >
+                <CheckCircle2 size={28} style={{ color: 'var(--red)' }} />
+              </div>
+              <div style={{ fontFamily: 'var(--display)', fontSize: 22, fontWeight: 700 }}>Enter your code</div>
+              <div className="page-sub" style={{ marginTop: 8 }}>
+                We emailed a 6-digit code to <strong>{email}</strong>. Enter it below.
+              </div>
             </div>
-            <div style={{ fontFamily: 'var(--display)', fontSize: 22, fontWeight: 700 }}>Check your email</div>
-            <div className="page-sub" style={{ marginTop: 8 }}>
-              We sent a magic link to <strong>{email}</strong>.
-            </div>
+            <form onSubmit={handleVerifyCode} style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 18 }}>
+              <input
+                id="code"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="123456"
+                autoFocus
+                style={{
+                  width: '100%',
+                  padding: '14px 16px',
+                  borderRadius: 10,
+                  border: '1px solid var(--line)',
+                  background: 'var(--surface)',
+                  fontSize: 22,
+                  letterSpacing: '.4em',
+                  textAlign: 'center',
+                  fontFamily: 'var(--mono)',
+                }}
+              />
+              {error && (
+                <div style={{ fontSize: 13, color: 'var(--loss)', background: 'var(--red-wash)', padding: '10px 12px', borderRadius: 8 }}>
+                  {error}
+                </div>
+              )}
+              <button type="submit" disabled={loading || code.length < 6} className="btn btn-primary btn-lg" style={{ width: '100%', justifyContent: 'center', height: 48, opacity: code.length < 6 ? 0.5 : 1 }}>
+                {loading ? <Loader2 size={16} className="animate-spin" /> : null}
+                Sign in
+              </button>
+            </form>
             <button
               type="button"
-              onClick={() => setSent(false)}
+              onClick={() => { setSent(false); setCode(''); setError(''); }}
               className="btn btn-ghost btn-sm"
-              style={{ marginTop: 14 }}
+              style={{ marginTop: 12, width: '100%', justifyContent: 'center' }}
             >
               Use a different email
             </button>

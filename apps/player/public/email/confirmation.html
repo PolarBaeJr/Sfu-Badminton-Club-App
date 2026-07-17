@@ -14,15 +14,11 @@
         </td></tr>
         <!-- body -->
         <tr><td style="padding:36px 32px 8px;">
-          <div style="font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#CC0633;margin-bottom:12px;">Sign in link</div>
+          <div style="font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#CC0633;margin-bottom:12px;">Your sign-in code</div>
           <h1 style="margin:0 0 12px;font-size:26px;font-weight:800;color:#141110;letter-spacing:-.02em;">Ready to hit the court.</h1>
-          <p style="margin:0 0 28px;font-size:15px;line-height:1.6;color:#5B534C;">Tap the button below to sign in to your SFU Badminton account. This link works once and expires shortly — no password needed.</p>
-          <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-            <td style="border-radius:10px;background:#CC0633;">
-              <a href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=email" style="display:inline-block;padding:14px 30px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:10px;">Sign in &rarr;</a>
-            </td>
-          </tr></table>
-          <p style="margin:28px 0 0;font-size:13px;line-height:1.6;color:#8A817A;">If the button doesn't work, copy this link into your browser:<br><span style="color:#CC0633;word-break:break-all;">{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=email</span></p>
+          <p style="margin:0 0 22px;font-size:15px;line-height:1.6;color:#5B534C;">Enter this 6-digit code on the sign-in page. It expires in 15 minutes.</p>
+          <div style="font-family:'Courier New',monospace;font-size:38px;font-weight:800;letter-spacing:.22em;color:#141110;background:#FAF8F5;border:1px solid #ECE7E1;border-radius:12px;padding:18px 0;text-align:center;">{{ .Token }}</div>
+          <p style="margin:24px 0 0;font-size:13px;line-height:1.6;color:#8A817A;">Prefer a link? <a href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=email" style="color:#CC0633;">Sign in here</a> — but if your email provider blocks it, use the code above.</p>
         </td></tr>
         <!-- footer -->
         <tr><td style="padding:24px 32px 30px;border-top:1px solid #F0EBE5;">
