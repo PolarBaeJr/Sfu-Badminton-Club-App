@@ -163,7 +163,7 @@ export default function OnboardingPage() {
               lineHeight: 1.6,
             }}
           >
-            Two quick fields and you&apos;re in. Starting ELO 1200 across singles and doubles. Climb from there.
+            Two quick fields and you&apos;re in. Starting ELO 400 across singles and doubles. Climb from there.
           </div>
         </div>
 
@@ -180,7 +180,7 @@ export default function OnboardingPage() {
             letterSpacing: '.1em',
           }}
         >
-          <span>Starting ELO 1200</span>
+          <span>Starting ELO 400</span>
           <span>Provisional K=40</span>
           <span>Unranked → Top 10</span>
         </div>
@@ -260,7 +260,7 @@ export default function OnboardingPage() {
             <div className="grid grid-3" style={{ gap: 12 }}>
               <div className="card-base" style={{ textAlign: 'center', padding: 16 }}>
                 <div className="stat-label">STARTING ELO</div>
-                <div className="stat-value" style={{ marginTop: 4 }}>1200</div>
+                <div className="stat-value" style={{ marginTop: 4 }}>400</div>
               </div>
               <div className="card-base" style={{ textAlign: 'center', padding: 16 }}>
                 <div className="stat-label">DIVISIONS</div>

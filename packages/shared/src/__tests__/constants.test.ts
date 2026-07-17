@@ -335,8 +335,8 @@ describe('getMaxGamesForFormat', () => {
 // Constants values
 // =============================================
 describe('business constants', () => {
-  it('DEFAULT_ELO is 1200', () => {
-    expect(DEFAULT_ELO).toBe(1200);
+  it('DEFAULT_ELO is 400', () => {
+    expect(DEFAULT_ELO).toBe(400);
   });
 
   it('PROVISIONAL_THRESHOLD is 8 matches', () => {

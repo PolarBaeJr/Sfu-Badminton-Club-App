@@ -30,24 +30,24 @@ INSERT INTO platform_settings (key, value) VALUES
   }'::jsonb),
 
   ('rating_defaults', '{
-    "default_elo": 1200,
+    "default_elo": 400,
     "provisional_threshold": 8,
-    "singles_k_provisional": 40,
-    "singles_k_established": 24,
-    "doubles_k_provisional": 32,
-    "doubles_k_established": 18
+    "singles_k_provisional": 80,
+    "singles_k_established": 48,
+    "doubles_k_provisional": 64,
+    "doubles_k_established": 36
   }'::jsonb),
 
   ('tournament_bonuses', '{
     "enabled": true,
-    "singles_champion": 16,
-    "singles_finalist": 10,
-    "singles_semifinalist": 6,
-    "singles_quarterfinalist": 3,
-    "doubles_champion": 14,
-    "doubles_finalist": 9,
-    "doubles_semifinalist": 5,
-    "doubles_quarterfinalist": 2
+    "singles_champion": 32,
+    "singles_finalist": 20,
+    "singles_semifinalist": 12,
+    "singles_quarterfinalist": 6,
+    "doubles_champion": 28,
+    "doubles_finalist": 18,
+    "doubles_semifinalist": 10,
+    "doubles_quarterfinalist": 4
   }'::jsonb),
 
   ('season_settings', '{

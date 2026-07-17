@@ -41,7 +41,7 @@ export default function NewChallengePage() {
   const [scheduledTime, setScheduledTime] = useState('');
   const [loading, setLoading] = useState(false);
   const [players, setPlayers] = useState<PlayerOption[]>([]);
-  const [myElo, setMyElo] = useState({ singles: 1200, doubles: 1200 });
+  const [myElo, setMyElo] = useState({ singles: 400, doubles: 400 });
   const router = useRouter();
   const { toast } = useToast();
 
@@ -59,7 +59,7 @@ export default function NewChallengePage() {
 
       if (me) {
         const r = Array.isArray(me.ratings) ? me.ratings[0] : me.ratings;
-        setMyElo({ singles: r?.singles_elo ?? 1200, doubles: r?.doubles_elo ?? 1200 });
+        setMyElo({ singles: r?.singles_elo ?? 400, doubles: r?.doubles_elo ?? 400 });
       }
 
       const { data } = await supabase
@@ -74,8 +74,8 @@ export default function NewChallengePage() {
         return {
           id: p.id,
           full_name: p.full_name,
-          singles_elo: r?.singles_elo ?? 1200,
-          doubles_elo: r?.doubles_elo ?? 1200,
+          singles_elo: r?.singles_elo ?? 400,
+          doubles_elo: r?.doubles_elo ?? 400,
         };
       }));
     }

@@ -7,6 +7,11 @@ export const FORMAT_WEIGHTS: Record<MatchFormat, number> = {
   single_11: 0.5,
 };
 
+// Logistic divisor for the win-probability curve. The classic ELO value is 400;
+// this ladder uses 800 to stretch the rating spread 2x (nominal 400, top ~1300).
+// A rating gap of ELO_SCALE means the higher player wins ~91% of the time.
+export const ELO_SCALE = 800;
+
 export const EVENT_MULTIPLIERS: Record<EventType, number> = {
   rated_challenge: 1.0,
   trial: 1.15,
@@ -32,7 +37,7 @@ export interface EloCalcResult {
 }
 
 export function calculateExpected(playerRating: number, opponentRating: number): number {
-  return 1.0 / (1.0 + Math.pow(10, (opponentRating - playerRating) / 400));
+  return 1.0 / (1.0 + Math.pow(10, (opponentRating - playerRating) / ELO_SCALE));
 }
 
 export function calculateEloUpdate(input: EloCalcInput): EloCalcResult {
@@ -65,10 +70,13 @@ export function getKFactor(
 ): number {
   // Provisional threshold: < 8 matches = provisional K-factor
   const isProvisional = provisional || (matchesPlayed !== undefined && matchesPlayed < 8);
+  // K-factors are doubled from the classic 40/24 (singles) and 32/18 (doubles)
+  // to match the 2x-stretched ELO_SCALE — this keeps each delta the same
+  // fraction of the scale, so convergence speed and volatility are unchanged.
   if (matchType === 'singles') {
-    return isProvisional ? 40 : 24;
+    return isProvisional ? 80 : 48;
   }
-  return isProvisional ? 32 : 18;
+  return isProvisional ? 64 : 36;
 }
 
 export function calculateTeamRating(ratings: number[]): number {

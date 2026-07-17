@@ -62,13 +62,13 @@ export async function applyPlacementBonuses(eventId: string) {
         .select('player_id, doubles_elo')
         .in('player_id', playerIds);
       const ratingMap = new Map<string, number>();
-      for (const r of ratings ?? []) ratingMap.set(r.player_id, r.doubles_elo ?? 1200);
+      for (const r of ratings ?? []) ratingMap.set(r.player_id, r.doubles_elo ?? 400);
 
       // Parallel UPDATEs — one row per player, no contention.
       const results = await Promise.allSettled(
         [...playerBonus.entries()].map(([pid, bonus]) =>
           adminClient.from('ratings')
-            .update({ doubles_elo: (ratingMap.get(pid) ?? 1200) + bonus, updated_at: nowIso })
+            .update({ doubles_elo: (ratingMap.get(pid) ?? 400) + bonus, updated_at: nowIso })
             .eq('player_id', pid)
         )
       );
@@ -92,14 +92,14 @@ export async function applyPlacementBonuses(eventId: string) {
         .select('player_id, singles_elo')
         .in('player_id', playerIds);
       const ratingMap = new Map<string, number>();
-      for (const r of ratings ?? []) ratingMap.set(r.player_id, r.singles_elo ?? 1200);
+      for (const r of ratings ?? []) ratingMap.set(r.player_id, r.singles_elo ?? 400);
 
       // Parallel: rating UPDATE + participant elo_change UPDATE for each row.
       // Wrap in Promise.resolve so the Supabase thenable plays nicely with allSettled typing.
       const promises: PromiseLike<unknown>[] = [];
       for (const p of eligible) {
         promises.push(Promise.resolve(adminClient.from('ratings')
-          .update({ singles_elo: (ratingMap.get(p.player_id) ?? 1200) + p.bonus, updated_at: nowIso })
+          .update({ singles_elo: (ratingMap.get(p.player_id) ?? 400) + p.bonus, updated_at: nowIso })
           .eq('player_id', p.player_id)));
         const prevChange = (p.elo_change as number | null) ?? 0;
         promises.push(Promise.resolve(adminClient.from('tournament_participants')

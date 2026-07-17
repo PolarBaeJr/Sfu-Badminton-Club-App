@@ -12,8 +12,8 @@ export function PlayerEditForm({ player, rating }: { player: Player; rating: Rat
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState(player.status);
   const [role, setRole] = useState(player.role);
-  const [singlesElo, setSinglesElo] = useState(rating?.singles_elo ?? 1200);
-  const [doublesElo, setDoublesElo] = useState(rating?.doubles_elo ?? 1200);
+  const [singlesElo, setSinglesElo] = useState(rating?.singles_elo ?? 400);
+  const [doublesElo, setDoublesElo] = useState(rating?.doubles_elo ?? 400);
   const [reason, setReason] = useState('');
 
   const isPending = player.status === 'pending_approval';
@@ -31,8 +31,8 @@ export function PlayerEditForm({ player, rating }: { player: Player; rating: Rat
         await updatePlayer(player.id, {
           status: status !== player.status ? status as Player['status'] : undefined,
           role: role !== player.role ? role as Player['role'] : undefined,
-          singles_elo: singlesElo !== (rating?.singles_elo ?? 1200) ? singlesElo : undefined,
-          doubles_elo: doublesElo !== (rating?.doubles_elo ?? 1200) ? doublesElo : undefined,
+          singles_elo: singlesElo !== (rating?.singles_elo ?? 400) ? singlesElo : undefined,
+          doubles_elo: doublesElo !== (rating?.doubles_elo ?? 400) ? doublesElo : undefined,
           reason,
         });
         toast('Player updated', 'success');

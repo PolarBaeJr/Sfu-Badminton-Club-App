@@ -24,7 +24,12 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
 
 export const MAX_ACTIVE_CHALLENGES = 3;
 export const CHALLENGE_EXPIRY_HOURS = 72;
-export const DEFAULT_ELO = 1200;
+// Nominal starting rating. The ladder uses an affine-stretched scale: everyone
+// starts at 400 and strong players climb toward ~1300. This is a 2x stretch of
+// the classic 1200-nominal / 400-divisor ELO scale, rebased to 400 — see
+// ELO_SCALE in the engine. Every rating and delta is exactly 2x the classic
+// value minus 2000, so the underlying win-probability dynamics are unchanged.
+export const DEFAULT_ELO = 400;
 export const PROVISIONAL_THRESHOLD = 8;
 export const MAX_RATED_PER_SESSION = 3;
 export const MAX_REPEAT_OPPONENT_7DAYS = 2;
@@ -33,9 +38,11 @@ export const LATE_WITHDRAWAL_HOURS = 24;
 export const WALKOVER_REVIEW_HOURS = 48;
 export const INACTIVITY_DAYS = 45;
 
+// Absolute ELO point awards for tournament placement. Doubled from the classic
+// 16/10/6/3 (singles) and 14/9/5/2 (doubles) to match the 2x-stretched scale.
 export const PLACEMENT_BONUSES = {
-  singles: { champion: 16, finalist: 10, semifinalist: 6, quarterfinalist: 3 },
-  doubles: { champion: 14, finalist: 9, semifinalist: 5, quarterfinalist: 2 },
+  singles: { champion: 32, finalist: 20, semifinalist: 12, quarterfinalist: 6 },
+  doubles: { champion: 28, finalist: 18, semifinalist: 10, quarterfinalist: 4 },
 } as const;
 
 export const COLORS = {

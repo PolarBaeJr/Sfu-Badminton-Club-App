@@ -52,7 +52,7 @@ export async function registerForEvent(eventId: string) {
   const { error: insertErr } = await service.from('tournament_participants').insert({
     event_id: eventId,
     player_id: player.id,
-    elo_before: ratingRes.data?.singles_elo ?? 1200,
+    elo_before: ratingRes.data?.singles_elo ?? 400,
     status: 'registered',
   });
   if (insertErr) throw new Error(insertErr.message);

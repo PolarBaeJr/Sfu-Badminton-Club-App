@@ -34,14 +34,14 @@ export async function generateSingleEliminationBracket(eventId: string) {
       .eq('event_id', eventId)
       .in('status', ['registered', 'checked_in'])
       .order('seed_number', { ascending: true, nullsFirst: false });
-    entries = (pairs ?? []).map(p => ({ id: p.id, seed: p.seed_number, elo: p.combined_elo ?? 1200 }));
+    entries = (pairs ?? []).map(p => ({ id: p.id, seed: p.seed_number, elo: p.combined_elo ?? 400 }));
   } else {
     const { data: participants } = await adminClient.from('tournament_participants')
       .select('id, seed_number, elo_before, status')
       .eq('event_id', eventId)
       .in('status', ['registered', 'checked_in'])
       .order('seed_number', { ascending: true, nullsFirst: false });
-    entries = (participants ?? []).map(p => ({ id: p.id, seed: p.seed_number, elo: p.elo_before ?? 1200 }));
+    entries = (participants ?? []).map(p => ({ id: p.id, seed: p.seed_number, elo: p.elo_before ?? 400 }));
   }
 
   const N = entries.length;

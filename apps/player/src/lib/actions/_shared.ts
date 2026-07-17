@@ -90,7 +90,7 @@ export function getPlayerProps(player: Record<string, unknown>) {
   return {
     player_id: player.id as string,
     player_status: player.status as string,
-    singles_elo: ((ratings as Record<string, unknown>)?.singles_elo as number) ?? 1200,
-    doubles_elo: ((ratings as Record<string, unknown>)?.doubles_elo as number) ?? 1200,
+    singles_elo: ((ratings as Record<string, unknown>)?.singles_elo as number) ?? 400,
+    doubles_elo: ((ratings as Record<string, unknown>)?.doubles_elo as number) ?? 400,
   };
 }

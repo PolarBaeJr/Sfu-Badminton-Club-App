@@ -114,7 +114,7 @@ DECLARE
   v_actual NUMERIC;
   v_delta INTEGER;
 BEGIN
-  v_expected := 1.0 / (1.0 + POWER(10, (p_opponent_rating - p_player_rating)::NUMERIC / 400));
+  v_expected := 1.0 / (1.0 + POWER(10, (p_opponent_rating - p_player_rating)::NUMERIC / 800));
   v_actual := CASE WHEN p_won THEN 1.0 ELSE 0.0 END;
   v_delta := ROUND(p_k_factor * p_format_weight * p_event_multiplier * (v_actual - v_expected));
 
@@ -292,9 +292,9 @@ BEGIN
 
     -- K-factor
     IF v_match.match_type = 'singles' THEN
-      v_k_factor := CASE WHEN v_participant.singles_provisional OR v_participant.singles_matches_played < 8 THEN 40 ELSE 24 END;
+      v_k_factor := CASE WHEN v_participant.singles_provisional OR v_participant.singles_matches_played < 8 THEN 80 ELSE 48 END;
     ELSE
-      v_k_factor := CASE WHEN v_participant.doubles_provisional OR v_participant.doubles_matches_played < 8 THEN 32 ELSE 18 END;
+      v_k_factor := CASE WHEN v_participant.doubles_provisional OR v_participant.doubles_matches_played < 8 THEN 64 ELSE 36 END;
     END IF;
 
     -- Calculate Elo delta
@@ -728,7 +728,7 @@ GRANT EXECUTE ON FUNCTION increment_challenges_issued(UUID) TO authenticated;
 -- function must insert the ratings row itself. The trigger's later insert
 -- uses ON CONFLICT (player_id) DO NOTHING, so no double-insert occurs.
 --
--- The ratings defaults (1200/1200, provisional, K 40/40) mirror what both
+-- The ratings defaults (400/400, provisional, K 80/64) mirror what both
 -- call sites inserted before this function existed. onboarding_completed
 -- is TRUE only for self-onboarding (p_user_id present): admin-created
 -- placeholder players have no auth user and have not onboarded.
@@ -769,7 +769,7 @@ BEGIN
     player_id, singles_elo, doubles_elo,
     singles_provisional, doubles_provisional,
     singles_k_factor, doubles_k_factor
-  ) VALUES (v_player_id, 1200, 1200, TRUE, TRUE, 40, 40);
+  ) VALUES (v_player_id, 400, 400, TRUE, TRUE, 80, 64);
 
   RETURN v_player_id;
 END;

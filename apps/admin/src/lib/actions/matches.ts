@@ -127,7 +127,7 @@ export async function adminCreateMatch(data: {
   const participants = allPlayerIds.map(pid => {
     const side = data.side_a_players.includes(pid) ? 'a' : 'b';
     const r = ratingsMap.get(pid);
-    const preRating = isDoubles ? (r?.doubles_elo ?? 1200) : (r?.singles_elo ?? 1200);
+    const preRating = isDoubles ? (r?.doubles_elo ?? 400) : (r?.singles_elo ?? 400);
 
     let pointsScored = 0, pointsAllowed = 0, gamesWon = 0, gamesLost = 0;
     for (const g of data.games) {

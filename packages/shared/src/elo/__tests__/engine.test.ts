@@ -34,13 +34,20 @@ describe('calculateExpected', () => {
     expect(e1 + e2).toBeCloseTo(1.0);
   });
 
-  it('returns ~0.76 for a 200-point advantage', () => {
+  // ELO_SCALE is 800 (2x-stretched scale), so a 200-point gap is half the win
+  // probability spread the classic 400 divisor gave.
+  it('returns ~0.64 for a 200-point advantage', () => {
     const expected = calculateExpected(1400, 1200);
+    expect(expected).toBeCloseTo(0.6401, 3);
+  });
+
+  it('returns ~0.76 for a 400-point advantage', () => {
+    const expected = calculateExpected(1600, 1200);
     expect(expected).toBeCloseTo(0.7597, 3);
   });
 
-  it('returns ~0.91 for a 400-point advantage', () => {
-    const expected = calculateExpected(1600, 1200);
+  it('returns ~0.91 for an 800-point advantage', () => {
+    const expected = calculateExpected(2000, 1200);
     expect(expected).toBeCloseTo(0.9091, 3);
   });
 });
@@ -290,35 +297,36 @@ describe('getEventMultiplier', () => {
 });
 
 describe('getKFactor', () => {
-  it('returns 40 for provisional singles', () => {
-    expect(getKFactor('singles', true)).toBe(40);
+  // K-factors are doubled from the classic 40/24/32/18 to match ELO_SCALE=800.
+  it('returns 80 for provisional singles', () => {
+    expect(getKFactor('singles', true)).toBe(80);
   });
 
-  it('returns 24 for established singles', () => {
-    expect(getKFactor('singles', false)).toBe(24);
+  it('returns 48 for established singles', () => {
+    expect(getKFactor('singles', false)).toBe(48);
   });
 
-  it('returns 32 for provisional doubles', () => {
-    expect(getKFactor('doubles', true)).toBe(32);
+  it('returns 64 for provisional doubles', () => {
+    expect(getKFactor('doubles', true)).toBe(64);
   });
 
-  it('returns 18 for established doubles', () => {
-    expect(getKFactor('doubles', false)).toBe(18);
+  it('returns 36 for established doubles', () => {
+    expect(getKFactor('doubles', false)).toBe(36);
   });
 
   it('treats fewer than 8 matches as provisional regardless of flag', () => {
-    expect(getKFactor('singles', false, 5)).toBe(40);
-    expect(getKFactor('doubles', false, 7)).toBe(32);
+    expect(getKFactor('singles', false, 5)).toBe(80);
+    expect(getKFactor('doubles', false, 7)).toBe(64);
   });
 
   it('treats 8+ matches as established when provisional flag is false', () => {
-    expect(getKFactor('singles', false, 8)).toBe(24);
-    expect(getKFactor('doubles', false, 10)).toBe(18);
+    expect(getKFactor('singles', false, 8)).toBe(48);
+    expect(getKFactor('doubles', false, 10)).toBe(36);
   });
 
   it('treats player as provisional if flag is true even with many matches', () => {
-    expect(getKFactor('singles', true, 100)).toBe(40);
-    expect(getKFactor('doubles', true, 50)).toBe(32);
+    expect(getKFactor('singles', true, 100)).toBe(80);
+    expect(getKFactor('doubles', true, 50)).toBe(64);
   });
 });
 

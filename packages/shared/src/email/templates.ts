@@ -44,7 +44,7 @@ export function welcomeEmail(name: string, loginUrl: string): { subject: string;
     html: wrap(`
       <h1 style="color: #E94560; margin-bottom: 16px;">Welcome, ${name}!</h1>
       <p>Your account has been approved. You can now log in and start challenging other players.</p>
-      <p>You start with a <strong>1200 Elo</strong> rating in both singles and doubles.</p>
+      <p>You start with a <strong>400 Elo</strong> rating in both singles and doubles.</p>
       <a href="${loginUrl}" style="${BUTTON_STYLES}">Log In</a>
     `),
   };

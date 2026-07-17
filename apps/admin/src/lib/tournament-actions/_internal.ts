@@ -155,8 +155,8 @@ export async function applyTournamentMatchElo(matchId: string) {
 
     if (!winnerPair || !loserPair) return;
 
-    const winnerElo = winnerPair.combined_elo ?? 1200;
-    const loserElo = loserPair.combined_elo ?? 1200;
+    const winnerElo = winnerPair.combined_elo ?? 400;
+    const loserElo = loserPair.combined_elo ?? 400;
 
     // Single batched ratings fetch for all 4 players
     const allPlayerIds = [winnerPair.player1_id, winnerPair.player2_id, loserPair.player1_id, loserPair.player2_id];
@@ -166,7 +166,7 @@ export async function applyTournamentMatchElo(matchId: string) {
 
     const computeFor = (playerId: string, opponentElo: number, won: boolean) => {
       const rating = ratings?.find(r => r.player_id === playerId);
-      const before = rating?.doubles_elo ?? 1200;
+      const before = rating?.doubles_elo ?? 400;
       const k = getKFactor('doubles', rating?.doubles_provisional ?? true, rating?.doubles_matches_played);
       const result = calculateEloUpdate({
         playerRating: before,
@@ -222,8 +222,8 @@ export async function applyTournamentMatchElo(matchId: string) {
     const winnerRating = ratings?.find(r => r.player_id === winnerP.player_id);
     const loserRating = ratings?.find(r => r.player_id === loserP.player_id);
 
-    const winnerElo = winnerRating?.singles_elo ?? winnerP.elo_before ?? 1200;
-    const loserElo = loserRating?.singles_elo ?? loserP.elo_before ?? 1200;
+    const winnerElo = winnerRating?.singles_elo ?? winnerP.elo_before ?? 400;
+    const loserElo = loserRating?.singles_elo ?? loserP.elo_before ?? 400;
 
     const winK = getKFactor('singles', winnerRating?.singles_provisional ?? true, winnerRating?.singles_matches_played);
     const loseK = getKFactor('singles', loserRating?.singles_provisional ?? true, loserRating?.singles_matches_played);

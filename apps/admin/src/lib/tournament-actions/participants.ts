@@ -48,8 +48,8 @@ export async function addParticipantToEvent(eventId: string, playerId: string) {
     // Player has no ratings record — create one with defaults
     const { data: newRating } = await adminClient.from('ratings').insert({
       player_id: playerId,
-      singles_elo: 1200,
-      doubles_elo: 1200,
+      singles_elo: 400,
+      doubles_elo: 400,
       singles_provisional: true,
       doubles_provisional: true,
       singles_k_factor: 40,
@@ -61,7 +61,7 @@ export async function addParticipantToEvent(eventId: string, playerId: string) {
   const { data, error } = await adminClient.from('tournament_participants').insert({
     event_id: eventId,
     player_id: playerId,
-    elo_before: rating?.singles_elo ?? 1200,
+    elo_before: rating?.singles_elo ?? 400,
     added_by: admin.id,
   }).select().single();
 
@@ -237,8 +237,8 @@ export async function addPairToEvent(eventId: string, player1Id: string, player2
     .select('id, full_name')
     .in('id', [player1Id, player2Id]);
 
-  const p1Rating = ratings?.find(r => r.player_id === player1Id)?.doubles_elo ?? 1200;
-  const p2Rating = ratings?.find(r => r.player_id === player2Id)?.doubles_elo ?? 1200;
+  const p1Rating = ratings?.find(r => r.player_id === player1Id)?.doubles_elo ?? 400;
+  const p2Rating = ratings?.find(r => r.player_id === player2Id)?.doubles_elo ?? 400;
   const combinedElo = calculateTeamRating([p1Rating, p2Rating]);
 
   const p1Name = players?.find(p => p.id === player1Id)?.full_name ?? '';

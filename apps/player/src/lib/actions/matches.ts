@@ -92,8 +92,8 @@ export async function submitMatchResult(challengeId: string, input: MatchResultI
     const playerData = cp.player as Record<string, unknown>;
     const ratingsData = pickOne(playerData?.ratings);
     const preRating = isDoubles
-      ? ((ratingsData as Record<string, unknown>)?.doubles_elo as number) ?? 1200
-      : ((ratingsData as Record<string, unknown>)?.singles_elo as number) ?? 1200;
+      ? ((ratingsData as Record<string, unknown>)?.doubles_elo as number) ?? 400
+      : ((ratingsData as Record<string, unknown>)?.singles_elo as number) ?? 400;
 
     const side = cp.team_side as string;
     let pointsScored = 0;
