@@ -10,6 +10,8 @@ import {
   adminPlayerUpdateSchema,
   walkoverReportSchema,
   disputeResolveSchema,
+  feeMarkSchema,
+  playerFlagsSchema,
 } from '../schemas';
 
 const UUID_A = '11111111-1111-4111-8111-111111111111';
@@ -309,6 +311,76 @@ describe('walkoverReportSchema', () => {
         notice_hours: 2,
       }).success,
     ).toBe(true);
+  });
+});
+
+describe('feeMarkSchema', () => {
+  it('accepts a minimal valid input', () => {
+    expect(
+      feeMarkSchema.safeParse({ player_id: UUID_A, period: '2026 Summer' }).success,
+    ).toBe(true);
+  });
+  it('accepts optional amount_cents and method', () => {
+    expect(
+      feeMarkSchema.safeParse({
+        player_id: UUID_A,
+        period: '2026 Summer',
+        amount_cents: 1500,
+        method: 'e-transfer',
+      }).success,
+    ).toBe(true);
+  });
+  it('rejects a non-UUID player_id', () => {
+    expect(
+      feeMarkSchema.safeParse({ player_id: 'not-a-uuid', period: '2026 Summer' }).success,
+    ).toBe(false);
+  });
+  it('rejects an empty period', () => {
+    expect(feeMarkSchema.safeParse({ player_id: UUID_A, period: '' }).success).toBe(false);
+  });
+  it('rejects a period longer than 40 chars', () => {
+    expect(
+      feeMarkSchema.safeParse({ player_id: UUID_A, period: 'x'.repeat(41) }).success,
+    ).toBe(false);
+  });
+  it('rejects a non-positive or fractional amount_cents', () => {
+    expect(
+      feeMarkSchema.safeParse({ player_id: UUID_A, period: '2026 Summer', amount_cents: 0 }).success,
+    ).toBe(false);
+    expect(
+      feeMarkSchema.safeParse({ player_id: UUID_A, period: '2026 Summer', amount_cents: -100 }).success,
+    ).toBe(false);
+    expect(
+      feeMarkSchema.safeParse({ player_id: UUID_A, period: '2026 Summer', amount_cents: 15.5 }).success,
+    ).toBe(false);
+  });
+  it('rejects a method longer than 40 chars', () => {
+    expect(
+      feeMarkSchema.safeParse({
+        player_id: UUID_A,
+        period: '2026 Summer',
+        method: 'x'.repeat(41),
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('playerFlagsSchema', () => {
+  it('accepts all boolean combinations', () => {
+    for (const is_exec of [true, false]) {
+      for (const fee_exempt of [true, false]) {
+        expect(playerFlagsSchema.safeParse({ is_exec, fee_exempt }).success).toBe(true);
+      }
+    }
+  });
+  it('requires both flags', () => {
+    expect(playerFlagsSchema.safeParse({ is_exec: true }).success).toBe(false);
+    expect(playerFlagsSchema.safeParse({ fee_exempt: true }).success).toBe(false);
+  });
+  it('rejects non-boolean values', () => {
+    expect(
+      playerFlagsSchema.safeParse({ is_exec: 'yes', fee_exempt: false }).success,
+    ).toBe(false);
   });
 });
 

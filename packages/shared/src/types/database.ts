@@ -101,6 +101,8 @@ export interface Player {
   status: PlayerStatus;
   role: UserRole;
   active_flag: boolean;
+  is_exec: boolean;
+  fee_exempt: boolean;
   onboarding_completed: boolean;
   avatar_url: string | null;
   bio: string | null;
@@ -412,6 +414,17 @@ export interface ReliabilityMetrics {
   dispute_involvement_count: number;
   walkover_flag: boolean;
   updated_at: string;
+}
+
+export interface ClubFee {
+  id: string;
+  player_id: string;
+  period: string;
+  amount_cents: number | null;
+  paid_at: string | null;
+  marked_by: string | null;
+  method: string | null;
+  created_at: string;
 }
 
 export interface Announcement {

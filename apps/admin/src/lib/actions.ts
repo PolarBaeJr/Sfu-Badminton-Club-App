@@ -11,6 +11,7 @@
 //   - seasons.ts       — createSeason / setActiveSeason / endSeason
 //   - sessions.ts      — session CRUD
 //   - announcements.ts — announcement CRUD
+//   - fees.ts          — exec/exempt player flags + club-fee tracking
 //   - varsity.ts       — varsity notes
 //   - _shared.ts       — getAdminPlayer (NOT 'use server' — internal helper)
 export {
@@ -65,6 +66,12 @@ export {
   updateAnnouncement,
   deleteAnnouncement,
 } from './actions/announcements';
+
+export {
+  updatePlayerFlags,
+  markFeePaid,
+  markFeeUnpaid,
+} from './actions/fees';
 
 export {
   createVarsityNote,

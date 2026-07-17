@@ -158,6 +158,12 @@ CREATE TABLE players (
   role user_role NOT NULL DEFAULT 'player',
   eligibility_flag BOOLEAN NOT NULL DEFAULT FALSE,
   active_flag BOOLEAN NOT NULL DEFAULT TRUE,
+  -- Club-admin markers (no effect on gameplay, ratings, or leaderboards):
+  -- is_exec = member of the club executive team; fee_exempt = contributes
+  -- enough to be exempted from the club fee. Both exclude the player from
+  -- the fee-collection list.
+  is_exec BOOLEAN NOT NULL DEFAULT FALSE,
+  fee_exempt BOOLEAN NOT NULL DEFAULT FALSE,
   onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE,
   avatar_url TEXT,
   bio TEXT,
@@ -508,6 +514,20 @@ CREATE TABLE reliability_metrics (
   dispute_involvement_count INTEGER NOT NULL DEFAULT 0,
   walkover_flag BOOLEAN NOT NULL DEFAULT FALSE,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Club Fees — one row per (player, period) tracking club-fee payment.
+-- Purely administrative: no effect on gameplay, ratings, or leaderboards.
+CREATE TABLE club_fees (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  player_id UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  period TEXT NOT NULL, -- e.g. '2026 Summer'
+  amount_cents INTEGER,
+  paid_at TIMESTAMPTZ,
+  marked_by UUID REFERENCES players(id),
+  method TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(player_id, period)
 );
 
 -- Announcements

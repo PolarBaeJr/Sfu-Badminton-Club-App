@@ -29,6 +29,7 @@ ALTER TABLE varsity_notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE season_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reliability_metrics ENABLE ROW LEVEL SECURITY;
+ALTER TABLE club_fees ENABLE ROW LEVEL SECURITY;
 ALTER TABLE announcements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE announcement_reads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY;
@@ -348,6 +349,17 @@ CREATE POLICY rm_select_own ON reliability_metrics FOR SELECT TO authenticated
   USING (player_id = get_player_id(auth.uid()) OR is_admin(auth.uid()));
 
 CREATE POLICY rm_admin ON reliability_metrics FOR ALL TO authenticated
+  USING (is_admin(auth.uid()));
+
+-- ============================================================
+-- CLUB FEES — Admin-managed
+-- ============================================================
+
+-- A player may read only their own fee rows
+CREATE POLICY club_fees_select_own ON club_fees FOR SELECT TO authenticated
+  USING (player_id = get_player_id(auth.uid()));
+
+CREATE POLICY club_fees_admin ON club_fees FOR ALL TO authenticated
   USING (is_admin(auth.uid()));
 
 -- ============================================================

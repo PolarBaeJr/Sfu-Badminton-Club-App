@@ -176,6 +176,18 @@ export const adminMatchCreateSchema = z.object({
   admin_note: z.string().max(500).optional(),
 });
 
+export const feeMarkSchema = z.object({
+  player_id: z.string().uuid(),
+  period: z.string().min(1).max(40),
+  amount_cents: z.number().int().positive().optional(),
+  method: z.string().max(40).optional(),
+});
+
+export const playerFlagsSchema = z.object({
+  is_exec: z.boolean(),
+  fee_exempt: z.boolean(),
+});
+
 export const announcementSchema = z.object({
   title: z.string().min(1, 'Title is required').max(200),
   body: z.string().min(1, 'Body is required').max(5000),
@@ -201,3 +213,5 @@ export type DisputeResolveInput = z.infer<typeof disputeResolveSchema>;
 export type AdminPlayerCreateInput = z.infer<typeof adminPlayerCreateSchema>;
 export type AdminMatchCreateInput = z.infer<typeof adminMatchCreateSchema>;
 export type AnnouncementInput = z.infer<typeof announcementSchema>;
+export type FeeMarkInput = z.infer<typeof feeMarkSchema>;
+export type PlayerFlagsInput = z.infer<typeof playerFlagsSchema>;

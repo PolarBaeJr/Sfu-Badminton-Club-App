@@ -32,7 +32,7 @@ export default async function PlayersPage({
 
   let query = supabase
     .from('players')
-    .select('id, full_name, email, avatar_url, status, role, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses)')
+    .select('id, full_name, email, avatar_url, status, role, is_exec, fee_exempt, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses)')
     .order('created_at', { ascending: false })
     .limit(500);
 
@@ -127,9 +127,13 @@ export default async function PlayersPage({
                       </Link>
                     </td>
                     <td className="px-4 py-3">
-                      <Badge variant={statusBadgeVariant(player.status)}>
-                        {PLAYER_STATUS_LABELS[player.status as keyof typeof PLAYER_STATUS_LABELS] || player.status}
-                      </Badge>
+                      <div className="flex flex-wrap gap-1">
+                        <Badge variant={statusBadgeVariant(player.status)}>
+                          {PLAYER_STATUS_LABELS[player.status as keyof typeof PLAYER_STATUS_LABELS] || player.status}
+                        </Badge>
+                        {player.is_exec && <Badge variant="info">Exec</Badge>}
+                        {player.fee_exempt && <Badge variant="neutral">Fee Exempt</Badge>}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-right">
                       <span className="font-mono text-[var(--text-primary)]">{r?.singles_elo ?? '-'}</span>

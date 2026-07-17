@@ -104,6 +104,9 @@ CREATE INDEX idx_snapshots_player ON season_snapshots(player_id);
 CREATE INDEX idx_reliability_player ON reliability_metrics(player_id);
 CREATE INDEX idx_reliability_noshows ON reliability_metrics(no_shows);
 
+-- Club Fees (fee-collection list is filtered by period)
+CREATE INDEX idx_club_fees_period ON club_fees(period);
+
 -- Announcements / Push Subscriptions
 CREATE INDEX idx_push_subscriptions_player ON push_subscriptions(player_id) WHERE active = TRUE;
 CREATE INDEX idx_announcements_status ON announcements(status, created_at DESC);

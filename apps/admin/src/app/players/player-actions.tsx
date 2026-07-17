@@ -1,10 +1,10 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { Button, Dialog, Input, Select, Textarea } from '@badminton/ui';
+import { Button, Dialog, Input, Select, Switch, Textarea } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { updatePlayer, removePlayer } from '@/lib/actions';
+import { updatePlayer, updatePlayerFlags, removePlayer } from '@/lib/actions';
 
 interface Props {
   mode: 'edit' | 'delete';
@@ -30,6 +30,8 @@ export function PlayerActions({ mode, playerId, playerName, playerData }: Props)
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState((playerData?.status as string) || 'pending_approval');
   const [role, setRole] = useState((playerData?.role as string) || 'player');
+  const [isExec, setIsExec] = useState(Boolean(playerData?.is_exec));
+  const [feeExempt, setFeeExempt] = useState(Boolean(playerData?.fee_exempt));
   const [singlesElo, setSinglesElo] = useState('');
   const [doublesElo, setDoublesElo] = useState('');
   const [reason, setReason] = useState('');
@@ -47,6 +49,9 @@ export function PlayerActions({ mode, playerId, playerName, playerData }: Props)
           doubles_elo: doublesElo ? parseInt(doublesElo) : undefined,
           reason,
         });
+        if (isExec !== Boolean(playerData?.is_exec) || feeExempt !== Boolean(playerData?.fee_exempt)) {
+          await updatePlayerFlags(playerId, { is_exec: isExec, fee_exempt: feeExempt });
+        }
         toast('Player updated', 'success');
         setOpen(false);
         setReason('');
@@ -78,6 +83,8 @@ export function PlayerActions({ mode, playerId, playerName, playerData }: Props)
           <div className="space-y-4">
             <Select label="Status" options={STATUS_OPTIONS} value={status} onChange={(e) => setStatus(e.target.value)} />
             <Select label="Role" options={ROLE_OPTIONS} value={role} onChange={(e) => setRole(e.target.value)} />
+            <Switch label="Executive" description="Member of the club executive team (no gameplay effect)" checked={isExec} onChange={setIsExec} />
+            <Switch label="Fee Exempt" description="Exempted from the club fee (no gameplay effect)" checked={feeExempt} onChange={setFeeExempt} />
             <div className="flex gap-2">
               <Input label="Singles Elo (optional)" type="number" value={singlesElo} onChange={(e) => setSinglesElo(e.target.value)} placeholder="Leave blank to keep current" />
               <Input label="Doubles Elo (optional)" type="number" value={doublesElo} onChange={(e) => setDoublesElo(e.target.value)} placeholder="Leave blank to keep current" />
