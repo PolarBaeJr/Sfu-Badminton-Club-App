@@ -13,6 +13,7 @@ import {
   Bell,
   Search,
   Settings,
+  LogIn,
 } from 'lucide-react';
 
 const desktopNavItems = [
@@ -24,7 +25,15 @@ const desktopNavItems = [
   { href: '/my-stats',      label: 'My Stats',     icon: Sparkles  },
 ];
 
-export function TopBar({ playerName, unreadCount }: { playerName: string; unreadCount: number }) {
+export function TopBar({
+  playerName,
+  unreadCount,
+  isAuthenticated,
+}: {
+  playerName: string;
+  unreadCount: number;
+  isAuthenticated: boolean;
+}) {
   const pathname = usePathname();
   const initials = (playerName || 'You')
     .split(' ')
@@ -62,41 +71,55 @@ export function TopBar({ playerName, unreadCount }: { playerName: string; unread
         </nav>
 
         <div className="top-right">
-          <button className="icon-btn" aria-label="Search" type="button">
-            <Search className="w-4 h-4" />
-          </button>
-          <Link
-            href="/notifications"
-            aria-label={unreadCount > 0 ? `Notifications (${unreadCount} unread)` : 'Notifications'}
-            className="icon-btn"
-            style={{ position: 'relative' }}
-          >
-            <Bell className={cn('w-4 h-4', unreadCount > 0 && 'icon-bell-wiggle')} />
-            {unreadCount > 0 && (
-              <span
-                style={{
-                  position: 'absolute',
-                  top: 4,
-                  right: 4,
-                  width: 8,
-                  height: 8,
-                  borderRadius: 999,
-                  background: 'var(--red)',
-                  border: '2px solid var(--surface)',
-                }}
-              />
-            )}
-          </Link>
-          <Link href="/settings" className="me-chip" aria-label="Profile and settings">
-            <span className="avatar" data-size="sm" data-tone="4">
-              {initials}
-            </span>
-            <div>
-              <div className="name">{playerName || 'You'}</div>
-              <div className="sub">Settings</div>
-            </div>
-            <Settings className="icon-gear w-4 h-4 text-[var(--mute)] hidden md:inline" aria-hidden />
-          </Link>
+          {isAuthenticated ? (
+            <>
+              <button className="icon-btn" aria-label="Search" type="button">
+                <Search className="w-4 h-4" />
+              </button>
+              <Link
+                href="/notifications"
+                aria-label={unreadCount > 0 ? `Notifications (${unreadCount} unread)` : 'Notifications'}
+                className="icon-btn"
+                style={{ position: 'relative' }}
+              >
+                <Bell className={cn('w-4 h-4', unreadCount > 0 && 'icon-bell-wiggle')} />
+                {unreadCount > 0 && (
+                  <span
+                    style={{
+                      position: 'absolute',
+                      top: 4,
+                      right: 4,
+                      width: 8,
+                      height: 8,
+                      borderRadius: 999,
+                      background: 'var(--red)',
+                      border: '2px solid var(--surface)',
+                    }}
+                  />
+                )}
+              </Link>
+              <Link href="/settings" className="me-chip" aria-label="Profile and settings">
+                <span className="avatar" data-size="sm" data-tone="4">
+                  {initials}
+                </span>
+                <div>
+                  <div className="name">{playerName || 'You'}</div>
+                  <div className="sub">Settings</div>
+                </div>
+                <Settings className="icon-gear w-4 h-4 text-[var(--mute)] hidden md:inline" aria-hidden />
+              </Link>
+            </>
+          ) : (
+            <Link href="/login" className="me-chip" aria-label="Sign in">
+              <span className="avatar" data-size="sm" data-tone="4" aria-hidden>
+                <LogIn className="w-4 h-4" />
+              </span>
+              <div>
+                <div className="name">Sign in</div>
+                <div className="sub">to your account</div>
+              </div>
+            </Link>
+          )}
         </div>
       </div>
     </header>

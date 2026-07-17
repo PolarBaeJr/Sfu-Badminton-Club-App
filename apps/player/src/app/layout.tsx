@@ -44,6 +44,7 @@ export const viewport: Viewport = {
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   let playerName = '';
+  let isAuthenticated = false;
   let playerId: string | null = null;
   let playerStatus: string | null = null;
   let singlesElo: number | null = null;
@@ -54,6 +55,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     const supabase = await createServerSupabaseClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
+      isAuthenticated = true;
       const { data: player } = await supabase
         .from('players')
         .select('id, full_name, status, ratings(singles_elo, doubles_elo)')
@@ -107,7 +109,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               doublesElo={doublesElo}
             />
             <OfflineBanner />
-            <TopBar playerName={playerName} unreadCount={unreadCount} />
+            <TopBar playerName={playerName} unreadCount={unreadCount} isAuthenticated={isAuthenticated} />
             <main className="page pb-safe-nav md:pb-7">
               {children}
             </main>
