@@ -1,4 +1,4 @@
-const CACHE_NAME = 'sfu-badminton-v2';
+const CACHE_NAME = 'sfu-badminton-v3';
 
 // Network-first caching strategy (same-origin GETs only)
 self.addEventListener('fetch', (event) => {

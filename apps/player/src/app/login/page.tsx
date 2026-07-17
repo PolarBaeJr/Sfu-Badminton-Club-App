@@ -45,10 +45,19 @@ export default function LoginPage() {
     setLoading(true);
     setError('');
     const supabase = createClient();
-    const { error: authError } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
-    });
+    const send = () =>
+      supabase.auth.signInWithOtp({
+        email,
+        options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+      });
+    // The auth gateway can 503 on the first request after an idle period; a
+    // single silent retry makes that invisible to the user instead of showing
+    // a scary error they'd just have to click through themselves.
+    let { error: authError } = await send();
+    if (authError) {
+      await new Promise((r) => setTimeout(r, 900));
+      ({ error: authError } = await send());
+    }
     if (authError) {
       setError(friendlyAuthError(authError.message));
     } else {
