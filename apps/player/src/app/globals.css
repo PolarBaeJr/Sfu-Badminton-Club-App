@@ -1312,3 +1312,17 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
 @media (max-width: 560px) {
   .lp-features { grid-template-columns: 1fr; }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   MOBILE OVERFLOW GUARD
+   Flex/grid items default to min-width:auto, so wide content (the
+   leaderboard table's 680px min-width) inflates its card past the
+   viewport — the document grows wider than the screen and phones let
+   you pinch-zoom the whole page. min-width:0 lets items shrink so
+   wide content scrolls inside its own overflow container instead;
+   overflow-x:clip on the root is the belt against any stragglers.
+   Verified: leaderboard @390px went 698px → 390px document width.
+   ═══════════════════════════════════════════════════════════ */
+.feed-col > * { min-width: 0; }
+.grid-2 > *, .grid-3 > *, .grid-12 > * { min-width: 0; }
+html, body { overflow-x: clip; }
