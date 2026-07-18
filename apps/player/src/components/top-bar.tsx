@@ -20,7 +20,7 @@ const desktopNavItems = [
   { href: '/feed',          label: 'Feed',         icon: Home      },
   { href: '/leaderboard',   label: 'Leaderboard',  icon: Trophy    },
   { href: '/challenges',    label: 'Challenges',   icon: Crosshair },
-  { href: '/sessions',      label: 'Sessions',     icon: Calendar  },
+  { href: '/sessions',      label: 'Schedule',     icon: Calendar  },
   { href: '/tournaments',   label: 'Tournaments',  icon: Award     },
   { href: '/my-stats',      label: 'My Stats',     icon: Sparkles  },
 ];

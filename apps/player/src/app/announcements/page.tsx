@@ -51,7 +51,6 @@ export default async function AnnouncementsPage() {
   return (
     <div data-screen-label="News">
       <PageHeader
-        eyebrow="CLUB · ANNOUNCEMENTS"
         title="News"
         sub="Updates from the executive team. Sessions, tournaments, policy changes — keep an eye on pinned posts at the top."
       />

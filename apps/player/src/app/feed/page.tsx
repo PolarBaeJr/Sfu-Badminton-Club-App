@@ -21,11 +21,6 @@ type MatchRow = {
   match_participants: ParticipantRow[] | null;
 };
 
-function weekNumber(d: Date) {
-  const start = new Date(d.getFullYear(), 0, 1);
-  const diff = (d.getTime() - start.getTime()) / 86_400_000;
-  return Math.ceil((diff + start.getDay() + 1) / 7);
-}
 
 export default async function FeedPage() {
   const player = await getCurrentPlayer();
@@ -91,17 +86,6 @@ export default async function FeedPage() {
     .filter((row): row is { person: Person; elo: number } => Boolean(row))
     .slice(0, 5);
 
-  const now = new Date();
-  const wk = weekNumber(now);
-  const dateStr = now.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase();
-  const greeting = (() => {
-    const h = now.getHours();
-    if (h < 5) return 'Up late';
-    if (h < 12) return 'Good morning';
-    if (h < 17) return 'Good afternoon';
-    if (h < 22) return 'Good evening';
-    return 'Up late';
-  })();
   const firstName = player.full_name.split(' ')[0];
 
   const subBits: string[] = [];
@@ -118,8 +102,7 @@ export default async function FeedPage() {
   return (
     <div data-screen-label="Feed">
       <PageHeader
-        eyebrow={`WEEK ${wk} · ${dateStr}`}
-        title={`${greeting}, ${firstName}.`}
+        title={`Welcome back, ${firstName}.`}
         sub={subLine}
         actions={
           <>
@@ -137,7 +120,6 @@ export default async function FeedPage() {
       {r && (
         <div className="hero-banner" style={{ marginBottom: 24 }}>
           <div style={{ position: 'relative', zIndex: 2 }}>
-            <div className="eyebrow">Ladder · Your Standing</div>
             <h2>
               {r.singles_provisional
                 ? `Play ${Math.max(0, 8 - (r.singles_matches_played ?? 0))} more singles to lock in your rank.`

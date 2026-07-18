@@ -77,7 +77,6 @@ export default async function TournamentsPage() {
   return (
     <div data-screen-label="Tournaments">
       <PageHeader
-        eyebrow="COMPETITION · BRACKETS"
         title="Tournaments"
         sub="Internal championships, open events, invitationals. Sign up while registration is open and check brackets when matches go live."
       />

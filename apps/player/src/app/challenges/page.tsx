@@ -118,7 +118,6 @@ export default async function ChallengesPage() {
   return (
     <div data-screen-label="Challenges">
       <PageHeader
-        eyebrow="MATCHUPS · LIVE"
         title="Challenges"
         sub="Issue, accept, and track challenges. Pending responses live at the top — answer them so the queue clears."
         actions={

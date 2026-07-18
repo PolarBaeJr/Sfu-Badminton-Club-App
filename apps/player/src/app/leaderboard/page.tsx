@@ -208,9 +208,7 @@ export default function LeaderboardPage() {
   return (
     <div data-screen-label="Leaderboard">
       <PageHeader
-        eyebrow="RANKINGS · LIVE"
         title="Leaderboard"
-        sub={`ELO updates after every confirmed match. ${ranked.length} ranked players in ${tabs.find((t) => t.id === activeTab)?.label}.`}
         actions={
           <div
             className="row"

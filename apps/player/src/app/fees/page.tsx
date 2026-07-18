@@ -1,6 +1,7 @@
 import { createServerSupabaseClient, getCurrentPlayer, getActiveSeason } from '@/lib/supabase-server';
 import { unwrap, unwrapMaybe } from '@badminton/shared';
 import { redirect } from 'next/navigation';
+import Link from 'next/link';
 import { PageHeader } from '@badminton/ui';
 
 // The player supabase client is untyped, so column-list selects resolve to
@@ -136,7 +137,6 @@ export default async function FeesPage() {
   return (
     <div data-screen-label="Fees" style={{ maxWidth: 720, margin: '0 auto' }}>
       <PageHeader
-        eyebrow="ACCOUNT · DUES"
         title="Fees & dues"
         sub="What you owe for club membership and tournament entry. Payments are recorded by an admin."
       />
@@ -161,9 +161,20 @@ export default async function FeesPage() {
             <div className="card-head">
               <h3 className="card-title">Club & competition dues</h3>
             </div>
-            <p className="muted" style={{ fontSize: 13 }}>
-              You&apos;re exempt from club and competition fees.
-            </p>
+            {player.is_exec ? (
+              <p className="muted" style={{ fontSize: 13 }}>
+                As one of the club executives, you&apos;re exempt from club and competition fees. See
+                the{' '}
+                <Link href="/exec" style={{ color: 'var(--color-accent)', fontWeight: 600 }}>
+                  executives page
+                </Link>{' '}
+                for the current team.
+              </p>
+            ) : (
+              <p className="muted" style={{ fontSize: 13 }}>
+                You&apos;re exempt from club and competition fees.
+              </p>
+            )}
           </div>
         ) : (
           <>

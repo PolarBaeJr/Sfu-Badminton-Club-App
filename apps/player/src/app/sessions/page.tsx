@@ -54,10 +54,9 @@ export default async function SessionsPage() {
   const upcomingCount = openSessions?.length ?? 0;
 
   return (
-    <div data-screen-label="Sessions">
+    <div data-screen-label="Schedule">
       <PageHeader
-        eyebrow="PRACTICE · SCHEDULE"
-        title="Sessions"
+        title="Schedule"
         sub="Open practices, drop-ins, and ladder nights. Sign in to claim a court spot — capacity fills fast."
       />
 

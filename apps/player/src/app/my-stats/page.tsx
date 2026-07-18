@@ -60,9 +60,8 @@ export default async function MyStatsPage() {
   return (
     <div data-screen-label="My Stats">
       <PageHeader
-        eyebrow={activeSeason ? `PLAYER PROFILE · ${activeSeason.name.toUpperCase()}` : 'PLAYER PROFILE'}
         title="My stats"
-        sub="Your complete ledger across singles and doubles. Match history, head-to-head records, partnerships, and reliability."
+        sub={activeSeason ? activeSeason.name : undefined}
       />
 
       <div className="card-base" style={{ padding: 28, marginBottom: 24 }}>
@@ -84,11 +83,8 @@ export default async function MyStatsPage() {
               >
                 {player.full_name}
               </div>
-              <div className="mono muted" style={{ fontSize: 12, marginTop: 6 }}>
-                {player.email}
-              </div>
               {joined && (
-                <div className="mono muted" style={{ fontSize: 12 }}>
+                <div className="mono muted" style={{ fontSize: 12, marginTop: 6 }}>
                   JOINED {joined}
                 </div>
               )}

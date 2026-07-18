@@ -74,7 +74,6 @@ export default async function NotificationsPage() {
   return (
     <div data-screen-label="Notifications">
       <PageHeader
-        eyebrow="INBOX · ALERTS"
         title="Notifications"
         sub="Challenge updates, match confirmations, session reminders, and club announcements all land here."
         actions={

@@ -162,9 +162,7 @@ export default function SettingsPage() {
   return (
     <div data-screen-label="Settings" style={{ maxWidth: 720, margin: '0 auto' }}>
       <PageHeader
-        eyebrow="ACCOUNT · PROFILE"
         title="Settings"
-        sub={<>Profile, theme, notifications, privacy. Changes save when you click <strong>Save profile</strong>.</>}
       />
 
       {!loaded ? (
