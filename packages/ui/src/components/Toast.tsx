@@ -10,10 +10,13 @@ interface ToastProps {
 }
 
 export function Toast({ message, type = 'info', onClose }: ToastProps) {
+  // Per-variant text color: success/error sit on solid color (white text);
+  // info sits on the theme surface, which is light in light mode — white text
+  // was invisible there. The close button inherits currentColor via opacity.
   const colors = {
-    success: 'bg-[var(--color-success)]',
-    error: 'bg-[var(--color-danger)]',
-    info: 'bg-[var(--bg-surface)]',
+    success: 'bg-[var(--color-success)] text-white',
+    error: 'bg-[var(--color-danger)] text-white',
+    info: 'bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border)]',
   };
 
   React.useEffect(() => {
@@ -22,9 +25,9 @@ export function Toast({ message, type = 'info', onClose }: ToastProps) {
   }, [onClose]);
 
   return (
-    <div className={cn('fixed bottom-4 right-4 z-50 px-4 py-3 rounded-lg text-white shadow-lg flex items-center gap-2', colors[type])}>
+    <div className={cn('fixed bottom-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2', colors[type])}>
       <span>{message}</span>
-      <button onClick={onClose} className="ml-2 text-white/70 hover:text-white min-w-[44px] min-h-[44px] flex items-center justify-center">&times;</button>
+      <button onClick={onClose} className="ml-2 opacity-70 hover:opacity-100 min-w-[44px] min-h-[44px] flex items-center justify-center">&times;</button>
     </div>
   );
 }

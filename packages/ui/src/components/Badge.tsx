@@ -10,11 +10,15 @@ interface BadgeProps {
 }
 
 export function Badge({ variant = 'default', children, className }: BadgeProps) {
+  // Tailwind v3 silently drops `/opacity` modifiers on var() arbitrary colors
+  // (bg-[var(--x)]/20 compiles to nothing), which left these variants as bare
+  // text with no pill. color-mix() inside the arbitrary value does the same
+  // job and actually compiles.
   const variants = {
-    default: 'bg-[var(--color-accent)]/20 text-[var(--color-accent)]',
-    success: 'bg-[var(--color-success)]/20 text-[var(--color-success)]',
-    warning: 'bg-[var(--color-warning)]/20 text-[var(--color-warning)]',
-    danger: 'bg-[var(--color-danger)]/20 text-[var(--color-danger)]',
+    default: 'bg-[color-mix(in_oklab,var(--color-accent)_20%,transparent)] text-[var(--color-accent)]',
+    success: 'bg-[color-mix(in_oklab,var(--color-success)_20%,transparent)] text-[var(--color-success)]',
+    warning: 'bg-[color-mix(in_oklab,var(--color-warning)_20%,transparent)] text-[var(--color-warning)]',
+    danger: 'bg-[color-mix(in_oklab,var(--color-danger)_20%,transparent)] text-[var(--color-danger)]',
     info: 'bg-[rgba(59,130,246,0.12)] text-[var(--color-info)] border border-[rgba(59,130,246,0.3)]',
     neutral: 'bg-[var(--border-hover)] text-[var(--text-muted)]',
   };
