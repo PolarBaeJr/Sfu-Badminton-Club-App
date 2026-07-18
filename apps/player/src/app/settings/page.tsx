@@ -97,6 +97,10 @@ export default function SettingsPage() {
     load();
     const saved = (localStorage.getItem('theme') as Theme) || 'light';
     setThemeState(saved);
+    // Migrate existing localStorage-only users to the cookie so SSR picks it up.
+    if (!/(?:^|; )theme=/.test(document.cookie)) {
+      document.cookie = `theme=${saved}; path=/; max-age=31536000; samesite=lax`;
+    }
     setPushSupported(isPushSupported());
     isPushEnabled().then(setPushEnabled);
   }, []);
@@ -104,6 +108,9 @@ export default function SettingsPage() {
   function handleThemeChange(newTheme: Theme) {
     setThemeState(newTheme);
     localStorage.setItem('theme', newTheme);
+    // Also persist to a cookie so the server can set data-theme on first paint
+    // (no flash). 1-year expiry, lax so it rides normal navigations.
+    document.cookie = `theme=${newTheme}; path=/; max-age=31536000; samesite=lax`;
     const resolved = newTheme === 'system'
       ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
       : newTheme;

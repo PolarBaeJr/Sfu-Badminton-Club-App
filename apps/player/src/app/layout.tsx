@@ -9,6 +9,7 @@ import { OfflineBanner } from '@/components/OfflineBanner';
 import { PostHogProvider } from '@/components/posthog-provider';
 import { PostHogIdentify } from '@/components/posthog-identify';
 import { SentryUserInit } from '@/components/sentry-user-init';
+import { cookies } from 'next/headers';
 import { createServerSupabaseClient, getActiveSeason } from '@/lib/supabase-server';
 import { Inter, Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import { cn } from "@/lib/utils";
@@ -58,6 +59,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     // No active season
   }
 
+  // Theme preference lives in a cookie so we can set data-theme server-side and
+  // avoid a flash of the wrong theme. Explicit light/dark render correctly on
+  // the server; 'system' (or no cookie) defaults to light and the inline script
+  // below resolves the OS preference before paint.
+  const themePref = (await cookies()).get('theme')?.value;
+  const initialTheme = themePref === 'dark' ? 'dark' : 'light';
+
   try {
     const supabase = await createServerSupabaseClient();
     const { data: { user } } = await supabase.auth.getUser();
@@ -91,13 +99,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html
       lang="en"
       suppressHydrationWarning
-      data-theme="light"
+      data-theme={initialTheme}
       className={cn("font-sans", inter.variable, spaceGrotesk.variable, jetbrainsMono.variable)}
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: `
           try {
-            var t = localStorage.getItem('theme') || 'light';
+            var m = document.cookie.match(/(?:^|; )theme=([^;]+)/);
+            var t = (m && decodeURIComponent(m[1])) || localStorage.getItem('theme') || 'light';
             var r = t === 'system'
               ? window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
               : t;
