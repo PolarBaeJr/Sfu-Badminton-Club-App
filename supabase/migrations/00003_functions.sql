@@ -111,6 +111,42 @@ $$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp;
 
 GRANT EXECUTE ON FUNCTION get_executives() TO anon, authenticated;
 
+-- Helper: The public leaderboard, in one anon-safe call. Returns every
+-- leaderboard-eligible player with their ratings and total tournament points,
+-- so the client fetches once and filters/sorts each tab in memory (fast, and
+-- viewable logged-out). Publishes the public display name
+-- (coalesce(display_name, full_name)); respects hide_from_leaderboard.
+CREATE OR REPLACE FUNCTION get_leaderboard()
+RETURNS TABLE(
+  id uuid, name text, status player_status,
+  singles_elo int, doubles_elo int,
+  singles_wins int, singles_losses int, doubles_wins int, doubles_losses int,
+  singles_provisional boolean, doubles_provisional boolean,
+  current_singles_streak int, current_doubles_streak int,
+  tournament_points int
+) AS $$
+  SELECT
+    p.id, COALESCE(p.display_name, p.full_name) AS name, p.status,
+    r.singles_elo, r.doubles_elo,
+    r.singles_wins, r.singles_losses, r.doubles_wins, r.doubles_losses,
+    r.singles_provisional, r.doubles_provisional,
+    r.current_singles_streak, r.current_doubles_streak,
+    COALESCE(tp.pts, 0)::int AS tournament_points
+  FROM players p
+  JOIN ratings r ON r.player_id = p.id
+  LEFT JOIN (
+    SELECT tpa.player_id, SUM(tpa.points)::int AS pts
+    FROM tournament_participants tpa
+    WHERE tpa.status NOT IN ('withdrawn', 'disqualified') AND tpa.points > 0
+    GROUP BY tpa.player_id
+  ) tp ON tp.player_id = p.id
+  WHERE p.active_flag = TRUE
+    AND p.hide_from_leaderboard = FALSE
+    AND p.status NOT IN ('pending_approval', 'suspended');
+$$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp;
+
+GRANT EXECUTE ON FUNCTION get_leaderboard() TO anon, authenticated;
+
 -- ============================================================
 -- CORE: Elo Calculation
 -- ============================================================

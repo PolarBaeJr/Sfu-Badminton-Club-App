@@ -31,6 +31,14 @@ type LeaderboardEntry = {
   _tournamentPoints?: number;
 };
 
+// One row as returned by the get_leaderboard() RPC.
+type LeaderboardRow = Ratings & {
+  id: string;
+  name: string;
+  status: string;
+  tournament_points: number;
+};
+
 type CategoryId = 'open_singles' | 'open_doubles' | 'comp_singles' | 'comp_doubles' | 'tournament_points';
 
 type SortId = 'elo' | 'win_rate';
@@ -82,51 +90,12 @@ export default function LeaderboardPage() {
   useEffect(() => {
     const supabase = createClient();
 
+    // One anon-safe RPC returns every leaderboard-eligible player with ratings
+    // and tournament points. We fetch once and filter/sort each tab in memory
+    // (fast, works logged-out) instead of re-querying per tab.
     async function load() {
       setLoading(true);
-
-      if (activeTab === 'tournament_points') {
-        const { data: parts, error: partsError } = await supabase
-          .from('tournament_participants')
-          .select('player_id, points, player:players!player_id(id, full_name, status, hide_from_leaderboard)')
-          .not('status', 'in', '("withdrawn","disqualified")')
-          .gt('points', 0);
-
-        if (partsError) {
-          setLoadError(partsError.message);
-          setPlayers([]);
-          setLoading(false);
-          return;
-        }
-        setLoadError(null);
-
-        const totals: Record<string, { player: LeaderboardEntry; total: number }> = {};
-        for (const p of parts ?? []) {
-          const player = (Array.isArray(p.player) ? p.player[0] : p.player) as LeaderboardEntry | null;
-          if (!player || player.hide_from_leaderboard) continue;
-          const entry = totals[p.player_id] ?? (totals[p.player_id] = { player, total: 0 });
-          entry.total += (p.points as number) ?? 0;
-        }
-        const sorted = Object.values(totals)
-          .sort((a, b) => b.total - a.total)
-          .map((entry) => ({ ...entry.player, _tournamentPoints: entry.total, ratings: null }));
-        setPlayers(sorted);
-        setLoading(false);
-        return;
-      }
-
-      let query = supabase
-        .from('players')
-        .select('id, full_name, status, hide_from_leaderboard, ratings(*)')
-        .eq('active_flag', true)
-        .eq('hide_from_leaderboard', false)
-        .not('status', 'in', '("pending_approval","suspended")')
-        .limit(200);
-
-      if (activeTab.startsWith('comp_')) query = query.eq('status', 'competitive');
-
-      const { data, error } = await query;
-
+      const { data, error } = await supabase.rpc('get_leaderboard');
       if (error) {
         setLoadError(error.message);
         setPlayers([]);
@@ -134,18 +103,25 @@ export default function LeaderboardPage() {
         return;
       }
       setLoadError(null);
-
-      const sorted = (data || [])
-        .map((p) => ({ ...p, ratings: (Array.isArray(p.ratings) ? p.ratings[0] : p.ratings) as Ratings | null }))
-        .filter((p) => p.ratings)
-        .sort((a, b) => {
-          const isDoubles = activeTab.includes('doubles');
-          return isDoubles
-            ? (b.ratings?.doubles_elo ?? 0) - (a.ratings?.doubles_elo ?? 0)
-            : (b.ratings?.singles_elo ?? 0) - (a.ratings?.singles_elo ?? 0);
-        });
-
-      setPlayers(sorted as LeaderboardEntry[]);
+      const entries: LeaderboardEntry[] = ((data ?? []) as LeaderboardRow[]).map((row) => ({
+        id: row.id,
+        full_name: row.name,
+        status: row.status,
+        ratings: {
+          singles_elo: row.singles_elo,
+          doubles_elo: row.doubles_elo,
+          singles_wins: row.singles_wins,
+          singles_losses: row.singles_losses,
+          doubles_wins: row.doubles_wins,
+          doubles_losses: row.doubles_losses,
+          singles_provisional: row.singles_provisional,
+          doubles_provisional: row.doubles_provisional,
+          current_singles_streak: row.current_singles_streak,
+          current_doubles_streak: row.current_doubles_streak,
+        },
+        _tournamentPoints: row.tournament_points,
+      }));
+      setPlayers(entries);
       setLoading(false);
     }
     load();
@@ -164,33 +140,51 @@ export default function LeaderboardPage() {
       if (refetchTimer) clearTimeout(refetchTimer);
       supabase.removeChannel(channel);
     };
-  }, [activeTab]);
+  }, []);
 
   const isDoubles = activeTab.includes('doubles');
   const isTpts = activeTab === 'tournament_points';
 
+  // Which players belong to the active tab: competitive-only tabs filter by
+  // status; the tournament tab keeps players with points; open tabs keep all.
+  const tabFiltered = useMemo(() => {
+    if (isTpts) return players.filter((p) => (p._tournamentPoints ?? 0) > 0);
+    if (activeTab.startsWith('comp_')) return players.filter((p) => p.status === 'competitive');
+    return players;
+  }, [players, activeTab, isTpts]);
+
   const filtered = useMemo(
-    () => searchQuery ? players.filter((p) => p.full_name.toLowerCase().includes(searchQuery.toLowerCase())) : players,
-    [players, searchQuery]
+    () => searchQuery ? tabFiltered.filter((p) => p.full_name.toLowerCase().includes(searchQuery.toLowerCase())) : tabFiltered,
+    [tabFiltered, searchQuery]
   );
 
   const ranked = useMemo(() => {
-    if (isTpts || sortBy !== 'win_rate') return filtered;
-    const record = (p: LeaderboardEntry) => {
-      const r = p.ratings;
-      const wins = r ? (isDoubles ? r.doubles_wins : r.singles_wins) : 0;
-      const losses = r ? (isDoubles ? r.doubles_losses : r.singles_losses) : 0;
-      const rate = getWinRateNumeric(wins, losses);
-      // Tiers: established (≥5 games) first, small samples next, unplayed (null rate) last.
-      const tier = rate === null ? 2 : wins + losses < MIN_GAMES_FOR_WIN_RATE_RANK ? 1 : 0;
-      return { rate, tier };
-    };
-    return [...filtered].sort((a, b) => {
-      const ra = record(a);
-      const rb = record(b);
-      if (ra.tier !== rb.tier) return ra.tier - rb.tier;
-      return (rb.rate ?? 0) - (ra.rate ?? 0);
-    });
+    if (isTpts) {
+      return [...filtered].sort((a, b) => (b._tournamentPoints ?? 0) - (a._tournamentPoints ?? 0));
+    }
+    if (sortBy === 'win_rate') {
+      const record = (p: LeaderboardEntry) => {
+        const r = p.ratings;
+        const wins = r ? (isDoubles ? r.doubles_wins : r.singles_wins) : 0;
+        const losses = r ? (isDoubles ? r.doubles_losses : r.singles_losses) : 0;
+        const rate = getWinRateNumeric(wins, losses);
+        // Tiers: established (≥5 games) first, small samples next, unplayed (null rate) last.
+        const tier = rate === null ? 2 : wins + losses < MIN_GAMES_FOR_WIN_RATE_RANK ? 1 : 0;
+        return { rate, tier };
+      };
+      return [...filtered].sort((a, b) => {
+        const ra = record(a);
+        const rb = record(b);
+        if (ra.tier !== rb.tier) return ra.tier - rb.tier;
+        return (rb.rate ?? 0) - (ra.rate ?? 0);
+      });
+    }
+    // Default: sort by ELO for the active discipline.
+    return [...filtered].sort((a, b) =>
+      isDoubles
+        ? (b.ratings?.doubles_elo ?? 0) - (a.ratings?.doubles_elo ?? 0)
+        : (b.ratings?.singles_elo ?? 0) - (a.ratings?.singles_elo ?? 0)
+    );
   }, [filtered, sortBy, isDoubles, isTpts]);
 
   const meIndex = useMemo(
