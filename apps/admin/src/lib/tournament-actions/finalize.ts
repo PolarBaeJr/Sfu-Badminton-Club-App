@@ -3,7 +3,7 @@
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
-import { PLACEMENT_BONUSES, isDoublesEvent } from '@badminton/shared';
+import { PLACEMENT_BONUSES, isDoublesEvent, clampElo } from '@badminton/shared';
 import {
   getExecOrAdmin,
   revalidateEventPaths,
@@ -68,7 +68,7 @@ export async function applyPlacementBonuses(eventId: string) {
       const results = await Promise.allSettled(
         [...playerBonus.entries()].map(([pid, bonus]) =>
           adminClient.from('ratings')
-            .update({ doubles_elo: (ratingMap.get(pid) ?? 400) + bonus, updated_at: nowIso })
+            .update({ doubles_elo: clampElo((ratingMap.get(pid) ?? 400) + bonus), updated_at: nowIso })
             .eq('player_id', pid)
         )
       );
@@ -99,7 +99,7 @@ export async function applyPlacementBonuses(eventId: string) {
       const promises: PromiseLike<unknown>[] = [];
       for (const p of eligible) {
         promises.push(Promise.resolve(adminClient.from('ratings')
-          .update({ singles_elo: (ratingMap.get(p.player_id) ?? 400) + p.bonus, updated_at: nowIso })
+          .update({ singles_elo: clampElo((ratingMap.get(p.player_id) ?? 400) + p.bonus), updated_at: nowIso })
           .eq('player_id', p.player_id)));
         const prevChange = (p.elo_change as number | null) ?? 0;
         promises.push(Promise.resolve(adminClient.from('tournament_participants')

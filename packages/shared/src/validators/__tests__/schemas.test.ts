@@ -279,13 +279,18 @@ describe('adminPlayerUpdateSchema (Phase 2 enum simplification guard)', () => {
   it('requires reason', () => {
     expect(adminPlayerUpdateSchema.safeParse({ status: 'competitive' }).success).toBe(false);
   });
-  it('rejects an Elo outside 800-2400', () => {
+  it('rejects an Elo outside the 100-1500 cap', () => {
     expect(
-      adminPlayerUpdateSchema.safeParse({ singles_elo: 700, reason: 'test' }).success,
+      adminPlayerUpdateSchema.safeParse({ singles_elo: 50, reason: 'test' }).success,
     ).toBe(false);
     expect(
-      adminPlayerUpdateSchema.safeParse({ singles_elo: 2500, reason: 'test' }).success,
+      adminPlayerUpdateSchema.safeParse({ singles_elo: 1600, reason: 'test' }).success,
     ).toBe(false);
+  });
+  it('accepts an Elo within the 100-1500 cap', () => {
+    expect(
+      adminPlayerUpdateSchema.safeParse({ singles_elo: 1500, reason: 'test' }).success,
+    ).toBe(true);
   });
 });
 

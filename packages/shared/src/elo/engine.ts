@@ -1,4 +1,5 @@
 import type { MatchFormat, EventType } from '../types/database';
+import { clampElo } from '../utils/constants';
 
 export const FORMAT_WEIGHTS: Record<MatchFormat, number> = {
   bo3_21: 1.25,
@@ -44,12 +45,17 @@ export function calculateEloUpdate(input: EloCalcInput): EloCalcResult {
   const actual = input.won ? 1.0 : 0.0;
   const expected = calculateExpected(input.playerRating, input.opponentRating);
   const weight = input.eloWeightOverride ?? 1.0;
-  const delta = Math.round(
+  const rawDelta = Math.round(
     input.kFactor * input.formatWeight * input.eventMultiplier * weight * (actual - expected)
   );
 
+  // Clamp the resulting rating to [MIN_ELO, MAX_ELO], then derive the delta from
+  // the clamped rating so newRating and delta stay consistent at the bounds.
+  const newRating = clampElo(input.playerRating + rawDelta);
+  const delta = newRating - input.playerRating;
+
   return {
-    newRating: input.playerRating + delta,
+    newRating,
     delta,
     expected,
   };

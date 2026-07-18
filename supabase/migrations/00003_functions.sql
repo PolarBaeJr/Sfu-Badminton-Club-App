@@ -113,14 +113,20 @@ DECLARE
   v_expected NUMERIC;
   v_actual NUMERIC;
   v_delta INTEGER;
+  v_new INTEGER;
 BEGIN
   v_expected := 1.0 / (1.0 + POWER(10, (p_opponent_rating - p_player_rating)::NUMERIC / 800));
   v_actual := CASE WHEN p_won THEN 1.0 ELSE 0.0 END;
   v_delta := ROUND(p_k_factor * p_format_weight * p_event_multiplier * (v_actual - v_expected));
 
+  -- Clamp the new rating to [100, 1500], then derive the delta from the clamped
+  -- value so new_rating and delta stay consistent at the bounds (mirrors the TS
+  -- engine's clampElo).
+  v_new := GREATEST(100, LEAST(1500, p_player_rating + v_delta));
+
   RETURN QUERY SELECT
-    (p_player_rating + v_delta)::INTEGER AS new_rating,
-    v_delta AS delta,
+    v_new AS new_rating,
+    (v_new - p_player_rating) AS delta,
     v_expected AS expected;
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;

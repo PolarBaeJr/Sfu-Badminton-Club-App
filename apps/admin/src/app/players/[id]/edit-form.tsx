@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Input, Select, Textarea } from '@badminton/ui';
-import { PLAYER_STATUS_LABELS } from '@badminton/shared';
+import { PLAYER_STATUS_LABELS, MIN_ELO, MAX_ELO } from '@badminton/shared';
 import { updatePlayer, approvePlayer } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import type { Player, Rating } from '@badminton/shared';
@@ -68,12 +68,16 @@ export function PlayerEditForm({ player, rating }: { player: Player; rating: Rat
         <Input
           label="Singles Elo"
           type="number"
+          min={MIN_ELO}
+          max={MAX_ELO}
           value={singlesElo}
           onChange={(e) => setSinglesElo(Number(e.target.value))}
         />
         <Input
           label="Doubles Elo"
           type="number"
+          min={MIN_ELO}
+          max={MAX_ELO}
           value={doublesElo}
           onChange={(e) => setDoublesElo(Number(e.target.value))}
         />

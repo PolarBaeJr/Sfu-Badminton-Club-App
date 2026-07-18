@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MIN_ELO, MAX_ELO } from '../utils/constants';
 
 // Empty optional strings come from form fields where the user left the input blank.
 // Coerce them to undefined so downstream code doesn't have to discriminate "" vs unset.
@@ -135,8 +136,8 @@ export const adminPlayerUpdateSchema = z.object({
     'competitive', 'recreational', 'suspended', 'pending_approval',
   ]).optional(),
   role: z.enum(['player', 'admin']).optional(),
-  singles_elo: z.number().int().min(800).max(2400).optional(),
-  doubles_elo: z.number().int().min(800).max(2400).optional(),
+  singles_elo: z.number().int().min(MIN_ELO).max(MAX_ELO).optional(),
+  doubles_elo: z.number().int().min(MIN_ELO).max(MAX_ELO).optional(),
   reason: z.string().min(2, 'Reason is required'),
 });
 

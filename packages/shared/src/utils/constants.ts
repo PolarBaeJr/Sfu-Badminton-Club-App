@@ -30,6 +30,17 @@ export const CHALLENGE_EXPIRY_HOURS = 72;
 // ELO_SCALE in the engine. Every rating and delta is exactly 2x the classic
 // value minus 2000, so the underlying win-probability dynamics are unchanged.
 export const DEFAULT_ELO = 400;
+// Hard bounds on any rating. Enforced everywhere a rating is written — live
+// match results, tournament placement bonuses, and admin manual edits — so no
+// rating can exceed the top of the ladder or go negative.
+export const MAX_ELO = 1500;
+export const MIN_ELO = 100;
+
+// Clamp a rating to the allowed [MIN_ELO, MAX_ELO] range.
+export function clampElo(rating: number): number {
+  return Math.min(MAX_ELO, Math.max(MIN_ELO, rating));
+}
+
 export const PROVISIONAL_THRESHOLD = 8;
 export const MAX_RATED_PER_SESSION = 3;
 export const MAX_REPEAT_OPPONENT_7DAYS = 2;
