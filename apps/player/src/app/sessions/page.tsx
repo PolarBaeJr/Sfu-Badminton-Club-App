@@ -70,7 +70,13 @@ export default async function SessionsPage() {
             {upcomingCount > 0 && <span className="tag tag-win">{upcomingCount} OPEN</span>}
           </div>
           {upcomingCount === 0 ? (
-            <div className="empty">No upcoming sessions. Check back later.</div>
+            <div className="empty">
+              <div className="empty-icon"><Calendar size={20} /></div>
+              <div className="empty-title">No upcoming sessions</div>
+              <div className="empty-hint">
+                New practices are posted here — check back soon or watch announcements.
+              </div>
+            </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {(openSessions ?? []).map((session) => {
@@ -97,7 +103,7 @@ export default async function SessionsPage() {
                       }}
                     >
                       <div>
-                        <div style={{ fontFamily: 'var(--display)', fontSize: 20, fontWeight: 600, marginBottom: 6 }}>
+                        <div className="card-title card-title-lg">
                           {session.name ?? 'Practice Session'}
                         </div>
                         <div className="session-meta" style={{ flexWrap: 'wrap' }}>
@@ -119,7 +125,6 @@ export default async function SessionsPage() {
                         )}
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-                        <span className="tag tag-win">OPEN</span>
                         <CheckInButton sessionId={session.id} isCheckedIn={isCheckedIn} />
                         <AddToCalendarButton
                           name={session.name ?? 'Practice Session'}
@@ -146,18 +151,12 @@ export default async function SessionsPage() {
               {closedSessions.map((session) => (
                 <div
                   key={session.id}
-                  style={{
-                    padding: '12px 14px',
-                    border: '1px solid var(--line)',
-                    borderRadius: 10,
-                    background: 'var(--surface)',
-                    opacity: 0.7,
-                  }}
-                  className="row"
+                  style={{ opacity: 0.7 }}
+                  className="list-row"
                 >
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 600, fontSize: 13 }}>{session.name ?? 'Practice Session'}</div>
-                    <div className="mono muted" style={{ fontSize: 11 }}>
+                    <div className="row-title">{session.name ?? 'Practice Session'}</div>
+                    <div className="row-sub">
                       {formatDate(session.date).toUpperCase()} · {session.location}
                     </div>
                   </div>

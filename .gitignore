@@ -31,3 +31,11 @@ pnpm-debug.log*
 
 # local notes
 .claude-handoff.md
+
+# design-sync (staged scripts, build output, machine state)
+.ds-sync/
+ds-bundle/
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules
+packages/ui/.ds-styles.css

@@ -212,8 +212,8 @@ export default function LoginPage() {
           </h2>
           <div className="page-sub" style={{ marginTop: 8 }}>
             {mode === 'signin'
-              ? 'We\'ll email you a one-time link. No password to remember.'
-              : 'Join the club roster. We\'ll send a magic link to get you in.'}
+              ? 'We\'ll email you a 6-digit sign-in code. No password to remember.'
+              : 'Join the club roster. We\'ll email you a 6-digit code to get you in.'}
           </div>
         </div>
 
@@ -261,24 +261,16 @@ export default function LoginPage() {
                 onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                 placeholder="123456"
                 autoFocus
+                className="input-base"
                 style={{
-                  width: '100%',
-                  padding: '14px 16px',
-                  borderRadius: 10,
-                  border: '1px solid var(--line)',
-                  background: 'var(--surface)',
                   fontSize: 22,
                   letterSpacing: '.4em',
                   textAlign: 'center',
                   fontFamily: 'var(--mono)',
                 }}
               />
-              {error && (
-                <div style={{ fontSize: 13, color: 'var(--loss)', background: 'var(--red-wash)', padding: '10px 12px', borderRadius: 8 }}>
-                  {error}
-                </div>
-              )}
-              <button type="submit" disabled={loading || code.length < 6} className="btn btn-primary btn-lg" style={{ width: '100%', justifyContent: 'center', height: 48, opacity: code.length < 6 ? 0.5 : 1 }}>
+              {error && <div className="alert-danger">{error}</div>}
+              <button type="submit" disabled={loading || code.length < 6} className="btn btn-primary btn-lg" style={{ width: '100%', justifyContent: 'center', height: 48 }}>
                 {loading ? <Loader2 size={16} className="animate-spin" /> : null}
                 Sign in
               </button>
@@ -333,32 +325,11 @@ export default function LoginPage() {
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@sfu.ca"
                   required
-                  style={{
-                    width: '100%',
-                    padding: '14px 16px 14px 38px',
-                    borderRadius: 10,
-                    border: '1px solid var(--line)',
-                    background: 'var(--surface)',
-                    fontSize: 14,
-                    transition: 'border .15s',
-                  }}
-                  onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--ink)')}
-                  onBlur={(e) => (e.currentTarget.style.borderColor = 'var(--line)')}
+                  className="input-base"
+                  style={{ paddingLeft: 38 }}
                 />
               </div>
-              {error && (
-                <div
-                  style={{
-                    fontSize: 13,
-                    color: 'var(--loss)',
-                    background: 'var(--red-wash)',
-                    padding: '10px 12px',
-                    borderRadius: 8,
-                  }}
-                >
-                  {error}
-                </div>
-              )}
+              {error && <div className="alert-danger">{error}</div>}
               <button
                 type="submit"
                 disabled={loading}
@@ -366,28 +337,10 @@ export default function LoginPage() {
                 style={{ width: '100%', justifyContent: 'center', height: 48 }}
               >
                 {loading ? <Loader2 size={16} className="animate-spin" /> : <Mail size={14} />}
-                Send magic link
+                Email me a code
                 {!loading && <ChevronRight size={14} />}
               </button>
             </form>
-
-            <div className="muted" style={{ fontSize: 12, textAlign: 'center' }}>
-              {mode === 'signin' ? (
-                <>
-                  No account yet?{' '}
-                  <button onClick={() => { setMode('signup'); setError(''); }} type="button" style={{ color: 'var(--red)', fontWeight: 600 }}>
-                    Sign up
-                  </button>
-                </>
-              ) : (
-                <>
-                  Already have one?{' '}
-                  <button onClick={() => { setMode('signin'); setError(''); }} type="button" style={{ color: 'var(--red)', fontWeight: 600 }}>
-                    Sign in
-                  </button>
-                </>
-              )}
-            </div>
           </>
         )}
       </div>

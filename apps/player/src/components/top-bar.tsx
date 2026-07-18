@@ -12,7 +12,6 @@ import {
   Award,
   Sparkles,
   Bell,
-  Search,
   Settings,
   LogIn,
 } from 'lucide-react';
@@ -80,9 +79,6 @@ export function TopBar({
         <div className="top-right">
           {isAuthenticated ? (
             <>
-              <button className="icon-btn" aria-label="Search" type="button">
-                <Search className="w-4 h-4" />
-              </button>
               <Link
                 href="/notifications"
                 aria-label={unreadCount > 0 ? `Notifications (${unreadCount} unread)` : 'Notifications'}

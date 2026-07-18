@@ -25,6 +25,8 @@
     },
     "test": {},
     "lint": {},
-    "type-check": {}
+    "type-check": {
+      "dependsOn": ["build"]
+    }
   }
 }

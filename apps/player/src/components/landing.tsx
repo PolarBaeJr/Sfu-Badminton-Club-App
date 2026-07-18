@@ -68,7 +68,9 @@ export function Landing({ top, seasonName }: { top: TopEntry[]; seasonName: stri
           const Icon = f.icon;
           return (
             <div key={f.title} className="lp-feature">
-              <Icon className="lp-feature-icon" size={22} strokeWidth={2} />
+              <span className="lp-feature-icon">
+                <Icon size={22} strokeWidth={2} />
+              </span>
               <h3 className="lp-feature-title">{f.title}</h3>
               <p className="lp-feature-body">{f.body}</p>
             </div>

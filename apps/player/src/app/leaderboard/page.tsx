@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase-browser';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { getPostHogClient } from '@/lib/posthog';
-import { Search, Crosshair, ChevronRight } from 'lucide-react';
+import { Search, Crosshair, Trophy } from 'lucide-react';
 import { AvatarChip, PageHeader } from '@badminton/ui';
 import { getWinRate, getWinRateNumeric } from '@badminton/shared';
 
@@ -204,30 +204,14 @@ export default function LeaderboardPage() {
       <PageHeader
         title="Leaderboard"
         actions={
-          <div
-            className="row"
-            style={{
-              border: '1px solid var(--line)',
-              borderRadius: 999,
-              padding: '4px 6px 4px 14px',
-              gap: 6,
-              background: 'var(--surface)',
-            }}
-          >
+          <div className="search-pill">
             <Search size={14} className="text-[var(--mute)]" />
             <input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search player..."
               aria-label="Search leaderboard"
-              style={{
-                border: 0,
-                background: 'transparent',
-                padding: '6px 0',
-                width: 180,
-                fontSize: 13,
-                outline: 'none',
-              }}
+              style={{ width: 180 }}
             />
           </div>
         }
@@ -271,14 +255,10 @@ export default function LeaderboardPage() {
                   <Link
                     key={p.id}
                     href={`/leaderboard/${p.id}`}
-                    className="row press"
+                    className="row press list-row"
                     style={{
                       alignItems: 'stretch',
-                      gap: 14,
-                      padding: 14,
-                      border: '1px solid var(--line)',
-                      borderRadius: 12,
-                      background: i === 0 ? 'var(--red-wash)' : 'transparent',
+                      ...(i === 0 ? { background: 'var(--red-wash)' } : {}),
                     }}
                   >
                     <div style={{ width: 40, display: 'grid', placeItems: 'center' }}>
@@ -383,12 +363,26 @@ export default function LeaderboardPage() {
               )}
             </div>
             {loading ? (
-              <div className="empty">Loading rankings…</div>
+              <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {Array.from({ length: 7 }).map((_, i) => (
+                  <div key={i} className="skeleton" style={{ height: 44 }} />
+                ))}
+              </div>
             ) : loadError ? (
-              <div className="empty">Couldn&apos;t load rankings: {loadError}</div>
+              <div className="empty">
+                <div className="empty-icon"><Trophy size={20} /></div>
+                <div className="empty-title">Couldn&apos;t load rankings</div>
+                <div className="empty-hint">{loadError}</div>
+              </div>
             ) : ranked.length === 0 ? (
               <div className="empty">
-                {searchQuery ? `No players match "${searchQuery}".` : 'No ranked players yet.'}
+                <div className="empty-icon"><Trophy size={20} /></div>
+                <div className="empty-title">
+                  {searchQuery ? `No players match "${searchQuery}"` : 'No ranked players yet'}
+                </div>
+                <div className="empty-hint">
+                  {searchQuery ? 'Try a different name.' : 'Play a ranked match to appear here'}
+                </div>
               </div>
             ) : (
               <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>

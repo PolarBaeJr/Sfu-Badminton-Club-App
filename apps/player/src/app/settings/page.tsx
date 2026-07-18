@@ -174,7 +174,8 @@ export default function SettingsPage() {
 
       {!loaded ? (
         <div className="feed-col">
-          <div className="card-base"><div className="empty">Loading…</div></div>
+          <div className="skeleton" style={{ height: 220, borderRadius: 'var(--r-lg)' }} />
+          <div className="skeleton" style={{ height: 120, borderRadius: 'var(--r-lg)' }} />
         </div>
       ) : (
         <div className="feed-col">
@@ -209,12 +210,9 @@ export default function SettingsPage() {
           <Section icon={Receipt} title="Fees & Dues">
             <Link
               href="/fees"
-              className="row"
+              className="list-row"
               style={{
                 justifyContent: 'space-between',
-                padding: 12,
-                background: 'var(--surface-2)',
-                borderRadius: 10,
                 textDecoration: 'none',
                 color: 'inherit',
               }}
@@ -320,8 +318,8 @@ export default function SettingsPage() {
 
           <Section icon={Info} title="About">
             <div
-              className="row"
-              style={{ justifyContent: 'space-between', padding: 12, background: 'var(--surface-2)', borderRadius: 10, fontSize: 13 }}
+              className="list-row"
+              style={{ justifyContent: 'space-between', fontSize: 13 }}
             >
               <span className="muted">Version</span>
               <span className="mono tag">0.0.1</span>
@@ -331,14 +329,8 @@ export default function SettingsPage() {
           <button
             type="button"
             onClick={handleSignOut}
-            className="btn btn-lg"
-            style={{
-              width: '100%',
-              justifyContent: 'center',
-              background: 'var(--loss)',
-              color: '#fff',
-              borderColor: 'transparent',
-            }}
+            className="btn btn-lg btn-danger-ghost"
+            style={{ width: '100%', justifyContent: 'center' }}
           >
             <LogOut size={14} />
             Sign out

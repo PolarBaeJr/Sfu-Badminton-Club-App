@@ -65,8 +65,10 @@ export default async function MyStatsPage() {
       />
 
       <div className="card-base" style={{ padding: 28, marginBottom: 24 }}>
+        {/* grid-2 so the 980px media query (!important) collapses the inline
+            'auto 1fr' columns to a single column on mobile. */}
         <div
-          className="grid"
+          className="grid grid-2"
           style={{ gridTemplateColumns: 'auto 1fr', gap: 32, alignItems: 'center' }}
         >
           <div className="row" style={{ gap: 20 }}>
@@ -75,10 +77,11 @@ export default async function MyStatsPage() {
               <div
                 style={{
                   fontFamily: 'var(--display)',
-                  fontSize: 32,
+                  fontSize: 'clamp(24px, 4vw, 32px)',
                   fontWeight: 700,
                   letterSpacing: '-.02em',
                   lineHeight: 1,
+                  overflowWrap: 'anywhere',
                 }}
               >
                 {player.full_name}
@@ -265,20 +268,11 @@ export default async function MyStatsPage() {
                   const wins = isA ? h.player_a_wins : h.player_b_wins;
                   const losses = isA ? h.player_b_wins : h.player_a_wins;
                   return (
-                    <div
-                      key={h.id}
-                      className="row"
-                      style={{
-                        padding: '10px 12px',
-                        border: '1px solid var(--line)',
-                        borderRadius: 10,
-                        gap: 12,
-                      }}
-                    >
+                    <div key={h.id} className="list-row">
                       <AvatarChip name={opponent.full_name} id={opponent.id} size="sm" />
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 600, fontSize: 14 }}>{opponent.full_name}</div>
-                        <div className="mono muted" style={{ fontSize: 11 }}>{(h.match_type as string)?.toUpperCase()}</div>
+                        <div className="row-title">{opponent.full_name}</div>
+                        <div className="row-sub">{(h.match_type as string)?.toUpperCase()}</div>
                       </div>
                       <span className="mono" style={{ fontWeight: 600 }}>
                         <span style={{ color: 'var(--win)' }}>{wins}W</span>
@@ -329,20 +323,11 @@ export default async function MyStatsPage() {
                   const partner = (Array.isArray(partnerRaw) ? partnerRaw[0] : partnerRaw) as { id: string; full_name: string } | null;
                   if (!partner) return null;
                   return (
-                    <div
-                      key={p.id}
-                      className="row"
-                      style={{
-                        padding: '10px 12px',
-                        border: '1px solid var(--line)',
-                        borderRadius: 10,
-                        gap: 12,
-                      }}
-                    >
+                    <div key={p.id} className="list-row">
                       <AvatarChip name={partner.full_name} id={partner.id} size="sm" />
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 600, fontSize: 14 }}>{partner.full_name}</div>
-                        <div className="mono muted" style={{ fontSize: 11 }}>
+                        <div className="row-title">{partner.full_name}</div>
+                        <div className="row-sub">
                           {p.wins}W–{p.losses}L
                         </div>
                       </div>

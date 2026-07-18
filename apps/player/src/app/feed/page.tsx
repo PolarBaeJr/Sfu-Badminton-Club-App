@@ -3,7 +3,7 @@ import { MATCH_FORMAT_LABELS, formatRelativeTime, getWinRate, pickOne, unwrap } 
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { Plus, ChevronRight, Crosshair, Filter } from 'lucide-react';
-import { PageHeader, Section, AvatarChip, StatBlock } from '@badminton/ui';
+import { PageHeader, AvatarChip } from '@badminton/ui';
 
 type Person = { id: string; full_name: string | null };
 type ParticipantRow = {
@@ -138,22 +138,21 @@ export default async function FeedPage() {
                 left,
               }: { label: string; provisional: boolean; left: number }) => (
                 <div
-                  className="row"
+                  className="row hero-meta"
                   style={{
                     gap: 12,
                     fontSize: 13,
                     fontFamily: 'var(--mono)',
-                    color: 'color-mix(in oklab, var(--bg) 78%, transparent)',
                     letterSpacing: '.02em',
                   }}
                 >
                   <span
+                    className="hero-meta-dim"
                     style={{
                       width: 64,
                       fontSize: 11,
                       letterSpacing: '.12em',
                       textTransform: 'uppercase',
-                      color: 'color-mix(in oklab, var(--bg) 55%, transparent)',
                     }}
                   >
                     {label}
@@ -173,7 +172,7 @@ export default async function FeedPage() {
                     {provisional ? 'PROVISIONAL' : 'ESTABLISHED'}
                   </span>
                   {provisional && (
-                    <span style={{ color: 'color-mix(in oklab, var(--bg) 65%, transparent)' }}>
+                    <span className="hero-meta-dim">
                       {left} match{left === 1 ? '' : 'es'} to lock in
                     </span>
                   )}
@@ -192,11 +191,7 @@ export default async function FeedPage() {
               <Link href="/challenges/new" className="btn btn-primary">
                 <Crosshair size={14} /> Find an opponent
               </Link>
-              <Link
-                href="/leaderboard"
-                className="btn btn-ghost"
-                style={{ borderColor: 'rgba(255,255,255,.25)', color: '#fff' }}
-              >
+              <Link href="/leaderboard" className="btn btn-ghost-inverse">
                 See leaderboard
               </Link>
             </div>
@@ -243,18 +238,12 @@ export default async function FeedPage() {
                     <Link
                       key={pc.id}
                       href={`/challenges/${c.id}`}
-                      className="row press"
-                      style={{
-                        padding: '10px 12px',
-                        borderRadius: 10,
-                        border: '1px solid var(--line)',
-                        background: 'var(--surface)',
-                      }}
+                      className="list-row press"
                     >
                       <AvatarChip name={creatorName} id={(creator?.id as string) ?? creatorName} size="sm" />
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 600, fontSize: 14 }}>{creatorName} challenged you</div>
-                        <div className="mono muted" style={{ fontSize: 11 }}>
+                        <div className="row-title">{creatorName} challenged you</div>
+                        <div className="row-sub">
                           {(c.type as string) || ''} · {MATCH_FORMAT_LABELS[(c.format as string) as keyof typeof MATCH_FORMAT_LABELS] || (c.format as string)}
                         </div>
                       </div>
@@ -269,7 +258,7 @@ export default async function FeedPage() {
 
           <div className="card-head" style={{ marginBottom: 0 }}>
             <div>
-              <h3 className="card-title" style={{ fontSize: 22 }}>Recent matches</h3>
+              <h3 className="card-title card-title-lg">Recent matches</h3>
               <div className="card-sub">Your latest results.</div>
             </div>
             <Link href="/my-stats" className="btn btn-ghost btn-sm">

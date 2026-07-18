@@ -23,13 +23,7 @@ function money(cents: number | null | undefined): string {
 
 function StatusPill({ paid }: { paid: boolean }) {
   return (
-    <span
-      className="pill"
-      style={{
-        color: paid ? 'var(--win)' : 'var(--loss)',
-        fontWeight: 600,
-      }}
-    >
+    <span className={paid ? 'chip chip-success' : 'chip chip-red'}>
       {paid ? 'Paid' : 'Outstanding'}
     </span>
   );
@@ -183,21 +177,12 @@ export default async function FeesPage() {
                 <h3 className="card-title">Club dues</h3>
               </div>
               {season ? (
-                <div
-                  className="row"
-                  style={{
-                    justifyContent: 'space-between',
-                    padding: '12px 14px',
-                    border: '1px solid var(--line)',
-                    borderRadius: 10,
-                    gap: 12,
-                  }}
-                >
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>{season.name}</div>
-                    <div className="mono muted" style={{ fontSize: 11 }}>{money(clubOwedCents)}</div>
+                <div className="list-row" style={{ justifyContent: 'space-between' }}>
+                  <div className="row-title">{season.name}</div>
+                  <div className="row" style={{ gap: 10 }}>
+                    <span className="mono" style={{ fontSize: 15, fontWeight: 600 }}>{money(clubOwedCents)}</span>
+                    <StatusPill paid={clubPaid} />
                   </div>
-                  <StatusPill paid={clubPaid} />
                 </div>
               ) : (
                 <p className="muted" style={{ fontSize: 13 }}>No active season — nothing due.</p>
@@ -216,22 +201,12 @@ export default async function FeesPage() {
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {competitionRows.map((row) => (
-                    <div
-                      key={row.id}
-                      className="row"
-                      style={{
-                        justifyContent: 'space-between',
-                        padding: '12px 14px',
-                        border: '1px solid var(--line)',
-                        borderRadius: 10,
-                        gap: 12,
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontWeight: 600, fontSize: 14 }}>{row.name}</div>
-                        <div className="mono muted" style={{ fontSize: 11 }}>{money(row.owedCents)}</div>
+                    <div key={row.id} className="list-row" style={{ justifyContent: 'space-between' }}>
+                      <div className="row-title">{row.name}</div>
+                      <div className="row" style={{ gap: 10 }}>
+                        <span className="mono" style={{ fontSize: 15, fontWeight: 600 }}>{money(row.owedCents)}</span>
+                        <StatusPill paid={row.paid} />
                       </div>
-                      <StatusPill paid={row.paid} />
                     </div>
                   ))}
                 </div>

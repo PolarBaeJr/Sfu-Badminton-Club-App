@@ -29,18 +29,23 @@ export function Switch({ checked, onChange, label, description, disabled, classN
         disabled={disabled}
         onClick={() => onChange(!checked)}
         className={cn(
-          'relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:ring-offset-2 focus:ring-offset-[var(--bg-primary)] min-w-[44px] min-h-[44px] p-[10px]',
-          checked ? 'bg-[var(--color-accent)]' : 'bg-[var(--border-hover)]',
+          'inline-flex items-center justify-center min-w-[44px] min-h-[44px] bg-transparent rounded-full focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:ring-offset-2 focus:ring-offset-[var(--bg-primary)]',
           disabled && 'opacity-50 cursor-not-allowed'
         )}
-        style={{ padding: '10px' }}
       >
         <span
           className={cn(
-            'inline-block h-4 w-4 rounded-full shadow-sm transition-transform',
-            checked ? 'bg-white translate-x-5' : 'bg-[var(--text-muted)] translate-x-0'
+            'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+            checked ? 'bg-[var(--color-accent)]' : 'bg-[var(--border-hover)]'
           )}
-        />
+        >
+          <span
+            className={cn(
+              'inline-block h-4 w-4 rounded-full shadow-sm transition-transform',
+              checked ? 'bg-white translate-x-6' : 'bg-[var(--text-muted)] translate-x-1'
+            )}
+          />
+        </span>
       </button>
     </div>
   );
