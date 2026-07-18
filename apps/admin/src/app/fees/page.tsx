@@ -65,6 +65,11 @@ export default async function FeesPage() {
   const paidCount = paidPlayers + manualFees.length;
   const outstandingCount = players.length - paidPlayers;
 
+  // Total club-fee income collected this season (paid rows, incl. manual).
+  const collectedCents = fees
+    .filter((f) => f.paid_at != null)
+    .reduce((sum, f) => sum + (f.amount_cents ?? 0), 0);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -78,7 +83,12 @@ export default async function FeesPage() {
       </div>
 
       {/* Summary */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-3 gap-4">
+        <Card>
+          <p className="text-xs text-[var(--text-muted)] uppercase">Collected</p>
+          <p className="text-2xl font-bold font-mono text-[var(--text-primary)]">${(collectedCents / 100).toFixed(2)}</p>
+          <p className="text-xs text-[var(--text-muted)] mt-1">Season income</p>
+        </Card>
         <Card>
           <p className="text-xs text-[var(--text-muted)] uppercase">Paid</p>
           <p className="text-2xl font-bold font-mono text-[var(--color-success)]">{paidCount}</p>

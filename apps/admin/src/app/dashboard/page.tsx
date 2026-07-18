@@ -48,6 +48,22 @@ export default async function DashboardPage() {
 
   const hasAlerts = (pendingPlayers ?? 0) > 0 || (openDisputes ?? 0) > 0 || (pendingWalkovers ?? 0) > 0;
 
+  // Finance snapshot: club-fee income collected for the active season so far.
+  const { data: activeSeason } = await supabase
+    .from('seasons')
+    .select('id, name')
+    .eq('active_flag', true)
+    .maybeSingle();
+  let seasonIncomeCents = 0;
+  if (activeSeason) {
+    const { data: paidFees } = await supabase
+      .from('club_fees')
+      .select('amount_cents')
+      .eq('season_id', activeSeason.id)
+      .not('paid_at', 'is', null);
+    seasonIncomeCents = (paidFees ?? []).reduce((s, f) => s + (f.amount_cents ?? 0), 0);
+  }
+
   return (
     <div className="space-y-8">
       {/* Header */}
@@ -171,6 +187,21 @@ export default async function DashboardPage() {
           </div>
         </Link>
       </div>
+
+      {/* Finance snapshot — active-season income (expenses tracking to follow) */}
+      {activeSeason && (
+        <Link href="/fees" className="group block">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-5 hover:border-[var(--border-hover)] transition-all hover:shadow-lg hover:shadow-black/5 flex items-center justify-between">
+            <div>
+              <p className="text-xs text-[var(--text-muted)] uppercase">{activeSeason.name} · Income collected</p>
+              <p className="text-3xl font-bold font-mono text-[var(--text-primary)] mt-1">${(seasonIncomeCents / 100).toFixed(2)}</p>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-[var(--text-muted)]">
+              Manage fees <ArrowUpRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+            </div>
+          </div>
+        </Link>
+      )}
 
       {/* Two Column Section */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
