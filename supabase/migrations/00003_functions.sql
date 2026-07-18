@@ -97,6 +97,20 @@ $$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp;
 
 GRANT EXECUTE ON FUNCTION get_active_season() TO anon, authenticated;
 
+-- Helper: The club executive team, for the public /exec page. Anon-safe;
+-- exposes only public fields (public name, title, avatar) for players flagged
+-- is_exec. Ordered by title then name so titled execs (President, VP, ...)
+-- sort ahead of untitled ones.
+CREATE OR REPLACE FUNCTION get_executives()
+RETURNS TABLE(id uuid, name text, exec_title text, avatar_url text) AS $$
+  SELECT id, COALESCE(display_name, full_name) AS name, exec_title, avatar_url
+  FROM players
+  WHERE is_exec = TRUE AND active_flag = TRUE
+  ORDER BY (exec_title IS NULL), exec_title, COALESCE(display_name, full_name);
+$$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp;
+
+GRANT EXECUTE ON FUNCTION get_executives() TO anon, authenticated;
+
 -- ============================================================
 -- CORE: Elo Calculation
 -- ============================================================

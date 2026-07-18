@@ -54,6 +54,17 @@ export async function getActiveSeason(): Promise<{
   return data?.[0] ?? null;
 }
 
+export async function getExecutives(): Promise<{
+  id: string;
+  name: string;
+  exec_title: string | null;
+  avatar_url: string | null;
+}[]> {
+  const supabase = await createServerSupabaseClient();
+  const { data } = await supabase.rpc('get_executives');
+  return data ?? [];
+}
+
 export async function getCurrentPlayer() {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
