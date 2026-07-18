@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd job: pull DB dumps from the Pi to this Mac daily at 09:00.
+  Install:
+    cp backup/com.badminton.dbpull.plist ~/Library/LaunchAgents/
+    # edit ProgramArguments path below to the absolute path of pull-to-mac.sh
+    launchctl load ~/Library/LaunchAgents/com.badminton.dbpull.plist
+  Runs at 09:00 daily; if the Mac was asleep, launchd runs it on next wake.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.badminton.dbpull</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/ABSOLUTE/PATH/TO/backup/pull-to-mac.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>9</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/tmp/badminton-dbpull.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/badminton-dbpull.err</string>
+</dict>
+</plist>
