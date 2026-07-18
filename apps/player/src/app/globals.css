@@ -1125,3 +1125,98 @@ body {
     }
   }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   PUBLIC LANDING PAGE (.lp-*)
+   Extends the club identity: SFU crimson on warm ground, Space
+   Grotesk display, mono ladder. Signature = the live ELO ladder
+   rendered like a standings terminal.
+   ═══════════════════════════════════════════════════════════ */
+.lp { max-width: 1120px; margin: 0 auto; padding: 8px 4px 48px; }
+
+.lp-hero {
+  display: grid; grid-template-columns: 1.25fr 1fr; gap: 48px;
+  align-items: center; padding: 40px 0 56px;
+}
+.lp-kicker {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-family: var(--mono); font-size: 12px; letter-spacing: .16em;
+  color: var(--red); text-transform: uppercase; margin-bottom: 22px;
+}
+.lp-kicker-bar { width: 28px; height: 2px; background: var(--red); display: inline-block; }
+.lp-title {
+  font-family: var(--display); font-weight: 700;
+  font-size: clamp(40px, 6vw, 68px); line-height: .98; letter-spacing: -.03em;
+  margin: 0 0 20px; color: var(--ink);
+}
+.lp-lead {
+  font-size: 17px; line-height: 1.5; color: var(--ink-2);
+  max-width: 46ch; margin: 0 0 28px;
+}
+.lp-cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.lp-sublinks { font-size: 14px; }
+.lp-sublinks a { color: var(--mute); text-decoration: none; border-bottom: 1px solid var(--line); padding-bottom: 1px; }
+.lp-sublinks a:hover { color: var(--red); border-color: var(--red); }
+
+.lp-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-weight: 600; font-size: 15px; border-radius: 999px;
+  padding: 12px 22px; text-decoration: none; transition: all .15s ease;
+  border: 1px solid transparent; cursor: pointer;
+}
+.lp-btn-primary { background: var(--red); color: #fff; }
+.lp-btn-primary:hover { background: var(--red-ink); }
+.lp-btn-ghost { background: transparent; color: var(--ink); border-color: var(--line-2); }
+.lp-btn-ghost:hover { border-color: var(--ink); }
+.lp-btn-lg { padding: 14px 28px; font-size: 16px; }
+
+/* Signature ladder */
+.lp-ladder {
+  background: var(--surface); border: 1px solid var(--line);
+  border-top: 3px solid var(--red); border-radius: var(--r-lg);
+  padding: 20px; box-shadow: var(--shadow-md);
+}
+.lp-ladder-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-weight: 600; font-size: 14px; color: var(--ink); margin-bottom: 14px;
+}
+.lp-ladder-tag { font-family: var(--mono); font-size: 10px; letter-spacing: .14em; color: var(--red); }
+.lp-ladder-empty { font-size: 13px; color: var(--mute); padding: 8px 0; }
+.lp-ladder-list { list-style: none; margin: 0; padding: 0; }
+.lp-ladder-row {
+  display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 12px;
+  padding: 11px 0; border-top: 1px solid var(--line);
+}
+.lp-ladder-row:first-child { border-top: 0; }
+.lp-rank { font-family: var(--mono); font-size: 13px; color: var(--mute); }
+.lp-ladder-row:nth-child(1) .lp-rank { color: var(--red); font-weight: 700; }
+.lp-name { font-weight: 600; font-size: 15px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lp-elo { font-family: var(--mono); font-size: 15px; font-variant-numeric: tabular-nums; color: var(--ink); }
+
+/* Features */
+.lp-features {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px;
+  padding: 8px 0 48px; border-top: 1px solid var(--line);
+}
+.lp-feature { padding-top: 26px; }
+.lp-feature-icon { color: var(--red); margin-bottom: 14px; }
+.lp-feature-title { font-family: var(--display); font-size: 18px; font-weight: 600; letter-spacing: -.01em; margin: 0 0 8px; color: var(--ink); }
+.lp-feature-body { font-size: 14px; line-height: 1.5; color: var(--ink-2); margin: 0; }
+
+/* Closing CTA */
+.lp-close {
+  text-align: center; padding: 56px 24px; border-radius: var(--r-xl);
+  background: var(--surface-2); border: 1px solid var(--line);
+}
+.lp-close-title { font-family: var(--display); font-size: clamp(28px, 4vw, 40px); font-weight: 700; letter-spacing: -.02em; margin: 0 0 10px; color: var(--ink); }
+.lp-close-lead { font-size: 15px; color: var(--ink-2); margin: 0 0 24px; }
+
+.lp-footer { text-align: center; font-family: var(--mono); font-size: 12px; letter-spacing: .06em; color: var(--mute); padding: 40px 0 8px; }
+
+@media (max-width: 900px) {
+  .lp-hero { grid-template-columns: 1fr; gap: 32px; padding: 24px 0 40px; }
+  .lp-features { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 560px) {
+  .lp-features { grid-template-columns: 1fr; }
+}

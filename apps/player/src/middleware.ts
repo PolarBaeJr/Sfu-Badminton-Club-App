@@ -30,6 +30,7 @@ export async function middleware(request: NextRequest) {
   // Public routes viewable without an account.
   const pathname = request.nextUrl.pathname;
   const isPublic =
+    pathname === '/' ||
     pathname.startsWith('/login') ||
     pathname.startsWith('/auth') ||
     pathname.startsWith('/exec') ||
