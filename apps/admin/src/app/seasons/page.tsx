@@ -121,7 +121,7 @@ export default async function SeasonsPage() {
                       />
                     </td>
                     <td className="px-5 py-4 text-right">
-                      <SeasonActions seasonId={s.id} isActive={s.active_flag} />
+                      <SeasonActions seasonId={s.id} seasonName={s.name} isActive={s.active_flag} />
                     </td>
                   </tr>
                 ))}

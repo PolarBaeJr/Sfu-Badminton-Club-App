@@ -230,6 +230,19 @@ CREATE TABLE seasons (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Snapshot of each player's final ELO for a season, captured when the next
+-- season is activated. Non-destructive record of past-season standings —
+-- also the basis for a future "soft season start" and prediction model.
+CREATE TABLE season_final_ratings (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  season_id UUID NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+  player_id UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  singles_elo INTEGER NOT NULL,
+  doubles_elo INTEGER NOT NULL,
+  archived_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (season_id, player_id)
+);
+
 -- Session training track: which player status a session is aimed at.
 -- 'all' sessions are open to everyone.
 CREATE TYPE session_group AS ENUM ('competitive', 'recreational', 'all');

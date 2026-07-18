@@ -63,14 +63,18 @@ export async function updateSeasonFees(seasonId: string, fees: SeasonFeeInput) {
   revalidatePath('/fees');
 }
 
-export async function setActiveSeason(seasonId: string) {
+export type SeasonEloPolicy = 'carry' | 'soft' | 'full';
+
+export async function setActiveSeason(seasonId: string, eloPolicy: SeasonEloPolicy = 'carry') {
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
-  // Deactivate all seasons first
-  await adminClient.from('seasons').update({ active_flag: false }).neq('id', '00000000-0000-0000-0000-000000000000');
-
-  const { error } = await adminClient.from('seasons').update({ active_flag: true }).eq('id', seasonId);
+  // Atomic: snapshot the outgoing season's ELO, switch active, apply the policy.
+  // The policy only changes ratings — match history and W-L records are kept.
+  const { error } = await adminClient.rpc('activate_season', {
+    p_season_id: seasonId,
+    p_elo_policy: eloPolicy,
+  });
   if (error) throw new Error(error.message);
 
   await logAdminAudit(adminClient, {
@@ -78,9 +82,11 @@ export async function setActiveSeason(seasonId: string) {
     action_type: 'season_activated',
     target_type: 'season',
     target_id: seasonId,
+    new_value: { elo_policy: eloPolicy },
   }, { seasonId });
 
   revalidatePath('/seasons');
+  revalidatePath('/fees');
 }
 
 export async function endSeason(seasonId: string) {

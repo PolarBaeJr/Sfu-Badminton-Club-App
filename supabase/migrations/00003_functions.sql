@@ -147,6 +147,65 @@ $$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp;
 
 GRANT EXECUTE ON FUNCTION get_leaderboard() TO anon, authenticated;
 
+-- Activate a season and apply an admin-chosen ELO policy, atomically. Before
+-- switching, the outgoing season's current standings are snapshotted into
+-- season_final_ratings (non-destructive record + basis for a future soft
+-- season start). The policy only ever changes the rating number (and, on a
+-- full reset, provisional/matches) — match history, W-L records, and every
+-- other stat are left untouched.
+--   'carry' — ratings unchanged (default).
+--   'full'  — everyone back to 400, provisional again, matches_played 0.
+--   'soft'  — compress toward 400 by p_compression_factor, but never below the
+--             200-point tier a player has already reached (400, 600, 800, ...).
+CREATE OR REPLACE FUNCTION activate_season(
+  p_season_id uuid,
+  p_elo_policy text DEFAULT 'carry',
+  p_compression_factor numeric DEFAULT 0.5
+) RETURNS void AS $$
+DECLARE
+  v_prev_season uuid;
+BEGIN
+  IF p_elo_policy NOT IN ('carry', 'soft', 'full') THEN
+    RAISE EXCEPTION 'invalid elo policy: %', p_elo_policy;
+  END IF;
+
+  SELECT id INTO v_prev_season FROM seasons WHERE active_flag = TRUE LIMIT 1;
+  IF v_prev_season IS NOT NULL THEN
+    INSERT INTO season_final_ratings (season_id, player_id, singles_elo, doubles_elo)
+    SELECT v_prev_season, r.player_id, r.singles_elo, r.doubles_elo FROM ratings r
+    ON CONFLICT (season_id, player_id) DO UPDATE
+      SET singles_elo = EXCLUDED.singles_elo,
+          doubles_elo = EXCLUDED.doubles_elo,
+          archived_at = NOW();
+  END IF;
+
+  UPDATE seasons SET active_flag = FALSE WHERE active_flag = TRUE;
+  UPDATE seasons SET active_flag = TRUE WHERE id = p_season_id;
+
+  IF p_elo_policy = 'full' THEN
+    UPDATE ratings SET
+      singles_elo = 400, doubles_elo = 400,
+      singles_provisional = TRUE, doubles_provisional = TRUE,
+      singles_matches_played = 0, doubles_matches_played = 0,
+      singles_k_factor = 80, doubles_k_factor = 64,
+      updated_at = NOW();
+  ELSIF p_elo_policy = 'soft' THEN
+    UPDATE ratings SET
+      singles_elo = GREATEST(
+        400 + 200 * GREATEST(0, FLOOR((singles_elo - 400) / 200.0))::int,
+        ROUND(400 + (singles_elo - 400) * (1 - p_compression_factor))::int
+      ),
+      doubles_elo = GREATEST(
+        400 + 200 * GREATEST(0, FLOOR((doubles_elo - 400) / 200.0))::int,
+        ROUND(400 + (doubles_elo - 400) * (1 - p_compression_factor))::int
+      ),
+      updated_at = NOW();
+  END IF;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+GRANT EXECUTE ON FUNCTION activate_season(uuid, text, numeric) TO authenticated, service_role;
+
 -- ============================================================
 -- CORE: Elo Calculation
 -- ============================================================

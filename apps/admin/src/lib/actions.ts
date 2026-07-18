@@ -56,6 +56,7 @@ export {
   setActiveSeason,
   endSeason,
 } from './actions/seasons';
+export type { SeasonEloPolicy } from './actions/seasons';
 
 export {
   createSession,
