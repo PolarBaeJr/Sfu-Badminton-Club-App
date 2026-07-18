@@ -11,6 +11,7 @@ import { notFound } from 'next/navigation';
 import { Trophy, Users, Zap, ArrowLeft, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 import { EventRegistrationButton } from './EventRegistrationButton';
+import { FeedbackForm } from './feedback-form';
 
 export default async function TournamentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -39,6 +40,18 @@ export default async function TournamentDetailPage({ params }: { params: Promise
         registrationMap[r.event_id] = { status: r.status };
       }
     }
+  }
+
+  // The current player's existing feedback for this tournament, if any.
+  let myFeedback: { rating: number | null; comment: string | null } | null = null;
+  if (currentPlayer) {
+    const { data: fb } = await supabase
+      .from('event_feedback')
+      .select('rating, comment')
+      .eq('tournament_id', id)
+      .eq('player_id', currentPlayer.id)
+      .maybeSingle();
+    myFeedback = (fb as { rating: number | null; comment: string | null } | null) ?? null;
   }
 
   return (
@@ -167,6 +180,16 @@ export default async function TournamentDetailPage({ params }: { params: Promise
               </div>
             );
           })}
+        </div>
+      )}
+
+      {currentPlayer && (
+        <div style={{ marginTop: 24 }}>
+          <FeedbackForm
+            tournamentId={id}
+            initialRating={myFeedback?.rating ?? null}
+            initialComment={myFeedback?.comment ?? null}
+          />
         </div>
       )}
     </div>

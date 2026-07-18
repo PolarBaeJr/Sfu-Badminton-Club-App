@@ -147,6 +147,17 @@ export const adminPlayerUpdateSchema = z.object({
   reason: z.string().min(2, 'Reason is required'),
 });
 
+export const eventFeedbackSchema = z
+  .object({
+    tournament_id: z.string().uuid(),
+    rating: z.number().int().min(1).max(5).optional(),
+    comment: blankAsUndefined(z.string().max(2000)),
+  })
+  .refine((d) => d.rating !== undefined || (d.comment != null && d.comment.length > 0), {
+    message: 'Add a rating or a comment',
+  });
+export type EventFeedbackInput = z.infer<typeof eventFeedbackSchema>;
+
 export const walkoverReportSchema = z.object({
   challenge_id: z.string().uuid(),
   forfeit_player_id: z.string().uuid(),

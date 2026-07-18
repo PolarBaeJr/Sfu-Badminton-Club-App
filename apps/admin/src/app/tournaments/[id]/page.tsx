@@ -51,6 +51,15 @@ export default async function TournamentDetailPage({ params }: { params: Promise
     }
   }
 
+  // Player feedback for this tournament (attributed — the exec team moderates).
+  const { data: feedback } = await supabase
+    .from('event_feedback')
+    .select('id, rating, comment, created_at, player:players(full_name)')
+    .eq('tournament_id', id)
+    .order('created_at', { ascending: false });
+  type FeedbackRow = { id: string; rating: number | null; comment: string | null; created_at: string; player: { full_name: string } | { full_name: string }[] | null };
+  const feedbackRows = (feedback ?? []) as FeedbackRow[];
+
   return (
     <div className="space-y-6">
       {/* Back link */}
@@ -146,6 +155,35 @@ export default async function TournamentDetailPage({ params }: { params: Promise
             <p className="text-sm text-[var(--text-muted)]">
               No events yet. {tournament.status === 'draft' ? 'Add events to this tournament to get started.' : ''}
             </p>
+          </div>
+        )}
+      </div>
+
+      {/* Player feedback — attributed, for the exec team to review. */}
+      <div className="space-y-3">
+        <h2 className="text-lg font-semibold text-[var(--text-primary)]">
+          Feedback {feedbackRows.length > 0 && <span className="text-[var(--text-muted)] font-normal">({feedbackRows.length})</span>}
+        </h2>
+        {feedbackRows.length === 0 ? (
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6 text-center">
+            <p className="text-sm text-[var(--text-muted)]">No feedback submitted yet.</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {feedbackRows.map((f) => {
+              const player = Array.isArray(f.player) ? f.player[0] : f.player;
+              return (
+                <div key={f.id} className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm font-medium text-[var(--text-primary)]">{player?.full_name ?? 'Unknown'}</span>
+                    {f.rating != null && (
+                      <span className="font-mono text-sm text-[var(--color-accent)]">{'★'.repeat(f.rating)}<span className="text-[var(--text-muted)]">{'★'.repeat(5 - f.rating)}</span></span>
+                    )}
+                  </div>
+                  {f.comment && <p className="text-sm text-[var(--text-secondary)] mt-2 whitespace-pre-wrap">{f.comment}</p>}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

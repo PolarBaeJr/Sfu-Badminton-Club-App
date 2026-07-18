@@ -320,6 +320,22 @@ CREATE TABLE tournaments (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Event/tournament feedback from players. Attributed (player_id) so the exec
+-- team can moderate and follow up — the player UI presents it as private to the
+-- exec team, never shown to other members. One row per player per tournament
+-- (upserted so a player can revise their feedback).
+CREATE TABLE event_feedback (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tournament_id UUID NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+  player_id UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  rating INTEGER CHECK (rating BETWEEN 1 AND 5),
+  comment TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (tournament_id, player_id)
+);
+CREATE INDEX idx_event_feedback_tournament ON event_feedback(tournament_id);
+
 -- Legacy Tournament Participants
 -- Pre-event-system participant table (originally named
 -- tournament_participants, renamed when the event-based tournament
