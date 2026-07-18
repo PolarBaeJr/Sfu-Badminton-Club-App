@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Mail, CheckCircle2, ChevronRight, Loader2 } from 'lucide-react';
+import { ShuttleMark } from '@/components/shuttle-mark';
 
 // Supabase auth errors reach the client as raw strings; a gateway 503 arrives
 // with a "{}" body and rate limits phrase themselves oddly. Map both to
@@ -135,7 +136,7 @@ export default function LoginPage() {
           }}
         />
         <div className="brand" style={{ color: '#fff', position: 'relative', zIndex: 2 }}>
-          <div className="brand-mark">SB</div>
+          <div className="brand-mark"><ShuttleMark /></div>
           <div className="brand-wrap">
             <div>SFU Badminton</div>
             {seasonName && (

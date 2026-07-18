@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@badminton/ui';
+import { ShuttleMark } from './shuttle-mark';
 import {
   Home,
   Trophy,
@@ -49,7 +50,7 @@ export function TopBar({
     <header className="topbar safe-top">
       <div className="topbar-inner">
         <Link href="/feed" className="brand" aria-label="SFU Badminton home">
-          <div className="brand-mark">SB</div>
+          <div className="brand-mark"><ShuttleMark /></div>
           <div className="brand-wrap">
             <div>SFU Badminton</div>
             {activeSeasonName && <div className="brand-sub">{activeSeasonName}</div>}
