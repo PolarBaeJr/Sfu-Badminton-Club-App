@@ -22,23 +22,26 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { canAccess, type AccessLevel } from '@/lib/permissions';
 
+// Grouped by access level (see permissions.ts SECTION_ACCESS): the top section
+// is everything execs can reach; the bottom section is admin-only and filters
+// away entirely for execs.
 const navSections = [
   {
     title: 'Manage',
     items: [
       { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      { href: '/players', label: 'Players', icon: Users },
       { href: '/matches', label: 'Matches', icon: Target },
       { href: '/tournaments', label: 'Tournaments', icon: Trophy },
       { href: '/sessions', label: 'Sessions', icon: Calendar },
-      { href: '/fees', label: 'Fees', icon: DollarSign },
       { href: '/announcements', label: 'Announcements', icon: Megaphone },
+      { href: '/seasons', label: 'Seasons', icon: Medal },
     ],
   },
   {
-    title: 'System',
+    title: 'Admin only',
     items: [
-      { href: '/seasons', label: 'Seasons', icon: Medal },
+      { href: '/players', label: 'Players', icon: Users },
+      { href: '/fees', label: 'Fees', icon: DollarSign },
       { href: '/audit', label: 'Audit Log', icon: ScrollText },
       { href: '/settings', label: 'Settings', icon: Settings },
     ],

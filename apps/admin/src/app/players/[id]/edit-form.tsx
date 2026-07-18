@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Input, Select, Textarea } from '@badminton/ui';
+import { Button, Input, Select, Switch, Textarea } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS, MIN_ELO, MAX_ELO } from '@badminton/shared';
 import { updatePlayer, approvePlayer } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
@@ -14,6 +14,9 @@ export function PlayerEditForm({ player, rating }: { player: Player; rating: Rat
   const [role, setRole] = useState(player.role);
   const [singlesElo, setSinglesElo] = useState(rating?.singles_elo ?? 400);
   const [doublesElo, setDoublesElo] = useState(rating?.doubles_elo ?? 400);
+  const [isExec, setIsExec] = useState(player.is_exec ?? false);
+  const [execTitle, setExecTitle] = useState(player.exec_title ?? '');
+  const [feeExempt, setFeeExempt] = useState(player.fee_exempt ?? false);
   const [reason, setReason] = useState('');
 
   const isPending = player.status === 'pending_approval';
@@ -33,6 +36,9 @@ export function PlayerEditForm({ player, rating }: { player: Player; rating: Rat
           role: role !== player.role ? role as Player['role'] : undefined,
           singles_elo: singlesElo !== (rating?.singles_elo ?? 400) ? singlesElo : undefined,
           doubles_elo: doublesElo !== (rating?.doubles_elo ?? 400) ? doublesElo : undefined,
+          is_exec: isExec !== (player.is_exec ?? false) ? isExec : undefined,
+          exec_title: execTitle !== (player.exec_title ?? '') ? execTitle : undefined,
+          fee_exempt: feeExempt !== (player.fee_exempt ?? false) ? feeExempt : undefined,
           reason,
         });
         toast('Player updated', 'success');
@@ -80,6 +86,29 @@ export function PlayerEditForm({ player, rating }: { player: Player; rating: Rat
           max={MAX_ELO}
           value={doublesElo}
           onChange={(e) => setDoublesElo(Number(e.target.value))}
+        />
+      </div>
+      <div className="rounded-lg border border-[var(--border)] p-3 space-y-1">
+        <Switch
+          label="Club executive"
+          description="Adds this player to the executives team (shown on the public exec page) and exempts them from fees."
+          checked={isExec}
+          onChange={setIsExec}
+        />
+        {isExec && (
+          <Input
+            label="Executive title"
+            value={execTitle}
+            onChange={(e) => setExecTitle(e.target.value)}
+            placeholder="e.g. President, VP, Treasurer"
+            maxLength={60}
+          />
+        )}
+        <Switch
+          label="Fee exempt"
+          description="Exempts a non-executive contributor from club and competition fees."
+          checked={feeExempt}
+          onChange={setFeeExempt}
         />
       </div>
       <Textarea

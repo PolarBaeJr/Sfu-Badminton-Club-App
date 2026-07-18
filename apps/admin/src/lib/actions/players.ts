@@ -95,6 +95,9 @@ export async function updatePlayer(playerId: string, data: AdminPlayerUpdateInpu
   const playerUpdate: Record<string, unknown> = {};
   if (data.status) playerUpdate.status = data.status;
   if (data.role) playerUpdate.role = data.role;
+  if (data.is_exec !== undefined) playerUpdate.is_exec = data.is_exec;
+  if (data.exec_title !== undefined) playerUpdate.exec_title = data.exec_title;
+  if (data.fee_exempt !== undefined) playerUpdate.fee_exempt = data.fee_exempt;
   if (Object.keys(playerUpdate).length > 0) {
     const { error } = await adminClient.from('players').update(playerUpdate).eq('id', playerId);
     if (error) throw new Error(error.message);

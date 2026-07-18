@@ -138,6 +138,12 @@ export const adminPlayerUpdateSchema = z.object({
   role: z.enum(['player', 'admin']).optional(),
   singles_elo: z.number().int().min(MIN_ELO).max(MAX_ELO).optional(),
   doubles_elo: z.number().int().min(MIN_ELO).max(MAX_ELO).optional(),
+  // Club-executive markers (no gameplay effect). is_exec adds the player to the
+  // executive team (shown on the public /exec page) and exempts them from fees;
+  // exec_title is their role label; fee_exempt exempts non-exec contributors.
+  is_exec: z.boolean().optional(),
+  exec_title: blankAsUndefined(z.string().max(60)),
+  fee_exempt: z.boolean().optional(),
   reason: z.string().min(2, 'Reason is required'),
 });
 
