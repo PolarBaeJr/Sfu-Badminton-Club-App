@@ -160,7 +160,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div data-screen-label="Settings" style={{ maxWidth: 720, margin: '0 auto' }}>
+    <div data-screen-label="Settings" style={{ maxWidth: 1120, margin: '0 auto' }}>
       <PageHeader
         title="Settings"
       />

@@ -293,7 +293,7 @@ body {
   border-bottom: 1px solid var(--line);
 }
 .topbar-inner {
-  max-width: 1440px; margin: 0 auto;
+  max-width: 1680px; margin: 0 auto;
   padding: 14px 28px;
   display: flex; align-items: center; gap: 28px;
 }
@@ -483,7 +483,13 @@ body {
    ═══════════════════════════════════════════════════════════ */
 
 .hero-banner {
-  background: var(--ink); color: var(--bg);
+  /* Always a dark "spotlight" card, in both light and dark themes. Uses
+     hero-scoped tokens instead of --ink/--bg (which swap by theme and made the
+     card render light in dark mode). */
+  --hero-bg: #141110;
+  --hero-fg: #F6F1EC;
+  background: var(--hero-bg); color: var(--hero-fg);
+  border: 1px solid transparent;
   border-radius: var(--r-xl);
   padding: 32px;
   position: relative; overflow: hidden;
@@ -491,6 +497,12 @@ body {
   grid-template-columns: 1.4fr 1fr;
   gap: 32px;
   align-items: center;
+}
+[data-theme="dark"] .hero-banner {
+  /* Slightly lifted above the near-black page, with a subtle border so the
+     card still separates from the background. */
+  --hero-bg: #1C1613;
+  border-color: var(--line);
 }
 .hero-banner::before {
   content: ""; position: absolute;
@@ -510,22 +522,22 @@ body {
   font-size: 42px; line-height: 1; font-weight: 700;
   letter-spacing: -.03em;
   margin: 0 0 12px;
-  color: var(--bg);
+  color: var(--hero-fg);
 }
 .hero-banner .lead {
-  color: color-mix(in oklab, var(--bg) 70%, transparent);
+  color: color-mix(in oklab, var(--hero-fg) 70%, transparent);
   font-size: 14px;
   max-width: 40ch;
   margin-bottom: 20px;
 }
 .hero-stats {
   display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
-  border-left: 1px solid color-mix(in oklab, var(--bg) 18%, transparent);
+  border-left: 1px solid color-mix(in oklab, var(--hero-fg) 18%, transparent);
   padding-left: 28px;
   position: relative; z-index: 2;
 }
-.hero-stats .stat-label { color: color-mix(in oklab, var(--bg) 55%, transparent); }
-.hero-stats .stat-value { color: var(--bg); }
+.hero-stats .stat-label { color: color-mix(in oklab, var(--hero-fg) 55%, transparent); }
+.hero-stats .stat-value { color: var(--hero-fg); }
 
 .feed-col   { display: flex; flex-direction: column; gap: 20px; }
 .feed-match {
@@ -664,7 +676,7 @@ body {
 
 /* Page container */
 .page {
-  max-width: 1440px;
+  max-width: 1680px;
   margin: 0 auto;
   padding: 28px;
   width: 100%;

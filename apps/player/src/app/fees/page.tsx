@@ -135,7 +135,7 @@ export default async function FeesPage() {
   }
 
   return (
-    <div data-screen-label="Fees" style={{ maxWidth: 720, margin: '0 auto' }}>
+    <div data-screen-label="Fees" style={{ maxWidth: 1120, margin: '0 auto' }}>
       <PageHeader
         title="Fees & dues"
         sub="What you owe for club membership and tournament entry. Payments are recorded by an admin."
