@@ -38,6 +38,10 @@ export function TopBar({
   activeSeasonName?: string;
 }) {
   const pathname = usePathname();
+  // Auth / onboarding screens render their own full-screen layout — no app chrome.
+  if (pathname === '/login' || pathname.startsWith('/auth') || pathname === '/onboarding') {
+    return null;
+  }
   const initials = (playerName || 'You')
     .split(' ')
     .map((part) => part[0])

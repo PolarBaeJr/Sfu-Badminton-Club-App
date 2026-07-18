@@ -55,6 +55,11 @@ export function BottomNav() {
     };
   }, []);
 
+  // Auth / onboarding screens render their own full-screen layout — no app chrome.
+  if (pathname === '/login' || pathname.startsWith('/auth') || pathname === '/onboarding') {
+    return null;
+  }
+
   return (
     <nav className="mobile-tabbar" aria-label="Mobile navigation">
       {navItems.map((item) => {

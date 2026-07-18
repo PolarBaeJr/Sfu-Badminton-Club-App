@@ -117,8 +117,10 @@ export default function LoginPage() {
       <div
         style={{
           padding: 80,
-          background: 'var(--ink)',
-          color: 'var(--bg)',
+          // Fixed dark spotlight panel — not var(--ink)/var(--bg), which swap by
+          // theme and made the panel render light (white text invisible) in dark mode.
+          background: '#141110',
+          color: '#F6F1EC',
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'space-between',

@@ -12,9 +12,8 @@ name: Build & push app images
 on:
   push:
     branches:
-      - main
-      - deploy/**
-      - fixup/security-and-cleanup
+      # Only the production branch moves the `latest` tag the Pi tracks.
+      - deploy/docker-prod
   workflow_dispatch:
 
 permissions:
