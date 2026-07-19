@@ -32,7 +32,7 @@ export default async function PlayersPage({
 
   let query = supabase
     .from('players')
-    .select('id, full_name, email, avatar_url, status, role, is_exec, fee_exempt, is_banned, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
+    .select('id, full_name, email, avatar_url, status, role, is_exec, fee_exempt, is_banned, deletion_requested_at, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
     .order('created_at', { ascending: false })
     .limit(500);
 
@@ -148,6 +148,11 @@ export default async function PlayersPage({
                         {player.is_exec && <Badge variant="info">Exec</Badge>}
                         {player.fee_exempt && <Badge variant="neutral">Fee Exempt</Badge>}
                         {player.is_banned && <Badge variant="danger">Banned</Badge>}
+                        {player.deletion_requested_at && (
+                          <Badge variant="danger">
+                            Deletion {new Date(new Date(player.deletion_requested_at).getTime() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString()}
+                          </Badge>
+                        )}
                       </div>
                     </td>
                     <td className="px-4 py-3 text-right">

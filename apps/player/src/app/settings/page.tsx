@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
-import { Input, Textarea, Switch, PageHeader } from '@badminton/ui';
-import { updateProfile } from '@/lib/actions';
+import { Input, Textarea, Switch, PageHeader, Dialog } from '@badminton/ui';
+import { updateProfile, deleteMyAccount } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -25,6 +25,7 @@ import {
   Loader2,
   Receipt,
   ChevronRight,
+  Trash2,
 } from 'lucide-react';
 
 type Theme = 'light' | 'dark' | 'system';
@@ -71,6 +72,9 @@ export default function SettingsPage() {
   const [playerId, setPlayerId] = useState('');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState('');
+  const [deleteLoading, setDeleteLoading] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
 
@@ -162,6 +166,21 @@ export default function SettingsPage() {
     const supabase = createClient();
     await supabase.auth.signOut();
     router.push('/login');
+  }
+
+  async function handleDeleteAccount() {
+    setDeleteLoading(true);
+    try {
+      await deleteMyAccount(deleteConfirm);
+      // Best-effort sign out, then a hard redirect — router state is stale
+      // after the account is scheduled for deletion.
+      const supabase = createClient();
+      await supabase.auth.signOut();
+      window.location.href = '/';
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed to delete account', 'error');
+      setDeleteLoading(false);
+    }
   }
 
   return (
@@ -324,8 +343,7 @@ export default function SettingsPage() {
             </div>
           </Section>
 
-          <div className="danger-zone">
-            <h3 className="danger-title">Danger zone</h3>
+          <Section icon={LogOut} title="Account">
             <div className="settings-row">
               <div>
                 <div className="settings-row-label">Sign out</div>
@@ -335,14 +353,77 @@ export default function SettingsPage() {
                 <button
                   type="button"
                   onClick={handleSignOut}
-                  className="btn btn-danger-ghost"
+                  className="btn btn-ghost"
                 >
                   <LogOut size={14} />
                   Sign out
                 </button>
               </div>
             </div>
+          </Section>
+
+          <div className="danger-zone">
+            <h3 className="danger-title">Danger zone</h3>
+            <div className="settings-row">
+              <div>
+                <div className="settings-row-label">Delete account</div>
+                <div className="settings-row-hint">
+                  Permanently deletes your login and removes your personal information
+                  after a 30-day grace period. Your match and rating history stays under
+                  an anonymous name.
+                </div>
+              </div>
+              <div className="settings-row-control">
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteDialog(true)}
+                  className="btn btn-danger-ghost"
+                >
+                  <Trash2 size={14} />
+                  Delete account
+                </button>
+              </div>
+            </div>
           </div>
+
+          <Dialog
+            open={showDeleteDialog}
+            onClose={() => { setShowDeleteDialog(false); setDeleteConfirm(''); }}
+            title="Delete account"
+          >
+            <div className="space-y-4">
+              <p className="text-sm text-[var(--text-secondary)]">
+                Your account is deactivated and hidden immediately. Sign back in any time
+                within 30 days to restore it. After 30 days your login is permanently
+                removed and your personal information is deleted — your match and rating
+                history remains under an anonymous name.
+              </p>
+              <Input
+                label="Type DELETE to confirm"
+                value={deleteConfirm}
+                onChange={(e) => setDeleteConfirm(e.target.value)}
+                placeholder="DELETE"
+              />
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => { setShowDeleteDialog(false); setDeleteConfirm(''); }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={deleteConfirm !== 'DELETE' || deleteLoading}
+                  onClick={handleDeleteAccount}
+                >
+                  {deleteLoading ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                  Delete account
+                </button>
+              </div>
+            </div>
+          </Dialog>
         </div>
       )}
     </div>

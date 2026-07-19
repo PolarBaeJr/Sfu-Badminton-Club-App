@@ -2,7 +2,8 @@
 // keep working without churn. Real implementations live in ./actions/*.
 //
 // Each subfile is a 'use server' module owning one domain:
-//   - players.ts       — approve/create/update/remove player
+//   - players.ts       — approve/create/update/remove player,
+//                        cancelAccountDeletion
 //   - matches.ts       — voidMatch, convertMatchToCasual, adminCreateMatch,
 //                        adminCreateChallenge, forceExpireChallenge
 //   - disputes.ts      — resolveDispute
@@ -22,6 +23,7 @@ export {
   createPlayer,
   updatePlayer,
   removePlayer,
+  cancelAccountDeletion,
 } from './actions/players';
 
 export {

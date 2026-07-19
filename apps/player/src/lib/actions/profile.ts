@@ -5,12 +5,13 @@ import { headers } from 'next/headers';
 import {
   profileSchema,
   legalAcceptanceSchema,
+  accountDeletionSchema,
   parseOrThrow,
   type LegalAcceptanceInput,
   type WaiverDocument,
 } from '@badminton/shared';
-import { createServerSupabaseClient, getCurrentPlayer } from '../supabase-server';
-import { requirePlayer } from './_shared';
+import { createServerSupabaseClient, createServiceRoleClient, getCurrentPlayer } from '../supabase-server';
+import { requirePlayer, trackServerEvent } from './_shared';
 
 export async function updateProfile(data: {
   full_name: string;
@@ -94,6 +95,45 @@ export async function acceptLegalDocuments(data: LegalAcceptanceInput) {
   const supabase = await createServerSupabaseClient();
 
   await insertAcceptances(supabase, player.id, data.age_attestation);
+  revalidatePath('/');
+}
+
+// Not requirePlayer(): pending_approval members must be able to delete their
+// account too. Identity is derived only from the session — never from params.
+// Nothing is destroyed here: the row is deactivated and stamped, the
+// purge-deleted-accounts edge function anonymizes it after 30 days, and
+// signing back in before then lets the player restore it (restoreMyAccount).
+export async function deleteMyAccount(confirmation: string) {
+  parseOrThrow(accountDeletionSchema, { confirmation });
+  const player = await getCurrentPlayer();
+  if (!player) throw new Error('Not authenticated');
+
+  // Service role: deletion_requested_at / active_flag aren't part of the
+  // players self-update RLS surface.
+  const service = createServiceRoleClient();
+  const { error } = await service
+    .from('players')
+    .update({ deletion_requested_at: new Date().toISOString(), active_flag: false })
+    .eq('id', player.id);
+  if (error) throw new Error(error.message);
+
+  trackServerEvent(player.id, 'account_deletion_requested', {});
+}
+
+// Self-service revert path during the 30-day retention window.
+export async function restoreMyAccount() {
+  const player = await getCurrentPlayer();
+  if (!player) throw new Error('Not authenticated');
+  if (!player.deletion_requested_at) throw new Error('No deletion is scheduled for this account');
+
+  const service = createServiceRoleClient();
+  const { error } = await service
+    .from('players')
+    .update({ deletion_requested_at: null, active_flag: true })
+    .eq('id', player.id);
+  if (error) throw new Error(error.message);
+
+  trackServerEvent(player.id, 'account_deletion_cancelled', {});
   revalidatePath('/');
 }
 

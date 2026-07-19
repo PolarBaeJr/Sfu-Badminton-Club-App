@@ -2,6 +2,7 @@ import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge, StatCard, Avatar, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, getWinRate, getStreakDisplay, getPointDifferential } from '@badminton/shared';
 import { PlayerEditForm } from './edit-form';
+import { CancelDeletionButton } from './cancel-deletion-button';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Shield, Target, Trophy, Swords, TrendingUp, Flame, FileText, AlertTriangle, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import Link from 'next/link';
@@ -62,6 +63,20 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
           }
         />
       </div>
+
+      {/* Pending self-service account deletion */}
+      {player.deletion_requested_at && (
+        <div className="flex items-center justify-between gap-3 p-4 rounded-xl bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/20">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-[var(--color-danger)] shrink-0" />
+            <p className="text-sm text-[var(--color-danger)]">
+              Deletion requested {new Date(player.deletion_requested_at).toLocaleDateString()} — permanently anonymized on{' '}
+              {new Date(new Date(player.deletion_requested_at).getTime() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString()}.
+            </p>
+          </div>
+          <CancelDeletionButton playerId={player.id} />
+        </div>
+      )}
 
       {/* Stats Grid */}
       {r && (

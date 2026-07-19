@@ -7,6 +7,7 @@ import { TopBar } from '@/components/top-bar';
 import { ToastProvider } from '@/components/toast-provider';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { WaiverGate } from '@/components/waiver-gate';
+import { DeletionGate } from '@/components/deletion-gate';
 import { PostHogProvider } from '@/components/posthog-provider';
 import { PostHogIdentify } from '@/components/posthog-identify';
 import { SentryUserInit } from '@/components/sentry-user-init';
@@ -54,6 +55,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   let unreadCount = 0;
   let activeSeasonName = '';
   let needsWaiver = false;
+  let deletionRequestedAt: string | null = null;
 
   try {
     activeSeasonName = (await getActiveSeason())?.name ?? '';
@@ -75,12 +77,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       isAuthenticated = true;
       const { data: player } = await supabase
         .from('players')
-        .select('id, full_name, status, ratings(singles_elo, doubles_elo), waiver_acceptances(document, version)')
+        .select('id, full_name, status, deletion_requested_at, ratings(singles_elo, doubles_elo), waiver_acceptances(document, version)')
         .eq('user_id', user.id)
         .maybeSingle();
       playerName = player?.full_name ?? '';
       playerId = player?.id ?? null;
       playerStatus = player?.status ?? null;
+      deletionRequestedAt = player?.deletion_requested_at ?? null;
 
       // A member needs the waiver gate when they haven't accepted the current
       // version of both legal documents (two tiny rows — skipped when no player).
@@ -139,7 +142,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               doublesElo={doublesElo}
             />
             <OfflineBanner />
-            <WaiverGate needsWaiver={needsWaiver} />
+            <DeletionGate deletionRequestedAt={deletionRequestedAt} />
+            {/* Deletion screen wins when both gates would apply. */}
+            <WaiverGate needsWaiver={needsWaiver && !deletionRequestedAt} />
             <TopBar playerName={playerName} unreadCount={unreadCount} isAuthenticated={isAuthenticated} activeSeasonName={activeSeasonName} />
             <main className="page pb-safe-nav">
               {children}

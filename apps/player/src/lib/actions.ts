@@ -5,7 +5,8 @@
 //   - challenges.ts  — create/accept/reject/cancel
 //   - matches.ts     — submit/confirm/dispute, walkover
 //   - profile.ts     — updateProfile, completeOnboarding,
-//                      getLegalDocuments, acceptLegalDocuments
+//                      getLegalDocuments, acceptLegalDocuments,
+//                      deleteMyAccount, restoreMyAccount
 //   - notifications.ts — markNotificationRead / All / markAnnouncementRead
 //   - sessions.ts    — checkInToSession
 //   - _shared.ts     — requirePlayer / getPlayerProps / trackServerEvent
@@ -29,6 +30,8 @@ export {
   completeOnboarding,
   getLegalDocuments,
   acceptLegalDocuments,
+  deleteMyAccount,
+  restoreMyAccount,
 } from './actions/profile';
 
 export {

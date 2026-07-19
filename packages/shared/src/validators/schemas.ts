@@ -295,6 +295,13 @@ export const legalAcceptanceSchema = z.object({
   }),
 });
 
+// Typing DELETE is an affirmative act — the server rejects anything else.
+export const accountDeletionSchema = z.object({
+  confirmation: z.literal('DELETE', {
+    errorMap: () => ({ message: 'Type DELETE to confirm' }),
+  }),
+});
+
 export const legalDocumentUpdateSchema = z.object({
   document: z.enum(['waiver', 'code_of_conduct']),
   content: z.string().min(50, 'Content must be at least 50 characters').max(50000),
@@ -327,4 +334,5 @@ export type ReinstatementInput = z.infer<typeof reinstatementSchema>;
 export type BanInput = z.infer<typeof banSchema>;
 export type PlayerFlagsInput = z.infer<typeof playerFlagsSchema>;
 export type LegalAcceptanceInput = z.infer<typeof legalAcceptanceSchema>;
+export type AccountDeletionInput = z.infer<typeof accountDeletionSchema>;
 export type LegalDocumentUpdateInput = z.infer<typeof legalDocumentUpdateSchema>;

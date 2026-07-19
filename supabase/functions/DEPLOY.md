@@ -24,7 +24,7 @@ request is rejected — so the secret MUST be set before deploying.
    Functions with schedules: expire-challenges, expire-walkover-pending,
    send-challenge-reminders, send-session-reminders,
    send-stale-confirmation-alerts, detect-noshow-patterns,
-   mark-inactive-players. (apply-season-compression and
+   mark-inactive-players, purge-deleted-accounts. (apply-season-compression and
    capture-season-snapshot are invoked on demand — include the header there
    too.)
 

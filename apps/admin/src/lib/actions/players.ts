@@ -126,6 +126,36 @@ export async function updatePlayer(playerId: string, data: AdminPlayerUpdateInpu
   revalidatePath(`/players/${playerId}`);
 }
 
+// Backup path for the player's own restore flow: clears a pending
+// self-service account deletion (players.deletion_requested_at) before the
+// purge-deleted-accounts edge function anonymizes the row.
+export async function cancelAccountDeletion(playerId: string) {
+  const admin = await getAdminPlayer();
+  const adminClient = createAdminClient();
+
+  const { data: oldPlayer } = await adminClient.from('players').select('*').eq('id', playerId).single();
+  if (!oldPlayer?.deletion_requested_at) throw new Error('No deletion is scheduled for this player');
+
+  const { error } = await adminClient
+    .from('players')
+    .update({ deletion_requested_at: null, active_flag: true })
+    .eq('id', playerId);
+
+  if (error) throw new Error(error.message);
+
+  await logAdminAudit(adminClient, {
+    actor_id: admin.id,
+    action_type: 'account_deletion_cancelled',
+    target_type: 'player',
+    target_id: playerId,
+    old_value: { deletion_requested_at: oldPlayer.deletion_requested_at },
+    new_value: { deletion_requested_at: null, active_flag: true },
+  }, { playerId });
+
+  revalidatePath('/players');
+  revalidatePath(`/players/${playerId}`);
+}
+
 export async function removePlayer(playerId: string, reason: string) {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
