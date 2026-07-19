@@ -11,6 +11,12 @@ export function getPostHogClient() {
       person_profiles: 'identified_only',
       capture_pageview: true,
       capture_pageleave: true,
+      // Cookieless persistence: keep analytics state in localStorage only, not a
+      // cookie. Every cookie is sent on the same-origin Realtime websocket
+      // handshake, and the Realtime service (Cowboy) rejects requests whose
+      // Cookie header exceeds ~4KB with a 431, causing a reconnect loop. Dropping
+      // PostHog's cookie shrinks that header (and is better for privacy).
+      persistence: 'localStorage',
     });
     initialized = true;
   }
