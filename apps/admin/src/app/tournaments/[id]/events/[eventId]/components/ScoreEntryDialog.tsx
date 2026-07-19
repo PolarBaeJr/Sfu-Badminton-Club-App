@@ -174,12 +174,12 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, on
               </div>
             )}
 
-            <div className="flex gap-2 pt-2">
-              <Button onClick={handleSubmit} loading={loading} disabled={!autoWinner} className="flex-1 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
-                Submit Score
-              </Button>
+            <div className="flex items-center justify-between pt-2">
               <Button variant="ghost" onClick={() => setShowWalkover(true)} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
                 Walkover / Void
+              </Button>
+              <Button onClick={handleSubmit} loading={loading} disabled={!autoWinner} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
+                Submit Score
               </Button>
             </div>
           </>

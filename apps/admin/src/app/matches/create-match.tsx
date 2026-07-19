@@ -7,6 +7,13 @@ import { useToast } from '@/components/toast-provider';
 
 type Player = { id: string; full_name: string };
 
+/** Auto-grow the textarea with its content, capped at ~60vh (dialog scrolls past that). */
+function autoGrow(e: React.FormEvent<HTMLTextAreaElement>) {
+  const el = e.currentTarget;
+  el.style.height = 'auto';
+  el.style.height = `${Math.min(el.scrollHeight, window.innerHeight * 0.6)}px`;
+}
+
 export function CreateMatchForm({ players }: { players: Player[] }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -105,16 +112,16 @@ export function CreateMatchForm({ players }: { players: Player[] }) {
             <span className="text-sm text-[var(--text-secondary)]">Rated match</span>
           </div>
 
-          <div className="border border-[var(--border)] rounded-lg p-3 space-y-3">
-            <p className="text-xs font-medium text-[var(--text-muted)] uppercase">Side A</p>
+          <div className="dialog-group space-y-3">
+            <p className="dialog-group-label">Side A</p>
             <Select label="Player 1" value={sideA1} onChange={(e) => setSideA1(e.target.value)} options={playerOptions} />
             {matchType === 'doubles' && (
               <Select label="Player 2" value={sideA2} onChange={(e) => setSideA2(e.target.value)} options={playerOptions} />
             )}
           </div>
 
-          <div className="border border-[var(--border)] rounded-lg p-3 space-y-3">
-            <p className="text-xs font-medium text-[var(--text-muted)] uppercase">Side B</p>
+          <div className="dialog-group space-y-3">
+            <p className="dialog-group-label">Side B</p>
             <Select label="Player 1" value={sideB1} onChange={(e) => setSideB1(e.target.value)} options={playerOptions} />
             {matchType === 'doubles' && (
               <Select label="Player 2" value={sideB2} onChange={(e) => setSideB2(e.target.value)} options={playerOptions} />
@@ -135,8 +142,8 @@ export function CreateMatchForm({ players }: { players: Player[] }) {
             <div className="flex items-center justify-between">
               <p className="text-sm font-medium text-[var(--text-secondary)]">Games</p>
               <div className="flex gap-2">
-                <Button type="button" size="sm" variant="ghost" onClick={removeGame}>-</Button>
-                <Button type="button" size="sm" variant="ghost" onClick={addGame}>+</Button>
+                <button type="button" className="stepper-btn" onClick={removeGame} aria-label="Remove game">&minus;</button>
+                <button type="button" className="stepper-btn" onClick={addGame} aria-label="Add game">+</button>
               </div>
             </div>
             {games.map((g, i) => (
@@ -158,11 +165,11 @@ export function CreateMatchForm({ players }: { players: Player[] }) {
             ))}
           </div>
 
-          <Textarea label="Admin Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
+          <Textarea label="Admin Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} onInput={autoGrow} />
 
-          <div className="flex gap-2">
-            <Button type="submit" loading={loading}>Create Match</Button>
+          <div className="flex items-center justify-between">
             <Button variant="ghost" onClick={() => setOpen(false)} type="button">Cancel</Button>
+            <Button type="submit" loading={loading}>Create Match</Button>
           </div>
         </form>
       </Dialog>

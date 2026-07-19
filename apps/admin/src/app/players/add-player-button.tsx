@@ -85,12 +85,11 @@ export function AddPlayerButton() {
             value={role}
             onChange={(e) => setRole(e.target.value)}
           />
-          <div className="flex gap-2 pt-2">
+          <div className="flex items-center justify-between pt-2">
             <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
             <Button
               onClick={handleSubmit}
               loading={isPending}
-              className="flex-1"
               disabled={!fullName.trim() || !email.trim()}
             >
               Create Player

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Card, Input, Textarea } from '@badminton/ui';
+import { Button, Textarea } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { updatePlatformSettings } from './actions';
 
@@ -76,9 +76,14 @@ export function SettingsForm({ settings }: { settings: PlatformSetting[] }) {
   const hasChanges = Object.keys(edits).length > 0;
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-white">Platform Settings</h2>
+    <div className="mt-10">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <h3 className="text-lg font-bold text-[var(--text-primary)]">Platform settings</h3>
+          <p className="text-sm text-[var(--text-muted)]">
+            Changing platform settings affects all players immediately. Changes are logged in the audit trail.
+          </p>
+        </div>
         {hasChanges && (
           <Button onClick={handleSave} loading={loading}>
             Save Changes
@@ -86,34 +91,30 @@ export function SettingsForm({ settings }: { settings: PlatformSetting[] }) {
         )}
       </div>
 
-      {hasChanges && (
-        <div className="bg-[#F59E0B]/10 border border-[#F59E0B]/20 rounded-lg p-3 text-sm text-[#F59E0B]">
-          Warning: Changing platform settings affects all players immediately. Changes are logged in the audit trail.
-        </div>
-      )}
-
       {settings.map((s) => {
         const currentValue = edits[s.key] ?? JSON.stringify(s.value, null, 2);
         const isEdited = s.key in edits;
 
         return (
-          <Card key={s.key} className={isEdited ? 'border-[#E94560]/50' : ''}>
-            <div className="flex items-start justify-between mb-2">
-              <div>
-                <h3 className="text-white font-medium">{SETTING_LABELS[s.key] || s.key}</h3>
-                <p className="text-xs text-gray-500">{SETTING_DESCRIPTIONS[s.key] || ''}</p>
+          <div key={s.key} className="settings-row !items-start">
+            <div className="md:w-[220px] flex-shrink-0">
+              <div className="settings-row-label">
+                {SETTING_LABELS[s.key] || s.key}
+                {isEdited && (
+                  <span className="ml-2 text-[var(--color-accent)]">Modified</span>
+                )}
               </div>
-              {isEdited && (
-                <span className="text-xs text-[#E94560]">Modified</span>
-              )}
+              <div className="settings-row-hint">{SETTING_DESCRIPTIONS[s.key] || ''}</div>
             </div>
-            <Textarea
-              value={currentValue}
-              onChange={(e) => handleChange(s.key, e.target.value)}
-              rows={Math.min(Object.keys(s.value).length + 2, 8)}
-              className="font-mono text-xs"
-            />
-          </Card>
+            <div className="settings-row-control wide">
+              <Textarea
+                value={currentValue}
+                onChange={(e) => handleChange(s.key, e.target.value)}
+                rows={Math.min(Object.keys(s.value).length + 2, 8)}
+                className="font-mono text-xs"
+              />
+            </div>
+          </div>
         );
       })}
     </div>

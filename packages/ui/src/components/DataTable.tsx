@@ -36,7 +36,7 @@ export function DataTable<T extends Record<string, unknown>>({
         <thead>
           <tr className="border-b border-[var(--border)]">
             {columns.map((col) => (
-              <th key={col.key} className={cn('px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider', col.className)}>
+              <th key={col.key} className={cn('px-4 py-3 text-left text-[10px] font-medium text-[var(--text-muted)] uppercase tracking-[0.12em]', col.className)}>
                 {col.header}
               </th>
             ))}
@@ -47,7 +47,7 @@ export function DataTable<T extends Record<string, unknown>>({
             <tr
               key={String(row[keyField])}
               onClick={() => onRowClick?.(row)}
-              className={cn('hover:bg-[var(--border-hover)] transition-colors', onRowClick && 'cursor-pointer')}
+              className={cn('hover:bg-[var(--surface-2)] transition-colors', onRowClick && 'cursor-pointer')}
             >
               {columns.map((col) => (
                 <td key={col.key} className={cn('px-4 py-3 text-sm text-[var(--text-secondary)]', col.className)}>

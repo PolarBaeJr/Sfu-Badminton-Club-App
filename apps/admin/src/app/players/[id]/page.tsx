@@ -1,5 +1,5 @@
 import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge, StatCard, Avatar } from '@badminton/ui';
+import { Card, Badge, StatCard, Avatar, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, getWinRate, getStreakDisplay, getPointDifferential } from '@badminton/shared';
 import { PlayerEditForm } from './edit-form';
 import { notFound } from 'next/navigation';
@@ -43,19 +43,24 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
       {/* Header */}
       <div className="flex items-center gap-4">
         <Avatar name={player.full_name} size="lg" />
-        <div>
-          <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">{player.full_name}</h1>
-          <p className="text-sm text-[var(--text-muted)]">{player.email}</p>
-          <div className="flex gap-2 mt-2">
-            <Badge variant={player.status === 'competitive' ? 'success' : player.status === 'suspended' ? 'danger' : 'default'}>
-              {PLAYER_STATUS_LABELS[player.status as keyof typeof PLAYER_STATUS_LABELS]}
-            </Badge>
-            <Badge variant="neutral">
-              <Shield className="w-3 h-3 inline mr-1" />
-              {player.role}
-            </Badge>
-          </div>
-        </div>
+        <PageHeader
+          className="no-period flex-1 !mb-0"
+          title={player.full_name}
+          sub={
+            <>
+              {player.email}
+              <span className="flex gap-2 mt-2">
+                <Badge variant={player.status === 'competitive' ? 'success' : player.status === 'suspended' ? 'danger' : 'default'}>
+                  {PLAYER_STATUS_LABELS[player.status as keyof typeof PLAYER_STATUS_LABELS]}
+                </Badge>
+                <Badge variant="neutral">
+                  <Shield className="w-3 h-3 inline mr-1" />
+                  {player.role}
+                </Badge>
+              </span>
+            </>
+          }
+        />
       </div>
 
       {/* Stats Grid */}

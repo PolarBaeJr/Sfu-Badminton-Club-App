@@ -1,5 +1,5 @@
 import { createAdminClient } from '@/lib/supabase-server';
-import { Badge, Card, Avatar } from '@badminton/ui';
+import { Badge, Card, Avatar, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS, getWinRate, unwrap } from '@badminton/shared';
 import Link from 'next/link';
 import { PlayerActions } from './player-actions';
@@ -68,10 +68,7 @@ export default async function PlayersPage({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">PLAYERS</h1>
-        <AddPlayerButton />
-      </div>
+      <PageHeader title="Players" watermark="P" actions={<AddPlayerButton />} />
 
       {/* Tabs */}
       <Card padding={false}>

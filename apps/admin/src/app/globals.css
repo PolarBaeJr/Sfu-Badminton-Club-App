@@ -1,49 +1,59 @@
-@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Fonts loaded via next/font in layout.tsx — don't @import them here. */
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 [data-theme="dark"] {
-  --bg-primary: #0B0F1A;
-  --bg-surface: #111827;
-  --bg-card: #151C2C;
-  --bg-elevated: #0D1220;
-  --text-primary: #F1F5F9;
-  --text-secondary: #94A3B8;
-  --text-muted: #64748B;
-  --border: rgba(255,255,255,0.06);
-  --border-hover: rgba(255,255,255,0.10);
-  --color-accent: #E94560;
-  --color-accent-hover: #d63d56;
-  --color-success: #10B981;
-  --color-warning: #F59E0B;
-  --color-danger: #EF4444;
-  --color-info: #3B82F6;
+  --bg-primary: #0a0a0a;
+  --bg-surface: #111;
+  --bg-card: #111;
+  --bg-elevated: #1a1a1a;
+  --text-primary: #f0f0f0;
+  --text-secondary: #c8c8c8;
+  --text-muted: #888;
+  --border: hsla(0, 0%, 100%, 0.08);
+  --border-hover: hsla(0, 0%, 100%, 0.14);
+  --color-accent: #c00;
+  --color-accent-hover: #a30000;
+  --color-success: #4ade80;
+  --color-warning: #fbbf24;
+  --color-danger: #c00;
+  --color-info: #4c98b9;
 }
 
 [data-theme="light"] {
-  --bg-primary: #F8FAFC;
-  --bg-surface: #F1F5F9;
-  --bg-card: #FFFFFF;
-  --bg-elevated: #FFFFFF;
-  --text-primary: #0F172A;
-  --text-secondary: #475569;
-  --text-muted: #94A3B8;
-  --border: #E2E8F0;
-  --border-hover: #CBD5E1;
-  --color-accent: #E94560;
-  --color-accent-hover: #d63d56;
-  --color-success: #10B981;
-  --color-warning: #F59E0B;
-  --color-danger: #EF4444;
-  --color-info: #3B82F6;
+  --bg-primary: #fafafa;
+  --bg-surface: #f5f5f5;
+  --bg-card: #fff;
+  --bg-elevated: #fff;
+  --text-primary: #111;
+  --text-secondary: #444;
+  --text-muted: #888;
+  --border: rgba(0, 0, 0, 0.08);
+  --border-hover: rgba(0, 0, 0, 0.16);
+  --color-accent: #c00;
+  --color-accent-hover: #a30000;
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-danger: #c00;
+  --color-info: #2c7a9c;
 }
 
 body {
-  font-family: 'DM Sans', sans-serif;
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
   background-color: var(--bg-primary);
   color: var(--text-primary);
+}
+
+@layer base {
+  /* Display headings — Barlow Condensed */
+  h1, h2, h3, h4 {
+    font-family: var(--display);
+    letter-spacing: -0.015em;
+    font-weight: 700;
+    line-height: 1.05;
+  }
 }
 
 ::-webkit-scrollbar {
@@ -77,7 +87,7 @@ input, textarea, select, button, a {
    Shared component token bridge
    @badminton/ui components (Button, Badge, Dialog, Toast, Input, ...)
    reference player-system token names this file never defined. Map
-   them onto the admin slate theme variables above. Defined once at
+   them onto the admin theme variables above. Defined once at
    :root via var() indirection: data-theme lives on <html>, so each
    alias resolves to the active theme's value automatically.
    ------------------------------------------------------------------ */
@@ -85,13 +95,228 @@ input, textarea, select, button, a {
   --bg: var(--bg-primary);
   --surface: var(--bg-card);
   --surface-2: var(--bg-elevated);
+  --surface-3: #232323;
   --ink: var(--text-primary);
   --ink-2: var(--text-secondary);
+  --mute: var(--text-muted);
   --line: var(--border);
-  --red: var(--color-accent);            /* #E94560 */
-  --red-ink: var(--color-accent-hover);  /* #d63d56 */
+  --line-2: var(--border-hover);
+  --red: var(--color-accent);            /* #c00 */
+  --red-ink: var(--color-accent-hover);  /* #a30000 */
   --red-wash: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  --red-border: rgba(204, 0, 0, 0.3);
   --win: var(--color-success);
   --loss: var(--color-danger);
-  --display: 'Barlow Condensed', sans-serif;
+  --display: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+  --mono: var(--font-mono), ui-monospace, monospace;
+}
+[data-theme="light"] { --surface-3: #eee; }
+
+/* ═══════════════════════════════════════════════════════════
+   EDITORIAL PATTERNS — mirrored from the player app's globals.
+   ═══════════════════════════════════════════════════════════ */
+
+/* Layout helper */
+.row { display: flex; align-items: center; gap: 10px; }
+
+/* Editorial page header */
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 28px;
+  position: relative;
+  overflow: hidden;
+}
+@media (max-width: 980px) {
+  .page-header { flex-direction: column; align-items: flex-start; gap: 16px; margin-bottom: 20px; }
+}
+.page-eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--red);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.page-eyebrow .bar { width: 24px; height: 2px; background: var(--red); display: inline-block; }
+.page-title {
+  font-family: var(--display);
+  font-size: clamp(34px, 5vw, 52px);
+  font-weight: 700;
+  letter-spacing: -.015em;
+  line-height: 1;
+  margin: 0;
+  overflow-wrap: break-word;
+}
+.page-title::after { content: "."; color: var(--red); }
+.page-title.no-period::after,
+.page-header.no-period .page-title::after { content: none; }
+.page-sub {
+  color: var(--mute);
+  font-size: 14px;
+  margin-top: 10px;
+  max-width: 60ch;
+}
+.page-watermark {
+  position: absolute;
+  right: 0; top: 50%;
+  transform: translateY(-50%);
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 180px;
+  line-height: 1;
+  color: hsla(0, 0%, 100%, 0.03);
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+}
+[data-theme="light"] .page-watermark { color: rgba(0, 0, 0, 0.03); }
+
+/* Stat strip — full-width row of hairline-separated cells */
+.stat-strip {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  border-block: 1px solid var(--line);
+}
+.stat-strip > * {
+  border-left: 1px solid var(--line);
+  padding: 16px 20px;
+}
+.stat-strip > *:first-child { border-left: 0; }
+@media (max-width: 640px) {
+  .stat-strip { grid-auto-flow: row; grid-template-columns: 1fr 1fr; }
+  .stat-strip > *:nth-child(odd) { border-left: 0; }
+}
+.stat-strip .stat-label {
+  font-family: var(--mono);
+  font-size: 10px; color: var(--mute);
+  text-transform: uppercase; letter-spacing: .1em;
+}
+.stat-strip .stat-value {
+  font-family: var(--display);
+  font-size: 28px; font-weight: 700;
+  letter-spacing: -.02em; line-height: 1;
+  margin-top: 4px;
+}
+
+/* Danger zone — red-hairline box, red heading, row-per-action */
+.danger-zone {
+  border: 1px solid var(--red-border);
+  padding: 20px;
+}
+.danger-zone .danger-title {
+  color: var(--red);
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 18px;
+  margin: 0 0 8px;
+}
+
+/* Dialog inset group panel — hairline border + uppercase micro-label */
+.dialog-group {
+  border: 1px solid var(--line);
+  padding: 14px;
+}
+.dialog-group-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--mute);
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  margin-bottom: 10px;
+}
+
+/* Square hairline −/+ stepper buttons */
+.stepper-btn {
+  width: 32px; height: 32px;
+  display: inline-grid; place-items: center;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 15px;
+  cursor: pointer;
+  transition: background-color .15s, color .15s;
+}
+.stepper-btn:hover { background: var(--surface-2); color: var(--ink); }
+.stepper-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* Settings rows — uppercase label + hint left, control right,
+   full-width hairline separators. Stacks below 640px. */
+.settings-section-title {
+  font-size: 24px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+.settings-section-desc {
+  color: var(--mute);
+  font-size: 14px;
+  margin: 0 0 8px;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line);
+}
+.settings-row:last-child { border-bottom: 0; }
+.settings-row-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--ink);
+}
+.settings-row-hint {
+  color: var(--mute);
+  font-size: 14px;
+  margin-top: 4px;
+  max-width: 52ch;
+}
+.settings-row-control { flex-shrink: 0; }
+.settings-row-control.wide { flex: 1; min-width: 0; }
+@media (max-width: 640px) {
+  .settings-row { flex-direction: column; align-items: stretch; gap: 12px; }
+  .settings-row-control { flex-shrink: 1; }
+}
+
+/* Settings section rail (sticky left nav on the settings page) */
+.settings-rail {
+  position: sticky;
+  top: 120px;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+}
+.settings-rail a {
+  display: block;
+  padding: 10px 14px;
+  border-left: 2px solid transparent;
+  color: var(--mute);
+  transition: background-color .15s, color .15s, border-color .15s;
+}
+.settings-rail a:hover { color: var(--ink); }
+.settings-rail a.active {
+  border-left-color: var(--red);
+  background: var(--surface);
+  color: var(--ink);
+}
+.settings-rail .rail-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+}
+.settings-rail .rail-sub {
+  font-size: 12px;
+  color: var(--mute);
+  margin-top: 2px;
 }

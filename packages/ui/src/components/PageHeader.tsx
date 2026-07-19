@@ -10,13 +10,16 @@ interface PageHeaderProps {
   sub?: React.ReactNode;
   /** Right-side actions (buttons, search, etc.). */
   actions?: React.ReactNode;
+  /** Giant faint display glyph bleeding off the right edge. */
+  watermark?: string;
   /** Extra classes merged onto the root element (e.g. reveal stagger). */
   className?: string;
 }
 
-export function PageHeader({ eyebrow, title, sub, actions, className }: PageHeaderProps) {
+export function PageHeader({ eyebrow, title, sub, actions, watermark, className }: PageHeaderProps) {
   return (
     <div className={cn('page-header', className)}>
+      {watermark && <span className="page-watermark" aria-hidden>{watermark}</span>}
       <div>
         {eyebrow && (
           <div className="page-eyebrow">

@@ -1,11 +1,10 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge } from '@badminton/ui';
+import { Card, Badge, PageHeader } from '@badminton/ui';
 import { MATCH_FORMAT_LABELS, formatDateTime, unwrap } from '@badminton/shared';
 import { MatchActions } from './actions';
 import { CreateMatchForm } from './create-match';
 import {
-  Target,
   Plus,
   AlertTriangle,
   Clock,
@@ -69,20 +68,12 @@ export default async function MatchesPage() {
   return (
     <div className="space-y-8">
       {/* Page Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--color-accent)]/10 text-[var(--color-accent)]">
-            <Target className="w-5 h-5" />
-          </div>
-          <div>
-            <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">MATCHES</h1>
-            <p className="text-sm text-[var(--text-muted)] mt-0.5">
-              Manage match results, disputes, and walkovers
-            </p>
-          </div>
-        </div>
-        <CreateMatchForm players={allPlayers || []} />
-      </div>
+      <PageHeader
+        title="Matches"
+        sub="Manage match results, disputes, and walkovers"
+        watermark="M"
+        actions={<CreateMatchForm players={allPlayers || []} />}
+      />
 
       {/* Matches Table */}
       <Card padding={false}>

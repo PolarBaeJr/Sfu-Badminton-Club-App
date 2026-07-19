@@ -127,9 +127,9 @@ export function PlayerActions({ mode, playerId, playerName, playerData }: Props)
                 <Input label="Amount $ (optional)" type="number" step="0.01" min="0" value={reinstateAmount} onChange={(e) => setReinstateAmount(e.target.value)} placeholder="e.g. 20.00" />
                 <Input label="Method (optional)" value={reinstateMethod} onChange={(e) => setReinstateMethod(e.target.value)} placeholder="e.g. e-transfer, cash" />
               </div>
-              <div className="flex gap-2">
+              <div className="flex items-center justify-between">
                 <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-                <Button onClick={handleReinstate} loading={isPending} className="flex-1">Reinstate</Button>
+                <Button onClick={handleReinstate} loading={isPending}>Reinstate</Button>
               </div>
             </div>
           </Dialog>
@@ -145,9 +145,9 @@ export function PlayerActions({ mode, playerId, playerName, playerData }: Props)
               Ban <strong className="text-[var(--text-primary)]">{playerName}</strong>. They will need to be reinstated (with an optional fee) to return.
             </p>
             <Textarea label="Reason" value={banReason} onChange={(e) => setBanReason(e.target.value)} placeholder="Why is this player being banned?" />
-            <div className="flex gap-2">
+            <div className="flex items-center justify-between">
               <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button variant="danger" onClick={handleBan} loading={isPending} className="flex-1" disabled={banReason.trim().length < 2}>
+              <Button variant="danger" onClick={handleBan} loading={isPending} disabled={banReason.trim().length < 2}>
                 Ban Player
               </Button>
             </div>
@@ -172,9 +172,9 @@ export function PlayerActions({ mode, playerId, playerName, playerData }: Props)
               <Input label="Doubles Elo (optional)" type="number" value={doublesElo} onChange={(e) => setDoublesElo(e.target.value)} placeholder="Leave blank to keep current" />
             </div>
             <Textarea label="Reason (required)" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why is this change being made?" />
-            <div className="flex gap-2">
+            <div className="flex items-center justify-between">
               <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button onClick={handleEdit} loading={isPending} className="flex-1" disabled={!reason || reason.length < 2}>
+              <Button onClick={handleEdit} loading={isPending} disabled={!reason || reason.length < 2}>
                 Save Changes
               </Button>
             </div>
@@ -200,13 +200,12 @@ export function PlayerActions({ mode, playerId, playerName, playerData }: Props)
             onChange={(e) => setConfirmName(e.target.value)}
             placeholder={playerName}
           />
-          <div className="flex gap-2">
+          <div className="flex items-center justify-between">
             <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
             <Button
               variant="danger"
               onClick={handleDelete}
               loading={isPending}
-              className="flex-1"
               disabled={confirmName !== playerName}
             >
               Remove Player

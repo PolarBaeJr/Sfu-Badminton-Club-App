@@ -1,9 +1,8 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient, getAuthenticatedAdmin } from '@/lib/supabase-server';
-import { Card } from '@badminton/ui';
+import { PageHeader } from '@badminton/ui';
 import { SettingsForm } from './settings-form';
 import { LegalDocumentsForm } from './legal-documents-form';
-import { Settings, User, Mail, Shield, Sliders, Info, FileText } from 'lucide-react';
 
 export default async function SettingsPage() {
   let player: Awaited<ReturnType<typeof getAuthenticatedAdmin>> | null = null;
@@ -25,90 +24,87 @@ export default async function SettingsPage() {
     .order('document', { ascending: false }); // waiver first
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--color-accent)]/10">
-          <Settings className="w-5 h-5 text-[var(--color-accent)]" />
-        </div>
-        <div>
-          <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">SETTINGS</h1>
-          <p className="text-sm text-[var(--text-muted)]">Manage your profile and platform configuration</p>
-        </div>
-      </div>
+    <div>
+      <PageHeader
+        title="Settings"
+        sub="Manage your profile and platform configuration"
+        watermark="S"
+      />
 
-      {/* Profile Section */}
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
-        <div className="flex items-center gap-2 mb-5">
-          <div className="w-8 h-8 rounded-lg bg-[var(--color-info)]/10 flex items-center justify-center">
-            <User className="w-4 h-4 text-[var(--color-info)]" />
-          </div>
-          <h2 className="text-base font-semibold text-[var(--text-primary)]">Profile</h2>
-        </div>
-        <div className="space-y-4">
-          <div className="flex items-center gap-3 p-3 rounded-lg bg-[var(--bg-elevated)]">
-            <User className="w-4 h-4 text-[var(--text-muted)]" />
-            <div>
-              <p className="text-xs text-[var(--text-muted)]">Name</p>
-              <p className="text-sm font-medium text-[var(--text-primary)]">{player?.full_name}</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 p-3 rounded-lg bg-[var(--bg-elevated)]">
-            <Mail className="w-4 h-4 text-[var(--text-muted)]" />
-            <div>
-              <p className="text-xs text-[var(--text-muted)]">Email</p>
-              <p className="text-sm font-medium text-[var(--text-primary)]">{player?.email}</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 p-3 rounded-lg bg-[var(--bg-elevated)]">
-            <Shield className="w-4 h-4 text-[var(--text-muted)]" />
-            <div>
-              <p className="text-xs text-[var(--text-muted)]">Role</p>
-              <p className="text-sm font-medium text-[var(--text-primary)] capitalize">{player?.role}</p>
-            </div>
-          </div>
-        </div>
-      </div>
+      <div className="grid md:grid-cols-[210px_1fr] gap-10 items-start">
+        {/* Section rail */}
+        <nav className="settings-rail hidden md:flex">
+          <a href="#general" className="active">
+            <span className="rail-label block">General</span>
+            <span className="rail-sub block">Profile &amp; platform</span>
+          </a>
+          {player?.role === 'admin' && (
+            <a href="#legal">
+              <span className="rail-label block">Legal Documents</span>
+              <span className="rail-sub block">Waiver &amp; conduct</span>
+            </a>
+          )}
+          <a href="#about">
+            <span className="rail-label block">About</span>
+            <span className="rail-sub block">Version info</span>
+          </a>
+        </nav>
 
-      {/* Platform Settings */}
-      {player?.role === 'admin' && settings && (
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
-          <div className="flex items-center gap-2 mb-5">
-            <div className="w-8 h-8 rounded-lg bg-[var(--color-warning)]/10 flex items-center justify-center">
-              <Sliders className="w-4 h-4 text-[var(--color-warning)]" />
+        <div className="space-y-14 min-w-0">
+          {/* General */}
+          <section id="general" className="scroll-mt-32">
+            <h2 className="settings-section-title">General</h2>
+            <p className="settings-section-desc">
+              Your admin profile and platform-wide configuration.
+            </p>
+            <div className="settings-row">
+              <div>
+                <div className="settings-row-label">Name</div>
+                <div className="settings-row-hint">Your full name as shown across the club.</div>
+              </div>
+              <div className="settings-row-control text-sm text-[var(--text-primary)]">{player?.full_name}</div>
             </div>
-            <h2 className="text-base font-semibold text-[var(--text-primary)]">Platform Settings</h2>
-          </div>
-          <SettingsForm settings={settings} />
-        </div>
-      )}
-
-      {/* Legal Documents */}
-      {player?.role === 'admin' && legalDocuments && legalDocuments.length > 0 && (
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
-          <div className="flex items-center gap-2 mb-5">
-            <div className="w-8 h-8 rounded-lg bg-[var(--color-accent)]/10 flex items-center justify-center">
-              <FileText className="w-4 h-4 text-[var(--color-accent)]" />
+            <div className="settings-row">
+              <div>
+                <div className="settings-row-label">Email</div>
+                <div className="settings-row-hint">The address you sign in with.</div>
+              </div>
+              <div className="settings-row-control text-sm text-[var(--text-primary)]">{player?.email}</div>
             </div>
-            <h2 className="text-base font-semibold text-[var(--text-primary)]">Legal Documents</h2>
-          </div>
-          <LegalDocumentsForm documents={legalDocuments} />
-        </div>
-      )}
+            <div className="settings-row">
+              <div>
+                <div className="settings-row-label">Role</div>
+                <div className="settings-row-hint">Controls which admin sections you can reach.</div>
+              </div>
+              <div className="settings-row-control text-sm text-[var(--text-primary)] capitalize">{player?.role}</div>
+            </div>
 
-      {/* About */}
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
-        <div className="flex items-center gap-2 mb-5">
-          <div className="w-8 h-8 rounded-lg bg-[var(--text-muted)]/10 flex items-center justify-center">
-            <Info className="w-4 h-4 text-[var(--text-muted)]" />
-          </div>
-          <h2 className="text-base font-semibold text-[var(--text-primary)]">About</h2>
-        </div>
-        <div className="space-y-3 text-sm">
-          <div className="flex items-center justify-between p-3 rounded-lg bg-[var(--bg-elevated)]">
-            <span className="text-[var(--text-muted)]">App Version</span>
-            <span className="font-mono text-xs bg-[var(--color-accent)]/10 text-[var(--color-accent)] px-2 py-0.5 rounded-full">v0.0.1</span>
-          </div>
+            {player?.role === 'admin' && settings && (
+              <SettingsForm settings={settings} />
+            )}
+          </section>
+
+          {/* Legal Documents */}
+          {player?.role === 'admin' && legalDocuments && legalDocuments.length > 0 && (
+            <section id="legal" className="scroll-mt-32">
+              <h2 className="settings-section-title">Legal documents</h2>
+              <p className="settings-section-desc">
+                Shown to every member during onboarding. Bumping a version forces all members to re-accept before playing.
+              </p>
+              <LegalDocumentsForm documents={legalDocuments} />
+            </section>
+          )}
+
+          {/* About */}
+          <section id="about" className="scroll-mt-32">
+            <h2 className="settings-section-title">About</h2>
+            <div className="settings-row">
+              <div>
+                <div className="settings-row-label">App version</div>
+              </div>
+              <div className="settings-row-control font-mono text-xs text-[var(--text-muted)]">v0.0.1</div>
+            </div>
+          </section>
         </div>
       </div>
     </div>

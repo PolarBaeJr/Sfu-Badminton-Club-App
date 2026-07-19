@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge } from '@badminton/ui';
+import { Card, Badge, PageHeader } from '@badminton/ui';
 import { formatRelativeTime } from '@badminton/shared';
 import { WalkoverActions } from './actions';
 import { Clock, User, AlertTriangle, MessageSquare, CheckCircle2 } from 'lucide-react';
@@ -24,22 +24,20 @@ export default async function WalkoversPage() {
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div className="flex items-center gap-3">
-        <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--color-accent)]/10">
-          <Clock className="w-5 h-5 text-[var(--color-accent)]" />
-        </div>
-        <div>
-          <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">WALKOVERS</h1>
-          <p className="text-sm text-[var(--text-muted)]">
+      <PageHeader
+        title="Walkovers"
+        watermark="W"
+        sub={
+          <>
             Review and manage walkover reports
             {pendingCount > 0 && (
-              <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[var(--color-warning)] text-black text-xs font-semibold">
+              <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 bg-[var(--color-warning)] text-black text-xs font-semibold">
                 {pendingCount} pending
               </span>
             )}
-          </p>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {/* Walkover Cards */}
       <div className="grid gap-4">

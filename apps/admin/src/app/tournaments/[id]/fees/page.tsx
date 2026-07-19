@@ -1,5 +1,5 @@
 import { createAdminClient, getAuthenticatedAdmin } from '@/lib/supabase-server';
-import { Card, Badge, Avatar } from '@badminton/ui';
+import { Card, Badge, Avatar, PageHeader } from '@badminton/ui';
 import { unwrap } from '@badminton/shared';
 import type { TournamentFeeTier, TournamentFee, Player } from '@badminton/shared';
 import { notFound } from 'next/navigation';
@@ -84,9 +84,7 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
         Back to Tournament
       </Link>
 
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">{tournament.name} — Fees</h1>
-      </div>
+      <PageHeader className="no-period" title={`${tournament.name} — Fees`} watermark="F" />
 
       <TournamentFeeActions mode="tiers" tournamentId={id} tiers={tiers} />
 

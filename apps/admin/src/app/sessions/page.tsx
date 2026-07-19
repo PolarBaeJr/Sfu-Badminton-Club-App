@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge } from '@badminton/ui';
+import { Card, Badge, PageHeader } from '@badminton/ui';
 import { formatDate, formatTime, type AttendanceStatus } from '@badminton/shared';
 import { CreateSessionForm, SessionCardMenu, AttendanceDialog } from './actions';
 import { Calendar, MapPin, FileText } from 'lucide-react';
@@ -53,20 +53,12 @@ export default async function SessionsPage() {
   return (
     <div className="space-y-8">
       {/* Page Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--color-accent)]/10">
-            <Calendar className="w-5 h-5 text-[var(--color-accent)]" />
-          </div>
-          <div>
-            <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">SESSIONS</h1>
-            <p className="text-sm text-[var(--text-muted)] mt-0.5">
-              Schedule and manage club practice sessions
-            </p>
-          </div>
-        </div>
-        <CreateSessionForm />
-      </div>
+      <PageHeader
+        title="Sessions"
+        sub="Schedule and manage club practice sessions"
+        watermark="S"
+        actions={<CreateSessionForm />}
+      />
 
       {/* Sessions List */}
       {sessions && sessions.length > 0 ? (

@@ -189,14 +189,16 @@ export function CreateSessionForm() {
         <form onSubmit={handleCreate} className="space-y-4">
           <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required placeholder="e.g. Tuesday Practice" />
           <Input label="Date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
-          <Input label="Time (optional)" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
-          <Input label="End time (optional)" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+          <div className="grid grid-cols-2 gap-3">
+            <Input label="Start time" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+            <Input label="End time" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+          </div>
           <Input label="Location" value={location} onChange={(e) => setLocation(e.target.value)} required placeholder="e.g. SFU Gym A" />
           <Select label="Track" options={TRACK_OPTIONS} value={track} onChange={(e) => setTrack(e.target.value as SessionGroupInput)} />
-          <Input label="Notes (optional)" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Any additional info..." />
-          <div className="flex gap-2">
-            <Button type="submit" loading={loading}>Create</Button>
+          <Input label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Any additional info..." />
+          <div className="flex items-center justify-between pt-2">
             <Button variant="ghost" onClick={() => setOpen(false)} type="button">Cancel</Button>
+            <Button type="submit" loading={loading}>Create</Button>
           </div>
         </form>
       </Dialog>
@@ -324,14 +326,16 @@ export function SessionCardMenu({ session }: SessionCardMenuProps) {
         <form onSubmit={handleUpdate} className="space-y-4">
           <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required placeholder="e.g. Tuesday Practice" />
           <Input label="Date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
-          <Input label="Time (optional)" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
-          <Input label="End time (optional)" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+          <div className="grid grid-cols-2 gap-3">
+            <Input label="Start time" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+            <Input label="End time" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+          </div>
           <Input label="Location" value={location} onChange={(e) => setLocation(e.target.value)} required placeholder="e.g. SFU Gym A" />
           <Select label="Track" options={TRACK_OPTIONS} value={track} onChange={(e) => setTrack(e.target.value as SessionGroupInput)} />
-          <Input label="Notes (optional)" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Any additional info..." />
-          <div className="flex gap-2">
-            <Button type="submit" loading={loading}>Save Changes</Button>
+          <Input label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Any additional info..." />
+          <div className="flex items-center justify-between pt-2">
             <Button variant="ghost" onClick={() => setEditOpen(false)} type="button">Cancel</Button>
+            <Button type="submit" loading={loading}>Save Changes</Button>
           </div>
         </form>
       </Dialog>

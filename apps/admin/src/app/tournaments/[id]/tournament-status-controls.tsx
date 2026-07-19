@@ -100,9 +100,9 @@ export function TournamentStatusControls({ tournamentId, status, suspendedAt }: 
               minLength={2}
               maxLength={500}
             />
-            <div className="flex gap-2 pt-2">
-              <Button type="submit" loading={loading} className="flex-1">Suspend Tournament</Button>
+            <div className="flex items-center justify-between pt-2">
               <Button variant="ghost" onClick={() => setSuspendOpen(false)} type="button">Cancel</Button>
+              <Button type="submit" loading={loading}>Suspend Tournament</Button>
             </div>
           </form>
         </Dialog>

@@ -70,6 +70,13 @@ function AnnouncementFields({
   form: AnnouncementFormData;
   setForm: React.Dispatch<React.SetStateAction<AnnouncementFormData>>;
 }) {
+  /** Auto-grow the body with its content, capped at ~60vh (dialog scrolls past that). */
+  function autoGrow(e: React.FormEvent<HTMLTextAreaElement>) {
+    const el = e.currentTarget;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, window.innerHeight * 0.6)}px`;
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
@@ -91,6 +98,7 @@ function AnnouncementFields({
         <Textarea
           value={form.body}
           onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))}
+          onInput={autoGrow}
           placeholder="Announcement body"
           rows={4}
           required
@@ -217,7 +225,7 @@ export function CreateAnnouncementForm() {
         <form onSubmit={handleSubmit} className="flex flex-col gap-5">
           <AnnouncementFields form={form} setForm={setForm} />
 
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex items-center justify-between pt-2">
             <Button
               type="button"
               variant="ghost"
@@ -411,7 +419,7 @@ export function AnnouncementCardMenu({ announcement }: AnnouncementCardMenuProps
         <form onSubmit={handleEdit} className="flex flex-col gap-5">
           <AnnouncementFields form={form} setForm={setForm} />
 
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex items-center justify-between pt-2">
             <Button
               type="button"
               variant="ghost"
@@ -442,7 +450,7 @@ export function AnnouncementCardMenu({ announcement }: AnnouncementCardMenuProps
             ? This action cannot be undone.
           </p>
 
-          <div className="flex justify-end gap-2">
+          <div className="flex items-center justify-between">
             <Button
               type="button"
               variant="ghost"

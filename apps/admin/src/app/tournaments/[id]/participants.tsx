@@ -65,9 +65,9 @@ export function AddParticipantForm({
             />
           )}
           <Input label="Seed (optional)" type="number" value={seed} onChange={(e) => setSeed(e.target.value)} />
-          <div className="flex gap-2">
-            <Button type="submit" loading={loading}>Add</Button>
+          <div className="flex items-center justify-between">
             <Button variant="ghost" onClick={() => setOpen(false)} type="button">Cancel</Button>
+            <Button type="submit" loading={loading}>Add</Button>
           </div>
         </form>
       </Dialog>

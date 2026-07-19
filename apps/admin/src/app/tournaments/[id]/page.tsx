@@ -1,8 +1,8 @@
 import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
-import { Card, Badge } from '@badminton/ui';
+import { Card, Badge, PageHeader } from '@badminton/ui';
 import { formatDate, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS } from '@badminton/shared';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, Trophy, Users, Calendar, Zap, Crown, Plus, Swords, DollarSign } from 'lucide-react';
+import { ArrowLeft, Users, Calendar, Zap, Crown, Plus, Swords, DollarSign } from 'lucide-react';
 import Link from 'next/link';
 import { CreateEventButton } from './create-event';
 import { TournamentStatusControls } from './tournament-status-controls';
@@ -71,20 +71,20 @@ export default async function TournamentDetailPage({ params }: { params: Promise
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-[var(--color-accent)]/10 flex items-center justify-center">
-              <Trophy className="w-5 h-5 text-[var(--color-accent)]" />
-            </div>
-            <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">{tournament.name}</h1>
-          </div>
-          <div className="flex items-center gap-3 mt-2 ml-[52px] text-sm text-[var(--text-muted)]">
-            <span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5" />{formatDate(tournament.start_date)}</span>
-            <span>&middot;</span>
-            <span>{tournament.format}</span>
-            <span>&middot;</span>
-            <span className="flex items-center gap-1"><Zap className="w-3 h-3" />{tournament.event_multiplier}x</span>
-          </div>
-          <div className="flex gap-2 mt-3 ml-[52px]">
+          <PageHeader
+            className="no-period !mb-0"
+            title={tournament.name}
+            sub={
+              <span className="flex items-center gap-3">
+                <span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5" />{formatDate(tournament.start_date)}</span>
+                <span>&middot;</span>
+                <span>{tournament.format}</span>
+                <span>&middot;</span>
+                <span className="flex items-center gap-1"><Zap className="w-3 h-3" />{tournament.event_multiplier}x</span>
+              </span>
+            }
+          />
+          <div className="flex gap-2 mt-3">
             <Badge variant={tournament.status === 'active' ? 'success' : tournament.status === 'completed' ? 'neutral' : 'warning'}>
               <span className="sr-only">Tournament status: </span>{tournament.status}
             </Badge>
@@ -93,7 +93,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
             {tournament.placement_bonus_enabled && <Badge variant="default">Placement Bonuses</Badge>}
           </div>
           {tournament.suspended_at && tournament.suspension_reason && (
-            <p className="text-sm text-[var(--text-muted)] mt-2 ml-[52px]">{tournament.suspension_reason}</p>
+            <p className="text-sm text-[var(--text-muted)] mt-2">{tournament.suspension_reason}</p>
           )}
         </div>
         <div className="flex items-center gap-3">

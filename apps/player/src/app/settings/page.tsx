@@ -45,15 +45,13 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <div className="card-base">
-      <div className="card-head">
-        <div className="row" style={{ gap: 10 }}>
-          <Icon size={16} className="text-[var(--mute)]" />
-          <h3 className="card-title">{title}</h3>
-        </div>
+    <section>
+      <div className="row" style={{ gap: 10, marginBottom: 10 }}>
+        <Icon size={16} className="text-[var(--mute)]" />
+        <h3 className="settings-section-title" style={{ margin: 0 }}>{title}</h3>
       </div>
       {children}
-    </div>
+    </section>
   );
 }
 
@@ -210,15 +208,16 @@ export default function SettingsPage() {
           <Section icon={Receipt} title="Fees & Dues">
             <Link
               href="/fees"
-              className="list-row"
-              style={{
-                justifyContent: 'space-between',
-                textDecoration: 'none',
-                color: 'inherit',
-              }}
+              className="settings-row"
+              style={{ textDecoration: 'none', color: 'inherit' }}
             >
-              <span style={{ fontSize: 13, fontWeight: 500 }}>View what I owe</span>
-              <ChevronRight size={16} className="text-[var(--mute)]" />
+              <div>
+                <div className="settings-row-label">View what I owe</div>
+                <div className="settings-row-hint">Club and tournament fees for the current season.</div>
+              </div>
+              <div className="settings-row-control">
+                <ChevronRight size={16} className="text-[var(--mute)]" />
+              </div>
             </Link>
           </Section>
 
@@ -239,7 +238,7 @@ export default function SettingsPage() {
                       alignItems: 'center',
                       gap: 8,
                       padding: '16px 12px',
-                      borderRadius: 12,
+                      borderRadius: 0,
                       border: '1px solid ' + (active ? 'var(--red)' : 'var(--line)'),
                       background: active ? 'var(--red-wash)' : 'var(--surface)',
                       color: active ? 'var(--red)' : 'var(--ink-2)',
@@ -290,7 +289,7 @@ export default function SettingsPage() {
                 </div>
               </div>
             ) : (
-              <div className="row" style={{ gap: 10, padding: 12, background: 'var(--surface-2)', borderRadius: 10 }}>
+              <div className="row" style={{ gap: 10, padding: 12, background: 'var(--surface-2)' }}>
                 <BellOff size={14} className="text-[var(--mute)]" />
                 <span className="muted" style={{ fontSize: 13 }}>Push notifications not supported in this browser.</span>
               </div>
@@ -317,24 +316,33 @@ export default function SettingsPage() {
           </Section>
 
           <Section icon={Info} title="About">
-            <div
-              className="list-row"
-              style={{ justifyContent: 'space-between', fontSize: 13 }}
-            >
-              <span className="muted">Version</span>
-              <span className="mono tag">0.0.1</span>
+            <div className="settings-row">
+              <div className="settings-row-label">Version</div>
+              <div className="settings-row-control">
+                <span className="mono tag">0.0.1</span>
+              </div>
             </div>
           </Section>
 
-          <button
-            type="button"
-            onClick={handleSignOut}
-            className="btn btn-lg btn-danger-ghost"
-            style={{ width: '100%', justifyContent: 'center' }}
-          >
-            <LogOut size={14} />
-            Sign out
-          </button>
+          <div className="danger-zone">
+            <h3 className="danger-title">Danger zone</h3>
+            <div className="settings-row">
+              <div>
+                <div className="settings-row-label">Sign out</div>
+                <div className="settings-row-hint">End your session on this device.</div>
+              </div>
+              <div className="settings-row-control">
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  className="btn btn-danger-ghost"
+                >
+                  <LogOut size={14} />
+                  Sign out
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

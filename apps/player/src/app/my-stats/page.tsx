@@ -132,29 +132,29 @@ export default async function MyStatsPage() {
       </div>
 
       {r && (
-        <div className="grid grid-3 reveal reveal-2" style={{ marginBottom: 24 }}>
-          <div className="card-base">
+        <div className="stat-strip reveal reveal-2" style={{ marginBottom: 24 }}>
+          <div>
             <div className="stat-label">SINGLES STREAK</div>
             <div className="stat-value">{getStreakDisplay(r.current_singles_streak)}</div>
             <div className="mono muted" style={{ fontSize: 11, marginTop: 6 }}>
               Best W{r.best_singles_streak ?? 0}
             </div>
           </div>
-          <div className="card-base">
+          <div>
             <div className="stat-label">DOUBLES STREAK</div>
             <div className="stat-value">{getStreakDisplay(r.current_doubles_streak)}</div>
             <div className="mono muted" style={{ fontSize: 11, marginTop: 6 }}>
               Best W{r.best_doubles_streak ?? 0}
             </div>
           </div>
-          <div className="card-base">
+          <div>
             <div className="stat-label">RELIABILITY</div>
             <div className="stat-value">{reliability?.no_shows ?? 0}</div>
             <div className="mono muted" style={{ fontSize: 11, marginTop: 6 }}>
               No-shows · {reliability?.late_withdrawals ?? 0} late w/d
             </div>
           </div>
-          <div className="card-base">
+          <div>
             <div className="stat-label">SINGLES POINT DIFF</div>
             <div className="stat-value">
               {getPointDifferential(r.singles_points_scored, r.singles_points_allowed)}
@@ -163,7 +163,7 @@ export default async function MyStatsPage() {
               Games {r.singles_games_won}–{r.singles_games_lost}
             </div>
           </div>
-          <div className="card-base">
+          <div>
             <div className="stat-label">DOUBLES POINT DIFF</div>
             <div className="stat-value">
               {getPointDifferential(r.doubles_points_scored, r.doubles_points_allowed)}
@@ -172,7 +172,7 @@ export default async function MyStatsPage() {
               Games {r.doubles_games_won}–{r.doubles_games_lost}
             </div>
           </div>
-          <div className="card-base">
+          <div>
             <div className="stat-label">TOTAL MATCHES</div>
             <div className="stat-value">{totalPlayed}</div>
             <div className="mono muted" style={{ fontSize: 11, marginTop: 6 }}>

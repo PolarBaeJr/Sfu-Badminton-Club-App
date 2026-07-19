@@ -15,15 +15,16 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
     return (
       <div className="space-y-1">
         {label && (
-          <label htmlFor={textareaId} className="block font-mono text-[11px] font-medium uppercase tracking-[.08em] text-[var(--text-muted)] mb-1.5">
+          <label htmlFor={textareaId} className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5">
             {label}
+            {props.required && <span className="text-[var(--color-accent)]"> *</span>}
           </label>
         )}
         <textarea
           ref={ref}
           id={textareaId}
           className={cn(
-            'w-full px-3 py-3 bg-[var(--bg-surface)] border border-[var(--border)] rounded-[10px] text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent resize-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
+            'w-full px-3 py-3 bg-[var(--bg-surface)] border border-[var(--border)] rounded-[8px] text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent resize-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
             error && 'border-[var(--color-danger)]',
             className
           )}

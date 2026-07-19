@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Badge, Card, Avatar, EmptyState } from '@badminton/ui';
+import { Badge, Card, Avatar, EmptyState, PageHeader } from '@badminton/ui';
 import { unwrap, unwrapMaybe } from '@badminton/shared';
 import type { Season } from '@badminton/shared';
 import { FeeActions, AddManualFee, RemoveManualFee } from './fee-actions';
@@ -19,7 +19,7 @@ export default async function FeesPage() {
   if (!season) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">FEES</h1>
+        <PageHeader title="Fees" watermark="F" />
         <Card>
           <EmptyState
             title="No active season"
@@ -72,15 +72,12 @@ export default async function FeesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">FEES</h1>
-          <p className="text-sm text-[var(--text-muted)] mt-1">
-            {season.name} · Competitive ${(season.competitive_fee_cents / 100).toFixed(2)} · Recreational ${(season.recreational_fee_cents / 100).toFixed(2)}
-          </p>
-        </div>
-        <AddManualFee seasonId={season.id} seasonName={season.name} />
-      </div>
+      <PageHeader
+        title="Fees"
+        watermark="F"
+        sub={`${season.name} · Competitive $${(season.competitive_fee_cents / 100).toFixed(2)} · Recreational $${(season.recreational_fee_cents / 100).toFixed(2)}`}
+        actions={<AddManualFee seasonId={season.id} seasonName={season.name} />}
+      />
 
       {/* Summary */}
       <div className="grid grid-cols-3 gap-4">

@@ -20,8 +20,8 @@ export function StatCard({ label, value, change, changeType = 'neutral' }: StatC
 
   return (
     <Card>
-      <p className="text-sm text-[var(--text-muted)]">{label}</p>
-      <p className="text-2xl font-bold text-[var(--text-primary)] font-mono mt-1">{value}</p>
+      <p className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{label}</p>
+      <p className="text-4xl font-bold text-[var(--text-primary)] font-display mt-1">{value}</p>
       {change && <p className={cn('text-sm mt-1', changeColors[changeType])}>{change}</p>}
     </Card>
   );

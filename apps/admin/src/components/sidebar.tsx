@@ -15,8 +15,6 @@ import {
   DollarSign,
   Megaphone,
   LogOut,
-  Menu,
-  X,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
@@ -50,21 +48,15 @@ const navSections = [
 
 export function Sidebar() {
   const pathname = usePathname();
-  const [mobileOpen, setMobileOpen] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [accessLevel, setAccessLevel] = useState<AccessLevel | null>(null);
   const [accessLoaded, setAccessLoaded] = useState(false);
 
-  // Don't render sidebar on public routes
+  // Don't render header on public routes
   const isPublicRoute =
     pathname === '/login' ||
     pathname.startsWith('/auth') ||
     pathname === '/unauthorized';
-
-  // Close mobile menu on navigation
-  useEffect(() => {
-    setMobileOpen(false);
-  }, [pathname]);
 
   // Load user email + access level (drives nav filtering for execs)
   useEffect(() => {
@@ -85,111 +77,75 @@ export function Sidebar() {
     window.location.href = '/login';
   }
 
-  const sidebarContent = (
-    <>
-      {/* Header */}
-      <div className="p-4 border-b border-[var(--border)] flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-bold text-[var(--color-accent)] font-display tracking-wider">SFU BADMINTON</h1>
-          <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-widest mt-0.5">Admin Panel</p>
-        </div>
-        <button
-          onClick={() => setMobileOpen(false)}
-          className="md:hidden p-1.5 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-hover)] transition-colors"
-        >
-          <X className="w-5 h-5" />
-        </button>
-      </div>
-
-      {/* Navigation */}
-      <nav className="flex-1 py-3 overflow-y-auto space-y-4">
-        {navSections.map((section) => {
-          // Until the access level resolves, show everything (avoids an empty-nav
-          // flash for the common admin case); once loaded, hide sections execs
-          // can't reach. The server action is the real boundary — this is cosmetic.
-          const visibleItems = section.items.filter(
-            (item) => !accessLoaded || canAccess(accessLevel, item.href)
-          );
-          if (visibleItems.length === 0) return null;
-          return (
-          <div key={section.title}>
-            <p className="px-5 mb-1.5 text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-widest">
-              {section.title}
-            </p>
-            <div className="space-y-0.5 px-2">
-              {visibleItems.map((item) => {
-                const isActive = pathname.startsWith(item.href);
-                const Icon = item.icon;
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={cn(
-                      'flex items-center gap-3 rounded-lg text-sm transition-all duration-200 group relative px-3 py-2.5',
-                      isActive
-                        ? 'bg-[var(--color-accent)]/10 text-[var(--color-accent)]'
-                        : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/[0.04]'
-                    )}
-                  >
-                    {isActive && (
-                      <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-[var(--color-accent)]" />
-                    )}
-                    <Icon className={cn('w-[18px] h-[18px] flex-shrink-0', isActive && 'text-[var(--color-accent)]')} />
-                    <span className="font-medium">{item.label}</span>
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
-          );
-        })}
-      </nav>
-
-      {/* Footer — user info + logout */}
-      <div className="p-4 border-t border-[var(--border)] space-y-3">
-        {userEmail && (
-          <p className="text-xs text-[var(--text-muted)] truncate">{userEmail}</p>
-        )}
-        <button
-          onClick={handleSignOut}
-          className="flex items-center gap-2 text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors w-full"
-        >
-          <LogOut className="w-4 h-4" />
-          Sign out
-        </button>
-      </div>
-    </>
-  );
-
   if (isPublicRoute) return null;
 
-  return (
-    <>
-      {/* Mobile hamburger button */}
-      <button
-        onClick={() => setMobileOpen(true)}
-        className="md:hidden fixed top-4 left-4 z-50 p-2 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
-      >
-        <Menu className="w-5 h-5" />
-      </button>
+  // Until the access level resolves, show everything (avoids an empty-nav
+  // flash for the common admin case); once loaded, hide sections execs
+  // can't reach. The server action is the real boundary — this is cosmetic.
+  const visibleItems = navSections.map((section) =>
+    section.items.filter((item) => !accessLoaded || canAccess(accessLevel, item.href))
+  );
+  const manageItems = visibleItems[0] ?? [];
+  const adminItems = visibleItems[1] ?? [];
 
-      {/* Mobile overlay */}
-      {mobileOpen && (
-        <div
-          className="md:hidden fixed inset-0 bg-black/50 z-40"
-          onClick={() => setMobileOpen(false)}
-        />
-      )}
-
-      {/* Sidebar — hidden on mobile unless mobileOpen */}
-      <aside
+  const navLink = (item: { href: string; label: string }) => {
+    const isActive = pathname.startsWith(item.href);
+    return (
+      <Link
+        key={item.href}
+        href={item.href}
         className={cn(
-          'fixed left-0 top-0 bottom-0 bg-[var(--bg-elevated)] border-r border-[var(--border)] flex flex-col z-50 w-64 transition-transform duration-300',
-          mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+          'relative px-3 py-3.5 text-[11px] font-semibold uppercase tracking-[0.08em] whitespace-nowrap transition-colors',
+          isActive
+            ? 'text-[var(--text-primary)]'
+            : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
         )}
       >
-        {sidebarContent}
-      </aside>
-    </>
+        {item.label}
+        {isActive && (
+          <span className="absolute left-3 right-3 bottom-0 h-[2px] bg-[var(--color-accent)]" />
+        )}
+      </Link>
+    );
+  };
+
+  return (
+    <header className="sticky top-0 z-40 bg-[var(--bg-primary)] border-b border-[var(--border)]">
+      {/* Row 1 — brand + Manage nav + user */}
+      <div className="flex items-center gap-4 px-4 lg:px-6">
+        <Link href="/dashboard" className="flex items-center gap-2.5 flex-shrink-0 py-2.5">
+          <span className="w-8 h-8 grid place-items-center bg-[var(--color-accent)] text-white font-display font-bold text-sm">
+            SB
+          </span>
+          <span className="hidden sm:block text-xs font-bold uppercase tracking-[0.12em] whitespace-nowrap text-[var(--text-primary)]">
+            SFU Badminton <span className="text-[var(--text-muted)]">· Admin</span>
+          </span>
+        </Link>
+        <nav className="flex items-center overflow-x-auto">
+          {manageItems.map(navLink)}
+        </nav>
+        <div className="ml-auto flex items-center gap-3 flex-shrink-0">
+          {userEmail && (
+            <span className="hidden lg:block text-xs text-[var(--text-muted)] truncate max-w-[200px]">
+              {userEmail}
+            </span>
+          )}
+          <button
+            onClick={handleSignOut}
+            className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors whitespace-nowrap"
+          >
+            <LogOut className="w-4 h-4" />
+            <span className="hidden md:inline">Sign out</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Row 2 — Admin-only sub-nav (hairline top; the header border gives the bottom) */}
+      {adminItems.length > 0 && (
+        <nav className="flex items-center overflow-x-auto px-4 lg:px-6 border-t border-[var(--border)]">
+          {adminItems.map(navLink)}
+        </nav>
+      )}
+    </header>
   );
 }

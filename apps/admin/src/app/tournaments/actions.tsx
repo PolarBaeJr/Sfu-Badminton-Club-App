@@ -141,9 +141,9 @@ function TournamentFormDialog({
           <Switch checked={placementBonus} onChange={setPlacementBonus} />
           <span className="text-sm text-[var(--text-secondary)]">Enable placement bonuses</span>
         </div>
-        <div className="flex gap-2">
-          <Button type="submit" loading={loading} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">{isEdit ? 'Save Changes' : 'Create'}</Button>
+        <div className="flex items-center justify-between">
           <Button variant="ghost" onClick={onClose} type="button" className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">Cancel</Button>
+          <Button type="submit" loading={loading} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">{isEdit ? 'Save Changes' : 'Create'}</Button>
         </div>
       </form>
     </Dialog>
@@ -220,9 +220,9 @@ export function TournamentMenu({ tournament }: { tournament: TournamentData }) {
           <p className="text-sm text-[var(--text-secondary)]">
             Are you sure you want to permanently delete <strong>{tournament.name}</strong>? This will also remove all participants and events. This action cannot be undone.
           </p>
-          <div className="flex gap-2">
-            <Button variant="danger" onClick={handleDelete} loading={loading} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">Delete</Button>
+          <div className="flex items-center justify-between">
             <Button variant="ghost" onClick={() => setConfirmDelete(false)} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">Cancel</Button>
+            <Button variant="danger" onClick={handleDelete} loading={loading} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">Delete</Button>
           </div>
         </div>
       </Dialog>

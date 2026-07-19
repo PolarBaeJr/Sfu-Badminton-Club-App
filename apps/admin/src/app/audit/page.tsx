@@ -1,8 +1,8 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge } from '@badminton/ui';
+import { Card, Badge, PageHeader } from '@badminton/ui';
 import { formatDateTime } from '@badminton/shared';
-import { ScrollText, User, Inbox } from 'lucide-react';
+import { User, Inbox } from 'lucide-react';
 
 const actionCategory = (action: string): 'success' | 'danger' | 'warning' | 'info' | 'neutral' => {
   if (action.includes('created') || action.includes('added')) return 'success';
@@ -24,15 +24,11 @@ export default async function AuditPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--color-accent)]/10">
-          <ScrollText className="w-5 h-5 text-[var(--color-accent)]" />
-        </div>
-        <div>
-          <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">AUDIT LOG</h1>
-          <p className="text-sm text-[var(--text-muted)]">Track all administrative actions</p>
-        </div>
-      </div>
+      <PageHeader
+        title="Audit log"
+        sub="Track all administrative actions"
+        watermark="A"
+      />
 
       <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
         <div className="overflow-x-auto">

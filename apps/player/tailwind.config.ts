@@ -7,6 +7,20 @@ const config: Config = {
     '../../packages/ui/src/**/*.{js,ts,jsx,tsx}',
   ],
   theme: {
+    // Reference design is sharp-cornered: zero the whole radius scale so every
+    // rounded-* class flattens app-wide. `full` stays for avatars/pill dots;
+    // dialogs opt back in with literal rounded-[16px]/[8px] (bypasses the scale).
+    borderRadius: {
+      none: '0',
+      sm: '0',
+      DEFAULT: '0',
+      md: '0',
+      lg: '0',
+      xl: '0',
+      '2xl': '0',
+      '3xl': '0',
+      full: '9999px',
+    },
     extend: {
       colors: {
         // shadcn/ui CSS variable colors
@@ -51,15 +65,10 @@ const config: Config = {
         'card-dark': 'var(--bg-card)',
         surface: 'var(--bg-surface)',
       },
-      borderRadius: {
-        lg: 'var(--radius)',
-        md: 'calc(var(--radius) - 2px)',
-        sm: 'calc(var(--radius) - 4px)',
-      },
       fontFamily: {
-        display: ['var(--font-display)', 'Space Grotesk', 'sans-serif'],
-        body: ['var(--font-sans)', 'Inter', 'sans-serif'],
-        sans: ['var(--font-sans)', 'Inter', 'sans-serif'],
+        display: ['var(--font-display)', 'Barlow Condensed', 'sans-serif'],
+        body: ['var(--font-sans)', 'Barlow', 'sans-serif'],
+        sans: ['var(--font-sans)', 'Barlow', 'sans-serif'],
         mono: ['var(--font-mono)', 'JetBrains Mono', 'monospace'],
       },
       animation: {

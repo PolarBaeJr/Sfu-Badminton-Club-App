@@ -96,9 +96,9 @@ export function CreateEventButton({ tournamentId }: { tournamentId: string }) {
             value={eloMultiplier}
             onChange={(e) => setEloMultiplier(e.target.value)}
           />
-          <div className="flex gap-2 pt-2">
-            <Button type="submit" loading={loading} className="flex-1">Create Event</Button>
+          <div className="flex items-center justify-between pt-2">
             <Button variant="ghost" onClick={() => setOpen(false)} type="button">Cancel</Button>
+            <Button type="submit" loading={loading}>Create Event</Button>
           </div>
         </form>
       </Dialog>

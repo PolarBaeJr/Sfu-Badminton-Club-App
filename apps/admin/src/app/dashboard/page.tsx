@@ -1,13 +1,11 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Badge, Avatar } from '@badminton/ui';
+import { Badge, Avatar, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS } from '@badminton/shared';
 import Link from 'next/link';
 import {
-  Users,
   UserCheck,
   AlertTriangle,
-  Clock,
   Swords,
   ArrowUpRight,
   Trophy,
@@ -67,10 +65,11 @@ export default async function DashboardPage() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold font-display text-[var(--text-primary)] tracking-wide">DASHBOARD</h1>
-        <p className="text-sm text-[var(--text-muted)] mt-1">Overview of club activity and action items</p>
-      </div>
+      <PageHeader
+        title="Dashboard"
+        sub="Overview of club activity and action items"
+        watermark="D"
+      />
 
       {/* Alert Banner */}
       {hasAlerts && (
@@ -121,70 +120,23 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      {/* Stat Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Link href="/players" className="group">
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-5 hover:border-[var(--border-hover)] transition-all hover:shadow-lg hover:shadow-black/5">
-            <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 rounded-lg bg-[var(--color-info)]/10 flex items-center justify-center">
-                <Users className="w-5 h-5 text-[var(--color-info)]" />
-              </div>
-              <ArrowUpRight className="w-4 h-4 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
-            </div>
-            <p className="text-2xl font-bold font-mono text-[var(--text-primary)]">{totalPlayers ?? 0}</p>
-            <p className="text-xs text-[var(--text-muted)] mt-1">Active Players</p>
-          </div>
+      {/* Stat strip */}
+      <div className="stat-strip">
+        <Link href="/players" className="hover:bg-[var(--bg-card)] transition-colors">
+          <p className="stat-label">Active Players</p>
+          <p className="stat-value">{totalPlayers ?? 0}</p>
         </Link>
-
-        <Link href="/players?tab=attention" className="group">
-          <div className={`rounded-xl border p-5 transition-all hover:shadow-lg hover:shadow-black/5 ${
-            (pendingPlayers ?? 0) > 0
-              ? 'border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5 hover:border-[var(--color-warning)]/50'
-              : 'border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--border-hover)]'
-          }`}>
-            <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 rounded-lg bg-[var(--color-warning)]/10 flex items-center justify-center">
-                <UserCheck className="w-5 h-5 text-[var(--color-warning)]" />
-              </div>
-              <ArrowUpRight className="w-4 h-4 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
-            </div>
-            <p className="text-2xl font-bold font-mono text-[var(--text-primary)]">{pendingPlayers ?? 0}</p>
-            <p className="text-xs text-[var(--text-muted)] mt-1">Pending Approvals</p>
-          </div>
+        <Link href="/players?tab=attention" className="hover:bg-[var(--bg-card)] transition-colors">
+          <p className="stat-label">Pending Approvals</p>
+          <p className={`stat-value ${(pendingPlayers ?? 0) > 0 ? 'text-[var(--color-warning)]' : ''}`}>{pendingPlayers ?? 0}</p>
         </Link>
-
-        <Link href="/disputes" className="group">
-          <div className={`rounded-xl border p-5 transition-all hover:shadow-lg hover:shadow-black/5 ${
-            (openDisputes ?? 0) > 0
-              ? 'border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5 hover:border-[var(--color-danger)]/50'
-              : 'border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--border-hover)]'
-          }`}>
-            <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 rounded-lg bg-[var(--color-danger)]/10 flex items-center justify-center">
-                <AlertTriangle className="w-5 h-5 text-[var(--color-danger)]" />
-              </div>
-              <ArrowUpRight className="w-4 h-4 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
-            </div>
-            <p className="text-2xl font-bold font-mono text-[var(--text-primary)]">{openDisputes ?? 0}</p>
-            <p className="text-xs text-[var(--text-muted)] mt-1">Open Disputes</p>
-          </div>
+        <Link href="/disputes" className="hover:bg-[var(--bg-card)] transition-colors">
+          <p className="stat-label">Open Disputes</p>
+          <p className={`stat-value ${(openDisputes ?? 0) > 0 ? 'text-[var(--color-danger)]' : ''}`}>{openDisputes ?? 0}</p>
         </Link>
-
-        <Link href="/walkovers" className="group">
-          <div className={`rounded-xl border p-5 transition-all hover:shadow-lg hover:shadow-black/5 ${
-            (pendingWalkovers ?? 0) > 0
-              ? 'border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5 hover:border-[var(--color-warning)]/50'
-              : 'border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--border-hover)]'
-          }`}>
-            <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 rounded-lg bg-[var(--color-warning)]/10 flex items-center justify-center">
-                <Clock className="w-5 h-5 text-[var(--color-warning)]" />
-              </div>
-              <ArrowUpRight className="w-4 h-4 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
-            </div>
-            <p className="text-2xl font-bold font-mono text-[var(--text-primary)]">{pendingWalkovers ?? 0}</p>
-            <p className="text-xs text-[var(--text-muted)] mt-1">Pending Walkovers</p>
-          </div>
+        <Link href="/walkovers" className="hover:bg-[var(--bg-card)] transition-colors">
+          <p className="stat-label">Pending Walkovers</p>
+          <p className={`stat-value ${(pendingWalkovers ?? 0) > 0 ? 'text-[var(--color-warning)]' : ''}`}>{pendingWalkovers ?? 0}</p>
         </Link>
       </div>
 

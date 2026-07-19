@@ -19,7 +19,7 @@ export function Button({
   ...props
 }: ButtonProps) {
   const base =
-    'inline-flex items-center justify-center gap-2 font-semibold rounded-full transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--red)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)] disabled:opacity-50 disabled:cursor-not-allowed border whitespace-nowrap';
+    'inline-flex items-center justify-center gap-2 font-bold uppercase tracking-[0.16em] rounded-none transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--red)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)] disabled:opacity-50 disabled:cursor-not-allowed border whitespace-nowrap';
   const variants = {
     primary:
       'bg-[var(--red)] text-white border-transparent hover:bg-[var(--red-ink)]',
@@ -33,8 +33,8 @@ export function Button({
       'bg-[var(--win)] text-white border-transparent hover:brightness-110',
   };
   const sizes = {
-    sm: 'px-3 min-h-[32px] text-xs',
-    md: 'px-4 min-h-[40px] text-sm',
+    sm: 'px-3 min-h-[32px] text-[11px]',
+    md: 'px-4 min-h-[40px] text-[11px]',
     lg: 'px-6 min-h-[48px] text-sm',
   };
 
