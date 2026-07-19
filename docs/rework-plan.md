@@ -1,5 +1,9 @@
 # SFU Badminton — Structural Rework Plan (2026-07)
 
+> ✅ **SHIPPED 2026-07-18** — all phases below were implemented on `rework/seasons-fees-rbac`
+> (14 commits), merged into `deploy/docker-prod`, and are live in production. Kept for
+> reference; see `docs/project/02-completed.md` for the plain-language feature ledger.
+
 Batch of interrelated changes. Build on branch fixup/security-and-cleanup; deploy in ONE
 coordinated window (schema migration + ELO rescale disrupt live use). Tasks #14–22.
 
