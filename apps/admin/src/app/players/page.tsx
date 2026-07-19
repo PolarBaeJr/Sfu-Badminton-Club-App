@@ -43,6 +43,10 @@ export default async function PlayersPage({
     query = query.eq('status', 'recreational');
   } else if (tab === 'attention') {
     query = query.in('status', ['suspended', 'pending_approval']);
+  } else if (tab === 'suspended') {
+    query = query.or('status.eq.suspended,is_banned.eq.true');
+  } else if (tab === 'inactive') {
+    query = query.eq('active_flag', false);
   }
 
   if (params.search) {
@@ -59,11 +63,15 @@ export default async function PlayersPage({
   const { count: compCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).not('status', 'in', '("recreational","suspended","pending_approval")');
   const { count: recCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).eq('status', 'recreational');
   const { count: attCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).in('status', ['suspended', 'pending_approval']);
+  const { count: susCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).or('status.eq.suspended,is_banned.eq.true');
+  const { count: inactCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).eq('active_flag', false);
 
   const tabs = [
     { id: 'competitive', label: 'Competitive', count: compCount ?? 0 },
     { id: 'recreational', label: 'Recreational', count: recCount ?? 0 },
     { id: 'attention', label: 'Needs Attention', count: attCount ?? 0 },
+    { id: 'suspended', label: 'Suspended', count: susCount ?? 0 },
+    { id: 'inactive', label: 'Inactive', count: inactCount ?? 0 },
   ];
 
   return (

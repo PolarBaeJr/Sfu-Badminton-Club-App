@@ -25,7 +25,7 @@ const actionCategory = (action: string): 'success' | 'danger' | 'warning' | 'inf
 };
 
 // Explicit target_type → filter-bucket mapping. Core buckets always render as
-// chips; extras only appear when present in the fetched rows.
+// options; extras only appear when present in the fetched rows.
 const TARGET_BUCKETS: Record<string, string> = {
   player: 'players',
   rating: 'players',
@@ -51,24 +51,12 @@ const EXTRA_BUCKETS = ['seasons', 'tournaments', 'fees', 'announcements', 'other
 
 const bucketOf = (log: AuditLogRow) => TARGET_BUCKETS[log.target_type ?? ''] ?? 'other';
 
-const actorName = (log: AuditLogRow) => log.actor?.full_name ?? 'System';
-
-type SortKey = 'newest' | 'oldest' | 'action' | 'admin';
-
-const SORT_OPTIONS: { value: SortKey; label: string }[] = [
-  { value: 'newest', label: 'Newest first' },
-  { value: 'oldest', label: 'Oldest first' },
-  { value: 'action', label: 'Action A–Z' },
-  { value: 'admin', label: 'Admin A–Z' },
-];
-
 export function AuditList({ logs }: { logs: AuditLogRow[] }) {
   const router = useRouter();
   const [filter, setFilter] = useState('all');
-  const [sort, setSort] = useState<SortKey>('newest');
 
   // Auto-refresh: router.refresh() re-runs the server fetch without resetting
-  // client filter/sort state. Skipped while the tab is hidden.
+  // client filter state. Skipped while the tab is hidden.
   useEffect(() => {
     const id = setInterval(() => {
       if (!document.hidden) router.refresh();
@@ -85,7 +73,7 @@ export function AuditList({ logs }: { logs: AuditLogRow[] }) {
     return c;
   }, [logs]);
 
-  const chips = [
+  const buckets = [
     'all',
     ...CORE_BUCKETS,
     ...EXTRA_BUCKETS.filter((b) => (counts[b] ?? 0) > 0),
@@ -93,62 +81,28 @@ export function AuditList({ logs }: { logs: AuditLogRow[] }) {
 
   const rows = useMemo(() => {
     const filtered = filter === 'all' ? logs : logs.filter((log) => bucketOf(log) === filter);
-    const sorted = [...filtered];
-    switch (sort) {
-      case 'oldest':
-        sorted.sort((a, b) => a.created_at.localeCompare(b.created_at));
-        break;
-      case 'action':
-        sorted.sort((a, b) => a.action_type.localeCompare(b.action_type));
-        break;
-      case 'admin':
-        sorted.sort((a, b) => actorName(a).localeCompare(actorName(b)));
-        break;
-      default:
-        sorted.sort((a, b) => b.created_at.localeCompare(a.created_at));
-    }
-    return sorted;
-  }, [logs, filter, sort]);
+    return [...filtered].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }, [logs, filter]);
 
   return (
     <div>
-      {/* Filter band — hairline-bounded chips + sort + auto-refresh */}
+      {/* Filter band — hairline-bounded category select + auto-refresh */}
       <div className="flex flex-wrap items-center gap-2 border-y border-[var(--border)] py-3">
-        {chips.map((bucket) => {
-          const active = filter === bucket;
-          return (
-            <button
-              key={bucket}
-              type="button"
-              onClick={() => setFilter(bucket)}
-              className={`flex items-center gap-1.5 border px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.12em] transition-colors ${
-                active
-                  ? 'border-[var(--color-accent)] text-[var(--color-accent)]'
-                  : 'border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--border-hover)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              {bucket}
-              <span className={active ? 'opacity-60' : 'text-[var(--text-muted)]'}>
-                {counts[bucket] ?? 0}
-              </span>
-            </button>
-          );
-        })}
-        <div className="ml-auto flex items-center gap-4">
-          <select
-            aria-label="Sort audit entries"
-            value={sort}
-            onChange={(e) => setSort(e.target.value as SortKey)}
-            className="border border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-1.5 text-xs text-[var(--text-secondary)] focus:outline-none focus:border-[var(--border-hover)]"
-          >
-            {SORT_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-          <span className="whitespace-nowrap font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">
-            Auto-refresh · 30s
-          </span>
-        </div>
+        <select
+          aria-label="Filter audit entries by category"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          className="settings-input font-mono text-[11px] uppercase tracking-[0.12em]"
+        >
+          {buckets.map((bucket) => (
+            <option key={bucket} value={bucket}>
+              {bucket.toUpperCase()} ({counts[bucket] ?? 0})
+            </option>
+          ))}
+        </select>
+        <span className="ml-auto whitespace-nowrap font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">
+          Auto-refresh · 30s
+        </span>
       </div>
 
       {/* Table — hairline dividers, no card chrome */}
