@@ -37,9 +37,9 @@ const darkBlocks = [...css.matchAll(/\[data-theme=(?:"dark"|dark)\]\{([^}]+)\}/g
 if (!darkBlocks.length) console.warn('! no [data-theme=dark] blocks found — tokens may be missing');
 
 const out = [
-  '@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap");',
+  '@import url("https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@400;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap");',
   `/* Snapshot of apps/player compiled CSS (${largest}). Regenerate: node .design-sync/gen-styles.mjs */`,
-  ':root{--font-sans:"Inter";--font-display:"Space Grotesk";--font-mono:"JetBrains Mono";}',
+  ':root{--font-sans:"Barlow";--font-display:"Barlow Condensed";--font-mono:"JetBrains Mono";}',
   `:root{${darkBlocks.join(';')}}`,
   css,
   // Preview cards inline body{background:#fff} AFTER linking this sheet; the

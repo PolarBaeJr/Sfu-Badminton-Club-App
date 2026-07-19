@@ -44,6 +44,21 @@
 - `RouteLoading` — [RENDER_BLANK]-ish: skeleton shimmer has very low ink. Floor card by scope.
 - These two + `RouteError` were deliberately left unauthored (trivial components).
 
+## Dark-first design (2026-07-19, black/red remap)
+- The app is dark-by-default (true black #0a0a0a + #C00 red, Barlow fonts —
+  see docs/design-reference.md). `gen-styles.mjs` now mirrors the
+  `[data-theme="dark"]` blocks to `:root` (was light) AND appends
+  `html body{background:var(--bg);color:var(--ink)}` — preview cards inline
+  `body{background:#fff}` AFTER linking styles.css, so the dark ground must
+  win by specificity. Without that rule, dark ink renders on white
+  (invisible PageHeader — the failure mode that prompted it).
+- Fonts changed to Barlow/Barlow Condensed — the Google Fonts @import in
+  gen-styles.mjs must list THOSE families after the next re-sync
+  regeneration (check it matches apps/player layout.tsx next/font families).
+- conventions.md palette claims were updated for slate once and black/red is
+  NEWER still — re-validate its color values against the fresh build on the
+  next sync (token names are stable; values moved twice in one day).
+
 ## Re-sync risks
 - `app-styles.css`/`packages/ui/.ds-styles.css` snapshot goes stale whenever
   `apps/player/src/app/globals.css`, tailwind config, or ui-package classes change —
