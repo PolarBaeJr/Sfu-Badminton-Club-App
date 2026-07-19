@@ -47,3 +47,7 @@ packages/ui/.ds-styles.css
 
 # ── Local notes ──
 .claude-handoff.md
+
+# staging-era deploy artifacts (removed from repo)
+deploy-staging.sh
+deploy/
