@@ -445,8 +445,8 @@ body {
 .btn-sm      { padding: 6px 10px; font-size: 12px; }
 .btn-lg      { padding: 12px 22px; font-size: 14px; }
 .btn:disabled { opacity: .55; cursor: not-allowed; }
-.btn-ghost-inverse { color: #fff; border-color: rgba(255,255,255,.28); }
-.btn-ghost-inverse:hover { background: rgba(255,255,255,.08); }
+.btn-ghost-inverse { color: var(--hero-fg); border-color: color-mix(in oklab, var(--hero-fg) 30%, transparent); }
+.btn-ghost-inverse:hover { background: color-mix(in oklab, var(--hero-fg) 8%, transparent); }
 .btn-danger-ghost {
   background: transparent;
   border: 1px solid color-mix(in oklab, var(--loss) 40%, transparent);
@@ -492,13 +492,15 @@ body {
    ═══════════════════════════════════════════════════════════ */
 
 .hero-banner {
-  /* Always a dark "spotlight" card, in both light and dark themes. Uses
-     hero-scoped tokens instead of --ink/--bg (which swap by theme and made the
-     card render light in dark mode). */
-  --hero-bg: #141110;
-  --hero-fg: #F6F1EC;
-  background: var(--hero-bg); color: var(--hero-fg);
-  border: 1px solid transparent;
+  /* Theme-responsive spotlight card: reads light in light mode, dark in dark
+     mode. --hero-fg drives every child (headline, stats, meta, the inverse
+     button), so swapping it per theme flips the whole card's ink at once. */
+  --hero-fg: var(--ink);
+  --hero-glow: rgba(204,6,51,.10);
+  background: linear-gradient(135deg, var(--surface), color-mix(in oklab, var(--red) 5%, var(--surface)));
+  color: var(--hero-fg);
+  border: 1px solid var(--line);
+  box-shadow: var(--elev-1);
   border-radius: var(--r-xl);
   padding: 32px;
   position: relative; overflow: hidden;
@@ -508,17 +510,19 @@ body {
   align-items: center;
 }
 [data-theme="dark"] .hero-banner {
-  /* Slightly lifted above the near-black page, with a subtle border so the
-     card still separates from the background. */
-  --hero-bg: #1C1613;
+  /* Dark spotlight: near-black card lifted above the near-black page. */
+  --hero-fg: #F6F1EC;
+  --hero-glow: rgba(204,6,51,.32);
+  background: #1C1613;
   border-color: var(--line);
+  box-shadow: none;
 }
 .hero-banner::before {
   content: ""; position: absolute;
   right: -60px; top: -60px;
   width: 340px; height: 340px;
   border-radius: 999px;
-  background: radial-gradient(circle, rgba(204,6,51,.35), transparent 70%);
+  background: radial-gradient(circle, var(--hero-glow), transparent 70%);
   pointer-events: none;
 }
 .hero-banner .eyebrow {
@@ -582,7 +586,7 @@ body {
   .hero-banner       { grid-template-columns: 1fr; padding: 22px; border-radius: 14px; gap: 22px; }
   .hero-banner h2    { font-size: 24px; line-height: 1.1; word-break: break-word; overflow-wrap: anywhere; }
   .hero-banner .lead { font-size: 13px; }
-  .hero-stats        { grid-template-columns: 1fr 1fr; border-left: 0; border-top: 1px solid rgba(255,255,255,.15); padding: 20px 0 0; gap: 14px; }
+  .hero-stats        { grid-template-columns: 1fr 1fr; border-left: 0; border-top: 1px solid color-mix(in oklab, var(--hero-fg) 15%, transparent); padding: 20px 0 0; gap: 14px; }
   .hero-stats .stat-value { font-size: 22px; }
 
   .feed-match              { grid-template-columns: 1fr; gap: 10px; text-align: left; }
