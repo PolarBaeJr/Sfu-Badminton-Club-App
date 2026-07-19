@@ -14,9 +14,10 @@ interface Props {
   eventStatus: string;
   registration: { id: string; status: string } | null;
   playerName: string;
+  tournamentSuspended: boolean;
 }
 
-export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registration, playerName }: Props) {
+export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registration, playerName, tournamentSuspended }: Props) {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const { toast } = useToast();
@@ -52,6 +53,26 @@ export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registra
           className="press inline-flex items-center gap-2 px-5 py-3 min-h-[48px] bg-[var(--color-success)]/10 text-[var(--color-success)] text-sm font-bold rounded-xl border border-[var(--color-success)]/25 hover:bg-[var(--color-success)]/20 transition-all duration-200"
         >
           View Event Details
+        </Link>
+      </div>
+    );
+  }
+
+  if (tournamentSuspended) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-5 text-center px-6 pb-28">
+        <div className="w-20 h-20 rounded-full bg-[var(--color-accent)]/15 flex items-center justify-center">
+          <XCircle className="w-10 h-10 text-[var(--color-accent)]" />
+        </div>
+        <div>
+          <h1 className="display-md">Check-in Paused</h1>
+          <p className="text-[var(--text-muted)] text-sm mt-2">This tournament is currently suspended, so check-in is paused.</p>
+        </div>
+        <Link
+          href={backLink}
+          className="press text-sm text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors min-h-[44px] flex items-center"
+        >
+          Back to Event
         </Link>
       </div>
     );

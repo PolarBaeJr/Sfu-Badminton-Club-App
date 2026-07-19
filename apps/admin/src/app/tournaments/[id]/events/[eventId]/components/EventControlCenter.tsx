@@ -8,7 +8,7 @@ import {
   TOURNAMENT_EVENT_STATUS_COLORS,
 } from '@badminton/shared';
 import type { TournamentEventType, TournamentEventStatus } from '@badminton/shared';
-import { Trophy, Users, CheckCircle, BarChart3, Settings, Swords, ListOrdered } from 'lucide-react';
+import { Trophy, Users, CheckCircle, BarChart3, Settings, Swords, ListOrdered, Pause } from 'lucide-react';
 import type {
   TournamentRow,
   TournamentEventRow,
@@ -88,6 +88,19 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
         totalMatches={totalMatches}
         completedMatches={completedMatches}
       />
+
+      {/* Suspension Banner — server actions enforce the actual blocking */}
+      {tournament.suspended_at && (
+        <div className="rounded-xl border border-[var(--color-accent)]/30 bg-[var(--color-accent)]/5 p-4 flex items-start gap-3" role="status">
+          <Pause className="w-4 h-4 text-[var(--color-accent)] mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-[var(--text-primary)]">This tournament is suspended — actions are paused until it is resumed.</p>
+            {tournament.suspension_reason && (
+              <p className="text-sm text-[var(--text-muted)] mt-1">{tournament.suspension_reason}</p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Tab Navigation */}
       <div className="overflow-x-auto -mx-1 px-1">

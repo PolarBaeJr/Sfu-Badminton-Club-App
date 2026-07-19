@@ -146,6 +146,11 @@ export const tournamentCreateSchema = z.object({
   placement_bonus_enabled: z.boolean().default(true),
 });
 
+export const tournamentSuspendSchema = z.object({
+  tournament_id: z.string().uuid(),
+  reason: z.string().min(2, 'Reason is required').max(500),
+});
+
 export const adminPlayerUpdateSchema = z.object({
   status: z.enum([
     'competitive', 'recreational', 'suspended', 'pending_approval',
@@ -285,6 +290,7 @@ export type SessionCreateInput = z.infer<typeof sessionCreateSchema>;
 export type AttendanceStatusInput = z.infer<typeof attendanceStatusSchema>;
 export type AttendanceMarkInput = z.infer<typeof attendanceMarkSchema>;
 export type TournamentCreateInput = z.infer<typeof tournamentCreateSchema>;
+export type TournamentSuspendInput = z.infer<typeof tournamentSuspendSchema>;
 export type AdminPlayerUpdateInput = z.infer<typeof adminPlayerUpdateSchema>;
 export type WalkoverReportInput = z.infer<typeof walkoverReportSchema>;
 export type DisputeResolveInput = z.infer<typeof disputeResolveSchema>;

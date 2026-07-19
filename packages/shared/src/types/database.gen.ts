@@ -1758,6 +1758,8 @@ export type Database = {
           season_id: string | null
           start_date: string
           status: Database["public"]["Enums"]["tournament_status"]
+          suspended_at: string | null
+          suspension_reason: string | null
           type: Database["public"]["Enums"]["tournament_type"]
           updated_at: string
         }
@@ -1775,6 +1777,8 @@ export type Database = {
           season_id?: string | null
           start_date: string
           status?: Database["public"]["Enums"]["tournament_status"]
+          suspended_at?: string | null
+          suspension_reason?: string | null
           type?: Database["public"]["Enums"]["tournament_type"]
           updated_at?: string
         }
@@ -1792,6 +1796,8 @@ export type Database = {
           season_id?: string | null
           start_date?: string
           status?: Database["public"]["Enums"]["tournament_status"]
+          suspended_at?: string | null
+          suspension_reason?: string | null
           type?: Database["public"]["Enums"]["tournament_type"]
           updated_at?: string
         }

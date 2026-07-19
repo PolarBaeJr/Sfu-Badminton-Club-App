@@ -14,9 +14,10 @@ interface Props {
     status: string;
   } | null;
   isDoubles: boolean;
+  suspended?: boolean;
 }
 
-export function EventActions({ eventId, eventStatus, playerRegistration, isDoubles }: Props) {
+export function EventActions({ eventId, eventStatus, playerRegistration, isDoubles, suspended }: Props) {
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
@@ -81,7 +82,7 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
   }
 
   if (!playerRegistration) {
-    if (eventStatus === 'registration') {
+    if (eventStatus === 'registration' && !suspended) {
       return (
         <Button
           onClick={handleRegister}
@@ -101,7 +102,7 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      {regStatus === 'registered' && eventStatus === 'checkin' && (
+      {regStatus === 'registered' && eventStatus === 'checkin' && !suspended && (
         <Button
           onClick={handleCheckIn}
           loading={loading}

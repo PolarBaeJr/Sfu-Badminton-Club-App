@@ -104,6 +104,11 @@ function TournamentCard({ t }: { t: TournamentWithEventCount }) {
               }>
                 <span className="sr-only">Status: </span>{t.status}
               </Badge>
+              {t.suspended_at && (
+                <Badge variant="danger">
+                  <span className="sr-only">Status: </span>suspended
+                </Badge>
+              )}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>

@@ -17,6 +17,12 @@ export default async function CheckInPage({
     .single();
   if (eventError || !event) notFound();
 
+  const { data: tournament } = await supabase
+    .from('tournaments')
+    .select('suspended_at')
+    .eq('id', tournamentId)
+    .single();
+
   const player = await getCurrentPlayer();
   if (!player) redirect('/login');
 
@@ -34,6 +40,7 @@ export default async function CheckInPage({
       eventStatus={event.status}
       registration={registration ? { id: registration.id, status: registration.status } : null}
       playerName={player.full_name}
+      tournamentSuspended={!!tournament?.suspended_at}
     />
   );
 }

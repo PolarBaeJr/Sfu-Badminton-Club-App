@@ -11,9 +11,10 @@ interface Props {
   eventStatus: string;
   registration: { status: string } | null;
   isDoubles: boolean;
+  suspended?: boolean;
 }
 
-export function EventRegistrationButton({ eventId, eventStatus, registration, isDoubles }: Props) {
+export function EventRegistrationButton({ eventId, eventStatus, registration, isDoubles, suspended }: Props) {
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
@@ -50,7 +51,7 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
   }
 
   if (!registration) {
-    if (eventStatus === 'registration') {
+    if (eventStatus === 'registration' && !suspended) {
       return (
         <Button
           size="sm"
@@ -69,7 +70,7 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
 
   return (
     <div className="flex items-center gap-1.5" onClick={(e) => e.preventDefault()}>
-      {s === 'registered' && eventStatus === 'checkin' && (
+      {s === 'registered' && eventStatus === 'checkin' && !suspended && (
         <Button
           size="sm"
           loading={loading}

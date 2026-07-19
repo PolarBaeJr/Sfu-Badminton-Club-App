@@ -9,6 +9,7 @@ import {
   revalidateEventPaths,
   notifyPlayers,
   getStandardSeedPositions,
+  assertTournamentNotSuspended,
 } from './_internal';
 
 // ============================================================
@@ -22,6 +23,7 @@ export async function generateSingleEliminationBracket(eventId: string) {
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
   if (event.draw_locked) throw new Error('Draw is locked. Unlock it before generating bracket.');
+  await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
   const doubles = isDoublesEvent(event.event_type);
 
@@ -261,6 +263,7 @@ export async function generateRoundRobinMatches(eventId: string) {
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
   if (event.draw_locked) throw new Error('Draw is locked. Unlock it before generating matches.');
+  await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
   const doubles = isDoublesEvent(event.event_type);
 

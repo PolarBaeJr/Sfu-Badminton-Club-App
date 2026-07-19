@@ -44,6 +44,7 @@ export const TOURNAMENT_STATUS_TAG: Record<string, string> = {
   checkin: 'tag tag-gold',
   completed: 'tag',
   cancelled: 'tag',
+  suspended: 'tag tag-red',
 };
 
 export const NOTIFICATION_TAG: Record<string, string> = {

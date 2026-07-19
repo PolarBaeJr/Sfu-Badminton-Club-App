@@ -300,6 +300,8 @@ export interface Tournament {
   event_multiplier: number;
   placement_bonus_enabled: boolean;
   status: TournamentStatus;
+  suspended_at: string | null;
+  suspension_reason: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;

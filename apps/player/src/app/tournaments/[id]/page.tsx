@@ -88,9 +88,12 @@ export default async function TournamentDetailPage({ params }: { params: Promise
               <span className="muted" style={{ textTransform: 'capitalize' }}>{tournament.scope}</span>
             </div>
           </div>
-          <span className={TOURNAMENT_STATUS_TAG[tournament.status as string] ?? 'tag'}>
-            {(tournament.status as string)?.toUpperCase()}
-          </span>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <span className={TOURNAMENT_STATUS_TAG[tournament.status as string] ?? 'tag'}>
+              {(tournament.status as string)?.toUpperCase()}
+            </span>
+            {tournament.suspended_at && <span className="tag tag-red">SUSPENDED</span>}
+          </div>
         </div>
         <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
           {tournament.scope === 'eligible_only' && <span className="tag">ELIGIBLE ONLY</span>}
@@ -99,6 +102,19 @@ export default async function TournamentDetailPage({ params }: { params: Promise
           </span>
         </div>
       </div>
+
+      {tournament.suspended_at && (
+        <div className="card-base" style={{ marginBottom: 20 }} role="status">
+          <div className="card-head" style={{ marginBottom: 0 }}>
+            <h3 className="card-title">Tournament suspended</h3>
+            <span className="tag tag-red">PAUSED</span>
+          </div>
+          <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+            Registration and check-in are paused
+            {tournament.suspension_reason ? `: ${tournament.suspension_reason}` : ' until further notice.'}
+          </p>
+        </div>
+      )}
 
       <div className="card-head" style={{ marginBottom: 14 }}>
         <h3 className="card-title">Events</h3>
@@ -175,6 +191,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
                     eventStatus={eventStatus}
                     registration={myReg}
                     isDoubles={doubles}
+                    suspended={!!tournament.suspended_at}
                   />
                 </div>
               </div>

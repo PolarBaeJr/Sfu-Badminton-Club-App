@@ -11,6 +11,7 @@ import {
   notifyPlayers,
   applyTournamentMatchElo,
   reverseEloSnapshot,
+  assertTournamentNotSuspended,
 } from './_internal';
 
 // ============================================================
@@ -36,6 +37,7 @@ export async function enterMatchResult(
   }
 
   const event = match.event as Record<string, unknown>;
+  await assertTournamentNotSuspended(adminClient, event.tournament_id as string);
   const matchFormat = event.match_format as TournamentMatchFormat;
   const maxGames = getMaxGamesForFormat(matchFormat);
   if (scores.length > maxGames) {
@@ -157,6 +159,7 @@ export async function enterWalkover(
   if (!match) throw new Error('Match not found');
 
   const event = match.event as Record<string, unknown>;
+  await assertTournamentNotSuspended(adminClient, event.tournament_id as string);
   const doubles = isDoublesEvent(event.event_type as TournamentEventType);
 
   let winnerId: string;

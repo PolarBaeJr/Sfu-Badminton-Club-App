@@ -10,6 +10,7 @@ import {
   extractEventContext,
   participantContextSelect,
   pairContextSelect,
+  assertTournamentNotSuspended,
 } from './_internal';
 
 // ============================================================
@@ -26,6 +27,7 @@ export async function addParticipantToEvent(eventId: string, playerId: string) {
     throw new Error('Cannot add participants in current status');
   }
   if (event.draw_locked) throw new Error('Draw is locked. Unlock it before making changes.');
+  await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
   if (isDoublesEvent(event.event_type)) {
     throw new Error('Use addPairToEvent for doubles events');
@@ -121,9 +123,12 @@ export async function checkInParticipant(participantId: string) {
   const adminClient = createAdminClient();
 
   const { data: participant } = await adminClient.from('tournament_participants')
-    .select('event_id, event:tournament_events(tournament_id)')
+    .select(participantContextSelect)
     .eq('id', participantId)
     .single();
+
+  const participantCtx = extractEventContext(participant);
+  if (participantCtx) await assertTournamentNotSuspended(adminClient, participantCtx.tid);
 
   const { error } = await adminClient.from('tournament_participants')
     .update({
@@ -213,6 +218,7 @@ export async function addPairToEvent(eventId: string, player1Id: string, player2
   }
 
   if (event.draw_locked) throw new Error('Draw is locked. Unlock it before making changes.');
+  await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
   if (!isDoublesEvent(event.event_type)) {
     throw new Error('Use addParticipantToEvent for singles events');
@@ -300,6 +306,14 @@ export async function checkInPair(pairId: string) {
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
+  const { data: pair } = await adminClient.from('tournament_pairs')
+    .select(pairContextSelect)
+    .eq('id', pairId)
+    .single();
+
+  const pairCtx = extractEventContext(pair);
+  if (pairCtx) await assertTournamentNotSuspended(adminClient, pairCtx.tid);
+
   const { data, error } = await adminClient.from('tournament_pairs')
     .update({
       status: 'checked_in',
@@ -347,6 +361,9 @@ export async function bulkCheckIn(eventId: string, type: 'participants' | 'pairs
 
   const table = type === 'pairs' ? 'tournament_pairs' : 'tournament_participants';
 
+  const { data: event } = await adminClient.from('tournament_events').select('tournament_id').eq('id', eventId).single();
+  if (event) await assertTournamentNotSuspended(adminClient, event.tournament_id);
+
   const { error } = await adminClient.from(table)
     .update({
       status: 'checked_in',
@@ -361,6 +378,5 @@ export async function bulkCheckIn(eventId: string, type: 'participants' | 'pairs
     throw new Error(error.message);
   }
 
-  const { data: event } = await adminClient.from('tournament_events').select('tournament_id').eq('id', eventId).single();
   if (event) revalidateEventPaths(event.tournament_id, eventId);
 }

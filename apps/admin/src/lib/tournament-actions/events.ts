@@ -11,7 +11,7 @@ import type {
   TournamentSeedingMethod,
   TournamentEventStatus,
 } from '@badminton/shared';
-import { getExecOrAdmin, revalidateEventPaths } from './_internal';
+import { getExecOrAdmin, revalidateEventPaths, assertTournamentNotSuspended } from './_internal';
 
 // ============================================================
 // Event Management
@@ -127,6 +127,7 @@ export async function setEventStatus(eventId: string, status: TournamentEventSta
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
+  await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
   // Validate status transitions
   const validTransitions: Record<string, string[]> = {

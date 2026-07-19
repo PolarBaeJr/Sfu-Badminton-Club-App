@@ -88,9 +88,13 @@ export default async function TournamentDetailPage({ params }: { params: Promise
             <Badge variant={tournament.status === 'active' ? 'success' : tournament.status === 'completed' ? 'neutral' : 'warning'}>
               <span className="sr-only">Tournament status: </span>{tournament.status}
             </Badge>
+            {tournament.suspended_at && <Badge variant="danger">suspended</Badge>}
             {tournament.scope === 'eligible_only' && <Badge variant="info">Eligible Only</Badge>}
             {tournament.placement_bonus_enabled && <Badge variant="default">Placement Bonuses</Badge>}
           </div>
+          {tournament.suspended_at && tournament.suspension_reason && (
+            <p className="text-sm text-[var(--text-muted)] mt-2 ml-[52px]">{tournament.suspension_reason}</p>
+          )}
         </div>
         <div className="flex items-center gap-3">
           {isAdmin && (
@@ -99,7 +103,12 @@ export default async function TournamentDetailPage({ params }: { params: Promise
               Fees
             </Link>
           )}
-          <TournamentStatusControls tournamentId={id} status={tournament.status} />
+          <TournamentStatusControls
+            tournamentId={id}
+            status={tournament.status}
+            suspendedAt={tournament.suspended_at}
+            suspensionReason={tournament.suspension_reason}
+          />
         </div>
       </div>
 

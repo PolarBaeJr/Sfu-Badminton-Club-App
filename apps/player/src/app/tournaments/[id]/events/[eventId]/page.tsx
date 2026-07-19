@@ -215,13 +215,26 @@ export default async function EventDetailPage({
                   {playerRegistration.status === 'checked_in' ? 'Checked In' : 'Registered'}
                 </span>
               )}
+              {tournament.suspended_at && (
+                <span className="chip chip-red" role="status">
+                  <span className="sr-only">Tournament status: </span>Suspended
+                </span>
+              )}
             </div>
+
+            {tournament.suspended_at && (
+              <p className="text-sm text-[var(--text-muted)] mb-4" role="status">
+                This tournament is currently suspended
+                {tournament.suspension_reason ? `: ${tournament.suspension_reason}` : '.'}
+              </p>
+            )}
 
             <EventActions
               eventId={eventId}
               eventStatus={eventStatus}
               playerRegistration={playerRegistration}
               isDoubles={doubles}
+              suspended={!!tournament.suspended_at}
             />
           </div>
         </div>

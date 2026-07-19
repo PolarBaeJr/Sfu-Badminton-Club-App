@@ -15,6 +15,12 @@ function revalidateTournamentPaths(tournamentId: string, eventId: string) {
   revalidatePath(`/tournaments/${tournamentId}/events/${eventId}`);
 }
 
+// Supabase may return a to-one embed as object-or-array — unwrap defensively.
+function pickSuspension(embed: unknown): { suspended_at: string | null; suspension_reason: string | null } | null {
+  const row = Array.isArray(embed) ? embed[0] : embed;
+  return (row as { suspended_at: string | null; suspension_reason: string | null } | null) ?? null;
+}
+
 export async function registerForEvent(eventId: string) {
   const player = await requirePlayer();
   if (player.is_banned) {
@@ -27,7 +33,7 @@ export async function registerForEvent(eventId: string) {
   // surfaced as a thrown PGRST116 error.
   const [eventRes, existingRes, ratingRes] = await Promise.all([
     service.from('tournament_events')
-      .select('id, status, event_type, tournament_id, max_participants')
+      .select('id, status, event_type, tournament_id, max_participants, tournament:tournaments(suspended_at, suspension_reason)')
       .eq('id', eventId).maybeSingle(),
     service.from('tournament_participants')
       .select('id').eq('event_id', eventId).eq('player_id', player.id).maybeSingle(),
@@ -36,6 +42,10 @@ export async function registerForEvent(eventId: string) {
 
   const event = eventRes.data;
   if (!event) throw new Error('Event not found');
+  const regTournament = pickSuspension(event.tournament);
+  if (regTournament?.suspended_at) {
+    throw new Error(`This tournament is currently suspended${regTournament.suspension_reason ? `: ${regTournament.suspension_reason}` : ''}`);
+  }
   if (event.status !== 'registration') throw new Error('Registration is closed');
   if (isDoublesEvent(event.event_type)) throw new Error('Use pair registration for doubles events');
   if (existingRes.data) throw new Error('Already registered');
@@ -92,13 +102,18 @@ export async function selfCheckIn(eventId: string) {
   // Parallel reads — event status and player participation row are independent.
   const [eventRes, participantRes] = await Promise.all([
     service.from('tournament_events')
-      .select('status, tournament_id').eq('id', eventId).maybeSingle(),
+      .select('status, tournament_id, tournament:tournaments(suspended_at, suspension_reason)')
+      .eq('id', eventId).maybeSingle(),
     service.from('tournament_participants')
       .select('id, status').eq('event_id', eventId).eq('player_id', player.id).maybeSingle(),
   ]);
 
   const event = eventRes.data;
   const participant = participantRes.data;
+  const checkinTournament = event ? pickSuspension(event.tournament) : null;
+  if (checkinTournament?.suspended_at) {
+    throw new Error(`This tournament is currently suspended${checkinTournament.suspension_reason ? `: ${checkinTournament.suspension_reason}` : ''}`);
+  }
   if (!event || event.status !== 'checkin') throw new Error('Check-in is not open');
   if (!participant) throw new Error('Not registered');
   if (participant.status !== 'registered') throw new Error('Cannot check in');

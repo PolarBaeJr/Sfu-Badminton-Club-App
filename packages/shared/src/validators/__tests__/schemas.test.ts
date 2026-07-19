@@ -7,6 +7,7 @@ import {
   disputeSchema,
   sessionCreateSchema,
   tournamentCreateSchema,
+  tournamentSuspendSchema,
   adminPlayerUpdateSchema,
   walkoverReportSchema,
   disputeResolveSchema,
@@ -247,6 +248,19 @@ describe('tournamentCreateSchema', () => {
   it('rejects an unknown type', () => {
     expect(
       tournamentCreateSchema.safeParse({ ...base, type: 'world_championship' }).success,
+    ).toBe(false);
+  });
+});
+
+describe('tournamentSuspendSchema', () => {
+  it('accepts a valid suspension', () => {
+    expect(
+      tournamentSuspendSchema.safeParse({ tournament_id: UUID_A, reason: 'Venue flooded' }).success,
+    ).toBe(true);
+  });
+  it('rejects an empty reason', () => {
+    expect(
+      tournamentSuspendSchema.safeParse({ tournament_id: UUID_A, reason: '' }).success,
     ).toBe(false);
   });
 });

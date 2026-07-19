@@ -25,6 +25,23 @@ export function revalidateEventPaths(tournamentId: string, eventId?: string) {
   if (eventId) revalidatePath(`/tournaments/${tournamentId}/events/${eventId}`);
 }
 
+// Throws when the tournament is suspended. Called by mutating tournament
+// actions before they touch data; corrective actions (void/edit/undo,
+// lock/unlock draw) intentionally skip this gate.
+export async function assertTournamentNotSuspended(
+  adminClient: ReturnType<typeof createAdminClient>,
+  tournamentId: string
+) {
+  const { data } = await adminClient.from('tournaments')
+    .select('suspended_at, suspension_reason')
+    .eq('id', tournamentId)
+    .single();
+  if (data?.suspended_at) {
+    const reason = data.suspension_reason;
+    throw new Error(`Tournament is suspended${reason ? `: ${reason}` : ''}. Resume it to continue.`);
+  }
+}
+
 // Map tournament match format to the shared elo engine's MatchFormat
 function toEloFormat(mf: TournamentMatchFormat): MatchFormat {
   switch (mf) {

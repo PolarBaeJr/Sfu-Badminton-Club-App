@@ -44,6 +44,8 @@ export {
   createTournament,
   updateTournamentStatus,
   updateTournament,
+  suspendTournament,
+  resumeTournament,
   archiveTournament,
   deleteTournament,
   addTournamentParticipant,

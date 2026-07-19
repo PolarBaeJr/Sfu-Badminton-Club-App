@@ -3,7 +3,7 @@
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
-import { parseOrThrow, tournamentCreateSchema } from '@badminton/shared';
+import { parseOrThrow, tournamentCreateSchema, tournamentSuspendSchema } from '@badminton/shared';
 import { getExecOrAdmin } from './_shared';
 
 export async function createTournament(data: {
@@ -58,7 +58,11 @@ export async function updateTournamentStatus(tournamentId: string, status: strin
 
   const { data: old } = await adminClient.from('tournaments').select('status').eq('id', tournamentId).single();
 
-  const { error } = await adminClient.from('tournaments').update({ status }).eq('id', tournamentId);
+  // An explicit status change also lifts any suspension, so completing a
+  // suspended tournament doesn't leave it flagged as paused.
+  const { error } = await adminClient.from('tournaments')
+    .update({ status, suspended_at: null, suspension_reason: null })
+    .eq('id', tournamentId);
   if (error) throw new Error(error.message);
 
   await logAdminAudit(adminClient, {
@@ -117,13 +121,75 @@ export async function updateTournament(tournamentId: string, data: {
   revalidatePath(`/tournaments/${tournamentId}`);
 }
 
+export async function suspendTournament(tournamentId: string, reason: string) {
+  parseOrThrow(tournamentSuspendSchema, { tournament_id: tournamentId, reason });
+  const admin = await getExecOrAdmin();
+  const adminClient = createAdminClient();
+
+  const { data: old } = await adminClient.from('tournaments')
+    .select('status, suspended_at').eq('id', tournamentId).single();
+  if (!old) throw new Error('Tournament not found');
+  if (old.status !== 'active' || old.suspended_at) {
+    throw new Error('Only an active, non-suspended tournament can be suspended');
+  }
+
+  const suspendedAt = new Date().toISOString();
+  const { error } = await adminClient.from('tournaments')
+    .update({ suspended_at: suspendedAt, suspension_reason: reason })
+    .eq('id', tournamentId);
+  if (error) throw new Error(error.message);
+
+  await logAdminAudit(adminClient, {
+    actor_id: admin.id,
+    action_type: 'tournament_suspended',
+    target_type: 'tournament',
+    target_id: tournamentId,
+    old_value: { suspended_at: null, suspension_reason: null },
+    new_value: { suspended_at: suspendedAt, suspension_reason: reason },
+    reason,
+  }, { tournamentId });
+
+  revalidatePath('/tournaments');
+  revalidatePath(`/tournaments/${tournamentId}`);
+}
+
+export async function resumeTournament(tournamentId: string) {
+  const admin = await getExecOrAdmin();
+  const adminClient = createAdminClient();
+
+  const { data: old } = await adminClient.from('tournaments')
+    .select('suspended_at, suspension_reason').eq('id', tournamentId).single();
+  if (!old) throw new Error('Tournament not found');
+  if (!old.suspended_at) throw new Error('Tournament is not suspended');
+
+  const { error } = await adminClient.from('tournaments')
+    .update({ suspended_at: null, suspension_reason: null })
+    .eq('id', tournamentId);
+  if (error) throw new Error(error.message);
+
+  await logAdminAudit(adminClient, {
+    actor_id: admin.id,
+    action_type: 'tournament_resumed',
+    target_type: 'tournament',
+    target_id: tournamentId,
+    old_value: { suspended_at: old.suspended_at, suspension_reason: old.suspension_reason },
+    new_value: { suspended_at: null, suspension_reason: null },
+  }, { tournamentId });
+
+  revalidatePath('/tournaments');
+  revalidatePath(`/tournaments/${tournamentId}`);
+}
+
 export async function archiveTournament(tournamentId: string) {
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('tournaments').select('status').eq('id', tournamentId).single();
 
-  const { error } = await adminClient.from('tournaments').update({ status: 'archived' }).eq('id', tournamentId);
+  // Archiving lifts any suspension (same rationale as updateTournamentStatus).
+  const { error } = await adminClient.from('tournaments')
+    .update({ status: 'archived', suspended_at: null, suspension_reason: null })
+    .eq('id', tournamentId);
   if (error) throw new Error(error.message);
 
   await logAdminAudit(adminClient, {
