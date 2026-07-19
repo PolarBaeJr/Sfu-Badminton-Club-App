@@ -25,6 +25,8 @@
 - **Session scheduling** — admins/execs create sessions with a date, venue, and **track** (competitive, recreational, or all).
 - **Player check-in** — members check themselves in to sessions from their phone.
 - **Attendance rosters** — execs/admins see exactly who checked in to each session, with live counts.
+- **Attendance marking** — execs/admins can mark anyone **present, no-show, or excused** (and add walk-ins who never self-checked-in). Every mark is audit-logged, and no-shows don't inflate the "attending" count players see.
+- **Real session times & check-in windows** — sessions now store an actual start (and optional end) time, and self check-in closes when the session ends — enforced in the database, not just the app. How early check-in opens is a club setting (currently: any time in advance, so it still works as an RSVP).
 - **Add to calendar** — players can add a session to their personal calendar (Apple/Google) in one tap.
 - **Automatic reminders** — the app sends session reminders so people don't forget to show up.
 
@@ -38,8 +40,14 @@ A full tournament system, not just a bracket generator:
 - **Singles and doubles** — full support for both, including doubles pairs.
 - **Automatic seeding** — brackets are seeded by ELO so the strongest players don't meet in round one.
 - **Bracket generation, results entry, and finalization** — including **placement bonuses** applied to ratings when an event finishes.
+- **Tournament suspension** — admins/execs can **pause a tournament with a reason** (weather, venue issues) and resume it cleanly. While paused: no registration, check-in, bracket generation, or score entry; players see a clear "suspended" notice everywhere. Corrections and withdrawals still work, and completing or archiving lifts the suspension automatically.
 - **Participant states** — registered, checked-in, withdrawn, disqualified, no-show — all tracked.
 - **Change history** — tournament actions are logged for accountability.
+
+## ⚖️ Safety & compliance
+
+- **Liability waiver & code of conduct** — members must accept both before playing: new members during sign-up, existing members via a one-time prompt (with a 19+/guardian-consent confirmation). Acceptances are versioned, permanent records showing exactly who accepted which version and when.
+- **Admin-editable legal text** — the waiver and code-of-conduct wording lives in the database and is editable in the admin **Settings** page; saving with a version bump re-asks every member to accept.
 
 ## ⚔️ Challenges, matches, disputes
 

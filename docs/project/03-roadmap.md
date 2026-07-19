@@ -14,7 +14,7 @@
 - **A13 · Tournament entry fees & prize pools** *(M)* — charge entry fees online at tournament registration and track prize pools/payouts. *(Builds on A6.)*
 
 ### 🙋 Attendance & sessions
-- **A2 · Richer session attendance** *(S–M)* — extend the existing check-in with no-shows, admin marking, and attendance windows.
+- ~~**A2 · Richer session attendance** *(S–M)*~~ — ✅ **Shipped 2026-07-19.** No-show/excused/present marking by execs and admins (audited), walk-in adds, server-enforced check-in windows, and real session start/end times. See [02-completed.md](02-completed.md).
 - **A3 · Google Calendar attendance** *(L)* — send calendar invites for sessions and mark attendance from **RSVPs**. *(The heaviest of the batch; we'll weigh it against a cheaper door-QR check-in first.)*
 - **A10 · Subscribe-to-calendar feed** *(S–M)* — members subscribe once and their sessions **auto-appear** in their calendar going forward.
 - **A11 · Offline-first check-in & scoring** *(M)* — check in and score matches even when the venue's wifi is bad; actions queue and sync when back online.
@@ -29,7 +29,7 @@
 - **Recognition** — season awards (MVP, most-improved, giant-killer), streak badges, and rivalry match-ups.
 
 ### ⚖️ Safety & compliance
-- **A7 · Liability waivers & code of conduct** *(S)* — require members to accept a waiver before playing (commonly required for campus clubs).
+- ~~**A7 · Liability waivers & code of conduct** *(S)*~~ — ✅ **Shipped 2026-07-19.** Versioned acceptance (onboarding step + blocking prompt for existing members), play actions blocked until accepted, and the legal text is editable in Admin → Settings. See [02-completed.md](02-completed.md).
 
 ### 📅 Structure
 - **A9 · Semester/term-aware scheduling** *(M)* — Fall / Spring / Summer terms built in, with fees and memberships scoped per term.
@@ -38,13 +38,13 @@
 - **A5 · Open read-only data feed** *(M)* — a safe, privacy-respecting way to pull match/results data out to build **stats models** (e.g. win/loss prediction, a "who should I play" recommender), plus CSV export.
 
 ### 🔧 Tournaments
-- **A4 · Tournament suspension** *(S–M)* — pause and resume a tournament cleanly (e.g. weather, venue issues).
+- ~~**A4 · Tournament suspension** *(S–M)*~~ — ✅ **Shipped 2026-07-19.** Pause with a reason / resume cleanly; registration, check-in, brackets, and scoring are blocked while suspended, and everyone sees why. See [02-completed.md](02-completed.md).
 
 ---
 
 ## Suggested delivery order (waves)
 
-1. **Quick wins** — richer attendance (A2), tournament suspend (A4), waivers (A7), and the cheap competitive-depth pieces (win probability, rivalries, season awards).
+1. **Quick wins** — ✅ *mostly done 2026-07-19:* richer attendance (A2), tournament suspend (A4), and waivers (A7) have shipped. Still open from this wave: the cheap competitive-depth pieces (win probability, rivalries, season awards).
 2. **Payment rail** — online fee payment (A6), then tournament entry fees (A13).
 3. **Permissions keystone** — the access overhaul (A1), which unlocks a whole cluster of later features.
 4. **Data & scheduling** — term-aware scheduling (A9), predictive attendance (A14), and the open data feed (A5) with a personal stats dashboard.
