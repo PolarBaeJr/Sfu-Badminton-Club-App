@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   formatDate,
   formatDateTime,
+  formatTime,
   formatRelativeTime,
   isAdmin,
   getWinRate,
@@ -35,6 +36,21 @@ describe('formatDateTime', () => {
     const result = formatDateTime('2024-06-20T14:30:00Z');
     expect(result).toContain('Jun');
     expect(result).toContain('2024');
+  });
+});
+
+describe('formatTime', () => {
+  it('formats an evening TIME value with seconds', () => {
+    expect(formatTime('18:30:00')).toBe('6:30 PM');
+  });
+
+  it('formats a morning HH:MM value', () => {
+    expect(formatTime('09:05')).toBe('9:05 AM');
+  });
+
+  it('formats midnight and noon as 12', () => {
+    expect(formatTime('00:00:00')).toBe('12:00 AM');
+    expect(formatTime('12:00')).toBe('12:00 PM');
   });
 });
 

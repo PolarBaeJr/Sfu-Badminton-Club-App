@@ -41,6 +41,15 @@ export function clampElo(rating: number): number {
   return Math.min(MAX_ELO, Math.max(MIN_ELO, rating));
 }
 
+// Session check-in window. The DB function session_checkin_open
+// (00008_richer_attendance.sql) is the enforcement source of truth; these
+// constants must mirror the 'session_attendance' platform_settings defaults
+// seeded in that migration.
+export const CLUB_TIMEZONE = 'America/Vancouver';
+export const SESSION_DEFAULT_DURATION_MINUTES = 120;
+// null = check-in opens as soon as the session exists (only a closing edge).
+export const SESSION_CHECKIN_OPENS_MINUTES_BEFORE: number | null = null;
+
 export const PROVISIONAL_THRESHOLD = 8;
 export const MAX_RATED_PER_SESSION = 3;
 export const MAX_REPEAT_OPPONENT_7DAYS = 2;

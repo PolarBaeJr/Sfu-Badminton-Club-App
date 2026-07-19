@@ -18,7 +18,7 @@ Deno.serve(async (req) => {
 
   const { data: sessions, error } = await supabase
     .from('sessions')
-    .select('id, name, date, location, session_attendance(player_id)')
+    .select('id, name, date, location, session_attendance(player_id, status)')
     .eq('status', 'open')
     .eq('date', tomorrowDate);
 
@@ -30,13 +30,20 @@ Deno.serve(async (req) => {
   let notifCount = 0;
 
   if (sessions && sessions.length > 0) {
-    const typedSessions = sessions as Array<{
+    const rawSessions = sessions as Array<{
       id: string;
       name: string | null;
       date: string;
       location: string;
-      session_attendance: Array<{ player_id: string }>;
+      session_attendance: Array<{ player_id: string; status: string }>;
     }>;
+    // Don't remind players an admin already marked as not coming.
+    const typedSessions = rawSessions.map((s) => ({
+      ...s,
+      session_attendance: s.session_attendance.filter(
+        (a) => a.status !== 'no_show' && a.status !== 'excused'
+      ),
+    }));
     const reminders = typedSessions.flatMap((s) =>
       s.session_attendance.map((a) => ({
         player_id: a.player_id,

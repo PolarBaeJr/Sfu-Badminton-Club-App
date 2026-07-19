@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge } from '@badminton/ui';
-import { formatDate } from '@badminton/shared';
+import { formatDate, formatTime, type AttendanceStatus } from '@badminton/shared';
 import { CreateSessionForm, SessionCardMenu, AttendanceDialog } from './actions';
 import { Calendar, MapPin, FileText } from 'lucide-react';
 
@@ -15,10 +15,23 @@ export default async function SessionsPage() {
 
   const { data: attendanceRows } = await supabase
     .from('session_attendance')
-    .select('session_id, player_id, checked_in_at, players(full_name)');
+    .select('session_id, player_id, checked_in_at, status, marked_by, marked_at, players(full_name)');
+
+  const { data: activePlayers } = await supabase
+    .from('players')
+    .select('id, full_name')
+    .eq('active_flag', true)
+    .order('full_name');
 
   // Group attendance records by session_id
-  type AttendeeEntry = { player_id: string; full_name: string; checked_in_at: string };
+  type AttendeeEntry = {
+    player_id: string;
+    full_name: string;
+    checked_in_at: string;
+    status: AttendanceStatus;
+    marked_by: string | null;
+    marked_at: string | null;
+  };
   const attendanceMap: Record<string, AttendeeEntry[]> = {};
   for (const row of attendanceRows ?? []) {
     const name =
@@ -27,7 +40,14 @@ export default async function SessionsPage() {
         : ((row.players as { full_name: string } | null)?.full_name ?? 'Unknown');
     const sid = row.session_id as string;
     if (!attendanceMap[sid]) attendanceMap[sid] = [];
-    attendanceMap[sid].push({ player_id: row.player_id as string, full_name: name, checked_in_at: row.checked_in_at as string });
+    attendanceMap[sid].push({
+      player_id: row.player_id as string,
+      full_name: name,
+      checked_in_at: row.checked_in_at as string,
+      status: row.status as AttendanceStatus,
+      marked_by: row.marked_by as string | null,
+      marked_at: row.marked_at as string | null,
+    });
   }
 
   return (
@@ -73,6 +93,8 @@ export default async function SessionsPage() {
                     <div className="flex items-center gap-1.5 text-sm text-[var(--text-secondary)]">
                       <Calendar className="w-3.5 h-3.5 text-[var(--text-muted)]" />
                       {formatDate(session.date)}
+                      {session.start_time && ` · ${formatTime(session.start_time)}`}
+                      {session.start_time && session.end_time && ` – ${formatTime(session.end_time)}`}
                     </div>
                     <div className="flex items-center gap-1.5 text-sm text-[var(--text-secondary)]">
                       <MapPin className="w-3.5 h-3.5 text-[var(--text-muted)]" />
@@ -92,6 +114,7 @@ export default async function SessionsPage() {
                   <AttendanceDialog
                     sessionId={session.id}
                     attendees={attendanceMap[session.id] ?? []}
+                    players={activePlayers ?? []}
                   />
                 </div>
 

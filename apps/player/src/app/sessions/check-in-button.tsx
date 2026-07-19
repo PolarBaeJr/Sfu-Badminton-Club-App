@@ -6,20 +6,30 @@ import { useToast } from '@/components/toast-provider';
 
 interface CheckInButtonProps {
   sessionId: string;
-  isCheckedIn: boolean;
+  myStatus: 'checked_in' | 'present' | 'no_show' | 'excused' | null;
+  canCheckIn: boolean;
+  windowLabel?: string;
 }
 
-export function CheckInButton({ sessionId, isCheckedIn }: CheckInButtonProps) {
+export function CheckInButton({ sessionId, myStatus, canCheckIn, windowLabel }: CheckInButtonProps) {
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
-  if (isCheckedIn) {
+  if (myStatus === 'checked_in' || myStatus === 'present') {
     return (
       <span className="chip chip-success">
         <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-        Checked In
+        {myStatus === 'present' ? 'Attended' : 'Checked In'}
       </span>
     );
+  }
+
+  if (myStatus === 'no_show') {
+    return <span className="chip">No-show</span>;
+  }
+
+  if (myStatus === 'excused') {
+    return <span className="chip">Excused</span>;
   }
 
   async function handleCheckIn() {
@@ -36,10 +46,10 @@ export function CheckInButton({ sessionId, isCheckedIn }: CheckInButtonProps) {
   return (
     <button
       onClick={handleCheckIn}
-      disabled={loading}
+      disabled={loading || !canCheckIn}
       className="press btn-primary-cta text-white rounded-full px-4 py-2 text-sm font-semibold min-h-[44px] disabled:opacity-60 disabled:cursor-not-allowed"
     >
-      {loading ? 'Checking in...' : 'Check In'}
+      {!canCheckIn ? (windowLabel ?? 'Check-in closed') : loading ? 'Checking in...' : 'Check In'}
     </button>
   );
 }

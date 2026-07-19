@@ -63,6 +63,8 @@ export {
   updateSession,
   archiveSession,
   deleteSession,
+  markAttendance,
+  clearAttendanceMark,
 } from './actions/sessions';
 
 export {

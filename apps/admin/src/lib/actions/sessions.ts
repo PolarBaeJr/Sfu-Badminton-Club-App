@@ -3,13 +3,22 @@
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
-import { parseOrThrow, sessionCreateSchema, sessionGroupSchema, type SessionGroupInput } from '@badminton/shared';
+import {
+  parseOrThrow,
+  sessionCreateSchema,
+  sessionGroupSchema,
+  attendanceMarkSchema,
+  type SessionGroupInput,
+  type AttendanceMarkInput,
+} from '@badminton/shared';
+import { z } from 'zod';
 import { getExecOrAdmin } from './_shared';
 
 export async function createSession(data: {
   name: string;
   date: string;
   time?: string;
+  end_time?: string;
   location: string;
   notes?: string;
   track: SessionGroupInput;
@@ -20,11 +29,11 @@ export async function createSession(data: {
 
   const activeSeason = await adminClient.from('seasons').select('id').eq('active_flag', true).single();
 
-  const sessionDate = data.time ? `${data.date}T${data.time}` : data.date;
-
   const { data: session, error } = await adminClient.from('sessions').insert({
     name: data.name,
-    date: sessionDate,
+    date: data.date,
+    start_time: data.time ?? null,
+    end_time: data.end_time ?? null,
     location: data.location,
     notes: data.notes || null,
     status: 'open',
@@ -51,6 +60,7 @@ export async function updateSession(sessionId: string, data: {
   name: string;
   date: string;
   time?: string;
+  end_time?: string;
   location: string;
   notes?: string;
   track: SessionGroupInput;
@@ -61,11 +71,11 @@ export async function updateSession(sessionId: string, data: {
 
   const { data: old } = await adminClient.from('sessions').select('*').eq('id', sessionId).single();
 
-  const sessionDate = data.time ? `${data.date}T${data.time}` : data.date;
-
   const { error } = await adminClient.from('sessions').update({
     name: data.name,
-    date: sessionDate,
+    date: data.date,
+    start_time: data.time ?? null,
+    end_time: data.end_time ?? null,
     location: data.location,
     notes: data.notes || null,
     track: data.track,
@@ -101,6 +111,80 @@ export async function archiveSession(sessionId: string) {
     target_id: sessionId,
     old_value: { status: old?.status },
     new_value: { status: 'closed' },
+  }, { sessionId });
+
+  revalidatePath('/sessions');
+}
+
+export async function markAttendance(input: AttendanceMarkInput) {
+  const data = parseOrThrow(attendanceMarkSchema, input);
+  const admin = await getExecOrAdmin();
+  const adminClient = createAdminClient();
+
+  const { data: old } = await adminClient
+    .from('session_attendance')
+    .select('*')
+    .eq('session_id', data.session_id)
+    .eq('player_id', data.player_id)
+    .maybeSingle();
+
+  // checked_in_at is deliberately omitted: on conflict the player's original
+  // self check-in timestamp is preserved; for walk-ins it defaults to now().
+  const { data: row, error } = await adminClient
+    .from('session_attendance')
+    .upsert({
+      session_id: data.session_id,
+      player_id: data.player_id,
+      status: data.status,
+      marked_by: admin.id,
+      marked_at: new Date().toISOString(),
+    }, { onConflict: 'session_id,player_id' })
+    .select()
+    .single();
+
+  if (error) throw new Error(error.message);
+
+  await logAdminAudit(adminClient, {
+    actor_id: admin.id,
+    action_type: 'session_attendance_marked',
+    target_type: 'session_attendance',
+    target_id: row.id,
+    old_value: old ?? undefined,
+    new_value: data,
+  }, { sessionId: data.session_id });
+
+  revalidatePath('/sessions');
+}
+
+export async function clearAttendanceMark(sessionId: string, playerId: string) {
+  parseOrThrow(z.string().uuid(), sessionId);
+  parseOrThrow(z.string().uuid(), playerId);
+  const admin = await getExecOrAdmin();
+  const adminClient = createAdminClient();
+
+  const { data: old } = await adminClient
+    .from('session_attendance')
+    .select('*')
+    .eq('session_id', sessionId)
+    .eq('player_id', playerId)
+    .maybeSingle();
+
+  if (!old) return;
+
+  const { error } = await adminClient
+    .from('session_attendance')
+    .delete()
+    .eq('session_id', sessionId)
+    .eq('player_id', playerId);
+
+  if (error) throw new Error(error.message);
+
+  await logAdminAudit(adminClient, {
+    actor_id: admin.id,
+    action_type: 'session_attendance_removed',
+    target_type: 'session_attendance',
+    target_id: old.id,
+    old_value: old,
   }, { sessionId });
 
   revalidatePath('/sessions');

@@ -113,10 +113,25 @@ export const sessionCreateSchema = z.object({
   name: z.string().min(2),
   date: z.string(),
   time: isoTimeSchema,
+  end_time: isoTimeSchema,
   location: z.string().min(2),
   notes: z.string().max(500).optional(),
   season_id: z.string().uuid().optional(),
   track: sessionGroupSchema.default('all'),
+  // When both times are present, the session must end after it starts.
+  // Zero-padded HH:MM[:SS] strings compare correctly lexicographically.
+}).refine((d) => !d.time || !d.end_time || d.end_time > d.time, {
+  message: 'End time must be after start time',
+  path: ['end_time'],
+});
+
+// Admin-only attendance marks; players self-insert 'checked_in' rows via RLS.
+export const attendanceStatusSchema = z.enum(['present', 'no_show', 'excused']);
+
+export const attendanceMarkSchema = z.object({
+  session_id: z.string().uuid(),
+  player_id: z.string().uuid(),
+  status: attendanceStatusSchema,
 });
 
 export const tournamentCreateSchema = z.object({
@@ -267,6 +282,8 @@ export type ChallengeCreateInput = z.infer<typeof challengeCreateSchema>;
 export type MatchResultInput = z.infer<typeof matchResultSchema>;
 export type DisputeInput = z.infer<typeof disputeSchema>;
 export type SessionCreateInput = z.infer<typeof sessionCreateSchema>;
+export type AttendanceStatusInput = z.infer<typeof attendanceStatusSchema>;
+export type AttendanceMarkInput = z.infer<typeof attendanceMarkSchema>;
 export type TournamentCreateInput = z.infer<typeof tournamentCreateSchema>;
 export type AdminPlayerUpdateInput = z.infer<typeof adminPlayerUpdateSchema>;
 export type WalkoverReportInput = z.infer<typeof walkoverReportSchema>;

@@ -1,7 +1,7 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { formatDate } from '@badminton/shared';
+import { CLUB_TIMEZONE, formatDate, formatTime, getCheckinWindow, isCheckinOpen, type AttendanceStatus } from '@badminton/shared';
 import { redirect } from 'next/navigation';
-import { Calendar, MapPin, FileText, Users } from 'lucide-react';
+import { Calendar, MapPin, FileText, Users, Clock } from 'lucide-react';
 import { PageHeader } from '@badminton/ui';
 import { CheckInButton } from './check-in-button';
 import { AddToCalendarButton } from './add-to-calendar';
@@ -28,11 +28,13 @@ export default async function SessionsPage() {
       .limit(10),
     supabase
       .from('session_attendance')
-      .select('session_id')
+      .select('session_id, status')
       .eq('player_id', player.id),
+    // Attendee counts shown on cards exclude admin-marked no-show/excused rows.
     supabase
       .from('session_attendance')
       .select('session_id')
+      .in('status', ['checked_in', 'present'])
       .then(({ data, error }) => ({
         data: data
           ? Object.entries(
@@ -46,7 +48,9 @@ export default async function SessionsPage() {
       })),
   ]);
 
-  const checkedInSessionIds = new Set((myAttendance ?? []).map((r) => r.session_id));
+  const myStatusBySession = new Map<string, AttendanceStatus>(
+    (myAttendance ?? []).map((r) => [r.session_id as string, r.status as AttendanceStatus])
+  );
   const countBySession = Object.fromEntries(
     (attendanceCounts ?? []).map((r) => [r.session_id, r.count])
   );
@@ -80,8 +84,26 @@ export default async function SessionsPage() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {(openSessions ?? []).map((session) => {
-                const isCheckedIn = checkedInSessionIds.has(session.id);
+                const myStatus = myStatusBySession.get(session.id) ?? null;
                 const attendees = countBySession[session.id] ?? 0;
+                const now = new Date();
+                const canCheckIn = isCheckinOpen(session, now);
+                const { opensAt } = getCheckinWindow(session);
+                let windowLabel: string | undefined;
+                if (!canCheckIn) {
+                  if (opensAt && now < opensAt) {
+                    // Club-local HH:MM of the opening instant, rendered like session times.
+                    const opensLocal = opensAt.toLocaleTimeString('en-GB', {
+                      timeZone: CLUB_TIMEZONE,
+                      hourCycle: 'h23',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    });
+                    windowLabel = `Opens at ${formatTime(opensLocal)}`;
+                  } else {
+                    windowLabel = 'Check-in closed';
+                  }
+                }
                 return (
                   <div
                     key={session.id}
@@ -110,6 +132,15 @@ export default async function SessionsPage() {
                           <span className="row" style={{ gap: 6 }}>
                             <Calendar size={14} /> <span className="mono">{formatDate(session.date).toUpperCase()}</span>
                           </span>
+                          {session.start_time && (
+                            <span className="row" style={{ gap: 6 }}>
+                              <Clock size={14} />{' '}
+                              <span className="mono">
+                                {formatTime(session.start_time)}
+                                {session.end_time ? ` – ${formatTime(session.end_time)}` : ''}
+                              </span>
+                            </span>
+                          )}
                           <span className="row" style={{ gap: 6 }}>
                             <MapPin size={14} /> <span>{session.location}</span>
                           </span>
@@ -125,7 +156,7 @@ export default async function SessionsPage() {
                         )}
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-                        <CheckInButton sessionId={session.id} isCheckedIn={isCheckedIn} />
+                        <CheckInButton sessionId={session.id} myStatus={myStatus} canCheckIn={canCheckIn} windowLabel={windowLabel} />
                         <AddToCalendarButton
                           name={session.name ?? 'Practice Session'}
                           date={session.date}

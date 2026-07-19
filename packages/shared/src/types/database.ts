@@ -162,11 +162,15 @@ export interface Season {
 
 export type SessionGroup = 'competitive' | 'recreational' | 'all';
 
+export type AttendanceStatus = 'checked_in' | 'present' | 'no_show' | 'excused';
+
 export interface Session {
   id: string;
   season_id: string | null;
   name: string | null;
   date: string;
+  start_time: string | null;
+  end_time: string | null;
   location: string;
   host_player_id: string | null;
   status: SessionStatus;
@@ -181,6 +185,9 @@ export interface SessionAttendance {
   session_id: string;
   player_id: string;
   checked_in_at: string;
+  status: AttendanceStatus;
+  marked_by: string | null;
+  marked_at: string | null;
 }
 
 export interface Challenge {

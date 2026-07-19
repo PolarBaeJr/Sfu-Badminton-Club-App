@@ -18,6 +18,16 @@ export function formatDateTime(dateString: string): string {
   });
 }
 
+// "18:30:00" (or "18:30") -> "6:30 PM". For Postgres TIME columns.
+export function formatTime(time: string): string {
+  const [h, m] = time.split(':');
+  const hour = Number(h);
+  const minute = Number(m ?? '0');
+  const period = hour >= 12 ? 'PM' : 'AM';
+  const hour12 = hour % 12 === 0 ? 12 : hour % 12;
+  return `${hour12}:${String(minute).padStart(2, '0')} ${period}`;
+}
+
 export function formatRelativeTime(dateString: string): string {
   const now = Date.now();
   const then = new Date(dateString).getTime();
