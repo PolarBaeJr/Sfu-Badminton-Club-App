@@ -406,7 +406,7 @@ export default async function EventDetailPage({
                   const revealIdx = pi < 3 ? `reveal-${pi + 1}` : '';
 
                   return (
-                    <div key={p.id as string} className={`reveal ${revealIdx} flex items-center justify-between p-2.5 bg-white/[0.02] rounded-xl border border-[var(--border)] gap-2`}>
+                    <div key={p.id as string} className={`reveal ${revealIdx} flex items-center justify-between p-2.5 bg-[var(--on-surface-soft)] rounded-xl border border-[var(--border)] gap-2`}>
                       <div className="flex items-center gap-2.5 min-w-0">
                         {seed && (
                           <span className="nums text-xs text-[var(--text-muted)] w-5 text-center shrink-0">#{seed}</span>
@@ -440,7 +440,7 @@ export default async function EventDetailPage({
                   const revealIdx = pi < 3 ? `reveal-${pi + 1}` : '';
 
                   return (
-                    <div key={p.id as string} className={`reveal ${revealIdx} flex items-center justify-between p-2.5 bg-white/[0.02] rounded-xl border border-[var(--border)] gap-2`}>
+                    <div key={p.id as string} className={`reveal ${revealIdx} flex items-center justify-between p-2.5 bg-[var(--on-surface-soft)] rounded-xl border border-[var(--border)] gap-2`}>
                       <div className="flex items-center gap-2.5 min-w-0">
                         {seed && (
                           <span className="nums text-xs text-[var(--text-muted)] w-5 text-center shrink-0">#{seed}</span>

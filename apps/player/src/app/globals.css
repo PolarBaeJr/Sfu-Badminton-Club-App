@@ -1205,6 +1205,8 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
     100% { transform: scale(1.1); }
   }
 
+  /* Superseded on mobile by the unlayered override at the end of this file —
+     see the "Mobile tabbar clearance" block. */
   .pb-safe-nav { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 5.5rem); }
 
   @media (prefers-reduced-motion: reduce) {
@@ -1214,6 +1216,9 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
       animation: none !important;
       transition: none !important;
     }
+    /* .reveal starts hidden and relies on its animation to appear; with
+       animations disabled it must render in its final state. */
+    .reveal { opacity: 1; transform: none; }
   }
 }
 
@@ -1330,3 +1335,21 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
 .feed-col > * { min-width: 0; }
 .grid-2 > *, .grid-3 > *, .grid-12 > * { min-width: 0; }
 html, body { overflow-x: clip; }
+
+/* Mobile tabbar clearance. Must be unlayered: Tailwind emits all utilities
+   (including the in-layer .pb-safe-nav above) at the @tailwind utilities
+   position (line 5), so .page's shorthand `padding` was overriding it.
+   980px matches the .mobile-tabbar display breakpoint, not md/768px. */
+@media (max-width: 980px) {
+  .pb-safe-nav {
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 5.5rem);
+  }
+}
+
+/* Keep toasts clear of the mobile tabbar (Toast in packages/ui anchors at
+   bottom-4; the tabbar shows at ≤980px and would sit underneath them). */
+@media (max-width: 980px) {
+  .toast {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 5rem);
+  }
+}

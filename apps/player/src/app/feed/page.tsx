@@ -109,7 +109,7 @@ export default async function FeedPage() {
             <Link href="/leaderboard" className="btn btn-ghost">
               <Filter size={14} /> Browse
             </Link>
-            <Link href="/challenges/new" className="btn btn-primary">
+            <Link href="/challenges/new" className="btn btn-primary-cta">
               <Plus size={14} /> Issue Challenge
             </Link>
           </>
@@ -118,7 +118,7 @@ export default async function FeedPage() {
 
 
       {r && (
-        <div className="hero-banner" style={{ marginBottom: 24 }}>
+        <div className="hero-banner reveal reveal-1" style={{ marginBottom: 24 }}>
           <div style={{ position: 'relative', zIndex: 2 }}>
             <h2>
               {r.singles_provisional
@@ -220,7 +220,7 @@ export default async function FeedPage() {
       <div className="grid grid-12">
         <div style={{ gridColumn: 'span 8' }} className="feed-col">
           {pendingChallenges && pendingChallenges.length > 0 && (
-            <div className="card-base">
+            <div className="card-base reveal reveal-2">
               <div className="card-head">
                 <div>
                   <h3 className="card-title">Pending challenges</h3>
@@ -302,7 +302,13 @@ export default async function FeedPage() {
               const oppTotal = games.reduce((s, g) => s + ((me?.team_side === 'a' ? g[1] : g[0]) || 0), 0);
 
               return (
-                <div key={m.id} className="card-base">
+                <div
+                  key={m.id}
+                  className="card-base reveal reveal-3"
+                  style={{
+                    borderLeft: `3px solid ${isWin ? 'var(--win)' : isLoss ? 'var(--loss)' : 'var(--line)'}`,
+                  }}
+                >
                   <div className="row" style={{ marginBottom: 14, fontSize: 12 }}>
                     <span className="tag tag-red">{formatLabel}</span>
                     <span className="mono muted">

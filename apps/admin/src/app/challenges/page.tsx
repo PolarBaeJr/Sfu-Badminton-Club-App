@@ -223,7 +223,7 @@ export default async function ChallengesPage() {
               {challenges?.map((c, index) => (
                 <tr
                   key={c.id}
-                  className="hover:bg-white/5 transition-colors"
+                  className="hover:bg-[var(--on-surface-soft)] transition-colors"
                   style={{
                     borderBottom: index < (challenges?.length ?? 0) - 1 ? '1px solid var(--border)' : 'none',
                   }}

@@ -231,7 +231,7 @@ export default function LeaderboardPage() {
       </div>
 
       <div className="grid grid-12">
-        <div style={{ gridColumn: 'span 4' }} className="feed-col">
+        <div style={{ gridColumn: 'span 4' }} className="feed-col reveal reveal-1">
           <div className="card-base" style={{ padding: 0, overflow: 'hidden' }}>
             <div
               className="card-head"
@@ -266,7 +266,10 @@ export default function LeaderboardPage() {
                         <span className="hash">#</span>
                         <span
                           className="num"
-                          style={{ fontSize: 32, color: i === 0 ? 'var(--red)' : 'var(--ink)' }}
+                          style={{
+                            fontSize: 32,
+                            color: i === 0 ? 'var(--gold)' : i === 1 ? 'var(--silver)' : 'var(--bronze)',
+                          }}
                         >
                           {i + 1}
                         </span>
@@ -335,7 +338,7 @@ export default function LeaderboardPage() {
           )}
         </div>
 
-        <div style={{ gridColumn: 'span 8' }}>
+        <div style={{ gridColumn: 'span 8' }} className="reveal reveal-2">
           <div className="card-base" style={{ padding: 0, overflow: 'hidden' }}>
             <div
               className="card-head row"
@@ -385,7 +388,7 @@ export default function LeaderboardPage() {
                 </div>
               </div>
             ) : (
-              <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+              <div className="scroll-fade-x" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
                 <table className="data-table" style={{ minWidth: 680 }}>
                   <thead>
                     <tr>
@@ -415,7 +418,18 @@ export default function LeaderboardPage() {
                           className={'row-hover' + (isMeRow ? ' me' : '')}
                           onClick={() => { router.push(`/leaderboard/${p.id}`); }}
                         >
-                          <td className="num" style={{ fontSize: 16, fontWeight: 600, color: i < 3 ? 'var(--red)' : 'var(--ink)' }}>
+                          <td
+                            className="num"
+                            style={{
+                              fontSize: 16,
+                              fontWeight: 600,
+                              color:
+                                i === 0 ? 'var(--gold)'
+                                : i === 1 ? 'var(--silver)'
+                                : i === 2 ? 'var(--bronze)'
+                                : 'var(--ink)',
+                            }}
+                          >
                             #{i + 1}
                           </td>
                           <td>

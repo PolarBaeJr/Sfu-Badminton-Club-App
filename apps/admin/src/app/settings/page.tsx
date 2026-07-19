@@ -22,11 +22,11 @@ export default async function SettingsPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--color-accent)]/10">
+        <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-[color-mix(in_oklab,var(--color-accent)_10%,transparent)]">
           <Settings className="w-5 h-5 text-[var(--color-accent)]" />
         </div>
         <div>
-          <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">SETTINGS</h1>
+          <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">Settings</h1>
           <p className="text-sm text-[var(--text-muted)]">Manage your profile and platform configuration</p>
         </div>
       </div>
@@ -34,7 +34,7 @@ export default async function SettingsPage() {
       {/* Profile Section */}
       <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
         <div className="flex items-center gap-2 mb-5">
-          <div className="w-8 h-8 rounded-lg bg-[var(--color-info)]/10 flex items-center justify-center">
+          <div className="w-8 h-8 rounded-lg bg-[color-mix(in_oklab,var(--color-info)_10%,transparent)] flex items-center justify-center">
             <User className="w-4 h-4 text-[var(--color-info)]" />
           </div>
           <h2 className="text-base font-semibold text-[var(--text-primary)]">Profile</h2>
@@ -68,7 +68,7 @@ export default async function SettingsPage() {
       {player?.role === 'admin' && settings && (
         <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
           <div className="flex items-center gap-2 mb-5">
-            <div className="w-8 h-8 rounded-lg bg-[var(--color-warning)]/10 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg bg-[color-mix(in_oklab,var(--color-warning)_10%,transparent)] flex items-center justify-center">
               <Sliders className="w-4 h-4 text-[var(--color-warning)]" />
             </div>
             <h2 className="text-base font-semibold text-[var(--text-primary)]">Platform Settings</h2>
@@ -80,7 +80,7 @@ export default async function SettingsPage() {
       {/* About */}
       <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
         <div className="flex items-center gap-2 mb-5">
-          <div className="w-8 h-8 rounded-lg bg-[var(--text-muted)]/10 flex items-center justify-center">
+          <div className="w-8 h-8 rounded-lg bg-[color-mix(in_oklab,var(--text-muted)_10%,transparent)] flex items-center justify-center">
             <Info className="w-4 h-4 text-[var(--text-muted)]" />
           </div>
           <h2 className="text-base font-semibold text-[var(--text-primary)]">About</h2>
@@ -88,7 +88,7 @@ export default async function SettingsPage() {
         <div className="space-y-3 text-sm">
           <div className="flex items-center justify-between p-3 rounded-lg bg-[var(--bg-elevated)]">
             <span className="text-[var(--text-muted)]">App Version</span>
-            <span className="font-mono text-xs bg-[var(--color-accent)]/10 text-[var(--color-accent)] px-2 py-0.5 rounded-full">v0.0.1</span>
+            <span className="font-mono text-xs bg-[color-mix(in_oklab,var(--color-accent)_10%,transparent)] text-[var(--color-accent)] px-2 py-0.5 rounded-full">v0.0.1</span>
           </div>
         </div>
       </div>

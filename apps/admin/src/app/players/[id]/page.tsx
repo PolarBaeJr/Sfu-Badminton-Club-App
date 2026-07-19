@@ -168,7 +168,7 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
             const m = mp.match as Record<string, unknown> | null;
             if (!m) return null;
             return (
-              <div key={mp.id} className="flex items-center justify-between py-3 border-b border-[var(--border)] last:border-0 hover:bg-white/[0.02] -mx-3 px-3 rounded-lg transition-colors">
+              <div key={mp.id} className="flex items-center justify-between py-3 border-b border-[var(--border)] last:border-0 hover:bg-[var(--on-surface-soft)] -mx-3 px-3 rounded-lg transition-colors">
                 <div className="flex items-center gap-3">
                   <Badge variant={mp.win_flag ? 'success' : 'danger'}>
                     {mp.win_flag ? 'W' : 'L'}

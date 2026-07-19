@@ -90,7 +90,7 @@ export function Sidebar() {
       {/* Header */}
       <div className="p-4 border-b border-[var(--border)] flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-bold text-[var(--color-accent)] font-display tracking-wider">SFU BADMINTON</h1>
+          <h1 className="text-lg font-bold text-[var(--color-accent)] font-display">SFU Badminton</h1>
           <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-widest mt-0.5">Admin Panel</p>
         </div>
         <button
@@ -127,8 +127,8 @@ export function Sidebar() {
                     className={cn(
                       'flex items-center gap-3 rounded-lg text-sm transition-all duration-200 group relative px-3 py-2.5',
                       isActive
-                        ? 'bg-[var(--color-accent)]/10 text-[var(--color-accent)]'
-                        : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-white/[0.04]'
+                        ? 'bg-[color-mix(in_oklab,var(--color-accent)_10%,transparent)] text-[var(--color-accent)]'
+                        : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--on-surface-med)]'
                     )}
                   >
                     {isActive && (

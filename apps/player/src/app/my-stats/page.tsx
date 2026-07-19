@@ -64,7 +64,7 @@ export default async function MyStatsPage() {
         sub={activeSeason ? activeSeason.name : undefined}
       />
 
-      <div className="card-base" style={{ padding: 28, marginBottom: 24 }}>
+      <div className="card-base reveal reveal-1" style={{ padding: 28, marginBottom: 24 }}>
         {/* grid-2 so the 980px media query (!important) collapses the inline
             'auto 1fr' columns to a single column on mobile. */}
         <div
@@ -132,7 +132,7 @@ export default async function MyStatsPage() {
       </div>
 
       {r && (
-        <div className="grid grid-3" style={{ marginBottom: 24 }}>
+        <div className="grid grid-3 reveal reveal-2" style={{ marginBottom: 24 }}>
           <div className="card-base">
             <div className="stat-label">SINGLES STREAK</div>
             <div className="stat-value">{getStreakDisplay(r.current_singles_streak)}</div>

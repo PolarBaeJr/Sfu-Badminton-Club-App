@@ -1,4 +1,5 @@
 import React from 'react';
+import { cn } from '../utils';
 
 interface PageHeaderProps {
   /** Mono red eyebrow text. The leading bar is rendered automatically. */
@@ -9,11 +10,13 @@ interface PageHeaderProps {
   sub?: React.ReactNode;
   /** Right-side actions (buttons, search, etc.). */
   actions?: React.ReactNode;
+  /** Extra classes merged onto the root element (e.g. reveal stagger). */
+  className?: string;
 }
 
-export function PageHeader({ eyebrow, title, sub, actions }: PageHeaderProps) {
+export function PageHeader({ eyebrow, title, sub, actions, className }: PageHeaderProps) {
   return (
-    <div className="page-header">
+    <div className={cn('page-header', className)}>
       <div>
         {eyebrow && (
           <div className="page-eyebrow">

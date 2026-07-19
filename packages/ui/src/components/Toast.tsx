@@ -25,7 +25,9 @@ export function Toast({ message, type = 'info', onClose }: ToastProps) {
   }, [onClose]);
 
   return (
-    <div className={cn('fixed bottom-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2', colors[type])}>
+    // .toast is a styling hook for app-level overrides (e.g. the player app
+    // lifts toasts above its mobile tabbar in globals.css).
+    <div className={cn('toast fixed bottom-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2', colors[type])}>
       <span>{message}</span>
       <button onClick={onClose} className="ml-2 opacity-70 hover:opacity-100 min-w-[44px] min-h-[44px] flex items-center justify-center">&times;</button>
     </div>

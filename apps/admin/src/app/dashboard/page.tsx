@@ -68,14 +68,14 @@ export default async function DashboardPage() {
     <div className="space-y-8">
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold font-display text-[var(--text-primary)] tracking-wide">DASHBOARD</h1>
+        <h1 className="text-3xl font-bold font-display text-[var(--text-primary)]">Dashboard</h1>
         <p className="text-sm text-[var(--text-muted)] mt-1">Overview of club activity and action items</p>
       </div>
 
       {/* Alert Banner */}
       {hasAlerts && (
-        <div className="rounded-xl border border-[var(--color-warning)]/20 bg-[var(--color-warning)]/5 p-4 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-[var(--color-warning)]/10 flex items-center justify-center flex-shrink-0">
+        <div className="rounded-xl border border-[color-mix(in_oklab,var(--color-warning)_20%,transparent)] bg-[color-mix(in_oklab,var(--color-warning)_5%,transparent)] p-4 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-[color-mix(in_oklab,var(--color-warning)_10%,transparent)] flex items-center justify-center flex-shrink-0">
             <AlertTriangle className="w-5 h-5 text-[var(--color-warning)]" />
           </div>
           <div className="flex-1">
@@ -93,12 +93,12 @@ export default async function DashboardPage() {
 
       {/* Pending Players */}
       {pendingPlayersList && pendingPlayersList.length > 0 && (
-        <div className="rounded-xl border border-[var(--color-warning)]/20 bg-[var(--bg-card)] overflow-hidden">
+        <div className="rounded-xl border border-[color-mix(in_oklab,var(--color-warning)_20%,transparent)] bg-[var(--bg-card)] overflow-hidden">
           <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between">
             <div className="flex items-center gap-2">
               <UserCheck className="w-4 h-4 text-[var(--color-warning)]" />
               <h2 className="text-sm font-semibold text-[var(--text-primary)] uppercase tracking-wide">Pending Approvals</h2>
-              <span className="text-xs bg-[var(--color-warning)]/10 text-[var(--color-warning)] px-2 py-0.5 rounded-full font-medium">{pendingPlayersList.length}</span>
+              <span className="text-xs bg-[color-mix(in_oklab,var(--color-warning)_10%,transparent)] text-[var(--color-warning)] px-2 py-0.5 rounded-full font-medium">{pendingPlayersList.length}</span>
             </div>
             <Link href="/players?tab=attention" className="text-xs text-[var(--color-accent)] hover:underline flex items-center gap-1">
               View All <ArrowUpRight className="w-3 h-3" />
@@ -126,7 +126,7 @@ export default async function DashboardPage() {
         <Link href="/players" className="group">
           <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-5 hover:border-[var(--border-hover)] transition-all hover:shadow-lg hover:shadow-black/5">
             <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 rounded-lg bg-[var(--color-info)]/10 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-lg bg-[color-mix(in_oklab,var(--color-info)_10%,transparent)] flex items-center justify-center">
                 <Users className="w-5 h-5 text-[var(--color-info)]" />
               </div>
               <ArrowUpRight className="w-4 h-4 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -139,11 +139,11 @@ export default async function DashboardPage() {
         <Link href="/players?tab=attention" className="group">
           <div className={`rounded-xl border p-5 transition-all hover:shadow-lg hover:shadow-black/5 ${
             (pendingPlayers ?? 0) > 0
-              ? 'border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5 hover:border-[var(--color-warning)]/50'
+              ? 'border-[color-mix(in_oklab,var(--color-warning)_30%,transparent)] bg-[color-mix(in_oklab,var(--color-warning)_5%,transparent)] hover:border-[color-mix(in_oklab,var(--color-warning)_50%,transparent)]'
               : 'border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--border-hover)]'
           }`}>
             <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 rounded-lg bg-[var(--color-warning)]/10 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-lg bg-[color-mix(in_oklab,var(--color-warning)_10%,transparent)] flex items-center justify-center">
                 <UserCheck className="w-5 h-5 text-[var(--color-warning)]" />
               </div>
               <ArrowUpRight className="w-4 h-4 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -156,11 +156,11 @@ export default async function DashboardPage() {
         <Link href="/disputes" className="group">
           <div className={`rounded-xl border p-5 transition-all hover:shadow-lg hover:shadow-black/5 ${
             (openDisputes ?? 0) > 0
-              ? 'border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5 hover:border-[var(--color-danger)]/50'
+              ? 'border-[color-mix(in_oklab,var(--color-danger)_30%,transparent)] bg-[color-mix(in_oklab,var(--color-danger)_5%,transparent)] hover:border-[color-mix(in_oklab,var(--color-danger)_50%,transparent)]'
               : 'border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--border-hover)]'
           }`}>
             <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 rounded-lg bg-[var(--color-danger)]/10 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-lg bg-[color-mix(in_oklab,var(--color-danger)_10%,transparent)] flex items-center justify-center">
                 <AlertTriangle className="w-5 h-5 text-[var(--color-danger)]" />
               </div>
               <ArrowUpRight className="w-4 h-4 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -173,11 +173,11 @@ export default async function DashboardPage() {
         <Link href="/walkovers" className="group">
           <div className={`rounded-xl border p-5 transition-all hover:shadow-lg hover:shadow-black/5 ${
             (pendingWalkovers ?? 0) > 0
-              ? 'border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5 hover:border-[var(--color-warning)]/50'
+              ? 'border-[color-mix(in_oklab,var(--color-warning)_30%,transparent)] bg-[color-mix(in_oklab,var(--color-warning)_5%,transparent)] hover:border-[color-mix(in_oklab,var(--color-warning)_50%,transparent)]'
               : 'border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--border-hover)]'
           }`}>
             <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 rounded-lg bg-[var(--color-warning)]/10 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-lg bg-[color-mix(in_oklab,var(--color-warning)_10%,transparent)] flex items-center justify-center">
                 <Clock className="w-5 h-5 text-[var(--color-warning)]" />
               </div>
               <ArrowUpRight className="w-4 h-4 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -259,7 +259,7 @@ export default async function DashboardPage() {
               const sideB = participants.filter((p: Record<string, unknown>) => p.team_side === 'b');
 
               return (
-                <div key={match.id} className="flex items-center justify-between py-3 border-b border-[var(--border)] last:border-0 hover:bg-white/[0.02] -mx-3 px-3 rounded-lg transition-colors">
+                <div key={match.id} className="flex items-center justify-between py-3 border-b border-[var(--border)] last:border-0 hover:bg-[var(--on-surface-soft)] -mx-3 px-3 rounded-lg transition-colors">
                   <div className="flex items-center gap-3 min-w-0">
                     <span className="text-sm text-[var(--text-primary)] truncate">
                       {sideA.map((p: Record<string, unknown>) => (p.player as Record<string, unknown>)?.full_name).join(' & ')}
@@ -286,7 +286,7 @@ export default async function DashboardPage() {
             })}
             {(!recentMatches || recentMatches.length === 0) && (
               <div className="flex flex-col items-center py-8">
-                <Trophy className="w-8 h-8 text-[var(--text-muted)]/50 mb-2" />
+                <Trophy className="w-8 h-8 text-[color-mix(in_oklab,var(--text-muted)_50%,transparent)] mb-2" />
                 <p className="text-sm text-[var(--text-muted)]">No matches yet</p>
               </div>
             )}

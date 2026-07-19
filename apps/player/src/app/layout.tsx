@@ -126,7 +126,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             />
             <OfflineBanner />
             <TopBar playerName={playerName} unreadCount={unreadCount} isAuthenticated={isAuthenticated} activeSeasonName={activeSeasonName} />
-            <main className="page pb-safe-nav md:pb-7">
+            <main className="page pb-safe-nav">
               {children}
             </main>
             <BottomNav />

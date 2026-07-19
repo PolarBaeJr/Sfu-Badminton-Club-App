@@ -48,7 +48,7 @@ export default async function AuditPage() {
             </thead>
             <tbody className="divide-y divide-[var(--border)]">
               {logs?.map((log) => (
-                <tr key={log.id} className="hover:bg-white/[0.03] transition-colors">
+                <tr key={log.id} className="hover:bg-[var(--on-surface-soft)] transition-colors">
                   <td className="px-5 py-3.5 text-sm text-[var(--text-muted)] whitespace-nowrap font-mono text-xs">
                     {formatDateTime(log.created_at)}
                   </td>

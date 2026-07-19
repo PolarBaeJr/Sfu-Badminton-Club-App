@@ -61,7 +61,7 @@ export default async function SessionsPage() {
       />
 
       <div className="feed-col">
-        <div className="card-base">
+        <div className="card-base reveal reveal-1">
           <div className="card-head">
             <div>
               <h3 className="card-title">Upcoming</h3>
@@ -142,7 +142,7 @@ export default async function SessionsPage() {
         </div>
 
         {closedSessions && closedSessions.length > 0 && (
-          <div className="card-base">
+          <div className="card-base reveal reveal-2">
             <div className="card-head">
               <h3 className="card-title">Past sessions</h3>
               <div className="card-sub">Last {closedSessions.length} closed.</div>
