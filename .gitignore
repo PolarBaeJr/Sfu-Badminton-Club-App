@@ -1,41 +1,49 @@
-# dependencies
+# ── Dependencies ──
 node_modules/
-**/node_modules/
 .pnpm-store/
 
-# builds / caches
+# ── Build output & caches ──
 .next/
-**/.next/
 .turbo/
-**/.turbo/
+out/
 dist/
 build/
-.vercel
+coverage/
+*.tsbuildinfo
+next-env.d.ts
 
-# env files
+# ── Next.js / Vercel ──
+.vercel/
+
+# ── Environment files (keep the *.example templates) ──
 .env
 .env.*
-**/.env
-**/.env.*
 !.env.example
 !.env.*.example
 
-# logs
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
+# ── Logs ──
+*.log
 
-# TypeScript
-*.tsbuildinfo
+# ── Editors & OS ──
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
 
-# local notes
-.claude-handoff.md
+# ── Claude Code local settings ──
+.claude/
 
-# design-sync (staged scripts, build output, machine state)
+# ── Design-sync: local tooling, snapshots, machine state (see .design-sync/NOTES.md) ──
+.design-sync/
 .ds-sync/
 ds-bundle/
-.design-sync/.cache/
-.design-sync/learnings/
-.design-sync/node_modules
 packages/ui/.ds-styles.css
+
+# ── Other local-only dirs ──
+.deploy/
+.previews/
+.backup/
+
+# ── Local notes ──
+.claude-handoff.md
