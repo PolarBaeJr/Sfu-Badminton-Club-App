@@ -38,8 +38,8 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#FAF8F5' },
-    { media: '(prefers-color-scheme: dark)', color: '#0D0B0A' },
+    { media: '(prefers-color-scheme: light)', color: '#F8FAFC' },
+    { media: '(prefers-color-scheme: dark)', color: '#0B0F1A' },
   ],
 };
 
@@ -61,10 +61,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 
   // Theme preference lives in a cookie so we can set data-theme server-side and
   // avoid a flash of the wrong theme. Explicit light/dark render correctly on
-  // the server; 'system' (or no cookie) defaults to light and the inline script
+  // the server; 'system' (or no cookie) defaults to dark and the inline script
   // below resolves the OS preference before paint.
   const themePref = (await cookies()).get('theme')?.value;
-  const initialTheme = themePref === 'dark' ? 'dark' : 'light';
+  const initialTheme = themePref === 'light' ? 'light' : 'dark';
 
   try {
     const supabase = await createServerSupabaseClient();
@@ -106,12 +106,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <script dangerouslySetInnerHTML={{ __html: `
           try {
             var m = document.cookie.match(/(?:^|; )theme=([^;]+)/);
-            var t = (m && decodeURIComponent(m[1])) || localStorage.getItem('theme') || 'light';
+            var t = (m && decodeURIComponent(m[1])) || localStorage.getItem('theme') || 'dark';
             var r = t === 'system'
               ? window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
               : t;
             document.documentElement.setAttribute('data-theme', r);
-          } catch(e) { document.documentElement.setAttribute('data-theme', 'light'); }
+          } catch(e) { document.documentElement.setAttribute('data-theme', 'dark'); }
         `}} />
       </head>
       <body>

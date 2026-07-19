@@ -6,33 +6,33 @@
 
 /* ═══════════════════════════════════════════════════════════
    SFU BADMINTON — REDESIGN
-   SFU red on warm cream (light) / warm-black (dark).
+   #E94560 accent on slate (light) / dark-slate (dark).
    Competitive-sport meets trading-platform aesthetic.
    ═══════════════════════════════════════════════════════════ */
 
 [data-theme="light"] {
   /* New design tokens */
-  --red:           #CC0633;
-  --red-ink:       #8B0020;
-  --red-wash:      #FFF1F3;
-  --bg:            #FAF8F5;
+  --red:           #E94560;
+  --red-ink:       #d63d56;
+  --red-wash:      rgba(233, 69, 96, 0.08);
+  --bg:            #F8FAFC;
   --surface:       #FFFFFF;
-  --surface-2:     #F3EFEA;
-  --ink:           #141110;
-  --ink-2:         #3A332F;
-  --mute:          #726A64;
-  --line:          #E8E2DB;
-  --line-2:        #D8D0C7;
-  --win:           oklch(62% 0.12 160);
+  --surface-2:     #F1F5F9;
+  --ink:           #0F172A;
+  --ink-2:         #475569;
+  --mute:          #94A3B8;
+  --line:          #E2E8F0;
+  --line-2:        #CBD5E1;
+  --win:           #10B981;
   --win-wash:      oklch(95% 0.03 160);
-  --loss:          #9A1524;
+  --loss:          #EF4444;
   --gold:          #C99A3C;
   --silver:        #9FA0A3;
   --bronze:        #A6683A;
 
-  --shadow-sm: 0 1px 0 rgba(20,17,16,.04), 0 1px 2px rgba(20,17,16,.04);
-  --shadow-md: 0 2px 4px rgba(20,17,16,.04), 0 8px 22px rgba(20,17,16,.06);
-  --shadow-lg: 0 8px 30px rgba(20,17,16,.10);
+  --shadow-sm: 0 1px 0 rgba(15,23,42,.04), 0 1px 2px rgba(15,23,42,.04);
+  --shadow-md: 0 2px 4px rgba(15,23,42,.04), 0 8px 22px rgba(15,23,42,.06);
+  --shadow-lg: 0 8px 30px rgba(15,23,42,.10);
 
   --r-sm: 6px;
   --r-md: 10px;
@@ -56,9 +56,9 @@
   --border-strong:     color-mix(in oklab, var(--ink) 24%, transparent);
 
   --color-accent:      var(--red);
-  --color-accent-hover:#A30429;
+  --color-accent-hover:#d63d56;
   --color-accent-deep: var(--red-ink);
-  --color-accent-glow: rgba(204, 6, 51, 0.20);
+  --color-accent-glow: rgba(233, 69, 96, 0.20);
 
   --color-gold:        var(--gold);
   --color-gold-hover:  #B5852E;
@@ -69,21 +69,21 @@
   --color-bronze:      var(--bronze);
 
   --color-success:     var(--win);
-  --color-warning:     var(--gold);
+  --color-warning:     #F59E0B;
   --color-danger:      var(--loss);
-  --color-info:        #1D4ED8;
+  --color-info:        #3B82F6;
 
   --elev-1:            var(--shadow-sm);
   --elev-2:            var(--shadow-md);
   --elev-3:            var(--shadow-lg);
-  --elev-4:            0 24px 56px rgba(20,17,16,.14), 0 8px 16px rgba(20,17,16,.06);
+  --elev-4:            0 24px 56px rgba(15,23,42,.14), 0 8px 16px rgba(15,23,42,.06);
 
-  --on-surface-soft:   rgba(20, 17, 16, 0.03);
-  --on-surface-med:    rgba(20, 17, 16, 0.06);
-  --on-surface-hard:   rgba(20, 17, 16, 0.10);
-  --on-surface-grid:   rgba(20, 17, 16, 0.04);
+  --on-surface-soft:   rgba(15, 23, 42, 0.03);
+  --on-surface-med:    rgba(15, 23, 42, 0.06);
+  --on-surface-hard:   rgba(15, 23, 42, 0.10);
+  --on-surface-grid:   rgba(15, 23, 42, 0.04);
   --on-surface-inset:  rgba(255, 255, 255, 0.7);
-  --shadow-deep:       rgba(20, 17, 16, 0.14);
+  --shadow-deep:       rgba(15, 23, 42, 0.14);
 
   --background:        var(--bg);
   --foreground:        var(--ink);
@@ -101,29 +101,29 @@
   --accent-foreground: var(--ink);
   --destructive:       var(--loss);
   --destructive-foreground: #FFFFFF;
-  --input:             rgba(20, 17, 16, 0.10);
+  --input:             rgba(15, 23, 42, 0.10);
   --ring:              var(--red);
 
-  --body-grad-1: radial-gradient(ellipse 80% 60% at 50% -20%, rgba(204, 6, 51, 0.05), transparent 60%);
-  --body-grad-2: radial-gradient(ellipse 60% 50% at 100% 100%, rgba(201, 154, 60, 0.04), transparent 60%);
-  --body-grad-3: radial-gradient(ellipse 50% 40% at 0% 80%, rgba(204, 6, 51, 0.025), transparent 60%);
+  --body-grad-1: radial-gradient(ellipse 80% 60% at 50% -20%, rgba(233, 69, 96, 0.05), transparent 60%);
+  --body-grad-2: radial-gradient(ellipse 60% 50% at 100% 100%, rgba(148, 163, 184, 0.04), transparent 60%);
+  --body-grad-3: radial-gradient(ellipse 50% 40% at 0% 80%, rgba(233, 69, 96, 0.025), transparent 60%);
 }
 
 [data-theme="dark"] {
-  --red:           #CC0633;
-  --red-ink:       #8B0020;
-  --red-wash:      #2A0A10;
-  --bg:            #0D0B0A;
-  --surface:       #15110F;
-  --surface-2:     #1E1816;
-  --ink:           #F6F1EC;
-  --ink-2:         #CCC3BB;
-  --mute:          #8A817A;
-  --line:          #2A211E;
-  --line-2:        #352B27;
-  --win:           oklch(72% 0.12 160);
+  --red:           #E94560;
+  --red-ink:       #d63d56;
+  --red-wash:      rgba(233, 69, 96, 0.10);
+  --bg:            #0B0F1A;
+  --surface:       #151C2C;
+  --surface-2:     #0D1220;
+  --ink:           #F1F5F9;
+  --ink-2:         #94A3B8;
+  --mute:          #64748B;
+  --line:          rgba(255, 255, 255, 0.06);
+  --line-2:        rgba(255, 255, 255, 0.10);
+  --win:           #10B981;
   --win-wash:      oklch(28% 0.05 160);
-  --loss:          #C2334A;
+  --loss:          #EF4444;
   --gold:          #E5BB65;
   --silver:        #BCBDC0;
   --bronze:        #C68A55;
@@ -148,9 +148,9 @@
   --border-strong:     color-mix(in oklab, var(--ink) 30%, transparent);
 
   --color-accent:      var(--red);
-  --color-accent-hover:#E03450;
+  --color-accent-hover:#d63d56;
   --color-accent-deep: var(--red-ink);
-  --color-accent-glow: rgba(204, 6, 51, 0.32);
+  --color-accent-glow: rgba(233, 69, 96, 0.32);
 
   --color-gold:        var(--gold);
   --color-gold-hover:  #F0CC81;
@@ -161,9 +161,9 @@
   --color-bronze:      var(--bronze);
 
   --color-success:     var(--win);
-  --color-warning:     var(--gold);
+  --color-warning:     #F59E0B;
   --color-danger:      var(--loss);
-  --color-info:        #6EA8FF;
+  --color-info:        #3B82F6;
 
   --elev-1:            var(--shadow-sm);
   --elev-2:            var(--shadow-md);
@@ -196,9 +196,9 @@
   --input:             rgba(255, 255, 255, 0.10);
   --ring:              var(--red);
 
-  --body-grad-1: radial-gradient(ellipse 80% 60% at 50% -20%, rgba(204, 6, 51, 0.10), transparent 60%);
-  --body-grad-2: radial-gradient(ellipse 60% 50% at 100% 100%, rgba(229, 187, 101, 0.05), transparent 60%);
-  --body-grad-3: radial-gradient(ellipse 50% 40% at 0% 80%, rgba(204, 6, 51, 0.04), transparent 60%);
+  --body-grad-1: radial-gradient(ellipse 80% 60% at 50% -20%, rgba(233, 69, 96, 0.10), transparent 60%);
+  --body-grad-2: radial-gradient(ellipse 60% 50% at 100% 100%, rgba(148, 163, 184, 0.05), transparent 60%);
+  --body-grad-3: radial-gradient(ellipse 50% 40% at 0% 80%, rgba(233, 69, 96, 0.04), transparent 60%);
 }
 
 /* Motion + radius tokens (theme-independent) */
@@ -375,7 +375,7 @@ body {
 .avatar[data-tone="1"] { background: #EDE4DB; color: #8B5A2B; }
 .avatar[data-tone="2"] { background: #DDE7DC; color: #37604B; }
 .avatar[data-tone="3"] { background: #E4DCEA; color: #5B4680; }
-.avatar[data-tone="4"] { background: #F5D8DC; color: #8B0020; }
+.avatar[data-tone="4"] { background: #F5D8DC; color: #9F1239; }
 .avatar[data-tone="5"] { background: #DCE3EE; color: #3B547A; }
 .avatar[data-tone="6"] { background: #EEE1D6; color: #6B4A23; }
 .avatar[data-tone="7"] { background: #E0DEDA; color: #3D3A36; }
@@ -496,7 +496,7 @@ body {
      mode. --hero-fg drives every child (headline, stats, meta, the inverse
      button), so swapping it per theme flips the whole card's ink at once. */
   --hero-fg: var(--ink);
-  --hero-glow: rgba(204,6,51,.10);
+  --hero-glow: rgba(233,69,96,.10);
   background: linear-gradient(135deg, var(--surface), color-mix(in oklab, var(--red) 5%, var(--surface)));
   color: var(--hero-fg);
   border: 1px solid var(--line);
@@ -511,9 +511,9 @@ body {
 }
 [data-theme="dark"] .hero-banner {
   /* Dark spotlight: near-black card lifted above the near-black page. */
-  --hero-fg: #F6F1EC;
-  --hero-glow: rgba(204,6,51,.32);
-  background: #1C1613;
+  --hero-fg: #F1F5F9;
+  --hero-glow: rgba(233,69,96,.32);
+  background: #151C2C;
   border-color: var(--line);
   box-shadow: none;
 }
@@ -906,9 +906,9 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
 
   .glow-red {
     box-shadow:
-      0 0 0 1px rgba(204, 6, 51, 0.25),
-      0 10px 30px -10px rgba(204, 6, 51, 0.45),
-      0 0 80px -10px rgba(204, 6, 51, 0.25);
+      0 0 0 1px rgba(233, 69, 96, 0.25),
+      0 10px 30px -10px rgba(233, 69, 96, 0.45),
+      0 0 80px -10px rgba(233, 69, 96, 0.25);
   }
   .glow-gold {
     box-shadow:
@@ -922,7 +922,7 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
       0 20px 40px -20px var(--shadow-deep);
   }
 
-  .gradient-court  { background: linear-gradient(135deg, #E5294D 0%, var(--red) 40%, var(--red-ink) 100%); }
+  .gradient-court  { background: linear-gradient(135deg, #F25C77 0%, var(--red) 40%, var(--red-ink) 100%); }
   .gradient-gold   { background: linear-gradient(135deg, #E5BB65 0%, var(--gold) 40%, #6E4F1A 100%); }
   .gradient-dark   { background: linear-gradient(180deg, var(--bg) 0%, var(--surface) 100%); }
   .gradient-card   { background: linear-gradient(180deg, var(--on-surface-soft) 0%, transparent 50%), var(--surface); }
@@ -932,7 +932,7 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
     -webkit-text-fill-color: transparent;
   }
   .gradient-text-red {
-    background: linear-gradient(135deg, #E5294D 0%, var(--red) 50%, var(--red-ink) 100%);
+    background: linear-gradient(135deg, #F25C77 0%, var(--red) 50%, var(--red-ink) 100%);
     -webkit-background-clip: text; background-clip: text;
     -webkit-text-fill-color: transparent;
   }
@@ -1000,8 +1000,8 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
     color: var(--ink-2);
   }
   [data-theme="dark"] .chip-red {
-    border-color: rgba(204, 6, 51, 0.42);
-    background: rgba(204, 6, 51, 0.14);
+    border-color: rgba(233, 69, 96, 0.42);
+    background: rgba(233, 69, 96, 0.14);
     color: #F5A8B4;
   }
   [data-theme="dark"] .chip-gold {
@@ -1025,7 +1025,7 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
     color: #F0CC81;
   }
   [data-theme="light"] .chip-red {
-    border-color: rgba(204, 6, 51, 0.25);
+    border-color: rgba(233, 69, 96, 0.25);
     background: var(--red-wash);
     color: var(--red-ink);
   }
@@ -1154,7 +1154,7 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
     color: #fff;
     font-weight: 700;
     letter-spacing: 0.02em;
-    box-shadow: 0 4px 20px -6px rgba(204, 6, 51, 0.45);
+    box-shadow: 0 4px 20px -6px rgba(233, 69, 96, 0.45);
     transition:
       transform var(--dur-fast) var(--ease-out-expo),
       box-shadow var(--dur-fast) var(--ease-out-expo),
@@ -1163,7 +1163,7 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
   @media (hover: hover) {
     .btn-primary-cta:hover {
       background: var(--red-ink);
-      box-shadow: 0 8px 28px -8px rgba(139, 0, 32, 0.55);
+      box-shadow: 0 8px 28px -8px rgba(214, 61, 86, 0.55);
       transform: translateY(-1px);
     }
   }

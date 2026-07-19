@@ -64,7 +64,7 @@ export default function SettingsPage() {
   const [bio, setBio] = useState('');
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const [theme, setThemeState] = useState<Theme>('light');
+  const [theme, setThemeState] = useState<Theme>('dark');
   const [showOnLeaderboard, setShowOnLeaderboard] = useState(true);
   const [showActivity, setShowActivity] = useState(true);
   const [pushEnabled, setPushEnabled] = useState(false);
@@ -95,7 +95,7 @@ export default function SettingsPage() {
       }
     }
     load();
-    const saved = (localStorage.getItem('theme') as Theme) || 'light';
+    const saved = (localStorage.getItem('theme') as Theme) || 'dark';
     setThemeState(saved);
     // Migrate existing localStorage-only users to the cookie so SSR picks it up.
     if (!/(?:^|; )theme=/.test(document.cookie)) {

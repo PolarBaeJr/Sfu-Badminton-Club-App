@@ -84,7 +84,7 @@ export default async function PlayersPage({
             >
               {t.label}
               <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                tab === t.id ? 'bg-[var(--on-surface-hard)]' : 'bg-[var(--border-hover)]'
+                tab === t.id ? 'bg-white/20' : 'bg-[var(--border-hover)]'
               }`}>{t.count}</span>
             </Link>
           ))}

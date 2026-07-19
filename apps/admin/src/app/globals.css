@@ -1,283 +1,97 @@
-/* Fonts loaded via next/font in layout.tsx — don't @import them here. */
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* ═══════════════════════════════════════════════════════════
-   SFU BADMINTON ADMIN — shared token system
-   Synced from apps/player/src/app/globals.css: SFU red on warm
-   cream (light) / warm-black (dark). Keep the two in lockstep.
-   ═══════════════════════════════════════════════════════════ */
+[data-theme="dark"] {
+  --bg-primary: #0B0F1A;
+  --bg-surface: #111827;
+  --bg-card: #151C2C;
+  --bg-elevated: #0D1220;
+  --text-primary: #F1F5F9;
+  --text-secondary: #94A3B8;
+  --text-muted: #64748B;
+  --border: rgba(255,255,255,0.06);
+  --border-hover: rgba(255,255,255,0.10);
+  --color-accent: #E94560;
+  --color-accent-hover: #d63d56;
+  --color-success: #10B981;
+  --color-warning: #F59E0B;
+  --color-danger: #EF4444;
+  --color-info: #3B82F6;
+}
 
 [data-theme="light"] {
-  /* New design tokens */
-  --red:           #CC0633;
-  --red-ink:       #8B0020;
-  --red-wash:      #FFF1F3;
-  --bg:            #FAF8F5;
-  --surface:       #FFFFFF;
-  --surface-2:     #F3EFEA;
-  --ink:           #141110;
-  --ink-2:         #3A332F;
-  --mute:          #726A64;
-  --line:          #E8E2DB;
-  --line-2:        #D8D0C7;
-  --win:           oklch(62% 0.12 160);
-  --win-wash:      oklch(95% 0.03 160);
-  --loss:          #9A1524;
-  --gold:          #C99A3C;
-  --silver:        #9FA0A3;
-  --bronze:        #A6683A;
-
-  --shadow-sm: 0 1px 0 rgba(20,17,16,.04), 0 1px 2px rgba(20,17,16,.04);
-  --shadow-md: 0 2px 4px rgba(20,17,16,.04), 0 8px 22px rgba(20,17,16,.06);
-  --shadow-lg: 0 8px 30px rgba(20,17,16,.10);
-
-  --r-sm: 6px;
-  --r-md: 10px;
-  --r-lg: 14px;
-  --r-xl: 20px;
-
-  /* Existing-name aliases so legacy components keep working */
-  --bg-primary:        var(--bg);
-  --bg-surface:        var(--surface);
-  --bg-card:           var(--surface);
-  --bg-elevated:       var(--surface-2);
-  --bg-overlay:        color-mix(in oklab, var(--bg) 82%, transparent);
-
-  --text-primary:      var(--ink);
-  --text-secondary:    var(--ink-2);
-  --text-muted:        var(--mute);
-  --text-dim:          color-mix(in oklab, var(--mute) 70%, var(--bg));
-
-  --border:            var(--line);
-  --border-hover:      var(--line-2);
-  --border-strong:     color-mix(in oklab, var(--ink) 24%, transparent);
-
-  --color-accent:      var(--red);
-  --color-accent-hover:#A30429;
-  --color-accent-deep: var(--red-ink);
-  --color-accent-glow: rgba(204, 6, 51, 0.20);
-
-  --color-gold:        var(--gold);
-  --color-gold-hover:  #B5852E;
-  --color-gold-deep:   #6E4F1A;
-  --color-gold-glow:   rgba(201, 154, 60, 0.22);
-
-  --color-silver:      var(--silver);
-  --color-bronze:      var(--bronze);
-
-  --color-success:     var(--win);
-  --color-warning:     var(--gold);
-  --color-danger:      var(--loss);
-  --color-info:        #1D4ED8;
-
-  --elev-1:            var(--shadow-sm);
-  --elev-2:            var(--shadow-md);
-  --elev-3:            var(--shadow-lg);
-  --elev-4:            0 24px 56px rgba(20,17,16,.14), 0 8px 16px rgba(20,17,16,.06);
-
-  --on-surface-soft:   rgba(20, 17, 16, 0.03);
-  --on-surface-med:    rgba(20, 17, 16, 0.06);
-  --on-surface-hard:   rgba(20, 17, 16, 0.10);
-  --on-surface-grid:   rgba(20, 17, 16, 0.04);
-  --on-surface-inset:  rgba(255, 255, 255, 0.7);
-  --shadow-deep:       rgba(20, 17, 16, 0.14);
-
-  --background:        var(--bg);
-  --foreground:        var(--ink);
-  --card:              var(--surface);
-  --card-foreground:   var(--ink);
-  --popover:           var(--surface);
-  --popover-foreground:var(--ink);
-  --primary:           var(--red);
-  --primary-foreground:#FFFFFF;
-  --secondary:         var(--surface-2);
-  --secondary-foreground: var(--ink);
-  --muted:             var(--surface-2);
-  --muted-foreground:  var(--ink-2);
-  --accent:            var(--surface-2);
-  --accent-foreground: var(--ink);
-  --destructive:       var(--loss);
-  --destructive-foreground: #FFFFFF;
-  --input:             rgba(20, 17, 16, 0.10);
-  --ring:              var(--red);
-
-  --body-grad-1: radial-gradient(ellipse 80% 60% at 50% -20%, rgba(204, 6, 51, 0.05), transparent 60%);
-  --body-grad-2: radial-gradient(ellipse 60% 50% at 100% 100%, rgba(201, 154, 60, 0.04), transparent 60%);
-  --body-grad-3: radial-gradient(ellipse 50% 40% at 0% 80%, rgba(204, 6, 51, 0.025), transparent 60%);
-}
-
-[data-theme="dark"] {
-  --red:           #CC0633;
-  --red-ink:       #8B0020;
-  --red-wash:      #2A0A10;
-  --bg:            #0D0B0A;
-  --surface:       #15110F;
-  --surface-2:     #1E1816;
-  --ink:           #F6F1EC;
-  --ink-2:         #CCC3BB;
-  --mute:          #8A817A;
-  --line:          #2A211E;
-  --line-2:        #352B27;
-  --win:           oklch(72% 0.12 160);
-  --win-wash:      oklch(28% 0.05 160);
-  --loss:          #C2334A;
-  --gold:          #E5BB65;
-  --silver:        #BCBDC0;
-  --bronze:        #C68A55;
-
-  --shadow-sm: 0 1px 0 rgba(0,0,0,.5), 0 1px 2px rgba(0,0,0,.4);
-  --shadow-md: 0 2px 4px rgba(0,0,0,.4), 0 8px 22px rgba(0,0,0,.4);
-  --shadow-lg: 0 12px 40px rgba(0,0,0,.55);
-
-  --bg-primary:        var(--bg);
-  --bg-surface:        var(--surface);
-  --bg-card:           var(--surface);
-  --bg-elevated:       var(--surface-2);
-  --bg-overlay:        color-mix(in oklab, var(--bg) 82%, transparent);
-
-  --text-primary:      var(--ink);
-  --text-secondary:    var(--ink-2);
-  --text-muted:        var(--mute);
-  --text-dim:          color-mix(in oklab, var(--mute) 60%, var(--bg));
-
-  --border:            var(--line);
-  --border-hover:      var(--line-2);
-  --border-strong:     color-mix(in oklab, var(--ink) 30%, transparent);
-
-  --color-accent:      var(--red);
-  --color-accent-hover:#E03450;
-  --color-accent-deep: var(--red-ink);
-  --color-accent-glow: rgba(204, 6, 51, 0.32);
-
-  --color-gold:        var(--gold);
-  --color-gold-hover:  #F0CC81;
-  --color-gold-deep:   #A57F3F;
-  --color-gold-glow:   rgba(229, 187, 101, 0.30);
-
-  --color-silver:      var(--silver);
-  --color-bronze:      var(--bronze);
-
-  --color-success:     var(--win);
-  --color-warning:     var(--gold);
-  --color-danger:      var(--loss);
-  --color-info:        #6EA8FF;
-
-  --elev-1:            var(--shadow-sm);
-  --elev-2:            var(--shadow-md);
-  --elev-3:            var(--shadow-lg);
-  --elev-4:            0 24px 64px rgba(0,0,0,.65), 0 8px 16px rgba(0,0,0,.4);
-
-  --on-surface-soft:   rgba(255, 255, 255, 0.04);
-  --on-surface-med:    rgba(255, 255, 255, 0.08);
-  --on-surface-hard:   rgba(255, 255, 255, 0.14);
-  --on-surface-grid:   rgba(255, 255, 255, 0.025);
-  --on-surface-inset:  rgba(255, 255, 255, 0.04);
-  --shadow-deep:       rgba(0, 0, 0, 0.7);
-
-  --background:        var(--bg);
-  --foreground:        var(--ink);
-  --card:              var(--surface);
-  --card-foreground:   var(--ink);
-  --popover:           var(--surface-2);
-  --popover-foreground:var(--ink);
-  --primary:           var(--red);
-  --primary-foreground:#FFFFFF;
-  --secondary:         var(--surface-2);
-  --secondary-foreground: var(--ink);
-  --muted:             var(--surface-2);
-  --muted-foreground:  var(--ink-2);
-  --accent:            var(--surface-2);
-  --accent-foreground: var(--ink);
-  --destructive:       var(--loss);
-  --destructive-foreground: #FFFFFF;
-  --input:             rgba(255, 255, 255, 0.10);
-  --ring:              var(--red);
-
-  --body-grad-1: radial-gradient(ellipse 80% 60% at 50% -20%, rgba(204, 6, 51, 0.10), transparent 60%);
-  --body-grad-2: radial-gradient(ellipse 60% 50% at 100% 100%, rgba(229, 187, 101, 0.05), transparent 60%);
-  --body-grad-3: radial-gradient(ellipse 50% 40% at 0% 80%, rgba(204, 6, 51, 0.04), transparent 60%);
-}
-
-/* Motion + radius tokens (theme-independent) */
-:root {
-  --display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
-  --body:    "Inter", ui-sans-serif, system-ui, sans-serif;
-  --mono:    "JetBrains Mono", ui-monospace, monospace;
-
-  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-out-back: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --ease-in-out:   cubic-bezier(0.65, 0, 0.35, 1);
-  --dur-fast:  160ms;
-  --dur-med:   240ms;
-  --dur-slow:  420ms;
-  --radius:    0.875rem;
-}
-
-* {
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
-}
-
-html, body {
-  background: var(--bg);
-  color: var(--ink);
-  font-family: var(--body);
-  font-feature-settings: "ss01", "cv11";
-  transition: background-color var(--dur-med) var(--ease-in-out),
-              color var(--dur-med) var(--ease-in-out);
+  --bg-primary: #F8FAFC;
+  --bg-surface: #F1F5F9;
+  --bg-card: #FFFFFF;
+  --bg-elevated: #FFFFFF;
+  --text-primary: #0F172A;
+  --text-secondary: #475569;
+  --text-muted: #94A3B8;
+  --border: #E2E8F0;
+  --border-hover: #CBD5E1;
+  --color-accent: #E94560;
+  --color-accent-hover: #d63d56;
+  --color-success: #10B981;
+  --color-warning: #F59E0B;
+  --color-danger: #EF4444;
+  --color-info: #3B82F6;
 }
 
 body {
-  min-height: 100dvh;
-  background-image: var(--body-grad-1), var(--body-grad-2), var(--body-grad-3);
-  background-attachment: fixed;
+  font-family: 'DM Sans', sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
 }
 
-::selection {
-  background: var(--red);
-  color: #fff;
+::-webkit-scrollbar {
+  width: 6px;
 }
-
-/* Scrollbar */
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-track {
+  background: transparent;
+}
 ::-webkit-scrollbar-thumb {
-  background: var(--on-surface-hard);
-  border-radius: 999px;
-  border: 2px solid transparent;
-  background-clip: padding-box;
+  background: var(--border-hover);
+  border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--border-strong);
-  background-clip: padding-box;
-  border: 2px solid transparent;
+  background: var(--text-muted);
 }
 
-:focus-visible {
-  outline: 2px solid var(--red);
-  outline-offset: 2px;
-  border-radius: 6px;
+/* Smooth transitions for theme changes */
+*, *::before, *::after {
+  transition-property: background-color, border-color;
+  transition-duration: 200ms;
+  transition-timing-function: ease;
 }
 
-@layer base {
-  * { border-color: var(--border); }
-  body { background-color: var(--bg); color: var(--ink); }
+/* Override transition for elements that shouldn't animate */
+input, textarea, select, button, a {
+  transition-property: all;
+  transition-duration: 150ms;
+}
 
-  /* Display headings — Space Grotesk replaces Barlow Condensed */
-  h1, h2, h3, h4 {
-    font-family: var(--display);
-    letter-spacing: -0.02em;
-    font-weight: 700;
-    line-height: 1.05;
-  }
-
-  /* Tabular numerals */
-  .nums, [data-nums], .font-mono {
-    font-variant-numeric: tabular-nums;
-    font-feature-settings: "tnum" 1;
-  }
+/* ------------------------------------------------------------------
+   Shared component token bridge
+   @badminton/ui components (Button, Badge, Dialog, Toast, Input, ...)
+   reference player-system token names this file never defined. Map
+   them onto the admin slate theme variables above. Defined once at
+   :root via var() indirection: data-theme lives on <html>, so each
+   alias resolves to the active theme's value automatically.
+   ------------------------------------------------------------------ */
+:root {
+  --bg: var(--bg-primary);
+  --surface: var(--bg-card);
+  --surface-2: var(--bg-elevated);
+  --ink: var(--text-primary);
+  --ink-2: var(--text-secondary);
+  --line: var(--border);
+  --red: var(--color-accent);            /* #E94560 */
+  --red-ink: var(--color-accent-hover);  /* #d63d56 */
+  --red-wash: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  --win: var(--color-success);
+  --loss: var(--color-danger);
+  --display: 'Barlow Condensed', sans-serif;
 }
