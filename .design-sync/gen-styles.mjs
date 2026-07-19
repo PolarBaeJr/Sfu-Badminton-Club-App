@@ -9,9 +9,10 @@
 //     JetBrains Mono via next/font with hashed family names; previews use the
 //     real names).
 //  3. Maps the next/font CSS vars to real family names on :root.
-//  4. Mirrors every `[data-theme="light"]` token block onto :root — preview
+//  4. Mirrors every `[data-theme="dark"]` token block onto :root — preview
 //     pages have no data-theme attribute on <html>, so without this every
-//     var(--*) resolves to nothing and components render unstyled.
+//     var(--*) resolves to nothing and components render unstyled. Dark is
+//     mirrored because the app is dark-by-default (slate/#E94560 design).
 //  5. Writes .design-sync/app-styles.css and copies it to
 //     packages/ui/.ds-styles.css (the package-relative cssEntry, gitignored).
 import { readFileSync, writeFileSync, readdirSync, statSync, copyFileSync } from 'node:fs';
@@ -28,23 +29,26 @@ const largest = files
   .sort((a, b) => b.size - a.size)[0].f;
 const css = readFileSync(join(cssDir, largest), 'utf8');
 
-// Mirror [data-theme="light"] custom-prop blocks onto :root (token blocks have
+// Mirror [data-theme="dark"] custom-prop blocks onto :root (token blocks have
 // no nested braces, so a flat regex is safe on the minified output).
-const lightBlocks = [...css.matchAll(/\[data-theme=(?:"light"|light)\]\{([^}]+)\}/g)].map(
+const darkBlocks = [...css.matchAll(/\[data-theme=(?:"dark"|dark)\]\{([^}]+)\}/g)].map(
   (m) => m[1],
 );
-if (!lightBlocks.length) console.warn('! no [data-theme=light] blocks found — tokens may be missing');
+if (!darkBlocks.length) console.warn('! no [data-theme=dark] blocks found — tokens may be missing');
 
 const out = [
   '@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap");',
   `/* Snapshot of apps/player compiled CSS (${largest}). Regenerate: node .design-sync/gen-styles.mjs */`,
   ':root{--font-sans:"Inter";--font-display:"Space Grotesk";--font-mono:"JetBrains Mono";}',
-  `:root{${lightBlocks.join(';')}}`,
+  `:root{${darkBlocks.join(';')}}`,
   css,
+  // Preview cards inline body{background:#fff} AFTER linking this sheet; the
+  // dark ground must win, so use higher specificity (html body) not order.
+  'html body{background:var(--bg);color:var(--ink)}',
 ].join('\n');
 
 writeFileSync(join(root, '.design-sync/app-styles.css'), out);
 copyFileSync(join(root, '.design-sync/app-styles.css'), join(root, 'packages/ui/.ds-styles.css'));
 console.log(
-  `wrote app-styles.css (${(out.length / 1024).toFixed(0)} KB) from ${largest}; light-token blocks mirrored to :root: ${lightBlocks.length}`,
+  `wrote app-styles.css (${(out.length / 1024).toFixed(0)} KB) from ${largest}; dark-token blocks mirrored to :root: ${darkBlocks.length}`,
 );
