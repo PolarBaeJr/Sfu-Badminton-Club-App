@@ -1,5 +1,7 @@
 # Liability Waiver & Assumption of Risk
 
+> The live text is stored in the database (legal_documents) and editable in Admin → Settings → Legal documents. This file is the original draft.
+
 > 🚧 **DRAFT — REVIEW REQUIRED. This is NOT legal advice.** A liability waiver is a legal document whose enforceability depends on wording and jurisdiction (British Columbia). **Have this reviewed by SFU student-club/risk resources or a lawyer before using it.** Do not rely on this draft as-is. Fill in `[PLACEHOLDER]`s.
 
 **Participant:** the member accepting this waiver in the app.

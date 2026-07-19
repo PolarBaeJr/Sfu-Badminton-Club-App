@@ -4,7 +4,8 @@
 // Each subfile is a 'use server' module owning one domain:
 //   - challenges.ts  — create/accept/reject/cancel
 //   - matches.ts     — submit/confirm/dispute, walkover
-//   - profile.ts     — updateProfile, completeOnboarding
+//   - profile.ts     — updateProfile, completeOnboarding,
+//                      getLegalDocuments, acceptLegalDocuments
 //   - notifications.ts — markNotificationRead / All / markAnnouncementRead
 //   - sessions.ts    — checkInToSession
 //   - _shared.ts     — requirePlayer / getPlayerProps / trackServerEvent
@@ -26,6 +27,8 @@ export {
 export {
   updateProfile,
   completeOnboarding,
+  getLegalDocuments,
+  acceptLegalDocuments,
 } from './actions/profile';
 
 export {

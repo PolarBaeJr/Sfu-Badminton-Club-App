@@ -6,6 +6,7 @@ import { BottomNav } from '@/components/bottom-nav';
 import { TopBar } from '@/components/top-bar';
 import { ToastProvider } from '@/components/toast-provider';
 import { OfflineBanner } from '@/components/OfflineBanner';
+import { WaiverGate } from '@/components/waiver-gate';
 import { PostHogProvider } from '@/components/posthog-provider';
 import { PostHogIdentify } from '@/components/posthog-identify';
 import { SentryUserInit } from '@/components/sentry-user-init';
@@ -52,6 +53,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   let doublesElo: number | null = null;
   let unreadCount = 0;
   let activeSeasonName = '';
+  let needsWaiver = false;
 
   try {
     activeSeasonName = (await getActiveSeason())?.name ?? '';
@@ -73,12 +75,24 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       isAuthenticated = true;
       const { data: player } = await supabase
         .from('players')
-        .select('id, full_name, status, ratings(singles_elo, doubles_elo)')
+        .select('id, full_name, status, ratings(singles_elo, doubles_elo), waiver_acceptances(document, version)')
         .eq('user_id', user.id)
         .maybeSingle();
       playerName = player?.full_name ?? '';
       playerId = player?.id ?? null;
       playerStatus = player?.status ?? null;
+
+      // A member needs the waiver gate when they haven't accepted the current
+      // version of both legal documents (two tiny rows — skipped when no player).
+      if (player) {
+        const { data: docs } = await supabase
+          .from('legal_documents')
+          .select('document, version');
+        const acceptances = (player.waiver_acceptances ?? []) as { document: string; version: string }[];
+        needsWaiver = (docs ?? []).some(
+          (doc) => !acceptances.some((a) => a.document === doc.document && a.version === doc.version)
+        );
+      }
 
       const ratings = Array.isArray(player?.ratings) ? player.ratings[0] : player?.ratings;
       singlesElo = (ratings as Record<string, unknown>)?.singles_elo as number ?? null;
@@ -125,6 +139,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               doublesElo={doublesElo}
             />
             <OfflineBanner />
+            <WaiverGate needsWaiver={needsWaiver} />
             <TopBar playerName={playerName} unreadCount={unreadCount} isAuthenticated={isAuthenticated} activeSeasonName={activeSeasonName} />
             <main className="page pb-safe-nav">
               {children}

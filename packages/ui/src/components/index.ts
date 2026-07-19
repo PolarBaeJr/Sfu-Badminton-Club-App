@@ -21,3 +21,4 @@ export { AvatarChip } from './AvatarChip';
 export { DataRow } from './DataRow';
 export { RouteError } from './RouteError';
 export { RouteLoading } from './RouteLoading';
+export { LegalMarkdown } from './LegalMarkdown';

@@ -32,7 +32,7 @@ export default async function PlayersPage({
 
   let query = supabase
     .from('players')
-    .select('id, full_name, email, avatar_url, status, role, is_exec, fee_exempt, is_banned, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses)')
+    .select('id, full_name, email, avatar_url, status, role, is_exec, fee_exempt, is_banned, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
     .order('created_at', { ascending: false })
     .limit(500);
 
@@ -50,6 +50,10 @@ export default async function PlayersPage({
   }
 
   const players = unwrap(await query);
+
+  // Current legal-document versions — a player's waiver status is "accepted"
+  // only when they've accepted the current version of every document.
+  const { data: legalDocs } = await supabase.from('legal_documents').select('document, version');
 
   // Count for tabs — competitive catches all active players not in other tabs
   const { count: compCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).not('status', 'in', '("recreational","suspended","pending_approval")');
@@ -103,6 +107,7 @@ export default async function PlayersPage({
                 <th className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase">Doubles Elo</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase">S W/L</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase">D W/L</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Waiver</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase">Actions</th>
               </tr>
             </thead>
@@ -110,6 +115,18 @@ export default async function PlayersPage({
               {players?.map((player) => {
                 const r = Array.isArray(player.ratings) ? player.ratings[0] : player.ratings;
                 const dotClass = attentionDot(player.status);
+                const acceptances = (player.waiver_acceptances ?? []) as { document: string; version: string; accepted_at: string }[];
+                const currentAcceptances = (legalDocs ?? [])
+                  .map((doc) => acceptances.find((a) => a.document === doc.document && a.version === doc.version))
+                  .filter((a): a is NonNullable<typeof a> => Boolean(a));
+                const waiverCurrent =
+                  (legalDocs?.length ?? 0) > 0 && currentAcceptances.length === (legalDocs?.length ?? 0);
+                const latestAcceptedAt = waiverCurrent
+                  ? currentAcceptances.map((a) => a.accepted_at).sort().slice(-1)[0]
+                  : null;
+                // Documents can be bumped independently — collapse to one string
+                // when versions match, else list both.
+                const waiverVersion = [...new Set(currentAcceptances.map((a) => a.version))].join(' / ');
                 return (
                   <tr key={player.id} className="hover:bg-[var(--border-hover)] transition-colors">
                     <td className="px-4 py-3">
@@ -149,6 +166,16 @@ export default async function PlayersPage({
                     </td>
                     <td className="px-4 py-3 text-right text-sm text-[var(--text-secondary)]">
                       {r ? `${r.doubles_wins}-${r.doubles_losses}${r.doubles_wins + r.doubles_losses > 0 ? ` (${getWinRate(r.doubles_wins, r.doubles_losses)})` : ''}` : '-'}
+                    </td>
+                    <td className="px-4 py-3">
+                      {waiverCurrent ? (
+                        <span className="font-mono text-xs text-[var(--text-muted)]">
+                          v{waiverVersion}
+                          {latestAcceptedAt && ` · ${new Date(latestAcceptedAt).toLocaleDateString()}`}
+                        </span>
+                      ) : (
+                        <Badge variant="warning">Missing</Badge>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex gap-1 justify-end">

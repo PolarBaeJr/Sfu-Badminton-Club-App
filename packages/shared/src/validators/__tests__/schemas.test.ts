@@ -20,6 +20,8 @@ import {
   reinstatementSchema,
   banSchema,
   playerFlagsSchema,
+  legalAcceptanceSchema,
+  legalDocumentUpdateSchema,
 } from '../schemas';
 
 const UUID_A = '11111111-1111-4111-8111-111111111111';
@@ -522,6 +524,53 @@ describe('playerFlagsSchema', () => {
   it('rejects non-boolean values', () => {
     expect(
       playerFlagsSchema.safeParse({ is_exec: 'yes', fee_exempt: false }).success,
+    ).toBe(false);
+  });
+});
+
+describe('legalAcceptanceSchema', () => {
+  const allTrue = {
+    waiver_accepted: true,
+    code_of_conduct_accepted: true,
+    age_attestation: true,
+  };
+  it('accepts all three literals true', () => {
+    expect(legalAcceptanceSchema.safeParse(allTrue).success).toBe(true);
+  });
+  it('rejects any false literal', () => {
+    for (const key of ['waiver_accepted', 'code_of_conduct_accepted', 'age_attestation'] as const) {
+      expect(legalAcceptanceSchema.safeParse({ ...allTrue, [key]: false }).success).toBe(false);
+    }
+  });
+  it('rejects a missing field', () => {
+    expect(
+      legalAcceptanceSchema.safeParse({ waiver_accepted: true, code_of_conduct_accepted: true }).success,
+    ).toBe(false);
+  });
+});
+
+describe('legalDocumentUpdateSchema', () => {
+  const base = {
+    document: 'waiver' as const,
+    content: 'x'.repeat(100),
+    bump_version: false,
+  };
+  it('accepts a valid update for each document', () => {
+    for (const document of ['waiver', 'code_of_conduct'] as const) {
+      expect(legalDocumentUpdateSchema.safeParse({ ...base, document }).success).toBe(true);
+    }
+  });
+  it('rejects an unknown document', () => {
+    expect(
+      legalDocumentUpdateSchema.safeParse({ ...base, document: 'privacy_policy' }).success,
+    ).toBe(false);
+  });
+  it('rejects content shorter than 50 chars', () => {
+    expect(legalDocumentUpdateSchema.safeParse({ ...base, content: 'too short' }).success).toBe(false);
+  });
+  it('rejects content longer than 50000 chars', () => {
+    expect(
+      legalDocumentUpdateSchema.safeParse({ ...base, content: 'x'.repeat(50001) }).success,
     ).toBe(false);
   });
 });

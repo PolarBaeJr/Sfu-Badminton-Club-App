@@ -1,5 +1,7 @@
 # Code of Conduct
 
+> The live text is stored in the database (legal_documents) and editable in Admin → Settings → Legal documents. This file is the original draft.
+
 > 🚧 **DRAFT — REVIEW REQUIRED.** Template for the club to adopt. Align it with SFU's student-club and athletics/rec conduct policies. Fill in `[PLACEHOLDER]`s.
 
 **Applies to:** all members of `[CLUB LEGAL NAME]`, at all club activities (sessions, tournaments, socials) and in the club app.

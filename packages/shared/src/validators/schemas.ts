@@ -281,6 +281,26 @@ export const announcementSchema = z.object({
   expires_at: z.string().optional(),
 });
 
+// All three must be literally true — accepting is an affirmative act, so the
+// server rejects anything short of an explicit check on every box.
+export const legalAcceptanceSchema = z.object({
+  waiver_accepted: z.literal(true, {
+    errorMap: () => ({ message: 'You must accept the liability waiver' }),
+  }),
+  code_of_conduct_accepted: z.literal(true, {
+    errorMap: () => ({ message: 'You must accept the code of conduct' }),
+  }),
+  age_attestation: z.literal(true, {
+    errorMap: () => ({ message: 'You must confirm you are 19 or older, or have your parent/guardian\'s consent' }),
+  }),
+});
+
+export const legalDocumentUpdateSchema = z.object({
+  document: z.enum(['waiver', 'code_of_conduct']),
+  content: z.string().min(50, 'Content must be at least 50 characters').max(50000),
+  bump_version: z.boolean(),
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type ProfileInput = z.infer<typeof profileSchema>;
 export type ChallengeCreateInput = z.infer<typeof challengeCreateSchema>;
@@ -306,3 +326,5 @@ export type TournamentFeeMarkInput = z.infer<typeof tournamentFeeMarkSchema>;
 export type ReinstatementInput = z.infer<typeof reinstatementSchema>;
 export type BanInput = z.infer<typeof banSchema>;
 export type PlayerFlagsInput = z.infer<typeof playerFlagsSchema>;
+export type LegalAcceptanceInput = z.infer<typeof legalAcceptanceSchema>;
+export type LegalDocumentUpdateInput = z.infer<typeof legalDocumentUpdateSchema>;

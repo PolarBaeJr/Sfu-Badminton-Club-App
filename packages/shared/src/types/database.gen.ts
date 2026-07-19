@@ -460,6 +460,38 @@ export type Database = {
           },
         ]
       }
+      legal_documents: {
+        Row: {
+          content: string
+          document: string
+          updated_at: string
+          updated_by: string | null
+          version: string
+        }
+        Insert: {
+          content: string
+          document: string
+          updated_at?: string
+          updated_by?: string | null
+          version: string
+        }
+        Update: {
+          content?: string
+          document?: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_documents_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       match_games: {
         Row: {
           game_number: number
@@ -1853,6 +1885,44 @@ export type Database = {
           },
           {
             foreignKeyName: "varsity_notes_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      waiver_acceptances: {
+        Row: {
+          accepted_at: string
+          age_attestation: boolean
+          document: string
+          id: string
+          player_id: string
+          user_agent: string | null
+          version: string
+        }
+        Insert: {
+          accepted_at?: string
+          age_attestation?: boolean
+          document: string
+          id?: string
+          player_id: string
+          user_agent?: string | null
+          version: string
+        }
+        Update: {
+          accepted_at?: string
+          age_attestation?: boolean
+          document?: string
+          id?: string
+          player_id?: string
+          user_agent?: string | null
+          version?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "waiver_acceptances_player_id_fkey"
             columns: ["player_id"]
             isOneToOne: false
             referencedRelation: "players"

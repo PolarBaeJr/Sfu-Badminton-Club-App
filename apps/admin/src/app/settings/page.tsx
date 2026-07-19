@@ -2,7 +2,8 @@ export const dynamic = 'force-dynamic';
 import { createAdminClient, getAuthenticatedAdmin } from '@/lib/supabase-server';
 import { Card } from '@badminton/ui';
 import { SettingsForm } from './settings-form';
-import { Settings, User, Mail, Shield, Sliders, Info } from 'lucide-react';
+import { LegalDocumentsForm } from './legal-documents-form';
+import { Settings, User, Mail, Shield, Sliders, Info, FileText } from 'lucide-react';
 
 export default async function SettingsPage() {
   let player: Awaited<ReturnType<typeof getAuthenticatedAdmin>> | null = null;
@@ -17,6 +18,11 @@ export default async function SettingsPage() {
     .from('platform_settings')
     .select('*')
     .order('key');
+
+  const { data: legalDocuments } = await supabase
+    .from('legal_documents')
+    .select('document, version, content, updated_at')
+    .order('document', { ascending: false }); // waiver first
 
   return (
     <div className="space-y-6">
@@ -74,6 +80,19 @@ export default async function SettingsPage() {
             <h2 className="text-base font-semibold text-[var(--text-primary)]">Platform Settings</h2>
           </div>
           <SettingsForm settings={settings} />
+        </div>
+      )}
+
+      {/* Legal Documents */}
+      {player?.role === 'admin' && legalDocuments && legalDocuments.length > 0 && (
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
+          <div className="flex items-center gap-2 mb-5">
+            <div className="w-8 h-8 rounded-lg bg-[var(--color-accent)]/10 flex items-center justify-center">
+              <FileText className="w-4 h-4 text-[var(--color-accent)]" />
+            </div>
+            <h2 className="text-base font-semibold text-[var(--text-primary)]">Legal Documents</h2>
+          </div>
+          <LegalDocumentsForm documents={legalDocuments} />
         </div>
       )}
 

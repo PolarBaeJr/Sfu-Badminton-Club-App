@@ -3,11 +3,12 @@
 import { revalidatePath } from 'next/cache';
 import { CLUB_TIMEZONE, formatTime, getCheckinWindow, isCheckinOpen } from '@badminton/shared';
 import { createServerSupabaseClient } from '../supabase-server';
-import { requirePlayer, getPlayerProps, trackServerEvent } from './_shared';
+import { requirePlayer, getPlayerProps, trackServerEvent, assertCurrentWaiver } from './_shared';
 
 export async function checkInToSession(sessionId: string) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
+  await assertCurrentWaiver(supabase, player);
 
   const { data: session } = await supabase
     .from('sessions')

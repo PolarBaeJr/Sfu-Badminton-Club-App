@@ -1,15 +1,22 @@
 'use client';
 
-import { useState } from 'react';
-import { completeOnboarding } from '@/lib/actions';
+import { useEffect, useState } from 'react';
+import { completeOnboarding, getLegalDocuments } from '@/lib/actions';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/toast-provider';
-import { User, Phone, Sparkles, Trophy, Crosshair, ChevronRight, ChevronLeft, Loader2, Rocket } from 'lucide-react';
+import { LegalMarkdown } from '@badminton/ui';
+import { User, Phone, Sparkles, Trophy, ChevronRight, ChevronLeft, Loader2, Rocket } from 'lucide-react';
 
 const steps = [
   { number: 1, title: 'Profile' },
-  { number: 2, title: 'Confirm' },
+  { number: 2, title: 'Waiver' },
+  { number: 3, title: 'Confirm' },
 ];
+
+const DOC_TITLES: Record<string, string> = {
+  waiver: 'Liability Waiver & Assumption of Risk',
+  code_of_conduct: 'Code of Conduct',
+};
 
 // Defined at module scope (NOT inside OnboardingPage): a component declared
 // inside the page body gets a new identity on every render, so React would
@@ -71,14 +78,56 @@ function Field({
   );
 }
 
+// Module scope for the same focus-preservation reason as Field.
+function LegalCheckbox({
+  id,
+  checked,
+  onChange,
+  label,
+}: {
+  id: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+}) {
+  return (
+    <label
+      htmlFor={id}
+      style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 13, lineHeight: 1.5, cursor: 'pointer' }}
+    >
+      <input
+        id={id}
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        style={{ marginTop: 2, accentColor: 'var(--red)', flexShrink: 0 }}
+      />
+      <span>{label}</span>
+    </label>
+  );
+}
+
 export default function OnboardingPage() {
   const [step, setStep] = useState(1);
   const [name, setName] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
+  const [docs, setDocs] = useState<{ document: string; version: string; content: string }[] | null>(null);
+  const [waiverAccepted, setWaiverAccepted] = useState(false);
+  const [cocAccepted, setCocAccepted] = useState(false);
+  const [ageAttested, setAgeAttested] = useState(false);
   const router = useRouter();
   const { toast } = useToast();
+
+  useEffect(() => {
+    getLegalDocuments()
+      .then(setDocs)
+      .catch(() => toast('Failed to load the waiver — please refresh', 'error'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const allAccepted = waiverAccepted && cocAccepted && ageAttested;
 
   async function handleComplete() {
     setLoading(true);
@@ -87,6 +136,9 @@ export default function OnboardingPage() {
         full_name: name,
         display_name: displayName || undefined,
         phone: phone || undefined,
+        waiver_accepted: waiverAccepted,
+        code_of_conduct_accepted: cocAccepted,
+        age_attestation: ageAttested,
       });
       router.push('/feed');
     } catch (err) {
@@ -200,7 +252,7 @@ export default function OnboardingPage() {
         }}
       >
         <div>
-          <div className="page-eyebrow"><span className="bar" /> STEP {step} OF 2 · {steps[step - 1]!.title.toUpperCase()}</div>
+          <div className="page-eyebrow"><span className="bar" /> STEP {step} OF 3 · {steps[step - 1]!.title.toUpperCase()}</div>
           <h2
             style={{
               fontFamily: 'var(--display)',
@@ -210,11 +262,17 @@ export default function OnboardingPage() {
               margin: '8px 0 0',
             }}
           >
-            {step === 1 ? 'Set up your profile' : `You're ready, ${displayName || name.split(' ')[0]}!`}
+            {step === 1
+              ? 'Set up your profile'
+              : step === 2
+              ? 'Waiver & code of conduct'
+              : `You're ready, ${displayName || name.split(' ')[0]}!`}
           </h2>
           <div className="page-sub" style={{ marginTop: 8 }}>
             {step === 1
               ? 'This is how other players will see you. Display name and phone are optional.'
+              : step === 2
+              ? 'Read and accept the liability waiver and code of conduct to play.'
               : 'Start exploring the club, check into sessions, and issue challenges.'}
           </div>
         </div>
@@ -254,6 +312,55 @@ export default function OnboardingPage() {
             >
               Continue <ChevronRight size={14} />
             </button>
+          </>
+        ) : step === 2 ? (
+          <>
+            <div className="card-base" style={{ maxHeight: '50vh', overflowY: 'auto', padding: 16 }}>
+              {docs === null ? (
+                <div className="muted" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                  <Loader2 size={14} className="animate-spin" /> Loading documents…
+                </div>
+              ) : (
+                docs.map((doc) => (
+                  <div key={doc.document} style={{ marginBottom: 20 }}>
+                    <div className="card-title">{DOC_TITLES[doc.document] || doc.document}</div>
+                    <div className="card-sub mono">Version {doc.version}</div>
+                    <LegalMarkdown content={doc.content} />
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <LegalCheckbox id="waiver-accept" checked={waiverAccepted} onChange={setWaiverAccepted} label="I have read and accept the liability waiver." />
+              <LegalCheckbox id="coc-accept" checked={cocAccepted} onChange={setCocAccepted} label="I have read and accept the code of conduct." />
+              <LegalCheckbox id="age-attest" checked={ageAttested} onChange={setAgeAttested} label="I am 19 or older, or I have my parent/guardian's consent." />
+            </div>
+
+            <div className="row" style={{ gap: 10 }}>
+              <button
+                type="button"
+                onClick={() => setStep(1)}
+                className="btn btn-ghost"
+                style={{ height: 48 }}
+              >
+                <ChevronLeft size={14} /> Back
+              </button>
+              <button
+                type="button"
+                onClick={() => { if (allAccepted) setStep(3); }}
+                disabled={!allAccepted}
+                className="btn btn-primary btn-lg"
+                style={{
+                  flex: 1,
+                  justifyContent: 'center',
+                  height: 48,
+                  opacity: allAccepted ? 1 : 0.4,
+                }}
+              >
+                Continue <ChevronRight size={14} />
+              </button>
+            </div>
           </>
         ) : (
           <>
@@ -295,7 +402,7 @@ export default function OnboardingPage() {
             <div className="row" style={{ gap: 10 }}>
               <button
                 type="button"
-                onClick={() => setStep(1)}
+                onClick={() => setStep(2)}
                 className="btn btn-ghost"
                 style={{ height: 48 }}
               >

@@ -513,6 +513,26 @@ export interface PushSubscription {
   created_at: string;
 }
 
+export type WaiverDocument = 'waiver' | 'code_of_conduct';
+
+export interface LegalDocument {
+  document: WaiverDocument;
+  version: string;
+  content: string;
+  updated_at: string;
+  updated_by: string | null;
+}
+
+export interface WaiverAcceptance {
+  id: string;
+  player_id: string;
+  document: WaiverDocument;
+  version: string;
+  accepted_at: string;
+  age_attestation: boolean;
+  user_agent: string | null;
+}
+
 // Joined/view types
 export interface PlayerWithRating extends Player {
   ratings: Rating;

@@ -3,7 +3,7 @@
 import { createServiceRoleClient } from './supabase-server';
 import { revalidatePath } from 'next/cache';
 import { isDoublesEvent } from '@badminton/shared';
-import { requirePlayer } from './actions/_shared';
+import { requirePlayer, assertCurrentWaiver } from './actions/_shared';
 
 // Revalidate every surface that surfaces tournament_participants /
 // tournament_pairs after a register/withdraw/check-in. The event detail
@@ -27,6 +27,7 @@ export async function registerForEvent(eventId: string) {
     throw new Error('Your account is suspended pending a reinstatement fee. Contact an admin to be reinstated.');
   }
   const service = createServiceRoleClient();
+  await assertCurrentWaiver(service, player);
 
   // Parallelize the three independent reads needed before we can validate.
   // `.maybeSingle()` instead of `.single()` so a missing existing row isn't
@@ -98,6 +99,7 @@ export async function selfCheckIn(eventId: string) {
     throw new Error('Your account is suspended pending a reinstatement fee. Contact an admin to be reinstated.');
   }
   const service = createServiceRoleClient();
+  await assertCurrentWaiver(service, player);
 
   // Parallel reads — event status and player participation row are independent.
   const [eventRes, participantRes] = await Promise.all([

@@ -72,7 +72,7 @@ export async function getCurrentPlayer() {
 
   const { data: player } = await supabase
     .from('players')
-    .select('*, ratings(*)')
+    .select('*, ratings(*), waiver_acceptances(document, version)')
     .eq('user_id', user.id)
     .maybeSingle();
 

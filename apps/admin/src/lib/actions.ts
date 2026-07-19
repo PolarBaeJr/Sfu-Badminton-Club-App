@@ -15,6 +15,7 @@
 //   - tournament-fees.ts — tournament fee tiers + per-player entry-fee tracking
 //   - reinstatement.ts — player ban / reinstatement (with reinstatement fee)
 //   - varsity.ts       — varsity notes
+//   - settings.ts      — updateLegalDocument (waiver / code of conduct)
 //   - _shared.ts       — getAdminPlayer (NOT 'use server' — internal helper)
 export {
   approvePlayer,
@@ -100,3 +101,7 @@ export {
   createVarsityNote,
   deleteVarsityNote,
 } from './actions/varsity';
+
+export {
+  updateLegalDocument,
+} from './actions/settings';

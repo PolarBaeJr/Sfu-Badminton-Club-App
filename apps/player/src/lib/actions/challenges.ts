@@ -12,12 +12,13 @@ import {
   parseOrThrow,
   type ChallengeCreateInput,
 } from '@badminton/shared';
-import { requirePlayer, getPlayerProps, trackServerEvent, notifyPlayers } from './_shared';
+import { requirePlayer, getPlayerProps, trackServerEvent, notifyPlayers, assertCurrentWaiver } from './_shared';
 
 export async function createChallenge(input: ChallengeCreateInput) {
   parseOrThrow(challengeCreateSchema, input);
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
+  await assertCurrentWaiver(supabase, player);
 
   // Validate via DB function
   const { data: validation } = await supabase.rpc('validate_challenge_creation', {
@@ -116,6 +117,7 @@ export async function createChallenge(input: ChallengeCreateInput) {
 export async function acceptChallenge(challengeId: string) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
+  await assertCurrentWaiver(supabase, player);
 
   const { data: challenge } = await supabase
     .from('challenges')
