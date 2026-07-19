@@ -12,6 +12,7 @@ const sentrySetUser = vi.hoisted(() => vi.fn());
 vi.mock('next/headers', () => ({
   cookies: async () => ({
     getAll: () => [],
+    get: () => undefined,
     set: () => {},
   }),
 }));

@@ -2,6 +2,8 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
+import { PASSKEY_VERIFIED_COOKIE } from './passkey/config';
+import { verifyPayload } from './passkey/cookie';
 
 // NOTE: generated `Database` type is available from '@badminton/shared' but not
 // applied here — see comments in apps/player/src/lib/supabase-server.ts.
@@ -39,7 +41,34 @@ export function createAdminClient() {
   );
 }
 
-export async function getAuthenticatedAdmin() {
+// Belt-and-braces mirror of the middleware passkey gate: once a player has
+// enrolled at least one passkey, server actions also require the signed
+// verified-cookie (zero passkeys = grace period, no requirement). The
+// /api/passkey handlers opt out via { skipPasskey: true } — they must work
+// while UNverified, otherwise enrolment/verification would deadlock.
+async function assertPasskeyVerified(
+  userId: string,
+  playerId: string,
+  adminClient: ReturnType<typeof createAdminClient>
+) {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(PASSKEY_VERIFIED_COOKIE)?.value;
+  if (token) {
+    const payload = await verifyPayload(token);
+    if (payload && payload.sub === userId) return;
+  }
+
+  const { count } = await adminClient
+    .from('passkey_credentials')
+    .select('id', { count: 'exact', head: true })
+    .eq('player_id', playerId);
+  if ((count ?? 0) >= 1) {
+    Sentry.setUser(null);
+    throw new Error('Passkey verification required');
+  }
+}
+
+export async function getAuthenticatedAdmin(options: { skipPasskey?: boolean } = {}) {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
@@ -65,6 +94,10 @@ export async function getAuthenticatedAdmin() {
     throw new Error('Admin access required');
   }
 
+  if (!options.skipPasskey) {
+    await assertPasskeyVerified(user.id, player.id, adminClient);
+  }
+
   Sentry.setUser({ id: player.id });
   return player;
 }
@@ -72,7 +105,7 @@ export async function getAuthenticatedAdmin() {
 // Broader gate than getAuthenticatedAdmin: permits full admins OR execs.
 // Used by exec-allowed domain actions (matches, sessions, tournaments,
 // announcements, seasons). Admin-only actions keep getAuthenticatedAdmin.
-export async function getAuthenticatedExecOrAdmin() {
+export async function getAuthenticatedExecOrAdmin(options: { skipPasskey?: boolean } = {}) {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
@@ -94,6 +127,10 @@ export async function getAuthenticatedExecOrAdmin() {
   if (player.role !== 'admin' && player.is_exec !== true) {
     Sentry.setUser(null);
     throw new Error('Admin or exec access required');
+  }
+
+  if (!options.skipPasskey) {
+    await assertPasskeyVerified(user.id, player.id, adminClient);
   }
 
   Sentry.setUser({ id: player.id });

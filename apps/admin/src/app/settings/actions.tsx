@@ -1,6 +1,13 @@
 'use server';
 
-import { createAdminClient, getAuthenticatedAdmin } from '@/lib/supabase-server';
+import { z } from 'zod';
+import { parseOrThrow } from '@badminton/shared';
+import {
+  createAdminClient,
+  getAuthenticatedAdmin,
+  getAuthenticatedExecOrAdmin,
+} from '@/lib/supabase-server';
+import { logAdminAudit } from '@/lib/audit';
 import { revalidatePath } from 'next/cache';
 
 async function getAdminPlayer() {
@@ -41,6 +48,35 @@ export async function updatePlatformSettings(
       reason: `Platform setting "${update.key}" updated`,
     });
   }
+
+  revalidatePath('/settings');
+}
+
+// Removing a passkey always requires a passkey-verified session (the default
+// gate — no skipPasskey), so a stolen Supabase session can't strip the gate.
+export async function removePasskey(credentialId: string) {
+  const id = parseOrThrow(z.string().uuid(), credentialId);
+  const player = await getAuthenticatedExecOrAdmin();
+  const adminClient = createAdminClient();
+
+  const { data: row } = await adminClient
+    .from('passkey_credentials')
+    .select('id, player_id, nickname')
+    .eq('id', id)
+    .maybeSingle();
+  if (!row || row.player_id !== player.id) throw new Error('Passkey not found');
+
+  const { error } = await adminClient.from('passkey_credentials').delete().eq('id', row.id);
+  if (error) throw new Error(error.message);
+
+  await logAdminAudit(adminClient, {
+    actor_id: player.id,
+    action_type: 'passkey_removed',
+    target_type: 'passkey_credential',
+    target_id: row.id,
+    old_value: { nickname: row.nickname },
+    reason: 'Passkey removed',
+  });
 
   revalidatePath('/settings');
 }

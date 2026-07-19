@@ -7,7 +7,8 @@ export function MainContent({ children }: { children: React.ReactNode }) {
   const isPublicRoute =
     pathname === '/login' ||
     pathname.startsWith('/auth') ||
-    pathname === '/unauthorized';
+    pathname === '/unauthorized' ||
+    pathname === '/unavailable';
 
   if (isPublicRoute) {
     return <>{children}</>;

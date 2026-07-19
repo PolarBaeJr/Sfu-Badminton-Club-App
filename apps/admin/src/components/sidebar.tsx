@@ -56,7 +56,8 @@ export function Sidebar() {
   const isPublicRoute =
     pathname === '/login' ||
     pathname.startsWith('/auth') ||
-    pathname === '/unauthorized';
+    pathname === '/unauthorized' ||
+    pathname === '/unavailable';
 
   // Load user email + access level (drives nav filtering for execs)
   useEffect(() => {

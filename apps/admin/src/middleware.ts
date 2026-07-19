@@ -1,6 +1,8 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 import { canAccess, type AccessLevel } from '@/lib/permissions';
+import { PASSKEY_VERIFIED_COOKIE } from '@/lib/passkey/config';
+import { verifyPayload } from '@/lib/passkey/cookie';
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -29,7 +31,8 @@ export async function middleware(request: NextRequest) {
   const isPublicRoute =
     request.nextUrl.pathname.startsWith('/login') ||
     request.nextUrl.pathname.startsWith('/auth') ||
-    request.nextUrl.pathname === '/unauthorized';
+    request.nextUrl.pathname === '/unauthorized' ||
+    request.nextUrl.pathname === '/unavailable';
 
   try {
     const { data: { user } } = await supabase.auth.getUser();
@@ -46,6 +49,34 @@ export async function middleware(request: NextRequest) {
         const url = request.nextUrl.clone();
         url.pathname = '/unauthorized';
         return NextResponse.redirect(url);
+      }
+
+      // Passkey gate: once a user has enrolled a passkey, every page needs a
+      // valid signed verified-cookie (zero passkeys = grace period). The
+      // /api/passkey handlers are exempt — they're how you GET verified.
+      // Wrapped in its own try so an RPC failure (e.g. migration 00011 not
+      // yet applied) fails OPEN and logs, instead of falling into the outer
+      // catch's redirect-to-/login (which would loop forever).
+      const pathname = request.nextUrl.pathname;
+      if (!pathname.startsWith('/unavailable') && !pathname.startsWith('/api/passkey')) {
+        try {
+          const token = request.cookies.get(PASSKEY_VERIFIED_COOKIE)?.value;
+          const payload = token ? await verifyPayload(token) : null;
+          if (!payload || payload.sub !== user.id) {
+            const { data: hasKeys, error } = await supabase.rpc('has_passkeys', { p_user_id: user.id });
+            if (error) throw new Error(error.message);
+            if (hasKeys) {
+              const url = request.nextUrl.clone();
+              url.pathname = '/unavailable';
+              url.search = '';
+              url.searchParams.set('next', pathname + request.nextUrl.search);
+              return NextResponse.redirect(url);
+            }
+            // No enrolled passkeys → grace period, proceed.
+          }
+        } catch (err) {
+          console.error('Passkey gate check failed (failing open):', err);
+        }
       }
     }
   } catch {

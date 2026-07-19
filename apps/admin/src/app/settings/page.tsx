@@ -1,15 +1,16 @@
 export const dynamic = 'force-dynamic';
-import { createAdminClient, getAuthenticatedAdmin } from '@/lib/supabase-server';
+import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
 import { PageHeader } from '@badminton/ui';
 import { SettingsForm } from './settings-form';
 import { LegalDocumentsForm } from './legal-documents-form';
+import { PasskeySection } from './passkey-section';
 
 export default async function SettingsPage() {
-  let player: Awaited<ReturnType<typeof getAuthenticatedAdmin>> | null = null;
+  let player: Awaited<ReturnType<typeof getAuthenticatedExecOrAdmin>> | null = null;
   try {
-    player = await getAuthenticatedAdmin();
+    player = await getAuthenticatedExecOrAdmin();
   } catch {
-    // Not authenticated or not admin — show limited settings
+    // Not authenticated or not exec/admin — show limited settings
   }
   const supabase = createAdminClient();
 
@@ -22,6 +23,14 @@ export default async function SettingsPage() {
     .from('legal_documents')
     .select('document, version, content, updated_at')
     .order('document', { ascending: false }); // waiver first
+
+  const { data: passkeys } = player
+    ? await supabase
+        .from('passkey_credentials')
+        .select('id, nickname, created_at, last_used_at, transports')
+        .eq('player_id', player.id)
+        .order('created_at')
+    : { data: null };
 
   return (
     <div>
@@ -38,6 +47,12 @@ export default async function SettingsPage() {
             <span className="rail-label block">General</span>
             <span className="rail-sub block">Profile &amp; platform</span>
           </a>
+          {player && (
+            <a href="#security">
+              <span className="rail-label block">Security</span>
+              <span className="rail-sub block">Passkeys</span>
+            </a>
+          )}
           {player?.role === 'admin' && (
             <a href="#legal">
               <span className="rail-label block">Legal Documents</span>
@@ -83,6 +98,18 @@ export default async function SettingsPage() {
               <SettingsForm settings={settings} />
             )}
           </section>
+
+          {/* Security */}
+          {player && (
+            <section id="security" className="scroll-mt-32">
+              <h2 className="settings-section-title">Security</h2>
+              <p className="settings-section-desc">
+                Passkeys gate access to the admin console. Once you enroll one, every login
+                requires a passkey check.
+              </p>
+              <PasskeySection passkeys={passkeys ?? []} />
+            </section>
+          )}
 
           {/* Legal Documents */}
           {player?.role === 'admin' && legalDocuments && legalDocuments.length > 0 && (

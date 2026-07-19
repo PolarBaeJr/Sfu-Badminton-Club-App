@@ -15,7 +15,8 @@ export const SECTION_ACCESS: { [pathPrefix: string]: AccessLevel } = {
   '/seasons': 'exec',
   '/fees': 'admin',
   '/audit': 'admin',
-  '/settings': 'admin',
+  '/settings': 'exec', // execs need it to enroll/manage their own passkeys
+  '/api/passkey': 'exec', // passkey enrollment/verification endpoints
   '/players': 'admin',
   '/disputes': 'admin',
   '/walkovers': 'admin',
