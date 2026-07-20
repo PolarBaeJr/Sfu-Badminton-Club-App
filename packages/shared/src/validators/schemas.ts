@@ -213,7 +213,10 @@ export const adminPlayerCreateSchema = z.object({
   status: z.enum([
     'competitive', 'recreational', 'suspended', 'pending_approval',
   ]).optional(),
-  role: z.enum(['player', 'admin']).optional(),
+  // 'admin' intentionally absent: admin accounts are promoted from existing
+  // members (updatePlayer), never created directly.
+  role: z.enum(['player']).optional(),
+  is_exec: z.boolean().optional(),
 });
 
 export const adminMatchCreateSchema = z.object({

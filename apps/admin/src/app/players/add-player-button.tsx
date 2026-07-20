@@ -12,9 +12,12 @@ const STATUS_OPTIONS = [
   { value: 'recreational', label: 'Recreational' },
 ];
 
+// Admin accounts are never created from this dialog — promote an existing,
+// signed-up member via Edit instead (an added "player" has no login yet, and
+// a passwordless admin account would bypass the passkey enrollment flow).
 const ROLE_OPTIONS = [
   { value: 'player', label: 'Player' },
-  { value: 'admin', label: 'Admin' },
+  { value: 'exec', label: 'Executive' },
 ];
 
 export function AddPlayerButton() {
@@ -38,7 +41,8 @@ export function AddPlayerButton() {
           full_name: fullName.trim(),
           email: email.trim().toLowerCase(),
           status,
-          role,
+          role: 'player',
+          is_exec: role === 'exec',
         });
         toast('Player created', 'success');
         setOpen(false);

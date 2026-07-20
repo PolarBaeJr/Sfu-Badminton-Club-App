@@ -47,7 +47,13 @@ export async function createPlayer(data: {
   email: string;
   status: string;
   role?: string;
+  is_exec?: boolean;
 }) {
+  // Admin accounts cannot be created here — only promoted from existing
+  // members via updatePlayer, so every admin went through real signup
+  // (and the passkey enrollment path). The schema also excludes 'admin';
+  // this check just gives the friendly message before Zod's enum error.
+  if (data.role === 'admin') throw new Error('Admins cannot be created directly — promote an existing member instead');
   parseOrThrow(adminPlayerCreateSchema, data);
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
@@ -71,12 +77,16 @@ export async function createPlayer(data: {
     throw new Error(error.message);
   }
 
+  if (data.is_exec) {
+    await adminClient.from('players').update({ is_exec: true }).eq('id', playerId);
+  }
+
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
     action_type: 'player_created',
     target_type: 'player',
     target_id: playerId,
-    new_value: { full_name: data.full_name, email: data.email, status: data.status },
+    new_value: { full_name: data.full_name, email: data.email, status: data.status, is_exec: data.is_exec ?? false },
     reason: 'Manual admin creation',
   });
 
