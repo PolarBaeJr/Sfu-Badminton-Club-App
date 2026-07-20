@@ -72,6 +72,7 @@ export default function SettingsPage() {
   const [playerId, setPlayerId] = useState('');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [isExec, setIsExec] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState('');
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -93,6 +94,7 @@ export default function SettingsPage() {
         setBio(data.bio || '');
         setShowOnLeaderboard(!data.hide_from_leaderboard);
         setShowActivity(data.show_activity_status !== false);
+        setIsExec(data.is_exec || data.role === 'admin');
         setLoaded(true);
       }
     }
@@ -364,6 +366,25 @@ export default function SettingsPage() {
 
           <div className="danger-zone">
             <h3 className="danger-title">Danger zone</h3>
+            {isExec && (
+              <div className="settings-row">
+                <div>
+                  <div className="settings-row-label">EXEC PANEL</div>
+                  <div className="settings-row-hint">Open the club administration panel.</div>
+                </div>
+                <div className="settings-row-control">
+                  <a
+                    href={process.env.NEXT_PUBLIC_ADMIN_URL || '/admin'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-danger-ghost"
+                  >
+                    <Shield size={14} />
+                    OPEN EXEC PANEL
+                  </a>
+                </div>
+              </div>
+            )}
             <div className="settings-row">
               <div>
                 <div className="settings-row-label">Delete account</div>
