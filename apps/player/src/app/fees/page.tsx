@@ -6,7 +6,7 @@ import { PageHeader } from '@badminton/ui';
 
 // The player supabase client is untyped, so column-list selects resolve to
 // `never` — annotate the unwrap helpers with the row shape we expect.
-type ClubFeeRow = { amount_cents: number | null; paid_at: string | null };
+type ClubFeeRow = { amount_cents: number | null; paid_at: string | null; method: string | null };
 type EventRefRow = { event: { tournament_id: string } | { tournament_id: string }[] | null };
 type TournamentRow = { id: string; name: string };
 type TournamentFeeRow = {
@@ -21,7 +21,8 @@ function money(cents: number | null | undefined): string {
   return cents == null ? 'TBD' : `$${(cents / 100).toFixed(2)}`;
 }
 
-function StatusPill({ paid }: { paid: boolean }) {
+function StatusPill({ paid, waived = false }: { paid: boolean; waived?: boolean }) {
+  if (waived) return <span className="chip">Waived</span>;
   return (
     <span className={paid ? 'chip chip-success' : 'chip chip-red'}>
       {paid ? 'Paid' : 'Outstanding'}
@@ -47,14 +48,16 @@ export default async function FeesPage() {
   const clubFeeRes = season
     ? await supabase
         .from('club_fees')
-        .select('amount_cents, paid_at')
+        .select('amount_cents, paid_at, method')
         .eq('player_id', player.id)
         .eq('season_id', season.id)
         .maybeSingle()
     : null;
   const clubFee = clubFeeRes ? unwrapMaybe<ClubFeeRow>(clubFeeRes) : null;
-  const clubPaid = clubFee?.paid_at != null;
-  const clubOwedCents = clubPaid ? clubFee?.amount_cents ?? null : seasonFeeCents;
+  const clubWaived = clubFee?.paid_at != null && clubFee?.method === 'waived';
+  const clubPaid = clubFee?.paid_at != null && !clubWaived;
+  // A waived fee is stored as amount_cents 0, so the owed figure shows $0.00.
+  const clubOwedCents = clubFee?.paid_at != null ? clubFee?.amount_cents ?? null : seasonFeeCents;
 
   // Competition dues — tournaments the player is entered in (singles + doubles).
   const competitionRows: { id: string; name: string; owedCents: number | null; paid: boolean }[] = [];
@@ -181,7 +184,7 @@ export default async function FeesPage() {
                   <div className="row-title">{season.name}</div>
                   <div className="row" style={{ gap: 10 }}>
                     <span className="mono" style={{ fontSize: 15, fontWeight: 600 }}>{money(clubOwedCents)}</span>
-                    <StatusPill paid={clubPaid} />
+                    <StatusPill paid={clubPaid} waived={clubWaived} />
                   </div>
                 </div>
               ) : (

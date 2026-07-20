@@ -165,6 +165,8 @@ export function CreateSessionForm() {
   const [location, setLocation] = useState('');
   const [notes, setNotes] = useState('');
   const [track, setTrack] = useState<SessionGroupInput>('all');
+  const [repeatWeekly, setRepeatWeekly] = useState(false);
+  const [repeatUntil, setRepeatUntil] = useState('');
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
@@ -172,10 +174,20 @@ export function CreateSessionForm() {
     e.preventDefault();
     setLoading(true);
     try {
-      await createSession({ name, date, time: time || undefined, end_time: endTime || undefined, location, notes: notes || undefined, track });
-      toast('Session created', 'success');
+      const { count } = await createSession({
+        name,
+        date,
+        time: time || undefined,
+        end_time: endTime || undefined,
+        location,
+        notes: notes || undefined,
+        track,
+        repeat_until: repeatWeekly && repeatUntil ? repeatUntil : undefined,
+      });
+      toast(count > 1 ? `Created ${count} sessions` : 'Session created', 'success');
       setOpen(false);
       setName(''); setDate(''); setTime(''); setEndTime(''); setLocation(''); setNotes(''); setTrack('all');
+      setRepeatWeekly(false); setRepeatUntil('');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
@@ -189,6 +201,18 @@ export function CreateSessionForm() {
         <form onSubmit={handleCreate} className="space-y-4">
           <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required placeholder="e.g. Tuesday Practice" />
           <Input label="Date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+          <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
+            <input
+              type="checkbox"
+              checked={repeatWeekly}
+              onChange={(e) => setRepeatWeekly(e.target.checked)}
+              className="rounded border-[var(--border)]"
+            />
+            Repeat weekly
+          </label>
+          {repeatWeekly && (
+            <Input label="Repeat until" type="date" value={repeatUntil} min={date || undefined} onChange={(e) => setRepeatUntil(e.target.value)} required />
+          )}
           <div className="grid grid-cols-2 gap-3">
             <Input label="Start time" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
             <Input label="End time" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />

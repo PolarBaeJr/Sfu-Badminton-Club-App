@@ -22,15 +22,23 @@ const STATUS_OPTIONS = [
 
 const ROLE_OPTIONS = [
   { value: 'player', label: 'Player' },
+  { value: 'exec', label: 'Executive' },
   { value: 'admin', label: 'Admin' },
+  { value: 'admin_exec', label: 'Admin + Executive' },
 ];
+
+function toRoleValue(role: string, isExec: boolean) {
+  if (role === 'admin') return isExec ? 'admin_exec' : 'admin';
+  return isExec ? 'exec' : 'player';
+}
 
 export function PlayerActions({ mode, playerId, playerName, playerData }: Props) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState((playerData?.status as string) || 'pending_approval');
-  const [role, setRole] = useState((playerData?.role as string) || 'player');
-  const [isExec, setIsExec] = useState(Boolean(playerData?.is_exec));
+  const [roleValue, setRoleValue] = useState(
+    toRoleValue((playerData?.role as string) || 'player', Boolean(playerData?.is_exec))
+  );
   const [feeExempt, setFeeExempt] = useState(Boolean(playerData?.fee_exempt));
   const [singlesElo, setSinglesElo] = useState('');
   const [doublesElo, setDoublesElo] = useState('');
@@ -45,6 +53,8 @@ export function PlayerActions({ mode, playerId, playerName, playerData }: Props)
 
   function handleEdit() {
     startTransition(async () => {
+      const role = roleValue === 'admin' || roleValue === 'admin_exec' ? 'admin' : 'player';
+      const isExec = roleValue === 'exec' || roleValue === 'admin_exec';
       try {
         await updatePlayer(playerId, {
           status: status as 'competitive' | 'recreational' | 'suspended' | 'pending_approval',
@@ -164,8 +174,7 @@ export function PlayerActions({ mode, playerId, playerName, playerData }: Props)
         <Dialog open={open} onClose={() => setOpen(false)} title="Edit Player">
           <div className="space-y-4">
             <Select label="Status" options={STATUS_OPTIONS} value={status} onChange={(e) => setStatus(e.target.value)} />
-            <Select label="Role" options={ROLE_OPTIONS} value={role} onChange={(e) => setRole(e.target.value)} />
-            <Switch label="Executive" description="Member of the club executive team (no gameplay effect)" checked={isExec} onChange={setIsExec} />
+            <Select label="Role" options={ROLE_OPTIONS} value={roleValue} onChange={(e) => setRoleValue(e.target.value)} />
             <Switch label="Fee Exempt" description="Exempted from the club fee (no gameplay effect)" checked={feeExempt} onChange={setFeeExempt} />
             <div className="flex gap-2">
               <Input label="Singles Elo (optional)" type="number" value={singlesElo} onChange={(e) => setSinglesElo(e.target.value)} placeholder="Leave blank to keep current" />

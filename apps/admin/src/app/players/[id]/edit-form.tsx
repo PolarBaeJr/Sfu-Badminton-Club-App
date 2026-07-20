@@ -7,19 +7,32 @@ import { updatePlayer, approvePlayer } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import type { Player, Rating } from '@badminton/shared';
 
+const ROLE_OPTIONS = [
+  { value: 'player', label: 'Player' },
+  { value: 'exec', label: 'Executive' },
+  { value: 'admin', label: 'Admin' },
+  { value: 'admin_exec', label: 'Admin + Executive' },
+];
+
+function toRoleValue(role: string, isExec: boolean) {
+  if (role === 'admin') return isExec ? 'admin_exec' : 'admin';
+  return isExec ? 'exec' : 'player';
+}
+
 export function PlayerEditForm({ player, rating }: { player: Player; rating: Rating | null }) {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState(player.status);
-  const [role, setRole] = useState(player.role);
+  const [roleValue, setRoleValue] = useState(toRoleValue(player.role, player.is_exec ?? false));
   const [singlesElo, setSinglesElo] = useState(rating?.singles_elo ?? 400);
   const [doublesElo, setDoublesElo] = useState(rating?.doubles_elo ?? 400);
-  const [isExec, setIsExec] = useState(player.is_exec ?? false);
   const [execTitle, setExecTitle] = useState(player.exec_title ?? '');
   const [feeExempt, setFeeExempt] = useState(player.fee_exempt ?? false);
   const [reason, setReason] = useState('');
 
   const isPending = player.status === 'pending_approval';
+  const role = roleValue === 'admin' || roleValue === 'admin_exec' ? 'admin' : 'player';
+  const isExec = roleValue === 'exec' || roleValue === 'admin_exec';
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -63,12 +76,9 @@ export function PlayerEditForm({ player, rating }: { player: Player; rating: Rat
       />
       <Select
         label="Role"
-        options={[
-          { value: 'player', label: 'Player' },
-          { value: 'admin', label: 'Admin' },
-        ]}
-        value={role}
-        onChange={(e) => setRole(e.target.value as Player['role'])}
+        options={ROLE_OPTIONS}
+        value={roleValue}
+        onChange={(e) => setRoleValue(e.target.value)}
       />
       <div className="grid grid-cols-2 gap-3">
         <Input
@@ -89,12 +99,6 @@ export function PlayerEditForm({ player, rating }: { player: Player; rating: Rat
         />
       </div>
       <div className="rounded-lg border border-[var(--border)] p-3 space-y-1">
-        <Switch
-          label="Club executive"
-          description="Adds this player to the executives team (shown on the public exec page) and exempts them from fees."
-          checked={isExec}
-          onChange={setIsExec}
-        />
         {isExec && (
           <Input
             label="Executive title"

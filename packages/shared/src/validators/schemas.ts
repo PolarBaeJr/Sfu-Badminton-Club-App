@@ -118,11 +118,17 @@ export const sessionCreateSchema = z.object({
   notes: z.string().max(500).optional(),
   season_id: z.string().uuid().optional(),
   track: sessionGroupSchema.default('all'),
+  // Weekly recurrence: when set, sessions repeat on the same weekday up to and
+  // including this date. YYYY-MM-DD strings compare correctly lexicographically.
+  repeat_until: z.string().optional(),
   // When both times are present, the session must end after it starts.
   // Zero-padded HH:MM[:SS] strings compare correctly lexicographically.
 }).refine((d) => !d.time || !d.end_time || d.end_time > d.time, {
   message: 'End time must be after start time',
   path: ['end_time'],
+}).refine((d) => !d.repeat_until || d.repeat_until >= d.date, {
+  message: 'Repeat-until date must be on or after the start date',
+  path: ['repeat_until'],
 });
 
 // Admin-only attendance marks; players self-insert 'checked_in' rows via RLS.
@@ -224,6 +230,13 @@ export const feeMarkSchema = z.object({
   method: z.string().max(40).optional(),
 });
 
+// One-time season-fee waiver: stored as a paid row with amount_cents 0 and
+// method 'waived', so income sums stay correct without a schema migration.
+export const feeWaiveSchema = z.object({
+  player_id: z.string().uuid(),
+  season_id: z.string().uuid(),
+});
+
 export const seasonFeeSchema = z.object({
   competitive_fee_cents: z.number().int().min(0),
   recreational_fee_cents: z.number().int().min(0),
@@ -267,6 +280,11 @@ export const banSchema = z.object({
 export const playerFlagsSchema = z.object({
   is_exec: z.boolean(),
   fee_exempt: z.boolean(),
+});
+
+export const varsityNoteSchema = z.object({
+  player_id: z.string().uuid(),
+  note: z.string().min(2, 'Note must be at least 2 characters').max(2000),
 });
 
 export const announcementSchema = z.object({
@@ -325,6 +343,7 @@ export type AdminPlayerCreateInput = z.infer<typeof adminPlayerCreateSchema>;
 export type AdminMatchCreateInput = z.infer<typeof adminMatchCreateSchema>;
 export type AnnouncementInput = z.infer<typeof announcementSchema>;
 export type FeeMarkInput = z.infer<typeof feeMarkSchema>;
+export type FeeWaiveInput = z.infer<typeof feeWaiveSchema>;
 export type SeasonFeeInput = z.infer<typeof seasonFeeSchema>;
 export type SessionGroupInput = z.infer<typeof sessionGroupSchema>;
 export type ManualFeeInput = z.infer<typeof manualFeeSchema>;
@@ -333,6 +352,7 @@ export type TournamentFeeMarkInput = z.infer<typeof tournamentFeeMarkSchema>;
 export type ReinstatementInput = z.infer<typeof reinstatementSchema>;
 export type BanInput = z.infer<typeof banSchema>;
 export type PlayerFlagsInput = z.infer<typeof playerFlagsSchema>;
+export type VarsityNoteInput = z.infer<typeof varsityNoteSchema>;
 export type LegalAcceptanceInput = z.infer<typeof legalAcceptanceSchema>;
 export type AccountDeletionInput = z.infer<typeof accountDeletionSchema>;
 export type LegalDocumentUpdateInput = z.infer<typeof legalDocumentUpdateSchema>;

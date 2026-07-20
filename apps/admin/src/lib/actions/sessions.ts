@@ -22,16 +22,34 @@ export async function createSession(data: {
   location: string;
   notes?: string;
   track: SessionGroupInput;
+  repeat_until?: string;
 }) {
   parseOrThrow(sessionCreateSchema, data);
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
+  // Weekly recurrence: same weekday, stepping +7 days up to repeat_until.
+  // UTC math on the YYYY-MM-DD string — a local Date would drift across DST.
+  const dates = [data.date];
+  if (data.repeat_until) {
+    // Date-only strings parse as UTC midnight per the ECMAScript spec.
+    let ms = Date.parse(data.date);
+    for (;;) {
+      ms += 7 * 86400000;
+      const next = new Date(ms).toISOString().slice(0, 10);
+      if (next > data.repeat_until) break;
+      dates.push(next);
+    }
+  }
+  if (dates.length > 40) {
+    throw new Error('Too many sessions (max 40) — pick an earlier end date');
+  }
+
   const activeSeason = await adminClient.from('seasons').select('id').eq('active_flag', true).single();
 
-  const { data: session, error } = await adminClient.from('sessions').insert({
+  const rows = dates.map((date) => ({
     name: data.name,
-    date: data.date,
+    date,
     start_time: data.time ?? null,
     end_time: data.end_time ?? null,
     location: data.location,
@@ -40,20 +58,22 @@ export async function createSession(data: {
     track: data.track,
     season_id: activeSeason.data?.id || null,
     host_player_id: admin.id,
-  }).select().single();
+  }));
 
-  if (error) throw new Error(error.message);
+  const { data: sessions, error } = await adminClient.from('sessions').insert(rows).select('id, date');
+
+  if (error || !sessions?.[0]) throw new Error(error?.message ?? 'Failed to create sessions');
 
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
-    action_type: 'session_created',
+    action_type: dates.length > 1 ? 'sessions_batch_created' : 'session_created',
     target_type: 'session',
-    target_id: session.id,
-    new_value: data,
+    target_id: sessions[0].id,
+    new_value: { ...data, count: dates.length, dates },
   });
 
   revalidatePath('/sessions');
-  return session;
+  return { sessions, count: dates.length };
 }
 
 export async function updateSession(sessionId: string, data: {

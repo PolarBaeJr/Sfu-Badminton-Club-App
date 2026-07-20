@@ -223,6 +223,26 @@ describe('sessionCreateSchema', () => {
       }).success,
     ).toBe(false);
   });
+  it('accepts a valid weekly recurrence', () => {
+    expect(
+      sessionCreateSchema.safeParse({
+        name: 'Tuesday Open',
+        date: '2026-04-10',
+        location: 'Lorne Davies Complex',
+        repeat_until: '2026-05-08',
+      }).success,
+    ).toBe(true);
+  });
+  it('rejects a repeat_until before the start date', () => {
+    expect(
+      sessionCreateSchema.safeParse({
+        name: 'Tuesday Open',
+        date: '2026-04-10',
+        location: 'Lorne Davies Complex',
+        repeat_until: '2026-04-03',
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe('tournamentCreateSchema', () => {

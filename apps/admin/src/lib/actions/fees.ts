@@ -6,9 +6,11 @@ import { revalidatePath } from 'next/cache';
 import {
   parseOrThrow,
   feeMarkSchema,
+  feeWaiveSchema,
   manualFeeSchema,
   playerFlagsSchema,
   type FeeMarkInput,
+  type FeeWaiveInput,
   type ManualFeeInput,
   type PlayerFlagsInput,
 } from '@badminton/shared';
@@ -96,6 +98,44 @@ export async function markFeePaid(input: FeeMarkInput) {
       season_id: input.season_id,
       amount_cents: amountCents,
       method: input.method ?? null,
+    },
+  }, { playerId: input.player_id });
+
+  revalidatePath('/fees');
+}
+
+// One-time waiver of the season fee: recorded as a paid row with
+// amount_cents 0 and method 'waived' so income sums stay correct.
+// Un-waiving is just markFeeUnpaid.
+export async function waiveFee(input: FeeWaiveInput) {
+  parseOrThrow(feeWaiveSchema, input);
+  const admin = await getAdminPlayer();
+  const adminClient = createAdminClient();
+
+  const { data: fee, error } = await adminClient
+    .from('club_fees')
+    .upsert({
+      player_id: input.player_id,
+      season_id: input.season_id,
+      paid_at: new Date().toISOString(),
+      marked_by: admin.id,
+      amount_cents: 0,
+      method: 'waived',
+    }, { onConflict: 'player_id,season_id' })
+    .select('id')
+    .single();
+  if (error) throw new Error(error.message);
+
+  await logAdminAudit(adminClient, {
+    actor_id: admin.id,
+    action_type: 'fee_waived',
+    target_type: 'club_fee',
+    target_id: fee.id,
+    new_value: {
+      player_id: input.player_id,
+      season_id: input.season_id,
+      amount_cents: 0,
+      method: 'waived',
     },
   }, { playerId: input.player_id });
 

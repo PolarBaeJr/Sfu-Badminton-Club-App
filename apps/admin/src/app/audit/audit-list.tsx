@@ -29,6 +29,7 @@ const actionCategory = (action: string): 'success' | 'danger' | 'warning' | 'inf
 const TARGET_BUCKETS: Record<string, string> = {
   player: 'players',
   rating: 'players',
+  varsity_note: 'players',
   match: 'matches',
   walkover: 'matches',
   challenge: 'matches',

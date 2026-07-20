@@ -4,7 +4,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Dialog, Input } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
-import { markFeePaid, markFeeUnpaid, addManualFee, removeManualFee } from '@/lib/actions';
+import { markFeePaid, waiveFee, markFeeUnpaid, addManualFee, removeManualFee } from '@/lib/actions';
 
 interface FeeActionsProps {
   playerId: string;
@@ -13,9 +13,10 @@ interface FeeActionsProps {
   seasonName: string;
   defaultFeeCents: number;
   paid: boolean;
+  waived: boolean;
 }
 
-export function FeeActions({ playerId, playerName, seasonId, seasonName, defaultFeeCents, paid }: FeeActionsProps) {
+export function FeeActions({ playerId, playerName, seasonId, seasonName, defaultFeeCents, paid, waived }: FeeActionsProps) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [amount, setAmount] = useState((defaultFeeCents / 100).toFixed(2));
@@ -43,11 +44,11 @@ export function FeeActions({ playerId, playerName, seasonId, seasonName, default
     });
   }
 
-  function handleMarkUnpaid() {
+  function handleMarkUnpaid(successMessage: string) {
     startTransition(async () => {
       try {
         await markFeeUnpaid(playerId, seasonId);
-        toast('Fee marked as unpaid', 'success');
+        toast(successMessage, 'success');
         router.refresh();
       } catch (err) {
         toast(err instanceof Error ? err.message : 'Failed to mark fee unpaid', 'error');
@@ -55,16 +56,39 @@ export function FeeActions({ playerId, playerName, seasonId, seasonName, default
     });
   }
 
+  function handleWaive() {
+    if (!confirm(`Waive the season fee for ${playerName}? They will be excluded from the outstanding count.`)) return;
+    startTransition(async () => {
+      try {
+        await waiveFee({ player_id: playerId, season_id: seasonId });
+        toast('Fee waived', 'success');
+        router.refresh();
+      } catch (err) {
+        toast(err instanceof Error ? err.message : 'Failed to waive fee', 'error');
+      }
+    });
+  }
+
   if (paid) {
     return (
-      <Button variant="ghost" size="sm" onClick={handleMarkUnpaid} loading={isPending}>
+      <Button variant="ghost" size="sm" onClick={() => handleMarkUnpaid('Fee marked as unpaid')} loading={isPending}>
         Mark Unpaid
       </Button>
     );
   }
 
+  if (waived) {
+    return (
+      <Button variant="ghost" size="sm" onClick={() => handleMarkUnpaid('Fee waiver removed')} loading={isPending}>
+        Unwaive
+      </Button>
+    );
+  }
+
+  // Note: manually typing 'waived' as a Mark Paid method renders as Waived — accepted.
   return (
     <>
+      <Button variant="ghost" size="sm" onClick={handleWaive} loading={isPending}>Skip (Waive)</Button>
       <Button variant="ghost" size="sm" onClick={() => { setAmount((defaultFeeCents / 100).toFixed(2)); setOpen(true); }}>Mark Paid</Button>
       <Dialog open={open} onClose={() => setOpen(false)} title={`Mark Fee Paid — ${playerName}`}>
         <div className="space-y-4">

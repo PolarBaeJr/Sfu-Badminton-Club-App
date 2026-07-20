@@ -2,6 +2,7 @@ import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge, StatCard, Avatar, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, getWinRate, getStreakDisplay, getPointDifferential } from '@badminton/shared';
 import { PlayerEditForm } from './edit-form';
+import { VarsityNotes } from './varsity-notes';
 import { CancelDeletionButton } from './cancel-deletion-button';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Shield, Target, Trophy, Swords, TrendingUp, Flame, FileText, AlertTriangle, ArrowUpRight, ArrowDownRight } from 'lucide-react';
@@ -161,19 +162,7 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
             <FileText className="w-4 h-4 text-[var(--text-muted)]" />
             <h2 className="text-base font-semibold text-[var(--text-primary)]">Varsity Notes</h2>
           </div>
-          <div className="space-y-3">
-            {varsityNotes?.map((note) => (
-              <div key={note.id} className="p-3 bg-[var(--bg-elevated)] rounded-lg border border-[var(--border)]">
-                <p className="text-sm text-[var(--text-secondary)]">{note.note}</p>
-                <p className="text-xs text-[var(--text-muted)] mt-2">
-                  {(note.author as Record<string, unknown>)?.full_name as string} &middot; {new Date(note.created_at).toLocaleDateString()}
-                </p>
-              </div>
-            ))}
-            {(!varsityNotes || varsityNotes.length === 0) && (
-              <p className="text-sm text-[var(--text-muted)]">No notes</p>
-            )}
-          </div>
+          <VarsityNotes playerId={player.id} notes={varsityNotes ?? []} />
         </div>
       </div>
 

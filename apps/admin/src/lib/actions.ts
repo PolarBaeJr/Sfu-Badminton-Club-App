@@ -81,6 +81,7 @@ export {
 export {
   updatePlayerFlags,
   markFeePaid,
+  waiveFee,
   markFeeUnpaid,
   addManualFee,
   removeManualFee,

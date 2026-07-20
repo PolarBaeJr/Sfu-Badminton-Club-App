@@ -61,9 +61,17 @@ export default async function FeesPage() {
   );
   const manualFees = fees.filter((f) => f.manual_name != null);
 
-  const paidPlayers = players.filter((p) => feeByPlayer.get(p.id)?.paid_at).length;
+  const isWaived = (fee?: { paid_at: string | null; method: string | null }) =>
+    Boolean(fee?.paid_at) && fee?.method === 'waived';
+
+  // Waived players count as neither Paid nor Outstanding.
+  const waivedPlayers = players.filter((p) => isWaived(feeByPlayer.get(p.id))).length;
+  const paidPlayers = players.filter((p) => {
+    const fee = feeByPlayer.get(p.id);
+    return fee?.paid_at && !isWaived(fee);
+  }).length;
   const paidCount = paidPlayers + manualFees.length;
-  const outstandingCount = players.length - paidPlayers;
+  const outstandingCount = players.length - paidPlayers - waivedPlayers;
 
   // Total club-fee income collected this season (paid rows, incl. manual).
   const collectedCents = fees
@@ -112,7 +120,8 @@ export default async function FeesPage() {
             <tbody className="divide-y divide-[var(--border)]">
               {players.map((player) => {
                 const fee = feeByPlayer.get(player.id);
-                const paid = Boolean(fee?.paid_at);
+                const waived = isWaived(fee);
+                const paid = Boolean(fee?.paid_at) && !waived;
                 return (
                   <tr key={player.id} className="hover:bg-[var(--border-hover)] transition-colors">
                     <td className="px-4 py-3">
@@ -125,7 +134,9 @@ export default async function FeesPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <Badge variant={paid ? 'success' : 'warning'}>{paid ? 'Paid' : 'Unpaid'}</Badge>
+                      <Badge variant={paid ? 'success' : waived ? 'neutral' : 'warning'}>
+                        {paid ? 'Paid' : waived ? 'Waived' : 'Unpaid'}
+                      </Badge>
                     </td>
                     <td className="px-4 py-3 text-right">
                       <span className="font-mono text-[var(--text-primary)]">
@@ -143,6 +154,7 @@ export default async function FeesPage() {
                         seasonName={season.name}
                         defaultFeeCents={feeForStatus(player.status)}
                         paid={paid}
+                        waived={waived}
                       />
                     </td>
                   </tr>
