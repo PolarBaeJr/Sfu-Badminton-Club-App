@@ -244,6 +244,28 @@ describe('sessionCreateSchema', () => {
       }).success,
     ).toBe(false);
   });
+  it('accepts a weekly recurrence with excluded dates', () => {
+    expect(
+      sessionCreateSchema.safeParse({
+        name: 'Tuesday Open',
+        date: '2026-04-10',
+        location: 'Lorne Davies Complex',
+        repeat_until: '2026-05-08',
+        excluded_dates: ['2026-04-17', '2026-05-01'],
+      }).success,
+    ).toBe(true);
+  });
+  it('rejects more than 40 excluded dates', () => {
+    expect(
+      sessionCreateSchema.safeParse({
+        name: 'Tuesday Open',
+        date: '2026-04-10',
+        location: 'Lorne Davies Complex',
+        repeat_until: '2026-05-08',
+        excluded_dates: Array.from({ length: 41 }, (_, i) => `2026-04-${i}`),
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe('tournamentCreateSchema', () => {

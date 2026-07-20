@@ -121,6 +121,10 @@ export const sessionCreateSchema = z.object({
   // Weekly recurrence: when set, sessions repeat on the same weekday up to and
   // including this date. YYYY-MM-DD strings compare correctly lexicographically.
   repeat_until: z.string().optional(),
+  // Dates to skip within the weekly series (same YYYY-MM-DD format as `date`).
+  // Only meaningful alongside repeat_until; stray exclusions without a series
+  // are ignored server-side rather than rejected. Capped at the series max.
+  excluded_dates: z.array(z.string()).max(40).optional(),
   // When both times are present, the session must end after it starts.
   // Zero-padded HH:MM[:SS] strings compare correctly lexicographically.
 }).refine((d) => !d.time || !d.end_time || d.end_time > d.time, {

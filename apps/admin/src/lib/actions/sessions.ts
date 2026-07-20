@@ -23,6 +23,7 @@ export async function createSession(data: {
   notes?: string;
   track: SessionGroupInput;
   repeat_until?: string;
+  excluded_dates?: string[];
 }) {
   parseOrThrow(sessionCreateSchema, data);
   const admin = await getExecOrAdmin();
@@ -30,7 +31,7 @@ export async function createSession(data: {
 
   // Weekly recurrence: same weekday, stepping +7 days up to repeat_until.
   // UTC math on the YYYY-MM-DD string — a local Date would drift across DST.
-  const dates = [data.date];
+  const series = [data.date];
   if (data.repeat_until) {
     // Date-only strings parse as UTC midnight per the ECMAScript spec.
     let ms = Date.parse(data.date);
@@ -38,11 +39,19 @@ export async function createSession(data: {
       ms += 7 * 86400000;
       const next = new Date(ms).toISOString().slice(0, 10);
       if (next > data.repeat_until) break;
-      dates.push(next);
+      series.push(next);
     }
   }
-  if (dates.length > 40) {
+  // The 40-cap is on the pre-exclusion series: it bounds the date window being
+  // reviewed, so excluding dates doesn't buy a longer window.
+  if (series.length > 40) {
     throw new Error('Too many sessions (max 40) — pick an earlier end date');
+  }
+  // Exclusions only apply to a series; stray ones without repeat_until are ignored.
+  const excluded = new Set(data.repeat_until ? data.excluded_dates ?? [] : []);
+  const dates = series.filter((d) => !excluded.has(d));
+  if (dates.length === 0) {
+    throw new Error('All dates in the series are excluded');
   }
 
   const activeSeason = await adminClient.from('seasons').select('id').eq('active_flag', true).single();
@@ -69,7 +78,7 @@ export async function createSession(data: {
     action_type: dates.length > 1 ? 'sessions_batch_created' : 'session_created',
     target_type: 'session',
     target_id: sessions[0].id,
-    new_value: { ...data, count: dates.length, dates },
+    new_value: { ...data, count: dates.length, dates, excluded_dates: excluded.size > 0 ? [...excluded] : undefined },
   });
 
   revalidatePath('/sessions');

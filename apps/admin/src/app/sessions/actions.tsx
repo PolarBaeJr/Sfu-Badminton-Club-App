@@ -156,6 +156,26 @@ export function AttendanceDialog({ sessionId, attendees, players }: AttendanceDi
   );
 }
 
+// Mirrors the server's weekly recurrence in createSession: UTC math on the
+// YYYY-MM-DD strings so the preview never drifts across DST. Capped at 41 so a
+// typo'd far-future end date can't flood the dialog with chips (the server
+// rejects anything over 40 anyway).
+function weeklySeriesDates(start: string, until: string): string[] {
+  const dates = [start];
+  let ms = Date.parse(start);
+  while (dates.length <= 40) {
+    ms += 7 * 86400000;
+    const next = new Date(ms).toISOString().slice(0, 10);
+    if (next > until) break;
+    dates.push(next);
+  }
+  return dates;
+}
+
+// UTC to match the date-only strings (parsed as UTC midnight) — a local-zone
+// format would render the previous day anywhere west of UTC.
+const CHIP_DATE = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+
 export function CreateSessionForm() {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
@@ -167,8 +187,22 @@ export function CreateSessionForm() {
   const [track, setTrack] = useState<SessionGroupInput>('all');
   const [repeatWeekly, setRepeatWeekly] = useState(false);
   const [repeatUntil, setRepeatUntil] = useState('');
+  const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+
+  const series = repeatWeekly && date && repeatUntil && repeatUntil >= date
+    ? weeklySeriesDates(date, repeatUntil)
+    : [];
+  const excludedInSeries = series.filter((d) => excluded.has(d));
+
+  function toggleExcluded(d: string) {
+    setExcluded((prev) => {
+      const next = new Set(prev);
+      if (next.has(d)) next.delete(d); else next.add(d);
+      return next;
+    });
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -183,11 +217,12 @@ export function CreateSessionForm() {
         notes: notes || undefined,
         track,
         repeat_until: repeatWeekly && repeatUntil ? repeatUntil : undefined,
+        excluded_dates: excludedInSeries.length > 0 ? excludedInSeries : undefined,
       });
       toast(count > 1 ? `Created ${count} sessions` : 'Session created', 'success');
       setOpen(false);
       setName(''); setDate(''); setTime(''); setEndTime(''); setLocation(''); setNotes(''); setTrack('all');
-      setRepeatWeekly(false); setRepeatUntil('');
+      setRepeatWeekly(false); setRepeatUntil(''); setExcluded(new Set());
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
@@ -200,7 +235,7 @@ export function CreateSessionForm() {
       <Dialog open={open} onClose={() => setOpen(false)} title="Create Session">
         <form onSubmit={handleCreate} className="space-y-4">
           <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required placeholder="e.g. Tuesday Practice" />
-          <Input label="Date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+          <Input label="Date" type="date" value={date} onChange={(e) => { setDate(e.target.value); setExcluded(new Set()); }} required />
           <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
             <input
               type="checkbox"
@@ -211,7 +246,34 @@ export function CreateSessionForm() {
             Repeat weekly
           </label>
           {repeatWeekly && (
-            <Input label="Repeat until" type="date" value={repeatUntil} min={date || undefined} onChange={(e) => setRepeatUntil(e.target.value)} required />
+            <Input label="Repeat until" type="date" value={repeatUntil} min={date || undefined} onChange={(e) => { setRepeatUntil(e.target.value); setExcluded(new Set()); }} required />
+          )}
+          {series.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-1.5">
+                {series.map((d) => {
+                  const off = excluded.has(d);
+                  return (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => toggleExcluded(d)}
+                      aria-pressed={off}
+                      className={`px-2 py-1 text-xs border transition-colors ${
+                        off
+                          ? 'border-[var(--color-danger)]/40 text-[var(--text-muted)] line-through'
+                          : 'border-[var(--border)] text-[var(--text-primary)] hover:border-[var(--border-hover)]'
+                      }`}
+                    >
+                      {CHIP_DATE.format(new Date(d))}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-[var(--text-muted)]">
+                {series.length - excludedInSeries.length} session{series.length - excludedInSeries.length === 1 ? '' : 's'} will be created
+              </p>
+            </div>
           )}
           <div className="grid grid-cols-2 gap-3">
             <Input label="Start time" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
