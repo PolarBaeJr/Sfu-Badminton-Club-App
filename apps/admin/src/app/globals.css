@@ -306,13 +306,15 @@ input, textarea, select, button, a {
   .settings-row-control { flex-shrink: 1; }
 }
 
-/* Settings section rail (sticky left nav on the settings page) */
+/* Settings section rail (sticky left nav on the settings page).
+   Visibility/direction come from the element's `hidden md:flex md:flex-col`
+   utilities — this rule must NOT set `display`, or it would (by source order)
+   override Tailwind's `.hidden` and render the rail on phones, overlapping the
+   profile content beneath its sticky position. */
 .settings-rail {
   position: sticky;
   top: 120px;
   align-self: start;
-  display: flex;
-  flex-direction: column;
 }
 .settings-rail a {
   display: block;
@@ -338,3 +340,16 @@ input, textarea, select, button, a {
   color: var(--mute);
   margin-top: 2px;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   MOBILE OVERFLOW GUARD
+   Any element wider than the viewport inflates the document, and phones
+   let you pinch-zoom the whole page out (mirrors the player-app fix in
+   5e8a850). The two admin culprits are the top-nav's whitespace-nowrap
+   links and the players status-tab row — both are given local
+   overflow-x:auto scrollers (min-w-0 on the nav so the scroller can
+   engage). overflow-x:clip on the root is the belt against stragglers;
+   clip (not hidden) avoids creating a scroll container that would break
+   the sticky header.
+   ═══════════════════════════════════════════════════════════ */
+html, body { overflow-x: clip; }

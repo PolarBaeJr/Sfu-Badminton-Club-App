@@ -122,7 +122,7 @@ export function Sidebar() {
             SFU Badminton <span className="text-[var(--text-muted)]">· Admin</span>
           </span>
         </Link>
-        <nav className="flex items-center overflow-x-auto">
+        <nav className="flex items-center overflow-x-auto min-w-0">
           {manageItems.map(navLink)}
         </nav>
         <div className="ml-auto flex items-center gap-3 flex-shrink-0">

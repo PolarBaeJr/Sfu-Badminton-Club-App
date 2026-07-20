@@ -82,7 +82,7 @@ export default async function PlayersPage({
 
       {/* Tabs */}
       <Card padding={false}>
-        <div className="flex gap-1 p-1">
+        <div className="flex gap-1 p-1 overflow-x-auto">
           {tabs.map((t) => (
             <Link
               key={t.id}
