@@ -3,6 +3,7 @@ export type { Database, Json } from './types/database.gen';
 export * from './elo/engine';
 export * from './utils/constants';
 export * from './utils/helpers';
+export * from './utils/legal';
 export * from './utils/session-window';
 export * from './utils/ics';
 export * from './utils/tags';

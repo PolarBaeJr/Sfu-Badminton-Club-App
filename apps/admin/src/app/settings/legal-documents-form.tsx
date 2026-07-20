@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Textarea } from '@badminton/ui';
+import { LEGAL_DOCUMENT_LABELS, type WaiverDocument } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { updateLegalDocument } from '@/lib/actions';
 
@@ -12,13 +13,10 @@ interface LegalDocumentRow {
   updated_at: string;
 }
 
-const DOC_LABELS: Record<string, string> = {
-  waiver: 'Liability Waiver & Assumption of Risk',
-  code_of_conduct: 'Code of Conduct',
-};
-
 const DOC_DESCRIPTIONS: Record<string, string> = {
-  waiver: 'Shown to every member during onboarding and after a version bump. Markdown: ## headings, - lists, **bold**.',
+  terms_of_use: 'App usage rules. Accepted during onboarding; public at /legal/terms. Markdown: ## headings, - lists, **bold**.',
+  privacy_policy: 'What we collect and how long we keep it. Public at /legal/privacy. Markdown: ## headings, - lists, **bold**.',
+  waiver: 'Shown to every member during onboarding, after a version bump, and re-signed annually. Markdown: ## headings, - lists, **bold**.',
   code_of_conduct: 'Accepted alongside the waiver. Markdown: ## headings, - lists, **bold**.',
 };
 
@@ -39,7 +37,7 @@ export function LegalDocumentsForm({ documents }: { documents: LegalDocumentRow[
     setSaving(`${doc.document}${bumpVersion ? '-bump' : ''}`);
     try {
       await updateLegalDocument({
-        document: doc.document as 'waiver' | 'code_of_conduct',
+        document: doc.document as WaiverDocument,
         content,
         bump_version: bumpVersion,
       });
@@ -70,7 +68,7 @@ export function LegalDocumentsForm({ documents }: { documents: LegalDocumentRow[
           <div key={doc.document} className="settings-row !items-start">
             <div className="md:w-[220px] flex-shrink-0">
               <div className="settings-row-label">
-                {DOC_LABELS[doc.document] || doc.document}
+                {LEGAL_DOCUMENT_LABELS[doc.document as WaiverDocument] || doc.document}
                 {isEdited && (
                   <span className="ml-2 text-[var(--color-accent)]">Modified</span>
                 )}

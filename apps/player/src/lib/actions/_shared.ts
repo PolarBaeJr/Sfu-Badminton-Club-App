@@ -5,6 +5,7 @@
 import * as Sentry from '@sentry/nextjs';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { PostHog } from 'posthog-node';
+import { getMissingLegalDocuments } from '@badminton/shared';
 import { sendPushToPlayers, type PushPayload } from '@badminton/shared/src/push/send';
 import { getCurrentPlayer, createServiceRoleClient } from '../supabase-server';
 
@@ -52,25 +53,24 @@ export async function requirePlayer() {
 }
 
 // Blocks gameplay actions (check-in, challenges, tournament registration)
-// until the player has accepted the current version of both legal documents.
-// `player` comes from requirePlayer()/getCurrentPlayer(), whose select embeds
-// waiver_acceptances(document, version). legal_documents holds exactly two
-// tiny rows, so the version fetch is cheap.
+// until the player has accepted the current version of all four legal
+// documents — with the waiver re-signed within the last year (annual
+// renewal, see getMissingLegalDocuments). `player` comes from
+// requirePlayer()/getCurrentPlayer(), whose select embeds
+// waiver_acceptances(document, version, accepted_at). legal_documents holds
+// four tiny rows, so the version fetch is cheap.
 export async function assertCurrentWaiver(
   supabase: SupabaseClient,
-  player: { waiver_acceptances?: { document: string; version: string }[] | null }
+  player: { waiver_acceptances?: { document: string; version: string; accepted_at: string }[] | null }
 ) {
   const { data: docs } = await supabase
     .from('legal_documents')
     .select('document, version');
   if (!docs || docs.length === 0) return;
 
-  const acceptances = player.waiver_acceptances ?? [];
-  const covered = docs.every((doc) =>
-    acceptances.some((a) => a.document === doc.document && a.version === doc.version)
-  );
-  if (!covered) {
-    throw new Error('Please accept the liability waiver and code of conduct before playing');
+  const missing = getMissingLegalDocuments(docs, player.waiver_acceptances ?? []);
+  if (missing.length > 0) {
+    throw new Error("Please accept the club's current legal documents before playing");
   }
 }
 

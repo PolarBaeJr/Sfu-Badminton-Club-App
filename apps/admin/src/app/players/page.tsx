@@ -1,6 +1,6 @@
 import { createAdminClient } from '@/lib/supabase-server';
 import { Badge, Card, Avatar, PageHeader } from '@badminton/ui';
-import { PLAYER_STATUS_LABELS, getWinRate, unwrap } from '@badminton/shared';
+import { PLAYER_STATUS_LABELS, getMissingLegalDocuments, getWinRate, unwrap } from '@badminton/shared';
 import Link from 'next/link';
 import { PlayerActions } from './player-actions';
 import { AddPlayerButton } from './add-player-button';
@@ -56,7 +56,9 @@ export default async function PlayersPage({
   const players = unwrap(await query);
 
   // Current legal-document versions — a player's waiver status is "accepted"
-  // only when they've accepted the current version of every document.
+  // only when they've accepted the current version of every document AND the
+  // waiver itself within the last year (annual renewal — the shared
+  // getMissingLegalDocuments helper is the single source of truth).
   const { data: legalDocs } = await supabase.from('legal_documents').select('document, version');
 
   // Count for tabs — competitive catches all active players not in other tabs
@@ -121,11 +123,19 @@ export default async function PlayersPage({
                 const r = Array.isArray(player.ratings) ? player.ratings[0] : player.ratings;
                 const dotClass = attentionDot(player.status);
                 const acceptances = (player.waiver_acceptances ?? []) as { document: string; version: string; accepted_at: string }[];
+                // Latest acceptance row per document (rows are append-only —
+                // an annual waiver renewal adds a new row for the same version).
                 const currentAcceptances = (legalDocs ?? [])
-                  .map((doc) => acceptances.find((a) => a.document === doc.document && a.version === doc.version))
+                  .map((doc) =>
+                    acceptances
+                      .filter((a) => a.document === doc.document && a.version === doc.version)
+                      .sort((a, b) => a.accepted_at.localeCompare(b.accepted_at))
+                      .at(-1)
+                  )
                   .filter((a): a is NonNullable<typeof a> => Boolean(a));
                 const waiverCurrent =
-                  (legalDocs?.length ?? 0) > 0 && currentAcceptances.length === (legalDocs?.length ?? 0);
+                  (legalDocs?.length ?? 0) > 0 &&
+                  getMissingLegalDocuments(legalDocs ?? [], acceptances).length === 0;
                 const latestAcceptedAt = waiverCurrent
                   ? currentAcceptances.map((a) => a.accepted_at).sort().slice(-1)[0]
                   : null;

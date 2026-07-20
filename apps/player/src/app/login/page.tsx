@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { createClient } from '@/lib/supabase-browser';
 import { Mail, CheckCircle2, ChevronRight, Loader2 } from 'lucide-react';
 import { ShuttleMark } from '@/components/shuttle-mark';
@@ -343,6 +344,13 @@ export default function LoginPage() {
             </form>
           </>
         )}
+
+        <div className="muted" style={{ fontSize: 12, textAlign: 'center' }}>
+          By signing in you agree to the{' '}
+          <Link href="/legal/terms" style={{ color: 'inherit', textDecoration: 'underline' }}>Terms of Use</Link>
+          {' '}and{' '}
+          <Link href="/legal/privacy" style={{ color: 'inherit', textDecoration: 'underline' }}>Privacy Policy</Link>.
+        </div>
       </div>
     </div>
   );

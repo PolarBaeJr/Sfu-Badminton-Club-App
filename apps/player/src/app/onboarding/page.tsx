@@ -5,6 +5,7 @@ import { completeOnboarding, getLegalDocuments } from '@/lib/actions';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/toast-provider';
 import { LegalMarkdown } from '@badminton/ui';
+import { LEGAL_DOCUMENT_LABELS, sortLegalDocuments } from '@badminton/shared';
 import { User, Phone, Sparkles, Trophy, ChevronRight, ChevronLeft, Loader2, Rocket } from 'lucide-react';
 
 const steps = [
@@ -12,11 +13,6 @@ const steps = [
   { number: 2, title: 'Waiver' },
   { number: 3, title: 'Confirm' },
 ];
-
-const DOC_TITLES: Record<string, string> = {
-  waiver: 'Liability Waiver & Assumption of Risk',
-  code_of_conduct: 'Code of Conduct',
-};
 
 // Defined at module scope (NOT inside OnboardingPage): a component declared
 // inside the page body gets a new identity on every render, so React would
@@ -116,18 +112,19 @@ export default function OnboardingPage() {
   const [docs, setDocs] = useState<{ document: string; version: string; content: string }[] | null>(null);
   const [waiverAccepted, setWaiverAccepted] = useState(false);
   const [cocAccepted, setCocAccepted] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [ageAttested, setAgeAttested] = useState(false);
   const router = useRouter();
   const { toast } = useToast();
 
   useEffect(() => {
     getLegalDocuments()
-      .then(setDocs)
+      .then((rows) => setDocs(sortLegalDocuments(rows)))
       .catch(() => toast('Failed to load the waiver — please refresh', 'error'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const allAccepted = waiverAccepted && cocAccepted && ageAttested;
+  const allAccepted = waiverAccepted && cocAccepted && termsAccepted && ageAttested;
 
   async function handleComplete() {
     setLoading(true);
@@ -138,6 +135,7 @@ export default function OnboardingPage() {
         phone: phone || undefined,
         waiver_accepted: waiverAccepted,
         code_of_conduct_accepted: cocAccepted,
+        terms_accepted: termsAccepted,
         age_attestation: ageAttested,
       });
       router.push('/feed');
@@ -265,14 +263,14 @@ export default function OnboardingPage() {
             {step === 1
               ? 'Set up your profile'
               : step === 2
-              ? 'Waiver & code of conduct'
+              ? 'Waiver & club policies'
               : `You're ready, ${displayName || name.split(' ')[0]}!`}
           </h2>
           <div className="page-sub" style={{ marginTop: 8 }}>
             {step === 1
               ? 'This is how other players will see you. Display name and phone are optional.'
               : step === 2
-              ? 'Read and accept the liability waiver and code of conduct to play.'
+              ? 'Read and accept the terms of use, privacy policy, liability waiver, and code of conduct to play.'
               : 'Start exploring the club, check into sessions, and issue challenges.'}
           </div>
         </div>
@@ -323,7 +321,7 @@ export default function OnboardingPage() {
               ) : (
                 docs.map((doc) => (
                   <div key={doc.document} style={{ marginBottom: 20 }}>
-                    <div className="card-title">{DOC_TITLES[doc.document] || doc.document}</div>
+                    <div className="card-title">{LEGAL_DOCUMENT_LABELS[doc.document as keyof typeof LEGAL_DOCUMENT_LABELS] || doc.document}</div>
                     <div className="card-sub mono">Version {doc.version}</div>
                     <LegalMarkdown content={doc.content} />
                   </div>
@@ -332,6 +330,7 @@ export default function OnboardingPage() {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <LegalCheckbox id="terms-accept" checked={termsAccepted} onChange={setTermsAccepted} label="I agree to the Terms of Use and Privacy Policy." />
               <LegalCheckbox id="waiver-accept" checked={waiverAccepted} onChange={setWaiverAccepted} label="I have read and accept the liability waiver." />
               <LegalCheckbox id="coc-accept" checked={cocAccepted} onChange={setCocAccepted} label="I have read and accept the code of conduct." />
               <LegalCheckbox id="age-attest" checked={ageAttested} onChange={setAgeAttested} label="I am 19 or older, or I have my parent/guardian's consent." />

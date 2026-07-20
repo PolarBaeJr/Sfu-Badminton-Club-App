@@ -12,6 +12,7 @@ import { PostHogProvider } from '@/components/posthog-provider';
 import { PostHogIdentify } from '@/components/posthog-identify';
 import { SentryUserInit } from '@/components/sentry-user-init';
 import { cookies } from 'next/headers';
+import { getMissingLegalDocuments } from '@badminton/shared';
 import { createServerSupabaseClient, getActiveSeason } from '@/lib/supabase-server';
 import { Barlow, Barlow_Condensed, JetBrains_Mono } from "next/font/google";
 import { cn } from "@/lib/utils";
@@ -54,7 +55,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   let doublesElo: number | null = null;
   let unreadCount = 0;
   let activeSeasonName = '';
-  let needsWaiver = false;
+  let missingLegalDocs: string[] = [];
   let deletionRequestedAt: string | null = null;
 
   try {
@@ -77,7 +78,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       isAuthenticated = true;
       const { data: player } = await supabase
         .from('players')
-        .select('id, full_name, status, deletion_requested_at, ratings(singles_elo, doubles_elo), waiver_acceptances(document, version)')
+        .select('id, full_name, status, deletion_requested_at, ratings(singles_elo, doubles_elo), waiver_acceptances(document, version, accepted_at)')
         .eq('user_id', user.id)
         .maybeSingle();
       playerName = player?.full_name ?? '';
@@ -85,16 +86,15 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       playerStatus = player?.status ?? null;
       deletionRequestedAt = player?.deletion_requested_at ?? null;
 
-      // A member needs the waiver gate when they haven't accepted the current
-      // version of both legal documents (two tiny rows — skipped when no player).
+      // A member needs the waiver gate when any of the four legal documents
+      // lacks a valid acceptance — current version, and for the waiver also
+      // re-signed within the last year (four tiny rows — skipped when no player).
       if (player) {
         const { data: docs } = await supabase
           .from('legal_documents')
           .select('document, version');
-        const acceptances = (player.waiver_acceptances ?? []) as { document: string; version: string }[];
-        needsWaiver = (docs ?? []).some(
-          (doc) => !acceptances.some((a) => a.document === doc.document && a.version === doc.version)
-        );
+        const acceptances = (player.waiver_acceptances ?? []) as { document: string; version: string; accepted_at: string }[];
+        missingLegalDocs = getMissingLegalDocuments(docs ?? [], acceptances);
       }
 
       const ratings = Array.isArray(player?.ratings) ? player.ratings[0] : player?.ratings;
@@ -144,7 +144,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <OfflineBanner />
             <DeletionGate deletionRequestedAt={deletionRequestedAt} />
             {/* Deletion screen wins when both gates would apply. */}
-            <WaiverGate needsWaiver={needsWaiver && !deletionRequestedAt} />
+            <WaiverGate missingDocs={deletionRequestedAt ? [] : missingLegalDocs} />
             <TopBar playerName={playerName} unreadCount={unreadCount} isAuthenticated={isAuthenticated} activeSeasonName={activeSeasonName} />
             <main className="page pb-safe-nav">
               {children}

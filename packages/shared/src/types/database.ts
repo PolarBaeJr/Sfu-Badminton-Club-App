@@ -513,7 +513,7 @@ export interface PushSubscription {
   created_at: string;
 }
 
-export type WaiverDocument = 'waiver' | 'code_of_conduct';
+export type WaiverDocument = 'waiver' | 'code_of_conduct' | 'terms_of_use' | 'privacy_policy';
 
 export interface LegalDocument {
   document: WaiverDocument;

@@ -7,6 +7,7 @@ import {
   legalAcceptanceSchema,
   accountDeletionSchema,
   parseOrThrow,
+  getMissingLegalDocuments,
   type LegalAcceptanceInput,
   type WaiverDocument,
 } from '@badminton/shared';
@@ -52,15 +53,16 @@ export async function getLegalDocuments(): Promise<
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase
     .from('legal_documents')
-    .select('document, version, content')
-    .order('document', { ascending: false }); // waiver first
+    .select('document, version, content');
   if (error) throw new Error(error.message);
+  // Callers sort with sortLegalDocuments for display.
   return data ?? [];
 }
 
-// Insert one acceptance row per current document version. Upsert with
-// ignoreDuplicates makes re-acceptance idempotent (UNIQUE player_id,
-// document, version).
+// Insert acceptance rows for the documents the player is still missing —
+// never touching prior rows, which are append-only evidence (00014 dropped
+// the unique key so the annual waiver renewal adds a NEW row). Only inserting
+// the missing/expired set keeps re-acceptance idempotent in effect.
 async function insertAcceptances(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   playerId: string,
@@ -72,16 +74,25 @@ async function insertAcceptances(
   if (docsError) throw new Error(docsError.message);
   if (!docs || docs.length === 0) return;
 
+  const { data: existing, error: existingError } = await supabase
+    .from('waiver_acceptances')
+    .select('document, version, accepted_at')
+    .eq('player_id', playerId);
+  if (existingError) throw new Error(existingError.message);
+
+  const missing = getMissingLegalDocuments(docs, existing ?? []);
+  if (missing.length === 0) return;
+
+  const versionByDoc = new Map(docs.map((doc) => [doc.document, doc.version]));
   const userAgent = (await headers()).get('user-agent');
-  const { error } = await supabase.from('waiver_acceptances').upsert(
-    docs.map((doc) => ({
+  const { error } = await supabase.from('waiver_acceptances').insert(
+    missing.map((document) => ({
       player_id: playerId,
-      document: doc.document,
-      version: doc.version,
+      document,
+      version: versionByDoc.get(document)!,
       age_attestation: ageAttestation,
       user_agent: userAgent,
-    })),
-    { onConflict: 'player_id,document,version', ignoreDuplicates: true }
+    }))
   );
   if (error) throw new Error(error.message);
 }
@@ -143,6 +154,7 @@ export async function completeOnboarding(data: {
   phone?: string;
   waiver_accepted: boolean;
   code_of_conduct_accepted: boolean;
+  terms_accepted: boolean;
   age_attestation: boolean;
 }) {
   parseOrThrow(profileSchema, data);

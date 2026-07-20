@@ -89,6 +89,11 @@ export function Landing({ top, seasonName }: { top: TopEntry[]; seasonName: stri
 
       <footer className="lp-footer">
         SFU Badminton Club · Lorne Davies Complex
+        <div style={{ marginTop: 8 }}>
+          <Link href="/legal/terms" style={{ color: 'inherit' }}>Terms of Use</Link>
+          {' · '}
+          <Link href="/legal/privacy" style={{ color: 'inherit' }}>Privacy Policy</Link>
+        </div>
       </footer>
     </div>
   );

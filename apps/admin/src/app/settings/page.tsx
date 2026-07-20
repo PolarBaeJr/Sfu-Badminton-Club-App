@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
 import { PageHeader } from '@badminton/ui';
+import { sortLegalDocuments } from '@badminton/shared';
 import { SettingsForm } from './settings-form';
 import { LegalDocumentsForm } from './legal-documents-form';
 import { PasskeySection } from './passkey-section';
@@ -21,8 +22,8 @@ export default async function SettingsPage() {
 
   const { data: legalDocuments } = await supabase
     .from('legal_documents')
-    .select('document, version, content, updated_at')
-    .order('document', { ascending: false }); // waiver first
+    .select('document, version, content, updated_at');
+  const sortedLegalDocuments = sortLegalDocuments(legalDocuments ?? []);
 
   const { data: passkeys } = player
     ? await supabase
@@ -56,7 +57,7 @@ export default async function SettingsPage() {
           {player?.role === 'admin' && (
             <a href="#legal">
               <span className="rail-label block">Legal Documents</span>
-              <span className="rail-sub block">Waiver &amp; conduct</span>
+              <span className="rail-sub block">Terms, privacy, waiver &amp; conduct</span>
             </a>
           )}
           <a href="#about">
@@ -112,13 +113,13 @@ export default async function SettingsPage() {
           )}
 
           {/* Legal Documents */}
-          {player?.role === 'admin' && legalDocuments && legalDocuments.length > 0 && (
+          {player?.role === 'admin' && sortedLegalDocuments.length > 0 && (
             <section id="legal" className="scroll-mt-32">
               <h2 className="settings-section-title">Legal documents</h2>
               <p className="settings-section-desc">
                 Shown to every member during onboarding. Bumping a version forces all members to re-accept before playing.
               </p>
-              <LegalDocumentsForm documents={legalDocuments} />
+              <LegalDocumentsForm documents={sortedLegalDocuments} />
             </section>
           )}
 

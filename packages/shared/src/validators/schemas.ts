@@ -312,7 +312,7 @@ export const announcementSchema = z.object({
   expires_at: z.string().optional(),
 });
 
-// All three must be literally true — accepting is an affirmative act, so the
+// All four must be literally true — accepting is an affirmative act, so the
 // server rejects anything short of an explicit check on every box.
 export const legalAcceptanceSchema = z.object({
   waiver_accepted: z.literal(true, {
@@ -320,6 +320,9 @@ export const legalAcceptanceSchema = z.object({
   }),
   code_of_conduct_accepted: z.literal(true, {
     errorMap: () => ({ message: 'You must accept the code of conduct' }),
+  }),
+  terms_accepted: z.literal(true, {
+    errorMap: () => ({ message: 'You must accept the terms of use and privacy policy' }),
   }),
   age_attestation: z.literal(true, {
     errorMap: () => ({ message: 'You must confirm you are 19 or older, or have your parent/guardian\'s consent' }),
@@ -334,7 +337,7 @@ export const accountDeletionSchema = z.object({
 });
 
 export const legalDocumentUpdateSchema = z.object({
-  document: z.enum(['waiver', 'code_of_conduct']),
+  document: z.enum(['waiver', 'code_of_conduct', 'terms_of_use', 'privacy_policy']),
   content: z.string().min(50, 'Content must be at least 50 characters').max(50000),
   bump_version: z.boolean(),
 });

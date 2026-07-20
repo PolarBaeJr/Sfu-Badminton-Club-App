@@ -595,19 +595,20 @@ describe('legalAcceptanceSchema', () => {
   const allTrue = {
     waiver_accepted: true,
     code_of_conduct_accepted: true,
+    terms_accepted: true,
     age_attestation: true,
   };
-  it('accepts all three literals true', () => {
+  it('accepts all four literals true', () => {
     expect(legalAcceptanceSchema.safeParse(allTrue).success).toBe(true);
   });
   it('rejects any false literal', () => {
-    for (const key of ['waiver_accepted', 'code_of_conduct_accepted', 'age_attestation'] as const) {
+    for (const key of ['waiver_accepted', 'code_of_conduct_accepted', 'terms_accepted', 'age_attestation'] as const) {
       expect(legalAcceptanceSchema.safeParse({ ...allTrue, [key]: false }).success).toBe(false);
     }
   });
   it('rejects a missing field', () => {
     expect(
-      legalAcceptanceSchema.safeParse({ waiver_accepted: true, code_of_conduct_accepted: true }).success,
+      legalAcceptanceSchema.safeParse({ waiver_accepted: true, code_of_conduct_accepted: true, terms_accepted: true }).success,
     ).toBe(false);
   });
 });
@@ -619,13 +620,13 @@ describe('legalDocumentUpdateSchema', () => {
     bump_version: false,
   };
   it('accepts a valid update for each document', () => {
-    for (const document of ['waiver', 'code_of_conduct'] as const) {
+    for (const document of ['waiver', 'code_of_conduct', 'terms_of_use', 'privacy_policy'] as const) {
       expect(legalDocumentUpdateSchema.safeParse({ ...base, document }).success).toBe(true);
     }
   });
   it('rejects an unknown document', () => {
     expect(
-      legalDocumentUpdateSchema.safeParse({ ...base, document: 'privacy_policy' }).success,
+      legalDocumentUpdateSchema.safeParse({ ...base, document: 'refund_policy' }).success,
     ).toBe(false);
   });
   it('rejects content shorter than 50 chars', () => {

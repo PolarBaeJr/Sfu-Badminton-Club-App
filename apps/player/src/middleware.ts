@@ -34,6 +34,8 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/login') ||
     pathname.startsWith('/auth') ||
     pathname.startsWith('/exec') ||
+    // Legal documents (terms, privacy, waiver, conduct) are public reading.
+    pathname.startsWith('/legal') ||
     // ICS feed for calendar clients — token-authenticated, no session cookie.
     pathname.startsWith('/api/calendar') ||
     pathname === '/leaderboard';
