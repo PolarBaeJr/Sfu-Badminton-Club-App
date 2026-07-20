@@ -52,9 +52,19 @@ const EXTRA_BUCKETS = ['seasons', 'tournaments', 'fees', 'announcements', 'other
 
 const bucketOf = (log: AuditLogRow) => TARGET_BUCKETS[log.target_type ?? ''] ?? 'other';
 
+type SortMode = 'newest' | 'oldest' | 'operator_asc' | 'operator_desc';
+
+const SORT_OPTIONS: { value: SortMode; label: string }[] = [
+  { value: 'newest', label: 'Newest first' },
+  { value: 'oldest', label: 'Oldest first' },
+  { value: 'operator_asc', label: 'Operator A–Z' },
+  { value: 'operator_desc', label: 'Operator Z–A' },
+];
+
 export function AuditList({ logs }: { logs: AuditLogRow[] }) {
   const router = useRouter();
   const [filter, setFilter] = useState('all');
+  const [sort, setSort] = useState<SortMode>('newest');
 
   // Auto-refresh: router.refresh() re-runs the server fetch without resetting
   // client filter state. Skipped while the tab is hidden.
@@ -82,8 +92,23 @@ export function AuditList({ logs }: { logs: AuditLogRow[] }) {
 
   const rows = useMemo(() => {
     const filtered = filter === 'all' ? logs : logs.filter((log) => bucketOf(log) === filter);
-    return [...filtered].sort((a, b) => b.created_at.localeCompare(a.created_at));
-  }, [logs, filter]);
+    return [...filtered].sort((a, b) => {
+      if (sort === 'operator_asc' || sort === 'operator_desc') {
+        const an = a.actor?.full_name ?? null;
+        const bn = b.actor?.full_name ?? null;
+        // Null actors ("System") always sort last, regardless of direction.
+        if (an === null && bn === null) return b.created_at.localeCompare(a.created_at);
+        if (an === null) return 1;
+        if (bn === null) return -1;
+        const cmp = an.localeCompare(bn, undefined, { sensitivity: 'base' });
+        if (cmp !== 0) return sort === 'operator_asc' ? cmp : -cmp;
+        return b.created_at.localeCompare(a.created_at);
+      }
+      return sort === 'oldest'
+        ? a.created_at.localeCompare(b.created_at)
+        : b.created_at.localeCompare(a.created_at);
+    });
+  }, [logs, filter, sort]);
 
   return (
     <div>
@@ -101,7 +126,19 @@ export function AuditList({ logs }: { logs: AuditLogRow[] }) {
             </option>
           ))}
         </select>
-        <span className="ml-auto whitespace-nowrap font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">
+        <select
+          aria-label="Sort audit entries"
+          value={sort}
+          onChange={(e) => setSort(e.target.value as SortMode)}
+          className="settings-input ml-auto font-mono text-[11px] uppercase tracking-[0.12em]"
+        >
+          {SORT_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+        <span className="whitespace-nowrap font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">
           Auto-refresh · 30s
         </span>
       </div>
