@@ -20,6 +20,7 @@ import {
   reinstatementSchema,
   banSchema,
   playerFlagsSchema,
+  reliabilityAdjustSchema,
   legalAcceptanceSchema,
   legalDocumentUpdateSchema,
 } from '../schemas';
@@ -545,6 +546,26 @@ describe('playerFlagsSchema', () => {
     expect(
       playerFlagsSchema.safeParse({ is_exec: 'yes', fee_exempt: false }).success,
     ).toBe(false);
+  });
+});
+
+describe('reliabilityAdjustSchema', () => {
+  const base = {
+    player_id: UUID_A,
+    no_shows: 2,
+    late_cancellations: 1,
+    early_withdrawals: 0,
+    walkover_flag: false,
+    reason: 'Corrected after admin review',
+  };
+  it('accepts a valid adjustment', () => {
+    expect(reliabilityAdjustSchema.safeParse(base).success).toBe(true);
+  });
+  it('rejects a negative count', () => {
+    expect(reliabilityAdjustSchema.safeParse({ ...base, no_shows: -1 }).success).toBe(false);
+  });
+  it('rejects an empty reason', () => {
+    expect(reliabilityAdjustSchema.safeParse({ ...base, reason: '' }).success).toBe(false);
   });
 });
 

@@ -1,5 +1,5 @@
 import { createServerSupabaseClient, getCurrentPlayer, getActiveSeason } from '@/lib/supabase-server';
-import { getWinRate, getOverallRecord, getStreakDisplay, getPointDifferential, formatDate } from '@badminton/shared';
+import { getWinRate, getOverallRecord, getStreakDisplay, getPointDifferential, formatDate, TOURNAMENT_EVENT_TYPE_LABELS } from '@badminton/shared';
 import { redirect } from 'next/navigation';
 import { AvatarChip, PageHeader } from '@badminton/ui';
 
@@ -11,10 +11,10 @@ export default async function MyStatsPage() {
   const activeSeason = await getActiveSeason();
   const r = Array.isArray(player.ratings) ? player.ratings[0] : player.ratings;
 
-  const [reliabilityRes, recentMatchesRes, h2hRes, partnersRes] = await Promise.all([
+  const [reliabilityRes, recentMatchesRes, h2hRes, partnersRes, walkoverEventsRes, tournamentNoShowsRes] = await Promise.all([
     supabase
       .from('reliability_metrics')
-      .select('no_shows, late_withdrawals, challenges_issued, matches_completed')
+      .select('no_shows, late_cancellations, early_withdrawals, walkovers_received, matches_completed, walkover_flag')
       .eq('player_id', player.id)
       .maybeSingle(),
     supabase
@@ -36,12 +36,36 @@ export default async function MyStatsPage() {
       .gte('total_matches', 3)
       .order('win_rate', { ascending: false })
       .limit(5),
+    supabase
+      .from('walkovers')
+      .select('id, walkover_type, notice_hours, reported_at, status, challenge:challenges(type)')
+      .eq('forfeit_player_id', player.id)
+      .eq('status', 'confirmed')
+      .order('reported_at', { ascending: false }),
+    supabase
+      .from('tournament_participants')
+      .select('id, status, event:tournament_events(event_type, tournament:tournaments(name))')
+      .eq('player_id', player.id)
+      .eq('status', 'no_show'),
   ]);
 
   const reliability = reliabilityRes.data;
   const recentMatches = recentMatchesRes.data ?? [];
   const h2h = h2hRes.data ?? [];
   const partners = partnersRes.data ?? [];
+  const walkoverEvents = walkoverEventsRes.data ?? [];
+  const tournamentNoShows = tournamentNoShowsRes.data ?? [];
+
+  // Reliability card is only rendered when something is on record — players
+  // with a clean history never see it.
+  const hasReliabilityRecord =
+    (reliability?.no_shows ?? 0) > 0 ||
+    (reliability?.late_cancellations ?? 0) > 0 ||
+    (reliability?.early_withdrawals ?? 0) > 0 ||
+    (reliability?.walkovers_received ?? 0) > 0 ||
+    reliability?.walkover_flag === true ||
+    walkoverEvents.length > 0 ||
+    tournamentNoShows.length > 0;
 
   const singlesPlayed = (r?.singles_wins ?? 0) + (r?.singles_losses ?? 0);
   const doublesPlayed = (r?.doubles_wins ?? 0) + (r?.doubles_losses ?? 0);
@@ -151,7 +175,7 @@ export default async function MyStatsPage() {
             <div className="stat-label">RELIABILITY</div>
             <div className="stat-value">{reliability?.no_shows ?? 0}</div>
             <div className="mono muted" style={{ fontSize: 11, marginTop: 6 }}>
-              No-shows · {reliability?.late_withdrawals ?? 0} late w/d
+              No-shows · {reliability?.late_cancellations ?? 0} late w/d
             </div>
           </div>
           <div>
@@ -336,6 +360,84 @@ export default async function MyStatsPage() {
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {hasReliabilityRecord && (
+            <div className="card-base">
+              <h3 className="card-title" style={{ marginBottom: 4 }}>Reliability</h3>
+              <div className="card-sub" style={{ marginBottom: 18 }}>No-shows and withdrawals on record</div>
+              {reliability?.walkover_flag && (
+                <div
+                  style={{
+                    border: '1px solid var(--loss)',
+                    background: 'var(--red-wash)',
+                    borderRadius: 8,
+                    padding: '10px 12px',
+                    marginBottom: 14,
+                  }}
+                >
+                  <div style={{ fontWeight: 600, color: 'var(--loss)', fontSize: 13 }}>
+                    Flagged for repeated no-shows — contact an exec.
+                  </div>
+                </div>
+              )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: (walkoverEvents.length > 0 || tournamentNoShows.length > 0) ? 14 : 0 }}>
+                {[
+                  { label: 'No-shows', value: reliability?.no_shows ?? 0 },
+                  { label: 'Late withdrawals (<24h notice)', value: reliability?.late_cancellations ?? 0 },
+                  { label: 'Withdrawals', value: reliability?.early_withdrawals ?? 0 },
+                  { label: 'Walkovers received', value: reliability?.walkovers_received ?? 0 },
+                ].map((row) => (
+                  <div key={row.label} className="list-row">
+                    <div style={{ flex: 1 }}>
+                      <div className="row-title">{row.label}</div>
+                    </div>
+                    <span className="mono" style={{ fontWeight: 600, color: row.value > 0 ? 'var(--loss)' : 'var(--mute)' }}>
+                      {row.value}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {(walkoverEvents.length > 0 || tournamentNoShows.length > 0) && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--line)', paddingTop: 14 }}>
+                  {walkoverEvents.map((w) => {
+                    const challengeRaw = w.challenge as unknown;
+                    const challenge = (Array.isArray(challengeRaw) ? challengeRaw[0] : challengeRaw) as { type: string } | null;
+                    // <24h notice = "late" — same cutoff the walkover flow uses to
+                    // increment late_cancellations vs early_withdrawals.
+                    const label = w.walkover_type === 'no_show'
+                      ? 'No-show'
+                      : (w.notice_hours ?? 0) < 24 ? 'Late withdrawal' : 'Withdrawal';
+                    return (
+                      <div key={w.id} className="list-row">
+                        <div style={{ flex: 1 }}>
+                          <div className="row-title">{label}</div>
+                          <div className="row-sub">{formatDate(w.reported_at)}</div>
+                        </div>
+                        {challenge && <span className="tag">{challenge.type.toUpperCase()}</span>}
+                      </div>
+                    );
+                  })}
+                  {tournamentNoShows.map((tp) => {
+                    const eventRaw = tp.event as unknown;
+                    const event = (Array.isArray(eventRaw) ? eventRaw[0] : eventRaw) as { event_type: string; tournament: unknown } | null;
+                    const tournamentRaw = event?.tournament;
+                    const tournament = (Array.isArray(tournamentRaw) ? tournamentRaw[0] : tournamentRaw) as { name: string } | null;
+                    const eventLabel = event ? (TOURNAMENT_EVENT_TYPE_LABELS[event.event_type as keyof typeof TOURNAMENT_EVENT_TYPE_LABELS] ?? event.event_type) : '';
+                    return (
+                      <div key={tp.id} className="list-row">
+                        <div style={{ flex: 1 }}>
+                          <div className="row-title">Tournament no-show</div>
+                          <div className="row-sub">
+                            {[tournament?.name, eventLabel].filter(Boolean).join(' · ')}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
         </div>

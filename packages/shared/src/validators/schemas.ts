@@ -287,6 +287,15 @@ export const varsityNoteSchema = z.object({
   note: z.string().min(2, 'Note must be at least 2 characters').max(2000),
 });
 
+export const reliabilityAdjustSchema = z.object({
+  player_id: z.string().uuid(),
+  no_shows: z.number().int().min(0),
+  late_cancellations: z.number().int().min(0),
+  early_withdrawals: z.number().int().min(0),
+  walkover_flag: z.boolean(),
+  reason: z.string().min(2, 'Reason must be at least 2 characters').max(500),
+});
+
 export const announcementSchema = z.object({
   title: z.string().min(1, 'Title is required').max(200),
   body: z.string().min(1, 'Body is required').max(5000),
@@ -353,6 +362,7 @@ export type ReinstatementInput = z.infer<typeof reinstatementSchema>;
 export type BanInput = z.infer<typeof banSchema>;
 export type PlayerFlagsInput = z.infer<typeof playerFlagsSchema>;
 export type VarsityNoteInput = z.infer<typeof varsityNoteSchema>;
+export type ReliabilityAdjustInput = z.infer<typeof reliabilityAdjustSchema>;
 export type LegalAcceptanceInput = z.infer<typeof legalAcceptanceSchema>;
 export type AccountDeletionInput = z.infer<typeof accountDeletionSchema>;
 export type LegalDocumentUpdateInput = z.infer<typeof legalDocumentUpdateSchema>;

@@ -1,8 +1,9 @@
 import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge, StatCard, Avatar, PageHeader } from '@badminton/ui';
-import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, getWinRate, getStreakDisplay, getPointDifferential } from '@badminton/shared';
+import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, TOURNAMENT_EVENT_TYPE_LABELS, getWinRate, getStreakDisplay, getPointDifferential } from '@badminton/shared';
 import { PlayerEditForm } from './edit-form';
 import { VarsityNotes } from './varsity-notes';
+import { ReliabilityEditor } from './reliability-editor';
 import { CancelDeletionButton } from './cancel-deletion-button';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Shield, Target, Trophy, Swords, TrendingUp, Flame, FileText, AlertTriangle, ArrowUpRight, ArrowDownRight } from 'lucide-react';
@@ -18,16 +19,26 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
     { data: reliability },
     { data: recentMatches },
     { data: varsityNotes },
+    { data: walkoverEvents },
+    { data: tournamentNoShows },
   ] = await Promise.all([
     supabase.from('players').select('*').eq('id', id).single(),
     supabase.from('ratings').select('*').eq('player_id', id).single(),
-    supabase.from('reliability_metrics').select('*').eq('player_id', id).single(),
+    supabase.from('reliability_metrics').select('*').eq('player_id', id).maybeSingle(),
     supabase.from('match_participants')
       .select('*, match:matches(*, match_games(*))')
       .eq('player_id', id)
       .order('created_at', { ascending: false, referencedTable: 'matches' })
       .limit(10),
     supabase.from('varsity_notes').select('*, author:players!varsity_notes_author_id_fkey(full_name)').eq('player_id', id).order('created_at', { ascending: false }),
+    supabase.from('walkovers')
+      .select('id, walkover_type, notice_hours, reported_at, status, admin_notes, challenge:challenges(type), reporter:players!walkovers_reported_by_fkey(full_name)')
+      .eq('forfeit_player_id', id)
+      .order('reported_at', { ascending: false }),
+    supabase.from('tournament_participants')
+      .select('id, status, event:tournament_events(event_type, tournament:tournaments(name))')
+      .eq('player_id', id)
+      .eq('status', 'no_show'),
   ]);
 
   if (!player) notFound();
@@ -128,7 +139,14 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
         <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
           <div className="flex items-center gap-2 mb-4">
             <Shield className="w-4 h-4 text-[var(--text-muted)]" />
-            <h2 className="text-base font-semibold text-[var(--text-primary)]">Reliability</h2>
+            <h2 className="text-base font-semibold text-[var(--text-primary)] flex-1">Reliability</h2>
+            <ReliabilityEditor
+              playerId={id}
+              noShows={reliability?.no_shows ?? 0}
+              lateCancellations={reliability?.late_cancellations ?? 0}
+              earlyWithdrawals={reliability?.early_withdrawals ?? 0}
+              walkoverFlag={reliability?.walkover_flag ?? false}
+            />
           </div>
           {reliability ? (
             <div className="space-y-3">
@@ -137,6 +155,7 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
                 { label: 'Matches Completed', value: reliability.matches_completed },
                 { label: 'No-Shows', value: reliability.no_shows, danger: reliability.no_shows > 0 },
                 { label: 'Late Cancellations', value: reliability.late_cancellations },
+                { label: 'Early Withdrawals', value: reliability.early_withdrawals },
                 { label: 'Dispute Involvement', value: reliability.dispute_involvement_count },
               ].map(({ label, value, danger }) => (
                 <div key={label} className="flex justify-between items-center p-2 rounded-lg bg-[var(--bg-elevated)]">
@@ -153,6 +172,58 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
             </div>
           ) : (
             <p className="text-sm text-[var(--text-muted)]">No reliability data</p>
+          )}
+          {((walkoverEvents && walkoverEvents.length > 0) || (tournamentNoShows && tournamentNoShows.length > 0)) && (
+            <div className="mt-4 pt-4 border-t border-[var(--border)] space-y-2">
+              <p className="text-xs text-[var(--text-muted)] uppercase">Events</p>
+              {walkoverEvents?.map((w) => {
+                const challengeRaw = w.challenge as unknown;
+                const challenge = (Array.isArray(challengeRaw) ? challengeRaw[0] : challengeRaw) as { type: string } | null;
+                const reporterRaw = w.reporter as unknown;
+                const reporter = (Array.isArray(reporterRaw) ? reporterRaw[0] : reporterRaw) as { full_name: string } | null;
+                // <24h notice = "late" — same cutoff the walkover flow uses to
+                // increment late_cancellations vs early_withdrawals.
+                const label = w.walkover_type === 'no_show'
+                  ? 'No-show'
+                  : (w.notice_hours ?? 0) < 24 ? 'Late withdrawal' : 'Withdrawal';
+                return (
+                  <div key={w.id} className="p-2 rounded-lg bg-[var(--bg-elevated)]">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm text-[var(--text-primary)]">
+                        {label}
+                        {w.notice_hours !== null && ` (${w.notice_hours}h notice)`}
+                        {challenge && ` · ${challenge.type}`}
+                      </span>
+                      <Badge variant={w.status === 'pending' ? 'warning' : w.status === 'confirmed' ? 'success' : 'danger'}>
+                        {w.status}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-[var(--text-muted)] mt-1">
+                      {new Date(w.reported_at).toLocaleDateString()}
+                      {reporter && ` · Reported by ${reporter.full_name}`}
+                    </p>
+                    {w.admin_notes && (
+                      <p className="text-xs text-[var(--text-secondary)] mt-1">{w.admin_notes}</p>
+                    )}
+                  </div>
+                );
+              })}
+              {tournamentNoShows?.map((tp) => {
+                const eventRaw = tp.event as unknown;
+                const event = (Array.isArray(eventRaw) ? eventRaw[0] : eventRaw) as { event_type: string; tournament: { name: string } | { name: string }[] | null } | null;
+                const tournamentRaw = event?.tournament as unknown;
+                const tournament = (Array.isArray(tournamentRaw) ? tournamentRaw[0] : tournamentRaw) as { name: string } | null;
+                const eventLabel = event ? (TOURNAMENT_EVENT_TYPE_LABELS[event.event_type as keyof typeof TOURNAMENT_EVENT_TYPE_LABELS] ?? event.event_type) : '';
+                return (
+                  <div key={tp.id} className="p-2 rounded-lg bg-[var(--bg-elevated)] flex items-center justify-between gap-2">
+                    <span className="text-sm text-[var(--text-primary)]">
+                      Tournament no-show{tournament && ` — ${tournament.name}`}{eventLabel && ` · ${eventLabel}`}
+                    </span>
+                    <Badge variant="danger">no_show</Badge>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
 
