@@ -32,7 +32,7 @@ export default async function PlayersPage({
 
   let query = supabase
     .from('players')
-    .select('id, full_name, email, avatar_url, status, role, is_exec, fee_exempt, is_banned, deletion_requested_at, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
+    .select('id, full_name, email, avatar_url, status, role, is_exec, fee_exempt, is_banned, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
     .order('created_at', { ascending: false })
     .limit(500);
 
@@ -59,7 +59,7 @@ export default async function PlayersPage({
   // only when they've accepted the current version of every document AND the
   // waiver itself within the last year (annual renewal — the shared
   // getMissingLegalDocuments helper is the single source of truth).
-  const { data: legalDocs } = await supabase.from('legal_documents').select('document, version');
+  const { data: legalDocs } = await supabase.from('legal_documents').select('document, version, reacceptance_required_since');
 
   // Count for tabs — competitive catches all active players not in other tabs
   const { count: compCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).not('status', 'in', '("recreational","suspended","pending_approval")');
@@ -135,7 +135,7 @@ export default async function PlayersPage({
                   .filter((a): a is NonNullable<typeof a> => Boolean(a));
                 const waiverCurrent =
                   (legalDocs?.length ?? 0) > 0 &&
-                  getMissingLegalDocuments(legalDocs ?? [], acceptances).length === 0;
+                  getMissingLegalDocuments(legalDocs ?? [], acceptances, new Date(), player.waiver_reset_at).length === 0;
                 const latestAcceptedAt = waiverCurrent
                   ? currentAcceptances.map((a) => a.accepted_at).sort().slice(-1)[0]
                   : null;

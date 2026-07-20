@@ -61,14 +61,17 @@ export async function requirePlayer() {
 // four tiny rows, so the version fetch is cheap.
 export async function assertCurrentWaiver(
   supabase: SupabaseClient,
-  player: { waiver_acceptances?: { document: string; version: string; accepted_at: string }[] | null }
+  player: {
+    waiver_reset_at?: string | null;
+    waiver_acceptances?: { document: string; version: string; accepted_at: string }[] | null;
+  }
 ) {
   const { data: docs } = await supabase
     .from('legal_documents')
-    .select('document, version');
+    .select('document, version, reacceptance_required_since');
   if (!docs || docs.length === 0) return;
 
-  const missing = getMissingLegalDocuments(docs, player.waiver_acceptances ?? []);
+  const missing = getMissingLegalDocuments(docs, player.waiver_acceptances ?? [], new Date(), player.waiver_reset_at);
   if (missing.length > 0) {
     throw new Error("Please accept the club's current legal documents before playing");
   }

@@ -166,6 +166,35 @@ export async function cancelAccountDeletion(playerId: string) {
   revalidatePath(`/players/${playerId}`);
 }
 
+// Force just this player to re-sign the waiver on their next visit. Stamps
+// players.waiver_reset_at = now(); the shared getMissingLegalDocuments helper
+// then treats their latest waiver acceptance as stale until they re-sign.
+export async function requireWaiverResignature(playerId: string) {
+  const admin = await getAdminPlayer();
+  const adminClient = createAdminClient();
+
+  const { data: oldPlayer } = await adminClient.from('players').select('waiver_reset_at').eq('id', playerId).single();
+
+  const now = new Date().toISOString();
+  const { error } = await adminClient
+    .from('players')
+    .update({ waiver_reset_at: now })
+    .eq('id', playerId);
+  if (error) throw new Error(error.message);
+
+  await logAdminAudit(adminClient, {
+    actor_id: admin.id,
+    action_type: 'waiver_resignature_required',
+    target_type: 'player',
+    target_id: playerId,
+    old_value: { waiver_reset_at: oldPlayer?.waiver_reset_at ?? null },
+    new_value: { waiver_reset_at: now },
+  }, { playerId });
+
+  revalidatePath('/players');
+  revalidatePath(`/players/${playerId}`);
+}
+
 export async function removePlayer(playerId: string, reason: string) {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();

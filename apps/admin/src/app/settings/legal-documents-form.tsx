@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Button, Textarea } from '@badminton/ui';
 import { LEGAL_DOCUMENT_LABELS, type WaiverDocument } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
-import { updateLegalDocument } from '@/lib/actions';
+import { updateLegalDocument, requireReacceptance } from '@/lib/actions';
 
 interface LegalDocumentRow {
   document: string;
@@ -58,6 +58,18 @@ export function LegalDocumentsForm({ documents }: { documents: LegalDocumentRow[
     setSaving(null);
   }
 
+  async function handleRequireReacceptance(doc: LegalDocumentRow) {
+    if (!confirm('Require every member to re-sign this document on their next visit? This does not change the text.')) return;
+    setSaving(`${doc.document}-reaccept`);
+    try {
+      await requireReacceptance(doc.document as WaiverDocument);
+      toast('All members must re-sign this on their next visit.', 'success');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed to require re-signature', 'error');
+    }
+    setSaving(null);
+  }
+
   return (
     <div>
       {documents.map((doc) => {
@@ -103,6 +115,15 @@ export function LegalDocumentsForm({ documents }: { documents: LegalDocumentRow[
                   disabled={saving !== null}
                 >
                   Save &amp; require re-acceptance
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="border-[var(--red-border)] text-[var(--color-accent)] hover:bg-[var(--red-wash)] hover:text-[var(--color-accent)]"
+                  onClick={() => handleRequireReacceptance(doc)}
+                  loading={saving === `${doc.document}-reaccept`}
+                  disabled={saving !== null}
+                >
+                  Require re-signature now
                 </Button>
               </div>
             </div>

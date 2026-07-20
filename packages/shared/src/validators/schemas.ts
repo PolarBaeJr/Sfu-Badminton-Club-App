@@ -154,6 +154,7 @@ export const tournamentCreateSchema = z.object({
   bracket_size: z.number().int().min(2).default(8),
   event_multiplier: z.number().min(1).max(2).default(1.15),
   placement_bonus_enabled: z.boolean().default(true),
+  waiver_text: z.string().max(50000).optional(),
 });
 
 export const tournamentSuspendSchema = z.object({
@@ -345,6 +346,11 @@ export const legalDocumentUpdateSchema = z.object({
   bump_version: z.boolean(),
 });
 
+// Just the document key — validated when an admin forces re-acceptance.
+export const waiverDocumentSchema = z.enum([
+  'waiver', 'code_of_conduct', 'terms_of_use', 'privacy_policy',
+]);
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type ProfileInput = z.infer<typeof profileSchema>;
 export type ChallengeCreateInput = z.infer<typeof challengeCreateSchema>;
@@ -376,3 +382,4 @@ export type ReliabilityAdjustInput = z.infer<typeof reliabilityAdjustSchema>;
 export type LegalAcceptanceInput = z.infer<typeof legalAcceptanceSchema>;
 export type AccountDeletionInput = z.infer<typeof accountDeletionSchema>;
 export type LegalDocumentUpdateInput = z.infer<typeof legalDocumentUpdateSchema>;
+export type WaiverDocumentInput = z.infer<typeof waiverDocumentSchema>;

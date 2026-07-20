@@ -2,10 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { getMissingLegalDocuments, sortLegalDocuments, LEGAL_DOCUMENT_ORDER } from '../legal';
 
 const DOCS = [
-  { document: 'waiver', version: '2026-07-19' },
-  { document: 'code_of_conduct', version: '2026-07-19' },
-  { document: 'terms_of_use', version: '2026-07-19' },
-  { document: 'privacy_policy', version: '2026-07-19' },
+  { document: 'waiver', version: '2026-07-19', reacceptance_required_since: null },
+  { document: 'code_of_conduct', version: '2026-07-19', reacceptance_required_since: null },
+  { document: 'terms_of_use', version: '2026-07-19', reacceptance_required_since: null },
+  { document: 'privacy_policy', version: '2026-07-19', reacceptance_required_since: null },
 ];
 
 const NOW = new Date('2026-07-19T12:00:00Z');
@@ -68,6 +68,61 @@ describe('getMissingLegalDocuments', () => {
       accepted('privacy_policy', '2026-07-19', '2020-01-01T00:00:00Z'),
     ];
     expect(getMissingLegalDocuments(DOCS, acceptances, NOW)).toEqual([]);
+  });
+
+  it('flags a document when reacceptance_required_since is after the last acceptance', () => {
+    const docs = DOCS.map((d) =>
+      d.document === 'code_of_conduct'
+        ? { ...d, reacceptance_required_since: '2026-07-10T00:00:00Z' }
+        : d
+    );
+    // Everyone accepted 2026-07-01 — before the 2026-07-10 threshold.
+    const acceptances = DOCS.map((d) => accepted(d.document));
+    expect(getMissingLegalDocuments(docs, acceptances, NOW)).toEqual(['code_of_conduct']);
+  });
+
+  it('clears a forced re-accept once re-accepted after the threshold', () => {
+    const docs = DOCS.map((d) =>
+      d.document === 'code_of_conduct'
+        ? { ...d, reacceptance_required_since: '2026-07-10T00:00:00Z' }
+        : d
+    );
+    const acceptances = [
+      accepted('waiver'),
+      accepted('code_of_conduct', '2026-07-19', '2026-07-15T00:00:00Z'),
+      accepted('terms_of_use'),
+      accepted('privacy_policy'),
+    ];
+    expect(getMissingLegalDocuments(docs, acceptances, NOW)).toEqual([]);
+  });
+
+  it('forces re-acceptance of a non-waiver document', () => {
+    const docs = DOCS.map((d) =>
+      d.document === 'terms_of_use'
+        ? { ...d, reacceptance_required_since: '2026-07-10T00:00:00Z' }
+        : d
+    );
+    const acceptances = DOCS.map((d) => accepted(d.document));
+    expect(getMissingLegalDocuments(docs, acceptances, NOW)).toEqual(['terms_of_use']);
+  });
+
+  it('per-player waiver_reset_at forces only the waiver to be re-signed', () => {
+    const acceptances = DOCS.map((d) => accepted(d.document));
+    expect(
+      getMissingLegalDocuments(DOCS, acceptances, NOW, '2026-07-10T00:00:00Z')
+    ).toEqual(['waiver']);
+  });
+
+  it('clears a per-player waiver reset once re-signed after the reset', () => {
+    const acceptances = [
+      accepted('waiver', '2026-07-19', '2026-07-15T00:00:00Z'),
+      accepted('code_of_conduct'),
+      accepted('terms_of_use'),
+      accepted('privacy_policy'),
+    ];
+    expect(
+      getMissingLegalDocuments(DOCS, acceptances, NOW, '2026-07-10T00:00:00Z')
+    ).toEqual([]);
   });
 });
 

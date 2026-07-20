@@ -16,6 +16,7 @@ export async function createTournament(data: {
   bracket_size: number;
   event_multiplier: number;
   placement_bonus_enabled: boolean;
+  waiver_text?: string;
 }) {
   parseOrThrow(tournamentCreateSchema, data);
   const admin = await getExecOrAdmin();
@@ -33,6 +34,7 @@ export async function createTournament(data: {
     bracket_size: data.bracket_size,
     event_multiplier: data.event_multiplier,
     placement_bonus_enabled: data.placement_bonus_enabled,
+    waiver_text: data.waiver_text?.trim() || null,
     status: 'draft',
     season_id: activeSeason.data?.id || null,
     created_by: admin.id,
@@ -88,6 +90,7 @@ export async function updateTournament(tournamentId: string, data: {
   bracket_size: number;
   event_multiplier: number;
   placement_bonus_enabled: boolean;
+  waiver_text?: string;
 }) {
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
@@ -104,6 +107,7 @@ export async function updateTournament(tournamentId: string, data: {
     bracket_size: data.bracket_size,
     event_multiplier: data.event_multiplier,
     placement_bonus_enabled: data.placement_bonus_enabled,
+    waiver_text: data.waiver_text?.trim() || null,
   }).eq('id', tournamentId);
 
   if (error) throw new Error(error.message);

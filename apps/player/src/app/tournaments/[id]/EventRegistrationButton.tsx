@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button } from '@badminton/ui';
+import { Button, Dialog, LegalMarkdown } from '@badminton/ui';
 import { registerForEvent, withdrawFromEvent, selfCheckIn } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
@@ -12,10 +12,13 @@ interface Props {
   registration: { status: string } | null;
   isDoubles: boolean;
   suspended?: boolean;
+  eventWaiverText?: string | null;
 }
 
-export function EventRegistrationButton({ eventId, eventStatus, registration, isDoubles, suspended }: Props) {
+export function EventRegistrationButton({ eventId, eventStatus, registration, isDoubles, suspended, eventWaiverText }: Props) {
   const [loading, setLoading] = useState(false);
+  const [waiverOpen, setWaiverOpen] = useState(false);
+  const [waiverAccepted, setWaiverAccepted] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
 
@@ -50,8 +53,55 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
     setLoading(false);
   }
 
+  const waiverText = eventWaiverText?.trim();
+
   if (!registration) {
     if (eventStatus === 'registration' && !suspended) {
+      if (waiverText) {
+        return (
+          <>
+            <Button
+              size="sm"
+              loading={loading}
+              onClick={() => { setWaiverAccepted(false); setWaiverOpen(true); }}
+              className="press focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none min-h-[36px]"
+            >
+              Register
+            </Button>
+            <Dialog open={waiverOpen} onClose={() => setWaiverOpen(false)} title="Event waiver">
+              <div className="space-y-4">
+                <div style={{ maxHeight: '50vh', overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 10, padding: 14 }}>
+                  <LegalMarkdown content={waiverText} />
+                </div>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 13, lineHeight: 1.5, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={waiverAccepted}
+                    onChange={(e) => setWaiverAccepted(e.target.checked)}
+                    style={{ marginTop: 2, accentColor: 'var(--red)', flexShrink: 0 }}
+                  />
+                  <span>I have read and accept the event waiver.</span>
+                </label>
+                <div className="flex items-center justify-between">
+                  <Button variant="ghost" type="button" onClick={() => setWaiverOpen(false)}>Cancel</Button>
+                  <Button
+                    loading={loading}
+                    disabled={!waiverAccepted}
+                    onClick={() =>
+                      act(async () => {
+                        await registerForEvent(eventId, { eventWaiverAccepted: true });
+                        setWaiverOpen(false);
+                      }, 'Registered!')
+                    }
+                  >
+                    Register
+                  </Button>
+                </div>
+              </div>
+            </Dialog>
+          </>
+        );
+      }
       return (
         <Button
           size="sm"

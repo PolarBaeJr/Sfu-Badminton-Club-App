@@ -192,6 +192,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
                     registration={myReg}
                     isDoubles={doubles}
                     suspended={!!tournament.suspended_at}
+                    eventWaiverText={tournament.waiver_text}
                   />
                 </div>
               </div>

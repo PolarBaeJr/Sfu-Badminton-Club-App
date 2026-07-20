@@ -36,11 +36,15 @@ export function sortLegalDocuments<T extends { document: string }>(docs: T[]): T
 //   WAIVER_VALIDITY_DAYS (the most recent row counts — acceptances are
 //   append-only, annual renewal adds a new row).
 // - every other document: needs a current-version acceptance, any age.
+// - any document: an admin can force re-acceptance by stamping
+//   reacceptance_required_since; a member's latest acceptance must post-date
+//   it. For the waiver, playerWaiverResetAt does the same for a single member.
 // Returns the document keys the player still has to accept.
 export function getMissingLegalDocuments(
-  docs: { document: string; version: string }[],
+  docs: { document: string; version: string; reacceptance_required_since?: string | null }[],
   acceptances: { document: string; version: string; accepted_at: string }[],
-  now: Date = new Date()
+  now: Date = new Date(),
+  playerWaiverResetAt?: string | null
 ): WaiverDocument[] {
   const missing: WaiverDocument[] = [];
   for (const doc of docs) {
@@ -48,9 +52,22 @@ export function getMissingLegalDocuments(
       (a) => a.document === doc.document && a.version === doc.version
     );
     let valid = current.length > 0;
-    if (valid && doc.document === 'waiver') {
+    if (valid) {
       const latest = Math.max(...current.map((a) => new Date(a.accepted_at).getTime()));
-      valid = now.getTime() - latest <= WAIVER_VALIDITY_DAYS * 24 * 60 * 60 * 1000;
+      if (doc.document === 'waiver') {
+        valid = now.getTime() - latest <= WAIVER_VALIDITY_DAYS * 24 * 60 * 60 * 1000;
+      }
+      // Forced re-acceptance: the latest acceptance must post-date the
+      // threshold. reacceptance_required_since applies to any document; the
+      // per-player waiver_reset_at additionally forces the waiver.
+      let threshold: number | null = doc.reacceptance_required_since
+        ? new Date(doc.reacceptance_required_since).getTime()
+        : null;
+      if (doc.document === 'waiver' && playerWaiverResetAt) {
+        const reset = new Date(playerWaiverResetAt).getTime();
+        threshold = threshold === null ? reset : Math.max(threshold, reset);
+      }
+      if (valid && threshold !== null && latest < threshold) valid = false;
     }
     if (!valid) missing.push(doc.document as WaiverDocument);
   }

@@ -25,6 +25,7 @@ export {
   updatePlayer,
   removePlayer,
   cancelAccountDeletion,
+  requireWaiverResignature,
 } from './actions/players';
 
 export {
@@ -112,4 +113,5 @@ export {
 
 export {
   updateLegalDocument,
+  requireReacceptance,
 } from './actions/settings';

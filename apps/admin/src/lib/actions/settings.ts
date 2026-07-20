@@ -3,7 +3,7 @@
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
-import { parseOrThrow, legalDocumentUpdateSchema, type LegalDocumentUpdateInput } from '@badminton/shared';
+import { parseOrThrow, legalDocumentUpdateSchema, waiverDocumentSchema, type LegalDocumentUpdateInput, type WaiverDocument } from '@badminton/shared';
 import { getAdminPlayer } from './_shared';
 
 // Bumping re-requires acceptance from every member (the player app compares
@@ -52,6 +52,42 @@ export async function updateLegalDocument(input: LegalDocumentUpdateInput) {
     reason: input.bump_version
       ? `Legal document "${input.document}" updated with version bump (re-acceptance required)`
       : `Legal document "${input.document}" content updated`,
+  });
+
+  revalidatePath('/settings');
+}
+
+// Force every member to re-sign a specific document on their next visit,
+// without editing its text or bumping its version. Stamps
+// reacceptance_required_since = now(); the shared getMissingLegalDocuments
+// helper then treats any acceptance older than this as stale.
+export async function requireReacceptance(document: WaiverDocument) {
+  parseOrThrow(waiverDocumentSchema, document);
+  const admin = await getAdminPlayer();
+  const adminClient = createAdminClient();
+
+  const { data: old, error: readError } = await adminClient
+    .from('legal_documents')
+    .select('reacceptance_required_since')
+    .eq('document', document)
+    .single();
+  if (readError) throw new Error(readError.message);
+
+  const now = new Date().toISOString();
+  const { error } = await adminClient
+    .from('legal_documents')
+    .update({ reacceptance_required_since: now })
+    .eq('document', document);
+  if (error) throw new Error(error.message);
+
+  await logAdminAudit(adminClient, {
+    actor_id: admin.id,
+    action_type: 'legal_document_reacceptance_required',
+    target_type: 'legal_document',
+    target_id: document,
+    old_value: { reacceptance_required_since: old.reacceptance_required_since },
+    new_value: { reacceptance_required_since: now },
+    reason: `All members must re-sign "${document}" on their next visit`,
   });
 
   revalidatePath('/settings');

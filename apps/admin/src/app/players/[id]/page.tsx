@@ -5,6 +5,7 @@ import { PlayerEditForm } from './edit-form';
 import { VarsityNotes } from './varsity-notes';
 import { ReliabilityEditor } from './reliability-editor';
 import { CancelDeletionButton } from './cancel-deletion-button';
+import { RequireWaiverResignatureButton } from './require-waiver-resignature-button';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Shield, Target, Trophy, Swords, TrendingUp, Flame, FileText, AlertTriangle, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import Link from 'next/link';
@@ -133,6 +134,12 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
         <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
           <h2 className="text-base font-semibold text-[var(--text-primary)] mb-4">Edit Player</h2>
           <PlayerEditForm player={player} rating={r} />
+          <div className="mt-4 pt-4 border-t border-[var(--border)]">
+            <p className="text-xs text-[var(--text-muted)] mb-2">
+              Forces only this player to re-sign the liability waiver on their next visit.
+            </p>
+            <RequireWaiverResignatureButton playerId={player.id} />
+          </div>
         </div>
 
         {/* Reliability */}

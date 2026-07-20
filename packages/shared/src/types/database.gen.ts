@@ -1794,6 +1794,7 @@ export type Database = {
           suspension_reason: string | null
           type: Database["public"]["Enums"]["tournament_type"]
           updated_at: string
+          waiver_text: string | null
         }
         Insert: {
           bracket_size?: number | null
@@ -1813,6 +1814,7 @@ export type Database = {
           suspension_reason?: string | null
           type?: Database["public"]["Enums"]["tournament_type"]
           updated_at?: string
+          waiver_text?: string | null
         }
         Update: {
           bracket_size?: number | null
@@ -1832,6 +1834,7 @@ export type Database = {
           suspension_reason?: string | null
           type?: Database["public"]["Enums"]["tournament_type"]
           updated_at?: string
+          waiver_text?: string | null
         }
         Relationships: [
           {

@@ -70,7 +70,7 @@ async function insertAcceptances(
 ) {
   const { data: docs, error: docsError } = await supabase
     .from('legal_documents')
-    .select('document, version');
+    .select('document, version, reacceptance_required_since');
   if (docsError) throw new Error(docsError.message);
   if (!docs || docs.length === 0) return;
 
@@ -80,7 +80,16 @@ async function insertAcceptances(
     .eq('player_id', playerId);
   if (existingError) throw new Error(existingError.message);
 
-  const missing = getMissingLegalDocuments(docs, existing ?? []);
+  // Same inputs as the layout's waiver gate — including the per-player
+  // waiver_reset_at — or the two disagree and the accept loop deadlocks
+  // (gate shows but this inserts nothing).
+  const { data: playerRow } = await supabase
+    .from('players')
+    .select('waiver_reset_at')
+    .eq('id', playerId)
+    .maybeSingle();
+
+  const missing = getMissingLegalDocuments(docs, existing ?? [], new Date(), playerRow?.waiver_reset_at ?? null);
   if (missing.length === 0) return;
 
   const versionByDoc = new Map(docs.map((doc) => [doc.document, doc.version]));

@@ -235,6 +235,7 @@ export default async function EventDetailPage({
               playerRegistration={playerRegistration}
               isDoubles={doubles}
               suspended={!!tournament.suspended_at}
+              eventWaiverText={tournament.waiver_text}
             />
           </div>
         </div>

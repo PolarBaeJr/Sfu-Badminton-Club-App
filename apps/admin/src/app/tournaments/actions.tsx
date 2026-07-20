@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button, Dialog, Input, Select, Switch, Dropdown } from '@badminton/ui';
+import { Button, Dialog, Input, Select, Switch, Dropdown, Textarea } from '@badminton/ui';
 import { createTournament, updateTournament, archiveTournament, deleteTournament } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { MoreVertical } from 'lucide-react';
@@ -18,6 +18,7 @@ interface TournamentData {
   bracket_size: number | null;
   event_multiplier: number;
   placement_bonus_enabled: boolean;
+  waiver_text: string | null;
   status: string;
 }
 
@@ -41,6 +42,7 @@ function TournamentFormDialog({
   const [bracketSize, setBracketSize] = useState(tournament?.bracket_size ?? 8);
   const [eventMultiplier, setEventMultiplier] = useState(tournament?.event_multiplier ?? 1.15);
   const [placementBonus, setPlacementBonus] = useState(tournament?.placement_bonus_enabled ?? true);
+  const [waiverText, setWaiverText] = useState(tournament?.waiver_text ?? '');
   const { toast } = useToast();
   const router = useRouter();
 
@@ -58,6 +60,7 @@ function TournamentFormDialog({
         bracket_size: bracketSize,
         event_multiplier: eventMultiplier,
         placement_bonus_enabled: placementBonus,
+        waiver_text: waiverText,
       };
       if (isEdit) {
         await updateTournament(tournament.id, data);
@@ -71,6 +74,7 @@ function TournamentFormDialog({
         setName(''); setStartDate(''); setEndDate('');
         setScope('open'); setType('internal'); setFormat('singles');
         setBracketSize(8); setEventMultiplier(1.15); setPlacementBonus(true);
+        setWaiverText('');
       }
       router.refresh();
     } catch (err) {
@@ -140,6 +144,17 @@ function TournamentFormDialog({
         <div className="flex items-center gap-3">
           <Switch checked={placementBonus} onChange={setPlacementBonus} />
           <span className="text-sm text-[var(--text-secondary)]">Enable placement bonuses</span>
+        </div>
+        <div>
+          <Textarea
+            label="Event waiver (optional)"
+            value={waiverText}
+            onChange={(e) => setWaiverText(e.target.value)}
+            rows={5}
+          />
+          <p className="text-xs text-[var(--text-muted)] mt-1">
+            Participants must accept this before registering. Leave blank for none.
+          </p>
         </div>
         <div className="flex items-center justify-between">
           <Button variant="ghost" onClick={onClose} type="button" className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">Cancel</Button>

@@ -78,7 +78,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       isAuthenticated = true;
       const { data: player } = await supabase
         .from('players')
-        .select('id, full_name, status, deletion_requested_at, ratings(singles_elo, doubles_elo), waiver_acceptances(document, version, accepted_at)')
+        .select('id, full_name, status, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo), waiver_acceptances(document, version, accepted_at)')
         .eq('user_id', user.id)
         .maybeSingle();
       playerName = player?.full_name ?? '';
@@ -92,9 +92,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       if (player) {
         const { data: docs } = await supabase
           .from('legal_documents')
-          .select('document, version');
+          .select('document, version, reacceptance_required_since');
         const acceptances = (player.waiver_acceptances ?? []) as { document: string; version: string; accepted_at: string }[];
-        missingLegalDocs = getMissingLegalDocuments(docs ?? [], acceptances);
+        missingLegalDocs = getMissingLegalDocuments(docs ?? [], acceptances, new Date(), player.waiver_reset_at);
       }
 
       const ratings = Array.isArray(player?.ratings) ? player.ratings[0] : player?.ratings;

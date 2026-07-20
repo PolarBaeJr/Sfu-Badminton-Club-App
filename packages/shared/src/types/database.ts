@@ -111,6 +111,7 @@ export interface Player {
   avatar_url: string | null;
   bio: string | null;
   exec_title: string | null;
+  waiver_reset_at: string | null;
   joined_at: string;
   last_active_at: string;
   created_at: string;
@@ -302,6 +303,7 @@ export interface Tournament {
   status: TournamentStatus;
   suspended_at: string | null;
   suspension_reason: string | null;
+  waiver_text: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -519,6 +521,7 @@ export interface LegalDocument {
   document: WaiverDocument;
   version: string;
   content: string;
+  reacceptance_required_since: string | null;
   updated_at: string;
   updated_by: string | null;
 }
@@ -530,6 +533,15 @@ export interface WaiverAcceptance {
   version: string;
   accepted_at: string;
   age_attestation: boolean;
+  user_agent: string | null;
+}
+
+export interface EventWaiverAcceptance {
+  id: string;
+  player_id: string;
+  tournament_id: string;
+  waiver_hash: string;
+  accepted_at: string;
   user_agent: string | null;
 }
 

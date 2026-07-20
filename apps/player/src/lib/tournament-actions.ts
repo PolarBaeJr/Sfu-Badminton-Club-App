@@ -1,5 +1,7 @@
 'use server';
 
+import { createHash } from 'node:crypto';
+import { headers } from 'next/headers';
 import { createServiceRoleClient } from './supabase-server';
 import { revalidatePath } from 'next/cache';
 import { isDoublesEvent } from '@badminton/shared';
@@ -16,12 +18,12 @@ function revalidateTournamentPaths(tournamentId: string, eventId: string) {
 }
 
 // Supabase may return a to-one embed as object-or-array — unwrap defensively.
-function pickSuspension(embed: unknown): { suspended_at: string | null; suspension_reason: string | null } | null {
+function pickSuspension(embed: unknown): { suspended_at: string | null; suspension_reason: string | null; waiver_text?: string | null } | null {
   const row = Array.isArray(embed) ? embed[0] : embed;
-  return (row as { suspended_at: string | null; suspension_reason: string | null } | null) ?? null;
+  return (row as { suspended_at: string | null; suspension_reason: string | null; waiver_text?: string | null } | null) ?? null;
 }
 
-export async function registerForEvent(eventId: string) {
+export async function registerForEvent(eventId: string, opts?: { eventWaiverAccepted?: boolean }) {
   const player = await requirePlayer();
   if (player.is_banned) {
     throw new Error('Your account is suspended pending a reinstatement fee. Contact an admin to be reinstated.');
@@ -34,7 +36,7 @@ export async function registerForEvent(eventId: string) {
   // surfaced as a thrown PGRST116 error.
   const [eventRes, existingRes, ratingRes] = await Promise.all([
     service.from('tournament_events')
-      .select('id, status, event_type, tournament_id, max_participants, tournament:tournaments(suspended_at, suspension_reason)')
+      .select('id, status, event_type, tournament_id, max_participants, tournament:tournaments(suspended_at, suspension_reason, waiver_text)')
       .eq('id', eventId).maybeSingle(),
     service.from('tournament_participants')
       .select('id').eq('event_id', eventId).eq('player_id', player.id).maybeSingle(),
@@ -50,6 +52,14 @@ export async function registerForEvent(eventId: string) {
   if (event.status !== 'registration') throw new Error('Registration is closed');
   if (isDoublesEvent(event.event_type)) throw new Error('Use pair registration for doubles events');
   if (existingRes.data) throw new Error('Already registered');
+
+  // Event waiver gate — the tournament may require its own waiver before
+  // registering. The client must confirm acceptance; the hash is always taken
+  // from the server-side text, never a client-supplied value.
+  const eventWaiverText = regTournament?.waiver_text?.trim();
+  if (eventWaiverText && !opts?.eventWaiverAccepted) {
+    throw new Error('You must accept the event waiver to register');
+  }
 
   // Capacity check is the only thing that has to wait — it depends on a fresh count.
   if (event.max_participants) {
@@ -67,6 +77,19 @@ export async function registerForEvent(eventId: string) {
     status: 'registered',
   });
   if (insertErr) throw new Error(insertErr.message);
+
+  // Record immutable acceptance evidence keyed by the text hash. onConflict
+  // ignore keeps it idempotent if the same text is accepted twice.
+  if (eventWaiverText) {
+    const waiverHash = createHash('sha256').update(eventWaiverText).digest('hex');
+    const userAgent = (await headers()).get('user-agent');
+    await service.from('event_waiver_acceptances').upsert({
+      player_id: player.id,
+      tournament_id: event.tournament_id,
+      waiver_hash: waiverHash,
+      user_agent: userAgent,
+    }, { onConflict: 'player_id,tournament_id,waiver_hash', ignoreDuplicates: true });
+  }
 
   revalidateTournamentPaths(event.tournament_id, eventId);
 }
