@@ -2,42 +2,39 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { Calendar, Download, ExternalLink } from 'lucide-react';
+import { buildICSCalendar, formatICSDates } from '@badminton/shared';
 
 interface AddToCalendarProps {
   name: string;
   date: string;
+  start_time?: string | null;
+  end_time?: string | null;
   location: string;
   notes?: string | null;
 }
 
-function formatICSDate(dateStr: string): string {
-  const d = new Date(dateStr);
-  return d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+// Session times are club-local wall-clock; formatICSDates/buildICSCalendar
+// convert them to UTC instants (or an all-day event when untimed) so the
+// event lands on the right day in every timezone.
+function generateICS({ name, date, start_time, end_time, location, notes }: AddToCalendarProps): string {
+  return buildICSCalendar([{
+    id: `download-${date}`,
+    name,
+    date,
+    start_time: start_time ?? null,
+    end_time: end_time ?? null,
+    location,
+    notes: notes ?? null,
+    updated_at: new Date().toISOString(),
+  }]);
 }
 
-function generateICS({ name, date, location, notes }: AddToCalendarProps): string {
-  const start = formatICSDate(date);
-  // Default 2 hour duration
-  const end = formatICSDate(new Date(new Date(date).getTime() + 2 * 60 * 60 * 1000).toISOString());
-
-  return [
-    'BEGIN:VCALENDAR',
-    'VERSION:2.0',
-    'PRODID:-//SFU Badminton//EN',
-    'BEGIN:VEVENT',
-    `DTSTART:${start}`,
-    `DTEND:${end}`,
-    `SUMMARY:${name}`,
-    `LOCATION:${location}`,
-    notes ? `DESCRIPTION:${notes.replace(/\n/g, '\\n')}` : '',
-    'END:VEVENT',
-    'END:VCALENDAR',
-  ].filter(Boolean).join('\r\n');
-}
-
-function getGoogleCalendarUrl({ name, date, location, notes }: AddToCalendarProps): string {
-  const start = formatICSDate(date);
-  const end = formatICSDate(new Date(new Date(date).getTime() + 2 * 60 * 60 * 1000).toISOString());
+function getGoogleCalendarUrl({ name, date, start_time, end_time, location, notes }: AddToCalendarProps): string {
+  const { start, end } = formatICSDates({
+    date,
+    start_time: start_time ?? null,
+    end_time: end_time ?? null,
+  });
   const params = new URLSearchParams({
     action: 'TEMPLATE',
     text: name,
@@ -48,7 +45,7 @@ function getGoogleCalendarUrl({ name, date, location, notes }: AddToCalendarProp
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 
-export function AddToCalendarButton({ name, date, location, notes }: AddToCalendarProps) {
+export function AddToCalendarButton({ name, date, start_time, end_time, location, notes }: AddToCalendarProps) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -63,7 +60,7 @@ export function AddToCalendarButton({ name, date, location, notes }: AddToCalend
   }, [open]);
 
   function handleDownloadICS() {
-    const ics = generateICS({ name, date, location, notes });
+    const ics = generateICS({ name, date, start_time, end_time, location, notes });
     const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -87,7 +84,7 @@ export function AddToCalendarButton({ name, date, location, notes }: AddToCalend
       {open && (
         <div className="absolute right-0 top-full mt-1 w-48 bg-[var(--bg-elevated)] border border-[var(--line)] rounded-lg shadow-xl z-50 overflow-hidden">
           <a
-            href={getGoogleCalendarUrl({ name, date, location, notes })}
+            href={getGoogleCalendarUrl({ name, date, start_time, end_time, location, notes })}
             target="_blank"
             rel="noopener noreferrer"
             className="press flex items-center gap-2 px-3 py-2.5 min-h-[44px] text-sm text-[var(--ink)] hover:bg-[var(--bg-card)] transition-colors"

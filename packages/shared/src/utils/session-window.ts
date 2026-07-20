@@ -47,7 +47,7 @@ function tzOffsetMs(utcMillis: number): number {
 // Convert a club-local wall-clock time to a UTC instant using the standard
 // two-pass technique: guess the offset at the naive-UTC reading of the wall
 // clock, then re-derive it at the corrected instant (handles DST edges).
-function wallClockToUtc(year: number, month: number, day: number, hour: number, minute: number): Date {
+export function wallClockToUtc(year: number, month: number, day: number, hour: number, minute: number): Date {
   const naiveUtc = Date.UTC(year, month - 1, day, hour, minute);
   const offset1 = tzOffsetMs(naiveUtc);
   const offset2 = tzOffsetMs(naiveUtc - offset1);

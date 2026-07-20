@@ -160,6 +160,8 @@ export default async function SessionsPage() {
                         <AddToCalendarButton
                           name={session.name ?? 'Practice Session'}
                           date={session.date}
+                          start_time={session.start_time}
+                          end_time={session.end_time}
                           location={session.location}
                           notes={session.notes}
                         />

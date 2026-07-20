@@ -9,8 +9,10 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { isPushSupported, isPushEnabled, subscribeToPush, unsubscribeFromPush } from '@/lib/push-client';
 import { AvatarUpload } from '@/components/AvatarUpload';
+import { CalendarFeed } from './calendar-feed';
 import {
   User,
+  Calendar,
   Moon,
   Sun,
   Monitor,
@@ -240,6 +242,10 @@ export default function SettingsPage() {
                 <ChevronRight size={16} className="text-[var(--mute)]" />
               </div>
             </Link>
+          </Section>
+
+          <Section icon={Calendar} title="Calendar">
+            <CalendarFeed />
           </Section>
 
           <Section icon={Palette} title="Appearance">
