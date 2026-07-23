@@ -1,6 +1,7 @@
 'use server';
 
 import { randomBytes } from 'crypto';
+import * as Sentry from '@sentry/nextjs';
 import { createServiceRoleClient } from '../supabase-server';
 import { requirePlayer } from './_shared';
 
@@ -36,6 +37,7 @@ export async function getCalendarFeedToken(): Promise<string> {
       .eq('player_id', player.id)
       .maybeSingle();
     if (raced) return raced.token;
+    Sentry.captureException(error, { extra: { action: 'getCalendarFeedToken', playerId: player.id } });
     throw new Error('Could not create calendar feed link');
   }
   return token;
@@ -51,6 +53,9 @@ export async function regenerateCalendarFeedToken(): Promise<string> {
   const { error } = await serviceClient
     .from('calendar_feed_tokens')
     .upsert({ player_id: player.id, token });
-  if (error) throw new Error('Could not reset calendar feed link');
+  if (error) {
+    Sentry.captureException(error, { extra: { action: 'regenerateCalendarFeedToken', playerId: player.id } });
+    throw new Error('Could not reset calendar feed link');
+  }
   return token;
 }

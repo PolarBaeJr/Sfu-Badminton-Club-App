@@ -1,5 +1,6 @@
 'use server';
 
+import * as Sentry from '@sentry/nextjs';
 import { revalidatePath } from 'next/cache';
 import { CLUB_TIMEZONE, formatTime, getCheckinWindow, isCheckinOpen } from '@badminton/shared';
 import { createServerSupabaseClient } from '../supabase-server';
@@ -43,6 +44,7 @@ export async function checkInToSession(sessionId: string) {
     if (error.code === '23505') throw new Error('Already checked in');
     // RLS backstop: session_checkin_open() rejected the insert.
     if (error.code === '42501') throw new Error('Check-in is not open for this session');
+    Sentry.captureException(error, { extra: { action: 'checkInToSession', sessionId } });
     throw new Error(error.message);
   }
 
@@ -69,7 +71,10 @@ export async function setSessionIntent(
     const { error } = await supabase
       .from('session_rsvp').delete()
       .eq('session_id', sessionId).eq('player_id', player.id);
-    if (error) throw new Error(error.message);
+    if (error) {
+      Sentry.captureException(error, { extra: { action: 'setSessionIntent', sessionId, intent } });
+      throw new Error(error.message);
+    }
   } else {
     const { error } = await supabase
       .from('session_rsvp')
@@ -79,6 +84,7 @@ export async function setSessionIntent(
       );
     if (error) {
       if (error.code === '42501') throw new Error('RSVP is not open for this session');
+      Sentry.captureException(error, { extra: { action: 'setSessionIntent', sessionId, intent } });
       throw new Error(error.message);
     }
   }

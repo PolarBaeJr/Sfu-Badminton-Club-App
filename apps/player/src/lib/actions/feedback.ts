@@ -1,5 +1,6 @@
 'use server';
 
+import * as Sentry from '@sentry/nextjs';
 import { revalidatePath } from 'next/cache';
 import { createServiceRoleClient } from '../supabase-server';
 import { eventFeedbackSchema, parseOrThrow, type EventFeedbackInput } from '@badminton/shared';
@@ -23,7 +24,10 @@ export async function submitEventFeedback(input: EventFeedbackInput) {
     },
     { onConflict: 'tournament_id,player_id' },
   );
-  if (error) throw new Error(error.message);
+  if (error) {
+    Sentry.captureException(error, { extra: { action: 'submitEventFeedback', tournamentId: input.tournament_id } });
+    throw new Error(error.message);
+  }
 
   revalidatePath(`/tournaments/${input.tournament_id}`);
 }

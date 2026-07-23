@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect } from 'react';
+import * as Sentry from '@sentry/nextjs';
 import { AlertTriangle, RotateCw } from 'lucide-react';
 
 interface RouteErrorProps {
@@ -14,6 +15,7 @@ interface RouteErrorProps {
  * server component errors. */
 export function RouteError({ error, reset }: RouteErrorProps) {
   useEffect(() => {
+    Sentry.captureException(error);
     if (error?.digest) {
       // eslint-disable-next-line no-console
       console.error('Route error:', error.digest, error);

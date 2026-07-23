@@ -1,5 +1,7 @@
 'use client';
 
+import * as Sentry from '@sentry/nextjs';
+import { useEffect } from 'react';
 import { Button, Card } from '@badminton/ui';
 
 export default function Error({
@@ -9,6 +11,10 @@ export default function Error({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  useEffect(() => {
+    Sentry.captureException(error);
+  }, [error]);
+
   return (
     <div className="min-h-[60vh] flex items-center justify-center p-4">
       <Card className="max-w-md w-full text-center">

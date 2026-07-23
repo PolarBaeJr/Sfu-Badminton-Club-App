@@ -1,5 +1,6 @@
 'use server';
 
+import * as Sentry from '@sentry/nextjs';
 import { revalidatePath } from 'next/cache';
 import { headers } from 'next/headers';
 import {
@@ -41,7 +42,10 @@ export async function updateProfile(data: {
     .update(update)
     .eq('id', player.id);
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    Sentry.captureException(error, { extra: { action: 'updateProfile', playerId: player.id } });
+    throw new Error(error.message);
+  }
   revalidatePath('/settings');
 }
 
@@ -54,7 +58,10 @@ export async function getLegalDocuments(): Promise<
   const { data, error } = await supabase
     .from('legal_documents')
     .select('document, version, content');
-  if (error) throw new Error(error.message);
+  if (error) {
+    Sentry.captureException(error, { extra: { action: 'getLegalDocuments' } });
+    throw new Error(error.message);
+  }
   // Callers sort with sortLegalDocuments for display.
   return data ?? [];
 }
@@ -71,14 +78,20 @@ async function insertAcceptances(
   const { data: docs, error: docsError } = await supabase
     .from('legal_documents')
     .select('document, version, reacceptance_required_since');
-  if (docsError) throw new Error(docsError.message);
+  if (docsError) {
+    Sentry.captureException(docsError, { extra: { action: 'insertAcceptances', playerId } });
+    throw new Error(docsError.message);
+  }
   if (!docs || docs.length === 0) return;
 
   const { data: existing, error: existingError } = await supabase
     .from('waiver_acceptances')
     .select('document, version, accepted_at')
     .eq('player_id', playerId);
-  if (existingError) throw new Error(existingError.message);
+  if (existingError) {
+    Sentry.captureException(existingError, { extra: { action: 'insertAcceptances', playerId } });
+    throw new Error(existingError.message);
+  }
 
   // Same inputs as the layout's waiver gate — including the per-player
   // waiver_reset_at — or the two disagree and the accept loop deadlocks
@@ -103,7 +116,10 @@ async function insertAcceptances(
       user_agent: userAgent,
     }))
   );
-  if (error) throw new Error(error.message);
+  if (error) {
+    Sentry.captureException(error, { extra: { action: 'insertAcceptances', playerId } });
+    throw new Error(error.message);
+  }
 }
 
 // Not requirePlayer(): pending_approval members must be able to accept, and
@@ -135,7 +151,10 @@ export async function deleteMyAccount(confirmation: string) {
     .from('players')
     .update({ deletion_requested_at: new Date().toISOString(), active_flag: false })
     .eq('id', player.id);
-  if (error) throw new Error(error.message);
+  if (error) {
+    Sentry.captureException(error, { extra: { action: 'deleteMyAccount', playerId: player.id } });
+    throw new Error(error.message);
+  }
 
   trackServerEvent(player.id, 'account_deletion_requested', {});
 }
@@ -151,7 +170,10 @@ export async function restoreMyAccount() {
     .from('players')
     .update({ deletion_requested_at: null, active_flag: true })
     .eq('id', player.id);
-  if (error) throw new Error(error.message);
+  if (error) {
+    Sentry.captureException(error, { extra: { action: 'restoreMyAccount', playerId: player.id } });
+    throw new Error(error.message);
+  }
 
   trackServerEvent(player.id, 'account_deletion_cancelled', {});
   revalidatePath('/');
@@ -188,7 +210,10 @@ export async function completeOnboarding(data: {
       .update(update)
       .eq('id', existingPlayer.id);
 
-    if (error) throw new Error(error.message);
+    if (error) {
+      Sentry.captureException(error, { extra: { action: 'completeOnboarding', playerId: existingPlayer.id } });
+      throw new Error(error.message);
+    }
   } else {
     // create_player_with_rating (migration 00003_functions.sql) inserts the
     // player and ratings rows in one transaction. Its internal guard mirrors
@@ -202,7 +227,10 @@ export async function completeOnboarding(data: {
       p_phone: data.phone || null,
     });
 
-    if (error) throw new Error(error.message);
+    if (error) {
+      Sentry.captureException(error, { extra: { action: 'completeOnboarding', userId: user.id } });
+      throw new Error(error.message);
+    }
 
     // Re-fetch for the freshly created row's id.
     playerId = (await getCurrentPlayer())?.id ?? null;
