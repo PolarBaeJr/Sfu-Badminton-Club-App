@@ -30,7 +30,7 @@ Both Next.js apps talk to the same self-hosted Supabase backend. Edge functions 
 
 ## The two apps
 
-- **`apps/player`** — the member experience. Reads mostly via the browser Supabase client (RLS-protected) and the public RPCs; mutations go through server actions.
+- **`apps/player`** — the member experience. Reads mostly via the browser Supabase client (RLS-protected) and the public RPCs; mutations go through server actions. Navigation is **public vs member**: signed-out visitors get a slim public bar (brand → `/`, Leaderboard, Execs); signed-in members get the full member nav; execs/admins also get an **"Exec Panel"** link to the admin app. Logged-in users are no longer redirected off `/`. It also serves the **`/api/calendar/[token]`** route — an ICS/webcal feed authenticated by the per-player token from `calendar_feed_tokens` (calendar clients can't log in, so the unguessable token is the credential); rate-limited.
 - **`apps/admin`** — the exec/admin console. Management actions run as **server actions** using the **service-role** client (bypasses RLS), gated by role checks (see Access control).
 
 Both are **Next.js 14 App Router**, built in **standalone** mode, shipped as separate Docker images.
@@ -51,6 +51,8 @@ Authority is derived from columns on the `players` table — `role` (`player`/`a
 
 The route→level map lives in `apps/admin/src/lib/permissions.ts` (`SECTION_ACCESS`, `canAccess`). The sidebar filters cosmetically off the same map.
 
+**Passkey gate (admin).** On top of the role checks, the admin app requires a **WebAuthn passkey** (`@simplewebauthn`, `passkey_credentials`). The middleware sends any exec/admin who hasn't enrolled to `/unavailable` (with a passkey-login option); a verified passkey is recorded in a **signed HttpOnly cookie** (`apps/admin/src/lib/passkey/`), with a grace state until enrollment.
+
 ## Public data access
 
 Anonymous visitors can touch **nothing** at the table level (no `TO anon` RLS policies). Public reads flow only through three `SECURITY DEFINER` RPCs granted to `anon`, each hand-picking safe columns:
@@ -63,7 +65,7 @@ This is the pattern to extend for any future public/API read (see roadmap A5).
 
 | Table | Purpose |
 |-------|---------|
-| `players` | Member records; `role`, `is_exec`, `exec_title`, `fee_exempt`, status |
+| `players` | Member records; `role`, `is_exec`, `exec_title`, `fee_exempt`, status, `waiver_reset_at` (per-player forced re-sign), `deletion_requested_at` (30-day deletion grace) |
 | `ratings` | Per-player ELO/stats — **singles + doubles** elo, k-factor, provisional, wins/losses, points, games, current/best streaks |
 | `matches` | A played match; type, event type, rated flag, format/weights, winner, score summary, result status |
 | `match_participants` | Per-player-per-match: pre/post rating, rating delta, points, games, win flag |
@@ -73,14 +75,20 @@ This is the pattern to extend for any future public/API read (see roadmap A5).
 | `partnership_stats` | Doubles pair records (matches, wins, losses, avg elo delta) |
 | `seasons` | Season backbone; `active_flag`, competitive/recreational fees |
 | `season_final_ratings` / `season_snapshots` | End-of-season archives |
-| `sessions` | Club sessions; `track` (competitive/recreational/all), `status`, `season_id` |
-| `session_attendance` | Check-ins (player_id, session_id, checked_in_at) |
+| `sessions` | Club sessions; `track` (competitive/recreational/all), `status`, `season_id`, `start_time`/`end_time` |
+| `session_attendance` | Check-ins/attendance; `status` (`checked_in`/`present`/`no_show`/`excused`), `marked_by`, `marked_at` |
+| `session_rsvp` | Ahead-of-time intent per (session, player); `intent` (`going`/`declined`) — distinct from same-day check-in |
 | `tournaments` | `status` = draft/active/completed/archived |
 | `tournament_events` | Per-event phases (registration → checkin → bracket → live → completed) |
 | `tournament_participants` / `tournament_pairs` | Registrations + statuses; check-in fields |
 | `tournament_matches` | Bracket matches; elo snapshot |
 | `audit_logs` / `tournament_audit_log` | Change history |
 | `push_subscriptions` | Web-push endpoints |
+| `legal_documents` | Versioned legal text; `document` ∈ `waiver`/`code_of_conduct`/`terms_of_use`/`privacy_policy`, `reacceptance_required_since` (global forced re-sign) |
+| `waiver_acceptances` | Append-only acceptance history (who accepted which `document`+`version`, when); waiver re-signs every 365 days |
+| `event_waiver_acceptances` | Per-player acceptance of a tournament's `waiver_text`; `waiver_hash` (SHA-256) re-requires acceptance after edits |
+| `calendar_feed_tokens` | Per-player secret token backing the ICS/webcal feed; resettable (revokes old links) |
+| `passkey_credentials` | Enrolled WebAuthn passkeys gating the admin console |
 
 ## The ELO engine
 
@@ -91,9 +99,14 @@ This is the pattern to extend for any future public/API read (see roadmap A5).
 
 ## Edge functions (Deno, scheduled)
 
-`expire-challenges`, `expire-walkover-pending`, `send-challenge-reminders`, `send-session-reminders`, `send-stale-confirmation-alerts`, `detect-noshow-patterns`, `mark-inactive-players`, `apply-season-compression`, `capture-season-snapshot`.
+`expire-challenges`, `expire-walkover-pending`, `send-challenge-reminders`, `send-session-reminders`, `send-stale-confirmation-alerts`, `detect-noshow-patterns`, `mark-inactive-players`, `apply-season-compression`, `capture-season-snapshot`, `purge-deleted-accounts` (anonymizes accounts past the 30-day deletion grace).
 
 All gated by `x-cron-secret` (constant-time check; fail closed if `CRON_SECRET` unset), running with the service-role client.
+
+## Observability
+
+- **Sentry** (`@sentry/nextjs`) — error tracking wired for all three Next.js runtimes in each app (`sentry.client.config.ts` / `sentry.server.config.ts` / `sentry.edge.config.ts`), with **source-map upload** at build time and a `tunnelRoute` (`/monitoring`) to dodge ad-blockers. Errors are **tagged with the player id**; per-route error boundaries and a `global-error.tsx` in each app report, and genuine server-action failures `captureException`. **Session Replay is off.**
+- **PostHog** — product analytics, client (`posthog-js`) + server (`posthog-node` via `trackServerEvent`). Captures pageviews/leaves plus domain events (`challenge_*`, `match_result_*`, `session_checked_in`, `session_rsvp`, `account_deletion_*`, `leaderboard_viewed`, `push_notification_subscribed`). **Cookieless, identified-only, no replay.**
 
 ## Deploy pipeline
 
@@ -104,7 +117,7 @@ git push deploy/docker-prod
 GitHub Actions ── builds ARM64 images ──► GHCR (tags: latest + sha-<commit>)
       │
       ▼
-Self-hosted proxy (Raspberry Pi) ── polls GHCR every 10 min ──► auto-deploys latest
+Server (Raspberry Pi) ── docker compose pull + up -d ──► recreates the serving containers
 ```
 
-Migrations are applied **manually** and never run by CI or the app — so an image deploy is DB-safe. See [ops/RUNBOOK.md](ops/RUNBOOK.md).
+The serving containers are **compose-managed** and recreated on the server after a build (see [ops/RUNBOOK.md](ops/RUNBOOK.md) for the exact commands and the runtime-env gotcha). Migrations are applied **manually** and never run by CI or the app — so an image deploy is DB-safe.

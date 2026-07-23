@@ -8,9 +8,9 @@ Step-by-step procedures for running the app in production. Written for whoever h
 
 ## Mental model
 
-- **The app** (player + admin) runs as Docker containers on a **self-hosted server** (Raspberry Pi), behind the club's own **reverse proxy** which auto-deploys new images.
+- **The app** (player + admin) runs as **compose-managed** Docker containers (`badminton-player-1` / `badminton-admin-1`) on a **self-hosted server** (Raspberry Pi), behind the club's own **reverse proxy**.
 - **The database** is a self-hosted **Supabase** stack on the same server. It is **separate** from the app — deploying the app never touches data.
-- **Deploys are automatic** from GitHub. **Migrations are manual.** **Backups are nightly.**
+- **Deploys are a push + a compose recreate** on the server. **Migrations are manual.** **Backups are nightly.**
 
 ---
 
@@ -22,9 +22,16 @@ Step-by-step procedures for running the app in production. Written for whoever h
    git push <remote> HEAD:deploy/docker-prod
    ```
 3. GitHub Actions builds ARM64 images and pushes to GHCR, tagged **`latest`** and **`sha-<commit>`**.
-4. The proxy's **auto-update** polls GHCR **every ~10 minutes** and redeploys `latest` automatically. No manual step on the server.
+4. **Recreate the serving containers on the server** — pull the new images and let compose recreate them:
+   ```sh
+   # on the server
+   cd <deploy-dir> && docker compose pull player admin && docker compose up -d player admin
+   ```
+   This is the only manual step; nothing on the server updates on its own.
 
-### Verify a deploy landed (read-only — do NOT `docker pull`)
+> ⚠️ **Env-clone gotcha.** If your change adds a **new runtime variable** to the server's `.env`, you must do a real `docker compose up -d` so the container picks it up. Do **not** use the proxy dashboard's **"Replace"** to redeploy in that case — Replace **clones the old environment** and your new variable will be missing. Compose recreate reads `.env` fresh; Replace does not.
+
+### Verify a deploy landed (read-only)
 
 Compare the **running container's image** to the newest `latest`, and check the commit label:
 
@@ -38,17 +45,15 @@ docker image inspect ghcr.io/<owner>/badminton-player:latest \
 
 Matching image ids + the expected commit = deployed.
 
-> 🛑 **Never run `docker pull ...:latest` on the server manually.** The auto-updater decides "update available" by comparing the **local `latest` tag** to the registry. Pulling `latest` yourself advances the local tag *without* recreating the container, which makes the updater think it's already up to date — and it will **never auto-deploy that image**. If you did this by accident, force a redeploy via the proxy dashboard's **Replace** button.
+### Reaching the server
 
-### If auto-update stalls
-
-Open the proxy dashboard → the `badminton-player` / `badminton-admin` service → **Replace** (forces pull + recreate). Announce before doing service-mutation actions on the dashboard.
+Deploys and verification run **on the server** over SSH. If the public SSH port is unreachable, fall back to the **Tailscale** address (`ssh <pi-host>` over the tailnet). Announce before doing service-mutation actions on the proxy dashboard.
 
 ---
 
 ## Roll back
 
-Every build is tagged `sha-<commit>` (immutable). To roll back, point the service at the previous `sha-<commit>` tag via the proxy dashboard (or redeploy an earlier commit to `deploy/docker-prod`). Prefer this over editing containers by hand.
+Every build is tagged `sha-<commit>` (immutable). To roll back, point the compose service at the previous `sha-<commit>` tag (pin the image tag in the compose file / `.env`, then `docker compose pull player admin && docker compose up -d player admin`), or redeploy an earlier commit to `deploy/docker-prod`. Prefer this over editing containers by hand.
 
 ---
 
@@ -89,13 +94,14 @@ To re-seed the primary admin from scratch, see `scripts/reseed-admin.sql`.
 
 ## Apply a database migration
 
-> The live DB has **real data**. Migrations are **forward-only** — never edit the `00001–00007` baseline or re-apply it destructively. New change = a new `00008_*.sql` (ALTER/CREATE).
+> The live DB has **real data**. Migrations are **additive and forward-only** — never edit an already-applied baseline or re-apply it destructively. New change = a new `000NN_*.sql` (ALTER/CREATE only).
 
-1. Write the new migration file in `supabase/migrations/`.
+1. Write the new migration file in `supabase/migrations/` (next number in sequence).
 2. **Back up the DB first.**
-3. Apply it manually on the server:
+3. Apply it manually by piping the file over SSH into the Postgres container, stopping on the first error:
    ```sh
-   docker exec -i <db-container> psql -U postgres < supabase/migrations/00008_your_change.sql
+   cat supabase/migrations/000NN_your_change.sql \
+     | ssh <pi-host> "docker exec -i supabase-db psql -U postgres -d postgres -v ON_ERROR_STOP=1"
    ```
 4. If the change touches the ELO math, update **both** the SQL and the TypeScript engine.
 5. Regenerate types if applicable, redeploy the app.
@@ -118,6 +124,23 @@ Also set the shared VAPID + Resend secrets (same values as the apps). Full steps
 
 ---
 
+## Monitoring (Sentry / PostHog)
+
+**Sentry** captures errors across each app's browser, server, and edge runtimes (source maps uploaded at build time so stack traces are readable). **PostHog** captures anonymous, cookieless product analytics from the client. Both are configured **by environment variable only** — no values in this repo; real values live in the password manager / [CREDENTIALS.md](CREDENTIALS.md).
+
+Env var names (values kept private):
+
+| Variable | Where | When it takes effect |
+|----------|-------|----------------------|
+| `NEXT_PUBLIC_SENTRY_DSN` | **build-time** (GitHub Actions secret) — client bundle | needs a **CI rebuild** |
+| `SENTRY_DSN` | **runtime** (server `.env`) | needs the **compose recreate** (`up -d`) |
+| `SENTRY_ORG` / `SENTRY_PROJECT` / `SENTRY_AUTH_TOKEN` | **build-time** — source-map upload | needs a **CI rebuild** |
+| `NEXT_PUBLIC_POSTHOG_KEY` / `NEXT_PUBLIC_POSTHOG_HOST` | **build-time**, client-only | needs a **CI rebuild** |
+
+> Rule of thumb: anything `NEXT_PUBLIC_*` is baked into the client bundle at **build time** → change it → **rebuild via CI**. The server-side `SENTRY_DSN` is a runtime var → change `.env` → **compose recreate** (mind the env-clone gotcha above).
+
+---
+
 ## Restart Supabase
 
 **Always restart the full stack**, not individual containers — restarting one container can leave the API gateway caching stale internal addresses and break auth routing.
@@ -134,7 +157,8 @@ Also set the shared VAPID + Resend secrets (same values as the apps). Full steps
 |---------|--------------|
 | **Site down** | Is the server up? Are the app + Supabase containers running? Check the proxy is routing to a container with the right host label. |
 | **Login broken** | Supabase Auth container healthy? Full-stack restart if the gateway is caching stale IPs. Email (Resend) sending? |
-| **New code didn't go live** | Did CI build succeed? Did auto-update run (≤10 min)? Did someone `docker pull latest` and mask it? → Replace via dashboard. |
+| **New code didn't go live** | Did CI build succeed? Did anyone run the **compose recreate** (`docker compose pull player admin && up -d`) on the server? A push alone doesn't deploy. |
+| **New env var not taking effect** | `NEXT_PUBLIC_*`? Needs a **CI rebuild**. Server-side var? Needs `docker compose up -d` — **not** dashboard "Replace" (it clones the old env). |
 | **Push notifications silent** | VAPID secrets set on both apps and the edge functions? |
 | **Emails not sending** | `RESEND_API_KEY` set? Sender domain still verified? |
 | **A scheduled job stopped** | `CRON_SECRET` set and the job sending the `x-cron-secret` header? |
@@ -143,9 +167,10 @@ Also set the shared VAPID + Resend secrets (same values as the apps). Full steps
 
 ## Golden rules
 
-- ✅ Deploys via `deploy/docker-prod` → CI → auto-update.
-- ✅ Migrations manual, forward-only, backup first.
-- ✅ Verify deploys by inspecting the image; **never `docker pull latest` on the server.**
+- ✅ Deploys via `deploy/docker-prod` → CI builds → **compose recreate on the server** (`docker compose pull player admin && up -d`).
+- ✅ Migrations manual, additive, forward-only, backup first.
+- ✅ Verify deploys by inspecting the running image against `latest`.
+- ✅ A new runtime var in `.env` needs a real `compose up -d`, **not** dashboard "Replace" (Replace clones the old env).
 - ✅ Restart Supabase as a full stack.
 - ❌ Never `docker compose --build` on the server (CI builds images; the server pulls).
 - ❌ Never commit real secrets to this public repo.
