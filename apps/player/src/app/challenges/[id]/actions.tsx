@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Card, Input, Select, Dialog, Textarea } from '@badminton/ui';
+import { Button, Card, Input, Select, Dialog, Textarea, useConfirm } from '@badminton/ui';
 import { acceptChallenge, rejectChallenge, submitMatchResult, confirmMatchResult, disputeMatchResult, reportWalkover, cancelChallenge } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
@@ -24,6 +24,7 @@ export function ChallengeDetailActions({
 }: Props) {
   const { toast } = useToast();
   const router = useRouter();
+  const confirm = useConfirm();
   const [loading, setLoading] = useState('');
   const [showSubmit, setShowSubmit] = useState(false);
   const [showDispute, setShowDispute] = useState(false);
@@ -74,7 +75,7 @@ export function ChallengeDetailActions({
         await confirmMatchResult(matchId);
         toast('Result confirmed! Elo updated.', 'success');
       } else if (action === 'cancel') {
-        if (!confirm('Cancel this challenge? The opponent will be notified.')) { setLoading(''); return; }
+        if (!(await confirm({ title: 'Cancel challenge?', message: 'Cancel this challenge? The opponent will be notified.', confirmLabel: 'Cancel challenge', danger: true }))) { setLoading(''); return; }
         await cancelChallenge(challengeId);
         toast('Challenge cancelled', 'info');
       }

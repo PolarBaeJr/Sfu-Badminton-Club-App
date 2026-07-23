@@ -1,7 +1,7 @@
 'use client';
 
 import { useTransition } from 'react';
-import { Button } from '@badminton/ui';
+import { Button, useConfirm } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { requireWaiverResignature } from '@/lib/actions';
@@ -10,9 +10,10 @@ export function RequireWaiverResignatureButton({ playerId }: { playerId: string 
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
   const router = useRouter();
+  const confirm = useConfirm();
 
-  function handleRequire() {
-    if (!confirm('Force this player to re-sign the liability waiver on their next visit? This affects only this player.')) return;
+  async function handleRequire() {
+    if (!(await confirm({ title: 'Require re-signature?', message: 'Force this player to re-sign the liability waiver on their next visit? This affects only this player.', confirmLabel: 'Require re-signature' }))) return;
     startTransition(async () => {
       try {
         await requireWaiverResignature(playerId);

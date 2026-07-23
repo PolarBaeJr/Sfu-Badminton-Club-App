@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Copy, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
 import { getCalendarFeedToken, regenerateCalendarFeedToken } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
+import { useConfirm } from '@badminton/ui';
 
 // Settings rows for the personal ICS subscription feed. The token is a
 // capability URL — anyone holding it can read the player's schedule, so
@@ -12,6 +13,7 @@ export function CalendarFeed() {
   const [token, setToken] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
   const { toast } = useToast();
+  const confirm = useConfirm();
 
   useEffect(() => {
     getCalendarFeedToken()
@@ -33,7 +35,7 @@ export function CalendarFeed() {
   }
 
   async function handleReset() {
-    if (!confirm('Reset your calendar link? Calendars subscribed with the old link will stop updating.')) return;
+    if (!(await confirm({ title: 'Reset calendar link?', message: 'Reset your calendar link? Calendars subscribed with the old link will stop updating.', confirmLabel: 'Reset link', danger: true }))) return;
     setResetting(true);
     try {
       setToken(await regenerateCalendarFeedToken());

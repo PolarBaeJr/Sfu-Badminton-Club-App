@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Badge, Button, Dialog, Input, Select } from '@badminton/ui';
+import { Badge, Button, Dialog, Input, Select, useConfirm } from '@badminton/ui';
 import { createSession, updateSession, archiveSession, deleteSession, markAttendance, clearAttendanceMark } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { MoreVertical, Users } from 'lucide-react';
@@ -55,6 +55,7 @@ export function AttendanceDialog({ sessionId, attendees, players }: AttendanceDi
   const [addPlayerId, setAddPlayerId] = useState('');
   const [busyPlayerId, setBusyPlayerId] = useState<string | null>(null);
   const { toast } = useToast();
+  const confirm = useConfirm();
 
   const listedIds = new Set(attendees.map((a) => a.player_id));
   const addablePlayers = players.filter((p) => !listedIds.has(p.id));
@@ -71,7 +72,7 @@ export function AttendanceDialog({ sessionId, attendees, players }: AttendanceDi
   }
 
   async function handleRemove(playerId: string) {
-    if (!confirm('Remove this attendance record?')) return;
+    if (!(await confirm({ title: 'Remove attendance?', message: 'Remove this attendance record?', confirmLabel: 'Remove', danger: true }))) return;
     setBusyPlayerId(playerId);
     try {
       await clearAttendanceMark(sessionId, playerId);
@@ -319,6 +320,7 @@ export function SessionCardMenu({ session }: SessionCardMenuProps) {
   const [loading, setLoading] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
+  const confirm = useConfirm();
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -346,7 +348,7 @@ export function SessionCardMenu({ session }: SessionCardMenuProps) {
   }
 
   async function handleArchive() {
-    if (!confirm('Archive this session? It will be marked as closed.')) return;
+    if (!(await confirm({ title: 'Archive session?', message: 'Archive this session? It will be marked as closed.', confirmLabel: 'Archive' }))) return;
     setLoading(true);
     try {
       await archiveSession(session.id);
@@ -359,7 +361,7 @@ export function SessionCardMenu({ session }: SessionCardMenuProps) {
   }
 
   async function handleDelete() {
-    if (!confirm('Delete this session? This cannot be undone.')) return;
+    if (!(await confirm({ title: 'Delete session?', message: 'Delete this session? This cannot be undone.', confirmLabel: 'Delete', danger: true }))) return;
     setLoading(true);
     try {
       await deleteSession(session.id);

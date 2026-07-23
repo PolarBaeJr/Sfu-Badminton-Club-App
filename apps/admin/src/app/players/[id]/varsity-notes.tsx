@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { Button, Textarea } from '@badminton/ui';
+import { Button, Textarea, useConfirm } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { createVarsityNote, deleteVarsityNote } from '@/lib/actions';
@@ -18,6 +18,7 @@ export function VarsityNotes({ playerId, notes }: { playerId: string; notes: Var
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
   const router = useRouter();
+  const confirm = useConfirm();
 
   function handleAdd() {
     startTransition(async () => {
@@ -32,8 +33,8 @@ export function VarsityNotes({ playerId, notes }: { playerId: string; notes: Var
     });
   }
 
-  function handleDelete(noteId: string) {
-    if (!confirm('Delete this note? This cannot be undone.')) return;
+  async function handleDelete(noteId: string) {
+    if (!(await confirm({ title: 'Delete note?', message: 'Delete this note? This cannot be undone.', confirmLabel: 'Delete', danger: true }))) return;
     startTransition(async () => {
       try {
         await deleteVarsityNote(noteId);

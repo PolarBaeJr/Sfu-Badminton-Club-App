@@ -16,6 +16,7 @@ import { getMissingLegalDocuments } from '@badminton/shared';
 import { createServerSupabaseClient, getActiveSeason } from '@/lib/supabase-server';
 import { Barlow, Barlow_Condensed, JetBrains_Mono } from "next/font/google";
 import { cn } from "@/lib/utils";
+import { ConfirmProvider } from "@badminton/ui";
 
 const barlow = Barlow({ subsets: ['latin'], variable: '--font-sans', weight: ['400','500','600','700'] });
 const barlowCondensed = Barlow_Condensed({ subsets: ['latin'], variable: '--font-display', weight: ['400','600','700'] });
@@ -136,22 +137,24 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body>
         <PostHogProvider>
           <ToastProvider>
-            <SentryUserInit playerId={playerId} />
-            <PostHogIdentify
-              playerId={playerId}
-              playerStatus={playerStatus}
-              singlesElo={singlesElo}
-              doublesElo={doublesElo}
-            />
-            <OfflineBanner />
-            <DeletionGate deletionRequestedAt={deletionRequestedAt} />
-            {/* Deletion screen wins when both gates would apply. */}
-            <WaiverGate missingDocs={deletionRequestedAt ? [] : missingLegalDocs} />
-            <TopBar playerName={playerName} unreadCount={unreadCount} isAuthenticated={isAuthenticated} isExecOrAdmin={isExecOrAdmin} adminUrl={process.env.NEXT_PUBLIC_ADMIN_URL || '/admin'} activeSeasonName={activeSeasonName} />
-            <main className="page pb-safe-nav">
-              {children}
-            </main>
-            <BottomNav isAuthenticated={isAuthenticated} />
+            <ConfirmProvider>
+              <SentryUserInit playerId={playerId} />
+              <PostHogIdentify
+                playerId={playerId}
+                playerStatus={playerStatus}
+                singlesElo={singlesElo}
+                doublesElo={doublesElo}
+              />
+              <OfflineBanner />
+              <DeletionGate deletionRequestedAt={deletionRequestedAt} />
+              {/* Deletion screen wins when both gates would apply. */}
+              <WaiverGate missingDocs={deletionRequestedAt ? [] : missingLegalDocs} />
+              <TopBar playerName={playerName} unreadCount={unreadCount} isAuthenticated={isAuthenticated} isExecOrAdmin={isExecOrAdmin} adminUrl={process.env.NEXT_PUBLIC_ADMIN_URL || '/admin'} activeSeasonName={activeSeasonName} />
+              <main className="page pb-safe-nav">
+                {children}
+              </main>
+              <BottomNav isAuthenticated={isAuthenticated} />
+            </ConfirmProvider>
           </ToastProvider>
         </PostHogProvider>
         <script dangerouslySetInnerHTML={{ __html: `

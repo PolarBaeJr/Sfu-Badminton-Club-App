@@ -7,7 +7,7 @@ import { MainContent } from '@/components/main-content';
 import { ToastProvider } from '@/components/toast-provider';
 import { SentryUserInit } from '@/components/sentry-user-init';
 import { Barlow, Barlow_Condensed, JetBrains_Mono } from 'next/font/google';
-import { cn } from '@badminton/ui';
+import { cn, ConfirmProvider } from '@badminton/ui';
 
 const barlow = Barlow({ subsets: ['latin'], variable: '--font-sans', weight: ['400','500','600','700'] });
 const barlowCondensed = Barlow_Condensed({ subsets: ['latin'], variable: '--font-display', weight: ['400','600','700'] });
@@ -61,11 +61,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       </head>
       <body className="antialiased">
         <ToastProvider>
-          <SentryUserInit playerId={null} />
-          <Sidebar />
-          <MainContent>
-            {children}
-          </MainContent>
+          <ConfirmProvider>
+            <SentryUserInit playerId={null} />
+            <Sidebar />
+            <MainContent>
+              {children}
+            </MainContent>
+          </ConfirmProvider>
         </ToastProvider>
         <script dangerouslySetInnerHTML={{ __html: `
           if ('serviceWorker' in navigator) {

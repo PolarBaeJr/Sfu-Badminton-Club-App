@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button, Dialog, Input } from '@badminton/ui';
+import { Button, Dialog, Input, useConfirm } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { markFeePaid, waiveFee, markFeeUnpaid, addManualFee, removeManualFee } from '@/lib/actions';
 
@@ -23,6 +23,7 @@ export function FeeActions({ playerId, playerName, seasonId, seasonName, default
   const [method, setMethod] = useState('');
   const { toast } = useToast();
   const router = useRouter();
+  const confirm = useConfirm();
 
   function handleMarkPaid() {
     startTransition(async () => {
@@ -56,8 +57,8 @@ export function FeeActions({ playerId, playerName, seasonId, seasonName, default
     });
   }
 
-  function handleWaive() {
-    if (!confirm(`Waive the season fee for ${playerName}? They will be excluded from the outstanding count.`)) return;
+  async function handleWaive() {
+    if (!(await confirm({ title: 'Waive fee?', message: `Waive the season fee for ${playerName}? They will be excluded from the outstanding count.`, confirmLabel: 'Waive fee' }))) return;
     startTransition(async () => {
       try {
         await waiveFee({ player_id: playerId, season_id: seasonId });

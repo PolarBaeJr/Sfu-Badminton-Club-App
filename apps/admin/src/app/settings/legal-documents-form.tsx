@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Textarea, Dialog } from '@badminton/ui';
+import { Button, Textarea, useConfirm } from '@badminton/ui';
 import { LEGAL_DOCUMENT_LABELS, type WaiverDocument } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { updateLegalDocument, requireReacceptance } from '@/lib/actions';
@@ -30,9 +30,8 @@ function autoGrow(e: React.FormEvent<HTMLTextAreaElement>) {
 export function LegalDocumentsForm({ documents }: { documents: LegalDocumentRow[] }) {
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<string | null>(null);
-  // Doc pending the "require re-signature" confirmation (replaces window.confirm).
-  const [confirmDoc, setConfirmDoc] = useState<LegalDocumentRow | null>(null);
   const { toast } = useToast();
+  const confirm = useConfirm();
 
   async function handleSave(doc: LegalDocumentRow, bumpVersion: boolean) {
     const content = edits[doc.document] ?? doc.content;
@@ -60,14 +59,12 @@ export function LegalDocumentsForm({ documents }: { documents: LegalDocumentRow[
     setSaving(null);
   }
 
-  async function confirmReacceptance() {
-    if (!confirmDoc) return;
-    const doc = confirmDoc;
+  async function handleRequireReacceptance(doc: LegalDocumentRow) {
+    if (!(await confirm({ title: 'Require re-signature?', message: <>Require every member to re-sign <span className="text-[var(--text-primary)] font-medium">{LEGAL_DOCUMENT_LABELS[doc.document as WaiverDocument] || doc.document}</span> on their next visit? This does not change the document text.</>, confirmLabel: 'Require re-signature' }))) return;
     setSaving(`${doc.document}-reaccept`);
     try {
       await requireReacceptance(doc.document as WaiverDocument);
       toast('All members must re-sign this on their next visit.', 'success');
-      setConfirmDoc(null);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed to require re-signature', 'error');
     }
@@ -123,7 +120,7 @@ export function LegalDocumentsForm({ documents }: { documents: LegalDocumentRow[
                 <Button
                   variant="ghost"
                   className="border-[var(--red-border)] text-[var(--color-accent)] hover:bg-[var(--red-wash)] hover:text-[var(--color-accent)]"
-                  onClick={() => setConfirmDoc(doc)}
+                  onClick={() => handleRequireReacceptance(doc)}
                   loading={saving === `${doc.document}-reaccept`}
                   disabled={saving !== null}
                 >
@@ -134,38 +131,6 @@ export function LegalDocumentsForm({ documents }: { documents: LegalDocumentRow[
           </div>
         );
       })}
-
-      <Dialog
-        open={!!confirmDoc}
-        onClose={() => saving === null && setConfirmDoc(null)}
-        title="Require re-signature?"
-      >
-        <div className="space-y-5">
-          <p className="text-sm text-[var(--text-muted)]">
-            Require every member to re-sign{' '}
-            <span className="text-[var(--text-primary)] font-medium">
-              {confirmDoc
-                ? LEGAL_DOCUMENT_LABELS[confirmDoc.document as WaiverDocument] || confirmDoc.document
-                : ''}
-            </span>{' '}
-            on their next visit? This does not change the document text.
-          </p>
-          <div className="flex items-center justify-between pt-1">
-            <Button variant="ghost" onClick={() => setConfirmDoc(null)} disabled={saving !== null}>
-              Cancel
-            </Button>
-            <Button
-              className="border-[var(--red-border)] text-[var(--color-accent)] hover:bg-[var(--red-wash)] hover:text-[var(--color-accent)]"
-              variant="ghost"
-              onClick={confirmReacceptance}
-              loading={saving === `${confirmDoc?.document}-reaccept`}
-              disabled={saving !== null}
-            >
-              Require re-signature
-            </Button>
-          </div>
-        </div>
-      </Dialog>
     </div>
   );
 }

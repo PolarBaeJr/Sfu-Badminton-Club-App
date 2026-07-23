@@ -22,3 +22,4 @@ export { DataRow } from './DataRow';
 export { RouteError } from './RouteError';
 export { RouteLoading } from './RouteLoading';
 export { LegalMarkdown } from './LegalMarkdown';
+export { ConfirmProvider, useConfirm, type ConfirmOptions } from './ConfirmDialog';

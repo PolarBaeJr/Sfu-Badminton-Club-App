@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Dialog, LegalMarkdown } from '@badminton/ui';
+import { Button, Dialog, LegalMarkdown, useConfirm } from '@badminton/ui';
 import { registerForEvent, withdrawFromEvent, selfCheckIn } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
@@ -21,6 +21,7 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
   const [waiverAccepted, setWaiverAccepted] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
+  const confirm = useConfirm();
 
   if (isDoubles) {
     if (registration) {
@@ -136,8 +137,8 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
           variant="ghost"
           loading={loading}
           className="press focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none min-h-[36px]"
-          onClick={() => {
-            if (confirm('Are you sure you want to withdraw from this event?')) {
+          onClick={async () => {
+            if (await confirm({ title: 'Withdraw from event?', message: 'Are you sure you want to withdraw from this event?', confirmLabel: 'Withdraw', danger: true })) {
               act(() => withdrawFromEvent(eventId), 'Withdrawn');
             }
           }}

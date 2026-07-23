@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { startRegistration } from '@simplewebauthn/browser';
-import { Button, Input } from '@badminton/ui';
+import { Button, Input, useConfirm } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { removePasskey } from './actions';
 
@@ -27,6 +27,7 @@ function formatDate(iso: string | null): string {
 export function PasskeySection({ passkeys }: { passkeys: Passkey[] }) {
   const router = useRouter();
   const { toast } = useToast();
+  const confirm = useConfirm();
   const [nickname, setNickname] = useState('');
   const [adding, setAdding] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -67,7 +68,7 @@ export function PasskeySection({ passkeys }: { passkeys: Passkey[] }) {
   }
 
   async function handleRemove(id: string) {
-    if (!window.confirm('Remove this passkey?')) return;
+    if (!(await confirm({ title: 'Remove passkey?', message: 'Remove this passkey?', confirmLabel: 'Remove', danger: true }))) return;
     setRemovingId(id);
     try {
       await removePasskey(id);
