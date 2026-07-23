@@ -13,8 +13,12 @@ export function Toast({ message, type = 'info', onClose }: ToastProps) {
   // Per-variant text color: success/error sit on solid color (white text);
   // info sits on the theme surface, which is light in light mode — white text
   // was invisible there. The close button inherits currentColor via opacity.
+  // On the black/red editorial system a saturated green slab reads foreign,
+  // so success is a dark toast with a green hairline + a green left accent bar
+  // (keeps the "success" cue without the candy fill). Error stays solid red —
+  // red is the brand accent, so a red slab is on-brand.
   const colors = {
-    success: 'bg-[var(--color-success)] text-white',
+    success: 'bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border)] border-l-2 border-l-[var(--color-success)]',
     error: 'bg-[var(--color-danger)] text-white',
     info: 'bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border)]',
   };
