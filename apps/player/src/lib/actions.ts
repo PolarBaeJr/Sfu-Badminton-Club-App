@@ -43,6 +43,7 @@ export {
 
 export {
   checkInToSession,
+  setSessionIntent,
 } from './actions/sessions';
 
 export {

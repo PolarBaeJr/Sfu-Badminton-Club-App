@@ -144,6 +144,9 @@ export const attendanceMarkSchema = z.object({
   status: attendanceStatusSchema,
 });
 
+// Ahead-of-time session RSVP: players signal whether they intend to attend.
+export const sessionIntentSchema = z.enum(['going', 'declined']);
+
 export const tournamentCreateSchema = z.object({
   name: z.string().min(2),
   scope: z.enum(['open', 'eligible_only']),
@@ -359,6 +362,7 @@ export type DisputeInput = z.infer<typeof disputeSchema>;
 export type SessionCreateInput = z.infer<typeof sessionCreateSchema>;
 export type AttendanceStatusInput = z.infer<typeof attendanceStatusSchema>;
 export type AttendanceMarkInput = z.infer<typeof attendanceMarkSchema>;
+export type SessionIntentInput = z.infer<typeof sessionIntentSchema>;
 export type TournamentCreateInput = z.infer<typeof tournamentCreateSchema>;
 export type TournamentSuspendInput = z.infer<typeof tournamentSuspendSchema>;
 export type AdminPlayerUpdateInput = z.infer<typeof adminPlayerUpdateSchema>;

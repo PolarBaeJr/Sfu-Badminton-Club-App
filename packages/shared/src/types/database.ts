@@ -165,6 +165,8 @@ export type SessionGroup = 'competitive' | 'recreational' | 'all';
 
 export type AttendanceStatus = 'checked_in' | 'present' | 'no_show' | 'excused';
 
+export type SessionIntent = 'going' | 'declined';
+
 export interface Session {
   id: string;
   season_id: string | null;

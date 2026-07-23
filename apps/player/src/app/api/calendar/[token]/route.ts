@@ -66,7 +66,7 @@ export async function GET(
     .order('date')
     .limit(200);
 
-  return new NextResponse(buildICSCalendar(sessions ?? []), {
+  return new NextResponse(buildICSCalendar(sessions ?? [], { baseUrl: process.env.NEXT_PUBLIC_PLAYER_URL }), {
     headers: {
       'Content-Type': 'text/calendar; charset=utf-8',
       'Content-Disposition': 'inline; filename="sfu-badminton.ics"',

@@ -96,7 +96,7 @@ export function formatICSDates(session: Pick<ICSSessionFields, 'date' | 'start_t
 // One session -> unfolded VEVENT content lines. Callers fold and join
 // (buildICSCalendar does both). UID is stable per session so calendar clients
 // update events in place; SEQUENCE bumps whenever the row is touched.
-export function sessionToVEvent(session: ICSSessionFields): string[] {
+export function sessionToVEvent(session: ICSSessionFields, baseUrl?: string): string[] {
   const { start, end, allDay } = formatICSDates(session);
   const updated = new Date(session.updated_at);
   const stamp = formatUtcStamp(updated);
@@ -113,12 +113,15 @@ export function sessionToVEvent(session: ICSSessionFields): string[] {
     `LOCATION:${escapeICSText(session.location)}`,
   ];
   if (session.notes) lines.push(`DESCRIPTION:${escapeICSText(session.notes)}`);
+  // URL is a URI value, not TEXT, so it is not run through escapeICSText —
+  // both baseUrl (env var) and session.id (uuid) are already URI-safe.
+  if (baseUrl) lines.push(`URL:${baseUrl}/sessions?s=${session.id}`);
   lines.push('END:VEVENT');
   return lines;
 }
 
 // Full VCALENDAR document, CRLF line endings, lines folded to 75 octets.
-export function buildICSCalendar(sessions: ICSSessionFields[]): string {
+export function buildICSCalendar(sessions: ICSSessionFields[], opts?: { baseUrl?: string }): string {
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
@@ -131,7 +134,7 @@ export function buildICSCalendar(sessions: ICSSessionFields[]): string {
     // X-PUBLISHED-TTL is the legacy Apple/Outlook equivalent.
     'REFRESH-INTERVAL;VALUE=DURATION:PT1H',
     'X-PUBLISHED-TTL:PT1H',
-    ...sessions.flatMap(sessionToVEvent),
+    ...sessions.flatMap((s) => sessionToVEvent(s, opts?.baseUrl)),
     'END:VCALENDAR',
   ];
   return lines.map(foldICSLine).join('\r\n') + '\r\n';

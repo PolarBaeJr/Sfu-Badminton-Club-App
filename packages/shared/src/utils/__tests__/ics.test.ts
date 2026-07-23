@@ -113,6 +113,16 @@ describe('sessionToVEvent', () => {
     expect(lines).toContain('LOCATION:Gym\\; Court 1');
     expect(lines).toContain('DESCRIPTION:Bring shuttles\\,\\nplease');
   });
+
+  it('emits a URL line pointing at the session when a baseUrl is given', () => {
+    const lines = sessionToVEvent(makeSession(), 'https://x.test');
+    expect(lines).toContain('URL:https://x.test/sessions?s=abc-123');
+  });
+
+  it('omits the URL line when no baseUrl is given', () => {
+    const lines = sessionToVEvent(makeSession());
+    expect(lines.some((l) => l.startsWith('URL:'))).toBe(false);
+  });
 });
 
 describe('buildICSCalendar', () => {
@@ -126,5 +136,10 @@ describe('buildICSCalendar', () => {
     expect(ics).toContain('BEGIN:VEVENT\r\n');
     // No bare LF anywhere.
     expect(ics.replace(/\r\n/g, '')).not.toContain('\n');
+  });
+
+  it('threads a baseUrl through to each event when provided', () => {
+    const ics = buildICSCalendar([makeSession()], { baseUrl: 'https://x.test' });
+    expect(ics).toContain('URL:https://x.test/sessions?s=abc-123\r\n');
   });
 });

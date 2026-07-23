@@ -1476,3 +1476,13 @@ html, body { overflow-x: clip; }
     bottom: calc(env(safe-area-inset-bottom, 0px) + 5rem);
   }
 }
+
+/* Deep-link target flash: a session scrolled to from a calendar URL gets a
+   brief red hairline ring that fades out (added then removed by DeepLinkScroll). */
+.session-deeplink-flash {
+  animation: session-deeplink-flash 1.5s var(--ease-out-expo) forwards;
+}
+@keyframes session-deeplink-flash {
+  0%   { box-shadow: 0 0 0 2px var(--red-border); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}

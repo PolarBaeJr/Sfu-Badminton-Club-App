@@ -17,6 +17,10 @@ export default async function SessionsPage() {
     .from('session_attendance')
     .select('session_id, player_id, checked_in_at, status, marked_by, marked_at, players(full_name)');
 
+  const { data: rsvpRows } = await supabase
+    .from('session_rsvp')
+    .select('session_id, intent, players(full_name)');
+
   const { data: activePlayers } = await supabase
     .from('players')
     .select('id, full_name')
@@ -50,6 +54,16 @@ export default async function SessionsPage() {
     });
   }
 
+  // Group RSVP records by session_id, splitting on intent.
+  const rsvpMap: Record<string, { going: string[]; declined: string[] }> = {};
+  for (const row of rsvpRows ?? []) {
+    const name = Array.isArray(row.players)
+      ? (row.players[0]?.full_name ?? 'Unknown')
+      : ((row.players as { full_name: string } | null)?.full_name ?? 'Unknown');
+    const sid = row.session_id as string;
+    (rsvpMap[sid] ??= { going: [], declined: [] })[row.intent as 'going' | 'declined'].push(name);
+  }
+
   return (
     <div className="space-y-8">
       {/* Page Header */}
@@ -63,7 +77,9 @@ export default async function SessionsPage() {
       {/* Sessions List */}
       {sessions && sessions.length > 0 ? (
         <div className="space-y-3">
-          {sessions.map((session) => (
+          {sessions.map((session) => {
+            const rsvp = rsvpMap[session.id];
+            return (
             <Card key={session.id}>
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 min-w-0 space-y-2">
@@ -108,6 +124,22 @@ export default async function SessionsPage() {
                     attendees={attendanceMap[session.id] ?? []}
                     players={activePlayers ?? []}
                   />
+
+                  {/* RSVP intents (read-only) */}
+                  {rsvp && (rsvp.going.length > 0 || rsvp.declined.length > 0) && (
+                    <div className="space-y-0.5">
+                      {rsvp.going.length > 0 && (
+                        <div className="text-xs text-[var(--text-secondary)]">
+                          Going ({rsvp.going.length}): {rsvp.going.join(', ')}
+                        </div>
+                      )}
+                      {rsvp.declined.length > 0 && (
+                        <div className="text-xs text-[var(--text-muted)]">
+                          Can&apos;t make it ({rsvp.declined.length}): {rsvp.declined.join(', ')}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Three-dot menu */}
@@ -116,7 +148,8 @@ export default async function SessionsPage() {
                 </div>
               </div>
             </Card>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <Card>

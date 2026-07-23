@@ -1,10 +1,12 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { CLUB_TIMEZONE, formatDate, formatTime, getCheckinWindow, isCheckinOpen, type AttendanceStatus } from '@badminton/shared';
+import { CLUB_TIMEZONE, formatDate, formatTime, getCheckinWindow, isCheckinOpen, type AttendanceStatus, type SessionIntent } from '@badminton/shared';
 import { redirect } from 'next/navigation';
-import { Calendar, MapPin, FileText, Users, Clock } from 'lucide-react';
+import { Calendar, MapPin, FileText, Users, UserCheck, Clock } from 'lucide-react';
 import { PageHeader } from '@badminton/ui';
 import { CheckInButton } from './check-in-button';
 import { AddToCalendarButton } from './add-to-calendar';
+import { RsvpButtons } from './rsvp-buttons';
+import { DeepLinkScroll } from './deep-link-scroll';
 
 export default async function SessionsPage() {
   const player = await getCurrentPlayer();
@@ -12,7 +14,7 @@ export default async function SessionsPage() {
 
   const supabase = await createServerSupabaseClient();
 
-  const [{ data: openSessions }, { data: closedSessions }, { data: myAttendance }, { data: attendanceCounts }] = await Promise.all([
+  const [{ data: openSessions }, { data: closedSessions }, { data: myAttendance }, { data: attendanceCounts }, { data: myRsvp }, { data: goingCounts }] = await Promise.all([
     supabase
       .from('sessions')
       .select('*')
@@ -46,6 +48,25 @@ export default async function SessionsPage() {
           : null,
         error,
       })),
+    supabase
+      .from('session_rsvp')
+      .select('session_id, intent')
+      .eq('player_id', player.id),
+    supabase
+      .from('session_rsvp')
+      .select('session_id')
+      .eq('intent', 'going')
+      .then(({ data, error }) => ({
+        data: data
+          ? Object.entries(
+              data.reduce<Record<string, number>>((acc, row) => {
+                acc[row.session_id] = (acc[row.session_id] ?? 0) + 1;
+                return acc;
+              }, {})
+            ).map(([session_id, count]) => ({ session_id, count }))
+          : null,
+        error,
+      })),
   ]);
 
   const myStatusBySession = new Map<string, AttendanceStatus>(
@@ -54,11 +75,18 @@ export default async function SessionsPage() {
   const countBySession = Object.fromEntries(
     (attendanceCounts ?? []).map((r) => [r.session_id, r.count])
   );
+  const myIntentBySession = new Map<string, SessionIntent>(
+    (myRsvp ?? []).map((r) => [r.session_id as string, r.intent as SessionIntent])
+  );
+  const goingBySession = Object.fromEntries(
+    (goingCounts ?? []).map((r) => [r.session_id, r.count])
+  );
 
   const upcomingCount = openSessions?.length ?? 0;
 
   return (
     <div data-screen-label="Schedule">
+      <DeepLinkScroll />
       <PageHeader
         title="Schedule"
         sub="Open practices, drop-ins, and ladder nights. Sign in to claim a court spot — capacity fills fast."
@@ -107,6 +135,7 @@ export default async function SessionsPage() {
                 return (
                   <div
                     key={session.id}
+                    id={`session-${session.id}`}
                     style={{
                       padding: 18,
                       border: '1px solid var(--line)',
@@ -147,6 +176,9 @@ export default async function SessionsPage() {
                           <span className="row" style={{ gap: 6 }}>
                             <Users size={14} /> <span className="mono">{attendees} attending</span>
                           </span>
+                          <span className="row" style={{ gap: 6 }}>
+                            <UserCheck size={14} /> <span className="mono">{goingBySession[session.id] ?? 0} going</span>
+                          </span>
                         </div>
                         {session.notes && (
                           <div className="row" style={{ gap: 6, fontSize: 13, color: 'var(--ink-2)', marginTop: 10, alignItems: 'flex-start' }}>
@@ -157,6 +189,7 @@ export default async function SessionsPage() {
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
                         <CheckInButton sessionId={session.id} myStatus={myStatus} canCheckIn={canCheckIn} windowLabel={windowLabel} />
+                        <RsvpButtons sessionId={session.id} myIntent={myIntentBySession.get(session.id) ?? null} />
                         <AddToCalendarButton
                           name={session.name ?? 'Practice Session'}
                           date={session.date}
