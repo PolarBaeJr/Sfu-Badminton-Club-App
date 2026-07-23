@@ -124,6 +124,50 @@ describe('getMissingLegalDocuments', () => {
       getMissingLegalDocuments(DOCS, acceptances, NOW, '2026-07-10T00:00:00Z')
     ).toEqual([]);
   });
+
+  it('waiver must beat the later of global reacceptance (T1) and player reset (T2) when T2 > T1', () => {
+    const docs = DOCS.map((d) =>
+      d.document === 'waiver'
+        ? { ...d, reacceptance_required_since: '2026-07-05T00:00:00Z' } // T1
+        : d
+    );
+    // Accepted 2026-07-08 — after T1 but before the later T2 (2026-07-12).
+    const between = [
+      accepted('waiver', '2026-07-19', '2026-07-08T00:00:00Z'),
+      accepted('code_of_conduct'),
+      accepted('terms_of_use'),
+      accepted('privacy_policy'),
+    ];
+    expect(getMissingLegalDocuments(docs, between, NOW, '2026-07-12T00:00:00Z')).toEqual(['waiver']);
+    // Accepted 2026-07-15 — after the later T2.
+    const after = [
+      accepted('waiver', '2026-07-19', '2026-07-15T00:00:00Z'),
+      accepted('code_of_conduct'),
+      accepted('terms_of_use'),
+      accepted('privacy_policy'),
+    ];
+    expect(getMissingLegalDocuments(docs, after, NOW, '2026-07-12T00:00:00Z')).toEqual([]);
+  });
+
+  it('waiver threshold is the later global reacceptance (T1) when T1 > T2', () => {
+    const docs = DOCS.map((d) =>
+      d.document === 'waiver'
+        ? { ...d, reacceptance_required_since: '2026-07-12T00:00:00Z' } // T1
+        : d
+    );
+    // Accepted 2026-07-08 — after T2 (2026-07-05) but before the later T1.
+    const between = [
+      accepted('waiver', '2026-07-19', '2026-07-08T00:00:00Z'),
+      accepted('code_of_conduct'),
+      accepted('terms_of_use'),
+      accepted('privacy_policy'),
+    ];
+    expect(getMissingLegalDocuments(docs, between, NOW, '2026-07-05T00:00:00Z')).toEqual(['waiver']);
+  });
+
+  it('returns an empty array when there are no documents', () => {
+    expect(getMissingLegalDocuments([], [], NOW)).toEqual([]);
+  });
 });
 
 describe('sortLegalDocuments', () => {

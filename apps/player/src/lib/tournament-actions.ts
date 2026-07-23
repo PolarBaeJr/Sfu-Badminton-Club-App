@@ -1,10 +1,10 @@
 'use server';
 
-import { createHash } from 'node:crypto';
 import { headers } from 'next/headers';
 import { createServiceRoleClient } from './supabase-server';
 import { revalidatePath } from 'next/cache';
 import { isDoublesEvent } from '@badminton/shared';
+import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
 import { requirePlayer, assertCurrentWaiver } from './actions/_shared';
 
 // Revalidate every surface that surfaces tournament_participants /
@@ -81,7 +81,7 @@ export async function registerForEvent(eventId: string, opts?: { eventWaiverAcce
   // Record immutable acceptance evidence keyed by the text hash. onConflict
   // ignore keeps it idempotent if the same text is accepted twice.
   if (eventWaiverText) {
-    const waiverHash = createHash('sha256').update(eventWaiverText).digest('hex');
+    const waiverHash = eventWaiverHash(eventWaiverText);
     const userAgent = (await headers()).get('user-agent');
     await service.from('event_waiver_acceptances').upsert({
       player_id: player.id,

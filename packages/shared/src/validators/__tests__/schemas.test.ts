@@ -23,6 +23,7 @@ import {
   reliabilityAdjustSchema,
   legalAcceptanceSchema,
   legalDocumentUpdateSchema,
+  sessionIntentSchema,
 } from '../schemas';
 
 const UUID_A = '11111111-1111-4111-8111-111111111111';
@@ -691,5 +692,17 @@ describe('disputeResolveSchema', () => {
         edited_games: [{ game_number: 1, side_a_score: 21, side_b_score: 15 }],
       }).success,
     ).toBe(true);
+  });
+});
+
+describe('sessionIntentSchema', () => {
+  it('accepts the known intents', () => {
+    expect(sessionIntentSchema.parse('going')).toBe('going');
+    expect(sessionIntentSchema.parse('declined')).toBe('declined');
+  });
+  it('rejects an unknown intent, empty string, or undefined', () => {
+    expect(sessionIntentSchema.safeParse('maybe').success).toBe(false);
+    expect(sessionIntentSchema.safeParse('').success).toBe(false);
+    expect(sessionIntentSchema.safeParse(undefined).success).toBe(false);
   });
 });

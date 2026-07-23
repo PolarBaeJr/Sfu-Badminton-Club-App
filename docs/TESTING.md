@@ -40,11 +40,14 @@ Covers: ELO engine, Zod validators, session-window math, legal/waiver expiry
 logic, ICS generation, push payloads, passkey cookie signing, admin
 supabase-server guards.
 
-**Gaps to add (P1 — not blocking beta, but write these next):**
-- [ ] `session_rsvp` intent transitions (going ↔ declined ↔ cleared) and the "N going" count.
-- [ ] `getMissingLegalDocuments` against the four docs with `reacceptance_required_since` + per-player `waiver_reset_at` + 365-day waiver expiry (extend `legal.test.ts`).
-- [ ] Event-waiver hash: editing `tournaments.waiver_text` invalidates a prior acceptance.
-- [ ] A lightweight **e2e** layer (Playwright) for the P0 flows below — none exists yet.
+**Added 2026-07-23 (suite now 301 passing):**
+- [x] `eventWaiverHash` — determinism, trim, edit-invalidation, hex shape, known vector (`event-waiver.test.ts`; helper extracted to `packages/shared/src/utils/event-waiver.ts`).
+- [x] `getMissingLegalDocuments` — combined global `reacceptance_required_since` + per-player `waiver_reset_at` threshold (`Math.max`) and empty-docs edge (extended `legal.test.ts`; annual-expiry + version cases were already covered).
+- [x] `sessionIntentSchema` — accepts going/declined, rejects invalid (`schemas.test.ts`).
+
+**Still to add (P1):**
+- [ ] RSVP intent *transitions* (going ↔ declined ↔ cleared) + the "N going" count — DB/component logic, not pure; covered by the e2e layer below (or extract a pure count helper to unit-test).
+- [ ] A lightweight **e2e** layer (Playwright) for the P0 flows — none exists yet.
 
 > ⚠️ CI (`build-images.yml`) does **not** run tests — it only builds images. Run `npm test` locally before every push, or add a test job to CI (recommended).
 
