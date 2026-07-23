@@ -26,6 +26,13 @@ ARG NEXT_PUBLIC_VAPID_PUBLIC_KEY
 ARG NEXT_PUBLIC_SENTRY_DSN
 ARG NEXT_PUBLIC_POSTHOG_KEY
 ARG NEXT_PUBLIC_POSTHOG_HOST
+# Build-only: let @sentry/nextjs upload source maps for readable stack traces.
+# withSentryConfig reads SENTRY_ORG/SENTRY_PROJECT (next.config.js) and picks up
+# SENTRY_AUTH_TOKEN from the env. Empty => upload is skipped, build still passes.
+# These live only in this (unpublished) builder stage, not the runner images.
+ARG SENTRY_ORG
+ARG SENTRY_PROJECT
+ARG SENTRY_AUTH_TOKEN
 
 RUN npx turbo run build --filter=player --filter=admin --concurrency=1
 
