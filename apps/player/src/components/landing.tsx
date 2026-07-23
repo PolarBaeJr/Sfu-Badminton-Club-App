@@ -10,7 +10,7 @@ const FEATURES = [
   { icon: Trophy, title: 'Run real tournaments', body: 'Brackets, seeding, and placement points — the club’s events, tracked end to end.' },
 ];
 
-export function Landing({ top, seasonName }: { top: TopEntry[]; seasonName: string | null }) {
+export function Landing({ top, seasonName, isAuthenticated }: { top: TopEntry[]; seasonName: string | null; isAuthenticated?: boolean }) {
   return (
     <div className="lp">
       {/* Hero */}
@@ -28,9 +28,15 @@ export function Landing({ top, seasonName }: { top: TopEntry[]; seasonName: stri
             on court — one rally at a time.
           </p>
           <div className="lp-cta-row">
-            <Link href="/login" className="lp-btn lp-btn-primary">
-              Sign in to play <ArrowRight size={16} />
-            </Link>
+            {isAuthenticated ? (
+              <Link href="/feed" className="lp-btn lp-btn-primary">
+                Enter the app <ArrowRight size={16} />
+              </Link>
+            ) : (
+              <Link href="/login" className="lp-btn lp-btn-primary">
+                Sign in to play <ArrowRight size={16} />
+              </Link>
+            )}
             <Link href="/leaderboard" className="lp-btn lp-btn-ghost">
               View the leaderboard
             </Link>
@@ -81,10 +87,21 @@ export function Landing({ top, seasonName }: { top: TopEntry[]; seasonName: stri
       {/* Closing CTA */}
       <section className="lp-close">
         <h2 className="lp-close-title">Ready to climb?</h2>
-        <p className="lp-close-lead">Sign in with your SFU email and issue your first challenge.</p>
-        <Link href="/login" className="lp-btn lp-btn-primary lp-btn-lg">
-          Get started <ArrowRight size={16} />
-        </Link>
+        {isAuthenticated ? (
+          <>
+            <p className="lp-close-lead">Jump back into the ladder.</p>
+            <Link href="/feed" className="lp-btn lp-btn-primary lp-btn-lg">
+              Open the app <ArrowRight size={16} />
+            </Link>
+          </>
+        ) : (
+          <>
+            <p className="lp-close-lead">Sign in with your SFU email and issue your first challenge.</p>
+            <Link href="/login" className="lp-btn lp-btn-primary lp-btn-lg">
+              Get started <ArrowRight size={16} />
+            </Link>
+          </>
+        )}
       </section>
 
       <footer className="lp-footer">

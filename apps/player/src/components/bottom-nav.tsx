@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { cn } from '@badminton/ui';
 import { createClient } from '@/lib/supabase-browser';
-import { Home, Trophy, Crosshair, Calendar, Sparkles } from 'lucide-react';
+import { Home, Trophy, Crosshair, Calendar, Sparkles, LogIn } from 'lucide-react';
 
 const navItems = [
   { href: '/feed',        label: 'Feed',  icon: Home      },
@@ -15,7 +15,13 @@ const navItems = [
   { href: '/my-stats',    label: 'Me',    icon: Sparkles  },
 ];
 
-export function BottomNav() {
+const publicNavItems = [
+  { href: '/',            label: 'Home',    icon: Home  },
+  { href: '/leaderboard', label: 'Ranks',   icon: Trophy },
+  { href: '/login',       label: 'Sign in', icon: LogIn },
+];
+
+export function BottomNav({ isAuthenticated }: { isAuthenticated: boolean }) {
   const pathname = usePathname();
   const [unreadAnnouncements, setUnreadAnnouncements] = useState(0);
 
@@ -60,10 +66,12 @@ export function BottomNav() {
     return null;
   }
 
+  const items = isAuthenticated ? navItems : publicNavItems;
+
   return (
     <nav className="mobile-tabbar" aria-label="Mobile navigation">
-      {navItems.map((item) => {
-        const active = pathname.startsWith(item.href);
+      {items.map((item) => {
+        const active = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
         const isLeaderboard = item.href === '/leaderboard';
         const showBadge = item.href === '/feed' && unreadAnnouncements > 0;
         return (

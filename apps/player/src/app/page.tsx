@@ -8,15 +8,14 @@ export default async function Home() {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
 
-  // Signed-in players go straight into the app.
+  // Un-onboarded players finish setup first; everyone else sees the landing.
   if (user) {
     const player = await getCurrentPlayer();
     if (!player || !player.onboarding_completed) redirect('/onboarding');
-    redirect('/feed');
   }
 
-  // Signed-out visitors get the public landing page. Pull the real top of the
-  // singles ladder so the hero shows live standings, not placeholder copy.
+  // Pull the real top of the singles ladder so the hero shows live standings,
+  // not placeholder copy.
   const { data: rows } = await supabase.rpc('get_leaderboard');
   const top = ((rows ?? []) as { name: string; singles_elo: number }[])
     .sort((a, b) => b.singles_elo - a.singles_elo)
@@ -25,5 +24,5 @@ export default async function Home() {
 
   const season = await getActiveSeason().catch(() => null);
 
-  return <Landing top={top} seasonName={season?.name ?? null} />;
+  return <Landing top={top} seasonName={season?.name ?? null} isAuthenticated={!!user} />;
 }

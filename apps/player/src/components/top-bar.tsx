@@ -14,6 +14,7 @@ import {
   Bell,
   Settings,
   LogIn,
+  Shield,
 } from 'lucide-react';
 
 const desktopNavItems = [
@@ -29,14 +30,19 @@ export function TopBar({
   playerName,
   unreadCount,
   isAuthenticated,
+  isExecOrAdmin,
+  adminUrl,
   activeSeasonName,
 }: {
   playerName: string;
   unreadCount: number;
   isAuthenticated: boolean;
+  isExecOrAdmin: boolean;
+  adminUrl?: string;
   activeSeasonName?: string;
 }) {
   const pathname = usePathname();
+  const navItems = isAuthenticated ? desktopNavItems : [];
   // Auth / onboarding screens render their own full-screen layout — no app chrome.
   if (pathname === '/login' || pathname.startsWith('/auth') || pathname === '/onboarding') {
     return null;
@@ -52,7 +58,7 @@ export function TopBar({
   return (
     <header className="topbar safe-top">
       <div className="topbar-inner">
-        <Link href="/feed" className="brand" aria-label="SFU Badminton home">
+        <Link href={isAuthenticated ? '/feed' : '/'} className="brand" aria-label="SFU Badminton home">
           <div className="brand-mark"><ShuttleMark /></div>
           <div className="brand-wrap">
             <div>SFU Badminton</div>
@@ -61,24 +67,52 @@ export function TopBar({
         </Link>
 
         <nav className="nav" aria-label="Main navigation">
-          {desktopNavItems.map((item) => {
-            const active = pathname.startsWith(item.href);
-            return (
+          {isAuthenticated ? (
+            navItems.map((item) => {
+              const active = pathname.startsWith(item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn('nav-item', active && 'active')}
+                  aria-current={active ? 'page' : undefined}
+                >
+                  {item.label}
+                </Link>
+              );
+            })
+          ) : (
+            <>
               <Link
-                key={item.href}
-                href={item.href}
-                className={cn('nav-item', active && 'active')}
-                aria-current={active ? 'page' : undefined}
+                href="/leaderboard"
+                className={cn('nav-item', pathname.startsWith('/leaderboard') && 'active')}
+                aria-current={pathname.startsWith('/leaderboard') ? 'page' : undefined}
               >
-                {item.label}
+                Leaderboard
               </Link>
-            );
-          })}
+              {/* TODO: activate → link to /exec (exec photo page) when ready; add a Contact Us page here later. */}
+              <span className="nav-item" aria-disabled="true" style={{ opacity: 0.4, cursor: 'default' }} title="Coming soon">Execs</span>
+            </>
+          )}
         </nav>
 
         <div className="top-right">
           {isAuthenticated ? (
             <>
+              {isExecOrAdmin && (
+                <a
+                  href={adminUrl || '/admin'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="icon-btn"
+                  aria-label="Exec panel"
+                  title="Exec panel"
+                  style={{ width: 'auto', padding: '0 12px', gap: 6, display: 'inline-flex', alignItems: 'center' }}
+                >
+                  <Shield className="w-4 h-4" />
+                  <span className="hidden md:inline" style={{ fontSize: 13, fontWeight: 600 }}>Exec Panel</span>
+                </a>
+              )}
               <Link
                 href="/notifications"
                 aria-label={unreadCount > 0 ? `Notifications (${unreadCount} unread)` : 'Notifications'}
