@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createServiceRoleClient } from '../supabase-server';
 import { eventFeedbackSchema, parseOrThrow, type EventFeedbackInput } from '@badminton/shared';
-import { requirePlayer } from './_shared';
+import { requirePlayer, trackServerEvent } from './_shared';
 
 // Submit (or revise) feedback on a tournament. Stored with the player's id so
 // the exec team can moderate and follow up — the UI tells members it's private
@@ -25,5 +25,10 @@ export async function submitEventFeedback(input: EventFeedbackInput) {
   );
   if (error) throw new Error(error.message);
 
+  trackServerEvent(player.id, 'tournament_feedback_submitted', {
+    tournament_id: input.tournament_id,
+    rating: input.rating ?? null,
+    has_comment: !!(input.comment && input.comment.trim().length > 0),
+  });
   revalidatePath(`/tournaments/${input.tournament_id}`);
 }

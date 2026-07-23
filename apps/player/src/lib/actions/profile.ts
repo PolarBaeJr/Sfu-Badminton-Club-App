@@ -42,6 +42,13 @@ export async function updateProfile(data: {
     .eq('id', player.id);
 
   if (error) throw new Error(error.message);
+  trackServerEvent(player.id, 'profile_updated', {
+    has_display_name: !!(data.display_name && data.display_name.trim().length > 0),
+    has_phone: !!(data.phone && data.phone.trim().length > 0),
+    has_bio: !!(data.bio && data.bio.trim().length > 0),
+    hide_from_leaderboard: data.hide_from_leaderboard ?? false,
+    show_activity_status: data.show_activity_status ?? true,
+  });
   revalidatePath('/settings');
 }
 
@@ -210,6 +217,10 @@ export async function completeOnboarding(data: {
 
   if (playerId) {
     await insertAcceptances(supabase, playerId, data.age_attestation);
+    trackServerEvent(playerId, 'onboarding_completed', {
+      has_display_name: !!(data.display_name && data.display_name.trim().length > 0),
+      has_phone: !!(data.phone && data.phone.trim().length > 0),
+    });
   }
 
   revalidatePath('/');

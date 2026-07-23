@@ -5,7 +5,7 @@ import { headers } from 'next/headers';
 import { createServiceRoleClient } from './supabase-server';
 import { revalidatePath } from 'next/cache';
 import { isDoublesEvent } from '@badminton/shared';
-import { requirePlayer, assertCurrentWaiver } from './actions/_shared';
+import { requirePlayer, assertCurrentWaiver, trackServerEvent } from './actions/_shared';
 
 // Revalidate every surface that surfaces tournament_participants /
 // tournament_pairs after a register/withdraw/check-in. The event detail
@@ -91,6 +91,12 @@ export async function registerForEvent(eventId: string, opts?: { eventWaiverAcce
     }, { onConflict: 'player_id,tournament_id,waiver_hash', ignoreDuplicates: true });
   }
 
+  trackServerEvent(player.id, 'tournament_event_registered', {
+    event_id: eventId,
+    tournament_id: event.tournament_id,
+    event_type: event.event_type,
+    event_waiver_accepted: !!eventWaiverText,
+  });
   revalidateTournamentPaths(event.tournament_id, eventId);
 }
 
@@ -112,6 +118,10 @@ export async function withdrawFromEvent(eventId: string) {
   if (error) throw new Error(error.message);
 
   const tid = (participant.event as unknown as { tournament_id: string } | null)?.tournament_id;
+  trackServerEvent(player.id, 'tournament_event_withdrawn', {
+    event_id: eventId,
+    tournament_id: tid ?? null,
+  });
   if (tid) revalidateTournamentPaths(tid, eventId);
   else revalidatePath('/tournaments');
 }
@@ -148,5 +158,9 @@ export async function selfCheckIn(eventId: string) {
     .eq('id', participant.id);
   if (error) throw new Error(error.message);
 
+  trackServerEvent(player.id, 'tournament_event_checked_in', {
+    event_id: eventId,
+    tournament_id: event.tournament_id,
+  });
   revalidateTournamentPaths(event.tournament_id, eventId);
 }

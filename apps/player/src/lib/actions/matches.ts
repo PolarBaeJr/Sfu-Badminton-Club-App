@@ -249,6 +249,11 @@ export async function disputeMatchResult(matchId: string, reason: string, catego
     }
   }
 
+  trackServerEvent(player.id, 'match_result_disputed', {
+    ...getPlayerProps(player),
+    match_id: matchId,
+    dispute_category: category,
+  });
   revalidatePath('/challenges');
 }
 
@@ -325,5 +330,10 @@ export async function reportWalkover(input: WalkoverReportInput) {
     }
   }
 
+  trackServerEvent(player.id, 'walkover_reported', {
+    ...getPlayerProps(player),
+    challenge_id: input.challenge_id,
+    walkover_type: input.walkover_type,
+  });
   revalidatePath('/challenges');
 }
