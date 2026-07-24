@@ -3,7 +3,7 @@
 // Web Crypto (crypto.subtle) and btoa/atob — no Node 'crypto' or Buffer.
 import { getCookieSecret } from './config';
 
-export type PasskeyCookiePayload = Record<string, unknown> & { exp: number };
+type PasskeyCookiePayload = Record<string, unknown> & { exp: number };
 
 function toBase64Url(bytes: Uint8Array): string {
   let bin = '';

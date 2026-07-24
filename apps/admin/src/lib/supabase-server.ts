@@ -8,7 +8,7 @@ import { verifyPayload } from './passkey/cookie';
 // NOTE: generated `Database` type is available from '@badminton/shared' but not
 // applied here — see comments in apps/player/src/lib/supabase-server.ts.
 
-export async function createServerSupabaseClient() {
+async function createServerSupabaseClient() {
   const cookieStore = await cookies();
 
   return createServerClient(

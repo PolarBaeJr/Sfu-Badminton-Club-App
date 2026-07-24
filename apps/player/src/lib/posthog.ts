@@ -31,16 +31,3 @@ type PlayerProperties = {
   doubles_elo: number;
 };
 
-export function trackEvent(
-  event: string,
-  playerProps: PlayerProperties,
-  extra?: Record<string, unknown>
-) {
-  const ph = getPostHogClient();
-  if (!ph) return;
-
-  ph.capture(event, {
-    ...playerProps,
-    ...extra,
-  });
-}

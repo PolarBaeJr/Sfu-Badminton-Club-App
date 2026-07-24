@@ -6,7 +6,7 @@
 // Anything not listed defaults to admin-only.
 export type AccessLevel = 'admin' | 'exec';
 
-export const SECTION_ACCESS: { [pathPrefix: string]: AccessLevel } = {
+const SECTION_ACCESS: { [pathPrefix: string]: AccessLevel } = {
   '/dashboard': 'exec',
   '/announcements': 'exec',
   '/matches': 'exec',
