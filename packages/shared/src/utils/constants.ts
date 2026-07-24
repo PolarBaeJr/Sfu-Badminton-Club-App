@@ -46,9 +46,15 @@ export function clampElo(rating: number): number {
 // constants must mirror the 'session_attendance' platform_settings defaults
 // seeded in that migration.
 export const CLUB_TIMEZONE = 'America/Vancouver';
-export const SESSION_DEFAULT_DURATION_MINUTES = 120;
-// null = check-in opens as soon as the session exists (only a closing edge).
-export const SESSION_CHECKIN_OPENS_MINUTES_BEFORE: number | null = null;
+// These mirror the platform_settings 'session_rules' row applied on prod
+// (default_duration_minutes / checkin_opens_minutes_before). The client uses
+// them to render the check-in window; the DB session_checkin_open() gate uses
+// the settings row. Keep them in sync — a client-only 'null' opening edge made
+// the Check In button show for every upcoming session while the server (30 min)
+// rejected it.
+export const SESSION_DEFAULT_DURATION_MINUTES = 60;
+// Check-in opens this many minutes before start (null = only a closing edge).
+export const SESSION_CHECKIN_OPENS_MINUTES_BEFORE: number | null = 30;
 
 export const PROVISIONAL_THRESHOLD = 8;
 export const MAX_RATED_PER_SESSION = 3;
