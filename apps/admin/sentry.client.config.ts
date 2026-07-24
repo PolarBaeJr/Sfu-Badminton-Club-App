@@ -6,7 +6,7 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 
 Sentry.init({
   dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
-  tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
+  tracesSampleRate: 1.0 /* beta: full sampling — lower after beta */,
   replaysSessionSampleRate: 0,
   replaysOnErrorSampleRate: 0,
   ignoreErrors: ['NEXT_NOT_FOUND'],

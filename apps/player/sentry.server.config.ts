@@ -22,10 +22,10 @@ Sentry.init({
   // dashboard's label-based auto-update as the sole deploy path (it clones the
   // old container's env, so a runtime-only var would silently drop off).
   dsn: process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN,
-  tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
+  tracesSampleRate: 1.0 /* beta: full sampling — lower after beta */,
   // Continuous profiling tied to active spans; profiles attach to the trace so
   // the flame graph shows function-level CPU time. Sampled like traces.
-  profileSessionSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
+  profileSessionSampleRate: 1.0 /* beta: full sampling — lower after beta */,
   profileLifecycle: 'trace',
   ignoreErrors: ['NEXT_NOT_FOUND'],
   integrations: [

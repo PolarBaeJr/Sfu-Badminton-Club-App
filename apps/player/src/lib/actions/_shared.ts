@@ -25,6 +25,10 @@ export async function runAction<T>(fn: () => Promise<T>): Promise<ActionResult<T
   } catch (err) {
     const digest = (err as { digest?: string } | null)?.digest;
     if (typeof digest === 'string' && NEXT_CONTROL_FLOW.test(digest)) throw err;
+    // Returning the error as a value (so it survives Next.js's prod redaction)
+    // means it never reaches Sentry's automatic server-action capture — report
+    // it here so the error is still logged, then return the user-facing message.
+    Sentry.captureException(err);
     return { ok: false, error: err instanceof Error ? err.message : 'Something went wrong' };
   }
 }
