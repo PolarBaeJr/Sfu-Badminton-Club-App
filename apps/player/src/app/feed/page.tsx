@@ -36,7 +36,7 @@ export default async function FeedPage() {
   ] = await Promise.all([
     supabase
       .from('challenge_participants')
-      .select('*, challenge:challenges(*, creator:players!challenges_created_by_fkey(full_name))')
+      .select('*, challenge:challenges(*, creator:players!challenges_created_by_fkey(id, full_name))')
       .eq('player_id', player.id)
       .eq('confirmation_status', 'pending')
       .limit(5),
@@ -49,8 +49,7 @@ export default async function FeedPage() {
         )
       `)
       .eq('player_id', player.id)
-      .order('created_at', { ascending: false, referencedTable: 'matches' })
-      .limit(5),
+      .limit(60),
     supabase
       .from('ratings')
       .select('singles_elo, player:players(id, full_name, hide_from_leaderboard)')
@@ -74,7 +73,12 @@ export default async function FeedPage() {
       const m = mp.match as unknown as MatchRow | null;
       return m;
     })
-    .filter((m): m is MatchRow => Boolean(m));
+    .filter((m): m is MatchRow => Boolean(m))
+    // match_participants has no timestamp, so ordering by the embedded match
+    // (a to-one relation) is a no-op in PostgREST. Sort by the match's
+    // played_at here (ISO strings sort chronologically) and cap to the count.
+    .sort((a, b) => (b.played_at ?? '').localeCompare(a.played_at ?? ''))
+    .slice(0, 5);
 
   const top = (topRatings || [])
     .map((row) => {

@@ -12,7 +12,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
   const [
     { data: player },
     { data: rating },
-    { data: recentMatches },
+    { data: recentMatchesRaw },
     { data: h2hStats },
   ] = await Promise.all([
     supabase.from('players').select('*').eq('id', playerId).single(),
@@ -21,8 +21,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
       .from('match_participants')
       .select('*, match:matches(score_summary, played_at, match_type, format, result_status, winner_side)')
       .eq('player_id', playerId)
-      .order('created_at', { ascending: false, referencedTable: 'matches' })
-      .limit(10),
+      .limit(60),
     supabase
       .from('head_to_head_stats')
       .select('*')
@@ -33,6 +32,16 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
 
   if (!player) notFound();
   const r = rating;
+
+  // match_participants has no timestamp; ordering by the embedded to-one match
+  // is a PostgREST no-op. Sort by the match's played_at (ISO sorts chrono) here.
+  const recentMatches = [...(recentMatchesRaw ?? [])]
+    .sort((a, b) => {
+      const pa = (a.match as { played_at?: string } | null)?.played_at ?? '';
+      const pb = (b.match as { played_at?: string } | null)?.played_at ?? '';
+      return pb.localeCompare(pa);
+    })
+    .slice(0, 10);
 
   return (
     <div data-screen-label="Player Profile" style={{ maxWidth: 720, margin: '0 auto' }}>

@@ -4,9 +4,16 @@ import * as Sentry from '@sentry/nextjs';
 import { revalidatePath } from 'next/cache';
 import { CLUB_TIMEZONE, formatTime, getCheckinWindow, isCheckinOpen } from '@badminton/shared';
 import { createServerSupabaseClient } from '../supabase-server';
-import { requirePlayer, getPlayerProps, trackServerEvent, assertCurrentWaiver } from './_shared';
+import { requirePlayer, getPlayerProps, trackServerEvent, assertCurrentWaiver, runAction, type ActionResult } from './_shared';
 
-export async function checkInToSession(sessionId: string) {
+// Wrapped so its validation messages ("Already checked in", "Check-in opens at
+// 6:00 PM", etc.) survive to the client — Next.js redacts thrown Server Action
+// errors in production.
+export async function checkInToSession(sessionId: string): Promise<ActionResult> {
+  return runAction(() => checkInToSessionImpl(sessionId));
+}
+
+async function checkInToSessionImpl(sessionId: string) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
   await assertCurrentWaiver(supabase, player);

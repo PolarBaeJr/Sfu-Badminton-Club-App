@@ -21,8 +21,7 @@ export default async function MyStatsPage() {
       .from('match_participants')
       .select('id, win_flag, rating_delta, team_side, match:matches(score_summary, played_at, match_type, format)')
       .eq('player_id', player.id)
-      .order('created_at', { ascending: false, referencedTable: 'matches' })
-      .limit(20),
+      .limit(60),
     supabase
       .from('head_to_head_stats')
       .select('id, player_a_id, player_b_id, player_a_wins, player_b_wins, total_matches, match_type, a:players!head_to_head_stats_player_a_id_fkey(id, full_name), b:players!head_to_head_stats_player_b_id_fkey(id, full_name)')
@@ -50,7 +49,16 @@ export default async function MyStatsPage() {
   ]);
 
   const reliability = reliabilityRes.data;
-  const recentMatches = recentMatchesRes.data ?? [];
+  // match_participants has no timestamp, so recency is derived from the embedded
+  // match (ISO played_at sorts chronologically) and capped to the display count.
+  const playedAtOf = (mp: { match: unknown }): string => {
+    const raw = mp.match;
+    const m = (Array.isArray(raw) ? raw[0] : raw) as { played_at?: string } | null;
+    return m?.played_at ?? '';
+  };
+  const recentMatches = [...(recentMatchesRes.data ?? [])]
+    .sort((a, b) => playedAtOf(b).localeCompare(playedAtOf(a)))
+    .slice(0, 20);
   const h2h = h2hRes.data ?? [];
   const partners = partnersRes.data ?? [];
   const walkoverEvents = walkoverEventsRes.data ?? [];

@@ -29,10 +29,12 @@ export default async function AnnouncementsPage() {
 
   const supabase = await createServerSupabaseClient();
 
+  const nowIso = new Date().toISOString();
   const { data: announcements } = await supabase
     .from('announcements')
     .select('*')
     .eq('status', 'published')
+    .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
     .order('pinned', { ascending: false })
     .order('created_at', { ascending: false })
     .returns<Announcement[]>();
@@ -44,7 +46,15 @@ export default async function AnnouncementsPage() {
     .returns<AnnouncementRead[]>();
 
   const readSet = new Set((reads ?? []).map((r) => r.announcement_id));
-  const all = announcements ?? [];
+  // RLS only checks status='published'; expiry + audience must be filtered here.
+  // Expiry is applied in the query above; audience is matched to the viewer's
+  // division / eligibility.
+  const all = (announcements ?? []).filter(
+    (a) =>
+      a.target_audience === 'all' ||
+      a.target_audience === player.status ||
+      (a.target_audience === 'eligible_only' && player.eligibility_flag)
+  );
   const pinned = all.filter((a) => a.pinned);
   const regular = all.filter((a) => !a.pinned);
 

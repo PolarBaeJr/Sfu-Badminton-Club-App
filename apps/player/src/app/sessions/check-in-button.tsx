@@ -41,7 +41,11 @@ export function CheckInButton({ sessionId, myStatus, canCheckIn, windowLabel }: 
   async function handleCheckIn() {
     setLoading(true);
     try {
-      await checkInToSession(sessionId);
+      const res = await checkInToSession(sessionId);
+      if (!res.ok) {
+        toast(res.error, 'error');
+        setLoading(false);
+      }
     } catch (err) {
       console.error(err);
       toast(err instanceof Error ? err.message : 'Failed to check in. Please try again.', 'error');
