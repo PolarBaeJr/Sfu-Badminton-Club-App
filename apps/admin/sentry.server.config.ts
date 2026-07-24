@@ -1,4 +1,19 @@
 import * as Sentry from '@sentry/nextjs';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { supabaseIntegration } from '@supabase/sentry-js-integration';
+
+// CPU profiling is a native add-on. Load defensively so a missing/incompatible
+// prebuilt binary (ARM Pi, gated install scripts) degrades to "no profiling"
+// instead of breaking Sentry init. See player app for the rationale.
+function loadProfilingIntegration() {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require('@sentry/profiling-node').nodeProfilingIntegration();
+  } catch {
+    return undefined; // native binary unavailable — span tracing still works
+  }
+}
+const profiling = loadProfilingIntegration();
 
 Sentry.init({
   // Fall back to the build-time-baked public DSN so server-side Sentry works
@@ -7,5 +22,15 @@ Sentry.init({
   // old container's env, so a runtime-only var would silently drop off).
   dsn: process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN,
   tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
+  profileSessionSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
+  profileLifecycle: 'trace',
   ignoreErrors: ['NEXT_NOT_FOUND'],
+  integrations: [
+    supabaseIntegration(SupabaseClient, Sentry, {
+      tracing: true,
+      breadcrumbs: true,
+      errors: true,
+    }),
+    ...(profiling ? [profiling] : []),
+  ],
 });
