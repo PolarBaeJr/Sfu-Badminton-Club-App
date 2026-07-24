@@ -2,12 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
-import { Select, Input, Textarea, DatePicker } from '@badminton/ui';
+import { Select, Input, Textarea, DatePicker, Button } from '@badminton/ui';
 import { MATCH_FORMAT_LABELS, previewEloChange } from '@badminton/shared';
 import { createChallenge } from '@/lib/actions';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/toast-provider';
-import { Button } from '@/components/ui/button';
 import { motion } from 'framer-motion';
 import {
   Swords,
