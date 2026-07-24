@@ -27,6 +27,13 @@ export async function resolveDispute(data: DisputeResolveInput) {
   } else if (data.resolution_type === 'converted_to_casual') {
     await convertMatchToCasual(dispute.match_id, data.resolution_note);
   } else if (data.resolution_type === 'accepted') {
+    // The match was disputed (never confirmed); apply_match_result requires
+    // pending_confirmation, so restore that state before applying the result.
+    const { error: stErr } = await adminClient
+      .from('matches')
+      .update({ result_status: 'pending_confirmation' })
+      .eq('id', dispute.match_id);
+    if (stErr) throw new Error(`Failed to restore match state: ${stErr.message}`);
     // Apply the result as-is
     const { error } = await adminClient.rpc('apply_match_result', {
       p_match_id: dispute.match_id,

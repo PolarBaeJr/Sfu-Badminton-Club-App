@@ -15,13 +15,18 @@ export async function voidMatch(matchId: string, reason: string) {
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
-  // Reverse Elo
-  const { error: reverseError } = await adminClient.rpc('reverse_match_result', { p_match_id: matchId });
-  if (reverseError) {
-    Sentry.captureException(new Error(`Elo reversal failed: ${reverseError.message}`), {
-      extra: { matchId, action: 'void_match' },
-    });
-    throw new Error(reverseError.message);
+  // Only a confirmed match has Elo applied, so reverse it only then. A disputed
+  // or pending match never applied Elo, and reverse_match_result requires a
+  // confirmed match (it would raise otherwise) — just mark it voided.
+  const { data: m } = await adminClient.from('matches').select('result_status').eq('id', matchId).single();
+  if (m?.result_status === 'confirmed') {
+    const { error: reverseError } = await adminClient.rpc('reverse_match_result', { p_match_id: matchId });
+    if (reverseError) {
+      Sentry.captureException(new Error(`Elo reversal failed: ${reverseError.message}`), {
+        extra: { matchId, action: 'void_match' },
+      });
+      throw new Error(reverseError.message);
+    }
   }
 
   const { error } = await adminClient
@@ -46,20 +51,44 @@ export async function convertMatchToCasual(matchId: string, reason: string) {
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
-  const { error: reverseError } = await adminClient.rpc('reverse_match_result', { p_match_id: matchId });
-  if (reverseError) {
-    Sentry.captureException(new Error(`Elo reversal failed: ${reverseError.message}`), {
-      extra: { matchId, action: 'convert_to_casual' },
+  const { data: m } = await adminClient.from('matches').select('result_status').eq('id', matchId).single();
+
+  if (m?.result_status === 'confirmed') {
+    // Elo was applied — reverse it (this also marks the match voided). We keep
+    // the existing "voided + casual flags" outcome for an already-confirmed
+    // match to avoid re-firing the on_match_confirmed stats trigger.
+    const { error: reverseError } = await adminClient.rpc('reverse_match_result', { p_match_id: matchId });
+    if (reverseError) {
+      Sentry.captureException(new Error(`Elo reversal failed: ${reverseError.message}`), {
+        extra: { matchId, action: 'convert_to_casual' },
+      });
+      throw new Error(reverseError.message);
+    }
+    const { error } = await adminClient
+      .from('matches')
+      .update({ rated_flag: false, event_type: 'casual', admin_note: reason })
+      .eq('id', matchId);
+    if (error) throw new Error(error.message);
+  } else {
+    // Never confirmed (disputed / pending) -> no Elo yet. Record it as a
+    // completed casual match: apply_match_result skips Elo for event_type
+    // 'casual' but still confirms the result and updates head-to-head once.
+    const { error: upErr } = await adminClient
+      .from('matches')
+      .update({ rated_flag: false, event_type: 'casual', result_status: 'pending_confirmation', admin_note: reason })
+      .eq('id', matchId);
+    if (upErr) throw new Error(upErr.message);
+    const { error: applyErr } = await adminClient.rpc('apply_match_result', {
+      p_match_id: matchId,
+      p_confirmed_by: admin.id,
     });
-    throw new Error(reverseError.message);
+    if (applyErr) {
+      Sentry.captureException(new Error(`Casual confirm failed: ${applyErr.message}`), {
+        extra: { matchId, action: 'convert_to_casual' },
+      });
+      throw new Error(applyErr.message);
+    }
   }
-
-  const { error } = await adminClient
-    .from('matches')
-    .update({ rated_flag: false, event_type: 'casual', admin_note: reason })
-    .eq('id', matchId);
-
-  if (error) throw new Error(error.message);
 
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
