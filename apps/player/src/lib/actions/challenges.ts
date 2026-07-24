@@ -98,7 +98,8 @@ async function createChallengeImpl(input: ChallengeCreateInput) {
       title: 'New Challenge',
       body: `${player.full_name} has challenged you!`,
       url: `/challenges/${challenge.id}`,
-    }
+    },
+    'challenges'
   );
 
   const { data: opponent } = await supabase.from('players').select('email').eq('id', input.opponent_id).single();
@@ -178,7 +179,8 @@ async function acceptChallengeImpl(challengeId: string) {
       title: 'Challenge Accepted',
       body: `${player.full_name} accepted your challenge!`,
       url: `/challenges/${challengeId}`,
-    }
+    },
+    'challenges'
   );
 
   const { data: creator } = await supabase.from('players').select('email').eq('id', challenge.created_by).single();

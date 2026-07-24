@@ -19,8 +19,8 @@ function getNotificationHref(type: string, metadata: Record<string, unknown> | n
   }
   if (metadata?.announcement_id) return '/announcements';
   if (type === 'rank_changed') return '/my-stats';
-  if (type === 'session_reminder' && metadata?.session_id) return `/sessions/${metadata.session_id}`;
-  if (type === 'tournament_update' && metadata?.tournament_id) return `/tournaments/${metadata.tournament_id}`;
+  if (type === 'session_reminder' || metadata?.session_id) return '/sessions';
+  if (metadata?.tournament_id) return `/tournaments/${metadata.tournament_id}`;
   return null;
 }
 

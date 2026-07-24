@@ -1,6 +1,7 @@
 import 'server-only';
 import * as Sentry from '@sentry/nextjs';
-import type { Database } from '@badminton/shared';
+import type { Database, NotificationCategory } from '@badminton/shared';
+import { isPushCategoryEnabled } from '@badminton/shared';
 import { sendPushToPlayers, type PushPayload } from '@badminton/shared/src/push/send';
 import type { createAdminClient } from './supabase-server';
 
@@ -11,6 +12,23 @@ interface NotifyInput {
   title: string;
   body?: string | null;
   metadata?: Record<string, unknown>;
+}
+
+// Drop players who turned this category's push off. In-app rows are inserted
+// for everyone regardless — only push honors per-category preferences.
+async function filterPushRecipients(
+  adminClient: ReturnType<typeof createAdminClient>,
+  playerIds: string[],
+  category: NotificationCategory,
+): Promise<string[]> {
+  const { data, error } = await adminClient
+    .from('players')
+    .select('id, notification_preferences')
+    .in('id', playerIds);
+  if (error || !data) return playerIds; // fail open — a pref lookup error shouldn't mute everyone
+  return data
+    .filter((p) => isPushCategoryEnabled(p.notification_preferences, category))
+    .map((p) => p.id);
 }
 
 // Fan an event out to players over both channels: an in-app notification row
@@ -25,6 +43,7 @@ export async function notifyPlayers(
   playerIds: string[],
   input: NotifyInput,
   push?: PushPayload,
+  pushCategory?: NotificationCategory,
 ): Promise<void> {
   if (playerIds.length === 0) return;
 
@@ -44,6 +63,12 @@ export async function notifyPlayers(
 
   if (push) {
     // Fire-and-forget: web push must never block or fail the parent action.
-    sendPushToPlayers(adminClient, playerIds, push).catch((err) => Sentry.captureException(err));
+    // When a category is given, respect each player's per-category push prefs.
+    const recipients = pushCategory
+      ? await filterPushRecipients(adminClient, playerIds, pushCategory)
+      : playerIds;
+    if (recipients.length > 0) {
+      sendPushToPlayers(adminClient, recipients, push).catch((err) => Sentry.captureException(err));
+    }
   }
 }

@@ -5,7 +5,7 @@
 import * as Sentry from '@sentry/nextjs';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { PostHog } from 'posthog-node';
-import { getMissingLegalDocuments } from '@badminton/shared';
+import { getMissingLegalDocuments, isPushCategoryEnabled, type NotificationCategory } from '@badminton/shared';
 import { sendPushToPlayers, type PushPayload } from '@badminton/shared/src/push/send';
 import { getCurrentPlayer, createServiceRoleClient } from '../supabase-server';
 
@@ -116,7 +116,8 @@ interface NotificationRow {
 // push_subscriptions RLS only lets players read their own rows.
 export async function notifyPlayers(
   notificationRows: NotificationRow[],
-  pushPayload?: PushPayload
+  pushPayload?: PushPayload,
+  pushCategory?: NotificationCategory
 ) {
   if (notificationRows.length === 0) return;
 
@@ -129,7 +130,20 @@ export async function notifyPlayers(
   }
 
   if (pushPayload) {
-    const playerIds = notificationRows.map((r) => r.player_id);
+    let playerIds = notificationRows.map((r) => r.player_id);
+    // In-app rows above always land; push honors per-category preferences.
+    if (pushCategory) {
+      const { data } = await serviceClient
+        .from('players')
+        .select('id, notification_preferences')
+        .in('id', playerIds);
+      if (data) {
+        playerIds = data
+          .filter((p) => isPushCategoryEnabled(p.notification_preferences, pushCategory))
+          .map((p) => p.id);
+      }
+    }
+    if (playerIds.length === 0) return;
     sendPushToPlayers(serviceClient, playerIds, pushPayload).catch((err) => {
       Sentry.captureException(err, { extra: { push: notificationRows[0]?.type, playerIds } });
     });

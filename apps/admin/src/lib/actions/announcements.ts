@@ -49,6 +49,7 @@ async function dispatchAnnouncementNotifications(
       metadata: { announcement_id: announcement.id, kind: 'announcement' },
     },
     announcement.send_push ? { title: announcement.title, body: preview, url: '/announcements' } : undefined,
+    'announcements',
   );
 }
 

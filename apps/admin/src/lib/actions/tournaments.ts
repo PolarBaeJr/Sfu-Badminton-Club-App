@@ -2,6 +2,7 @@
 
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
+import { notifyPlayers } from '../notify';
 import { revalidatePath } from 'next/cache';
 import { parseOrThrow, tournamentCreateSchema, tournamentSuspendSchema } from '@badminton/shared';
 import { getExecOrAdmin } from './_shared';
@@ -58,7 +59,7 @@ export async function updateTournamentStatus(tournamentId: string, status: strin
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
-  const { data: old } = await adminClient.from('tournaments').select('status').eq('id', tournamentId).single();
+  const { data: old } = await adminClient.from('tournaments').select('status, name').eq('id', tournamentId).single();
 
   // An explicit status change also lifts any suspension, so completing a
   // suspended tournament doesn't leave it flagged as paused.
@@ -75,6 +76,29 @@ export async function updateTournamentStatus(tournamentId: string, status: strin
     old_value: { status: old?.status },
     new_value: { status },
   }, { tournamentId });
+
+  // Registration opens when a tournament goes draft→active: tell every
+  // eligible member so they can sign up. Rare + important, so push too.
+  if (status === 'active' && old?.status !== 'active') {
+    const { data: players } = await adminClient
+      .from('players')
+      .select('id')
+      .in('status', ['competitive', 'recreational']);
+    const playerIds = (players ?? []).map((p) => p.id).filter((id) => id !== admin.id);
+    const name = old?.name ?? 'A tournament';
+    await notifyPlayers(
+      adminClient,
+      playerIds,
+      {
+        type: 'general',
+        title: 'Tournament registration open',
+        body: `${name} is open for sign-ups.`,
+        metadata: { tournament_id: tournamentId, kind: 'tournament_registration' },
+      },
+      { title: 'Tournament registration open', body: `${name} is open for sign-ups.`, url: `/tournaments/${tournamentId}` },
+      'tournaments',
+    );
+  }
 
   revalidatePath('/tournaments');
   revalidatePath(`/tournaments/${tournamentId}`);

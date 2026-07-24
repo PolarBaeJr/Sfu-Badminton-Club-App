@@ -173,7 +173,8 @@ async function submitMatchResultImpl(challengeId: string, input: MatchResultInpu
         title: 'Confirm Match Result',
         body: `${player.full_name} submitted a result. Please confirm.`,
         url: `/challenges/${challengeId}`,
-      }
+      },
+      'matches'
     );
 
     const { data: emails } = await supabase
@@ -337,7 +338,8 @@ async function reportWalkoverImpl(input: WalkoverReportInput) {
       title: 'Walkover Reported',
       body: `${player.full_name} reported a ${input.walkover_type === 'withdrawal' ? 'withdrawal' : 'no-show'} for your challenge.`,
       url: `/challenges/${input.challenge_id}`,
-    }
+    },
+    'matches'
   );
 
   const [adminsRes, forfeitRes] = await Promise.all([
