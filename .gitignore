@@ -51,3 +51,6 @@ packages/ui/.ds-styles.css
 # staging-era deploy artifacts (removed from repo)
 deploy-staging.sh
 deploy/
+
+# Local scripts (deploy/maintenance) — keep out of new commits
+scripts/
