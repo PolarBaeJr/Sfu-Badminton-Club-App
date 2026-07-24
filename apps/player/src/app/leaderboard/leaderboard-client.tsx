@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { getPostHogClient } from '@/lib/posthog';
+import { createClient } from '@/lib/supabase-browser';
 import { Search, Crosshair, Trophy } from 'lucide-react';
 import { AvatarChip, PageHeader } from '@badminton/ui';
 import { getWinRate, getWinRateNumeric } from '@badminton/shared';
@@ -79,6 +80,25 @@ export default function LeaderboardClient({
     const ph = getPostHogClient();
     if (ph) ph.capture('leaderboard_viewed');
   }, []);
+
+  // Live-refresh: when any rating changes (a match confirms), re-run the server
+  // component to pull fresh standings. Debounced so a burst of updates triggers
+  // one refresh. Data still comes from the server (RSC) — this only nudges it.
+  useEffect(() => {
+    const supabase = createClient();
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const channel = supabase
+      .channel('leaderboard-ratings')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ratings' }, () => {
+        clearTimeout(t);
+        t = setTimeout(() => router.refresh(), 2500);
+      })
+      .subscribe();
+    return () => {
+      clearTimeout(t);
+      supabase.removeChannel(channel);
+    };
+  }, [router]);
 
   const isDoubles = activeTab.includes('doubles');
   const isTpts = activeTab === 'tournament_points';
