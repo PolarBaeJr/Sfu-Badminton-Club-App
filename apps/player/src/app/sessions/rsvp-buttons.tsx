@@ -8,7 +8,7 @@ interface RsvpButtonsProps {
   myIntent: 'going' | 'declined' | null;
 }
 
-const base = 'press rounded-full px-4 py-2 text-sm font-semibold min-h-[44px] disabled:opacity-60 disabled:cursor-not-allowed';
+const base = 'press rounded-xl px-4 py-2 text-sm font-semibold min-h-[44px] whitespace-nowrap disabled:opacity-60 disabled:cursor-not-allowed';
 const goingActive = 'btn-primary-cta text-white';
 const declinedActive = 'bg-[var(--bg-card)] border border-[var(--line)] text-[var(--text-muted)]';
 const inactive = 'bg-transparent border border-[var(--line)] text-[var(--text-muted)] opacity-70';
@@ -37,8 +37,25 @@ export function RsvpButtons({ sessionId, myIntent }: RsvpButtonsProps) {
     }
   }
 
+  // Declined ("Not going") — surface only the option to switch to Going; no
+  // check-in and no other actions.
+  if (myIntent === 'declined') {
+    return (
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span className="chip">Not going</span>
+        <button
+          onClick={() => choose('going')}
+          disabled={loading}
+          className={`${base} ${inactive}`}
+        >
+          Going
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div style={{ display: 'flex', gap: 8 }}>
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
       <button
         onClick={() => choose('going')}
         disabled={loading}
@@ -49,7 +66,7 @@ export function RsvpButtons({ sessionId, myIntent }: RsvpButtonsProps) {
       <button
         onClick={() => choose('declined')}
         disabled={loading}
-        className={`${base} ${myIntent === 'declined' ? declinedActive : inactive}`}
+        className={`${base} ${inactive}`}
       >
         Can&apos;t make it
       </button>

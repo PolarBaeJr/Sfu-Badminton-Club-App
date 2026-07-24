@@ -188,7 +188,7 @@ export default async function SessionsPage() {
                         )}
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-                        <CheckInButton sessionId={session.id} myStatus={myStatus} canCheckIn={canCheckIn} windowLabel={windowLabel} />
+                        <CheckInButton sessionId={session.id} myStatus={myStatus} canCheckIn={canCheckIn} windowLabel={windowLabel} myIntent={myIntentBySession.get(session.id) ?? null} />
                         <RsvpButtons sessionId={session.id} myIntent={myIntentBySession.get(session.id) ?? null} />
                         <AddToCalendarButton
                           name={session.name ?? 'Practice Session'}

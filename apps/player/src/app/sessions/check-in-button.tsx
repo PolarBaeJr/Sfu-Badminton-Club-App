@@ -9,9 +9,10 @@ interface CheckInButtonProps {
   myStatus: 'checked_in' | 'present' | 'no_show' | 'excused' | null;
   canCheckIn: boolean;
   windowLabel?: string;
+  myIntent?: 'going' | 'declined' | null;
 }
 
-export function CheckInButton({ sessionId, myStatus, canCheckIn, windowLabel }: CheckInButtonProps) {
+export function CheckInButton({ sessionId, myStatus, canCheckIn, windowLabel, myIntent }: CheckInButtonProps) {
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
@@ -30,6 +31,12 @@ export function CheckInButton({ sessionId, myStatus, canCheckIn, windowLabel }: 
 
   if (myStatus === 'excused') {
     return <span className="chip">Excused</span>;
+  }
+
+  // Declined ("Not going") — don't offer check-in; the RSVP row keeps a way to
+  // switch to Going.
+  if (myIntent === 'declined') {
+    return null;
   }
 
   // Check-in not open (and no attendance status to show) — render nothing
@@ -57,7 +64,7 @@ export function CheckInButton({ sessionId, myStatus, canCheckIn, windowLabel }: 
     <button
       onClick={handleCheckIn}
       disabled={loading || !canCheckIn}
-      className="press btn-primary-cta text-white rounded-full px-4 py-2 text-sm font-semibold min-h-[44px] disabled:opacity-60 disabled:cursor-not-allowed"
+      className="press btn-primary-cta text-white rounded-xl px-4 py-2 text-sm font-semibold min-h-[44px] whitespace-nowrap disabled:opacity-60 disabled:cursor-not-allowed"
     >
       {!canCheckIn ? (windowLabel ?? 'Check-in closed') : loading ? 'Checking in...' : 'Check In'}
     </button>

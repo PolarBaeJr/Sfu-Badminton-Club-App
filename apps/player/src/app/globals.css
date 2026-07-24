@@ -763,7 +763,9 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
 @media (max-width: 980px) {
   .session-meta { gap: 12px; }
   .session-grid { grid-template-columns: 1fr !important; gap: 14px !important; }
-  .session-grid > div:last-child { flex-direction: row !important; align-items: stretch !important; }
+  /* Buttons flow in a wrapping row (content-sized, not stretched) so they stay
+     as pills instead of getting crushed into circles with wrapped labels. */
+  .session-grid > div:last-child { flex-direction: row !important; flex-wrap: wrap; align-items: center !important; }
 }
 
 /* ═══════════════════════════════════════════════════════════
