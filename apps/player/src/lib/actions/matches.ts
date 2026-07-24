@@ -17,9 +17,13 @@ import {
   type MatchResultInput,
   type WalkoverReportInput,
 } from '@badminton/shared';
-import { requirePlayer, getPlayerProps, trackServerEvent, notifyPlayers } from './_shared';
+import { requirePlayer, getPlayerProps, trackServerEvent, notifyPlayers, runAction, type ActionResult } from './_shared';
 
-export async function submitMatchResult(challengeId: string, input: MatchResultInput) {
+export async function submitMatchResult(challengeId: string, input: MatchResultInput): Promise<ActionResult<string>> {
+  return runAction(() => submitMatchResultImpl(challengeId, input));
+}
+
+async function submitMatchResultImpl(challengeId: string, input: MatchResultInput) {
   const parsed = matchResultSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? 'Invalid match result');
 
@@ -187,7 +191,11 @@ export async function submitMatchResult(challengeId: string, input: MatchResultI
   return match.id;
 }
 
-export async function confirmMatchResult(matchId: string) {
+export async function confirmMatchResult(matchId: string): Promise<ActionResult> {
+  return runAction(() => confirmMatchResultImpl(matchId));
+}
+
+async function confirmMatchResultImpl(matchId: string) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 
@@ -215,7 +223,11 @@ export async function confirmMatchResult(matchId: string) {
   revalidatePath('/my-stats');
 }
 
-export async function disputeMatchResult(matchId: string, reason: string, category: string) {
+export async function disputeMatchResult(matchId: string, reason: string, category: string): Promise<ActionResult> {
+  return runAction(() => disputeMatchResultImpl(matchId, reason, category));
+}
+
+async function disputeMatchResultImpl(matchId: string, reason: string, category: string) {
   parseOrThrow(disputeSchema, { match_id: matchId, reason_category: category, description: reason });
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
@@ -252,7 +264,11 @@ export async function disputeMatchResult(matchId: string, reason: string, catego
   revalidatePath('/challenges');
 }
 
-export async function reportWalkover(input: WalkoverReportInput) {
+export async function reportWalkover(input: WalkoverReportInput): Promise<ActionResult> {
+  return runAction(() => reportWalkoverImpl(input));
+}
+
+async function reportWalkoverImpl(input: WalkoverReportInput) {
   parseOrThrow(walkoverReportSchema, input);
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();

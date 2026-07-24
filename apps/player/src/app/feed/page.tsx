@@ -45,7 +45,7 @@ export default async function FeedPage() {
       .select(`
         match:matches(
           id, score_summary, played_at, match_type, format, result_status,
-          participants:match_participants(team_side, win_flag, player:players(id, full_name))
+          match_participants(team_side, win_flag, player:players(id, full_name))
         )
       `)
       .eq('player_id', player.id)
@@ -402,23 +402,6 @@ export default async function FeedPage() {
             <Link href="/leaderboard" className="btn btn-ghost" style={{ width: '100%', justifyContent: 'center' }}>
               View full leaderboard <ChevronRight size={12} />
             </Link>
-          </div>
-
-          <div className="card-base">
-            <div className="card-head">
-              <h3 className="card-title">Quick actions</h3>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <Link href="/challenges/new" className="btn btn-dark" style={{ width: '100%', justifyContent: 'center' }}>
-                <Crosshair size={14} /> Issue a challenge
-              </Link>
-              <Link href="/sessions" className="btn btn-ghost" style={{ width: '100%', justifyContent: 'center' }}>
-                Browse sessions
-              </Link>
-              <Link href="/tournaments" className="btn btn-ghost" style={{ width: '100%', justifyContent: 'center' }}>
-                Tournament bracket
-              </Link>
-            </div>
           </div>
         </div>
       </div>

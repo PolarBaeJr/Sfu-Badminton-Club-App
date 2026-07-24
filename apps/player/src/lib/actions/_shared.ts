@@ -9,6 +9,26 @@ import { getMissingLegalDocuments } from '@badminton/shared';
 import { sendPushToPlayers, type PushPayload } from '@badminton/shared/src/push/send';
 import { getCurrentPlayer, createServiceRoleClient } from '../supabase-server';
 
+export type ActionResult<T = void> =
+  | { ok: true; data: T }
+  | { ok: false; error: string };
+
+// Next.js control-flow errors (redirect/notFound) throw and MUST propagate.
+const NEXT_CONTROL_FLOW = /^NEXT_(REDIRECT|NOT_FOUND|HTTP_ERROR_FALLBACK)/;
+
+// Wrap a server-action body so thrown errors become a serializable
+// { ok:false, error } value the client can display. Without this, Next.js
+// redacts thrown Server Action messages in production to a generic digest.
+export async function runAction<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
+  try {
+    return { ok: true, data: await fn() };
+  } catch (err) {
+    const digest = (err as { digest?: string } | null)?.digest;
+    if (typeof digest === 'string' && NEXT_CONTROL_FLOW.test(digest)) throw err;
+    return { ok: false, error: err instanceof Error ? err.message : 'Something went wrong' };
+  }
+}
+
 let posthogServer: PostHog | null = null;
 function getPostHog(): PostHog | null {
   if (!process.env.NEXT_PUBLIC_POSTHOG_KEY) return null;

@@ -12,9 +12,13 @@ import {
   parseOrThrow,
   type ChallengeCreateInput,
 } from '@badminton/shared';
-import { requirePlayer, getPlayerProps, trackServerEvent, notifyPlayers, assertCurrentWaiver } from './_shared';
+import { requirePlayer, getPlayerProps, trackServerEvent, notifyPlayers, assertCurrentWaiver, runAction, type ActionResult } from './_shared';
 
-export async function createChallenge(input: ChallengeCreateInput) {
+export async function createChallenge(input: ChallengeCreateInput): Promise<ActionResult<string>> {
+  return runAction(() => createChallengeImpl(input));
+}
+
+async function createChallengeImpl(input: ChallengeCreateInput) {
   parseOrThrow(challengeCreateSchema, input);
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
@@ -73,7 +77,13 @@ export async function createChallenge(input: ChallengeCreateInput) {
     }
   }
 
-  const { error: partError } = await supabase.from('challenge_participants').insert(participants);
+  // Service-role for the participant insert: the batch includes rows for the
+  // opponent (and partners), whose player_id != the creator's. cp_insert RLS
+  // only permits self-rows (or admin), so Postgres' per-row WITH CHECK rejects
+  // the whole statement for a non-admin creator. Rows are server-constructed
+  // and already gated by validate_challenge_creation above, so this is safe.
+  const participantsClient = createServiceRoleClient();
+  const { error: partError } = await participantsClient.from('challenge_participants').insert(participants);
   if (partError) throw new Error(partError.message);
 
   await notifyPlayers(
@@ -114,7 +124,11 @@ export async function createChallenge(input: ChallengeCreateInput) {
   return challenge.id;
 }
 
-export async function acceptChallenge(challengeId: string) {
+export async function acceptChallenge(challengeId: string): Promise<ActionResult> {
+  return runAction(() => acceptChallengeImpl(challengeId));
+}
+
+async function acceptChallengeImpl(challengeId: string) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
   await assertCurrentWaiver(supabase, player);
@@ -178,7 +192,11 @@ export async function acceptChallenge(challengeId: string) {
   revalidatePath('/challenges');
 }
 
-export async function rejectChallenge(challengeId: string) {
+export async function rejectChallenge(challengeId: string): Promise<ActionResult> {
+  return runAction(() => rejectChallengeImpl(challengeId));
+}
+
+async function rejectChallengeImpl(challengeId: string) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 
@@ -228,7 +246,11 @@ export async function rejectChallenge(challengeId: string) {
   revalidatePath('/challenges');
 }
 
-export async function cancelChallenge(challengeId: string) {
+export async function cancelChallenge(challengeId: string): Promise<ActionResult> {
+  return runAction(() => cancelChallengeImpl(challengeId));
+}
+
+async function cancelChallengeImpl(challengeId: string) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 

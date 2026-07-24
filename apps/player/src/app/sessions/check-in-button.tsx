@@ -32,6 +32,12 @@ export function CheckInButton({ sessionId, myStatus, canCheckIn, windowLabel }: 
     return <span className="chip">Excused</span>;
   }
 
+  // Check-in not open (and no attendance status to show) — render nothing
+  // rather than a dead, disabled "Check-in closed" button.
+  if (!canCheckIn) {
+    return null;
+  }
+
   async function handleCheckIn() {
     setLoading(true);
     try {

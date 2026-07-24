@@ -97,7 +97,7 @@ export default function NewChallengePage() {
     if (!opponentId) { toast('Select an opponent', 'error'); return; }
     setLoading(true);
     try {
-      await createChallenge({
+      const res = await createChallenge({
         type,
         rated_flag: rated,
         event_type: rated ? 'rated_challenge' : 'casual',
@@ -109,6 +109,7 @@ export default function NewChallengePage() {
         scheduled_date: scheduledDate || undefined,
         scheduled_time: scheduledTime || undefined,
       });
+      if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
       toast('Challenge sent!', 'success');
       router.push('/challenges');
     } catch (err) {

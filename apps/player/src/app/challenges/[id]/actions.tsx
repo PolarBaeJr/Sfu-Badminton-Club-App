@@ -65,18 +65,22 @@ export function ChallengeDetailActions({
     setLoading(action);
     try {
       if (action === 'accept') {
-        await acceptChallenge(challengeId);
+        const res = await acceptChallenge(challengeId);
+        if (!res.ok) { toast(res.error, 'error'); setLoading(''); return; }
         toast('Challenge accepted!', 'success');
       } else if (action === 'reject') {
-        await rejectChallenge(challengeId);
+        const res = await rejectChallenge(challengeId);
+        if (!res.ok) { toast(res.error, 'error'); setLoading(''); return; }
         toast('Challenge rejected', 'info');
       } else if (action === 'confirm') {
         if (!matchId) return;
-        await confirmMatchResult(matchId);
+        const res = await confirmMatchResult(matchId);
+        if (!res.ok) { toast(res.error, 'error'); setLoading(''); return; }
         toast('Result confirmed! Elo updated.', 'success');
       } else if (action === 'cancel') {
         if (!(await confirm({ title: 'Cancel challenge?', message: 'Cancel this challenge? The opponent will be notified.', confirmLabel: 'Cancel challenge', danger: true }))) { setLoading(''); return; }
-        await cancelChallenge(challengeId);
+        const res = await cancelChallenge(challengeId);
+        if (!res.ok) { toast(res.error, 'error'); setLoading(''); return; }
         toast('Challenge cancelled', 'info');
       }
       router.refresh();
@@ -90,11 +94,12 @@ export function ChallengeDetailActions({
     setLoading('submit');
     try {
       const validGames = isBO3 ? games.filter((g, i) => i < 2 || (g.side_a_score > 0 || g.side_b_score > 0)) : games;
-      await submitMatchResult(challengeId, {
+      const res = await submitMatchResult(challengeId, {
         winner_side: winnerSide,
         games: validGames,
         completed: true,
       });
+      if (!res.ok) { toast(res.error, 'error'); setLoading(''); return; }
       toast('Result submitted! Waiting for confirmation.', 'success');
       setShowSubmit(false);
       router.refresh();
@@ -109,7 +114,8 @@ export function ChallengeDetailActions({
     if (!matchId) return;
     setLoading('dispute');
     try {
-      await disputeMatchResult(matchId, disputeReason, disputeCategory);
+      const res = await disputeMatchResult(matchId, disputeReason, disputeCategory);
+      if (!res.ok) { toast(res.error, 'error'); setLoading(''); return; }
       toast('Dispute opened', 'info');
       setShowDispute(false);
       router.refresh();
@@ -137,11 +143,12 @@ export function ChallengeDetailActions({
         setLoading('');
         return;
       }
-      await reportWalkover({
+      const res = await reportWalkover({
         challenge_id: challengeId,
         forfeit_player_id: forfeitPlayerId,
         walkover_type: type,
       });
+      if (!res.ok) { toast(res.error, 'error'); setLoading(''); return; }
       toast('Walkover reported. Admin will review.', 'info');
       setShowWalkover(false);
       router.refresh();
