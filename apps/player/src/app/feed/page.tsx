@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation';
 import { Plus, ChevronRight, Crosshair, Filter } from 'lucide-react';
 import { PageHeader, AvatarChip } from '@badminton/ui';
 
-type Person = { id: string; full_name: string | null };
+type Person = { id: string; full_name: string | null; avatar_url?: string | null };
 type ParticipantRow = {
   team_side: 'a' | 'b';
   win_flag: boolean | null;
@@ -36,7 +36,7 @@ export default async function FeedPage() {
   ] = await Promise.all([
     supabase
       .from('challenge_participants')
-      .select('*, challenge:challenges(*, creator:players!challenges_created_by_fkey(id, full_name))')
+      .select('*, challenge:challenges(*, creator:players!challenges_created_by_fkey(id, full_name, avatar_url))')
       .eq('player_id', player.id)
       .eq('confirmation_status', 'pending')
       .limit(5),
@@ -45,14 +45,14 @@ export default async function FeedPage() {
       .select(`
         match:matches(
           id, score_summary, played_at, match_type, format, result_status,
-          match_participants(team_side, win_flag, player:players(id, full_name))
+          match_participants(team_side, win_flag, player:players(id, full_name, avatar_url))
         )
       `)
       .eq('player_id', player.id)
       .limit(60),
     supabase
       .from('ratings')
-      .select('singles_elo, player:players(id, full_name, hide_from_leaderboard)')
+      .select('singles_elo, player:players(id, full_name, hide_from_leaderboard, avatar_url)')
       .order('singles_elo', { ascending: false })
       .limit(20),
   ]);
@@ -244,7 +244,7 @@ export default async function FeedPage() {
                       href={`/challenges/${c.id}`}
                       className="list-row press"
                     >
-                      <AvatarChip name={creatorName} id={(creator?.id as string) ?? creatorName} size="sm" />
+                      <AvatarChip name={creatorName} id={(creator?.id as string) ?? creatorName} src={creator?.avatar_url as string | null | undefined} size="sm" />
                       <div style={{ flex: 1 }}>
                         <div className="row-title">{creatorName} challenged you</div>
                         <div className="row-sub">
@@ -324,7 +324,7 @@ export default async function FeedPage() {
                   </div>
                   <div className="feed-match">
                     <div className="side">
-                      <AvatarChip name={player.full_name} id={player.id} size="md" />
+                      <AvatarChip name={player.full_name} id={player.id} src={player.avatar_url} size="md" />
                       <div>
                         <div style={{ fontWeight: 600, fontSize: 15 }}>You</div>
                         {partnerPerson && (
@@ -351,7 +351,7 @@ export default async function FeedPage() {
                       )}
                     </div>
                     <div className="side right">
-                      <AvatarChip name={opponent?.full_name ?? '?'} id={opponent?.id ?? ''} size="md" />
+                      <AvatarChip name={opponent?.full_name ?? '?'} id={opponent?.id ?? ''} src={opponent?.avatar_url} size="md" />
                       <div>
                         <div style={{ fontWeight: 600, fontSize: 15 }}>
                           {opponent?.full_name ?? 'Opponent'}
@@ -393,7 +393,7 @@ export default async function FeedPage() {
                     >
                       #{i + 1}
                     </div>
-                    <AvatarChip name={row.person.full_name ?? '?'} id={row.person.id} size="sm" />
+                    <AvatarChip name={row.person.full_name ?? '?'} id={row.person.id} src={row.person.avatar_url} size="sm" />
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 600, fontSize: 13 }}>{row.person.full_name}</div>
                     </div>

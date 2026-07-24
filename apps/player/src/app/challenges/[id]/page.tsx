@@ -16,7 +16,7 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
 
   const { data: challenge } = await supabase
     .from('challenges')
-    .select('*, creator:players!challenges_created_by_fkey(full_name), challenge_participants(*, player:players(id, full_name, ratings(*)))')
+    .select('*, creator:players!challenges_created_by_fkey(full_name), challenge_participants(*, player:players(id, full_name, avatar_url, ratings(*)))')
     .eq('id', id)
     .single();
 
@@ -34,7 +34,7 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
     team_side: string;
     confirmation_status: string;
     role: string;
-    player: { id: string; full_name: string; ratings?: unknown } | { id: string; full_name: string; ratings?: unknown }[] | null;
+    player: { id: string; full_name: string; avatar_url?: string | null; ratings?: unknown } | { id: string; full_name: string; avatar_url?: string | null; ratings?: unknown }[] | null;
   };
 
   const participants = (challenge.challenge_participants ?? []) as Participant[];
@@ -154,7 +154,7 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
                       const p = pickOne(cp.player);
                       return (
                         <div key={cp.id} className="row" style={{ gap: 10 }}>
-                          <AvatarChip name={p?.full_name ?? '?'} id={p?.id ?? cp.id} size="sm" />
+                          <AvatarChip name={p?.full_name ?? '?'} id={p?.id ?? cp.id} src={p?.avatar_url} size="sm" />
                           <span style={{ flex: 1, fontSize: 13, fontWeight: 500, minWidth: 0 }} className="truncate">
                             {p?.full_name ?? 'Unknown'}
                           </span>

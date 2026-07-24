@@ -24,13 +24,13 @@ export default async function MyStatsPage() {
       .limit(60),
     supabase
       .from('head_to_head_stats')
-      .select('id, player_a_id, player_b_id, player_a_wins, player_b_wins, total_matches, match_type, a:players!head_to_head_stats_player_a_id_fkey(id, full_name), b:players!head_to_head_stats_player_b_id_fkey(id, full_name)')
+      .select('id, player_a_id, player_b_id, player_a_wins, player_b_wins, total_matches, match_type, a:players!head_to_head_stats_player_a_id_fkey(id, full_name, avatar_url), b:players!head_to_head_stats_player_b_id_fkey(id, full_name, avatar_url)')
       .or(`player_a_id.eq.${player.id},player_b_id.eq.${player.id}`)
       .order('total_matches', { ascending: false })
       .limit(10),
     supabase
       .from('partnership_stats')
-      .select('id, wins, losses, win_rate, total_matches, partner:players!partnership_stats_partner_id_fkey(id, full_name)')
+      .select('id, wins, losses, win_rate, total_matches, partner:players!partnership_stats_partner_id_fkey(id, full_name, avatar_url)')
       .eq('player_id', player.id)
       .gte('total_matches', 3)
       .order('win_rate', { ascending: false })
@@ -295,13 +295,13 @@ export default async function MyStatsPage() {
                 {h2h.map((h) => {
                   const isA = h.player_a_id === player.id;
                   const opponentRaw = isA ? h.b : h.a;
-                  const opponent = (Array.isArray(opponentRaw) ? opponentRaw[0] : opponentRaw) as { id: string; full_name: string } | null;
+                  const opponent = (Array.isArray(opponentRaw) ? opponentRaw[0] : opponentRaw) as { id: string; full_name: string; avatar_url?: string | null } | null;
                   if (!opponent) return null;
                   const wins = isA ? h.player_a_wins : h.player_b_wins;
                   const losses = isA ? h.player_b_wins : h.player_a_wins;
                   return (
                     <div key={h.id} className="list-row">
-                      <AvatarChip name={opponent.full_name} id={opponent.id} size="sm" />
+                      <AvatarChip name={opponent.full_name} id={opponent.id} src={opponent.avatar_url} size="sm" />
                       <div style={{ flex: 1 }}>
                         <div className="row-title">{opponent.full_name}</div>
                         <div className="row-sub">{(h.match_type as string)?.toUpperCase()}</div>
@@ -352,11 +352,11 @@ export default async function MyStatsPage() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {partners.map((p) => {
                   const partnerRaw = p.partner as unknown;
-                  const partner = (Array.isArray(partnerRaw) ? partnerRaw[0] : partnerRaw) as { id: string; full_name: string } | null;
+                  const partner = (Array.isArray(partnerRaw) ? partnerRaw[0] : partnerRaw) as { id: string; full_name: string; avatar_url?: string | null } | null;
                   if (!partner) return null;
                   return (
                     <div key={p.id} className="list-row">
-                      <AvatarChip name={partner.full_name} id={partner.id} size="sm" />
+                      <AvatarChip name={partner.full_name} id={partner.id} src={partner.avatar_url} size="sm" />
                       <div style={{ flex: 1 }}>
                         <div className="row-title">{partner.full_name}</div>
                         <div className="row-sub">

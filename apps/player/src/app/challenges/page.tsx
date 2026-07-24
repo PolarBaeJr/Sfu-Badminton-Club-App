@@ -19,7 +19,7 @@ export default async function ChallengesPage() {
 
   const { data: myChallenges } = await supabase
     .from('challenge_participants')
-    .select('id, confirmation_status, challenge:challenges(id, created_by, type, format, rated_flag, status, created_at, creator:players!challenges_created_by_fkey(id, full_name), challenge_participants(id, player_id, role, team_side, player:players(id, full_name)))')
+    .select('id, confirmation_status, challenge:challenges(id, created_by, type, format, rated_flag, status, created_at, creator:players!challenges_created_by_fkey(id, full_name, avatar_url), challenge_participants(id, player_id, role, team_side, player:players(id, full_name)))')
     .eq('player_id', player.id)
     .order('created_at', { ascending: false, referencedTable: 'challenges' })
     .limit(20);
@@ -33,7 +33,7 @@ export default async function ChallengesPage() {
     rated_flag: boolean;
     status: string;
     created_at: string;
-    creator: { id: string; full_name: string } | { id: string; full_name: string }[] | null;
+    creator: { id: string; full_name: string; avatar_url?: string | null } | { id: string; full_name: string; avatar_url?: string | null }[] | null;
     challenge_participants: { id: string; player_id: string; role: string; team_side: string; player: { id: string; full_name: string } | { id: string; full_name: string }[] | null }[];
   };
 
@@ -83,7 +83,7 @@ export default async function ChallengesPage() {
 
         <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <div className="row" style={{ gap: 10, flex: 1, minWidth: 200 }}>
-            <AvatarChip name={creator?.full_name ?? '?'} id={creator?.id} size="md" />
+            <AvatarChip name={creator?.full_name ?? '?'} id={creator?.id} src={creator?.avatar_url} size="md" />
             <div>
               <div style={{ fontWeight: 600, fontSize: 14 }}>
                 {isMine ? 'You' : creator?.full_name ?? 'Unknown'} {isMine ? 'challenged' : 'challenged you'}

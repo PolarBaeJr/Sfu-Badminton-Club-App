@@ -25,6 +25,7 @@ type Ratings = {
 type LeaderboardEntry = {
   id: string;
   full_name: string;
+  avatar_url?: string | null;
   status: string;
   ratings: Ratings | null;
   hide_from_leaderboard?: boolean;
@@ -35,6 +36,7 @@ type LeaderboardEntry = {
 type LeaderboardRow = Ratings & {
   id: string;
   name: string;
+  avatar_url: string | null;
   status: string;
   tournament_points: number;
 };
@@ -106,6 +108,7 @@ export default function LeaderboardPage() {
       const entries: LeaderboardEntry[] = ((data ?? []) as LeaderboardRow[]).map((row) => ({
         id: row.id,
         full_name: row.name,
+        avatar_url: row.avatar_url,
         status: row.status,
         ratings: {
           singles_elo: row.singles_elo,
@@ -275,7 +278,7 @@ export default function LeaderboardPage() {
                         </span>
                       </div>
                     </div>
-                    <AvatarChip name={p.full_name} id={p.id} size="md" ring={i === 0} />
+                    <AvatarChip name={p.full_name} id={p.id} src={p.avatar_url} size="md" ring={i === 0} />
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                       <div style={{ fontWeight: 600, fontSize: 15 }}>{p.full_name}</div>
                       <div className="mono muted" style={{ fontSize: 11 }}>
@@ -434,7 +437,7 @@ export default function LeaderboardPage() {
                           </td>
                           <td>
                             <div className="row" style={{ gap: 12 }}>
-                              <AvatarChip name={p.full_name} id={p.id} size="sm" ring={isMeRow} />
+                              <AvatarChip name={p.full_name} id={p.id} src={p.avatar_url} size="sm" ring={isMeRow} />
                               <div>
                                 <div style={{ fontWeight: 600, fontSize: 14 }}>{p.full_name}</div>
                                 {prov && (
