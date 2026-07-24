@@ -13,9 +13,20 @@ import {
   type WaiverDocument,
 } from '@badminton/shared';
 import { createServerSupabaseClient, createServiceRoleClient, getCurrentPlayer } from '../supabase-server';
-import { requirePlayer, trackServerEvent } from './_shared';
+import { requirePlayer, trackServerEvent, runAction, type ActionResult } from './_shared';
 
 export async function updateProfile(data: {
+  full_name: string;
+  display_name?: string;
+  phone?: string;
+  bio?: string;
+  hide_from_leaderboard?: boolean;
+  show_activity_status?: boolean;
+}): Promise<ActionResult> {
+  return runAction(() => updateProfileImpl(data));
+}
+
+async function updateProfileImpl(data: {
   full_name: string;
   display_name?: string;
   phone?: string;
@@ -52,6 +63,12 @@ export async function updateProfile(data: {
 // The current legal document texts, for the onboarding waiver step and the
 // waiver-gate overlay. Public to any authenticated user (RLS: read-only).
 export async function getLegalDocuments(): Promise<
+  ActionResult<{ document: WaiverDocument; version: string; content: string }[]>
+> {
+  return runAction(() => getLegalDocumentsImpl());
+}
+
+async function getLegalDocumentsImpl(): Promise<
   { document: WaiverDocument; version: string; content: string }[]
 > {
   const supabase = await createServerSupabaseClient();
@@ -124,7 +141,11 @@ async function insertAcceptances(
 
 // Not requirePlayer(): pending_approval members must be able to accept, and
 // existing members hit this from the blocking waiver gate after a version bump.
-export async function acceptLegalDocuments(data: LegalAcceptanceInput) {
+export async function acceptLegalDocuments(data: LegalAcceptanceInput): Promise<ActionResult> {
+  return runAction(() => acceptLegalDocumentsImpl(data));
+}
+
+async function acceptLegalDocumentsImpl(data: LegalAcceptanceInput) {
   parseOrThrow(legalAcceptanceSchema, data);
   const player = await getCurrentPlayer();
   if (!player) throw new Error('Not authenticated');
@@ -139,7 +160,11 @@ export async function acceptLegalDocuments(data: LegalAcceptanceInput) {
 // Nothing is destroyed here: the row is deactivated and stamped, the
 // purge-deleted-accounts edge function anonymizes it after 30 days, and
 // signing back in before then lets the player restore it (restoreMyAccount).
-export async function deleteMyAccount(confirmation: string) {
+export async function deleteMyAccount(confirmation: string): Promise<ActionResult> {
+  return runAction(() => deleteMyAccountImpl(confirmation));
+}
+
+async function deleteMyAccountImpl(confirmation: string) {
   parseOrThrow(accountDeletionSchema, { confirmation });
   const player = await getCurrentPlayer();
   if (!player) throw new Error('Not authenticated');
@@ -160,7 +185,11 @@ export async function deleteMyAccount(confirmation: string) {
 }
 
 // Self-service revert path during the 30-day retention window.
-export async function restoreMyAccount() {
+export async function restoreMyAccount(): Promise<ActionResult> {
+  return runAction(() => restoreMyAccountImpl());
+}
+
+async function restoreMyAccountImpl() {
   const player = await getCurrentPlayer();
   if (!player) throw new Error('Not authenticated');
   if (!player.deletion_requested_at) throw new Error('No deletion is scheduled for this account');
@@ -180,6 +209,18 @@ export async function restoreMyAccount() {
 }
 
 export async function completeOnboarding(data: {
+  full_name: string;
+  display_name?: string;
+  phone?: string;
+  waiver_accepted: boolean;
+  code_of_conduct_accepted: boolean;
+  terms_accepted: boolean;
+  age_attestation: boolean;
+}): Promise<ActionResult> {
+  return runAction(() => completeOnboardingImpl(data));
+}
+
+async function completeOnboardingImpl(data: {
   full_name: string;
   display_name?: string;
   phone?: string;

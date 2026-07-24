@@ -65,6 +65,13 @@ async function checkInToSessionImpl(sessionId: string) {
 export async function setSessionIntent(
   sessionId: string,
   intent: 'going' | 'declined' | null
+): Promise<ActionResult> {
+  return runAction(() => setSessionIntentImpl(sessionId, intent));
+}
+
+async function setSessionIntentImpl(
+  sessionId: string,
+  intent: 'going' | 'declined' | null
 ) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();

@@ -2,9 +2,13 @@
 
 import { revalidatePath } from 'next/cache';
 import { createServerSupabaseClient } from '../supabase-server';
-import { requirePlayer } from './_shared';
+import { requirePlayer, runAction, type ActionResult } from './_shared';
 
-export async function markNotificationRead(notificationId: string) {
+export async function markNotificationRead(notificationId: string): Promise<ActionResult> {
+  return runAction(() => markNotificationReadImpl(notificationId));
+}
+
+async function markNotificationReadImpl(notificationId: string) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
   await supabase
@@ -15,7 +19,11 @@ export async function markNotificationRead(notificationId: string) {
   revalidatePath('/notifications');
 }
 
-export async function markAllNotificationsRead() {
+export async function markAllNotificationsRead(): Promise<ActionResult> {
+  return runAction(() => markAllNotificationsReadImpl());
+}
+
+async function markAllNotificationsReadImpl() {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
   await supabase
@@ -26,7 +34,11 @@ export async function markAllNotificationsRead() {
   revalidatePath('/notifications');
 }
 
-export async function markAnnouncementRead(announcementId: string) {
+export async function markAnnouncementRead(announcementId: string): Promise<ActionResult> {
+  return runAction(() => markAnnouncementReadImpl(announcementId));
+}
+
+async function markAnnouncementReadImpl(announcementId: string) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 

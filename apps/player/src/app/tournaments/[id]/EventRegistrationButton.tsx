@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Button, Dialog, LegalMarkdown, useConfirm } from '@badminton/ui';
 import { registerForEvent, withdrawFromEvent, selfCheckIn } from '@/lib/tournament-actions';
+import type { ActionResult } from '@/lib/actions/_shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 
@@ -42,10 +43,15 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
     );
   }
 
-  async function act(fn: () => Promise<void>, msg: string) {
+  async function act(fn: () => Promise<ActionResult>, msg: string) {
     setLoading(true);
     try {
-      await fn();
+      const res = await fn();
+      if (!res.ok) {
+        toast(res.error, 'error');
+        setLoading(false);
+        return;
+      }
       toast(msg, 'success');
       router.refresh();
     } catch (err) {
@@ -90,8 +96,9 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
                     disabled={!waiverAccepted}
                     onClick={() =>
                       act(async () => {
-                        await registerForEvent(eventId, { eventWaiverAccepted: true });
-                        setWaiverOpen(false);
+                        const r = await registerForEvent(eventId, { eventWaiverAccepted: true });
+                        if (r.ok) setWaiverOpen(false);
+                        return r;
                       }, 'Registered!')
                     }
                   >

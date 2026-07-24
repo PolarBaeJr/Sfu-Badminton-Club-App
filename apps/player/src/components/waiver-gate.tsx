@@ -44,7 +44,10 @@ export function WaiverGate({ missingDocs }: { missingDocs: string[] }) {
   useEffect(() => {
     if (!active || docs !== null) return;
     getLegalDocuments()
-      .then(setDocs)
+      .then((res) => {
+        if (res.ok) setDocs(res.data);
+        else toast('Failed to load the waiver — please refresh', 'error');
+      })
       .catch(() => toast('Failed to load the waiver — please refresh', 'error'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
@@ -72,12 +75,17 @@ export function WaiverGate({ missingDocs }: { missingDocs: string[] }) {
       // All four literals are asserted here; the server only inserts rows for
       // documents actually missing, so documents already validly accepted
       // keep their original acceptance evidence.
-      await acceptLegalDocuments({
+      const res = await acceptLegalDocuments({
         waiver_accepted: true,
         code_of_conduct_accepted: true,
         terms_accepted: true,
         age_attestation: true,
       });
+      if (!res.ok) {
+        toast(res.error, 'error');
+        setSubmitting(false);
+        return;
+      }
       toast('Thanks — you’re all set', 'success');
       // Deliberately stay in the submitting state: refresh() re-runs the
       // server layout, which recomputes the missing documents and unmounts

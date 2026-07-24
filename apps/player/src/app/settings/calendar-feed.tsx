@@ -17,7 +17,10 @@ export function CalendarFeed() {
 
   useEffect(() => {
     getCalendarFeedToken()
-      .then(setToken)
+      .then((res) => {
+        if (res.ok) setToken(res.data);
+        else toast('Could not load calendar feed link', 'error');
+      })
       .catch(() => toast('Could not load calendar feed link', 'error'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -38,7 +41,13 @@ export function CalendarFeed() {
     if (!(await confirm({ title: 'Reset calendar link?', message: 'Reset your calendar link? Calendars subscribed with the old link will stop updating.', confirmLabel: 'Reset link', danger: true }))) return;
     setResetting(true);
     try {
-      setToken(await regenerateCalendarFeedToken());
+      const res = await regenerateCalendarFeedToken();
+      if (!res.ok) {
+        toast(res.error, 'error');
+        setResetting(false);
+        return;
+      }
+      setToken(res.data);
       toast('Calendar link reset', 'success');
     } catch {
       toast('Could not reset calendar link', 'error');

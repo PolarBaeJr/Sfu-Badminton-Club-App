@@ -5,7 +5,7 @@ import { createServiceRoleClient } from './supabase-server';
 import { revalidatePath } from 'next/cache';
 import { isDoublesEvent } from '@badminton/shared';
 import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
-import { requirePlayer, assertCurrentWaiver } from './actions/_shared';
+import { requirePlayer, assertCurrentWaiver, runAction, type ActionResult } from './actions/_shared';
 
 // Revalidate every surface that surfaces tournament_participants /
 // tournament_pairs after a register/withdraw/check-in. The event detail
@@ -23,7 +23,11 @@ function pickSuspension(embed: unknown): { suspended_at: string | null; suspensi
   return (row as { suspended_at: string | null; suspension_reason: string | null; waiver_text?: string | null } | null) ?? null;
 }
 
-export async function registerForEvent(eventId: string, opts?: { eventWaiverAccepted?: boolean }) {
+export async function registerForEvent(eventId: string, opts?: { eventWaiverAccepted?: boolean }): Promise<ActionResult> {
+  return runAction(() => registerForEventImpl(eventId, opts));
+}
+
+async function registerForEventImpl(eventId: string, opts?: { eventWaiverAccepted?: boolean }) {
   const player = await requirePlayer();
   if (player.is_banned) {
     throw new Error('Your account is suspended pending a reinstatement fee. Contact an admin to be reinstated.');
@@ -94,7 +98,11 @@ export async function registerForEvent(eventId: string, opts?: { eventWaiverAcce
   revalidateTournamentPaths(event.tournament_id, eventId);
 }
 
-export async function withdrawFromEvent(eventId: string) {
+export async function withdrawFromEvent(eventId: string): Promise<ActionResult> {
+  return runAction(() => withdrawFromEventImpl(eventId));
+}
+
+async function withdrawFromEventImpl(eventId: string) {
   const player = await requirePlayer();
   const service = createServiceRoleClient();
 
@@ -116,7 +124,11 @@ export async function withdrawFromEvent(eventId: string) {
   else revalidatePath('/tournaments');
 }
 
-export async function selfCheckIn(eventId: string) {
+export async function selfCheckIn(eventId: string): Promise<ActionResult> {
+  return runAction(() => selfCheckInImpl(eventId));
+}
+
+async function selfCheckInImpl(eventId: string) {
   const player = await requirePlayer();
   if (player.is_banned) {
     throw new Error('Your account is suspended pending a reinstatement fee. Contact an admin to be reinstated.');

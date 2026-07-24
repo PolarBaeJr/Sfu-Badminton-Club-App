@@ -119,7 +119,10 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     getLegalDocuments()
-      .then((rows) => setDocs(sortLegalDocuments(rows)))
+      .then((res) => {
+        if (res.ok) setDocs(sortLegalDocuments(res.data));
+        else toast('Failed to load the waiver — please refresh', 'error');
+      })
       .catch(() => toast('Failed to load the waiver — please refresh', 'error'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -129,7 +132,7 @@ export default function OnboardingPage() {
   async function handleComplete() {
     setLoading(true);
     try {
-      await completeOnboarding({
+      const res = await completeOnboarding({
         full_name: name,
         display_name: displayName || undefined,
         phone: phone || undefined,
@@ -138,6 +141,11 @@ export default function OnboardingPage() {
         terms_accepted: termsAccepted,
         age_attestation: ageAttested,
       });
+      if (!res.ok) {
+        toast(res.error, 'error');
+        setLoading(false);
+        return;
+      }
       router.push('/feed');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');

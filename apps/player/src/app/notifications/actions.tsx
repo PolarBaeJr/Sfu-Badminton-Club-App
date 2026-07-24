@@ -13,7 +13,12 @@ export function NotificationActions() {
   async function handleMarkAll() {
     setLoading(true);
     try {
-      await markAllNotificationsRead();
+      const res = await markAllNotificationsRead();
+      if (!res.ok) {
+        toast(res.error, 'error');
+        setLoading(false);
+        return;
+      }
       toast('All marked as read', 'success');
     } catch (err) {
       toast('Failed', 'error');

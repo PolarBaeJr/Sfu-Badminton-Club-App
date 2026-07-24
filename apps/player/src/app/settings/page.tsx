@@ -127,7 +127,7 @@ export default function SettingsPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      await updateProfile({
+      const res = await updateProfile({
         full_name: name,
         display_name: displayName || undefined,
         phone: phone || undefined,
@@ -135,6 +135,11 @@ export default function SettingsPage() {
         hide_from_leaderboard: !showOnLeaderboard,
         show_activity_status: showActivity,
       });
+      if (!res.ok) {
+        toast(res.error, 'error');
+        setLoading(false);
+        return;
+      }
       setSaved(true);
       toast('Profile updated', 'success');
       setTimeout(() => setSaved(false), 2000);
@@ -175,7 +180,12 @@ export default function SettingsPage() {
   async function handleDeleteAccount() {
     setDeleteLoading(true);
     try {
-      await deleteMyAccount(deleteConfirm);
+      const res = await deleteMyAccount(deleteConfirm);
+      if (!res.ok) {
+        toast(res.error, 'error');
+        setDeleteLoading(false);
+        return;
+      }
       // Best-effort sign out, then a hard redirect — router state is stale
       // after the account is scheduled for deletion.
       const supabase = createClient();

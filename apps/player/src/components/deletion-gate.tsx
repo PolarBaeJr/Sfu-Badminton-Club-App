@@ -47,7 +47,12 @@ export function DeletionGate({ deletionRequestedAt }: { deletionRequestedAt: str
   async function handleRestore() {
     setRestoring(true);
     try {
-      await restoreMyAccount();
+      const res = await restoreMyAccount();
+      if (!res.ok) {
+        toast(res.error, 'error');
+        setRestoring(false);
+        return;
+      }
       toast('Welcome back — your account has been restored', 'success');
       // Deliberately stay in the restoring state: refresh() re-runs the
       // server layout, which recomputes deletion_requested_at and unmounts

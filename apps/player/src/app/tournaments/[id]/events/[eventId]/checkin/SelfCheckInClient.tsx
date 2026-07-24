@@ -26,7 +26,12 @@ export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registra
   async function handleCheckIn() {
     setLoading(true);
     try {
-      await selfCheckIn(eventId);
+      const res = await selfCheckIn(eventId);
+      if (!res.ok) {
+        toast(res.error, 'error');
+        setLoading(false);
+        return;
+      }
       setSuccess(true);
       toast('Checked in successfully!', 'success');
     } catch (err) {

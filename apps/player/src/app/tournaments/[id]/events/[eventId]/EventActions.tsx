@@ -51,7 +51,12 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
   async function handleRegister(eventWaiverAccepted?: boolean) {
     setLoading(true);
     try {
-      await registerForEvent(eventId, eventWaiverAccepted ? { eventWaiverAccepted: true } : undefined);
+      const res = await registerForEvent(eventId, eventWaiverAccepted ? { eventWaiverAccepted: true } : undefined);
+      if (!res.ok) {
+        toast(res.error, 'error');
+        setLoading(false);
+        return;
+      }
       toast('Registered successfully!', 'success');
       setWaiverOpen(false);
       router.refresh();
@@ -65,7 +70,12 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
     if (!(await confirm({ title: 'Withdraw from event?', message: 'Are you sure you want to withdraw from this event?', confirmLabel: 'Withdraw', danger: true }))) return;
     setLoading(true);
     try {
-      await withdrawFromEvent(eventId);
+      const res = await withdrawFromEvent(eventId);
+      if (!res.ok) {
+        toast(res.error, 'error');
+        setLoading(false);
+        return;
+      }
       toast('Withdrawn from event', 'success');
       router.refresh();
     } catch (err) {
@@ -77,7 +87,12 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
   async function handleCheckIn() {
     setLoading(true);
     try {
-      await selfCheckIn(eventId);
+      const res = await selfCheckIn(eventId);
+      if (!res.ok) {
+        toast(res.error, 'error');
+        setLoading(false);
+        return;
+      }
       toast('Checked in!', 'success');
       router.refresh();
     } catch (err) {

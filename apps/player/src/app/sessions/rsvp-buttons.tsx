@@ -22,7 +22,11 @@ export function RsvpButtons({ sessionId, myIntent }: RsvpButtonsProps) {
     const next = choice === myIntent ? null : choice;
     setLoading(true);
     try {
-      await setSessionIntent(sessionId, next);
+      const res = await setSessionIntent(sessionId, next);
+      if (!res.ok) {
+        toast(res.error, 'error');
+        return;
+      }
     } catch (err) {
       console.error(err);
       toast(err instanceof Error ? err.message : 'Failed to update your RSVP. Please try again.', 'error');

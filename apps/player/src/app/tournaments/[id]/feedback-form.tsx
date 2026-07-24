@@ -29,11 +29,15 @@ export function FeedbackForm({
     setError(null);
     startTransition(async () => {
       try {
-        await submitEventFeedback({
+        const res = await submitEventFeedback({
           tournament_id: tournamentId,
           rating: rating > 0 ? rating : undefined,
           comment: comment.trim() || undefined,
         });
+        if (!res.ok) {
+          setError(res.error);
+          return;
+        }
         setSaved(true);
         setTimeout(() => setSaved(false), 2500);
         router.refresh();

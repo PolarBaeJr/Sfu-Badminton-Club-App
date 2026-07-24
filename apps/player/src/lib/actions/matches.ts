@@ -131,7 +131,15 @@ async function submitMatchResultImpl(challengeId: string, input: MatchResultInpu
   });
 
   const { error: mpError } = await supabase.from('match_participants').insert(matchParticipants);
-  if (mpError) throw new Error(mpError.message);
+  if (mpError) {
+    // The match row already committed (and challenge_id is UNIQUE), so a failed
+    // participant insert would wedge the challenge: resubmit is blocked and the
+    // match can never be confirmed. Compensate by deleting the match (FK cascade
+    // removes any partial participants/games). Service-role: matches has no
+    // participant DELETE policy.
+    await createServiceRoleClient().from('matches').delete().eq('id', match.id);
+    throw new Error(mpError.message);
+  }
 
   const gameRows = input.games.map((g) => ({
     match_id: match.id,
@@ -140,7 +148,11 @@ async function submitMatchResultImpl(challengeId: string, input: MatchResultInpu
     side_b_score: g.side_b_score,
   }));
   const { error: gamesError } = await supabase.from('match_games').insert(gameRows);
-  if (gamesError) throw new Error(gamesError.message);
+  if (gamesError) {
+    // Same wedge risk as the participant insert above — roll back the match.
+    await createServiceRoleClient().from('matches').delete().eq('id', match.id);
+    throw new Error(gamesError.message);
+  }
 
   // Notify other participants — batch insert + parallel email lookup.
   const otherPlayers = (challenge.challenge_participants as Record<string, unknown>[]).filter(
