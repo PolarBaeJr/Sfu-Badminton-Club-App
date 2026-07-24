@@ -241,7 +241,7 @@ export default function SettingsPage() {
           <Section icon={Receipt} title="Fees & Dues">
             <Link
               href="/fees"
-              className="settings-row"
+              className="settings-row settings-row-nav"
               style={{ textDecoration: 'none', color: 'inherit' }}
             >
               <div>

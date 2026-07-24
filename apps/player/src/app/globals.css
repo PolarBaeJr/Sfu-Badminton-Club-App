@@ -1442,6 +1442,9 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
 .settings-row-control.wide { flex: 1; min-width: 0; }
 @media (max-width: 640px) {
   .settings-row { flex-direction: column; align-items: stretch; gap: 12px; }
+  /* Nav rows (label + hint + trailing chevron) stay horizontal so the chevron
+     sits at the end of the row instead of stacking onto its own line. */
+  .settings-row.settings-row-nav { flex-direction: row; align-items: center; gap: 16px; }
   .settings-row-control { flex-shrink: 1; }
 }
 
