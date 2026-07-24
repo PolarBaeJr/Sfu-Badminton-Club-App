@@ -20,7 +20,7 @@ export default async function SessionsPage() {
       .select('*')
       .eq('status', 'open')
       .in('track', [player.status, 'all'])
-      .order('date', { ascending: false }),
+      .order('date', { ascending: true }),
     supabase
       .from('sessions')
       .select('*')
@@ -113,6 +113,10 @@ export default async function SessionsPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {(openSessions ?? []).map((session) => {
                 const myStatus = myStatusBySession.get(session.id) ?? null;
+                // Once attendance is recorded (checked in / attended / no-show /
+                // excused) the RSVP is moot — hide it so we never show a
+                // contradiction like "Checked In" + "Not going".
+                const attended = myStatus === 'checked_in' || myStatus === 'present' || myStatus === 'no_show' || myStatus === 'excused';
                 const attendees = countBySession[session.id] ?? 0;
                 const now = new Date();
                 const canCheckIn = isCheckinOpen(session, now);
@@ -186,9 +190,9 @@ export default async function SessionsPage() {
                           </div>
                         )}
                       </div>
-                      <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+                      <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
                         <CheckInButton sessionId={session.id} myStatus={myStatus} canCheckIn={canCheckIn} windowLabel={windowLabel} myIntent={myIntentBySession.get(session.id) ?? null} />
-                        <RsvpButtons sessionId={session.id} myIntent={myIntentBySession.get(session.id) ?? null} />
+                        {!attended && <RsvpButtons sessionId={session.id} myIntent={myIntentBySession.get(session.id) ?? null} />}
                         <AddToCalendarButton
                           name={session.name ?? 'Practice Session'}
                           date={session.date}

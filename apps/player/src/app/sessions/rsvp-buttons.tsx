@@ -37,6 +37,23 @@ export function RsvpButtons({ sessionId, myIntent }: RsvpButtonsProps) {
     }
   }
 
+  // Going — show the state and only the option to switch to Not going (the
+  // "Going" action button is redundant once you're going).
+  if (myIntent === 'going') {
+    return (
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span className="chip chip-success">Going</span>
+        <button
+          onClick={() => choose('declined')}
+          disabled={loading}
+          className={`${base} ${inactive}`}
+        >
+          Can&apos;t make it
+        </button>
+      </div>
+    );
+  }
+
   // Declined ("Not going") — surface only the option to switch to Going; no
   // check-in and no other actions.
   if (myIntent === 'declined') {
