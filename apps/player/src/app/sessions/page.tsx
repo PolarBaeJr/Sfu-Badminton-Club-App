@@ -147,10 +147,9 @@ export default async function SessionsPage() {
                     <div
                       className="session-grid"
                       style={{
-                        display: 'grid',
-                        gridTemplateColumns: '1fr auto',
+                        display: 'flex',
+                        flexDirection: 'column',
                         gap: 16,
-                        alignItems: 'flex-start',
                       }}
                     >
                       <div>
@@ -187,7 +186,7 @@ export default async function SessionsPage() {
                           </div>
                         )}
                       </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+                      <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
                         <CheckInButton sessionId={session.id} myStatus={myStatus} canCheckIn={canCheckIn} windowLabel={windowLabel} myIntent={myIntentBySession.get(session.id) ?? null} />
                         <RsvpButtons sessionId={session.id} myIntent={myIntentBySession.get(session.id) ?? null} />
                         <AddToCalendarButton
