@@ -54,3 +54,9 @@ deploy/
 
 # Local scripts (deploy/maintenance) — keep out of new commits
 scripts/
+
+# Internal working notes / security findings — keep out of the public repo
+bug-audit.md
+bugs.md
+bug-fix-plan.md
+dead-code.md
