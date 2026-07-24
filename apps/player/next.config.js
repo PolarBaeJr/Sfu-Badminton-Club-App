@@ -10,6 +10,9 @@ const securityHeaders = [
 
 const nextConfig = {
   output: 'standalone',
+  // Required in Next 14 for src/instrumentation.ts (Sentry server/edge init) to
+  // run; default-on in Next 15.
+  experimental: { instrumentationHook: true },
   transpilePackages: ['@badminton/shared', '@badminton/ui'],
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }];
