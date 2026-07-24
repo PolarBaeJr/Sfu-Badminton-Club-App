@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Input, Textarea, Switch, PageHeader, Dialog } from '@badminton/ui';
-import { updateProfile, deleteMyAccount } from '@/lib/actions';
+import { updateProfile, updateNotificationPreferences, deleteMyAccount } from '@/lib/actions';
+import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, type NotificationCategory } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -71,6 +72,9 @@ export default function SettingsPage() {
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushSupported, setPushSupported] = useState(false);
   const [pushLoading, setPushLoading] = useState(false);
+  const [notifPrefs, setNotifPrefs] = useState<Record<NotificationCategory, boolean>>(
+    () => normalizeNotificationPreferences({}),
+  );
   const [playerId, setPlayerId] = useState('');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -96,6 +100,7 @@ export default function SettingsPage() {
         setBio(data.bio || '');
         setShowOnLeaderboard(!data.hide_from_leaderboard);
         setShowActivity(data.show_activity_status !== false);
+        setNotifPrefs(normalizeNotificationPreferences(data.notification_preferences));
         setIsExec(data.is_exec || data.role === 'admin');
         setLoaded(true);
       }
@@ -169,6 +174,17 @@ export default function SettingsPage() {
       toast('Failed to update push settings', 'error');
     }
     setPushLoading(false);
+  }
+
+  async function handleNotifPrefToggle(category: NotificationCategory, value: boolean) {
+    const previous = notifPrefs;
+    const next = { ...notifPrefs, [category]: value };
+    setNotifPrefs(next); // optimistic
+    const res = await updateNotificationPreferences(next);
+    if (!res.ok) {
+      setNotifPrefs(previous); // revert
+      toast(res.error, 'error');
+    }
   }
 
   async function handleSignOut() {
@@ -323,6 +339,25 @@ export default function SettingsPage() {
                     description="Get notified about challenges, results, and announcements."
                     disabled={pushLoading}
                   />
+
+                  {pushEnabled && (
+                    <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <p className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+                        Choose which push notifications you receive. The in-app inbox always keeps them all.
+                      </p>
+                      {NOTIFICATION_CATEGORIES.map((c, i) => (
+                        <div key={c.key}>
+                          {i > 0 && <div className="sep" />}
+                          <Switch
+                            checked={notifPrefs[c.key]}
+                            onChange={(v) => handleNotifPrefToggle(c.key, v)}
+                            label={c.label}
+                            description={c.description}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (

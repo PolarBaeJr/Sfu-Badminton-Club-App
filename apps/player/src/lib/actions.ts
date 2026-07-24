@@ -28,6 +28,7 @@ export {
 
 export {
   updateProfile,
+  updateNotificationPreferences,
   completeOnboarding,
   getLegalDocuments,
   acceptLegalDocuments,

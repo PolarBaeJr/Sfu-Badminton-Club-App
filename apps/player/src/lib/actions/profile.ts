@@ -9,6 +9,7 @@ import {
   accountDeletionSchema,
   parseOrThrow,
   getMissingLegalDocuments,
+  NOTIFICATION_CATEGORIES,
   type LegalAcceptanceInput,
   type WaiverDocument,
 } from '@badminton/shared';
@@ -24,6 +25,34 @@ export async function updateProfile(data: {
   show_activity_status?: boolean;
 }): Promise<ActionResult> {
   return runAction(() => updateProfileImpl(data));
+}
+
+// Per-category push preferences (players.notification_preferences JSONB).
+// Only known category keys are persisted, coerced to booleans — an unknown
+// key from the client is ignored rather than stored.
+export async function updateNotificationPreferences(
+  prefs: Record<string, boolean>,
+): Promise<ActionResult> {
+  return runAction(async () => {
+    const player = await requirePlayer();
+    const supabase = await createServerSupabaseClient();
+
+    const clean: Record<string, boolean> = {};
+    for (const c of NOTIFICATION_CATEGORIES) {
+      if (c.key in prefs) clean[c.key] = prefs[c.key] !== false;
+    }
+
+    const { error } = await supabase
+      .from('players')
+      .update({ notification_preferences: clean })
+      .eq('id', player.id);
+
+    if (error) {
+      Sentry.captureException(error, { extra: { action: 'updateNotificationPreferences', playerId: player.id } });
+      throw new Error(error.message);
+    }
+    revalidatePath('/settings');
+  });
 }
 
 async function updateProfileImpl(data: {
