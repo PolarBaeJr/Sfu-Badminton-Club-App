@@ -154,14 +154,12 @@ export default async function ChallengesPage() {
               {outgoing.map(({ cp, c }) => <ChallengeCard key={cp.id} c={c} />)}
             </Section>
           )}
-          {completed.length > 0 && (
-            <Section title="Completed">
-              {completed.map(({ cp, c }) => <ChallengeCard key={cp.id} c={c} />)}
-            </Section>
-          )}
-          {archived.length > 0 && (
-            <Section title="Archived">
-              {archived.map(({ cp, c }) => <ChallengeCard key={cp.id} c={c} />)}
+          {(completed.length > 0 || archived.length > 0) && (
+            <Section title="Archived" count={completed.length + archived.length}>
+              {/* Completed and rejected/cancelled both live here; each card keeps
+                  its own status badge (Completed / Rejected / Cancelled) so they
+                  stay distinguishable within the single archived group. */}
+              {[...completed, ...archived].map(({ cp, c }) => <ChallengeCard key={cp.id} c={c} />)}
             </Section>
           )}
         </div>
