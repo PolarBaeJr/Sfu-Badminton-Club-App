@@ -12,6 +12,20 @@ import {
   assertTournamentNotSuspended,
 } from './_internal';
 
+// Block (re)generating a draw once any match has a recorded result —
+// regeneration deletes all matches for the event and would erase entered
+// scores/Elo. Void those matches first to reset.
+async function assertNoResultsEntered(adminClient: ReturnType<typeof createAdminClient>, eventId: string) {
+  const { count } = await adminClient
+    .from('tournament_matches')
+    .select('id', { count: 'exact', head: true })
+    .eq('event_id', eventId)
+    .in('status', ['completed', 'walkover', 'disputed']);
+  if ((count ?? 0) > 0) {
+    throw new Error('Results have already been entered for this event — regenerating would erase them. Void those matches first if you really need to reset the draw.');
+  }
+}
+
 // ============================================================
 // Bracket Generation — Single Elimination
 // ============================================================
@@ -24,6 +38,7 @@ export async function generateSingleEliminationBracket(eventId: string) {
   if (!event) throw new Error('Event not found');
   if (event.draw_locked) throw new Error('Draw is locked. Unlock it before generating bracket.');
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
+  await assertNoResultsEntered(adminClient, eventId);
 
   const doubles = isDoublesEvent(event.event_type);
 
@@ -267,6 +282,7 @@ export async function generateRoundRobinMatches(eventId: string) {
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
   if (event.draw_locked) throw new Error('Draw is locked. Unlock it before generating matches.');
+  await assertNoResultsEntered(adminClient, eventId);
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
   const doubles = isDoublesEvent(event.event_type);
