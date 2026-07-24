@@ -25,7 +25,21 @@
 > unbounded (INTEGER overflow), markFeePaid suspended-competitive undercharge + silent
 > null-amount.
 >
-> **Auth deep-dive:** results pending at time of writing — see end of file / follow-up.
+> **Auth/security deep-dive:** passkey flow, redirects, service-role scoping, and
+> gate-completeness all verified CLEAN. Findings:
+> - **A1 (HIGH) — match forgery, now MITIGATED:** `mp_insert` lets a match's
+>   `submitted_by` self-enroll ANY player (incl. a victim) as a participant, so the
+>   00019 participant guard alone was bypassable (fabricate match w/ nullable
+>   challenge_id → enroll self+victim → confirm). **Fixed** by also blocking
+>   submitter=confirmer in `00019` (the forgery needs submitter to also confirm).
+>   Residual: two colluding accounts can still forge a match *between themselves*
+>   (self-harm only) — real fix is a create-match RPC that derives participants from
+>   an accepted challenge; deferred.
+> - **A3 (MED→fixed):** submitter could confirm their OWN result (skip the opponent's
+>   attestation) — same `00019` self-confirm block closes it. TODO: also hide the
+>   Confirm button from the submitter in `challenges/[id]/actions.tsx` (UX/defense).
+> - **A2 (MED→fixed):** `adminCreateChallenge`/`forceExpireChallenge` were exec-gated
+>   though `/challenges` is admin-only → switched to `getAdminPlayer`.
 
 
 

@@ -5,7 +5,7 @@ import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import { parseOrThrow, adminMatchCreateSchema } from '@badminton/shared';
-import { getExecOrAdmin } from './_shared';
+import { getExecOrAdmin, getAdminPlayer } from './_shared';
 import { runAction, type ActionResult } from '../action-result';
 
 // ============================================================
@@ -269,7 +269,10 @@ async function adminCreateChallengeImpl(data: {
   scheduled_time?: string;
   note?: string;
 }) {
-  const admin = await getExecOrAdmin();
+  // Challenge management is an admin-only section (permissions.ts '/challenges'),
+  // so gate at admin — not exec — even though this lives in the exec-allowed
+  // matches module.
+  const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
   const eventType = data.rated_flag ? 'rated_challenge' : 'casual';
@@ -331,7 +334,8 @@ export async function forceExpireChallenge(challengeId: string, reason: string):
 }
 
 async function forceExpireChallengeImpl(challengeId: string, reason: string) {
-  const admin = await getExecOrAdmin();
+  // Admin-only section — see adminCreateChallengeImpl.
+  const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
   const { error } = await adminClient

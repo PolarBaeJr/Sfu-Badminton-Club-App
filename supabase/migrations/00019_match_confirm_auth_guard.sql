@@ -51,6 +51,14 @@ BEGIN
      AND get_player_id(auth.uid()) NOT IN (
        SELECT player_id FROM match_participants WHERE match_id = p_match_id)
   THEN RAISE EXCEPTION 'Only a participant can confirm this match'; END IF;
+  -- The submitter must NOT confirm their own result — confirmation is the
+  -- opponent's attestation. This also shuts the match-forgery path: fabricating
+  -- a match + self-enrolling a victim requires being the submitter (mp_insert),
+  -- and applying it requires confirming, so submitter=confirmer is blocked here.
+  IF auth.uid() IS NOT NULL
+     AND NOT is_admin(auth.uid())
+     AND get_player_id(auth.uid()) = v_match.submitted_by
+  THEN RAISE EXCEPTION 'The submitter cannot confirm their own result'; END IF;
   IF v_match.event_type = 'casual' THEN
     -- Casual matches: just confirm, no Elo changes
     UPDATE matches SET result_status = 'confirmed', confirmed_by = p_confirmed_by, updated_at = NOW() WHERE id = p_match_id;
