@@ -49,6 +49,7 @@ export const viewport: Viewport = {
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   let playerName = '';
+  let avatarUrl: string | null = null;
   let isAuthenticated = false;
   let playerId: string | null = null;
   let playerStatus: string | null = null;
@@ -80,10 +81,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       isAuthenticated = true;
       const { data: player } = await supabase
         .from('players')
-        .select('id, full_name, status, role, is_exec, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo), waiver_acceptances(document, version, accepted_at)')
+        .select('id, full_name, avatar_url, status, role, is_exec, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo), waiver_acceptances(document, version, accepted_at)')
         .eq('user_id', user.id)
         .maybeSingle();
       playerName = player?.full_name ?? '';
+      avatarUrl = player?.avatar_url ?? null;
       playerId = player?.id ?? null;
       playerStatus = player?.status ?? null;
       deletionRequestedAt = player?.deletion_requested_at ?? null;
@@ -149,7 +151,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <DeletionGate deletionRequestedAt={deletionRequestedAt} />
               {/* Deletion screen wins when both gates would apply. */}
               <WaiverGate missingDocs={deletionRequestedAt ? [] : missingLegalDocs} />
-              <TopBar playerName={playerName} unreadCount={unreadCount} isAuthenticated={isAuthenticated} isExecOrAdmin={isExecOrAdmin} adminUrl={process.env.NEXT_PUBLIC_ADMIN_URL || '/admin'} activeSeasonName={activeSeasonName} />
+              <TopBar playerName={playerName} avatarUrl={avatarUrl} unreadCount={unreadCount} isAuthenticated={isAuthenticated} isExecOrAdmin={isExecOrAdmin} adminUrl={process.env.NEXT_PUBLIC_ADMIN_URL || '/admin'} activeSeasonName={activeSeasonName} />
               <main className="page pb-safe-nav">
                 {children}
               </main>

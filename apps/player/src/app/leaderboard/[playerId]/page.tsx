@@ -54,7 +54,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
 
       <div className="card-base" style={{ padding: 24, marginBottom: 16 }}>
         <div className="row" style={{ gap: 18, flexWrap: 'wrap', alignItems: 'center' }}>
-          <AvatarChip name={player.full_name} id={player.id} size="xl" ring />
+          <AvatarChip name={player.full_name} id={player.id} src={player.avatar_url} size="xl" ring />
           <div style={{ flex: 1, minWidth: 0 }}>
             <h1
               style={{

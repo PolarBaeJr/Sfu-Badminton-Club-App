@@ -1,10 +1,15 @@
-import React from 'react';
+'use client';
+
+import React, { useState } from 'react';
 
 interface AvatarChipProps {
   /** Player full name — initials are derived from this. */
   name: string;
   /** Stable id used to deterministically pick a tone. Falls back to name. */
   id?: string;
+  /** Avatar image URL. When set (and it loads), the photo is shown instead of
+   *  initials; a load error falls back to the initials tile. */
+  src?: string | null;
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
   /** Add a red ring (used to mark "you" in lists). */
   ring?: boolean;
@@ -29,17 +34,30 @@ function toneFor(seed: string) {
 
 /** The .avatar primitive with deterministic tone. Drops the per-call-site
  * initials/tone helpers we were copy-pasting into ~10 page files. */
-export function AvatarChip({ name, id, size = 'sm', ring, tone }: AvatarChipProps) {
+export function AvatarChip({ name, id, src, size = 'sm', ring, tone }: AvatarChipProps) {
+  const [errored, setErrored] = useState(false);
   const seed = id ?? name;
   const t = tone ?? toneFor(seed);
+  const showImg = !!src && !errored;
   return (
     <span
       className="avatar"
       data-size={size}
       data-tone={t}
-      style={ring ? { boxShadow: '0 0 0 2px var(--red)' } : undefined}
+      style={{ overflow: 'hidden', ...(ring ? { boxShadow: '0 0 0 2px var(--red)' } : {}) }}
     >
-      {initials(name)}
+      {showImg ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={src as string}
+          alt={name}
+          className="w-full h-full object-cover"
+          style={{ display: 'block' }}
+          onError={() => setErrored(true)}
+        />
+      ) : (
+        initials(name)
+      )}
     </span>
   );
 }

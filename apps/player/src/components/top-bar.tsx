@@ -23,11 +23,12 @@ const desktopNavItems = [
   { href: '/challenges',    label: 'Challenges',   icon: Crosshair },
   { href: '/sessions',      label: 'Schedule',     icon: Calendar  },
   { href: '/tournaments',   label: 'Tournaments',  icon: Award     },
-  { href: '/my-stats',      label: 'My Stats',     icon: Sparkles  },
+  { href: '/my-stats',      label: 'Stats',        icon: Sparkles  },
 ];
 
 export function TopBar({
   playerName,
+  avatarUrl,
   unreadCount,
   isAuthenticated,
   isExecOrAdmin,
@@ -35,6 +36,7 @@ export function TopBar({
   activeSeasonName,
 }: {
   playerName: string;
+  avatarUrl?: string | null;
   unreadCount: number;
   isAuthenticated: boolean;
   isExecOrAdmin: boolean;
@@ -136,8 +138,13 @@ export function TopBar({
                 )}
               </Link>
               <Link href="/settings" className="me-chip" aria-label="Profile and settings">
-                <span className="avatar" data-size="sm" data-tone="4">
-                  {initials}
+                <span className="avatar" data-size="sm" data-tone="4" style={{ overflow: 'hidden' }}>
+                  {avatarUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={avatarUrl} alt={playerName || 'You'} className="w-full h-full object-cover" style={{ display: 'block' }} />
+                  ) : (
+                    initials
+                  )}
                 </span>
                 <div>
                   <div className="name">{playerName || 'You'}</div>

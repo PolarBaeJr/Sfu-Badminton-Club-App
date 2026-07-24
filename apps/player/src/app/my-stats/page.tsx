@@ -104,7 +104,7 @@ export default async function MyStatsPage() {
           style={{ gridTemplateColumns: 'auto 1fr', gap: 32, alignItems: 'center' }}
         >
           <div className="row" style={{ gap: 20 }}>
-            <AvatarChip name={player.full_name} id={player.id} size="xl" ring />
+            <AvatarChip name={player.full_name} id={player.id} src={player.avatar_url} size="xl" ring />
             <div>
               <div
                 style={{
