@@ -73,6 +73,11 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
               </span>
               {r?.singles_provisional && <span className="pill pill-out">PROVISIONAL</span>}
             </div>
+            {player.bio && (
+              <p style={{ marginTop: 12, fontSize: 14, lineHeight: 1.55, color: 'var(--ink-2)', maxWidth: '56ch' }}>
+                {player.bio}
+              </p>
+            )}
           </div>
           <Link href={`/challenges/new?opponent=${playerId}`} className="btn btn-primary">
             <Crosshair size={14} /> Challenge
