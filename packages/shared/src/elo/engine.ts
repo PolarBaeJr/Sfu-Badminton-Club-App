@@ -1,5 +1,5 @@
 import type { MatchFormat, EventType } from '../types/database';
-import { clampElo } from '../utils/constants';
+import { clampElo, DEFAULT_ELO } from '../utils/constants';
 
 export const FORMAT_WEIGHTS: Record<MatchFormat, number> = {
   bo3_21: 1.25,
@@ -86,6 +86,9 @@ export function getKFactor(
 }
 
 export function calculateTeamRating(ratings: number[]): number {
+  // Guard against an empty team — dividing by 0 yields NaN, which would poison
+  // any downstream rating write.
+  if (ratings.length === 0) return DEFAULT_ELO;
   return Math.round(ratings.reduce((a, b) => a + b, 0) / ratings.length);
 }
 
