@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { Avatar } from '@badminton/ui';
+import { AvatarChip } from '@badminton/ui';
 import { createClient } from '@/lib/supabase-browser';
 import { useToast } from '@/components/toast-provider';
 
@@ -75,7 +75,7 @@ export function AvatarUpload({ playerId, playerName, currentUrl, onUploaded }: A
         disabled={uploading}
         className="relative group cursor-pointer min-h-[56px] min-w-[56px]"
       >
-        <Avatar name={playerName} src={avatarUrl} size="lg" />
+        <AvatarChip name={playerName} src={avatarUrl} size="lg" id={playerId} />
         <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
           <span className="text-white text-xs font-medium">
             {uploading ? 'Uploading...' : 'Change'}

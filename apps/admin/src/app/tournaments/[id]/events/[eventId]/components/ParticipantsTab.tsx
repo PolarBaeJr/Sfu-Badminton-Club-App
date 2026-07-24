@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { Button, Dialog, Select, Avatar } from '@badminton/ui';
+import { Button, Dialog, Select, AvatarChip } from '@badminton/ui';
 import {
   addParticipantToEvent,
   removeParticipantFromEvent,
@@ -353,7 +353,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2.5">
-                        <Avatar name={player?.full_name ?? ''} src={player?.avatar_url} size="sm" />
+                        <AvatarChip name={player?.full_name ?? ''} src={player?.avatar_url} size="sm" id={player?.id} />
                         <span className="text-sm font-medium text-[var(--text-primary)]">{player?.full_name ?? 'Unknown'}</span>
                       </div>
                     </td>

@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Badge, Avatar, PageHeader } from '@badminton/ui';
+import { Badge, AvatarChip, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS } from '@badminton/shared';
 import Link from 'next/link';
 import {
@@ -107,7 +107,7 @@ export default async function DashboardPage() {
             {pendingPlayersList.map((player) => (
               <div key={player.id} className="px-5 py-3 flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3 min-w-0">
-                  <Avatar src={player.avatar_url} name={player.full_name} size="sm" />
+                  <AvatarChip src={player.avatar_url} name={player.full_name} size="sm" id={player.id} />
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-[var(--text-primary)] truncate">{player.full_name}</p>
                     <p className="text-xs text-[var(--text-muted)] truncate">{player.email}</p>

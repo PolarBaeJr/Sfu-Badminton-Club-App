@@ -1,5 +1,5 @@
 import { getExecutives } from '@/lib/supabase-server';
-import { PageHeader, Avatar } from '@badminton/ui';
+import { PageHeader, AvatarChip } from '@badminton/ui';
 import { Users } from 'lucide-react';
 
 // Public page — viewable without an account (see middleware public allowlist).
@@ -32,7 +32,7 @@ export default async function ExecPage() {
           {execs.map((e) => (
             <div key={e.id} className="card-base card-interactive" style={{ textAlign: 'center', padding: 24 }}>
               <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
-                <Avatar name={e.name} src={e.avatar_url} size="lg" />
+                <AvatarChip name={e.name} src={e.avatar_url} size="lg" id={e.id} />
               </div>
               <div style={{ fontWeight: 700, fontSize: 16 }}>{e.name}</div>
               {e.exec_title && (

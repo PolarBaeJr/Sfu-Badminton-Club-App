@@ -1,5 +1,5 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { Avatar } from '@badminton/ui';
+import { AvatarChip } from '@badminton/ui';
 import {
   formatDate,
   isDoublesEvent,
@@ -426,8 +426,8 @@ export default async function EventDetailPage({
                           <span className="nums text-xs text-[var(--text-muted)] w-5 text-center shrink-0">#{seed}</span>
                         )}
                         <div className="flex -space-x-2">
-                          <Avatar name={(p1?.full_name as string) || ''} src={p1?.avatar_url as string | null} size="sm" />
-                          <Avatar name={(p2?.full_name as string) || ''} src={p2?.avatar_url as string | null} size="sm" />
+                          <AvatarChip name={(p1?.full_name as string) || ''} src={p1?.avatar_url as string | null} size="sm" id={p1?.id as string | undefined} />
+                          <AvatarChip name={(p2?.full_name as string) || ''} src={p2?.avatar_url as string | null} size="sm" id={p2?.id as string | undefined} />
                         </div>
                         <span className="text-sm text-[var(--text-primary)] font-medium truncate">
                           {p1?.full_name as string} &amp; {p2?.full_name as string}
@@ -459,7 +459,7 @@ export default async function EventDetailPage({
                         {seed && (
                           <span className="nums text-xs text-[var(--text-muted)] w-5 text-center shrink-0">#{seed}</span>
                         )}
-                        <Avatar name={(player?.full_name as string) || ''} src={player?.avatar_url as string | null} size="sm" />
+                        <AvatarChip name={(player?.full_name as string) || ''} src={player?.avatar_url as string | null} size="sm" id={player?.id as string | undefined} />
                         <span className="text-sm text-[var(--text-primary)] font-medium truncate">{player?.full_name as string}</span>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">

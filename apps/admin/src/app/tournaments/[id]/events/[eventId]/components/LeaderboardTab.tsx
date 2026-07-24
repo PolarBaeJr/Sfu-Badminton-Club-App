@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Avatar } from '@badminton/ui';
+import { Button } from '@badminton/ui';
 import { Download, ArrowUpDown } from 'lucide-react';
 import { getName } from './entry-name';
 import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';

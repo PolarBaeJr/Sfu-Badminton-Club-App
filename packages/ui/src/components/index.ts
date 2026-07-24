@@ -9,7 +9,6 @@ export { Card } from './Card';
 export { Toast } from './Toast';
 export { Dialog } from './Dialog';
 export { Dropdown } from './Dropdown';
-export { Avatar } from './Avatar';
 export { Spinner } from './Spinner';
 export { EmptyState } from './EmptyState';
 export { DataTable } from './DataTable';

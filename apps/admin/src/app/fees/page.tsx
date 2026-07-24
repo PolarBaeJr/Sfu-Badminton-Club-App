@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Badge, Card, Avatar, EmptyState, PageHeader } from '@badminton/ui';
+import { Badge, Card, AvatarChip, EmptyState, PageHeader } from '@badminton/ui';
 import { unwrap, unwrapMaybe } from '@badminton/shared';
 import type { Season } from '@badminton/shared';
 import { FeeActions, AddManualFee, RemoveManualFee } from './fee-actions';
@@ -126,7 +126,7 @@ export default async function FeesPage() {
                   <tr key={player.id} className="hover:bg-[var(--border-hover)] transition-colors">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
-                        <Avatar name={player.full_name} src={player.avatar_url} size="sm" />
+                        <AvatarChip name={player.full_name} src={player.avatar_url} size="sm" id={player.id} />
                         <div>
                           <p className="text-sm font-medium text-[var(--text-primary)]">{player.full_name}</p>
                           <p className="text-xs text-[var(--text-muted)]">{player.email}</p>
@@ -164,7 +164,7 @@ export default async function FeesPage() {
                 <tr key={fee.id} className="hover:bg-[var(--border-hover)] transition-colors">
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
-                      <Avatar name={fee.manual_name} size="sm" />
+                      <AvatarChip name={fee.manual_name} size="sm" />
                       <div>
                         <p className="text-sm font-medium text-[var(--text-primary)]">{fee.manual_name}</p>
                         <p className="text-xs text-[var(--text-muted)]">Manual entry</p>

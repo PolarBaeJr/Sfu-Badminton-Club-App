@@ -1,5 +1,5 @@
 import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge, StatCard, Avatar, PageHeader } from '@badminton/ui';
+import { Card, Badge, StatCard, AvatarChip, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, TOURNAMENT_EVENT_TYPE_LABELS, getWinRate, getStreakDisplay, getPointDifferential } from '@badminton/shared';
 import { PlayerEditForm } from './edit-form';
 import { VarsityNotes } from './varsity-notes';
@@ -56,7 +56,7 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
 
       {/* Header */}
       <div className="flex items-center gap-4">
-        <Avatar name={player.full_name} size="lg" />
+        <AvatarChip name={player.full_name} size="lg" id={player.id} />
         <PageHeader
           className="no-period flex-1 !mb-0"
           title={player.full_name}

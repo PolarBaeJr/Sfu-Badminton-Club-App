@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Avatar } from '@badminton/ui';
+import { Button, AvatarChip } from '@badminton/ui';
 import {
   checkInParticipant,
   markParticipantNoShow,
@@ -235,7 +235,7 @@ function EntryCard({
         {entry.seed_number && (
           <span className="text-xs font-mono text-[var(--text-muted)] w-6 text-center">#{entry.seed_number}</span>
         )}
-        {!isDoubles && <Avatar name={name} src={(entry as ParticipantWithPlayer).player?.avatar_url} size="sm" />}
+        {!isDoubles && <AvatarChip name={name} src={(entry as ParticipantWithPlayer).player?.avatar_url} size="sm" id={(entry as ParticipantWithPlayer).player?.id} />}
         <span className="text-sm font-medium text-[var(--text-primary)]">{name}</span>
       </div>
       {actions}

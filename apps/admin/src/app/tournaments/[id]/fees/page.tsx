@@ -1,5 +1,5 @@
 import { createAdminClient, getAuthenticatedAdmin } from '@/lib/supabase-server';
-import { Card, Badge, Avatar, PageHeader } from '@badminton/ui';
+import { Card, Badge, AvatarChip, PageHeader } from '@badminton/ui';
 import { unwrap } from '@badminton/shared';
 import type { TournamentFeeTier, TournamentFee, Player } from '@badminton/shared';
 import { notFound } from 'next/navigation';
@@ -124,7 +124,7 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
                   <tr key={player.id} className="hover:bg-[var(--border-hover)] transition-colors">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
-                        <Avatar name={player.full_name} src={player.avatar_url} size="sm" />
+                        <AvatarChip name={player.full_name} src={player.avatar_url} size="sm" id={player.id} />
                         <div>
                           <p className="text-sm font-medium text-[var(--text-primary)]">{player.full_name}</p>
                           <p className="text-xs text-[var(--text-muted)]">{player.email}</p>

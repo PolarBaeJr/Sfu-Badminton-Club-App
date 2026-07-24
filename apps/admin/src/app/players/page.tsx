@@ -1,5 +1,5 @@
 import { createAdminClient } from '@/lib/supabase-server';
-import { Badge, Card, Avatar, PageHeader } from '@badminton/ui';
+import { Badge, Card, AvatarChip, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS, getMissingLegalDocuments, getWinRate, unwrap } from '@badminton/shared';
 import Link from 'next/link';
 import { PlayerActions } from './player-actions';
@@ -147,7 +147,7 @@ export default async function PlayersPage({
                     <td className="px-4 py-3">
                       <Link href={`/players/${player.id}`} className="flex items-center gap-3 hover:text-[var(--color-accent)]">
                         <div className="relative">
-                          <Avatar name={player.full_name} src={player.avatar_url} size="sm" />
+                          <AvatarChip name={player.full_name} src={player.avatar_url} size="sm" id={player.id} />
                           {dotClass && (
                             <span className={`absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ${dotClass} border-2 border-[var(--bg-card)]`} />
                           )}

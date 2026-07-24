@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Badge, Avatar, Button, Dialog } from '@badminton/ui';
+import { Badge, AvatarChip, Button, Dialog } from '@badminton/ui';
 import { PLACEMENT_BONUSES, isDoublesEvent } from '@badminton/shared';
 import type { TournamentEventType } from '@badminton/shared';
 import { undoMatchResult } from '@/lib/tournament-actions';
@@ -134,7 +134,7 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
                   </td>
                   <td className="px-4 py-2.5">
                     <div className="flex items-center gap-2">
-                      {!isDoubles && <Avatar name={p.player?.full_name ?? ''} src={p.player?.avatar_url} size="sm" />}
+                      {!isDoubles && <AvatarChip name={p.player?.full_name ?? ''} src={p.player?.avatar_url} size="sm" id={p.player?.id} />}
                       <span className="text-sm font-medium text-[var(--text-primary)]">{getName(e, isDoubles)}</span>
                     </div>
                   </td>
