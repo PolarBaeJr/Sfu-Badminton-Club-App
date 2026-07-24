@@ -44,7 +44,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
     .slice(0, 10);
 
   return (
-    <div data-screen-label="Player Profile" style={{ maxWidth: 720, margin: '0 auto' }}>
+    <div data-screen-label="Player Profile">
       <div className="page-header" style={{ marginBottom: 18 }}>
         <Link href="/leaderboard" className="row press" style={{ gap: 8, fontSize: 13, color: 'var(--mute)' }}>
           <ArrowLeft size={16} />
