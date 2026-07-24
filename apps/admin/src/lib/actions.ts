@@ -70,6 +70,7 @@ export {
   updateSession,
   archiveSession,
   deleteSession,
+  sendSessionReminders,
   markAttendance,
   clearAttendanceMark,
 } from './actions/sessions';

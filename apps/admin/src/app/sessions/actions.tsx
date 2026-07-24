@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { Badge, Button, Dialog, Input, Select, useConfirm, DatePicker } from '@badminton/ui';
-import { createSession, updateSession, archiveSession, deleteSession, markAttendance, clearAttendanceMark } from '@/lib/actions';
+import { createSession, updateSession, archiveSession, deleteSession, markAttendance, clearAttendanceMark, sendSessionReminders } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { MoreVertical, Users } from 'lucide-react';
 import type { SessionGroupInput, AttendanceStatus, AttendanceStatusInput } from '@badminton/shared';
@@ -352,6 +352,20 @@ export function SessionCardMenu({ session }: SessionCardMenuProps) {
     setLoading(false);
   }
 
+  async function handleSendReminders() {
+    if (!(await confirm({ title: 'Send reminders?', message: 'Notify everyone who RSVP’d "going" to this session?', confirmLabel: 'Send' }))) return;
+    setLoading(true);
+    try {
+      const res = await sendSessionReminders(session.id);
+      if (!res.ok) { toast(res.error, 'error'); setLoading(false); setMenuOpen(false); return; }
+      toast(res.data.notified > 0 ? `Reminder sent to ${res.data.notified} player${res.data.notified === 1 ? '' : 's'}` : 'No one has RSVP’d going yet', res.data.notified > 0 ? 'success' : 'info');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed', 'error');
+    }
+    setLoading(false);
+    setMenuOpen(false);
+  }
+
   async function handleArchive() {
     if (!(await confirm({ title: 'Archive session?', message: 'Archive this session? It will be marked as closed.', confirmLabel: 'Archive' }))) return;
     setLoading(true);
@@ -398,6 +412,13 @@ export function SessionCardMenu({ session }: SessionCardMenuProps) {
               className="w-full px-4 py-2.5 text-left text-sm text-[var(--text-primary)] hover:bg-[var(--border-hover)] transition-colors"
             >
               Edit
+            </button>
+            <button
+              onClick={handleSendReminders}
+              disabled={loading}
+              className="w-full px-4 py-2.5 text-left text-sm text-[var(--text-primary)] hover:bg-[var(--border-hover)] transition-colors disabled:opacity-50"
+            >
+              Send reminder
             </button>
             <button
               onClick={handleArchive}

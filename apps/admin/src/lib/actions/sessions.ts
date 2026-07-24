@@ -2,12 +2,15 @@
 
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
+import { notifyPlayers } from '../notify';
 import { revalidatePath } from 'next/cache';
 import {
   parseOrThrow,
   sessionCreateSchema,
   sessionGroupSchema,
   attendanceMarkSchema,
+  formatDate,
+  formatTime,
   type SessionGroupInput,
   type AttendanceMarkInput,
 } from '@badminton/shared';
@@ -27,6 +30,63 @@ export async function createSession(data: {
   excluded_dates?: string[];
 }): Promise<ActionResult<Awaited<ReturnType<typeof createSessionImpl>>>> {
   return runAction(() => createSessionImpl(data));
+}
+
+// Remind every player who RSVP'd "going" to a session. This is the reusable
+// core a scheduled reminder job will call later; for now it's driven manually
+// by the admin "Send reminder" button. Best-effort push (category 'sessions')
+// plus the always-on in-app bell.
+export async function sendSessionReminders(sessionId: string): Promise<ActionResult<{ notified: number }>> {
+  return runAction(() => remindSessionGoers(sessionId));
+}
+
+async function remindSessionGoers(sessionId: string): Promise<{ notified: number }> {
+  const admin = await getExecOrAdmin();
+  const adminClient = createAdminClient();
+
+  const { data: session, error: sErr } = await adminClient
+    .from('sessions')
+    .select('id, name, date, start_time, location')
+    .eq('id', sessionId)
+    .single();
+  if (sErr || !session) throw new Error(sErr?.message ?? 'Session not found');
+
+  const { data: rsvps, error: rErr } = await adminClient
+    .from('session_rsvp')
+    .select('player_id')
+    .eq('session_id', sessionId)
+    .eq('intent', 'going');
+  if (rErr) throw new Error(rErr.message);
+
+  const playerIds = (rsvps ?? []).map((r) => r.player_id);
+  if (playerIds.length === 0) return { notified: 0 };
+
+  const label = session.name?.trim() || 'Session';
+  const when = `${formatDate(session.date)}${session.start_time ? ` · ${formatTime(session.start_time)}` : ''}`;
+  const body = `${label} at ${session.location} · ${when}`;
+
+  await notifyPlayers(
+    adminClient,
+    playerIds,
+    {
+      type: 'session_reminder',
+      title: 'Session reminder',
+      body,
+      metadata: { session_id: sessionId, kind: 'session_reminder' },
+    },
+    { title: 'Session reminder', body, url: '/sessions' },
+    'sessions',
+  );
+
+  await logAdminAudit(adminClient, {
+    actor_id: admin.id,
+    action_type: 'session_reminders_sent',
+    target_type: 'session',
+    target_id: sessionId,
+    new_value: { notified: playerIds.length },
+  });
+
+  return { notified: playerIds.length };
 }
 
 async function createSessionImpl(data: {
