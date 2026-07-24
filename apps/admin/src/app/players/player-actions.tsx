@@ -56,13 +56,14 @@ export function PlayerActions({ mode, playerId, playerName, playerData }: Props)
       const role = roleValue === 'admin' || roleValue === 'admin_exec' ? 'admin' : 'player';
       const isExec = roleValue === 'exec' || roleValue === 'admin_exec';
       try {
-        await updatePlayer(playerId, {
+        const res = await updatePlayer(playerId, {
           status: status as 'competitive' | 'recreational' | 'suspended' | 'pending_approval',
           role: role as 'player' | 'admin',
           singles_elo: singlesElo ? parseInt(singlesElo) : undefined,
           doubles_elo: doublesElo ? parseInt(doublesElo) : undefined,
           reason,
         });
+        if (!res.ok) { toast(res.error, 'error'); return; }
         if (isExec !== Boolean(playerData?.is_exec) || feeExempt !== Boolean(playerData?.fee_exempt)) {
           await updatePlayerFlags(playerId, { is_exec: isExec, fee_exempt: feeExempt });
         }
@@ -79,7 +80,8 @@ export function PlayerActions({ mode, playerId, playerName, playerData }: Props)
   function handleDelete() {
     startTransition(async () => {
       try {
-        await removePlayer(playerId, reason || 'Removed by admin');
+        const res = await removePlayer(playerId, reason || 'Removed by admin');
+        if (!res.ok) { toast(res.error, 'error'); return; }
         toast('Player removed', 'success');
         setOpen(false);
         router.refresh();

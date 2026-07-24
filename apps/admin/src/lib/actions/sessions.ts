@@ -13,8 +13,23 @@ import {
 } from '@badminton/shared';
 import { z } from 'zod';
 import { getExecOrAdmin } from './_shared';
+import { runAction, type ActionResult } from '../action-result';
 
 export async function createSession(data: {
+  name: string;
+  date: string;
+  time?: string;
+  end_time?: string;
+  location: string;
+  notes?: string;
+  track: SessionGroupInput;
+  repeat_until?: string;
+  excluded_dates?: string[];
+}): Promise<ActionResult<Awaited<ReturnType<typeof createSessionImpl>>>> {
+  return runAction(() => createSessionImpl(data));
+}
+
+async function createSessionImpl(data: {
   name: string;
   date: string;
   time?: string;
@@ -93,6 +108,18 @@ export async function updateSession(sessionId: string, data: {
   location: string;
   notes?: string;
   track: SessionGroupInput;
+}): Promise<ActionResult<void>> {
+  return runAction(() => updateSessionImpl(sessionId, data));
+}
+
+async function updateSessionImpl(sessionId: string, data: {
+  name: string;
+  date: string;
+  time?: string;
+  end_time?: string;
+  location: string;
+  notes?: string;
+  track: SessionGroupInput;
 }) {
   parseOrThrow(sessionGroupSchema, data.track);
   const admin = await getExecOrAdmin();
@@ -124,7 +151,11 @@ export async function updateSession(sessionId: string, data: {
   revalidatePath('/sessions');
 }
 
-export async function archiveSession(sessionId: string) {
+export async function archiveSession(sessionId: string): Promise<ActionResult<void>> {
+  return runAction(() => archiveSessionImpl(sessionId));
+}
+
+async function archiveSessionImpl(sessionId: string) {
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
@@ -145,7 +176,11 @@ export async function archiveSession(sessionId: string) {
   revalidatePath('/sessions');
 }
 
-export async function markAttendance(input: AttendanceMarkInput) {
+export async function markAttendance(input: AttendanceMarkInput): Promise<ActionResult<void>> {
+  return runAction(() => markAttendanceImpl(input));
+}
+
+async function markAttendanceImpl(input: AttendanceMarkInput) {
   const data = parseOrThrow(attendanceMarkSchema, input);
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
@@ -185,7 +220,11 @@ export async function markAttendance(input: AttendanceMarkInput) {
   revalidatePath('/sessions');
 }
 
-export async function clearAttendanceMark(sessionId: string, playerId: string) {
+export async function clearAttendanceMark(sessionId: string, playerId: string): Promise<ActionResult<void>> {
+  return runAction(() => clearAttendanceMarkImpl(sessionId, playerId));
+}
+
+async function clearAttendanceMarkImpl(sessionId: string, playerId: string) {
   parseOrThrow(z.string().uuid(), sessionId);
   parseOrThrow(z.string().uuid(), playerId);
   const admin = await getExecOrAdmin();
@@ -219,7 +258,11 @@ export async function clearAttendanceMark(sessionId: string, playerId: string) {
   revalidatePath('/sessions');
 }
 
-export async function deleteSession(sessionId: string) {
+export async function deleteSession(sessionId: string): Promise<ActionResult<void>> {
+  return runAction(() => deleteSessionImpl(sessionId));
+}
+
+async function deleteSessionImpl(sessionId: string) {
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 

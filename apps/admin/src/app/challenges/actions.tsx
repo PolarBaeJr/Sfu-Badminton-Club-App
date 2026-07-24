@@ -15,7 +15,8 @@ export function ChallengeActions({ challengeId }: { challengeId: string }) {
     if (!reason.trim()) { toast('Reason required', 'error'); return; }
     setLoading(true);
     try {
-      await forceExpireChallenge(challengeId, reason);
+      const res = await forceExpireChallenge(challengeId, reason);
+      if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
       toast('Challenge expired', 'success');
       setOpen(false);
     } catch (err) {

@@ -11,8 +11,13 @@ import {
   type AdminPlayerUpdateInput,
 } from '@badminton/shared';
 import { getAdminPlayer } from './_shared';
+import { runAction, type ActionResult } from '../action-result';
 
-export async function approvePlayer(playerId: string, status: 'competitive' | 'recreational', reason: string) {
+export async function approvePlayer(playerId: string, status: 'competitive' | 'recreational', reason: string): Promise<ActionResult<void>> {
+  return runAction(() => approvePlayerImpl(playerId, status, reason));
+}
+
+async function approvePlayerImpl(playerId: string, status: 'competitive' | 'recreational', reason: string) {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
@@ -43,6 +48,16 @@ export async function approvePlayer(playerId: string, status: 'competitive' | 'r
 }
 
 export async function createPlayer(data: {
+  full_name: string;
+  email: string;
+  status: string;
+  role?: string;
+  is_exec?: boolean;
+}): Promise<ActionResult<string>> {
+  return runAction(() => createPlayerImpl(data));
+}
+
+async function createPlayerImpl(data: {
   full_name: string;
   email: string;
   status: string;
@@ -94,7 +109,11 @@ export async function createPlayer(data: {
   return playerId;
 }
 
-export async function updatePlayer(playerId: string, data: AdminPlayerUpdateInput) {
+export async function updatePlayer(playerId: string, data: AdminPlayerUpdateInput): Promise<ActionResult<void>> {
+  return runAction(() => updatePlayerImpl(playerId, data));
+}
+
+async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) {
   parseOrThrow(adminPlayerUpdateSchema, data);
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
@@ -139,7 +158,11 @@ export async function updatePlayer(playerId: string, data: AdminPlayerUpdateInpu
 // Backup path for the player's own restore flow: clears a pending
 // self-service account deletion (players.deletion_requested_at) before the
 // purge-deleted-accounts edge function anonymizes the row.
-export async function cancelAccountDeletion(playerId: string) {
+export async function cancelAccountDeletion(playerId: string): Promise<ActionResult<void>> {
+  return runAction(() => cancelAccountDeletionImpl(playerId));
+}
+
+async function cancelAccountDeletionImpl(playerId: string) {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
@@ -169,7 +192,11 @@ export async function cancelAccountDeletion(playerId: string) {
 // Force just this player to re-sign the waiver on their next visit. Stamps
 // players.waiver_reset_at = now(); the shared getMissingLegalDocuments helper
 // then treats their latest waiver acceptance as stale until they re-sign.
-export async function requireWaiverResignature(playerId: string) {
+export async function requireWaiverResignature(playerId: string): Promise<ActionResult<void>> {
+  return runAction(() => requireWaiverResignatureImpl(playerId));
+}
+
+async function requireWaiverResignatureImpl(playerId: string) {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
@@ -195,7 +222,11 @@ export async function requireWaiverResignature(playerId: string) {
   revalidatePath(`/players/${playerId}`);
 }
 
-export async function removePlayer(playerId: string, reason: string) {
+export async function removePlayer(playerId: string, reason: string): Promise<ActionResult<void>> {
+  return runAction(() => removePlayerImpl(playerId, reason));
+}
+
+async function removePlayerImpl(playerId: string, reason: string) {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 

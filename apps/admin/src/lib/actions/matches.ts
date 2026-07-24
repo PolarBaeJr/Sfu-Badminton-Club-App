@@ -6,12 +6,17 @@ import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import { parseOrThrow, adminMatchCreateSchema } from '@badminton/shared';
 import { getExecOrAdmin } from './_shared';
+import { runAction, type ActionResult } from '../action-result';
 
 // ============================================================
 // Match Management
 // ============================================================
 
-export async function voidMatch(matchId: string, reason: string) {
+export async function voidMatch(matchId: string, reason: string): Promise<ActionResult<void>> {
+  return runAction(() => voidMatchImpl(matchId, reason));
+}
+
+async function voidMatchImpl(matchId: string, reason: string) {
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
@@ -47,7 +52,11 @@ export async function voidMatch(matchId: string, reason: string) {
   revalidatePath('/matches');
 }
 
-export async function convertMatchToCasual(matchId: string, reason: string) {
+export async function convertMatchToCasual(matchId: string, reason: string): Promise<ActionResult<void>> {
+  return runAction(() => convertMatchToCasualImpl(matchId, reason));
+}
+
+async function convertMatchToCasualImpl(matchId: string, reason: string) {
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
@@ -106,6 +115,19 @@ export async function convertMatchToCasual(matchId: string, reason: string) {
 // ============================================================
 
 export async function adminCreateMatch(data: {
+  match_type: string;
+  format: string;
+  rated_flag: boolean;
+  side_a_players: string[];
+  side_b_players: string[];
+  winner_side: string;
+  games: { game_number: number; side_a_score: number; side_b_score: number }[];
+  admin_note?: string;
+}): Promise<ActionResult<string>> {
+  return runAction(() => adminCreateMatchImpl(data));
+}
+
+async function adminCreateMatchImpl(data: {
   match_type: string;
   format: string;
   rated_flag: boolean;
@@ -233,6 +255,19 @@ export async function adminCreateChallenge(data: {
   scheduled_date?: string;
   scheduled_time?: string;
   note?: string;
+}): Promise<ActionResult<string>> {
+  return runAction(() => adminCreateChallengeImpl(data));
+}
+
+async function adminCreateChallengeImpl(data: {
+  type: string;
+  format: string;
+  rated_flag: boolean;
+  side_a_players: string[];
+  side_b_players: string[];
+  scheduled_date?: string;
+  scheduled_time?: string;
+  note?: string;
 }) {
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
@@ -291,7 +326,11 @@ export async function adminCreateChallenge(data: {
   return challenge.id;
 }
 
-export async function forceExpireChallenge(challengeId: string, reason: string) {
+export async function forceExpireChallenge(challengeId: string, reason: string): Promise<ActionResult<void>> {
+  return runAction(() => forceExpireChallengeImpl(challengeId, reason));
+}
+
+async function forceExpireChallengeImpl(challengeId: string, reason: string) {
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 

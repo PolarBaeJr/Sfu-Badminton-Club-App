@@ -17,10 +17,12 @@ export function MatchActions({ matchId, resultStatus }: { matchId: string; resul
     setLoading(true);
     try {
       if (action === 'void') {
-        await voidMatch(matchId, reason);
+        const res = await voidMatch(matchId, reason);
+        if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
         toast('Match voided', 'success');
       } else if (action === 'casual') {
-        await convertMatchToCasual(matchId, reason);
+        const res = await convertMatchToCasual(matchId, reason);
+        if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
         toast('Match converted to casual', 'success');
       }
       setAction(null);

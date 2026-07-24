@@ -16,10 +16,12 @@ export function WalkoverActions({ walkoverId }: { walkoverId: string }) {
     setLoading(true);
     try {
       if (action === 'confirm') {
-        await confirmWalkover(walkoverId, notes);
+        const res = await confirmWalkover(walkoverId, notes);
+        if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
         toast('Walkover confirmed', 'success');
       } else {
-        await rejectWalkover(walkoverId, notes);
+        const res = await rejectWalkover(walkoverId, notes);
+        if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
         toast('Walkover rejected', 'success');
       }
       setAction(null);

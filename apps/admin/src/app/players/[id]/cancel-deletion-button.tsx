@@ -14,7 +14,8 @@ export function CancelDeletionButton({ playerId }: { playerId: string }) {
   function handleCancel() {
     startTransition(async () => {
       try {
-        await cancelAccountDeletion(playerId);
+        const res = await cancelAccountDeletion(playerId);
+        if (!res.ok) { toast(res.error, 'error'); return; }
         toast('Deletion cancelled — account restored', 'success');
         router.refresh();
       } catch (err) {

@@ -56,7 +56,7 @@ export function CreateMatchForm({ players }: { players: Player[] }) {
 
     setLoading(true);
     try {
-      await adminCreateMatch({
+      const res = await adminCreateMatch({
         match_type: matchType,
         format,
         rated_flag: rated,
@@ -66,6 +66,7 @@ export function CreateMatchForm({ players }: { players: Player[] }) {
         games,
         admin_note: note || undefined,
       });
+      if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
       toast('Match created', 'success');
       setOpen(false);
       setSideA1(''); setSideA2(''); setSideB1(''); setSideB2('');

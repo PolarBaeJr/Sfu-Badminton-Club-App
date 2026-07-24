@@ -7,8 +7,13 @@ import { revalidatePath } from 'next/cache';
 import { parseOrThrow, disputeResolveSchema, type DisputeResolveInput } from '@badminton/shared';
 import { getAdminPlayer } from './_shared';
 import { voidMatch, convertMatchToCasual } from './matches';
+import { runAction, type ActionResult } from '../action-result';
 
-export async function resolveDispute(data: DisputeResolveInput) {
+export async function resolveDispute(data: DisputeResolveInput): Promise<ActionResult<void>> {
+  return runAction(() => resolveDisputeImpl(data));
+}
+
+async function resolveDisputeImpl(data: DisputeResolveInput) {
   parseOrThrow(disputeResolveSchema, data);
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
@@ -23,9 +28,11 @@ export async function resolveDispute(data: DisputeResolveInput) {
 
   // Handle resolution
   if (data.resolution_type === 'voided') {
-    await voidMatch(dispute.match_id, data.resolution_note);
+    const r = await voidMatch(dispute.match_id, data.resolution_note);
+    if (!r.ok) throw new Error(r.error);
   } else if (data.resolution_type === 'converted_to_casual') {
-    await convertMatchToCasual(dispute.match_id, data.resolution_note);
+    const r = await convertMatchToCasual(dispute.match_id, data.resolution_note);
+    if (!r.ok) throw new Error(r.error);
   } else if (data.resolution_type === 'accepted') {
     // The match was disputed (never confirmed); apply_match_result requires
     // pending_confirmation, so restore that state before applying the result.

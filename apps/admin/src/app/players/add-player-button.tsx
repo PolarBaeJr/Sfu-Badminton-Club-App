@@ -37,13 +37,14 @@ export function AddPlayerButton() {
     }
     startTransition(async () => {
       try {
-        await createPlayer({
+        const res = await createPlayer({
           full_name: fullName.trim(),
           email: email.trim().toLowerCase(),
           status,
           role: 'player',
           is_exec: role === 'exec',
         });
+        if (!res.ok) { toast(res.error, 'error'); return; }
         toast('Player created', 'success');
         setOpen(false);
         setFullName('');

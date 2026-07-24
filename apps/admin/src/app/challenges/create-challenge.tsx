@@ -32,7 +32,7 @@ export function CreateChallengeForm({ players }: { players: Player[] }) {
 
     setLoading(true);
     try {
-      await adminCreateChallenge({
+      const res = await adminCreateChallenge({
         type,
         format,
         rated_flag: rated,
@@ -42,6 +42,7 @@ export function CreateChallengeForm({ players }: { players: Player[] }) {
         scheduled_time: scheduledTime || undefined,
         note: note || undefined,
       });
+      if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
       toast('Challenge created', 'success');
       setOpen(false);
       setSideA1(''); setSideA2(''); setSideB1(''); setSideB2('');

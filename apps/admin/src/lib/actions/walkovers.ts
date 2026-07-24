@@ -5,8 +5,13 @@ import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import { getAdminPlayer } from './_shared';
+import { runAction, type ActionResult } from '../action-result';
 
-export async function confirmWalkover(walkoverId: string, notes: string) {
+export async function confirmWalkover(walkoverId: string, notes: string): Promise<ActionResult<void>> {
+  return runAction(() => confirmWalkoverImpl(walkoverId, notes));
+}
+
+async function confirmWalkoverImpl(walkoverId: string, notes: string) {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
@@ -35,7 +40,11 @@ export async function confirmWalkover(walkoverId: string, notes: string) {
   revalidatePath('/matches');
 }
 
-export async function rejectWalkover(walkoverId: string, notes: string) {
+export async function rejectWalkover(walkoverId: string, notes: string): Promise<ActionResult<void>> {
+  return runAction(() => rejectWalkoverImpl(walkoverId, notes));
+}
+
+async function rejectWalkoverImpl(walkoverId: string, notes: string) {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 

@@ -52,12 +52,13 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
     }
     setLoading(true);
     try {
-      await resolveDispute({
+      const res = await resolveDispute({
         dispute_id: disputeId,
         resolution_type: resType,
         resolution_note: note,
         ...(resType === 'edited' ? { edited_winner_side: editedWinner, edited_games: editedGames } : {}),
       });
+      if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
       toast('Dispute resolved', 'success');
       setOpen(false);
     } catch (err) {

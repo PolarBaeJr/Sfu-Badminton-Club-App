@@ -63,7 +63,8 @@ export function AttendanceDialog({ sessionId, attendees, players }: AttendanceDi
   async function handleMark(playerId: string, status: AttendanceStatusInput) {
     setBusyPlayerId(playerId);
     try {
-      await markAttendance({ session_id: sessionId, player_id: playerId, status });
+      const res = await markAttendance({ session_id: sessionId, player_id: playerId, status });
+      if (!res.ok) { toast(res.error, 'error'); setBusyPlayerId(null); return; }
       toast('Attendance updated', 'success');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
@@ -75,7 +76,8 @@ export function AttendanceDialog({ sessionId, attendees, players }: AttendanceDi
     if (!(await confirm({ title: 'Remove attendance?', message: 'Remove this attendance record?', confirmLabel: 'Remove', danger: true }))) return;
     setBusyPlayerId(playerId);
     try {
-      await clearAttendanceMark(sessionId, playerId);
+      const res = await clearAttendanceMark(sessionId, playerId);
+      if (!res.ok) { toast(res.error, 'error'); setBusyPlayerId(null); return; }
       toast('Attendance record removed', 'success');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
@@ -209,7 +211,7 @@ export function CreateSessionForm() {
     e.preventDefault();
     setLoading(true);
     try {
-      const { count } = await createSession({
+      const res = await createSession({
         name,
         date,
         time: time || undefined,
@@ -220,6 +222,8 @@ export function CreateSessionForm() {
         repeat_until: repeatWeekly && repeatUntil ? repeatUntil : undefined,
         excluded_dates: excludedInSeries.length > 0 ? excludedInSeries : undefined,
       });
+      if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
+      const { count } = res.data;
       toast(count > 1 ? `Created ${count} sessions` : 'Session created', 'success');
       setOpen(false);
       setName(''); setDate(''); setTime(''); setEndTime(''); setLocation(''); setNotes(''); setTrack('all');
@@ -338,7 +342,8 @@ export function SessionCardMenu({ session }: SessionCardMenuProps) {
     e.preventDefault();
     setLoading(true);
     try {
-      await updateSession(session.id, { name, date, time: time || undefined, end_time: endTime || undefined, location, notes: notes || undefined, track });
+      const res = await updateSession(session.id, { name, date, time: time || undefined, end_time: endTime || undefined, location, notes: notes || undefined, track });
+      if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
       toast('Session updated', 'success');
       setEditOpen(false);
     } catch (err) {
@@ -351,7 +356,8 @@ export function SessionCardMenu({ session }: SessionCardMenuProps) {
     if (!(await confirm({ title: 'Archive session?', message: 'Archive this session? It will be marked as closed.', confirmLabel: 'Archive' }))) return;
     setLoading(true);
     try {
-      await archiveSession(session.id);
+      const res = await archiveSession(session.id);
+      if (!res.ok) { toast(res.error, 'error'); setLoading(false); setMenuOpen(false); return; }
       toast('Session archived', 'success');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
@@ -364,7 +370,8 @@ export function SessionCardMenu({ session }: SessionCardMenuProps) {
     if (!(await confirm({ title: 'Delete session?', message: 'Delete this session? This cannot be undone.', confirmLabel: 'Delete', danger: true }))) return;
     setLoading(true);
     try {
-      await deleteSession(session.id);
+      const res = await deleteSession(session.id);
+      if (!res.ok) { toast(res.error, 'error'); setLoading(false); setMenuOpen(false); return; }
       toast('Session deleted', 'success');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');

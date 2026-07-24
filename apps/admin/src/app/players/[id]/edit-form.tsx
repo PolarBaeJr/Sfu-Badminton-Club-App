@@ -41,10 +41,11 @@ export function PlayerEditForm({ player, rating }: { player: Player; rating: Rat
 
     try {
       if (isPending) {
-        await approvePlayer(player.id, status as 'competitive' | 'recreational', reason);
+        const res = await approvePlayer(player.id, status as 'competitive' | 'recreational', reason);
+        if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
         toast('Player approved', 'success');
       } else {
-        await updatePlayer(player.id, {
+        const res = await updatePlayer(player.id, {
           status: status !== player.status ? status as Player['status'] : undefined,
           role: role !== player.role ? role as Player['role'] : undefined,
           singles_elo: singlesElo !== (rating?.singles_elo ?? 400) ? singlesElo : undefined,
@@ -54,6 +55,7 @@ export function PlayerEditForm({ player, rating }: { player: Player; rating: Rat
           fee_exempt: feeExempt !== (player.fee_exempt ?? false) ? feeExempt : undefined,
           reason,
         });
+        if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
         toast('Player updated', 'success');
       }
     } catch (err) {

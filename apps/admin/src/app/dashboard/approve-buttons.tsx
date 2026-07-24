@@ -14,7 +14,8 @@ export function ApproveButtons({ playerId, playerName }: { playerId: string; pla
   function handleApprove(type: 'competitive' | 'recreational') {
     startTransition(async () => {
       try {
-        await approvePlayer(playerId, type, `Approved as ${type} from dashboard`);
+        const res = await approvePlayer(playerId, type, `Approved as ${type} from dashboard`);
+        if (!res.ok) { toast(res.error, 'error'); return; }
         toast(`${playerName} approved as ${type}`, 'success');
         router.refresh();
       } catch (err) {
