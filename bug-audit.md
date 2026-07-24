@@ -1,5 +1,34 @@
 # Full-codebase bug audit
 
+> ## Round-2 discovery (deep-dive agents: fees, tournaments, auth)
+> **Fixed this session:** fee_exempt/active_flag self-escalation (migration `00020`) —
+> the standout money hole (a player could self-set `fee_exempt=true`, owe $0, and
+> vanish from the collection list).
+>
+> **Tournament system — NOT fixed (needs the tournament flow tested; likely not a
+> day-1 beta path):**
+> - **T1 (HIGH):** single-elim bracket advancement is fully broken —
+>   `tournament-actions/brackets.ts:101` indexes `matchesByRound[round]` instead of
+>   `[round+1]`, so `winner_to_match_id` is always null → no advancement, byes drop
+>   players, and `finalizeEvent` places everyone at position 2. Single-elim is
+>   non-functional end to end. **Fix = `round + 1` + re-test a full bracket.**
+> - **T4 (MED, privacy):** `tournament_events/participants/pairs/matches` SELECT
+>   policies omit `TO authenticated` → the anon key can enumerate all player_ids /
+>   pairings / match history (`00005_rls.sql:426-429`). Confirm whether a public
+>   bracket view is intended before locking to authenticated.
+> - T2 self/duplicate pair, T3 registration race, T5 regenerate-mid-event wipes
+>   scores, T6 walkover-edit drops Elo, T7 count includes withdrawn, T9 no state
+>   guards on no-show/withdraw/DQ, T10 result-entry on half-populated match.
+>
+> **Fees — remaining (admin-gated, lower urgency):** reinstatement non-atomic,
+> waiveFee overwrites a prior payment with no old-value audit, fee `amount_cents`
+> unbounded (INTEGER overflow), markFeePaid suspended-competitive undercharge + silent
+> null-amount.
+>
+> **Auth deep-dive:** results pending at time of writing — see end of file / follow-up.
+
+
+
 > ## Fix log (this session)
 > **Fixed + deployed/applied:** S1–S5 + M7 (migration `00018`, applied & verified on prod) ·
 > H1 dispute resolution · H5 compression baseline · L9 team-rating NaN · M1 recent-match
