@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Button, Dialog, Input, Select, Textarea } from '@badminton/ui';
+import { Button, Dialog, Input, Select, Textarea, DatePicker } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import {
   createAnnouncement,
@@ -142,16 +142,11 @@ function AnnouncementFields({
         />
       </div>
 
-      <div className="flex flex-col gap-1">
-        <label className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-          Expires At (optional)
-        </label>
-        <Input
-          type="date"
-          value={form.expires_at}
-          onChange={(e) => setForm((f) => ({ ...f, expires_at: e.target.value }))}
-        />
-      </div>
+      <DatePicker
+        label="Expires At (optional)"
+        value={form.expires_at}
+        onChange={(v) => setForm((f) => ({ ...f, expires_at: v }))}
+      />
 
       <div className="flex flex-col gap-2">
         <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">

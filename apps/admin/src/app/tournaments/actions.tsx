@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button, Dialog, Input, Select, Switch, Dropdown, Textarea } from '@badminton/ui';
+import { Button, Dialog, Input, Select, Switch, Dropdown, Textarea, DatePicker } from '@badminton/ui';
 import { createTournament, updateTournament, archiveTournament, deleteTournament } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { MoreVertical } from 'lucide-react';
@@ -132,8 +132,8 @@ function TournamentFormDialog({
           />
         </div>
         <div className="grid grid-cols-2 gap-4">
-          <Input label="Start Date" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} required />
-          <Input label="End Date" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+          <DatePicker label="Start Date" value={startDate} onChange={setStartDate} required />
+          <DatePicker label="End Date" value={endDate} onChange={setEndDate} />
         </div>
         <Input
           label="Elo Multiplier"

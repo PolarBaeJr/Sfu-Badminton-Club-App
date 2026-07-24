@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Dialog, Input, Select } from '@badminton/ui';
+import { Button, Dialog, Input, Select, DatePicker } from '@badminton/ui';
 import { createSeason, setActiveSeason, endSeason, updateSeasonFees, type SeasonEloPolicy } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
@@ -34,8 +34,8 @@ export function CreateSeasonForm() {
       <Dialog open={open} onClose={() => setOpen(false)} title="Create Season">
         <form onSubmit={handleCreate} className="space-y-4">
           <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required placeholder="e.g. Fall 2026" />
-          <Input label="Start Date" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} required />
-          <Input label="End Date (optional)" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+          <DatePicker label="Start Date" value={startDate} onChange={setStartDate} required />
+          <DatePicker label="End Date (optional)" value={endDate} onChange={setEndDate} />
           <div className="flex gap-2">
             <Button type="submit" loading={loading}>Create</Button>
             <Button variant="ghost" onClick={() => setOpen(false)} type="button">Cancel</Button>

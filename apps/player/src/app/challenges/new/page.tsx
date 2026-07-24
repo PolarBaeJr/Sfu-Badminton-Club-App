@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
-import { Select, Input, Textarea } from '@badminton/ui';
+import { Select, Input, Textarea, DatePicker } from '@badminton/ui';
 import { MATCH_FORMAT_LABELS, previewEloChange } from '@badminton/shared';
 import { createChallenge } from '@/lib/actions';
 import { useRouter } from 'next/navigation';
@@ -271,14 +271,10 @@ export default function NewChallengePage() {
                 </span>
               </label>
               <div className="grid grid-cols-2 gap-3">
-                <input
-                  id="scheduled_date"
-                  name="scheduled_date"
-                  type="date"
+                <DatePicker
                   value={scheduledDate}
-                  onChange={(e) => setScheduledDate(e.target.value)}
-                  min={new Date().toISOString().split('T')[0]}
-                  className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl px-3 py-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40 focus:border-transparent transition-colors min-h-[44px] w-full"
+                  onChange={setScheduledDate}
+                  placeholder="Pick a date"
                 />
                 <input
                   id="scheduled_time"

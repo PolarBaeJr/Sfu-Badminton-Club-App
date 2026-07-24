@@ -98,7 +98,11 @@ export async function generateSingleEliminationBracket(eventId: string) {
     const roundMatches: string[] = [];
 
     for (let pos = 0; pos < matchCount; pos++) {
-      const nextMatchId = round < totalRounds ? matchesByRound[round]?.[Math.floor(pos / 2)] ?? null : null;
+      // The next round (closer to the final) was built in the previous loop
+      // iteration since we count down from totalRounds, so index [round + 1].
+      // Using [round] read the not-yet-populated current round -> every
+      // winner_to_match_id was null and the bracket never advanced.
+      const nextMatchId = round < totalRounds ? matchesByRound[round + 1]?.[Math.floor(pos / 2)] ?? null : null;
       const nextMatchPosition = round < totalRounds ? (pos % 2 === 0 ? 'a' : 'b') : null;
 
       const { data: match, error } = await adminClient.from('tournament_matches').insert({

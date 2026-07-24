@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Badge, Button, Dialog, Input, Select, useConfirm } from '@badminton/ui';
+import { Badge, Button, Dialog, Input, Select, useConfirm, DatePicker } from '@badminton/ui';
 import { createSession, updateSession, archiveSession, deleteSession, markAttendance, clearAttendanceMark } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { MoreVertical, Users } from 'lucide-react';
@@ -240,7 +240,7 @@ export function CreateSessionForm() {
       <Dialog open={open} onClose={() => setOpen(false)} title="Create Session">
         <form onSubmit={handleCreate} className="space-y-4">
           <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required placeholder="e.g. Tuesday Practice" />
-          <Input label="Date" type="date" value={date} onChange={(e) => { setDate(e.target.value); setExcluded(new Set()); }} required />
+          <DatePicker label="Date" value={date} onChange={(v) => { setDate(v); setExcluded(new Set()); }} required />
           <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
             <input
               type="checkbox"
@@ -251,7 +251,7 @@ export function CreateSessionForm() {
             Repeat weekly
           </label>
           {repeatWeekly && (
-            <Input label="Repeat until" type="date" value={repeatUntil} min={date || undefined} onChange={(e) => { setRepeatUntil(e.target.value); setExcluded(new Set()); }} required />
+            <DatePicker label="Repeat until" value={repeatUntil} min={date || undefined} onChange={(v) => { setRepeatUntil(v); setExcluded(new Set()); }} required />
           )}
           {series.length > 0 && (
             <div className="space-y-2">
@@ -420,7 +420,7 @@ export function SessionCardMenu({ session }: SessionCardMenuProps) {
       <Dialog open={editOpen} onClose={() => setEditOpen(false)} title="Edit Session">
         <form onSubmit={handleUpdate} className="space-y-4">
           <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required placeholder="e.g. Tuesday Practice" />
-          <Input label="Date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+          <DatePicker label="Date" value={date} onChange={setDate} required />
           <div className="grid grid-cols-2 gap-3">
             <Input label="Start time" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
             <Input label="End time" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />

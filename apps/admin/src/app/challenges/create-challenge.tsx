@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Dialog, Input, Select, Switch, Textarea } from '@badminton/ui';
+import { Button, Dialog, Input, Select, Switch, Textarea, DatePicker } from '@badminton/ui';
 import { adminCreateChallenge } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 
@@ -105,7 +105,7 @@ export function CreateChallengeForm({ players }: { players: Player[] }) {
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <Input label="Date (optional)" type="date" value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)} />
+            <DatePicker label="Date (optional)" value={scheduledDate} onChange={setScheduledDate} />
             <Input label="Time (optional)" type="time" value={scheduledTime} onChange={(e) => setScheduledTime(e.target.value)} />
           </div>
 
