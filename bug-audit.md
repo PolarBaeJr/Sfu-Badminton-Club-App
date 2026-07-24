@@ -1,5 +1,20 @@
 # Full-codebase bug audit
 
+> ## Fix log (this session)
+> **Fixed + deployed/applied:** S1–S5 + M7 (migration `00018`, applied & verified on prod) ·
+> H1 dispute resolution · H5 compression baseline · L9 team-rating NaN · M1 recent-match
+> ordering · M2 dashboard names · M3 announcement expiry/audience · L1 feed avatar ·
+> #4 challenge/match + check-in error messages · #1 challenge RLS · #6 feed opponent.
+> (Code fixes ride the CI rebuild; H5 is an edge function — deploy separately.)
+>
+> **Still open (recommend doing tested, not pre-beta):** H2/M6 matches_update ELO-dodge &
+> apply_match_result participant guard (needs a matches trigger / dispute RPC — the
+> definer-context `auth.uid()` makes a naive trigger break legit confirms, so do it
+> carefully) · H4 submitMatchResult atomicity (needs a create-match RPC) · H3 remaining
+> error-message modules · M4/M5 accept/register races · M8/M9 + LOW items.
+
+
+
 Whole-codebase review (player app, admin app, shared packages, edge functions, DB
 migrations) by 5 parallel review agents, then triaged by hand. Ordered by severity.
 "Status" marks what's fixed vs pending as of this pass.
