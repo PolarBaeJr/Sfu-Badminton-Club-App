@@ -353,3 +353,37 @@ input, textarea, select, button, a {
    the sticky header.
    ═══════════════════════════════════════════════════════════ */
 html, body { overflow-x: clip; }
+
+/* Avatar primitive — shared by AvatarChip (packages/ui). Mirrors the player
+   app's .avatar rules so AvatarChip sizes/clips correctly in admin too. */
+.avatar {
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 999px;
+  background: var(--surface-2); color: var(--ink);
+  font-weight: 600; font-family: var(--display);
+  font-size: 12px; letter-spacing: -.01em;
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  position: relative; overflow: hidden;
+}
+.avatar.ring { box-shadow: 0 0 0 2px var(--red); }
+.avatar[data-size="xs"] { width: 24px; height: 24px; font-size: 10px; }
+.avatar[data-size="sm"] { width: 32px; height: 32px; font-size: 11px; }
+.avatar[data-size="md"] { width: 44px; height: 44px; font-size: 14px; }
+.avatar[data-size="lg"] { width: 64px; height: 64px; font-size: 20px; }
+.avatar[data-size="xl"] { width: 96px; height: 96px; font-size: 30px; }
+.avatar[data-tone="1"] { background: #EDE4DB; color: #8B5A2B; }
+.avatar[data-tone="2"] { background: #DDE7DC; color: #37604B; }
+.avatar[data-tone="3"] { background: #E4DCEA; color: #5B4680; }
+.avatar[data-tone="4"] { background: #F5D8DC; color: #9F1239; }
+.avatar[data-tone="5"] { background: #DCE3EE; color: #3B547A; }
+.avatar[data-tone="6"] { background: #EEE1D6; color: #6B4A23; }
+.avatar[data-tone="7"] { background: #E0DEDA; color: #3D3A36; }
+[data-theme="dark"] .avatar { background: var(--surface-2); }
+[data-theme="dark"] .avatar[data-tone="1"] { background: #3A2B1F; color: #E5B880; }
+[data-theme="dark"] .avatar[data-tone="2"] { background: #22362B; color: #A8D5B5; }
+[data-theme="dark"] .avatar[data-tone="3"] { background: #2E2538; color: #C6B2E3; }
+[data-theme="dark"] .avatar[data-tone="4"] { background: #3A1420; color: #F5A8B4; }
+[data-theme="dark"] .avatar[data-tone="5"] { background: #1E2A3D; color: #A8BBD8; }
+[data-theme="dark"] .avatar[data-tone="6"] { background: #32261A; color: #D8B88C; }
+[data-theme="dark"] .avatar[data-tone="7"] { background: #2A2824; color: #BFB9B0; }
