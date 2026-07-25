@@ -61,19 +61,29 @@ export default async function PlayersPage({
   // getMissingLegalDocuments helper is the single source of truth).
   const { data: legalDocs } = await supabase.from('legal_documents').select('document, version, reacceptance_required_since');
 
-  // Count for tabs — competitive catches all active players not in other tabs
-  const { count: compCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).not('status', 'in', '("recreational","suspended","pending_approval")');
-  const { count: recCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).eq('status', 'recreational');
-  const { count: attCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).in('status', ['suspended', 'pending_approval']);
-  const { count: susCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).or('status.eq.suspended,is_banned.eq.true');
-  const { count: inactCount } = await supabase.from('players').select('*', { count: 'exact', head: true }).eq('active_flag', false);
+  // Tab counts are derived from a single fetch of every player's status flags
+  // and computed here in JS, so each badge uses the exact same predicate as its
+  // tab's list filter. (Per-tab head:true count queries with .in()/.or() were
+  // silently returning 0 on the self-hosted PostgREST, so "Needs Attention"
+  // showed 0 while listing pending players.)
+  const { data: countRows } = await supabase
+    .from('players')
+    .select('status, is_banned, active_flag')
+    .limit(5000);
+  const forCount = countRows ?? [];
+  const isCompetitive = (s: string) => !['recreational', 'suspended', 'pending_approval'].includes(s);
+  const compCount = forCount.filter((p) => isCompetitive(p.status)).length;
+  const recCount = forCount.filter((p) => p.status === 'recreational').length;
+  const attCount = forCount.filter((p) => p.status === 'suspended' || p.status === 'pending_approval').length;
+  const susCount = forCount.filter((p) => p.status === 'suspended' || p.is_banned).length;
+  const inactCount = forCount.filter((p) => p.active_flag === false).length;
 
   const tabs = [
-    { id: 'competitive', label: 'Competitive', count: compCount ?? 0 },
-    { id: 'recreational', label: 'Recreational', count: recCount ?? 0 },
-    { id: 'attention', label: 'Needs Attention', count: attCount ?? 0 },
-    { id: 'suspended', label: 'Suspended', count: susCount ?? 0 },
-    { id: 'inactive', label: 'Inactive', count: inactCount ?? 0 },
+    { id: 'competitive', label: 'Competitive', count: compCount },
+    { id: 'recreational', label: 'Recreational', count: recCount },
+    { id: 'attention', label: 'Needs Attention', count: attCount },
+    { id: 'suspended', label: 'Suspended', count: susCount },
+    { id: 'inactive', label: 'Inactive', count: inactCount },
   ];
 
   return (
