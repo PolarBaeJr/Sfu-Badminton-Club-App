@@ -92,17 +92,33 @@ export default function LoginPage() {
     setLoading(true);
     setError('');
     const supabase = createClient();
-    const { error: authError } = await supabase.auth.verifyOtp({
-      email,
-      token: code.trim(),
-      type: 'email',
-    });
-    if (authError) {
-      setError(friendlyAuthError(authError.message));
-      setLoading(false);
-    } else {
-      window.location.href = '/auth/post-login';
+    const token = code.trim();
+    // GoTrue issues a different OTP token type per flow (verified against the
+    // live DB): an existing account gets a `recovery` token, a brand-new signup
+    // a `signup` (confirmation) token. The old `type: 'email'` matched neither
+    // and always failed with "Invalid email verification type". The client
+    // can't be certain which flow a user is in (they may pick the wrong tab),
+    // so try the mode-appropriate type first and fall back to the other. A
+    // wrong-type attempt looks up a different token column and returns
+    // "not found" without consuming the real token, so the fallback is safe.
+    const typeOrder = mode === 'signup'
+      ? (['signup', 'recovery'] as const)
+      : (['recovery', 'signup'] as const);
+
+    let authError: { message: string } | null = null;
+    for (const type of typeOrder) {
+      const { error } = await supabase.auth.verifyOtp({ email, token, type });
+      if (!error) {
+        window.location.href = '/auth/post-login';
+        return;
+      }
+      authError = error;
+      // Only fall through to the other type on a type/token mismatch; a genuinely
+      // wrong or expired code should surface immediately.
+      if (!/verification type|not found/i.test(authError.message ?? '')) break;
     }
+    setError(friendlyAuthError(authError?.message ?? 'That code didn’t work — request a new one.'));
+    setLoading(false);
   }
 
   return (
