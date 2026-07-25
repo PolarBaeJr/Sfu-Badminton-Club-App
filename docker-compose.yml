@@ -1,5 +1,5 @@
 # Pi deploy: joins the external `edge` network; proxy-manager routes by the
-# proxy.* labels below. Set PROXY_DOMAIN in .env when the club domain arrives.
+# proxy.* labels below. PROXY_DOMAIN in .env sets the served host (sfubadminton.com).
 networks:
   edge:
     external: true
@@ -33,7 +33,7 @@ services:
     networks: [edge, default]
     labels:
       proxy.enable:     "true"
-      proxy.host:       "${PROXY_DOMAIN:-badminton.polardev.org}"
+      proxy.host:       "${PROXY_DOMAIN:-sfubadminton.com}"
       # Explicit "/" (not empty) so the player is a real path-prefix group;
       # admin's longer "/admin" wins longest-prefix. An empty path here makes
       # the player a host catch-all that pools with the admin backend.
@@ -73,7 +73,7 @@ services:
     networks: [edge, default]
     labels:
       proxy.enable:     "true"
-      proxy.host:       "${PROXY_DOMAIN:-badminton.polardev.org}"
+      proxy.host:       "${PROXY_DOMAIN:-sfubadminton.com}"
       # admin is served under /admin (Next.js basePath), same domain as player
       proxy.path:       "/admin"
       proxy.port:       "3001"
