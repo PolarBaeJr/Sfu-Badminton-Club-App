@@ -56,6 +56,12 @@ export const SESSION_DEFAULT_DURATION_MINUTES = 60;
 // Check-in opens this many minutes before start (null = only a closing edge).
 export const SESSION_CHECKIN_OPENS_MINUTES_BEFORE: number | null = 30;
 
+// Shape of a session check-in QR token: randomBytes(24).toString('hex').
+// The admin generator (getOrCreateSessionCheckinToken) and the player
+// validator (checkInWithToken) must agree, so the pattern lives here rather
+// than being inlined twice. Mirrors the calendar feed route's /^[0-9a-f]{48}$/.
+export const CHECKIN_TOKEN_REGEX = /^[0-9a-f]{48}$/;
+
 export const PROVISIONAL_THRESHOLD = 8;
 export const MAX_RATED_PER_SESSION = 3;
 export const MAX_REPEAT_OPPONENT_7DAYS = 2;

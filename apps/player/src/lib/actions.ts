@@ -8,7 +8,7 @@
 //                      getLegalDocuments, acceptLegalDocuments,
 //                      deleteMyAccount, restoreMyAccount
 //   - notifications.ts — markNotificationRead / All / markAnnouncementRead
-//   - sessions.ts    — checkInToSession
+//   - sessions.ts    — checkInToSession / checkInWithToken (QR)
 //   - calendar.ts    — getCalendarFeedToken / regenerateCalendarFeedToken
 //   - _shared.ts     — requirePlayer / getPlayerProps / trackServerEvent
 //                      (NOT 'use server' — internal helpers)
@@ -44,6 +44,7 @@ export {
 
 export {
   checkInToSession,
+  checkInWithToken,
   setSessionIntent,
 } from './actions/sessions';
 

@@ -2,8 +2,9 @@ export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge, PageHeader } from '@badminton/ui';
 import { formatDate, formatTime, type AttendanceStatus } from '@badminton/shared';
-import { CreateSessionForm, SessionCardMenu, AttendanceDialog } from './actions';
+import { CreateSessionForm, SessionCardMenu, AttendanceDialog, CheckinQrDialog } from './actions';
 import { Calendar, MapPin, FileText } from 'lucide-react';
+import QRCode from 'qrcode';
 
 export default async function SessionsPage() {
   const supabase = createAdminClient();
@@ -26,6 +27,12 @@ export default async function SessionsPage() {
     .select('id, full_name')
     .eq('active_flag', true)
     .order('full_name');
+
+  // QR check-in tokens (00024). RLS denies everyone, so this read only works
+  // because createAdminClient() is the service-role client.
+  const { data: checkinTokens } = await supabase
+    .from('session_checkin_tokens')
+    .select('session_id, token');
 
   // Group attendance records by session_id
   type AttendeeEntry = {
@@ -64,6 +71,26 @@ export default async function SessionsPage() {
     (rsvpMap[sid] ??= { going: [], declined: [] })[row.intent as 'going' | 'declined'].push(name);
   }
 
+  // QR images are built here, server-side, so the qrcode library never reaches
+  // the client bundle. Only open sessions get one — nothing else can be
+  // checked into, so rendering a code for them would just be noise.
+  const playerBaseUrl = process.env.NEXT_PUBLIC_PLAYER_URL || 'http://localhost:3000';
+  const openSessionIds = new Set(
+    (sessions ?? []).filter((s) => s.status === 'open').map((s) => s.id as string)
+  );
+  const qrEntries = await Promise.all(
+    (checkinTokens ?? [])
+      .filter((row) => openSessionIds.has(row.session_id as string))
+      .map(async (row): Promise<[string, { url: string; svg: string }]> => {
+        const url = `${playerBaseUrl}/checkin/${row.token}`;
+        return [
+          row.session_id as string,
+          { url, svg: await QRCode.toString(url, { type: 'svg', margin: 1, width: 320 }) },
+        ];
+      })
+  );
+  const qrBySession = Object.fromEntries(qrEntries);
+
   return (
     <div className="space-y-8">
       {/* Page Header */}
@@ -79,6 +106,7 @@ export default async function SessionsPage() {
         <div className="space-y-3">
           {sessions.map((session) => {
             const rsvp = rsvpMap[session.id];
+            const qr = qrBySession[session.id];
             return (
             <Card key={session.id}>
               <div className="flex items-start justify-between gap-4">
@@ -118,12 +146,21 @@ export default async function SessionsPage() {
                     </div>
                   )}
 
-                  {/* Attendance count + view dialog */}
-                  <AttendanceDialog
-                    sessionId={session.id}
-                    attendees={attendanceMap[session.id] ?? []}
-                    players={activePlayers ?? []}
-                  />
+                  {/* Attendance count + view dialog, and the self check-in QR */}
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <AttendanceDialog
+                      sessionId={session.id}
+                      attendees={attendanceMap[session.id] ?? []}
+                      players={activePlayers ?? []}
+                    />
+                    {session.status === 'open' && (
+                      <CheckinQrDialog
+                        sessionId={session.id}
+                        url={qr?.url ?? null}
+                        svg={qr?.svg ?? null}
+                      />
+                    )}
+                  </div>
 
                   {/* RSVP intents (read-only) */}
                   {rsvp && (rsvp.going.length > 0 || rsvp.declined.length > 0) && (

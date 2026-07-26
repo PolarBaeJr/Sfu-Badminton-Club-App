@@ -10,7 +10,7 @@
 //   - walkovers.ts     — confirmWalkover / rejectWalkover
 //   - tournaments.ts   — tournament CRUD + legacy participant management
 //   - seasons.ts       — createSeason / setActiveSeason / endSeason
-//   - sessions.ts      — session CRUD
+//   - sessions.ts      — session CRUD + QR check-in tokens
 //   - announcements.ts — announcement CRUD
 //   - fees.ts          — exec/exempt player flags + club-fee tracking
 //   - tournament-fees.ts — tournament fee tiers + per-player entry-fee tracking
@@ -73,6 +73,8 @@ export {
   sendSessionReminders,
   markAttendance,
   clearAttendanceMark,
+  getOrCreateSessionCheckinToken,
+  rotateSessionCheckinToken,
 } from './actions/sessions';
 
 export {

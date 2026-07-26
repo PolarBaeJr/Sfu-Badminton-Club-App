@@ -1,5 +1,6 @@
 'use server';
 
+import { randomBytes } from 'crypto';
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { notifyPlayers } from '../notify';
@@ -234,6 +235,83 @@ async function archiveSessionImpl(sessionId: string) {
   }, { sessionId });
 
   revalidatePath('/sessions');
+}
+
+// 24 random bytes -> 48 hex chars; the player app's /checkin/[token] page
+// validates this exact shape (CHECKIN_TOKEN_REGEX).
+function newCheckinToken(): string {
+  return randomBytes(24).toString('hex');
+}
+
+// Returns the session's QR check-in token, creating one on first use.
+// session_checkin_tokens has RLS enabled with no policies (00024), so every
+// read and write goes through the service-role admin client.
+export async function getOrCreateSessionCheckinToken(sessionId: string): Promise<ActionResult<string>> {
+  return runAction(() => getOrCreateSessionCheckinTokenImpl(sessionId));
+}
+
+async function getOrCreateSessionCheckinTokenImpl(sessionId: string): Promise<string> {
+  parseOrThrow(z.string().uuid(), sessionId);
+  await getExecOrAdmin();
+  const adminClient = createAdminClient();
+
+  const { data: existing } = await adminClient
+    .from('session_checkin_tokens')
+    .select('token')
+    .eq('session_id', sessionId)
+    .maybeSingle();
+  if (existing) return existing.token;
+
+  const token = newCheckinToken();
+  const { error } = await adminClient
+    .from('session_checkin_tokens')
+    .insert({ session_id: sessionId, token });
+  if (error) {
+    // Unique-violation race: a concurrent request created the row first —
+    // return its token instead of failing.
+    const { data: raced } = await adminClient
+      .from('session_checkin_tokens')
+      .select('token')
+      .eq('session_id', sessionId)
+      .maybeSingle();
+    if (raced) return raced.token;
+    throw new Error(error.message);
+  }
+
+  revalidatePath('/sessions');
+  return token;
+}
+
+// Issues a fresh token, immediately invalidating every printed/photographed
+// copy of the old QR. This is the club's answer to a forwarded code.
+export async function rotateSessionCheckinToken(sessionId: string): Promise<ActionResult<string>> {
+  return runAction(() => rotateSessionCheckinTokenImpl(sessionId));
+}
+
+async function rotateSessionCheckinTokenImpl(sessionId: string): Promise<string> {
+  parseOrThrow(z.string().uuid(), sessionId);
+  const admin = await getExecOrAdmin();
+  const adminClient = createAdminClient();
+
+  const token = newCheckinToken();
+  const rotatedAt = new Date().toISOString();
+  const { error } = await adminClient
+    .from('session_checkin_tokens')
+    .upsert({ session_id: sessionId, token, rotated_at: rotatedAt }, { onConflict: 'session_id' });
+  if (error) throw new Error(error.message);
+
+  // The token is deliberately not written to the audit row — it's a
+  // credential, and audit_logs is readable by every admin.
+  await logAdminAudit(adminClient, {
+    actor_id: admin.id,
+    action_type: 'session_checkin_token_rotated',
+    target_type: 'session',
+    target_id: sessionId,
+    new_value: { rotated_at: rotatedAt },
+  }, { sessionId });
+
+  revalidatePath('/sessions');
+  return token;
 }
 
 export async function markAttendance(input: AttendanceMarkInput): Promise<ActionResult<void>> {

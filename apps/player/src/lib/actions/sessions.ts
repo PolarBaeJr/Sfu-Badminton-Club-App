@@ -2,8 +2,8 @@
 
 import * as Sentry from '@sentry/nextjs';
 import { revalidatePath } from 'next/cache';
-import { CLUB_TIMEZONE, formatTime, getCheckinWindow, isCheckinOpen } from '@badminton/shared';
-import { createServerSupabaseClient } from '../supabase-server';
+import { CHECKIN_TOKEN_REGEX, CLUB_TIMEZONE, formatTime, getCheckinWindow, isCheckinOpen } from '@badminton/shared';
+import { createServerSupabaseClient, createServiceRoleClient } from '../supabase-server';
 import { requirePlayer, getPlayerProps, trackServerEvent, assertCurrentWaiver, runAction, type ActionResult } from './_shared';
 
 // Wrapped so its validation messages ("Already checked in", "Check-in opens at
@@ -15,6 +15,18 @@ export async function checkInToSession(sessionId: string): Promise<ActionResult>
 
 async function checkInToSessionImpl(sessionId: string) {
   const player = await requirePlayer();
+  // The button flow treats a duplicate as an error; the QR flow doesn't.
+  const { alreadyCheckedIn } = await performCheckIn(player, sessionId);
+  if (alreadyCheckedIn) throw new Error('Already checked in');
+}
+
+// The one place a player checks themselves in. `player` is always the caller's
+// own requirePlayer() row — never anything a caller supplied — so every entry
+// point (button, QR) inherits the same identity, waiver and window gates.
+async function performCheckIn(
+  player: Awaited<ReturnType<typeof requirePlayer>>,
+  sessionId: string
+): Promise<{ alreadyCheckedIn: boolean }> {
   const supabase = await createServerSupabaseClient();
   await assertCurrentWaiver(supabase, player);
 
@@ -48,7 +60,9 @@ async function checkInToSessionImpl(sessionId: string) {
   });
 
   if (error) {
-    if (error.code === '23505') throw new Error('Already checked in');
+    // Idempotent: they're already on the list. Return before the activity
+    // ping / analytics event so a re-check-in isn't counted twice.
+    if (error.code === '23505') return { alreadyCheckedIn: true };
     // RLS backstop: session_checkin_open() rejected the insert.
     if (error.code === '42501') throw new Error('Check-in is not open for this session');
     Sentry.captureException(error, { extra: { action: 'checkInToSession', sessionId } });
@@ -60,6 +74,45 @@ async function checkInToSessionImpl(sessionId: string) {
   trackServerEvent(player.id, 'session_checked_in', { ...getPlayerProps(player), session_id: sessionId });
   revalidatePath('/sessions');
   revalidatePath(`/sessions/${sessionId}`);
+  return { alreadyCheckedIn: false };
+}
+
+// QR flow: the admin displays one code per session, the player scans it with
+// their phone camera and lands on /checkin/[token]. The token is a gate that
+// resolves to a session_id — it never carries an identity, so this is exactly
+// checkInToSession with a lookup in front.
+//
+// Every miss returns the SAME message: distinguishing "malformed" from
+// "unknown" would turn this into an oracle for enumerating live tokens.
+export async function checkInWithToken(
+  token: string
+): Promise<ActionResult<{ sessionId: string; alreadyCheckedIn: boolean }>> {
+  return runAction(() => checkInWithTokenImpl(token));
+}
+
+async function checkInWithTokenImpl(token: string) {
+  // Identity first, before the token table is touched at all. The page-level
+  // rate limit doesn't cover someone calling this action directly, and if the
+  // lookup ran first a logged-out caller could tell a real token ('Not
+  // authenticated') from an unknown one ('Invalid check-in code') — exactly the
+  // enumeration oracle the uniform message exists to prevent.
+  const player = await requirePlayer();
+
+  if (!CHECKIN_TOKEN_REGEX.test(token)) throw new Error('Invalid check-in code');
+
+  // session_checkin_tokens has RLS on with no policies (00024) — only the
+  // service-role client can resolve a token.
+  const serviceClient = createServiceRoleClient();
+  const { data: tokenRow } = await serviceClient
+    .from('session_checkin_tokens')
+    .select('session_id')
+    .eq('token', token)
+    .maybeSingle();
+  if (!tokenRow) throw new Error('Invalid check-in code');
+
+  const sessionId = tokenRow.session_id as string;
+  const { alreadyCheckedIn } = await performCheckIn(player, sessionId);
+  return { sessionId, alreadyCheckedIn };
 }
 
 export async function setSessionIntent(
