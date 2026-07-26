@@ -7,6 +7,7 @@ import {
   buildICSCalendar,
   type ICSSessionFields,
 } from '../ics';
+import { SESSION_DEFAULT_DURATION_MINUTES } from '../constants';
 
 // All expected instants below are UTC equivalents of America/Vancouver
 // wall-clock times: PDT = UTC-7 (summer), PST = UTC-8 (winter).
@@ -77,10 +78,15 @@ describe('sessionToVEvent', () => {
     expect(lines).toContain('DTEND:20260116T050000Z'); // 21:00 PST
   });
 
-  it('defaults a missing end_time to start + 120 minutes', () => {
+  it('defaults a missing end_time to start + the configured default duration', () => {
     const lines = sessionToVEvent(makeSession({ end_time: null }));
-    expect(lines).toContain('DTSTART:20260716T013000Z');
-    expect(lines).toContain('DTEND:20260716T033000Z'); // 20:30 PDT
+    expect(lines).toContain('DTSTART:20260716T013000Z'); // 18:30 PDT
+    // Derived, not hardcoded: default_duration_minutes is admin-editable in
+    // platform_settings, so a literal DTEND here rots when prod is retuned.
+    const start = Date.parse('2026-07-16T01:30:00.000Z');
+    const end = new Date(start + SESSION_DEFAULT_DURATION_MINUTES * 60_000);
+    const stamp = end.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    expect(lines).toContain(`DTEND:${stamp}`);
   });
 
   it('emits an all-day event with exclusive next-day DTEND when untimed', () => {
