@@ -12,6 +12,7 @@ export * from './utils/notifications';
 export * from './utils/theme';
 export * from './utils/rate-limit';
 export * from './utils/supabase-helpers';
+export * from './utils/challenge-qr';
 export * from './validators/schemas';
 export * from './validators/parse';
 export * from './email/templates';
