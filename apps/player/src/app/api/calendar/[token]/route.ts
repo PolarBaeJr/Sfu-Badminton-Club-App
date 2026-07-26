@@ -6,6 +6,7 @@ import {
   rateLimit,
 } from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
+import { getCheckinSettings } from '@/lib/checkin-settings';
 
 // Next 14 caches GET route handlers by default; the feed must always reflect
 // the current schedule (and the token check must always run).
@@ -66,11 +67,21 @@ export async function GET(
     .order('date')
     .limit(200);
 
-  return new NextResponse(buildICSCalendar(sessions ?? [], { baseUrl: process.env.NEXT_PUBLIC_PLAYER_URL }), {
-    headers: {
-      'Content-Type': 'text/calendar; charset=utf-8',
-      'Content-Disposition': 'inline; filename="sfu-badminton.ics"',
-      'Cache-Control': 'private, max-age=300',
-    },
-  });
+  // Same service-role client the feed already uses: this route has no user
+  // session, so the settings read has to go through it.
+  const checkinSettings = await getCheckinSettings(supabase);
+
+  return new NextResponse(
+    buildICSCalendar(sessions ?? [], {
+      baseUrl: process.env.NEXT_PUBLIC_PLAYER_URL,
+      settings: checkinSettings,
+    }),
+    {
+      headers: {
+        'Content-Type': 'text/calendar; charset=utf-8',
+        'Content-Disposition': 'inline; filename="sfu-badminton.ics"',
+        'Cache-Control': 'private, max-age=300',
+      },
+    }
+  );
 }

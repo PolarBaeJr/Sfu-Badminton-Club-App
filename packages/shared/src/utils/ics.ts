@@ -3,8 +3,12 @@
 // sessions and serve/download the output. Session wall-clock times are
 // club-local (CLUB_TIMEZONE); timed events are emitted as UTC instants so
 // every calendar client renders them correctly regardless of device timezone.
-import { CLUB_TIMEZONE, SESSION_DEFAULT_DURATION_MINUTES } from './constants';
-import { wallClockToUtc } from './session-window';
+import { CLUB_TIMEZONE } from './constants';
+import {
+  wallClockToUtc,
+  FALLBACK_CHECKIN_SETTINGS,
+  type CheckinSettings,
+} from './session-window';
 
 export interface ICSSessionFields {
   id: string;
@@ -64,7 +68,10 @@ function parseTime(time: string): { hour: number; minute: number } {
 // DTSTART/DTEND values for a session. Timed sessions get UTC ...Z stamps
 // (end = end_time, else start + default duration); untimed sessions are
 // all-day (VALUE=DATE), whose DTEND is exclusive per RFC 5545 — the next day.
-export function formatICSDates(session: Pick<ICSSessionFields, 'date' | 'start_time' | 'end_time'>): {
+export function formatICSDates(
+  session: Pick<ICSSessionFields, 'date' | 'start_time' | 'end_time'>,
+  settings: CheckinSettings = FALLBACK_CHECKIN_SETTINGS
+): {
   start: string;
   end: string;
   allDay: boolean;
@@ -79,7 +86,7 @@ export function formatICSDates(session: Pick<ICSSessionFields, 'date' | 'start_t
       const end = parseTime(session.end_time);
       endAt = wallClockToUtc(y, mo, d, end.hour, end.minute);
     } else {
-      endAt = new Date(startAt.getTime() + SESSION_DEFAULT_DURATION_MINUTES * 60_000);
+      endAt = new Date(startAt.getTime() + settings.defaultDurationMinutes * 60_000);
     }
     return { start: formatUtcStamp(startAt), end: formatUtcStamp(endAt), allDay: false };
   }
@@ -96,8 +103,12 @@ export function formatICSDates(session: Pick<ICSSessionFields, 'date' | 'start_t
 // One session -> unfolded VEVENT content lines. Callers fold and join
 // (buildICSCalendar does both). UID is stable per session so calendar clients
 // update events in place; SEQUENCE bumps whenever the row is touched.
-export function sessionToVEvent(session: ICSSessionFields, baseUrl?: string): string[] {
-  const { start, end, allDay } = formatICSDates(session);
+export function sessionToVEvent(
+  session: ICSSessionFields,
+  baseUrl?: string,
+  settings: CheckinSettings = FALLBACK_CHECKIN_SETTINGS
+): string[] {
+  const { start, end, allDay } = formatICSDates(session, settings);
   const updated = new Date(session.updated_at);
   const stamp = formatUtcStamp(updated);
 
@@ -121,7 +132,10 @@ export function sessionToVEvent(session: ICSSessionFields, baseUrl?: string): st
 }
 
 // Full VCALENDAR document, CRLF line endings, lines folded to 75 octets.
-export function buildICSCalendar(sessions: ICSSessionFields[], opts?: { baseUrl?: string }): string {
+export function buildICSCalendar(
+  sessions: ICSSessionFields[],
+  opts?: { baseUrl?: string; settings?: CheckinSettings }
+): string {
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
@@ -134,7 +148,7 @@ export function buildICSCalendar(sessions: ICSSessionFields[], opts?: { baseUrl?
     // X-PUBLISHED-TTL is the legacy Apple/Outlook equivalent.
     'REFRESH-INTERVAL;VALUE=DURATION:PT1H',
     'X-PUBLISHED-TTL:PT1H',
-    ...sessions.flatMap((s) => sessionToVEvent(s, opts?.baseUrl)),
+    ...sessions.flatMap((s) => sessionToVEvent(s, opts?.baseUrl, opts?.settings)),
     'END:VCALENDAR',
   ];
   return lines.map(foldICSLine).join('\r\n') + '\r\n';

@@ -1,4 +1,5 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
+import { getCheckinSettings } from '@/lib/checkin-settings';
 import { CLUB_TIMEZONE, formatDate, formatTime, getCheckinWindow, isCheckinOpen, type AttendanceStatus, type SessionIntent } from '@badminton/shared';
 import { redirect } from 'next/navigation';
 import { Calendar, MapPin, FileText, Users, UserCheck, Clock } from 'lucide-react';
@@ -13,6 +14,10 @@ export default async function SessionsPage() {
   if (!player) redirect('/login');
 
   const supabase = await createServerSupabaseClient();
+
+  // Live window tunables, so the Check In button and its "opens at" label agree
+  // with session_checkin_open() instead of a hardcoded snapshot of prod.
+  const checkinSettings = await getCheckinSettings();
 
   const [{ data: openSessions }, { data: closedSessions }, { data: myAttendance }, { data: attendanceCounts }, { data: myRsvp }, { data: goingCounts }] = await Promise.all([
     supabase
@@ -119,8 +124,8 @@ export default async function SessionsPage() {
                 const attended = myStatus === 'checked_in' || myStatus === 'present' || myStatus === 'no_show' || myStatus === 'excused';
                 const attendees = countBySession[session.id] ?? 0;
                 const now = new Date();
-                const canCheckIn = isCheckinOpen(session, now);
-                const { opensAt } = getCheckinWindow(session);
+                const canCheckIn = isCheckinOpen(session, now, checkinSettings);
+                const { opensAt } = getCheckinWindow(session, checkinSettings);
                 let windowLabel: string | undefined;
                 if (!canCheckIn) {
                   if (opensAt && now < opensAt) {

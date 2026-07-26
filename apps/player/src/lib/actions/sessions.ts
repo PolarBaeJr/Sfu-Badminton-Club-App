@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/nextjs';
 import { revalidatePath } from 'next/cache';
 import { CHECKIN_TOKEN_REGEX, CLUB_TIMEZONE, formatTime, getCheckinWindow, isCheckinOpen } from '@badminton/shared';
 import { createServerSupabaseClient, createServiceRoleClient } from '../supabase-server';
+import { getCheckinSettings } from '../checkin-settings';
 import { requirePlayer, getPlayerProps, trackServerEvent, assertCurrentWaiver, runAction, type ActionResult } from './_shared';
 
 // Wrapped so its validation messages ("Already checked in", "Check-in opens at
@@ -38,9 +39,13 @@ async function performCheckIn(
 
   if (!session || session.status !== 'open') throw new Error('This session is closed');
 
+  // Read the live window tunables rather than the fallback constants, so the
+  // message shown here matches what session_checkin_open() will actually allow.
+  const checkinSettings = await getCheckinSettings();
+
   const now = new Date();
-  if (!isCheckinOpen(session, now)) {
-    const { opensAt } = getCheckinWindow(session);
+  if (!isCheckinOpen(session, now, checkinSettings)) {
+    const { opensAt } = getCheckinWindow(session, checkinSettings);
     if (opensAt && now < opensAt) {
       // Club-local HH:MM of the opening instant, rendered like session times.
       const opensLocal = opensAt.toLocaleTimeString('en-GB', {
