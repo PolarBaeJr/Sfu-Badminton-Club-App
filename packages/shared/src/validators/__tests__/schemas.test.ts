@@ -42,18 +42,27 @@ describe('profileSchema', () => {
   it('accepts a valid profile', () => {
     expect(
       profileSchema.safeParse({
-        full_name: 'Alice',
+        first_name: 'Alice',
+        last_name: 'Lovelace',
         display_name: 'Ali',
         bio: 'Hello',
       }).success,
     ).toBe(true);
   });
-  it('rejects a name shorter than 2 chars', () => {
-    expect(profileSchema.safeParse({ full_name: 'A' }).success).toBe(false);
+  it('accepts a mononym (no last name)', () => {
+    expect(profileSchema.safeParse({ first_name: 'Cher', last_name: '' }).success).toBe(true);
+  });
+  it('rejects an empty first name', () => {
+    expect(profileSchema.safeParse({ first_name: '' }).success).toBe(false);
+  });
+  it('rejects a last name longer than 40 chars', () => {
+    expect(
+      profileSchema.safeParse({ first_name: 'Alice', last_name: 'x'.repeat(41) }).success,
+    ).toBe(false);
   });
   it('rejects a bio longer than 500 chars', () => {
     expect(
-      profileSchema.safeParse({ full_name: 'Alice', bio: 'x'.repeat(501) }).success,
+      profileSchema.safeParse({ first_name: 'Alice', bio: 'x'.repeat(501) }).success,
     ).toBe(false);
   });
 });

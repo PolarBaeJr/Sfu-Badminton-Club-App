@@ -63,7 +63,10 @@ Deno.serve(async (req) => {
     const { error: anonError } = await supabase
       .from('players')
       .update({
-        full_name: 'Deleted Player',
+        // Two parts, not one string: full_name is generated (00023), and these
+        // regenerate the same 'Deleted Player' every reader already expects.
+        first_name: 'Deleted',
+        last_name: 'Player',
         display_name: null,
         email: `deleted+${player.id}@deleted.invalid`,
         phone: null,

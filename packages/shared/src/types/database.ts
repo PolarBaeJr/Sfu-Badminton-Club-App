@@ -94,6 +94,9 @@ export type AnnouncementAudience = 'all' | 'competitive' | 'recreational' | 'eli
 export interface Player {
   id: string;
   user_id: string | null;
+  first_name: string;
+  last_name: string | null;
+  // Generated column (00023): read-only, never write it.
   full_name: string;
   display_name: string | null;
   email: string;

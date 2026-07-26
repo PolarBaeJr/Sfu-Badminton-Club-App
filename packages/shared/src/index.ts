@@ -4,6 +4,7 @@ export * from './elo/engine';
 export * from './utils/constants';
 export * from './utils/helpers';
 export * from './utils/legal';
+export * from './utils/name';
 export * from './utils/session-window';
 export * from './utils/ics';
 export * from './utils/tags';

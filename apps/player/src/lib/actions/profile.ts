@@ -17,7 +17,8 @@ import { createServerSupabaseClient, createServiceRoleClient, getCurrentPlayer }
 import { requirePlayer, trackServerEvent, runAction, type ActionResult } from './_shared';
 
 export async function updateProfile(data: {
-  full_name: string;
+  first_name: string;
+  last_name?: string;
   display_name?: string;
   phone?: string;
   bio?: string;
@@ -56,7 +57,8 @@ export async function updateNotificationPreferences(
 }
 
 async function updateProfileImpl(data: {
-  full_name: string;
+  first_name: string;
+  last_name?: string;
   display_name?: string;
   phone?: string;
   bio?: string;
@@ -67,7 +69,11 @@ async function updateProfileImpl(data: {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 
-  const update: Record<string, unknown> = { full_name: data.full_name };
+  // full_name is generated from these two (00023) — writing it would error.
+  const update: Record<string, unknown> = {
+    first_name: data.first_name,
+    last_name: data.last_name ?? null,
+  };
   if (data.display_name !== undefined) {
     // Empty string -> null so the column isn't stuck with ''.
     update.display_name = data.display_name === '' ? null : data.display_name;
@@ -238,7 +244,8 @@ async function restoreMyAccountImpl() {
 }
 
 export async function completeOnboarding(data: {
-  full_name: string;
+  first_name: string;
+  last_name?: string;
   display_name?: string;
   phone?: string;
   waiver_accepted: boolean;
@@ -250,7 +257,8 @@ export async function completeOnboarding(data: {
 }
 
 async function completeOnboardingImpl(data: {
-  full_name: string;
+  first_name: string;
+  last_name?: string;
   display_name?: string;
   phone?: string;
   waiver_accepted: boolean;
@@ -269,7 +277,8 @@ async function completeOnboardingImpl(data: {
 
   if (existingPlayer) {
     const update: Record<string, unknown> = {
-      full_name: data.full_name,
+      first_name: data.first_name,
+      last_name: data.last_name ?? null,
       onboarding_completed: true,
     };
     if (data.display_name) update.display_name = data.display_name;
@@ -292,7 +301,8 @@ async function completeOnboardingImpl(data: {
     const { error } = await supabase.rpc('create_player_with_rating', {
       p_user_id: user.id,
       p_email: user.email!,
-      p_full_name: data.full_name,
+      p_first_name: data.first_name,
+      p_last_name: data.last_name || null,
       p_display_name: data.display_name || null,
       p_phone: data.phone || null,
     });

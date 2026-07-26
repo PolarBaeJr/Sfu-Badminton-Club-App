@@ -12,6 +12,10 @@ const phoneSchema = blankAsUndefined(
 const displayNameSchema = blankAsUndefined(
   z.string().min(2, 'Display name must be at least 2 characters').max(40)
 );
+// players.first_name / last_name (00023). Mononyms are real names, so a
+// single character is enough and a last name is optional.
+const firstNameSchema = z.string().min(1, 'First name is required').max(40);
+const lastNameSchema = blankAsUndefined(z.string().max(40));
 // HTML <input type="date"> emits YYYY-MM-DD; <input type="time"> emits HH:MM (with optional :SS).
 const isoDateSchema = blankAsUndefined(
   z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date')
@@ -25,7 +29,8 @@ export const loginSchema = z.object({
 });
 
 export const profileSchema = z.object({
-  full_name: z.string().min(2, 'Name must be at least 2 characters').max(80),
+  first_name: firstNameSchema,
+  last_name: lastNameSchema,
   display_name: displayNameSchema,
   phone: phoneSchema,
   bio: z.string().max(500).optional(),
@@ -214,7 +219,8 @@ export const disputeResolveSchema = z.object({
 });
 
 export const adminPlayerCreateSchema = z.object({
-  full_name: z.string().min(2, 'Name must be at least 2 characters').max(80),
+  first_name: firstNameSchema,
+  last_name: lastNameSchema,
   email: z.string().email('Invalid email address'),
   status: z.enum([
     'competitive', 'recreational', 'suspended', 'pending_approval',

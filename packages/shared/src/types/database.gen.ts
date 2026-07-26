@@ -857,11 +857,13 @@ export type Database = {
           display_name: string | null
           eligibility_flag: boolean
           email: string
+          first_name: string
           full_name: string
           hide_from_leaderboard: boolean
           id: string
           joined_at: string
           last_active_at: string
+          last_name: string | null
           notification_preferences: Json
           onboarding_completed: boolean
           phone: string | null
@@ -880,11 +882,12 @@ export type Database = {
           display_name?: string | null
           eligibility_flag?: boolean
           email: string
-          full_name: string
+          first_name: string
           hide_from_leaderboard?: boolean
           id?: string
           joined_at?: string
           last_active_at?: string
+          last_name?: string | null
           notification_preferences?: Json
           onboarding_completed?: boolean
           phone?: string | null
@@ -903,11 +906,12 @@ export type Database = {
           display_name?: string | null
           eligibility_flag?: boolean
           email?: string
-          full_name?: string
+          first_name?: string
           hide_from_leaderboard?: boolean
           id?: string
           joined_at?: string
           last_active_at?: string
+          last_name?: string | null
           notification_preferences?: Json
           onboarding_completed?: boolean
           phone?: string | null
