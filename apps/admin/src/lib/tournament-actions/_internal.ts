@@ -134,6 +134,13 @@ export async function applyTournamentMatchElo(matchId: string) {
 
   if (!match || match.status === 'voided' || match.is_bye) return;
 
+  // Idempotency backstop: a populated elo_snapshot means this match's delta was
+  // already applied. Re-applying would overwrite the snapshot and strand the
+  // first delta with no way to reverse it, so refuse instead. Callers that
+  // legitimately re-rate a match (editMatchResult) reverse the snapshot first,
+  // which clears it.
+  if (match.elo_snapshot) return;
+
   const event = match.event as Record<string, unknown>;
   const doubles = isDoublesEvent(event.event_type as TournamentEventType);
   const matchFormat = event.match_format as TournamentMatchFormat;

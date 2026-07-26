@@ -1,5 +1,5 @@
 import type { MatchFormat, EventType } from '../types/database';
-import { clampElo, DEFAULT_ELO } from '../utils/constants';
+import { clampElo, DEFAULT_ELO, PROVISIONAL_THRESHOLD } from '../utils/constants';
 
 export const FORMAT_WEIGHTS: Record<MatchFormat, number> = {
   bo3_21: 1.25,
@@ -74,8 +74,10 @@ export function getKFactor(
   provisional: boolean,
   matchesPlayed?: number
 ): number {
-  // Provisional threshold: < 8 matches = provisional K-factor
-  const isProvisional = provisional || (matchesPlayed !== undefined && matchesPlayed < 8);
+  // Provisional threshold: fewer than PROVISIONAL_THRESHOLD matches = provisional
+  // K-factor. Uses the shared constant so tuning it can't silently drift from
+  // the rest of the app.
+  const isProvisional = provisional || (matchesPlayed !== undefined && matchesPlayed < PROVISIONAL_THRESHOLD);
   // K-factors are doubled from the classic 40/24 (singles) and 32/18 (doubles)
   // to match the 2x-stretched ELO_SCALE — this keeps each delta the same
   // fraction of the scale, so convergence speed and volatility are unchanged.

@@ -24,8 +24,12 @@ async function createChallengeImpl(input: ChallengeCreateInput) {
   const supabase = await createServerSupabaseClient();
   await assertCurrentWaiver(supabase, player);
 
-  // Validate via DB function
-  const { data: validation } = await supabase.rpc('validate_challenge_creation', {
+  // Validate via DB function. Fail closed: an RPC error or a null/!valid result
+  // must block creation. Previously the error was discarded and a falsy
+  // `validation` skipped the guard entirely, letting a caller bypass every
+  // check (self-challenge, suspended opponent, open-challenge cap, repeat
+  // opponent) and then enroll arbitrary player IDs via the service-role insert.
+  const { data: validation, error: validationError } = await supabase.rpc('validate_challenge_creation', {
     p_creator_id: player.id,
     p_opponent_id: input.opponent_id,
     p_type: input.type,
@@ -33,8 +37,10 @@ async function createChallengeImpl(input: ChallengeCreateInput) {
     p_opponent_partner_id: input.opponent_partner_id || null,
   });
 
-  if (validation && !validation.valid) {
-    const errors = validation.errors as string[];
+  if (validationError) throw new Error(validationError.message);
+  if (!validation) throw new Error('Could not validate this challenge — please try again.');
+  if (!validation.valid) {
+    const errors = (validation.errors ?? ['Challenge is not allowed']) as string[];
     throw new Error(errors.join(', '));
   }
 

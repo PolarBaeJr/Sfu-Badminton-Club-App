@@ -154,7 +154,9 @@ export const tournamentCreateSchema = z.object({
   format: z.enum(['singles', 'doubles', 'mixed_event']),
   start_date: z.string(),
   end_date: z.string().optional(),
-  bracket_size: z.number().int().min(2).default(8),
+  // Upper bound matters: bracket_size feeds nextPowerOf2 bracket generation,
+  // so an unbounded value is a DoS lever into a very expensive insert loop.
+  bracket_size: z.number().int().min(2).max(128).default(8),
   event_multiplier: z.number().min(1).max(2).default(1.15),
   placement_bonus_enabled: z.boolean().default(true),
   waiver_text: z.string().max(50000).optional(),

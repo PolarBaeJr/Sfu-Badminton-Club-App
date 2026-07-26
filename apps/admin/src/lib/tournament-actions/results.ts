@@ -157,6 +157,12 @@ export async function enterWalkover(
     .single();
 
   if (!match) throw new Error('Match not found');
+  // Same guard as enterMatchResult — without it, re-running a walkover on an
+  // already-decided match applies a second Elo delta and overwrites the
+  // elo_snapshot, making the first delta permanently irreversible.
+  if (match.status !== 'pending' && match.status !== 'ready' && match.status !== 'live') {
+    throw new Error('Match is not in a playable state');
+  }
 
   const event = match.event as Record<string, unknown>;
   await assertTournamentNotSuspended(adminClient, event.tournament_id as string);
@@ -326,9 +332,11 @@ export async function editMatchResult(
       .eq('id', match.winner_to_match_id);
   }
 
-  // Reapply Elo with corrected winner. Skipped for walkovers (no Elo impact)
-  // and voided matches.
-  if (match.status === 'completed') {
+  // Reapply Elo with the corrected winner. Walkovers count too — enterWalkover
+  // applies Elo, so omitting them here reversed the delta above and never
+  // restored it, permanently zeroing both sides' rating change. Voided matches
+  // stay unrated.
+  if (match.status === 'completed' || match.status === 'walkover') {
     await applyTournamentMatchElo(matchId);
   }
 

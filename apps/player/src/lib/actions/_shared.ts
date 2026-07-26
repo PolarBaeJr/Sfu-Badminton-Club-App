@@ -72,6 +72,13 @@ export async function requirePlayer() {
     Sentry.setUser(null);
     throw new Error('Account suspended');
   }
+  // is_banned is an independent column, not folded into status — without this
+  // a banned player could still create/accept challenges, check into sessions
+  // and submit rated results (tournament register/check-in already re-check it).
+  if (player.is_banned) {
+    Sentry.setUser(null);
+    throw new Error('Account suspended pending reinstatement');
+  }
   Sentry.setUser({ id: player.id });
   return player;
 }
