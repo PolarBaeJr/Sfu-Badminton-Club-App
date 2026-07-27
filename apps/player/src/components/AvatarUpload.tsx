@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AvatarChip } from '@badminton/ui';
 import { createClient } from '@/lib/supabase-browser';
 import { useToast } from '@/components/toast-provider';
+import { AvatarCropDialog } from '@/components/AvatarCropDialog';
 
 interface AvatarUploadProps {
   playerId: string;
@@ -18,11 +19,20 @@ const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 export function AvatarUpload({ playerId, playerName, currentUrl, onUploaded }: AvatarUploadProps) {
   const [uploading, setUploading] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState(currentUrl);
+  // Object URL of the picked file, shown in the crop dialog.
+  const [pendingSrc, setPendingSrc] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
-  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+  // Object URLs must be revoked or the blob stays pinned for the session.
+  useEffect(() => {
+    return () => { if (pendingSrc) URL.revokeObjectURL(pendingSrc); };
+  }, [pendingSrc]);
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
+    // Reset so re-picking the same file still fires onChange.
+    e.target.value = '';
     if (!file) return;
 
     if (!ALLOWED_TYPES.includes(file.type)) {
@@ -33,25 +43,35 @@ export function AvatarUpload({ playerId, playerName, currentUrl, onUploaded }: A
       toast('File must be under 5MB', 'error');
       return;
     }
+    // Don't upload yet — let the player frame it first.
+    setPendingSrc(URL.createObjectURL(file));
+  }
 
+  function closeCropper() {
+    if (pendingSrc) URL.revokeObjectURL(pendingSrc);
+    setPendingSrc(null);
+  }
+
+  async function handleCropped(blob: Blob) {
     setUploading(true);
     try {
       const supabase = createClient();
-      const ext = file.name.split('.').pop() || 'jpg';
-      const path = `avatars/${playerId}.${ext}`;
+      // The cropper always re-encodes to JPEG, so the object name is stable at
+      // "<playerId>.jpg". That also satisfies the storage RLS policy, which
+      // scopes writes by the filename stem (migration 00022).
+      const path = `avatars/${playerId}.jpg`;
 
       const { error: uploadError } = await supabase.storage
         .from('avatars')
-        .upload(path, file, { upsert: true });
+        .upload(path, blob, { upsert: true, contentType: 'image/jpeg' });
 
       if (uploadError) throw uploadError;
 
       const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(path);
 
-      // Add cache buster
+      // Cache buster — the path is stable, so browsers would keep the old image.
       const url = `${publicUrl}?t=${Date.now()}`;
 
-      // Update player
       const { error: updateError } = await supabase
         .from('players')
         .update({ avatar_url: url })
@@ -61,6 +81,7 @@ export function AvatarUpload({ playerId, playerName, currentUrl, onUploaded }: A
 
       setAvatarUrl(url);
       onUploaded?.(url);
+      closeCropper();
       toast('Avatar updated', 'success');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Upload failed', 'error');
@@ -93,6 +114,14 @@ export function AvatarUpload({ playerId, playerName, currentUrl, onUploaded }: A
         onChange={handleFileChange}
       />
       <p className="text-xs text-[var(--text-muted)]">Tap to upload (JPG, PNG, WebP, max 5MB)</p>
+
+      <AvatarCropDialog
+        open={pendingSrc !== null}
+        imageSrc={pendingSrc}
+        busy={uploading}
+        onCancel={closeCropper}
+        onConfirm={handleCropped}
+      />
     </div>
   );
 }
