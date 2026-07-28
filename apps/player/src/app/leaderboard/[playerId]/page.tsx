@@ -1,9 +1,10 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server';
-import { PLAYER_STATUS_LABELS, getWinRate, getStreakDisplay, getPointDifferential, formatDate } from '@badminton/shared';
+import { PLAYER_STATUS_LABELS, getWinRate, getStreakDisplay, getPointDifferential, formatDate, buildChallengeQrUrl } from '@badminton/shared';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, Crosshair, Trophy } from 'lucide-react';
+import { ArrowLeft, Crosshair, QrCode, Trophy } from 'lucide-react';
 import Link from 'next/link';
 import { AvatarChip } from '@badminton/ui';
+import QRCode from 'qrcode';
 
 export default async function PlayerProfilePage({ params }: { params: Promise<{ playerId: string }> }) {
   const { playerId } = await params;
@@ -32,6 +33,19 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
 
   if (!player) notFound();
   const r = rating;
+
+  // QR encoding the absolute form of the Challenge link beside it, so another
+  // member can point a phone camera at this profile and land on a prefilled
+  // challenge. Generated here (async server component) so `qrcode` never
+  // reaches the client bundle. Null when NEXT_PUBLIC_PLAYER_URL /
+  // NEXT_PUBLIC_APP_URL are unset at build time — then no QR is rendered.
+  const challengeUrl = buildChallengeQrUrl(
+    process.env.NEXT_PUBLIC_PLAYER_URL || process.env.NEXT_PUBLIC_APP_URL,
+    playerId
+  );
+  const challengeQrSvg = challengeUrl
+    ? await QRCode.toString(challengeUrl, { type: 'svg', margin: 1 })
+    : null;
 
   // match_participants has no timestamp; ordering by the embedded to-one match
   // is a PostgREST no-op. Sort by the match's played_at (ISO sorts chrono) here.
@@ -79,9 +93,35 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
               </p>
             )}
           </div>
-          <Link href={`/challenges/new?opponent=${playerId}`} className="btn btn-primary">
-            <Crosshair size={14} /> Challenge
-          </Link>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+            {/* Kept alongside the QR — on desktop nobody scans their own screen. */}
+            <Link href={`/challenges/new?opponent=${playerId}`} className="btn btn-primary">
+              <Crosshair size={14} /> Challenge
+            </Link>
+            {challengeQrSvg && (
+              <details>
+                <summary
+                  className="press"
+                  style={{ cursor: 'pointer', fontSize: 12, color: 'var(--mute)', listStyle: 'none' }}
+                >
+                  <span className="row" style={{ display: 'inline-flex', gap: 6 }}>
+                    <QrCode size={13} /> Show QR
+                  </span>
+                </summary>
+                {/* The qrcode lib emits only <svg><path d="..."/></svg> — the URL
+                    is encoded into the modules, never interpolated into markup —
+                    so this renders as a data URI rather than raw inner HTML. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`data:image/svg+xml;base64,${Buffer.from(challengeQrSvg).toString('base64')}`}
+                  alt={`QR code opening a new challenge against ${player.full_name}`}
+                  width={132}
+                  height={132}
+                  style={{ marginTop: 8, borderRadius: 8, background: '#fff', padding: 6 }}
+                />
+              </details>
+            )}
+          </div>
         </div>
       </div>
 
