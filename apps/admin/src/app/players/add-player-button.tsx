@@ -23,7 +23,8 @@ const ROLE_OPTIONS = [
 export function AddPlayerButton() {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
-  const [fullName, setFullName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState('recreational');
   const [role, setRole] = useState('player');
@@ -31,14 +32,15 @@ export function AddPlayerButton() {
   const router = useRouter();
 
   function handleSubmit() {
-    if (!fullName.trim() || !email.trim()) {
+    if (!firstName.trim() || !email.trim()) {
       toast('Name and email are required', 'error');
       return;
     }
     startTransition(async () => {
       try {
         const res = await createPlayer({
-          full_name: fullName.trim(),
+          first_name: firstName.trim(),
+          last_name: lastName.trim(),
           email: email.trim().toLowerCase(),
           status,
           role: 'player',
@@ -47,7 +49,8 @@ export function AddPlayerButton() {
         if (!res.ok) { toast(res.error, 'error'); return; }
         toast('Player created', 'success');
         setOpen(false);
-        setFullName('');
+        setFirstName('');
+        setLastName('');
         setEmail('');
         setStatus('recreational');
         setRole('player');
@@ -66,10 +69,16 @@ export function AddPlayerButton() {
       <Dialog open={open} onClose={() => setOpen(false)} title="Add New Player">
         <div className="space-y-4">
           <Input
-            label="Full Name"
-            value={fullName}
-            onChange={(e) => setFullName(e.target.value)}
-            placeholder="John Doe"
+            label="First Name"
+            value={firstName}
+            onChange={(e) => setFirstName(e.target.value)}
+            placeholder="John"
+          />
+          <Input
+            label="Last Name"
+            value={lastName}
+            onChange={(e) => setLastName(e.target.value)}
+            placeholder="Doe"
           />
           <Input
             label="Email"
@@ -95,7 +104,7 @@ export function AddPlayerButton() {
             <Button
               onClick={handleSubmit}
               loading={isPending}
-              disabled={!fullName.trim() || !email.trim()}
+              disabled={!firstName.trim() || !email.trim()}
             >
               Create Player
             </Button>

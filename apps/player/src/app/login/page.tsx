@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase-browser';
+import { CHECKIN_TOKEN_REGEX } from '@badminton/shared';
 import { Mail, CheckCircle2, ChevronRight, Loader2 } from 'lucide-react';
 import { ShuttleMark } from '@/components/shuttle-mark';
 
@@ -18,6 +19,19 @@ function friendlyAuthError(message: string): string {
     return 'Too many attempts — please wait a moment before trying again.';
   }
   return msg;
+}
+
+// A player who scans a session QR while logged out arrives at
+// /login?checkin=<token>; carry that token through sign-in so they land back on
+// /checkin/<token> instead of silently losing it. Deliberately a single-purpose
+// token rather than a `next=` path — an arbitrary redirect target is an
+// open-redirect waiting to happen, a 48-hex token can only ever be one route.
+// Read from window.location instead of useSearchParams(): in the Next 14 App
+// Router the hook fails the production build unless the whole page is wrapped
+// in <Suspense>.
+function checkinSuffix(): string {
+  const token = new URLSearchParams(window.location.search).get('checkin') ?? '';
+  return CHECKIN_TOKEN_REGEX.test(token) ? `?checkin=${token}` : '';
 }
 
 export default function LoginPage() {
@@ -50,7 +64,7 @@ export default function LoginPage() {
     const supabase = createClient();
     const { error: authError } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
+      options: { redirectTo: `${window.location.origin}/auth/callback${checkinSuffix()}` },
     });
     if (authError) {
       setError(friendlyAuthError(authError.message));
@@ -66,7 +80,7 @@ export default function LoginPage() {
     const send = () =>
       supabase.auth.signInWithOtp({
         email,
-        options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+        options: { emailRedirectTo: `${window.location.origin}/auth/callback${checkinSuffix()}` },
       });
     // The auth gateway can 503 on the first request after an idle period; a
     // single silent retry makes that invisible to the user instead of showing
@@ -109,7 +123,7 @@ export default function LoginPage() {
     for (const type of typeOrder) {
       const { error } = await supabase.auth.verifyOtp({ email, token, type });
       if (!error) {
-        window.location.href = '/auth/post-login';
+        window.location.href = `/auth/post-login${checkinSuffix()}`;
         return;
       }
       authError = error;

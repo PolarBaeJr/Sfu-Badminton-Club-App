@@ -105,7 +105,8 @@ function LegalCheckbox({
 
 export default function OnboardingPage() {
   const [step, setStep] = useState(1);
-  const [name, setName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
@@ -128,12 +129,15 @@ export default function OnboardingPage() {
   }, []);
 
   const allAccepted = waiverAccepted && cocAccepted && termsAccepted && ageAttested;
+  // Only the first name is required (profileSchema); mononyms are real names.
+  const nameEntered = firstName.trim().length > 0;
 
   async function handleComplete() {
     setLoading(true);
     try {
       const res = await completeOnboarding({
-        full_name: name,
+        first_name: firstName,
+        last_name: lastName || undefined,
         display_name: displayName || undefined,
         phone: phone || undefined,
         waiver_accepted: waiverAccepted,
@@ -272,7 +276,7 @@ export default function OnboardingPage() {
               ? 'Set up your profile'
               : step === 2
               ? 'Waiver & club policies'
-              : `You're ready, ${displayName || name.split(' ')[0]}!`}
+              : `You're ready, ${displayName || firstName}!`}
           </h2>
           <div className="page-sub" style={{ marginTop: 8 }}>
             {step === 1
@@ -300,20 +304,21 @@ export default function OnboardingPage() {
 
         {step === 1 ? (
           <>
-            <Field id="name"        label="Full name"     icon={User}     value={name}        onChange={setName}        placeholder="Your full name" />
+            <Field id="firstName"   label="First name"    icon={User}     value={firstName}   onChange={setFirstName}   placeholder="Your first name" />
+            <Field id="lastName"    label="Last name"     optional icon={User}     value={lastName}    onChange={setLastName}    placeholder="Your last name" />
             <Field id="displayName" label="Display name"  optional icon={Sparkles} value={displayName} onChange={setDisplayName} placeholder="Nickname or gamertag" />
             <Field id="phone"       label="Phone"         optional icon={Phone}    value={phone}       onChange={(v) => setPhone(v.replace(/[^\d\s+\-()]/g, ''))} placeholder="For session reminders" inputMode="tel" />
 
             <button
               type="button"
-              onClick={() => { if (name.length >= 2) setStep(2); }}
-              disabled={name.length < 2}
+              onClick={() => { if (nameEntered) setStep(2); }}
+              disabled={!nameEntered}
               className="btn btn-primary btn-lg"
               style={{
                 width: '100%',
                 justifyContent: 'center',
                 height: 48,
-                opacity: name.length < 2 ? 0.4 : 1,
+                opacity: nameEntered ? 1 : 0.4,
               }}
             >
               Continue <ChevronRight size={14} />

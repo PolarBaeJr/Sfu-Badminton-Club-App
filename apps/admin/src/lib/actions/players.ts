@@ -8,6 +8,7 @@ import {
   parseOrThrow,
   adminPlayerCreateSchema,
   adminPlayerUpdateSchema,
+  joinName,
   type AdminPlayerUpdateInput,
 } from '@badminton/shared';
 import { getAdminPlayer } from './_shared';
@@ -48,7 +49,8 @@ async function approvePlayerImpl(playerId: string, status: 'competitive' | 'recr
 }
 
 export async function createPlayer(data: {
-  full_name: string;
+  first_name: string;
+  last_name?: string;
   email: string;
   status: string;
   role?: string;
@@ -58,7 +60,8 @@ export async function createPlayer(data: {
 }
 
 async function createPlayerImpl(data: {
-  full_name: string;
+  first_name: string;
+  last_name?: string;
   email: string;
   status: string;
   role?: string;
@@ -81,8 +84,11 @@ async function createPlayerImpl(data: {
   const { data: playerId, error } = await adminClient.rpc('create_player_with_rating', {
     p_user_id: null,
     p_email: data.email,
-    p_full_name: data.full_name,
-    p_display_name: data.full_name,
+    p_first_name: data.first_name,
+    p_last_name: data.last_name || null,
+    // Admin-created players have always had display_name seeded with the
+    // whole name; joinName reproduces exactly what full_name will generate.
+    p_display_name: joinName(data.first_name, data.last_name),
     p_status: data.status || 'recreational',
     p_role: data.role || 'player',
   });
@@ -101,7 +107,7 @@ async function createPlayerImpl(data: {
     action_type: 'player_created',
     target_type: 'player',
     target_id: playerId,
-    new_value: { full_name: data.full_name, email: data.email, status: data.status, is_exec: data.is_exec ?? false },
+    new_value: { first_name: data.first_name, last_name: data.last_name ?? null, email: data.email, status: data.status, is_exec: data.is_exec ?? false },
     reason: 'Manual admin creation',
   });
 

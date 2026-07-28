@@ -41,20 +41,37 @@ export function clampElo(rating: number): number {
   return Math.min(MAX_ELO, Math.max(MIN_ELO, rating));
 }
 
-// Session check-in window. The DB function session_checkin_open
-// (00008_richer_attendance.sql) is the enforcement source of truth; these
-// constants must mirror the 'session_attendance' platform_settings defaults
-// seeded in that migration.
 export const CLUB_TIMEZONE = 'America/Vancouver';
-// These mirror the platform_settings 'session_rules' row applied on prod
-// (default_duration_minutes / checkin_opens_minutes_before). The client uses
-// them to render the check-in window; the DB session_checkin_open() gate uses
-// the settings row. Keep them in sync — a client-only 'null' opening edge made
-// the Check In button show for every upcoming session while the server (30 min)
-// rejected it.
+
+// Session check-in window. session_checkin_open()
+// (00008_richer_attendance.sql:56-58) is the enforcement source of truth, and
+// it reads both values out of the platform_settings 'session_attendance' row
+// on EVERY call. They are admin-editable at runtime, not constants.
+//
+// The pair below is a LAST-RESORT FALLBACK for callers that cannot reach the
+// database — client components and pure formatters. Server callers should
+// fetch the row and pass it through parseCheckinSettings(); see
+// FALLBACK_CHECKIN_SETTINGS in session-window.ts.
+//
+// These track what prod is configured to today. That is a snapshot, not a
+// contract: an admin editing the setting silently invalidates them. It has
+// already bitten once — a client-only 'null' opening edge showed the Check In
+// button for every upcoming session while the server (30 min) rejected it,
+// fixed in 231b0af.
+//
+// Do NOT "restore" these to the 120 / null seeded by 00008. That seed only
+// applied on first insert (ON CONFLICT DO NOTHING); prod has since been
+// retuned away from it. Two stale tests asserted the seed values and were
+// corrected in f677808 rather than the constants being reverted to match.
 export const SESSION_DEFAULT_DURATION_MINUTES = 60;
 // Check-in opens this many minutes before start (null = only a closing edge).
 export const SESSION_CHECKIN_OPENS_MINUTES_BEFORE: number | null = 30;
+
+// Shape of a session check-in QR token: randomBytes(24).toString('hex').
+// The admin generator (getOrCreateSessionCheckinToken) and the player
+// validator (checkInWithToken) must agree, so the pattern lives here rather
+// than being inlined twice. Mirrors the calendar feed route's /^[0-9a-f]{48}$/.
+export const CHECKIN_TOKEN_REGEX = /^[0-9a-f]{48}$/;
 
 export const PROVISIONAL_THRESHOLD = 8;
 export const MAX_RATED_PER_SESSION = 3;

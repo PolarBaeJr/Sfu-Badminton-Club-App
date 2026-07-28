@@ -59,11 +59,52 @@ function parseTime(time: string): { hour: number; minute: number } {
   return { hour: Number(h), minute: Number(m ?? '0') };
 }
 
+// The two tunables session_checkin_open() reads out of the
+// platform_settings 'session_attendance' row on every call.
+export interface CheckinSettings {
+  defaultDurationMinutes: number;
+  opensMinutesBefore: number | null;
+}
+
+// Fallback for callers that cannot reach the database — client components and
+// pure formatters. These track the values currently applied on prod, but they
+// are a guess: platform_settings is admin-editable, so anything rendered from
+// this fallback can disagree with what the RLS gate will actually allow.
+// SERVER CALLERS SHOULD FETCH AND PASS THE REAL ROW (parseCheckinSettings).
+export const FALLBACK_CHECKIN_SETTINGS: CheckinSettings = {
+  defaultDurationMinutes: SESSION_DEFAULT_DURATION_MINUTES,
+  opensMinutesBefore: SESSION_CHECKIN_OPENS_MINUTES_BEFORE,
+};
+
+// Parse a platform_settings 'session_attendance' value into CheckinSettings,
+// reproducing session_checkin_open()'s own coercion exactly
+// (00008_richer_attendance.sql:56-58):
+//   - default_duration_minutes falls back to 120 when absent/unparseable,
+//     because the SQL wraps it in COALESCE(..., 120)
+//   - checkin_opens_minutes_before yields NULL when absent, and the SQL
+//     treats NULL as "no opening edge"
+// Note the deliberate asymmetry with FALLBACK_CHECKIN_SETTINGS above: this
+// mirrors what the DATABASE does with a missing key, which is not the same as
+// what prod is currently configured to.
+export function parseCheckinSettings(value: unknown): CheckinSettings {
+  const row = (value ?? {}) as Record<string, unknown>;
+  const duration = Number(row.default_duration_minutes);
+  const opens = Number(row.checkin_opens_minutes_before);
+  return {
+    defaultDurationMinutes: Number.isFinite(duration) ? duration : 120,
+    opensMinutesBefore:
+      row.checkin_opens_minutes_before == null || !Number.isFinite(opens) ? null : opens,
+  };
+}
+
 // Same rules as session_checkin_open: close at date + end_time if set, else
 // start_time + default duration if start_time is set, else end of the
 // session's date (start of the next day, club time). opensAt is null when
-// SESSION_CHECKIN_OPENS_MINUTES_BEFORE is null (no opening edge).
-export function getCheckinWindow(session: SessionWindowFields): {
+// opensMinutesBefore is null (no opening edge).
+export function getCheckinWindow(
+  session: SessionWindowFields,
+  settings: CheckinSettings = FALLBACK_CHECKIN_SETTINGS
+): {
   opensAt: Date | null;
   closesAt: Date;
 } {
@@ -76,23 +117,27 @@ export function getCheckinWindow(session: SessionWindowFields): {
     const end = parseTime(session.end_time);
     closesAt = wallClockToUtc(y, mo, d, end.hour, end.minute);
   } else if (session.start_time) {
-    closesAt = new Date(startAt.getTime() + SESSION_DEFAULT_DURATION_MINUTES * 60_000);
+    closesAt = new Date(startAt.getTime() + settings.defaultDurationMinutes * 60_000);
   } else {
     // Date.UTC normalizes day overflow, so d + 1 rolls month/year correctly.
     closesAt = wallClockToUtc(y, mo, d + 1, 0, 0);
   }
 
   const opensAt =
-    SESSION_CHECKIN_OPENS_MINUTES_BEFORE == null
+    settings.opensMinutesBefore == null
       ? null
-      : new Date(startAt.getTime() - SESSION_CHECKIN_OPENS_MINUTES_BEFORE * 60_000);
+      : new Date(startAt.getTime() - settings.opensMinutesBefore * 60_000);
 
   return { opensAt, closesAt };
 }
 
-export function isCheckinOpen(session: SessionWindowFields, now: Date = new Date()): boolean {
+export function isCheckinOpen(
+  session: SessionWindowFields,
+  now: Date = new Date(),
+  settings: CheckinSettings = FALLBACK_CHECKIN_SETTINGS
+): boolean {
   if (session.status !== undefined && session.status !== 'open') return false;
-  const { opensAt, closesAt } = getCheckinWindow(session);
+  const { opensAt, closesAt } = getCheckinWindow(session, settings);
   if (opensAt && now < opensAt) return false;
   return now < closesAt;
 }

@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { Badge, Button, Dialog, Input, Select, useConfirm, DatePicker } from '@badminton/ui';
-import { createSession, updateSession, archiveSession, deleteSession, markAttendance, clearAttendanceMark, sendSessionReminders } from '@/lib/actions';
+import { createSession, updateSession, archiveSession, deleteSession, markAttendance, clearAttendanceMark, sendSessionReminders, getOrCreateSessionCheckinToken, rotateSessionCheckinToken } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
-import { MoreVertical, Users } from 'lucide-react';
+import { MoreVertical, Users, QrCode } from 'lucide-react';
 import type { SessionGroupInput, AttendanceStatus, AttendanceStatusInput } from '@badminton/shared';
 
 const TRACK_OPTIONS = [
@@ -151,6 +152,101 @@ export function AttendanceDialog({ sessionId, attendees, players }: AttendanceDi
             </div>
             <Button disabled={!addPlayerId || busyPlayerId !== null} onClick={handleAdd}>
               Mark present
+            </Button>
+          </div>
+        )}
+      </Dialog>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CheckinQrDialog
+// ---------------------------------------------------------------------------
+
+interface CheckinQrDialogProps {
+  sessionId: string;
+  // Both null until an admin generates the code. The QR is rendered server-side
+  // in page.tsx so the qrcode library never reaches the client bundle.
+  url: string | null;
+  svg: string | null;
+}
+
+export function CheckinQrDialog({ sessionId, url, svg }: CheckinQrDialogProps) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [refreshing, startTransition] = useTransition();
+  const { toast } = useToast();
+  const confirm = useConfirm();
+  const router = useRouter();
+
+  async function handleGenerate() {
+    setBusy(true);
+    try {
+      const res = await getOrCreateSessionCheckinToken(sessionId);
+      if (!res.ok) { toast(res.error, 'error'); setBusy(false); return; }
+      toast('Check-in code ready', 'success');
+      startTransition(() => router.refresh());
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed', 'error');
+    }
+    setBusy(false);
+  }
+
+  async function handleRotate() {
+    if (!(await confirm({ title: 'Rotate code?', message: 'Issue a new code? Any QR already printed or shared stops working immediately.', confirmLabel: 'Rotate' }))) return;
+    setBusy(true);
+    try {
+      const res = await rotateSessionCheckinToken(sessionId);
+      if (!res.ok) { toast(res.error, 'error'); setBusy(false); return; }
+      toast('New check-in code issued', 'success');
+      startTransition(() => router.refresh());
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed', 'error');
+    }
+    setBusy(false);
+  }
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        className="flex items-center gap-1 text-xs text-[var(--color-accent)] hover:underline"
+      >
+        <QrCode className="w-3.5 h-3.5" />
+        <span>Check-in QR</span>
+      </button>
+
+      <Dialog open={open} onClose={() => setOpen(false)} title="Check-in QR">
+        {url && svg ? (
+          <div className="space-y-4">
+            {/* Server-generated from a URL we built ourselves (origin + a hex
+                token we minted) — never from user input, so the SVG markup is
+                ours and not attacker-controlled. */}
+            <div
+              className="flex justify-center bg-white rounded-lg p-4"
+              dangerouslySetInnerHTML={{ __html: svg }}
+            />
+            <p className="text-sm text-[var(--text-secondary)] text-center">
+              Players scan this with their phone camera to check themselves in.
+            </p>
+            <p className="text-xs font-mono break-all text-[var(--text-muted)] text-center">{url}</p>
+            <div className="flex items-center justify-between pt-2 border-t border-[var(--border)]">
+              <span className="text-xs text-[var(--text-muted)]">
+                Rotating revokes every shared copy of the old code.
+              </span>
+              <Button variant="ghost" disabled={busy || refreshing} onClick={handleRotate}>
+                Rotate code
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4 py-2 text-center">
+            <p className="text-sm text-[var(--text-muted)]">
+              No check-in code for this session yet.
+            </p>
+            <Button disabled={busy || refreshing} onClick={handleGenerate}>
+              Generate code
             </Button>
           </div>
         )}

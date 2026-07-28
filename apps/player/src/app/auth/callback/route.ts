@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
-import { rateLimit, getClientIp } from '@badminton/shared';
+import { CHECKIN_TOKEN_REGEX, rateLimit, getClientIp } from '@badminton/shared';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -19,8 +19,16 @@ export async function GET(request: Request) {
 
   const cookieStore = await cookies();
 
+  // A session QR scanned while logged out round-trips its token through here.
+  // Only a well-formed 48-hex token is honoured and it can only ever build the
+  // /checkin/<token> path, so this can't be turned into an open redirect.
+  const checkin = searchParams.get('checkin');
+  const destination = checkin && CHECKIN_TOKEN_REGEX.test(checkin)
+    ? `${origin}/checkin/${checkin}`
+    : `${origin}/`;
+
   // Create redirect response upfront so session cookies are set on it
-  const response = NextResponse.redirect(`${origin}/`);
+  const response = NextResponse.redirect(destination);
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

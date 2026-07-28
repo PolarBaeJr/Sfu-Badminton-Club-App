@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Input, Textarea, Switch, PageHeader, Dialog } from '@badminton/ui';
 import { updateProfile, updateNotificationPreferences, deleteMyAccount } from '@/lib/actions';
-import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, type NotificationCategory } from '@badminton/shared';
+import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, joinName, type NotificationCategory } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -60,7 +60,8 @@ function Section({
 }
 
 export default function SettingsPage() {
-  const [name, setName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [phone, setPhone] = useState('');
   const [bio, setBio] = useState('');
@@ -94,7 +95,8 @@ export default function SettingsPage() {
       if (data) {
         setPlayerId(data.id);
         setAvatarUrl(data.avatar_url);
-        setName(data.full_name);
+        setFirstName(data.first_name);
+        setLastName(data.last_name || '');
         setDisplayName(data.display_name || '');
         setPhone(data.phone || '');
         setBio(data.bio || '');
@@ -133,7 +135,8 @@ export default function SettingsPage() {
     setLoading(true);
     try {
       const res = await updateProfile({
-        full_name: name,
+        first_name: firstName,
+        last_name: lastName || undefined,
         display_name: displayName || undefined,
         phone: phone || undefined,
         bio: bio || undefined,
@@ -231,14 +234,15 @@ export default function SettingsPage() {
               <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 18 }}>
                 <AvatarUpload
                   playerId={playerId}
-                  playerName={name}
+                  playerName={joinName(firstName, lastName)}
                   currentUrl={avatarUrl}
                   onUploaded={setAvatarUrl}
                 />
               </div>
             )}
             <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <Input label="Full name"           value={name}        onChange={(e) => setName(e.target.value)} required />
+              <Input label="First name"          value={firstName}   onChange={(e) => setFirstName(e.target.value)} required />
+              <Input label="Last name"           value={lastName}    onChange={(e) => setLastName(e.target.value)} placeholder="Optional" />
               <Input label="Display name / nickname" value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Optional" />
               <Input label="Phone"               value={phone}       onChange={(e) => setPhone(e.target.value.replace(/[^\d\s+\-()]/g, ''))} placeholder="Optional" inputMode="tel" />
               <Textarea label="Bio"              value={bio}         onChange={(e) => setBio(e.target.value)} placeholder="A few words about yourself" />

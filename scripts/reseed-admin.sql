@@ -3,7 +3,8 @@
 SELECT create_player_with_rating(
   '096fe767-903c-44fd-bc6d-3a6918eb8183',
   'chengmatthew2005@gmail.com',
-  'Matthew Cheng',
+  'Matthew',       -- first_name
+  'Cheng',         -- last_name
   NULL,            -- display_name
   NULL,            -- phone
   'competitive',   -- status
