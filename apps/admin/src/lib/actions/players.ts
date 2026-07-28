@@ -257,3 +257,59 @@ async function removePlayerImpl(playerId: string, reason: string) {
   revalidatePath('/players');
   revalidatePath('/dashboard');
 }
+
+// ---------------------------------------------------------------------------
+// Merge duplicate accounts
+// ---------------------------------------------------------------------------
+// The recurring case: an admin pre-adds someone to the roster, then that person
+// signs up themselves with a different email — two rows, one holding the
+// history, one holding the login. Rows can't share a UUID, so merging means
+// repointing every reference onto a survivor and deleting the other. All of
+// that lives in the merge_players() SQL function (migration 00026), which
+// refuses outright if the account being removed has real history.
+
+export interface MergePreviewRow {
+  table_name: string;
+  row_count: number;
+  effect: string;
+}
+
+/** What would block this merge — empty array means it's safe to run. */
+export async function previewPlayerMerge(
+  keepId: string,
+  removeId: string,
+): Promise<ActionResult<MergePreviewRow[]>> {
+  return runAction(async () => {
+    await getAdminPlayer();
+    const adminClient = createAdminClient();
+    const { data, error } = await adminClient.rpc('merge_players_preview', {
+      p_keep: keepId,
+      p_remove: removeId,
+    });
+    if (error) throw new Error(error.message);
+    // Only surface the rows that actually block; "ok" rows are noise.
+    return ((data ?? []) as MergePreviewRow[]).filter((r) => Number(r.row_count) > 0);
+  });
+}
+
+export async function mergePlayers(
+  keepId: string,
+  removeId: string,
+): Promise<ActionResult<{ login_moved: boolean }>> {
+  return runAction(async () => {
+    const admin = await getAdminPlayer();
+    const adminClient = createAdminClient();
+
+    const { data, error } = await adminClient.rpc('merge_players', {
+      p_keep: keepId,
+      p_remove: removeId,
+      p_actor: admin.id,
+    });
+    // The function raises with a human-readable reason (history present, two
+    // logins, same id) — surface it verbatim rather than a generic failure.
+    if (error) throw new Error(error.message);
+
+    revalidatePath('/players');
+    return { login_moved: Boolean((data as { login_moved?: boolean } | null)?.login_moved) };
+  });
+}

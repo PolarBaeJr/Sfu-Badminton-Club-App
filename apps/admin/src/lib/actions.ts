@@ -26,7 +26,10 @@ export {
   removePlayer,
   cancelAccountDeletion,
   requireWaiverResignature,
+  previewPlayerMerge,
+  mergePlayers,
 } from './actions/players';
+export type { MergePreviewRow } from './actions/players';
 
 export {
   voidMatch,

@@ -4,6 +4,7 @@ import { PLAYER_STATUS_LABELS, getMissingLegalDocuments, getWinRate, unwrap } fr
 import Link from 'next/link';
 import { PlayerActions } from './player-actions';
 import { AddPlayerButton } from './add-player-button';
+import { MergePlayersButton } from './merge-players-button';
 
 const statusBadgeVariant = (status: string) => {
   switch (status) {
@@ -66,9 +67,12 @@ export default async function PlayersPage({
   // tab's list filter. (Per-tab head:true count queries with .in()/.or() were
   // silently returning 0 on the self-hosted PostgREST, so "Needs Attention"
   // showed 0 while listing pending players.)
+  // Also selects the identity columns the merge picker needs, so the dialog
+  // doesn't cost a second query.
   const { data: countRows } = await supabase
     .from('players')
-    .select('status, is_banned, active_flag')
+    .select('id, full_name, email, user_id, status, is_banned, active_flag')
+    .order('full_name')
     .limit(5000);
   const forCount = countRows ?? [];
   const isCompetitive = (s: string) => !['recreational', 'suspended', 'pending_approval'].includes(s);
@@ -88,7 +92,26 @@ export default async function PlayersPage({
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Players" watermark="P" actions={<AddPlayerButton />} />
+      <PageHeader
+        title="Players"
+        watermark="P"
+        actions={
+          <div className="flex items-center gap-2">
+            {/* Merge candidates come from the count query, which already loads
+                every player — no extra round-trip just to populate the picker. */}
+            <MergePlayersButton
+              players={(countRows ?? []).map((p) => ({
+                id: p.id,
+                full_name: p.full_name,
+                email: p.email,
+                has_login: p.user_id !== null,
+                status: p.status,
+              }))}
+            />
+            <AddPlayerButton />
+          </div>
+        }
+      />
 
       {/* Tabs */}
       <Card padding={false}>
