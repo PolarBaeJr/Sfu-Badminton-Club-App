@@ -275,6 +275,43 @@ async function completeOnboardingImpl(data: {
   const existingPlayer = await getCurrentPlayer();
   let playerId = existingPlayer?.id ?? null;
 
+  // Claim an unclaimed roster row before creating a new one. Admins routinely
+  // pre-add members (user_id IS NULL) who later sign up themselves; without
+  // this, onboarding always inserts a SECOND row and someone has to merge the
+  // two by hand. Matching on the email is safe here specifically because
+  // sign-in is OTP/OAuth — the address is proven, not self-asserted — and we
+  // only ever attach to a row nobody has claimed yet.
+  // Needs the service-role client: under RLS the user cannot see or update a
+  // players row that isn't linked to them yet.
+  if (!existingPlayer && user.email) {
+    const serviceClient = createServiceRoleClient();
+    const { data: unclaimed } = await serviceClient
+      .from('players')
+      .select('id')
+      .is('user_id', null)
+      .ilike('email', user.email)
+      .maybeSingle();
+
+    if (unclaimed) {
+      // The admin-entered name/email/status stay authoritative (same rule the
+      // merge tool follows); onboarding only supplies what the admin couldn't
+      // know and links the login.
+      const claim: Record<string, unknown> = {
+        user_id: user.id,
+        onboarding_completed: true,
+      };
+      if (data.display_name) claim.display_name = data.display_name;
+      if (data.phone) claim.phone = data.phone;
+
+      const { error } = await serviceClient.from('players').update(claim).eq('id', unclaimed.id);
+      if (error) {
+        Sentry.captureException(error, { extra: { action: 'claimRosterRow', userId: user.id } });
+        throw new Error(error.message);
+      }
+      playerId = unclaimed.id;
+    }
+  }
+
   if (existingPlayer) {
     const update: Record<string, unknown> = {
       first_name: data.first_name,
@@ -293,7 +330,9 @@ async function completeOnboardingImpl(data: {
       Sentry.captureException(error, { extra: { action: 'completeOnboarding', playerId: existingPlayer.id } });
       throw new Error(error.message);
     }
-  } else {
+  } else if (!playerId) {
+    // Only insert when nothing was claimed above — otherwise onboarding would
+    // create the very duplicate the claim step exists to prevent.
     // create_player_with_rating (migration 00003_functions.sql) inserts the
     // player and ratings rows in one transaction. Its internal guard mirrors
     // the players_self_insert RLS policy (00005_rls.sql): user_id = auth.uid(),
