@@ -1,5 +1,5 @@
 import type { MatchFormat, EventType } from '../types/database';
-import { clampElo, DEFAULT_ELO, PROVISIONAL_THRESHOLD } from '../utils/constants';
+import { clampElo, DEFAULT_ELO, PROVISIONAL_THRESHOLD, SWEEP_MARGIN_MULTIPLIER } from '../utils/constants';
 
 export const FORMAT_WEIGHTS: Record<MatchFormat, number> = {
   bo3_21: 1.25,
@@ -29,6 +29,8 @@ export interface EloCalcInput {
   eventMultiplier: number;
   won: boolean;
   eloWeightOverride?: number;
+  /** Margin-of-victory scaling — see getMarginMultiplier(). Defaults to 1.0. */
+  marginMultiplier?: number;
 }
 
 export interface EloCalcResult {
@@ -41,12 +43,42 @@ export function calculateExpected(playerRating: number, opponentRating: number):
   return 1.0 / (1.0 + Math.pow(10, (opponentRating - playerRating) / ELO_SCALE));
 }
 
+// Margin-of-victory scaling, deliberately coarse: a clean sweep counts slightly
+// more than a match that went the distance, and nothing else does.
+//
+// Scaling by GAMES rather than points is a safety decision, not a modelling one.
+// Scores here are self-reported and confirmed by the opponent, so any factor
+// that rewards a bigger margin also rewards inflating one — points-based
+// scaling would make forged scorelines directly profitable and give players a
+// reason to run the score up on a weaker clubmate. Sweep-vs-not is a single bit
+// of information: nearly worthless to manipulate, but still enough to separate
+// "beat them twice cleanly" from "scraped through in three".
+//
+// Single-game formats have no margin to speak of and are always 1.0.
+export function getMarginMultiplier(gamesWon: number, gamesLost: number): number {
+  const total = gamesWon + gamesLost;
+  if (total < 2) return 1.0;             // single-game format
+  if (gamesWon > 0 && gamesLost > 0) return 1.0;  // went the distance
+  return SWEEP_MARGIN_MULTIPLIER;        // clean sweep (winner) / swept (loser)
+}
+
+// JS Math.round breaks ties toward +Infinity (-34.5 -> -34) while Postgres
+// ROUND() breaks them away from zero (-34.5 -> -35). Both engines rate real
+// matches — SQL for challenges, this one for tournaments — so a disagreement
+// means the same scoreline moves ratings differently depending on where it was
+// played, and a winner/loser pair can differ by a point (leaking rating into
+// the ladder). Match Postgres.
+function roundHalfAwayFromZero(n: number): number {
+  return Math.sign(n) * Math.round(Math.abs(n));
+}
+
 export function calculateEloUpdate(input: EloCalcInput): EloCalcResult {
   const actual = input.won ? 1.0 : 0.0;
   const expected = calculateExpected(input.playerRating, input.opponentRating);
   const weight = input.eloWeightOverride ?? 1.0;
-  const rawDelta = Math.round(
-    input.kFactor * input.formatWeight * input.eventMultiplier * weight * (actual - expected)
+  const margin = input.marginMultiplier ?? 1.0;
+  const rawDelta = roundHalfAwayFromZero(
+    input.kFactor * input.formatWeight * input.eventMultiplier * weight * margin * (actual - expected)
   );
 
   // Clamp the resulting rating to [MIN_ELO, MAX_ELO], then derive the delta from

@@ -74,6 +74,11 @@ export const SESSION_CHECKIN_OPENS_MINUTES_BEFORE: number | null = 30;
 export const CHECKIN_TOKEN_REGEX = /^[0-9a-f]{48}$/;
 
 export const PROVISIONAL_THRESHOLD = 8;
+
+// Margin-of-victory bonus applied when a multi-game match ends in a sweep
+// (2-0 / 3-0). Applies to both sides: the winner gains slightly more, the loser
+// drops slightly more. Kept small on purpose — see getMarginMultiplier().
+export const SWEEP_MARGIN_MULTIPLIER = 1.15;
 export const MAX_RATED_PER_SESSION = 3;
 export const MAX_REPEAT_OPPONENT_7DAYS = 2;
 export const GRACE_PERIOD_MINUTES = 15;

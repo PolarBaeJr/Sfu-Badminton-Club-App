@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { rateLimit, getClientIp } from '../utils/rate-limit';
+import { getMarginMultiplier, calculateEloUpdate } from '../elo/engine';
+import { SWEEP_MARGIN_MULTIPLIER } from '../utils/constants';
 import { escapeHtml, challengeReceivedEmail, disputeOpenedEmail } from '../email/templates';
 
 function req(headers: Record<string, string>): Request {
@@ -81,5 +83,33 @@ describe('email templates escape user-controlled values', () => {
   it('strips newlines from subjects (header injection)', () => {
     const { subject } = challengeReceivedEmail('Bad\r\nBcc: victim@test', 'bo3_21', 'singles', 'u');
     expect(subject).not.toMatch(/[\r\n]/);
+  });
+});
+
+describe('getMarginMultiplier (Elo margin-of-victory scaling)', () => {
+  it('rewards a clean sweep on both sides', () => {
+    expect(getMarginMultiplier(2, 0)).toBe(SWEEP_MARGIN_MULTIPLIER); // winner swept
+    expect(getMarginMultiplier(0, 2)).toBe(SWEEP_MARGIN_MULTIPLIER); // loser got swept
+  });
+
+  it('does not scale a match that went the distance', () => {
+    expect(getMarginMultiplier(2, 1)).toBe(1.0);
+    expect(getMarginMultiplier(1, 2)).toBe(1.0);
+  });
+
+  it('never scales single-game formats or walkovers', () => {
+    expect(getMarginMultiplier(1, 0)).toBe(1.0);
+    expect(getMarginMultiplier(0, 1)).toBe(1.0);
+    expect(getMarginMultiplier(0, 0)).toBe(1.0);
+  });
+
+  it('applies the multiplier to the delta, symmetrically', () => {
+    const base = { playerRating: 500, opponentRating: 500, kFactor: 48, formatWeight: 1.25, eventMultiplier: 1.0 };
+    const flat = calculateEloUpdate({ ...base, won: true });
+    const swept = calculateEloUpdate({ ...base, won: true, marginMultiplier: getMarginMultiplier(2, 0) });
+    expect(swept.delta).toBeGreaterThan(flat.delta);
+    // loser of a sweep drops by the same magnitude the winner gains
+    const loser = calculateEloUpdate({ ...base, won: false, marginMultiplier: getMarginMultiplier(0, 2) });
+    expect(Math.abs(loser.delta)).toBe(swept.delta);
   });
 });
