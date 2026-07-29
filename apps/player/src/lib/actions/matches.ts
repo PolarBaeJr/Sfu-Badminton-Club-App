@@ -7,9 +7,6 @@ import {
   sendResultPendingEmail,
   sendDisputeOpenedEmail,
   sendWalkoverReportedEmail,
-  getFormatWeight,
-  getEventMultiplier,
-  pickOne,
   matchResultSchema,
   disputeSchema,
   walkoverReportSchema,
@@ -44,115 +41,21 @@ async function submitMatchResultImpl(challengeId: string, input: MatchResultInpu
   );
   if (!isParticipant) throw new Error('Not a participant');
 
-  // Guard against double-submission. The matches_challenge_id_unique index
-  // (migration 00002_indexes.sql) is the hard backstop; this pre-check gives a friendlier error.
-  const { data: existingMatch } = await supabase
-    .from('matches')
-    .select('id')
-    .eq('challenge_id', challengeId)
-    .maybeSingle();
-  if (existingMatch) throw new Error('A match has already been submitted for this challenge');
-
-  if (challenge.session_id) {
-    const { data: capOk } = await supabase.rpc('check_session_caps', {
-      p_player_id: player.id,
-      p_session_id: challenge.session_id,
-      p_match_type: challenge.type,
-    });
-    if (capOk === false) throw new Error('Session match cap reached');
-  }
-
-  const { data: season } = await supabase.from('seasons').select('id').eq('active_flag', true).single();
-
-  const formatWeight = getFormatWeight(challenge.format);
-  const eventMult = getEventMultiplier(challenge.event_type);
-
-  const { data: match, error: matchError } = await supabase
-    .from('matches')
-    .insert({
-      challenge_id: challengeId,
-      session_id: challenge.session_id,
-      season_id: season?.id,
-      match_type: challenge.type,
-      event_type: challenge.event_type,
-      rated_flag: challenge.rated_flag,
-      format: challenge.format,
-      format_weight: formatWeight,
-      event_multiplier: eventMult,
-      completed_flag: input.completed,
-      winner_side: input.winner_side,
-      score_summary: input.games.map((g) => `${g.side_a_score}-${g.side_b_score}`).join(', '),
-      played_at: new Date().toISOString(),
-      submitted_by: player.id,
-      result_status: input.completed ? 'pending_confirmation' : 'incomplete',
-    })
-    .select()
-    .single();
-
-  if (matchError) throw new Error(matchError.message);
-
-  const isDoubles = challenge.type === 'doubles';
-  const matchParticipants = challenge.challenge_participants.map((cp: Record<string, unknown>) => {
-    const playerData = cp.player as Record<string, unknown>;
-    const ratingsData = pickOne(playerData?.ratings);
-    const preRating = isDoubles
-      ? ((ratingsData as Record<string, unknown>)?.doubles_elo as number) ?? 400
-      : ((ratingsData as Record<string, unknown>)?.singles_elo as number) ?? 400;
-
-    const side = cp.team_side as string;
-    let pointsScored = 0;
-    let pointsAllowed = 0;
-    let gamesWon = 0;
-    let gamesLost = 0;
-    for (const g of input.games) {
-      if (side === 'a') {
-        pointsScored += g.side_a_score;
-        pointsAllowed += g.side_b_score;
-        if (g.side_a_score > g.side_b_score) gamesWon++;
-        else gamesLost++;
-      } else {
-        pointsScored += g.side_b_score;
-        pointsAllowed += g.side_a_score;
-        if (g.side_b_score > g.side_a_score) gamesWon++;
-        else gamesLost++;
-      }
-    }
-
-    return {
-      match_id: match.id,
-      player_id: cp.player_id,
-      team_side: cp.team_side,
-      pre_rating: preRating,
-      points_scored: pointsScored,
-      points_allowed: pointsAllowed,
-      games_won: gamesWon,
-      games_lost: gamesLost,
-    };
+  // One RPC replaces what used to be three separate writes (match ->
+  // participants -> games). Those were non-atomic: a crash between the match
+  // insert and the compensating delete wedged the challenge permanently, since
+  // matches_challenge_id_unique blocks any resubmit. Just as importantly, the
+  // participant rows used to be built client-side, so a submitter could enrol
+  // any player they liked; the function derives them from challenge_participants
+  // instead. `authenticated` no longer holds INSERT on these tables (00027), so
+  // this is also the only way in.
+  const { data: newMatchId, error: submitError } = await supabase.rpc('submit_match_result', {
+    p_challenge_id: challengeId,
+    p_games: input.games.map((g) => ({ side_a_score: g.side_a_score, side_b_score: g.side_b_score })),
+    p_completed: input.completed,
   });
-
-  const { error: mpError } = await supabase.from('match_participants').insert(matchParticipants);
-  if (mpError) {
-    // The match row already committed (and challenge_id is UNIQUE), so a failed
-    // participant insert would wedge the challenge: resubmit is blocked and the
-    // match can never be confirmed. Compensate by deleting the match (FK cascade
-    // removes any partial participants/games). Service-role: matches has no
-    // participant DELETE policy.
-    await createServiceRoleClient().from('matches').delete().eq('id', match.id);
-    throw new Error(mpError.message);
-  }
-
-  const gameRows = input.games.map((g) => ({
-    match_id: match.id,
-    game_number: g.game_number,
-    side_a_score: g.side_a_score,
-    side_b_score: g.side_b_score,
-  }));
-  const { error: gamesError } = await supabase.from('match_games').insert(gameRows);
-  if (gamesError) {
-    // Same wedge risk as the participant insert above — roll back the match.
-    await createServiceRoleClient().from('matches').delete().eq('id', match.id);
-    throw new Error(gamesError.message);
-  }
+  if (submitError) throw new Error(submitError.message);
+  const matchId = newMatchId as string;
 
   // Notify other participants — batch insert + parallel email lookup.
   const otherPlayers = (challenge.challenge_participants as Record<string, unknown>[]).filter(
@@ -167,7 +70,7 @@ async function submitMatchResultImpl(challengeId: string, input: MatchResultInpu
         type: 'result_pending',
         title: 'Confirm Match Result',
         body: `${player.full_name} submitted a result. Please confirm.`,
-        metadata: { match_id: match.id, challenge_id: challengeId },
+        metadata: { match_id: matchId, challenge_id: challengeId },
       })),
       {
         title: 'Confirm Match Result',
@@ -184,8 +87,8 @@ async function submitMatchResultImpl(challengeId: string, input: MatchResultInpu
     const score = input.games.map((g) => `${g.side_a_score}-${g.side_b_score}`).join(', ');
     for (const row of emails ?? []) {
       if (row.email) {
-        sendResultPendingEmail(row.email, player.full_name, score, match.id).catch((err) => {
-          Sentry.captureException(err, { extra: { email: 'result_pending', matchId: match.id } });
+        sendResultPendingEmail(row.email, player.full_name, score, matchId).catch((err) => {
+          Sentry.captureException(err, { extra: { email: 'result_pending', matchId: matchId } });
         });
       }
     }
@@ -193,7 +96,7 @@ async function submitMatchResultImpl(challengeId: string, input: MatchResultInpu
 
   trackServerEvent(player.id, 'match_result_submitted', {
     ...getPlayerProps(player),
-    match_id: match.id,
+    match_id: matchId,
     challenge_id: challengeId,
     format: challenge.format,
     winner_side: input.winner_side,
@@ -201,7 +104,7 @@ async function submitMatchResultImpl(challengeId: string, input: MatchResultInpu
 
   revalidatePath('/challenges');
   revalidatePath(`/challenges/${challengeId}`);
-  return match.id;
+  return matchId;
 }
 
 export async function confirmMatchResult(matchId: string): Promise<ActionResult> {
@@ -245,21 +148,18 @@ async function disputeMatchResultImpl(matchId: string, reason: string, category:
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 
-  const { data: mp } = await supabase
-    .from('match_participants')
-    .select('player_id')
-    .eq('match_id', matchId);
-  if (!mp?.some((row) => row.player_id === player.id)) throw new Error('Not a participant');
-
-  await supabase.from('matches').update({ result_status: 'disputed' }).eq('id', matchId);
-
-  await supabase.from('disputes').insert({
-    match_id: matchId,
-    opened_by: player.id,
-    reason_category: category,
-    description: reason,
-    status: 'open',
+  // One RPC instead of a participant check + match UPDATE + dispute INSERT.
+  // `authenticated` no longer holds UPDATE on matches (migration 00027), so the
+  // write has to happen inside the definer function anyway — and doing it there
+  // makes the whole thing atomic and adds the checks this path was missing: the
+  // match must actually be disputable (not already voided/disputed) and only one
+  // open dispute may exist per match.
+  const { error } = await supabase.rpc('dispute_match_result', {
+    p_match_id: matchId,
+    p_reason_category: category,
+    p_description: reason,
   });
+  if (error) throw new Error(error.message);
 
   const [adminsRes, matchRes] = await Promise.all([
     supabase.from('players').select('email').eq('role', 'admin'),
