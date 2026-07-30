@@ -55,11 +55,20 @@ export function calculateExpected(playerRating: number, opponentRating: number):
 // "beat them twice cleanly" from "scraped through in three".
 //
 // Single-game formats have no margin to speak of and are always 1.0.
-export function getMarginMultiplier(gamesWon: number, gamesLost: number): number {
+// `sweepMultiplier` comes from platform_settings.rating_defaults
+// (sweep_margin_multiplier) so admins can tune it; the constant is only the
+// fallback. Bounded to [1, 2] to match get_margin_multiplier() in SQL — a
+// malformed setting must not scale every rating change arbitrarily.
+export function getMarginMultiplier(
+  gamesWon: number,
+  gamesLost: number,
+  sweepMultiplier: number = SWEEP_MARGIN_MULTIPLIER,
+): number {
   const total = gamesWon + gamesLost;
-  if (total < 2) return 1.0;             // single-game format
+  if (total < 2) return 1.0;                      // single-game format
   if (gamesWon > 0 && gamesLost > 0) return 1.0;  // went the distance
-  return SWEEP_MARGIN_MULTIPLIER;        // clean sweep (winner) / swept (loser)
+  const m = Number.isFinite(sweepMultiplier) ? sweepMultiplier : SWEEP_MARGIN_MULTIPLIER;
+  return Math.min(2.0, Math.max(1.0, m));         // clean sweep, either side
 }
 
 // JS Math.round breaks ties toward +Infinity (-34.5 -> -34) while Postgres

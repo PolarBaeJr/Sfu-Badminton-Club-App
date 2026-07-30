@@ -161,6 +161,14 @@ const FIELD_META: Record<string, Record<string, FieldMeta>> = {
       min: 0,
       step: 1,
     },
+    sweep_margin_multiplier: {
+      label: 'Sweep bonus multiplier',
+      hint: 'Extra rating movement when a multi-game match ends in a sweep (2-0). Applies to both players — the winner gains this much more, the loser drops this much more. 1.0 turns margin scaling off. Matches that go the distance are never scaled.',
+      type: 'number',
+      min: 1,
+      max: 2,
+      step: 0.05,
+    },
     provisional_threshold: {
       label: 'Provisional threshold',
       hint: 'Rated matches a player must complete before their rating counts as established.',
