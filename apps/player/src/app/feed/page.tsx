@@ -91,6 +91,10 @@ export default async function FeedPage() {
     }))
     .slice(0, 5);
 
+  // Every challenge/session/tournament action is rejected server-side by
+  // requirePlayer() until an account is approved, so the CTAs that lead there
+  // are hidden rather than left to fail on click (same rule as the nav).
+  const isApproved = player.status !== 'pending_approval' && player.status !== 'suspended';
   const firstName = player.full_name.split(' ')[0];
 
   const subBits: string[] = [];
@@ -114,13 +118,31 @@ export default async function FeedPage() {
             <Link href="/leaderboard" className="btn btn-ghost">
               <Filter size={14} /> Browse
             </Link>
-            <Link href="/challenges/new" className="btn btn-primary-cta">
-              <Plus size={14} /> Issue Challenge
-            </Link>
+            {isApproved && (
+              <Link href="/challenges/new" className="btn btn-primary-cta">
+                <Plus size={14} /> Issue Challenge
+              </Link>
+            )}
           </>
         }
       />
 
+      {/* Hiding the gated features without saying why leaves a new member
+          staring at a half-empty app wondering what they did wrong. Say it
+          plainly, and point at the one thing they can still do. */}
+      {!isApproved && (
+        <div
+          className="card-base"
+          style={{ marginBottom: 16, borderLeft: '3px solid var(--gold, #E0A800)' }}
+        >
+          <h3 className="card-title" style={{ marginBottom: 6 }}>Waiting on approval</h3>
+          <p className="muted" style={{ fontSize: 14, lineHeight: 1.55, margin: 0 }}>
+            An exec still needs to approve your account. Once they do, you can issue
+            challenges, RSVP to sessions and enter tournaments. Until then you can browse
+            the leaderboard to see where everyone stands.
+          </p>
+        </div>
+      )}
 
       {r && (
         <div className="hero-banner reveal reveal-1" style={{ marginBottom: 24 }}>
@@ -193,9 +215,11 @@ export default async function FeedPage() {
             })()}
 
             <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
-              <Link href="/challenges/new" className="btn btn-primary">
-                <Crosshair size={14} /> Find an opponent
-              </Link>
+              {isApproved && (
+                <Link href="/challenges/new" className="btn btn-primary">
+                  <Crosshair size={14} /> Find an opponent
+                </Link>
+              )}
               <Link href="/leaderboard" className="btn btn-ghost-inverse">
                 See leaderboard
               </Link>
