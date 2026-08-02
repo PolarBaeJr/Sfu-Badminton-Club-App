@@ -179,9 +179,31 @@ export const FORMAT_RULES: Record<MatchFormat, { bestOf: number; target: number;
   single_11: { bestOf: 1, target: 11, cap: 15 },
 };
 
+// Tournaments carry their own format enum with the same four shapes, so the
+// rules are mapped rather than duplicated — one source of truth for what a
+// legal score is, whether the match came from a challenge or a bracket.
+export const TOURNAMENT_FORMAT_RULES: Record<TournamentMatchFormat, { bestOf: number; target: number; cap: number }> = {
+  best_of_3_to_21: FORMAT_RULES.bo3_21,
+  one_game_21:     FORMAT_RULES.single_21,
+  one_game_15:     FORMAT_RULES.single_15,
+  one_game_11:     FORMAT_RULES.single_11,
+};
+
+export type AnyMatchFormat = MatchFormat | TournamentMatchFormat;
+
+export function getFormatRules(format: AnyMatchFormat): { bestOf: number; target: number; cap: number } {
+  const table = { ...FORMAT_RULES, ...TOURNAMENT_FORMAT_RULES } as Record<
+    string,
+    { bestOf: number; target: number; cap: number } | undefined
+  >;
+  // Unknown format: fall back to the 21-point rules rather than throwing, so a
+  // future enum member can never crash score entry before it's mapped here.
+  return table[format] ?? FORMAT_RULES.single_21;
+}
+
 /** Highest score legally reachable in this format — the deuce cap. */
-export function getMaxScoreForFormat(format: MatchFormat): number {
-  return FORMAT_RULES[format].cap;
+export function getMaxScoreForFormat(format: AnyMatchFormat): number {
+  return getFormatRules(format).cap;
 }
 
 /**
@@ -192,8 +214,8 @@ export function getMaxScoreForFormat(format: MatchFormat): number {
  *  - above T but below C, winning by exactly 2  (22-20, 23-21, … 29-27)
  *  - at C, with the loser on C-2 or C-1         (30-28 win-by-two, 30-29 the cap)
  */
-export function isLegalGameScore(a: number, b: number, format: MatchFormat): boolean {
-  const { target, cap } = FORMAT_RULES[format];
+export function isLegalGameScore(a: number, b: number, format: AnyMatchFormat): boolean {
+  const { target, cap } = getFormatRules(format);
   const winner = Math.max(a, b);
   const loser = Math.min(a, b);
   if (a === b) return false;                       // a game must be won
@@ -209,8 +231,8 @@ export function isLegalGameScore(a: number, b: number, format: MatchFormat): boo
  * A match stops the moment someone clinches, so a best-of-3 is 2 games (2-0) or
  * 3 (2-1) — never 3-0, because game three would never have been played.
  */
-export function isLegalGameCount(winnerGames: number, loserGames: number, format: MatchFormat): boolean {
-  const { bestOf } = FORMAT_RULES[format];
+export function isLegalGameCount(winnerGames: number, loserGames: number, format: AnyMatchFormat): boolean {
+  const { bestOf } = getFormatRules(format);
   const needed = Math.floor(bestOf / 2) + 1;
   if (winnerGames !== needed) return false;        // winner must reach exactly the clinch
   return loserGames <= needed - 1;                 // and no games played after it

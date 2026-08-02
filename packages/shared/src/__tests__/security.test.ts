@@ -166,3 +166,19 @@ describe('badminton score legality', () => {
     expect(isLegalGameCount(2, 0, 'single_21')).toBe(false);
   });
 });
+
+describe('score rules apply to tournament formats too', () => {
+  it('uses the same targets and caps as the challenge equivalents', () => {
+    expect(isLegalGameScore(21, 20, 'best_of_3_to_21')).toBe(false); // impossible
+    expect(isLegalGameScore(30, 29, 'best_of_3_to_21')).toBe(true);  // the cap
+    expect(isLegalGameScore(22, 20, 'one_game_21')).toBe(true);
+    expect(isLegalGameScore(11, 10, 'one_game_11')).toBe(false);     // win by two
+    expect(isLegalGameScore(15, 14, 'one_game_11')).toBe(true);      // 11-pt cap
+  });
+
+  it('applies the clinch rule to tournament best-of-3', () => {
+    expect(isLegalGameCount(2, 1, 'best_of_3_to_21')).toBe(true);
+    expect(isLegalGameCount(3, 0, 'best_of_3_to_21')).toBe(false);
+    expect(isLegalGameCount(1, 0, 'one_game_21')).toBe(true);
+  });
+});

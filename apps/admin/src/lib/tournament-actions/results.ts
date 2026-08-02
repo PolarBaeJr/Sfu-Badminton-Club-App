@@ -3,7 +3,7 @@
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
-import { isDoublesEvent, getMaxGamesForFormat } from '@badminton/shared';
+import { isDoublesEvent, getMaxGamesForFormat, isLegalGameScore, isLegalGameCount } from '@badminton/shared';
 import type { TournamentEventType, TournamentMatchFormat } from '@badminton/shared';
 import {
   getExecOrAdmin,
@@ -42,6 +42,24 @@ export async function enterMatchResult(
   const maxGames = getMaxGamesForFormat(matchFormat);
   if (scores.length > maxGames) {
     throw new Error(`Too many games for format ${matchFormat}. Max: ${maxGames}`);
+  }
+
+  // Same scoring rules challenges get (00030): a game is won by reaching the
+  // target with a two-point margin or by taking the cap, and a best-of-N stops
+  // the moment someone clinches. Previously tournaments only checked the number
+  // of games, so an impossible 21-20 — or a 3-0 best-of-3 — was accepted here
+  // even though the identical result was rejected on the challenge path.
+  for (const g of scores) {
+    if (!isLegalGameScore(g.a, g.b, matchFormat)) {
+      throw new Error(`Not a possible score for this format: ${g.a}-${g.b}`);
+    }
+  }
+  const aGames = scores.filter((g) => g.a > g.b).length;
+  const bGames = scores.filter((g) => g.b > g.a).length;
+  if (!isLegalGameCount(Math.max(aGames, bGames), Math.min(aGames, bGames), matchFormat)) {
+    throw new Error(
+      `${aGames}-${bGames} is not a possible result for ${matchFormat} — the match ends once a side clinches.`
+    );
   }
 
   const doubles = isDoublesEvent(event.event_type as TournamentEventType);
