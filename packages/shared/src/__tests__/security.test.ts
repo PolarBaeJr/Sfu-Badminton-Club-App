@@ -87,9 +87,19 @@ describe('email templates escape user-controlled values', () => {
 });
 
 describe('getMarginMultiplier (Elo margin-of-victory scaling)', () => {
+  // The rule is "did the loser win a game?", not a literal 2-0 check — so it
+  // keeps working unchanged if a best-of-5 format is ever added. With today's
+  // formats the only reachable sweep is 2-0 in a best-of-3; a 3-0 cannot occur
+  // (the match ends when someone clinches) and is now rejected outright by
+  // isLegalGameCount.
   it('rewards a clean sweep on both sides', () => {
     expect(getMarginMultiplier(2, 0)).toBe(SWEEP_MARGIN_MULTIPLIER); // winner swept
     expect(getMarginMultiplier(0, 2)).toBe(SWEEP_MARGIN_MULTIPLIER); // loser got swept
+  });
+
+  it('the only sweep reachable today is 2-0 — 3-0 is not a legal result', () => {
+    expect(isLegalGameCount(2, 0, 'bo3_21')).toBe(true);
+    expect(isLegalGameCount(3, 0, 'bo3_21')).toBe(false);
   });
 
   it('does not scale a match that went the distance', () => {
@@ -98,7 +108,7 @@ describe('getMarginMultiplier (Elo margin-of-victory scaling)', () => {
   });
 
   it('never scales single-game formats or walkovers', () => {
-    expect(getMarginMultiplier(1, 0)).toBe(1.0);
+    expect(getMarginMultiplier(1, 0)).toBe(1.0);  // a 1-game format has no margin
     expect(getMarginMultiplier(0, 1)).toBe(1.0);
     expect(getMarginMultiplier(0, 0)).toBe(1.0);
   });
