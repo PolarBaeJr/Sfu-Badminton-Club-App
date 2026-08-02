@@ -144,11 +144,15 @@ async function acceptChallengeImpl(challengeId: string) {
   const supabase = await createServerSupabaseClient();
   await assertCurrentWaiver(supabase, player);
 
-  const { data: challenge } = await supabase
+  const { data: challenge, error: challengeError } = await supabase
     .from('challenges')
     .select('created_by, challenge_participants(player_id, confirmation_status)')
     .eq('id', challengeId)
     .single();
+  // PGRST116 is genuinely "no rows". Anything else — a permission error, say —
+  // must surface as itself rather than be flattened into a misleading
+  // "not found" on a challenge that exists.
+  if (challengeError && challengeError.code !== 'PGRST116') throw new Error(challengeError.message);
   if (!challenge) throw new Error('Challenge not found');
   if (challenge.created_by === player.id) throw new Error('Cannot accept your own challenge');
 
@@ -212,11 +216,15 @@ async function rejectChallengeImpl(challengeId: string) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 
-  const { data: challenge } = await supabase
+  const { data: challenge, error: challengeError } = await supabase
     .from('challenges')
     .select('created_by, challenge_participants(player_id, confirmation_status)')
     .eq('id', challengeId)
     .single();
+  // PGRST116 is genuinely "no rows". Anything else — a permission error, say —
+  // must surface as itself rather than be flattened into a misleading
+  // "not found" on a challenge that exists.
+  if (challengeError && challengeError.code !== 'PGRST116') throw new Error(challengeError.message);
   if (!challenge) throw new Error('Challenge not found');
   if (challenge.created_by === player.id) throw new Error('Cannot reject your own challenge');
 
@@ -266,12 +274,16 @@ async function cancelChallengeImpl(challengeId: string) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 
-  const { data: challenge } = await supabase
+  const { data: challenge, error: challengeError } = await supabase
     .from('challenges')
     .select('*, challenge_participants(player_id)')
     .eq('id', challengeId)
     .single();
 
+  // PGRST116 is genuinely "no rows". Anything else — a permission error, say —
+  // must surface as itself rather than be flattened into a misleading
+  // "not found" on a challenge that exists.
+  if (challengeError && challengeError.code !== 'PGRST116') throw new Error(challengeError.message);
   if (!challenge) throw new Error('Challenge not found');
   if (challenge.created_by !== player.id) throw new Error('Only the creator can cancel');
   if (!['proposed', 'partially_confirmed'].includes(challenge.status)) {
