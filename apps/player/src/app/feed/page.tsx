@@ -84,7 +84,12 @@ export default async function FeedPage() {
 
   // get_leaderboard() returns rows already filtered and sorted; it exposes the
   // display name as `name` (display_name falling back to full_name).
+  // get_leaderboard() has no ORDER BY — the leaderboard page sorts per tab in
+  // memory — so this must sort explicitly. Ranking by rating is the whole point
+  // of the widget; without it the list came out in arbitrary table order.
   const top = ((topRatings ?? []) as { id: string; name: string; avatar_url: string | null; singles_elo: number }[])
+    .slice()
+    .sort((a, b) => (b.singles_elo ?? 0) - (a.singles_elo ?? 0))
     .map((row) => ({
       person: { id: row.id, full_name: row.name, avatar_url: row.avatar_url } as Person,
       elo: row.singles_elo,
