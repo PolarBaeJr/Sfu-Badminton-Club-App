@@ -240,6 +240,7 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
           format={challenge.format}
           participants={challenge.challenge_participants}
           playerId={player.id}
+          isSubmitter={match?.submitted_by === player.id}
         />
       </div>
     </div>

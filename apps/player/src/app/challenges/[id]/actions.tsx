@@ -16,11 +16,13 @@ interface Props {
   format: string;
   participants: Record<string, unknown>[];
   playerId: string;
+  /** True when the signed-in player is the one who submitted the result. */
+  isSubmitter: boolean;
 }
 
 export function ChallengeDetailActions({
   challengeId, challengeStatus, matchId, matchStatus,
-  myParticipantStatus, isCreator, format, participants, playerId,
+  myParticipantStatus, isCreator, format, participants, playerId, isSubmitter,
 }: Props) {
   const { toast } = useToast();
   const router = useRouter();
@@ -195,11 +197,19 @@ export function ChallengeDetailActions({
       {/* Confirm/Dispute for pending_confirmation matches */}
       {matchStatus === 'pending_confirmation' && matchId && (
         <div className="flex gap-3">
-          <Button onClick={() => handleAction('confirm')} loading={loading === 'confirm'} className="flex-1" variant="success">
-            Confirm Result
-          </Button>
+          {/* Confirmation is the opponent's attestation — apply_match_result
+              rejects "the submitter cannot confirm their own result", which is
+              also what stops someone fabricating a match and confirming it
+              themselves. Showing the button to the submitter only ever produced
+              an error, so hide it. They keep the reporting route below, which is
+              their only way to flag a score they mistyped. */}
+          {!isSubmitter && (
+            <Button onClick={() => handleAction('confirm')} loading={loading === 'confirm'} className="flex-1" variant="success">
+              Confirm Result
+            </Button>
+          )}
           <Button onClick={() => setShowDispute(true)} variant="danger" className="flex-1">
-            Dispute
+            {isSubmitter ? 'Report an error' : 'Dispute'}
           </Button>
         </div>
       )}
@@ -249,7 +259,7 @@ export function ChallengeDetailActions({
       </Dialog>
 
       {/* Dispute Dialog */}
-      <Dialog open={showDispute} onClose={() => setShowDispute(false)} title="Dispute Result">
+      <Dialog open={showDispute} onClose={() => setShowDispute(false)} title={isSubmitter ? 'Report an error in your result' : 'Dispute Result'}>
         <div className="space-y-4">
           <Select
             label="Reason"
