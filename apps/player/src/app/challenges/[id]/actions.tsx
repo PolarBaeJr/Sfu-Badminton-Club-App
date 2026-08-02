@@ -36,8 +36,11 @@ export function ChallengeDetailActions({
   const isBO3 = format === 'bo3_21';
   const [games, setGames] = useState(
     isBO3
-      ? [{ game_number: 1, side_a_score: 0, side_b_score: 0 }, { game_number: 2, side_a_score: 0, side_b_score: 0 }, { game_number: 3, side_a_score: 0, side_b_score: 0 }]
-      : [{ game_number: 1, side_a_score: 0, side_b_score: 0 }]
+      // Scores are held as text, not numbers: with `parseInt(x) || 0` the field
+      // snapped back to 0 the moment you cleared it, so you could never delete
+      // the zero to type over it. Empty stays empty until submit.
+      ? [{ game_number: 1, side_a_score: '', side_b_score: '' }, { game_number: 2, side_a_score: '', side_b_score: '' }, { game_number: 3, side_a_score: '', side_b_score: '' }]
+      : [{ game_number: 1, side_a_score: '', side_b_score: '' }]
   );
   const [winnerSide, setWinnerSide] = useState<'a' | 'b'>('a');
 
@@ -95,7 +98,13 @@ export function ChallengeDetailActions({
   async function handleSubmitResult() {
     setLoading('submit');
     try {
-      const validGames = isBO3 ? games.filter((g, i) => i < 2 || (g.side_a_score > 0 || g.side_b_score > 0)) : games;
+      // A blank third game means the best-of-3 ended 2-0.
+      const entered = games.filter((g, i) => !isBO3 || i < 2 || g.side_a_score !== '' || g.side_b_score !== '');
+      const validGames = entered.map((g) => ({
+        game_number: g.game_number,
+        side_a_score: Number(g.side_a_score || 0),
+        side_b_score: Number(g.side_b_score || 0),
+      }));
       const res = await submitMatchResult(challengeId, {
         winner_side: winnerSide,
         games: validGames,
@@ -230,23 +239,25 @@ export function ChallengeDetailActions({
             <div key={i} className="grid grid-cols-2 gap-3">
               <Input
                 label={`Game ${g.game_number} — ${compactA}`}
-                type="number"
-                min={0}
+                type="text"
+                inputMode="numeric"
                 value={g.side_a_score}
                 onChange={(e) => {
                   const updated = [...games];
-                  updated[i] = { ...g, side_a_score: parseInt(e.target.value) || 0 };
+                  // Keep digits only; '' is allowed so the field can be cleared.
+                  updated[i] = { ...g, side_a_score: e.target.value.replace(/\D/g, '') };
                   setGames(updated);
                 }}
               />
               <Input
                 label={`Game ${g.game_number} — ${compactB}`}
-                type="number"
-                min={0}
+                type="text"
+                inputMode="numeric"
                 value={g.side_b_score}
                 onChange={(e) => {
                   const updated = [...games];
-                  updated[i] = { ...g, side_b_score: parseInt(e.target.value) || 0 };
+                  // Keep digits only; '' is allowed so the field can be cleared.
+                  updated[i] = { ...g, side_b_score: e.target.value.replace(/\D/g, '') };
                   setGames(updated);
                 }}
               />
