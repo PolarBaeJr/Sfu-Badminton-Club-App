@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { AvatarChip } from '@badminton/ui';
 import { createClient } from '@/lib/supabase-browser';
 import { useToast } from '@/components/toast-provider';
@@ -23,6 +24,7 @@ export function AvatarUpload({ playerId, playerName, currentUrl, onUploaded }: A
   const [pendingSrc, setPendingSrc] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+  const router = useRouter();
 
   // Object URLs must be revoked or the blob stays pinned for the session.
   useEffect(() => {
@@ -82,6 +84,11 @@ export function AvatarUpload({ playerId, playerName, currentUrl, onUploaded }: A
       setAvatarUrl(url);
       onUploaded?.(url);
       closeCropper();
+      // Every other avatar on screen — the top bar, the feed, leaderboard rows —
+      // is server-rendered from players.avatar_url, so local state alone left
+      // them showing the previous photo until a full reload. Re-run the server
+      // components so the whole app picks up the new URL at once.
+      router.refresh();
       toast('Avatar updated', 'success');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Upload failed', 'error');
