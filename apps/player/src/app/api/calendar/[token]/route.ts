@@ -43,7 +43,9 @@ export async function GET(
     return new NextResponse('Not found', { status: 404 });
   }
 
-  const { data: player } = await supabase
+  // is_banned is not readable by `authenticated` after 00032, and this route is
+  // token-authenticated with no user session anyway.
+  const { data: player } = await createServiceRoleClient()
     .from('players')
     .select('status, active_flag, is_banned')
     .eq('id', tokenRow.player_id)

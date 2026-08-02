@@ -112,7 +112,7 @@ async function createChallengeImpl(input: ChallengeCreateInput) {
     'challenges'
   );
 
-  const { data: opponent } = await supabase.from('players').select('email').eq('id', input.opponent_id).single();
+  const { data: opponent } = await createServiceRoleClient() /* 00032: email is not readable by `authenticated` */.from('players').select('email').eq('id', input.opponent_id).single();
   if (opponent?.email) {
     const formatLabel = MATCH_FORMAT_LABELS[input.format as keyof typeof MATCH_FORMAT_LABELS] || input.format;
     sendChallengeReceivedEmail(opponent.email, player.full_name, formatLabel, input.type, challenge.id).catch((err) => {
@@ -193,7 +193,7 @@ async function acceptChallengeImpl(challengeId: string) {
     'challenges'
   );
 
-  const { data: creator } = await supabase.from('players').select('email').eq('id', challenge.created_by).single();
+  const { data: creator } = await createServiceRoleClient() /* 00032: email is not readable by `authenticated` */.from('players').select('email').eq('id', challenge.created_by).single();
   if (creator?.email) {
     sendChallengeAcceptedEmail(creator.email, player.full_name, challengeId).catch((err) => {
       Sentry.captureException(err, { extra: { email: 'challenge_accepted', challengeId } });
@@ -247,7 +247,7 @@ async function rejectChallengeImpl(challengeId: string) {
     metadata: { challenge_id: challengeId },
   }]);
 
-  const { data: creator } = await supabase.from('players').select('email').eq('id', challenge.created_by).single();
+  const { data: creator } = await createServiceRoleClient() /* 00032: email is not readable by `authenticated` */.from('players').select('email').eq('id', challenge.created_by).single();
   if (creator?.email) {
     sendChallengeRejectedEmail(creator.email, player.full_name, challengeId).catch((err) => {
       Sentry.captureException(err, { extra: { email: 'challenge_rejected', challengeId } });

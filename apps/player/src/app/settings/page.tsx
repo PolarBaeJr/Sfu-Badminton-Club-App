@@ -96,7 +96,10 @@ export default function SettingsPage() {
       const supabase = createClient();
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const { data } = await supabase.from('players').select('*').eq('user_id', user.id).maybeSingle();
+      // players_self is filtered to auth.uid() server-side, so it returns only
+      // this user's row — including the phone and notification preferences that
+      // 00032 withholds from the plain players grant.
+      const { data } = await supabase.from('players_self').select('*').maybeSingle();
       if (data) {
         setPlayerId(data.id);
         setAvatarUrl(data.avatar_url);

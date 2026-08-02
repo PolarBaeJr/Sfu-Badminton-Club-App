@@ -13,7 +13,7 @@ import { PostHogIdentify } from '@/components/posthog-identify';
 import { SentryUserInit } from '@/components/sentry-user-init';
 import { cookies } from 'next/headers';
 import { getMissingLegalDocuments } from '@badminton/shared';
-import { createServerSupabaseClient, getActiveSeason } from '@/lib/supabase-server';
+import { createServiceRoleClient, createServerSupabaseClient, getActiveSeason } from '@/lib/supabase-server';
 import { Barlow, Barlow_Condensed, JetBrains_Mono } from "next/font/google";
 import { cn } from "@/lib/utils";
 import { ConfirmProvider } from "@badminton/ui";
@@ -79,7 +79,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
       isAuthenticated = true;
-      const { data: player } = await supabase
+      // Reads deletion_requested_at / waiver_reset_at, which 00032 no longer
+      // exposes to `authenticated`. Server-side and filtered by the session's
+      // user id, so the service role is scoped to the caller's own row.
+      const { data: player } = await createServiceRoleClient()
         .from('players')
         .select('id, full_name, avatar_url, status, role, is_exec, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo), waiver_acceptances(document, version, accepted_at)')
         .eq('user_id', user.id)

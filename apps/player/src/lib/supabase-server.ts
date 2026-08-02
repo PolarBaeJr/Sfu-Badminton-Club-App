@@ -70,7 +70,11 @@ export async function getCurrentPlayer() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const { data: player } = await supabase
+  // Service role for the full row: migration 00032 revokes blanket SELECT on
+  // players, and a column grant denies select('*') even on your own row. This
+  // is safe because the filter is the user id from the verified session, never
+  // anything the caller supplies — it can only ever return the caller's row.
+  const { data: player } = await createServiceRoleClient()
     .from('players')
     .select('*, ratings(*), waiver_acceptances(document, version, accepted_at)')
     .eq('user_id', user.id)
