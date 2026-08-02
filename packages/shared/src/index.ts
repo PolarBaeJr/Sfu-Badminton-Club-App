@@ -9,6 +9,7 @@ export * from './utils/session-window';
 export * from './utils/ics';
 export * from './utils/tags';
 export * from './utils/notifications';
+export * from './utils/expected-error';
 export * from './utils/theme';
 export * from './utils/rate-limit';
 export * from './utils/supabase-helpers';

@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { rateLimit, getClientIp } from '../utils/rate-limit';
 import { getMarginMultiplier, calculateEloUpdate } from '../elo/engine';
+import { ExpectedError, isExpectedError } from '../utils/expected-error';
+import { parseOrThrow } from '../validators/parse';
+import { z } from 'zod';
 import { SWEEP_MARGIN_MULTIPLIER } from '../utils/constants';
 import { escapeHtml, challengeReceivedEmail, disputeOpenedEmail } from '../email/templates';
 
@@ -111,5 +114,29 @@ describe('getMarginMultiplier (Elo margin-of-victory scaling)', () => {
     // loser of a sweep drops by the same magnitude the winner gains
     const loser = calculateEloUpdate({ ...base, won: false, marginMultiplier: getMarginMultiplier(0, 2) });
     expect(Math.abs(loser.delta)).toBe(swept.delta);
+  });
+});
+
+describe('ExpectedError (Sentry noise suppression)', () => {
+  it('recognises its own instances', () => {
+    expect(isExpectedError(new ExpectedError('nope'))).toBe(true);
+  });
+
+  it('does NOT treat ordinary errors as expected — unmarked failures still report', () => {
+    expect(isExpectedError(new Error('boom'))).toBe(false);
+    expect(isExpectedError(null)).toBe(false);
+    expect(isExpectedError('boom')).toBe(false);
+  });
+
+  it('marks validation failures, so bad user input never pages anyone', () => {
+    const schema = z.object({ description: z.string().min(10) });
+    try {
+      parseOrThrow(schema, { description: 'too short' });
+      throw new Error('should have thrown');
+    } catch (err) {
+      expect(isExpectedError(err)).toBe(true);
+      // the user-facing message is unchanged
+      expect((err as Error).message).toContain('description');
+    }
   });
 });
