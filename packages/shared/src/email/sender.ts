@@ -20,7 +20,13 @@ function getResend(): Resend {
   return resend;
 }
 
-const FROM = 'SFU Badminton <noreply@badminton.club>';
+// Must be a domain verified in Resend, or every send fails. This previously
+// pointed at badminton.club — never owned or verified — so all app notification
+// mail (challenge received, result pending, disputes, walkovers) failed
+// silently while auth codes kept working, because those go through GoTrue from
+// login@mail.sfubadminton.com instead. Overridable so a staging clone can point
+// somewhere harmless without a code change.
+const FROM = process.env.EMAIL_FROM || 'SFU Badminton <noreply@mail.sfubadminton.com>';
 
 export async function sendEmail(to: string, subject: string, html: string): Promise<void> {
   // Throws on failure so callers can decide whether to swallow + log.
