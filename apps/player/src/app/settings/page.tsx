@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Input, Textarea, Switch, Select, PageHeader, Dialog } from '@badminton/ui';
 import { updateProfile, updateNotificationPreferences, deleteMyAccount } from '@/lib/actions';
-import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, joinName, REMINDER_LEAD_OPTIONS, getReminderLeadMinutes, type NotificationCategory } from '@badminton/shared';
+import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, type NotificationCategory } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -76,7 +76,9 @@ export default function SettingsPage() {
   const [notifPrefs, setNotifPrefs] = useState<Record<NotificationCategory, boolean>>(
     () => normalizeNotificationPreferences({}),
   );
-  const [reminderLead, setReminderLead] = useState<number>(getReminderLeadMinutes(null));
+  // Free-form: a number plus a unit, stored as minutes.
+  const [leadValue, setLeadValue] = useState('2');
+  const [leadUnit, setLeadUnit] = useState<'minutes' | 'hours' | 'days'>('hours');
   const [playerId, setPlayerId] = useState('');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -112,7 +114,12 @@ export default function SettingsPage() {
         setShowOnLeaderboard(!data.hide_from_leaderboard);
         setShowActivity(data.show_activity_status !== false);
         setNotifPrefs(normalizeNotificationPreferences(data.notification_preferences));
-        setReminderLead(getReminderLeadMinutes(data.notification_preferences));
+        const mins = getReminderLeadMinutes(data.notification_preferences);
+        // Show it back in the largest unit that divides evenly, so "120" reads
+        // as "2 hours" rather than a raw minute count.
+        if (mins % 1440 === 0) { setLeadValue(String(mins / 1440)); setLeadUnit('days'); }
+        else if (mins % 60 === 0) { setLeadValue(String(mins / 60)); setLeadUnit('hours'); }
+        else { setLeadValue(String(mins)); setLeadUnit('minutes'); }
         setIsExec(data.is_exec || data.role === 'admin');
         setIsApproved(data.status !== 'pending_approval' && data.status !== 'suspended');
         setLoaded(true);
@@ -190,14 +197,15 @@ export default function SettingsPage() {
     setPushLoading(false);
   }
 
-  async function handleReminderLeadChange(minutes: number) {
-    const previous = reminderLead;
-    setReminderLead(minutes); // optimistic
+  const leadMinutes =
+    (Number(leadValue) || 0) * (leadUnit === 'days' ? 1440 : leadUnit === 'hours' ? 60 : 1);
+  const leadInvalid =
+    !leadValue || leadMinutes < REMINDER_LEAD_MIN_MINUTES || leadMinutes > REMINDER_LEAD_MAX_MINUTES;
+
+  async function saveReminderLead(minutes: number) {
+    if (leadInvalid) return;
     const res = await updateNotificationPreferences({ ...notifPrefs, session_reminder_lead_minutes: minutes });
-    if (!res.ok) {
-      setReminderLead(previous);
-      toast(res.error, 'error');
-    }
+    if (!res.ok) toast(res.error, 'error');
   }
 
   async function handleNotifPrefToggle(category: NotificationCategory, value: boolean) {
@@ -372,15 +380,38 @@ export default function SettingsPage() {
                       <p className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
                         Choose which push notifications you receive. The in-app inbox always keeps them all.
                       </p>
-                      <div style={{ marginBottom: 12 }}>
-                        <Select
-                          label="Remind me about sessions"
-                          value={String(reminderLead)}
-                          onChange={(e) => handleReminderLeadChange(Number(e.target.value))}
-                          options={REMINDER_LEAD_OPTIONS.map((o) => ({ value: String(o.minutes), label: o.label }))}
-                        />
+                      <div style={{ marginBottom: 14 }}>
+                        <label className="eyebrow block mb-2">Remind me before a session</label>
+                        <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
+                          <Input
+                            aria-label="Amount"
+                            type="text"
+                            inputMode="numeric"
+                            value={leadValue}
+                            onChange={(e) => setLeadValue(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                            onBlur={() => saveReminderLead(leadMinutes)}
+                            style={{ maxWidth: 96 }}
+                          />
+                          <Select
+                            aria-label="Unit"
+                            value={leadUnit}
+                            onChange={(e) => {
+                              const u = e.target.value as 'minutes' | 'hours' | 'days';
+                              setLeadUnit(u);
+                              const m = (Number(leadValue) || 0) * (u === 'days' ? 1440 : u === 'hours' ? 60 : 1);
+                              if (m >= REMINDER_LEAD_MIN_MINUTES && m <= REMINDER_LEAD_MAX_MINUTES) saveReminderLead(m);
+                            }}
+                            options={[
+                              { value: 'minutes', label: 'minutes before' },
+                              { value: 'hours', label: 'hours before' },
+                              { value: 'days', label: 'days before' },
+                            ]}
+                          />
+                        </div>
                         <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                          Only for sessions you said you&apos;re going to, and only if they have a start time.
+                          {leadInvalid
+                            ? 'Pick anything from 5 minutes to 7 days.'
+                            : "Only for sessions you said you're going to, and only if they have a start time."}
                         </p>
                       </div>
                       {NOTIFICATION_CATEGORIES.map((c, i) => (

@@ -10,7 +10,7 @@ import {
   parseOrThrow,
   getMissingLegalDocuments,
   NOTIFICATION_CATEGORIES,
-  REMINDER_LEAD_OPTIONS,
+  getReminderLeadMinutes,
   type LegalAcceptanceInput,
   type WaiverDocument,
 } from '@badminton/shared';
@@ -43,11 +43,10 @@ export async function updateNotificationPreferences(
     for (const c of NOTIFICATION_CATEGORIES) {
       if (c.key in prefs) clean[c.key] = prefs[c.key] !== false;
     }
-    // How much notice this player wants before a session. Only values we offer
-    // are stored, so a crafted request can't schedule a reminder weeks out.
-    const lead = Number((prefs as Record<string, unknown>).session_reminder_lead_minutes);
-    if (REMINDER_LEAD_OPTIONS.some((o) => o.minutes === lead)) {
-      clean.session_reminder_lead_minutes = lead;
+    // How much notice this player wants before a session. Clamped to the
+    // sendable range, so a crafted request can't schedule a reminder a year out.
+    if ('session_reminder_lead_minutes' in prefs) {
+      clean.session_reminder_lead_minutes = getReminderLeadMinutes(prefs);
     }
 
     const { error } = await supabase

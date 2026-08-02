@@ -8,13 +8,15 @@
 --
 -- Reminders now go out a configurable interval before start_time, chosen per
 -- player (players.notification_preferences.session_reminder_lead_minutes,
--- default 120). Two people RSVP'd to the same session can want different
+-- default 120). Any interval from 5 minutes to a week is allowed — bounded only
+-- so the reminder is still sendable and still a reminder. Two people RSVP'd to the same session can want different
 -- notice, so "already reminded" has to be tracked per player per session —
 -- sessions.reminder_sent_at cannot express that.
 --
--- Cadence goes from hourly to every 15 minutes so a "1 hour before" preference
--- lands within a quarter of an hour of the mark rather than up to an hour late.
--- Cost is four no-op round-trips an hour.
+-- Cadence goes from hourly to every 5 minutes. Members can ask for any interval
+-- they like, so the job has to check often enough that an unusual choice (say
+-- 25 minutes) still lands close to the mark. A run with nothing due is a single
+-- indexed query and a 200, so the cost of the other 11 runs an hour is trivial.
 -- ============================================================
 
 -- Per-player, per-session stamp. sessions.reminder_sent_at stays for the manual
@@ -34,7 +36,7 @@ SELECT cron.unschedule('session-reminders')
 
 SELECT cron.schedule(
   'session-reminders',
-  '*/15 * * * *',
+  '*/5 * * * *',
   $$
   SELECT net.http_post(
     url     := (SELECT value FROM cron_config WHERE key = 'admin_url') || '/api/cron/session-reminders',
