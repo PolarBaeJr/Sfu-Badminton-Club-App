@@ -31,7 +31,7 @@ function clubTimeToUtc(date: string, time: string): Date {
 }
 
 // Reminds each player who RSVP'd "going" the interval before start that THEY
-// chose (default two hours). Called by pg_cron every 15 minutes.
+// chose (default two hours). Called by pg_cron every 5 minutes.
 //
 // Why an HTTP endpoint: web push is signed with the VAPID private key, which
 // only this Node process holds — Postgres cannot send a notification itself.
