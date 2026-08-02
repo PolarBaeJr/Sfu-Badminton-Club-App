@@ -223,6 +223,22 @@ export function ChallengeDetailActions({
         </div>
       )}
 
+      {/* Disputed and walkover-pending both wait on an exec, and neither had any
+          branch here — the page rendered a red status tag and then stopped, with
+          no action and nothing saying why. Say who holds it and what happens
+          next, so a dead end reads as a queue rather than a broken screen. */}
+      {(matchStatus === 'disputed' || challengeStatus === 'walkover_pending') && (
+        <div className="card-base">
+          <div className="card-title">
+            {matchStatus === 'disputed' ? 'Result disputed' : 'Walkover reported'}
+          </div>
+          <div className="card-sub">
+            An exec is reviewing this and will settle it. Ratings stay unchanged until they do —
+            there is nothing else to do here.
+          </div>
+        </div>
+      )}
+
       {/* Submit Result Dialog */}
       <Dialog open={showSubmit} onClose={() => setShowSubmit(false)} title="Submit Match Result">
         <div className="space-y-4">
