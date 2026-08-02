@@ -11,6 +11,10 @@ import { useConfirm } from '@badminton/ui';
 // resetting it is the revocation mechanism.
 export function CalendarFeed() {
   const [token, setToken] = useState<string | null>(null);
+  // Distinguish "still loading" from "failed": without this the component sat
+  // on a skeleton forever whenever the action errored (e.g. requirePlayer()
+  // rejecting an unapproved account), which reads as a broken empty box.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
   const { toast } = useToast();
   const confirm = useConfirm();
@@ -19,9 +23,9 @@ export function CalendarFeed() {
     getCalendarFeedToken()
       .then((res) => {
         if (res.ok) setToken(res.data);
-        else toast('Could not load calendar feed link', 'error');
+        else setLoadError(res.error);
       })
-      .catch(() => toast('Could not load calendar feed link', 'error'));
+      .catch(() => setLoadError('Could not load your calendar link.'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -53,6 +57,14 @@ export function CalendarFeed() {
       toast('Could not reset calendar link', 'error');
     }
     setResetting(false);
+  }
+
+  if (loadError) {
+    return (
+      <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+        {loadError}
+      </p>
+    );
   }
 
   if (!token) {

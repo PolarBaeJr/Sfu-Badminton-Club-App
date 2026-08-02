@@ -7,12 +7,13 @@ import { cn } from '@badminton/ui';
 import { createClient } from '@/lib/supabase-browser';
 import { Home, Trophy, Crosshair, Calendar, Sparkles, LogIn } from 'lucide-react';
 
+// `gated` = needs an approved account (see top-bar.tsx).
 const navItems = [
-  { href: '/feed',        label: 'Feed',  icon: Home      },
-  { href: '/leaderboard', label: 'Ranks', icon: Trophy    },
-  { href: '/challenges',  label: 'Vs.',   icon: Crosshair },
-  { href: '/sessions',    label: 'Play',  icon: Calendar  },
-  { href: '/my-stats',    label: 'Me',    icon: Sparkles  },
+  { href: '/feed',        label: 'Feed',  icon: Home,      gated: false },
+  { href: '/leaderboard', label: 'Ranks', icon: Trophy,    gated: false },
+  { href: '/challenges',  label: 'Vs.',   icon: Crosshair, gated: true  },
+  { href: '/sessions',    label: 'Play',  icon: Calendar,  gated: true  },
+  { href: '/my-stats',    label: 'Me',    icon: Sparkles,  gated: false },
 ];
 
 const publicNavItems = [
@@ -21,7 +22,14 @@ const publicNavItems = [
   { href: '/login',       label: 'Sign in', icon: LogIn },
 ];
 
-export function BottomNav({ isAuthenticated }: { isAuthenticated: boolean }) {
+export function BottomNav({
+  isAuthenticated,
+  isApproved = true,
+}: {
+  isAuthenticated: boolean;
+  /** False while the account is pending approval or suspended. */
+  isApproved?: boolean;
+}) {
   const pathname = usePathname();
   const [unreadAnnouncements, setUnreadAnnouncements] = useState(0);
 
@@ -66,7 +74,9 @@ export function BottomNav({ isAuthenticated }: { isAuthenticated: boolean }) {
     return null;
   }
 
-  const items = isAuthenticated ? navItems : publicNavItems;
+  const items = isAuthenticated
+    ? navItems.filter((item) => isApproved || !item.gated)
+    : publicNavItems;
 
   return (
     <nav className="mobile-tabbar" aria-label="Mobile navigation">

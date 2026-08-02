@@ -17,13 +17,17 @@ import {
   Shield,
 } from 'lucide-react';
 
+// `gated` marks destinations that require an approved account. requirePlayer()
+// rejects a pending member with "Account pending approval", so linking them is
+// a promise the app can't keep — hide until approved rather than let someone
+// click through to an error.
 const desktopNavItems = [
-  { href: '/feed',          label: 'Feed',         icon: Home      },
-  { href: '/leaderboard',   label: 'Leaderboard',  icon: Trophy    },
-  { href: '/challenges',    label: 'Challenges',   icon: Crosshair },
-  { href: '/sessions',      label: 'Schedule',     icon: Calendar  },
-  { href: '/tournaments',   label: 'Tournaments',  icon: Award     },
-  { href: '/my-stats',      label: 'Stats',        icon: Sparkles  },
+  { href: '/feed',          label: 'Feed',         icon: Home,      gated: false },
+  { href: '/leaderboard',   label: 'Leaderboard',  icon: Trophy,    gated: false },
+  { href: '/challenges',    label: 'Challenges',   icon: Crosshair, gated: true  },
+  { href: '/sessions',      label: 'Schedule',     icon: Calendar,  gated: true  },
+  { href: '/tournaments',   label: 'Tournaments',  icon: Award,     gated: true  },
+  { href: '/my-stats',      label: 'Stats',        icon: Sparkles,  gated: false },
 ];
 
 export function TopBar({
@@ -34,6 +38,7 @@ export function TopBar({
   isExecOrAdmin,
   adminUrl,
   activeSeasonName,
+  isApproved = true,
 }: {
   playerName: string;
   avatarUrl?: string | null;
@@ -42,9 +47,13 @@ export function TopBar({
   isExecOrAdmin: boolean;
   adminUrl?: string;
   activeSeasonName?: string;
+  /** False while the account is pending approval or suspended. */
+  isApproved?: boolean;
 }) {
   const pathname = usePathname();
-  const navItems = isAuthenticated ? desktopNavItems : [];
+  const navItems = isAuthenticated
+    ? desktopNavItems.filter((item) => isApproved || !item.gated)
+    : [];
   // Auth / onboarding screens render their own full-screen layout — no app chrome.
   if (pathname === '/login' || pathname.startsWith('/auth') || pathname === '/onboarding') {
     return null;

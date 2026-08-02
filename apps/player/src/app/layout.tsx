@@ -151,11 +151,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <DeletionGate deletionRequestedAt={deletionRequestedAt} />
               {/* Deletion screen wins when both gates would apply. */}
               <WaiverGate missingDocs={deletionRequestedAt ? [] : missingLegalDocs} />
-              <TopBar playerName={playerName} avatarUrl={avatarUrl} unreadCount={unreadCount} isAuthenticated={isAuthenticated} isExecOrAdmin={isExecOrAdmin} adminUrl={process.env.NEXT_PUBLIC_ADMIN_URL || '/admin'} activeSeasonName={activeSeasonName} />
+              <TopBar isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} playerName={playerName} avatarUrl={avatarUrl} unreadCount={unreadCount} isAuthenticated={isAuthenticated} isExecOrAdmin={isExecOrAdmin} adminUrl={process.env.NEXT_PUBLIC_ADMIN_URL || '/admin'} activeSeasonName={activeSeasonName} />
               <main className="page pb-safe-nav">
                 {children}
               </main>
-              <BottomNav isAuthenticated={isAuthenticated} />
+              <BottomNav isAuthenticated={isAuthenticated} isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} />
             </ConfirmProvider>
           </ToastProvider>
         </PostHogProvider>

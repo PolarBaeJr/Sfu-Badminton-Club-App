@@ -80,6 +80,11 @@ export default function SettingsPage() {
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [isExec, setIsExec] = useState(false);
+  // Fees and the calendar feed are member features the server rejects until an
+  // account is approved (requirePlayer throws "Account pending approval"), so
+  // showing them just produced a dead panel. Hidden until approval, same rule
+  // the nav uses.
+  const [isApproved, setIsApproved] = useState(true);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState('');
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -104,6 +109,7 @@ export default function SettingsPage() {
         setShowActivity(data.show_activity_status !== false);
         setNotifPrefs(normalizeNotificationPreferences(data.notification_preferences));
         setIsExec(data.is_exec || data.role === 'admin');
+        setIsApproved(data.status !== 'pending_approval' && data.status !== 'suspended');
         setLoaded(true);
       }
     }
@@ -274,9 +280,11 @@ export default function SettingsPage() {
             </Link>
           </Section>
 
-          <Section icon={Calendar} title="Calendar">
-            <CalendarFeed />
-          </Section>
+          {isApproved && (
+            <Section icon={Calendar} title="Calendar">
+              <CalendarFeed />
+            </Section>
+          )}
 
           <Section icon={Palette} title="Appearance">
             <p className="muted" style={{ fontSize: 13, marginBottom: 14 }}>Choose your preferred theme.</p>
