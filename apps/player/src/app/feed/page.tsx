@@ -2,7 +2,7 @@ import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-ser
 import { MATCH_FORMAT_LABELS, formatRelativeTime, getWinRate, pickOne, unwrap } from '@badminton/shared';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { Plus, ChevronRight, Crosshair, Filter } from 'lucide-react';
+import { Plus, ChevronRight, Crosshair } from 'lucide-react';
 import { PageHeader, AvatarChip } from '@badminton/ui';
 
 type Person = { id: string; full_name: string | null; avatar_url?: string | null };
@@ -103,8 +103,11 @@ export default async function FeedPage() {
   }
   if (recentMatches.length > 0 && r) {
     subBits.push(`Singles ELO ${r.singles_elo} · ${singlesWinRate} win rate`);
-  } else {
+  } else if (isApproved) {
     subBits.push('Issue your first challenge to start climbing.');
+  } else {
+    // Don't tell someone to do the one thing the server will refuse.
+    subBits.push('Your account is waiting on approval.');
   }
   const subLine = subBits.join(' · ');
 
@@ -114,16 +117,14 @@ export default async function FeedPage() {
         title={`Welcome back, ${firstName}.`}
         sub={subLine}
         actions={
-          <>
-            <Link href="/leaderboard" className="btn btn-ghost">
-              <Filter size={14} /> Browse
+          // "Browse" duplicated the Leaderboard nav item, so it only added
+          // clutter. Issue Challenge is the one action worth surfacing here,
+          // and only once the account can actually use it.
+          isApproved ? (
+            <Link href="/challenges/new" className="btn btn-primary-cta">
+              <Plus size={14} /> Issue Challenge
             </Link>
-            {isApproved && (
-              <Link href="/challenges/new" className="btn btn-primary-cta">
-                <Plus size={14} /> Issue Challenge
-              </Link>
-            )}
-          </>
+          ) : undefined
         }
       />
 
