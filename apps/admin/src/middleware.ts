@@ -31,6 +31,12 @@ export async function middleware(request: NextRequest) {
   const isPublicRoute =
     request.nextUrl.pathname.startsWith('/login') ||
     request.nextUrl.pathname.startsWith('/auth') ||
+    // Scheduled jobs carry a shared secret, not a session cookie. Without this
+    // the middleware redirected them to /login — and because pg_net follows
+    // redirects, the cron job recorded a cheerful 200 (the login page HTML)
+    // while no reminder was ever sent. Each handler under /api/cron checks the
+    // secret itself and answers 401/503 when it is wrong or unset.
+    request.nextUrl.pathname.startsWith('/api/cron') ||
     request.nextUrl.pathname === '/unauthorized' ||
     request.nextUrl.pathname === '/unavailable';
 
