@@ -73,6 +73,21 @@ export const SESSION_CHECKIN_OPENS_MINUTES_BEFORE: number | null = 30;
 // than being inlined twice. Mirrors the calendar feed route's /^[0-9a-f]{48}$/.
 export const CHECKIN_TOKEN_REGEX = /^[0-9a-f]{48}$/;
 
+// Name of the Supabase auth cookie, pinned rather than derived.
+//
+// supabase-js builds it as `sb-<first hostname label>-auth-token` from
+// NEXT_PUBLIC_SUPABASE_URL, so the session is silently tied to the domain: the
+// current badminton.polardev.org yields "sb-badminton-auth-token", while
+// sfubadminton.com would yield "sb-sfubadminton-auth-token". Changing that URL
+// would therefore make every existing cookie unreadable and sign everyone out,
+// re-triggering passkey verification with it.
+//
+// This value is exactly what the library derives today, so pinning it changes
+// nothing now — and means the pending move off polardev.org becomes a plain
+// config edit that sessions survive. Do not "tidy" the badminton- prefix: the
+// string must keep matching cookies already in browsers.
+export const AUTH_COOKIE_NAME = 'sb-badminton-auth-token';
+
 export const PROVISIONAL_THRESHOLD = 8;
 
 // Margin-of-victory bonus applied when a multi-game match ends in a sweep

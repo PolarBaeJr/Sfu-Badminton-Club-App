@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { canAccess, type AccessLevel } from '@/lib/permissions';
 import { PASSKEY_VERIFIED_COOKIE } from '@/lib/passkey/config';
 import { verifyPayload } from '@/lib/passkey/cookie';
+import { AUTH_COOKIE_NAME } from '@badminton/shared/src/utils/constants';
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -11,6 +12,7 @@ export async function middleware(request: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      cookieOptions: { name: AUTH_COOKIE_NAME },
       cookies: {
         getAll() {
           return request.cookies.getAll();
