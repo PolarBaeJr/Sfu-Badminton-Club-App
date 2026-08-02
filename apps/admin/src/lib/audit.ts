@@ -30,7 +30,8 @@ export async function logAudit(
 export async function logAdminAudit(
   adminClient: ReturnType<typeof createAdminClient>,
   entry: {
-    actor_id: string;
+    // Null when the actor is a scheduled job rather than a person.
+    actor_id: string | null;
     action_type: string;
     target_type: string;
     target_id: string;
