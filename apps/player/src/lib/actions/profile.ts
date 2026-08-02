@@ -10,6 +10,7 @@ import {
   parseOrThrow,
   getMissingLegalDocuments,
   NOTIFICATION_CATEGORIES,
+  REMINDER_LEAD_OPTIONS,
   type LegalAcceptanceInput,
   type WaiverDocument,
 } from '@badminton/shared';
@@ -32,15 +33,21 @@ export async function updateProfile(data: {
 // Only known category keys are persisted, coerced to booleans — an unknown
 // key from the client is ignored rather than stored.
 export async function updateNotificationPreferences(
-  prefs: Record<string, boolean>,
+  prefs: Record<string, boolean | number>,
 ): Promise<ActionResult> {
   return runAction(async () => {
     const player = await requirePlayer();
     const supabase = await createServerSupabaseClient();
 
-    const clean: Record<string, boolean> = {};
+    const clean: Record<string, boolean | number> = {};
     for (const c of NOTIFICATION_CATEGORIES) {
       if (c.key in prefs) clean[c.key] = prefs[c.key] !== false;
+    }
+    // How much notice this player wants before a session. Only values we offer
+    // are stored, so a crafted request can't schedule a reminder weeks out.
+    const lead = Number((prefs as Record<string, unknown>).session_reminder_lead_minutes);
+    if (REMINDER_LEAD_OPTIONS.some((o) => o.minutes === lead)) {
+      clean.session_reminder_lead_minutes = lead;
     }
 
     const { error } = await supabase

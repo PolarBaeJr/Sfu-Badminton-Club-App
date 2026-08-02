@@ -54,3 +54,30 @@ export function normalizeNotificationPreferences(
   }
   return out;
 }
+
+// How far ahead of a session a member wants their reminder. Stored per player
+// in players.notification_preferences alongside the category toggles, so the
+// existing settings plumbing carries it with no new column.
+//
+// Reminders are per-player rather than per-session because two people RSVP'd to
+// the same session can want different notice — which is also why the "already
+// reminded" stamp lives on session_rsvp, not on sessions.
+export const REMINDER_LEAD_OPTIONS = [
+  { minutes: 30,  label: '30 minutes before' },
+  { minutes: 60,  label: '1 hour before' },
+  { minutes: 120, label: '2 hours before' },
+  { minutes: 180, label: '3 hours before' },
+  { minutes: 1440, label: 'The day before' },
+] as const;
+
+export const DEFAULT_REMINDER_LEAD_MINUTES = 120;
+
+/** Minutes of notice this player wants, falling back to the default. */
+export function getReminderLeadMinutes(preferences: unknown): number {
+  const raw = (preferences as Record<string, unknown> | null)?.session_reminder_lead_minutes;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n)) return DEFAULT_REMINDER_LEAD_MINUTES;
+  // Only accept values we offer, so a hand-edited preference can't schedule a
+  // reminder a month out.
+  return REMINDER_LEAD_OPTIONS.some((o) => o.minutes === n) ? n : DEFAULT_REMINDER_LEAD_MINUTES;
+}

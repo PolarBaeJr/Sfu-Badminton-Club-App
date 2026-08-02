@@ -12,6 +12,10 @@ import { formatDate, formatTime } from '@badminton/shared';
 export async function remindSessionGoers(
   sessionId: string,
   actorId: string | null,
+  // Restrict to specific players. The scheduled job passes the subset whose
+  // chosen lead time has come due; the manual button omits it and reminds
+  // everyone who said they're going.
+  onlyPlayerIds?: string[],
 ): Promise<{ notified: number }> {
   const adminClient = createAdminClient();
 
@@ -29,7 +33,8 @@ export async function remindSessionGoers(
     .eq('intent', 'going');
   if (rErr) throw new Error(rErr.message);
 
-  const playerIds = (rsvps ?? []).map((r) => r.player_id);
+  let playerIds = (rsvps ?? []).map((r) => r.player_id);
+  if (onlyPlayerIds) playerIds = playerIds.filter((id) => onlyPlayerIds.includes(id));
   if (playerIds.length === 0) return { notified: 0 };
 
   const label = session.name?.trim() || 'Session';

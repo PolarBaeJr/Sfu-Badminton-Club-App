@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
-import { Input, Textarea, Switch, PageHeader, Dialog } from '@badminton/ui';
+import { Input, Textarea, Switch, Select, PageHeader, Dialog } from '@badminton/ui';
 import { updateProfile, updateNotificationPreferences, deleteMyAccount } from '@/lib/actions';
-import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, joinName, type NotificationCategory } from '@badminton/shared';
+import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, joinName, REMINDER_LEAD_OPTIONS, getReminderLeadMinutes, type NotificationCategory } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -76,6 +76,7 @@ export default function SettingsPage() {
   const [notifPrefs, setNotifPrefs] = useState<Record<NotificationCategory, boolean>>(
     () => normalizeNotificationPreferences({}),
   );
+  const [reminderLead, setReminderLead] = useState<number>(getReminderLeadMinutes(null));
   const [playerId, setPlayerId] = useState('');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -111,6 +112,7 @@ export default function SettingsPage() {
         setShowOnLeaderboard(!data.hide_from_leaderboard);
         setShowActivity(data.show_activity_status !== false);
         setNotifPrefs(normalizeNotificationPreferences(data.notification_preferences));
+        setReminderLead(getReminderLeadMinutes(data.notification_preferences));
         setIsExec(data.is_exec || data.role === 'admin');
         setIsApproved(data.status !== 'pending_approval' && data.status !== 'suspended');
         setLoaded(true);
@@ -186,6 +188,16 @@ export default function SettingsPage() {
       toast('Failed to update push settings', 'error');
     }
     setPushLoading(false);
+  }
+
+  async function handleReminderLeadChange(minutes: number) {
+    const previous = reminderLead;
+    setReminderLead(minutes); // optimistic
+    const res = await updateNotificationPreferences({ ...notifPrefs, session_reminder_lead_minutes: minutes });
+    if (!res.ok) {
+      setReminderLead(previous);
+      toast(res.error, 'error');
+    }
   }
 
   async function handleNotifPrefToggle(category: NotificationCategory, value: boolean) {
@@ -360,6 +372,17 @@ export default function SettingsPage() {
                       <p className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
                         Choose which push notifications you receive. The in-app inbox always keeps them all.
                       </p>
+                      <div style={{ marginBottom: 12 }}>
+                        <Select
+                          label="Remind me about sessions"
+                          value={String(reminderLead)}
+                          onChange={(e) => handleReminderLeadChange(Number(e.target.value))}
+                          options={REMINDER_LEAD_OPTIONS.map((o) => ({ value: String(o.minutes), label: o.label }))}
+                        />
+                        <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                          Only for sessions you said you&apos;re going to, and only if they have a start time.
+                        </p>
+                      </div>
                       {NOTIFICATION_CATEGORIES.map((c, i) => (
                         <div key={c.key}>
                           {i > 0 && <div className="sep" />}
