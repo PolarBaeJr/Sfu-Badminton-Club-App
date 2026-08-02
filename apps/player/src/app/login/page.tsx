@@ -136,98 +136,45 @@ export default function LoginPage() {
   }
 
   return (
+    // A login screen is a utility, not a landing page: no full-height brand
+    // panel, nothing to scroll past. One centred card, form immediately
+    // reachable at any viewport size.
     <div
+      className="auth"
       style={{
         minHeight: '100vh',
         display: 'grid',
-        gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1fr)',
+        placeItems: 'center',
         background: 'var(--bg)',
+        padding: '40px 20px',
       }}
-      className="auth"
     >
       <div
+        className="auth-card"
         style={{
-          padding: 80,
-          // Fixed dark spotlight panel — not var(--ink)/var(--bg), which swap by
-          // theme and made the panel render light (white text invisible) in dark mode.
-          background: '#141110',
-          color: '#F6F1EC',
+          width: '100%',
+          maxWidth: 380,
           display: 'flex',
           flexDirection: 'column',
-          justifyContent: 'space-between',
-          position: 'relative',
-          overflow: 'hidden',
+          gap: 22,
         }}
-        className="auth-panel"
       >
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            background: 'radial-gradient(ellipse at bottom right, rgba(204,6,51,.3), transparent 60%)',
-            pointerEvents: 'none',
-          }}
-        />
-        <div className="brand" style={{ color: '#fff', position: 'relative', zIndex: 2 }}>
-          <div className="brand-mark"><ShuttleMark /></div>
-          <div className="brand-wrap">
-            <div>SFU Badminton</div>
+        {/* Brand is a signature, not a billboard — enough to confirm you are in
+            the right place, then out of the way. */}
+        <div className="row" style={{ gap: 10, justifyContent: 'center' }}>
+          <div className="brand-mark" style={{ width: 30, height: 30 }}><ShuttleMark /></div>
+          <div style={{ lineHeight: 1.15 }}>
+            <div style={{ fontFamily: 'var(--display)', fontWeight: 700, fontSize: 17, letterSpacing: '-.01em' }}>
+              SFU Badminton
+            </div>
             {seasonName && (
-              <div className="brand-sub" style={{ color: 'rgba(255,255,255,.5)' }}>{seasonName}</div>
+              <div className="mono muted" style={{ fontSize: 10, letterSpacing: '.14em', textTransform: 'uppercase' }}>
+                {seasonName}
+              </div>
             )}
           </div>
         </div>
 
-        <div style={{ position: 'relative', zIndex: 2 }}>
-          <div className="page-eyebrow" style={{ color: 'rgba(255,255,255,.6)', marginBottom: 14 }}>
-            <span className="bar" style={{ background: 'rgba(255,255,255,.6)' }} /> CHALLENGE · COMPETE · CLIMB
-          </div>
-          <div
-            style={{
-              fontFamily: 'var(--display)',
-              fontSize: 'clamp(40px, 7vw, 88px)',
-              fontWeight: 700,
-              letterSpacing: '-.04em',
-              lineHeight: 0.9,
-            }}
-            className="auth-hero"
-          >
-            Singles. Doubles.<br />
-            <span style={{ color: 'var(--red)' }}>Every rally counted.</span>
-          </div>
-          <div
-            style={{
-              maxWidth: '46ch',
-              marginTop: 20,
-              color: 'rgba(255,255,255,.7)',
-              fontSize: 15,
-              lineHeight: 1.6,
-            }}
-          >
-            ELO ratings, head-to-head ledgers, tournament brackets, ladder climbs. Your full club profile.
-          </div>
-        </div>
-
-        <div className="row" style={{ gap: 24, fontSize: 12, color: 'rgba(255,255,255,.5)', position: 'relative', zIndex: 2, fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: '.1em' }}>
-          <span>Est. 2011</span>
-          <span>Lorne Davies Complex · Burnaby BC</span>
-          {seasonName && <span>{seasonName}</span>}
-        </div>
-      </div>
-
-      <div
-        style={{
-          padding: 80,
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center',
-          gap: 24,
-          maxWidth: 520,
-          width: '100%',
-          margin: '0 auto',
-        }}
-        className="auth-form"
-      >
         <div>
           <div className="page-eyebrow"><span className="bar" /> {mode === 'signin' ? 'WELCOME BACK' : 'NEW PLAYER'}</div>
           <h2

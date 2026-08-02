@@ -50,11 +50,13 @@ export default async function FeedPage() {
       `)
       .eq('player_id', player.id)
       .limit(60),
-    supabase
-      .from('ratings')
-      .select('singles_elo, player:players(id, full_name, hide_from_leaderboard, avatar_url)')
-      .order('singles_elo', { ascending: false })
-      .limit(20),
+    // Use the same source as /leaderboard rather than querying `ratings`
+    // directly. The old query had no status filter, so unapproved signups showed
+    // on the feed's ladder while being correctly absent from the leaderboard
+    // itself. get_leaderboard() already enforces active_flag, excludes
+    // pending_approval/suspended, and honours hide_from_leaderboard — reusing it
+    // means the two views cannot drift apart again.
+    supabase.rpc('get_leaderboard'),
   ]);
 
   const pendingChallenges = unwrap(pendingChallengesRes);
@@ -80,14 +82,13 @@ export default async function FeedPage() {
     .sort((a, b) => (b.played_at ?? '').localeCompare(a.played_at ?? ''))
     .slice(0, 5);
 
-  const top = (topRatings || [])
-    .map((row) => {
-      const raw = row.player as unknown as (Person & { hide_from_leaderboard?: boolean }) | (Person & { hide_from_leaderboard?: boolean })[] | null;
-      const person = pickOne(raw);
-      if (!person || person.hide_from_leaderboard) return null;
-      return { person, elo: row.singles_elo as number };
-    })
-    .filter((row): row is { person: Person; elo: number } => Boolean(row))
+  // get_leaderboard() returns rows already filtered and sorted; it exposes the
+  // display name as `name` (display_name falling back to full_name).
+  const top = ((topRatings ?? []) as { id: string; name: string; avatar_url: string | null; singles_elo: number }[])
+    .map((row) => ({
+      person: { id: row.id, full_name: row.name, avatar_url: row.avatar_url } as Person,
+      elo: row.singles_elo,
+    }))
     .slice(0, 5);
 
   const firstName = player.full_name.split(' ')[0];

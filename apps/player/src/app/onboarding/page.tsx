@@ -158,107 +158,26 @@ export default function OnboardingPage() {
   }
 
   return (
+    // Onboarding is a form to complete, not a pitch to read. No full-height
+    // brand panel — the member is already signed in and just needs to finish.
     <div
+      className="auth"
       style={{
         minHeight: '100vh',
         display: 'grid',
-        gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1fr)',
+        placeItems: 'center',
         background: 'var(--bg)',
+        padding: '40px 20px',
       }}
-      className="auth"
     >
       <div
+        className="auth-card"
         style={{
-          padding: 80,
-          background: 'var(--ink)',
-          color: 'var(--bg)',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between',
-          position: 'relative',
-          overflow: 'hidden',
-        }}
-        className="auth-panel"
-      >
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            background: 'radial-gradient(ellipse at bottom right, rgba(204,6,51,.3), transparent 60%)',
-            pointerEvents: 'none',
-          }}
-        />
-        <div className="brand" style={{ color: '#fff', position: 'relative', zIndex: 2 }}>
-          <div className="brand-mark">SB</div>
-          <div className="brand-wrap">
-            <div>SFU Badminton</div>
-            <div className="brand-sub" style={{ color: 'rgba(255,255,255,.5)' }}>Welcome aboard</div>
-          </div>
-        </div>
-
-        <div style={{ position: 'relative', zIndex: 2 }}>
-          <div
-            className="page-eyebrow"
-            style={{ color: 'rgba(255,255,255,.6)', marginBottom: 14 }}
-          >
-            <span className="bar" style={{ background: 'rgba(255,255,255,.6)' }} /> NEW PLAYER · GET STARTED
-          </div>
-          <div
-            className="auth-hero"
-            style={{
-              fontFamily: 'var(--display)',
-              fontSize: 'clamp(36px, 6vw, 72px)',
-              fontWeight: 700,
-              letterSpacing: '-.04em',
-              lineHeight: 0.95,
-            }}
-          >
-            Step onto<br />
-            <span style={{ color: 'var(--red)' }}>the ladder.</span>
-          </div>
-          <div
-            style={{
-              maxWidth: '46ch',
-              marginTop: 20,
-              color: 'rgba(255,255,255,.7)',
-              fontSize: 15,
-              lineHeight: 1.6,
-            }}
-          >
-            Two quick fields and you&apos;re in. Starting ELO 400 across singles and doubles. Climb from there.
-          </div>
-        </div>
-
-        <div
-          className="row"
-          style={{
-            gap: 24,
-            fontSize: 12,
-            color: 'rgba(255,255,255,.5)',
-            position: 'relative',
-            zIndex: 2,
-            fontFamily: 'var(--mono)',
-            textTransform: 'uppercase',
-            letterSpacing: '.1em',
-          }}
-        >
-          <span>Starting ELO 400</span>
-          <span>Provisional K=40</span>
-          <span>Unranked → Top 10</span>
-        </div>
-      </div>
-
-      <div
-        className="auth-form"
-        style={{
-          padding: 80,
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center',
-          gap: 24,
-          maxWidth: 520,
           width: '100%',
-          margin: '0 auto',
+          maxWidth: 460,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 24,
         }}
       >
         <div>
