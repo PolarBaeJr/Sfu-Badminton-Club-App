@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '@/lib/supabase-server';
 import { remindSessionGoers } from '@/lib/session-reminders';
-import { getReminderLeadMinutes } from '@badminton/shared';
+import { getReminderLeadMinutes, REMINDER_LEAD_MAX_MINUTES } from '@badminton/shared';
 
 export const dynamic = 'force-dynamic';
 
@@ -46,16 +46,23 @@ export async function POST(request: Request) {
     const admin = createAdminClient();
     const now = new Date();
 
-    // Look at today and tomorrow in club time: a "day before" preference on
-    // tomorrow's session comes due today.
-    const days = [0, 1].map((offset) =>
+    // The scan window has to reach as far ahead as the longest notice anyone
+    // can ask for, or that preference is quietly capped: a session outside the
+    // window is invisible until it drifts in, by which point the lead has
+    // already passed and the player is reminded late. Members may choose up to
+    // a week, so look a week (plus a day, for the club-vs-UTC boundary) ahead.
+    // Sessions not yet due cost one row each — the per-player check below is
+    // what actually decides when to send.
+    const clubDate = (d: Date) =>
       new Intl.DateTimeFormat('en-CA', { timeZone: CLUB_TZ, year: 'numeric', month: '2-digit', day: '2-digit' })
-        .format(new Date(now.getTime() + offset * 86400000)));
+        .format(d);
+    const horizonDays = Math.ceil(REMINDER_LEAD_MAX_MINUTES / 1440) + 1;
 
     const { data: sessions, error } = await admin
       .from('sessions')
       .select('id, date, start_time, session_rsvp(player_id, reminded_at, intent)')
-      .in('date', days)
+      .gte('date', clubDate(now))
+      .lte('date', clubDate(new Date(now.getTime() + horizonDays * 86400000)))
       .eq('status', 'open');
     if (error) throw new Error(error.message);
 
