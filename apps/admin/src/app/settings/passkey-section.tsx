@@ -37,7 +37,7 @@ export function PasskeySection({ passkeys }: { passkeys: Passkey[] }) {
     setAdding(true);
     try {
       // NOTE: fetch() ignores Next's basePath — the /admin prefix must be explicit.
-      const optRes = await fetch('/admin/api/passkey/register/options', { method: 'POST' });
+      const optRes = await fetch('/api/passkey/register/options', { method: 'POST' });
       if (!optRes.ok) {
         const body = await optRes.json().catch(() => null);
         throw new Error(body?.error || 'Could not start passkey enrollment');
@@ -46,7 +46,7 @@ export function PasskeySection({ passkeys }: { passkeys: Passkey[] }) {
 
       const attestation = await startRegistration({ optionsJSON });
 
-      const verifyRes = await fetch('/admin/api/passkey/register/verify', {
+      const verifyRes = await fetch('/api/passkey/register/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

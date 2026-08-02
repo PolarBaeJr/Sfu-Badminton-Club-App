@@ -35,7 +35,7 @@ function UnavailableContent() {
     setError('');
     try {
       // NOTE: fetch() ignores Next's basePath — the /admin prefix must be explicit.
-      const optRes = await fetch('/admin/api/passkey/auth/options', { method: 'POST' });
+      const optRes = await fetch('/api/passkey/auth/options', { method: 'POST' });
       if (optRes.status === 400) {
         setNoCredentials(true);
         return;
@@ -45,7 +45,7 @@ function UnavailableContent() {
 
       const assertion = await startAuthentication({ optionsJSON });
 
-      const verifyRes = await fetch('/admin/api/passkey/auth/verify', {
+      const verifyRes = await fetch('/api/passkey/auth/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ credential: assertion }),

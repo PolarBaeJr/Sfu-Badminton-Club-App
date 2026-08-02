@@ -2,7 +2,7 @@
   "name": "SFU Badminton Admin",
   "short_name": "SFU Admin",
   "description": "Admin dashboard for SFU Badminton Club",
-  "start_url": "/admin/dashboard",
+  "start_url": "/dashboard",
   "display": "standalone",
   "background_color": "#0a0a0a",
   "theme_color": "#c00000",

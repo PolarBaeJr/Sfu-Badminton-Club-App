@@ -22,6 +22,9 @@ ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
 ARG NEXT_PUBLIC_APP_URL
 ARG NEXT_PUBLIC_PLAYER_URL
 ARG NEXT_PUBLIC_ADMIN_URL
+# Passkey scope — see apps/admin/src/lib/passkey/config.ts. Must be the parent
+# domain so one credential covers the apex and the admin subdomain.
+ARG NEXT_PUBLIC_PASSKEY_RP_ID
 ARG NEXT_PUBLIC_VAPID_PUBLIC_KEY
 ARG NEXT_PUBLIC_SENTRY_DSN
 ARG NEXT_PUBLIC_POSTHOG_KEY

@@ -16,15 +16,15 @@ const jetbrainsMono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mon
 export const metadata: Metadata = {
   title: 'SFU Badminton - Admin',
   description: 'Admin dashboard for SFU Badminton Club',
-  // Public assets are served under the '/admin' basePath, and the metadata API
+  // Assets serve from the subdomain root
   // does not prepend basePath — so these URLs must include it explicitly.
-  manifest: '/admin/manifest.json',
+  manifest: '/manifest.json',
   icons: {
     icon: [
-      { url: '/admin/icon-192.png', sizes: '192x192', type: 'image/png' },
-      { url: '/admin/icon-512.png', sizes: '512x512', type: 'image/png' },
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icon-512.png', sizes: '512x512', type: 'image/png' },
     ],
-    apple: '/admin/apple-touch-icon.png',
+    apple: '/apple-touch-icon.png',
   },
   appleWebApp: {
     capable: true,
@@ -71,7 +71,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         </ToastProvider>
         <script dangerouslySetInnerHTML={{ __html: `
           if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/admin/sw.js').catch(function() {});
+            navigator.serviceWorker.register('/sw.js').catch(function() {});
           }
         `}} />
       </body>

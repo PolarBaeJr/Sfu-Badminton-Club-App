@@ -73,9 +73,9 @@ services:
     networks: [edge, default]
     labels:
       proxy.enable:     "true"
-      proxy.host:       "${PROXY_DOMAIN:-sfubadminton.com}"
-      # admin is served under /admin (Next.js basePath), same domain as player
-      proxy.path:       "/admin"
+      # Admin console has its own host now — no basePath, no path prefix.
+      proxy.host:       "${ADMIN_PROXY_DOMAIN:-admin.sfubadminton.com}"
+      proxy.path:       "/"
       proxy.port:       "3001"
       proxy.service:    "badminton-admin"
       proxy.unscalable: "true"
