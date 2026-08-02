@@ -1,76 +1,77 @@
 # Cloudflare DNS Setup for SFU Badminton Platform
 
-## 1. Buy a Domain on Namecheap
+> **Current setup:** the apps are **self-hosted on a Raspberry Pi**, behind
+> Cloudflare. They are no longer on Vercel. An earlier version of this document
+> told you to point DNS at Vercel's anycast IP (`76.76.21.21`) — following that
+> today takes the site offline, which is why it has been rewritten.
 
-1. Go to [namecheap.com](https://www.namecheap.com) and search for your desired domain (e.g., `sfubadminton.club`).
-2. Add it to cart and complete the purchase.
-3. After purchase, go to **Dashboard > Domain List** and click **Manage** on your new domain.
+## Architecture
 
-## 2. Point Nameservers to Cloudflare
+```
+browser → Cloudflare (proxied) → Raspberry Pi → proxy-manager → player / admin containers
+```
 
-1. Create a free account at [cloudflare.com](https://www.cloudflare.com).
-2. Click **Add a Site** and enter your domain name (e.g., `sfubadminton.club`).
-3. Select the **Free** plan.
-4. Cloudflare will provide you two nameservers, for example:
-   - `aria.ns.cloudflare.com`
-   - `logan.ns.cloudflare.com`
-5. Go back to **Namecheap > Domain List > Manage** for your domain.
-6. Under **Nameservers**, select **Custom DNS** from the dropdown.
-7. Enter the two Cloudflare nameservers and click the green checkmark to save.
-8. Wait for propagation (can take up to 24 hours, usually under 1 hour).
-9. Back in Cloudflare, click **Check Nameservers** to verify.
+Both apps are served from **one hostname**: the player app at the apex, the
+admin console under `/admin`. There is no separate `admin.` subdomain and no
+per-app DNS record — `proxy-manager` routes by container label, not by DNS.
 
-## 3. Add DNS Records for Vercel
+## 1. Domain and nameservers
 
-In the Cloudflare dashboard, go to **DNS > Records** and add the following:
+1. Create a free account at [cloudflare.com](https://www.cloudflare.com), click
+   **Add a Site**, enter the domain (`sfubadminton.com`), pick the **Free** plan.
+2. Cloudflare gives you two nameservers, e.g. `aria.ns.cloudflare.com`.
+3. At the registrar, set **Custom DNS** to those two nameservers.
+4. Wait for propagation (usually under an hour), then **Check Nameservers**.
 
-### Player App (e.g., `app.sfubadminton.club`)
+## 2. DNS records
 
-| Type | Name | Content | Proxy | TTL |
-|------|------|---------|-------|-----|
-| A | `app` | `76.76.21.21` | Proxied (orange cloud) | Auto |
-
-### Admin App (e.g., `admin.sfubadminton.club`)
+In **DNS > Records**:
 
 | Type | Name | Content | Proxy | TTL |
 |------|------|---------|-------|-----|
-| CNAME | `admin` | `cname.vercel-dns.com` | Proxied (orange cloud) | Auto |
+| A | `@` | *the Pi's public IP* | Proxied (orange cloud) | Auto |
+| TXT/MX | `mail`, `send.` etc. | *as issued by Resend* | **DNS only** (grey) | Auto |
 
-> **Note:** The A record IP `76.76.21.21` is Vercel's anycast IP. The CNAME `cname.vercel-dns.com` is Vercel's recommended CNAME target.
+**Keep the apex record proxied (orange).** That is what gives DDoS protection
+and hides the Pi's home IP. It is also what puts `cf-connecting-ip` on every
+request — the app's rate limiting reads that header to identify clients, so
+turning the proxy off would collapse every visitor into a single bucket.
 
-## 4. Enable Cloudflare Proxying (Orange Cloud)
+**Mail records must stay DNS-only (grey).** Those are the Resend DKIM/SPF
+records that carry auth email (sender: `login@mail.sfubadminton.com`);
+proxying them breaks delivery.
 
-When adding DNS records above, make sure the **Proxy status** toggle is enabled (orange cloud icon). This routes traffic through Cloudflare's network, providing:
+## 3. SSL/TLS
 
-- DDoS protection
-- CDN caching of static assets
-- Web Application Firewall (WAF)
-- Analytics
+Set **SSL/TLS > Overview** to **Full (strict)**.
 
-To verify: in **DNS > Records**, both records should show an orange cloud icon, not a grey one.
+- Browser → Cloudflare is encrypted.
+- Cloudflare → Pi is encrypted, and Cloudflare validates the origin certificate.
+- `proxy-manager` obtains and renews the origin certificate automatically.
 
-## 5. Configure SSL/TLS to Full (Strict)
+> Do **not** use "Flexible" — that leaves the Cloudflare→Pi hop unencrypted.
 
-1. In the Cloudflare dashboard, go to **SSL/TLS > Overview**.
-2. Set the encryption mode to **Full (strict)**.
+## 4. Adding an app to the proxy
 
-This ensures:
-- Cloudflare encrypts traffic between visitors and Cloudflare (browser to edge).
-- Cloudflare encrypts traffic between Cloudflare and Vercel (edge to origin).
-- Cloudflare validates Vercel's SSL certificate, preventing MITM attacks.
+Routing is by Docker label, not DNS. The player and admin services already carry
+these in `docker-compose.yml`; a new service needs the same, plus joining the
+external `edge` network:
 
-> **Important:** Do not use "Flexible" mode. This would leave the Cloudflare-to-Vercel connection unencrypted. Vercel provides free SSL certificates, so Full (strict) works out of the box.
+```yaml
+labels:
+  proxy.enable:  "true"
+  proxy.host:    "sfubadminton.com"
+  proxy.port:    "3000"
+  proxy.service: "badminton-player"
+```
 
-## 6. Configure Vercel Domains
+`PROXY_DOMAIN` in the Pi's `.env` sets the served hostname. The proxy picks up
+changes within seconds of `docker compose up -d` — no nginx config to edit.
 
-1. In your Vercel dashboard, go to each project's **Settings > Domains**.
-2. For the player app: add `app.sfubadminton.club`.
-3. For the admin app: add `admin.sfubadminton.club`.
-4. Vercel will automatically provision SSL certificates for both subdomains.
+## 5. Verify
 
-## 7. Verify Everything Works
-
-1. Visit `https://app.sfubadminton.club` -- should load the player app.
-2. Visit `https://admin.sfubadminton.club` -- should load the admin app.
-3. Check that the padlock icon appears in the browser (valid SSL).
-4. In Cloudflare **Analytics**, confirm traffic is flowing through the proxy.
+1. `https://sfubadminton.com` → player app, padlock valid.
+2. `https://sfubadminton.com/admin` → admin console (redirects to login).
+3. A **`522`** means Cloudflare is healthy but the **Pi is unreachable** — check
+   the Pi, not DNS.
+4. Cloudflare **Analytics** should show traffic flowing through the proxy.
