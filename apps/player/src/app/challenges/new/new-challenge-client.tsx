@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Select, Input, Textarea, DatePicker, Button } from '@badminton/ui';
-import { MATCH_FORMAT_LABELS, previewEloChange } from '@badminton/shared';
+import { previewEloChange } from '@badminton/shared';
 import { createChallenge } from '@/lib/actions';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/toast-provider';
@@ -31,12 +31,14 @@ interface PlayerOption {
 export default function NewChallengeClient({ initialOpponentId }: { initialOpponentId?: string }) {
   const [type, setType] = useState<'singles' | 'doubles'>('singles');
   const [rated, setRated] = useState(true);
-  const [format, setFormat] = useState('single_21');
   // Custom shape: "best of X games to Y points". Held as text so the fields can
   // be cleared while typing; only sent when the Custom option is chosen.
   const [customGames, setCustomGames] = useState('3');
   const [customPoints, setCustomPoints] = useState('21');
-  const isCustom = format === 'custom';
+  // Every challenge now carries an explicit shape, so the enum is only the
+  // fallback the DB coalesces to when the custom columns are null.
+  const isCustom = true;
+  const format = Number(customGames) > 1 ? 'bo3_21' : 'single_21';
   // Checked here as well as by the CHECK constraint, so the form never submits
   // a shape the database will refuse.
   const pointsInvalid = isCustom && (Number(customPoints) < 5 || Number(customPoints) > 30 || !customPoints);
@@ -239,20 +241,12 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
               </>
             )}
 
-            <Select
-              label="Format"
-              value={format}
-              onChange={(e) => setFormat(e.target.value)}
-              options={[
-                ...Object.entries(MATCH_FORMAT_LABELS).map(([value, label]) => ({ value, label })),
-                { value: 'custom', label: 'Custom…' },
-              ]}
-            />
-
-            {isCustom && (
-              <div className="grid grid-cols-2 gap-3">
-                <Select
-                  label="Best of (games)"
+            {/* The four presets were just (games, points) pairs — "Best of 3 to
+                21" is 3 and 21 — so the dropdown only added a step. Pick the two
+                numbers directly; the defaults are the old bo3_21. */}
+            <div className="grid grid-cols-2 gap-3">
+              <Select
+                label="Best of (games)"
                   value={customGames}
                   onChange={(e) => setCustomGames(e.target.value)}
                   options={[
@@ -275,8 +269,7 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
                     ? 'Points per game must be between 5 and 30.'
                     : `A game is won by two clear points, or at ${(Number(customPoints) || 21) + 9}.`}
                 </p>
-              </div>
-            )}
+            </div>
 
             {/* Rated Toggle */}
             <div>
