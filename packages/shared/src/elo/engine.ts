@@ -1,5 +1,5 @@
 import type { MatchFormat, EventType } from '../types/database';
-import { clampElo, DEFAULT_ELO, PROVISIONAL_THRESHOLD, SWEEP_MARGIN_MULTIPLIER } from '../utils/constants';
+import { clampElo, DEFAULT_ELO, PROVISIONAL_THRESHOLD, SWEEP_MARGIN_MULTIPLIER, derivedFormatWeight } from '../utils/constants';
 
 export const FORMAT_WEIGHTS: Record<MatchFormat, number> = {
   bo3_21: 1.25,
@@ -143,10 +143,16 @@ export function previewEloChange(
   matchType: 'singles' | 'doubles',
   provisional: boolean,
   eloWeightOverride?: number,
-  matchesPlayed?: number
+  matchesPlayed?: number,
+  // Custom shape ("best of X to Y"): when present the weight is derived rather
+  // than looked up. Without this the preview passed a format the table has no
+  // entry for, so the weight came back undefined and every figure rendered NaN.
+  custom?: { gamesPerMatch: number; pointsPerGame: number },
 ): { winDelta: number; lossDelta: number } {
   const k = getKFactor(matchType, provisional, matchesPlayed);
-  const fw = getFormatWeight(format);
+  const fw = custom
+    ? derivedFormatWeight(custom.gamesPerMatch, custom.pointsPerGame)
+    : (getFormatWeight(format) ?? FORMAT_WEIGHTS.single_21);
   const em = getEventMultiplier(eventType);
 
   const winResult = calculateEloUpdate({

@@ -37,6 +37,9 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
   const [customGames, setCustomGames] = useState('3');
   const [customPoints, setCustomPoints] = useState('21');
   const isCustom = format === 'custom';
+  // Checked here as well as by the CHECK constraint, so the form never submits
+  // a shape the database will refuse.
+  const pointsInvalid = isCustom && (Number(customPoints) < 5 || Number(customPoints) > 30 || !customPoints);
   const [opponentId, setOpponentId] = useState(initialOpponentId ?? '');
   const [partnerId, setPartnerId] = useState('');
   const [opponentPartnerId, setOpponentPartnerId] = useState('');
@@ -103,15 +106,21 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
   const eloPreview = opponent ? previewEloChange(
     type === 'singles' ? myElo.singles : myElo.doubles,
     type === 'singles' ? opponent.singles_elo : opponent.doubles_elo,
-    format as 'single_21' | 'bo3_21' | 'single_15' | 'single_11',
+    (isCustom ? (Number(customGames) > 1 ? 'bo3_21' : 'single_21') : format) as 'single_21' | 'bo3_21' | 'single_15' | 'single_11',
     rated ? 'rated_challenge' : 'casual',
     type,
-    true
+    true,
+    undefined,
+    undefined,
+    isCustom
+      ? { gamesPerMatch: Number(customGames) || 3, pointsPerGame: Number(customPoints) || 21 }
+      : undefined,
   ) : null;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!opponentId) { toast('Select an opponent', 'error'); return; }
+    if (pointsInvalid) { toast('Points per game must be between 5 and 30', 'error'); return; }
     setLoading(true);
     try {
       const res = await createChallenge({
@@ -242,25 +251,29 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
 
             {isCustom && (
               <div className="grid grid-cols-2 gap-3">
-                <Input
+                <Select
                   label="Best of (games)"
-                  type="text"
-                  inputMode="numeric"
                   value={customGames}
-                  onChange={(e) => setCustomGames(e.target.value.replace(/\D/g, ''))}
-                  placeholder="3"
+                  onChange={(e) => setCustomGames(e.target.value)}
+                  options={[
+                    { value: '1', label: '1 game' },
+                    { value: '3', label: 'Best of 3' },
+                    { value: '5', label: 'Best of 5' },
+                    { value: '7', label: 'Best of 7' },
+                  ]}
                 />
                 <Input
                   label="Points per game"
                   type="text"
                   inputMode="numeric"
                   value={customPoints}
-                  onChange={(e) => setCustomPoints(e.target.value.replace(/\D/g, ''))}
+                  onChange={(e) => setCustomPoints(e.target.value.replace(/\D/g, '').slice(0, 2))}
                   placeholder="21"
                 />
                 <p className="col-span-2 text-xs text-[var(--mute)]">
-                  Games must be an odd number up to 7, so one side always takes the majority.
-                  Points can be 5–30; a game is won by two clear points, or at {(Number(customPoints) || 21) + 9}.
+                  {pointsInvalid
+                    ? 'Points per game must be between 5 and 30.'
+                    : `A game is won by two clear points, or at ${(Number(customPoints) || 21) + 9}.`}
                 </p>
               </div>
             )}
@@ -348,7 +361,7 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
 
             <Button
               type="submit"
-              disabled={loading}
+              disabled={loading || pointsInvalid}
               size="lg"
               className="w-full min-h-[52px] btn-primary-cta press"
             >
