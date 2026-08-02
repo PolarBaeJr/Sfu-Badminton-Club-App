@@ -27,12 +27,20 @@ async function submitMatchResultImpl(challengeId: string, input: MatchResultInpu
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 
-  const { data: challenge } = await supabase
+  // No players embed: 00032 revoked blanket SELECT on players and granted a
+  // safe column subset, so `players(*)` is refused outright — and because the
+  // error used to be discarded, that surfaced as "Challenge not found" on a
+  // challenge that plainly existed. Nothing below this ever read the embedded
+  // player or its ratings; submit_match_result derives participants itself.
+  const { data: challenge, error: challengeError } = await supabase
     .from('challenges')
-    .select('*, challenge_participants(*, player:players(*, ratings(*)))')
+    .select('id, status, format, challenge_participants(player_id)')
     .eq('id', challengeId)
     .single();
 
+  // PGRST116 is genuinely "no rows"; anything else (a permission error, say) is
+  // a real fault and must not be flattened into a misleading "not found".
+  if (challengeError && challengeError.code !== 'PGRST116') throw new Error(challengeError.message);
   if (!challenge) throw new Error('Challenge not found');
   if (challenge.status !== 'accepted') throw new Error('Challenge not accepted');
 
@@ -186,11 +194,12 @@ async function reportWalkoverImpl(input: WalkoverReportInput) {
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
 
-  const { data: challenge } = await supabase
+  const { data: challenge, error: challengeError } = await supabase
     .from('challenges')
     .select('status, challenge_participants(player_id, team_side)')
     .eq('id', input.challenge_id)
     .single();
+  if (challengeError && challengeError.code !== 'PGRST116') throw new Error(challengeError.message);
   if (!challenge) throw new Error('Challenge not found');
   if (!['accepted', 'partially_confirmed'].includes(challenge.status)) {
     throw new Error('Challenge is not in a state that can be forfeited');
