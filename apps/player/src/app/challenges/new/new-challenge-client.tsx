@@ -32,6 +32,11 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
   const [type, setType] = useState<'singles' | 'doubles'>('singles');
   const [rated, setRated] = useState(true);
   const [format, setFormat] = useState('single_21');
+  // Custom shape: "best of X games to Y points". Held as text so the fields can
+  // be cleared while typing; only sent when the Custom option is chosen.
+  const [customGames, setCustomGames] = useState('3');
+  const [customPoints, setCustomPoints] = useState('21');
+  const isCustom = format === 'custom';
   const [opponentId, setOpponentId] = useState(initialOpponentId ?? '');
   const [partnerId, setPartnerId] = useState('');
   const [opponentPartnerId, setOpponentPartnerId] = useState('');
@@ -113,7 +118,14 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
         type,
         rated_flag: rated,
         event_type: rated ? 'rated_challenge' : 'casual',
-        format: format as 'single_21' | 'bo3_21' | 'single_15' | 'single_11',
+        // The enum stays the fallback the DB coalesces to; the custom columns
+        // win when present (migration 00031).
+        format: (isCustom
+          ? (Number(customGames) > 1 ? 'bo3_21' : 'single_21')
+          : format) as 'single_21' | 'bo3_21' | 'single_15' | 'single_11',
+        ...(isCustom
+          ? { games_per_match: Number(customGames) || 3, points_per_game: Number(customPoints) || 21 }
+          : {}),
         opponent_id: opponentId,
         partner_id: type === 'doubles' && partnerId ? partnerId : undefined,
         opponent_partner_id: type === 'doubles' && opponentPartnerId ? opponentPartnerId : undefined,
@@ -222,8 +234,36 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
               label="Format"
               value={format}
               onChange={(e) => setFormat(e.target.value)}
-              options={Object.entries(MATCH_FORMAT_LABELS).map(([value, label]) => ({ value, label }))}
+              options={[
+                ...Object.entries(MATCH_FORMAT_LABELS).map(([value, label]) => ({ value, label })),
+                { value: 'custom', label: 'Custom…' },
+              ]}
             />
+
+            {isCustom && (
+              <div className="grid grid-cols-2 gap-3">
+                <Input
+                  label="Best of (games)"
+                  type="text"
+                  inputMode="numeric"
+                  value={customGames}
+                  onChange={(e) => setCustomGames(e.target.value.replace(/\D/g, ''))}
+                  placeholder="3"
+                />
+                <Input
+                  label="Points per game"
+                  type="text"
+                  inputMode="numeric"
+                  value={customPoints}
+                  onChange={(e) => setCustomPoints(e.target.value.replace(/\D/g, ''))}
+                  placeholder="21"
+                />
+                <p className="col-span-2 text-xs text-[var(--mute)]">
+                  Games must be an odd number up to 7, so one side always takes the majority.
+                  Points can be 5–30; a game is won by two clear points, or at {(Number(customPoints) || 21) + 9}.
+                </p>
+              </div>
+            )}
 
             {/* Rated Toggle */}
             <div>

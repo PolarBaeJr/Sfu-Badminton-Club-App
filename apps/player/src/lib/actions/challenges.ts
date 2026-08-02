@@ -52,6 +52,10 @@ async function createChallengeImpl(input: ChallengeCreateInput) {
       type: input.type,
       rated_flag: input.rated_flag,
       format: input.format,
+      // Null unless the player chose a custom shape; submit_match_result and
+      // trigger_set_match_weights fall back to the preset when these are null.
+      games_per_match: input.games_per_match ?? null,
+      points_per_game: input.points_per_game ?? null,
       event_type: eventType,
       session_id: input.session_id || null,
       scheduled_date: input.scheduled_date || null,

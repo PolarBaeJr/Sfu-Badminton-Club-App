@@ -172,12 +172,45 @@ export function nextPowerOf2(n: number): number {
 // NOTE: the 21-point cap of 30 is the BWF rule. The caps for the 15- and
 // 11-point club formats are our own convention — adjust here if the club plays
 // them differently; nothing else needs to change.
+// One cap rule everywhere, preset or custom: target + 9, mirroring the BWF
+// 21 -> 30. Earlier this file guessed different caps per format; a single rule
+// is easier to reason about and is what the custom formats need anyway.
+export function pointsCap(target: number): number {
+  return target + 9;
+}
+
+export const CUSTOM_FORMAT_BOUNDS = {
+  minGames: 1, maxGames: 7,   // best-of must be odd so a majority exists
+  minPoints: 5, maxPoints: 30,
+} as const;
+
 export const FORMAT_RULES: Record<MatchFormat, { bestOf: number; target: number; cap: number }> = {
-  bo3_21:    { bestOf: 3, target: 21, cap: 30 },
-  single_21: { bestOf: 1, target: 21, cap: 30 },
-  single_15: { bestOf: 1, target: 15, cap: 21 },
-  single_11: { bestOf: 1, target: 11, cap: 15 },
+  bo3_21:    { bestOf: 3, target: 21, cap: pointsCap(21) },
+  single_21: { bestOf: 1, target: 21, cap: pointsCap(21) },
+  single_15: { bestOf: 1, target: 15, cap: pointsCap(15) },
+  single_11: { bestOf: 1, target: 11, cap: pointsCap(11) },
 };
+
+/**
+ * Rules for a match that may define its own shape. Custom values win when
+ * present; otherwise the preset applies. Mirrors effective_target/
+ * effective_best_of in migration 00031.
+ */
+export function getRulesFor(
+  format: AnyMatchFormat,
+  gamesPerMatch?: number | null,
+  pointsPerGame?: number | null,
+): { bestOf: number; target: number; cap: number } {
+  const preset = getFormatRules(format);
+  const target = pointsPerGame ?? preset.target;
+  return { bestOf: gamesPerMatch ?? preset.bestOf, target, cap: pointsCap(target) };
+}
+
+/** Elo weight for a custom shape — mirrors derived_format_weight (00031). */
+export function derivedFormatWeight(bestOf: number, target: number): number {
+  const raw = (target / 21) * (bestOf > 1 ? 1.25 : 1.0);
+  return Math.min(1.5, Math.max(0.25, raw));
+}
 
 // Tournaments carry their own format enum with the same four shapes, so the
 // rules are mapped rather than duplicated — one source of truth for what a
@@ -214,8 +247,14 @@ export function getMaxScoreForFormat(format: AnyMatchFormat): number {
  *  - above T but below C, winning by exactly 2  (22-20, 23-21, … 29-27)
  *  - at C, with the loser on C-2 or C-1         (30-28 win-by-two, 30-29 the cap)
  */
-export function isLegalGameScore(a: number, b: number, format: AnyMatchFormat): boolean {
-  const { target, cap } = getFormatRules(format);
+export function isLegalGameScore(
+  a: number,
+  b: number,
+  format: AnyMatchFormat,
+  gamesPerMatch?: number | null,
+  pointsPerGame?: number | null,
+): boolean {
+  const { target, cap } = getRulesFor(format, gamesPerMatch, pointsPerGame);
   const winner = Math.max(a, b);
   const loser = Math.min(a, b);
   if (a === b) return false;                       // a game must be won
@@ -231,8 +270,13 @@ export function isLegalGameScore(a: number, b: number, format: AnyMatchFormat): 
  * A match stops the moment someone clinches, so a best-of-3 is 2 games (2-0) or
  * 3 (2-1) — never 3-0, because game three would never have been played.
  */
-export function isLegalGameCount(winnerGames: number, loserGames: number, format: AnyMatchFormat): boolean {
-  const { bestOf } = getFormatRules(format);
+export function isLegalGameCount(
+  winnerGames: number,
+  loserGames: number,
+  format: AnyMatchFormat,
+  gamesPerMatch?: number | null,
+): boolean {
+  const { bestOf } = getRulesFor(format, gamesPerMatch);
   const needed = Math.floor(bestOf / 2) + 1;
   if (winnerGames !== needed) return false;        // winner must reach exactly the clinch
   return loserGames <= needed - 1;                 // and no games played after it
