@@ -14,7 +14,11 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
   const [note, setNote] = useState('');
   const [loading, setLoading] = useState(false);
   const [editedWinner, setEditedWinner] = useState<'a' | 'b'>('a');
-  const [editedGames, setEditedGames] = useState<Game[]>([]);
+  // Scores held as text: with `parseInt(x) || 0` the input snapped back to 0 as
+  // soon as it was cleared, so the zero could never be deleted to type over.
+  const [editedGames, setEditedGames] = useState<
+    { game_number: number; side_a_score: string; side_b_score: string }[]
+  >([]);
   const [matchFormat, setMatchFormat] = useState<string>('single_21');
   const [hydrated, setHydrated] = useState(false);
   const { toast } = useToast();
@@ -33,9 +37,16 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
       const games = ((m.match_games as Game[] | null) ?? []).slice().sort((a, b) => a.game_number - b.game_number);
       const formatStr = (m.format as string) || 'single_21';
       const isBO3 = formatStr === 'bo3_21';
-      const filled: Game[] = isBO3
-        ? [1, 2, 3].map((n) => games.find((g) => g.game_number === n) ?? { game_number: n, side_a_score: 0, side_b_score: 0 })
-        : [games[0] ?? { game_number: 1, side_a_score: 0, side_b_score: 0 }];
+      // Existing scores become text; an unplayed game starts blank rather than
+      // pre-filled with 0, which the admin would then have to delete.
+      const asText = (g?: Game, n?: number) => ({
+        game_number: g?.game_number ?? n ?? 1,
+        side_a_score: g ? String(g.side_a_score) : '',
+        side_b_score: g ? String(g.side_b_score) : '',
+      });
+      const filled = isBO3
+        ? [1, 2, 3].map((n) => asText(games.find((g) => g.game_number === n), n))
+        : [asText(games[0], 1)];
       setEditedGames(filled);
       setEditedWinner(((m.winner_side as 'a' | 'b' | null) ?? 'a'));
       setMatchFormat(formatStr);
@@ -47,7 +58,7 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
   async function handleResolve() {
     if (!note.trim()) { toast('Resolution note required', 'error'); return; }
     if (resType === 'edited') {
-      const valid = editedGames.every((g) => g.side_a_score >= 0 && g.side_b_score >= 0 && (g.side_a_score > 0 || g.side_b_score > 0));
+      const valid = toNumericGames().length > 0;
       if (!valid) { toast('Enter scores for each game', 'error'); return; }
     }
     setLoading(true);
@@ -56,7 +67,7 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
         dispute_id: disputeId,
         resolution_type: resType,
         resolution_note: note,
-        ...(resType === 'edited' ? { edited_winner_side: editedWinner, edited_games: editedGames } : {}),
+        ...(resType === 'edited' ? { edited_winner_side: editedWinner, edited_games: toNumericGames() } : {}),
       });
       if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
       toast('Dispute resolved', 'success');
@@ -67,7 +78,19 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
     setLoading(false);
   }
 
-  function setGameScore(idx: number, side: 'a' | 'b', value: number) {
+  // Text state -> the numeric shape the action expects, dropping games that
+  // were never played (both sides blank/zero).
+  function toNumericGames() {
+    return editedGames
+      .map((g) => ({
+        game_number: g.game_number,
+        side_a_score: Number(g.side_a_score || 0),
+        side_b_score: Number(g.side_b_score || 0),
+      }))
+      .filter((g) => g.side_a_score > 0 || g.side_b_score > 0);
+  }
+
+  function setGameScore(idx: number, side: 'a' | 'b', value: string) {
     setEditedGames((games) =>
       games.map((g, i) => (i === idx ? { ...g, [side === 'a' ? 'side_a_score' : 'side_b_score']: value } : g))
     );
@@ -105,17 +128,17 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
                 <div key={i} className="grid grid-cols-2 gap-3">
                   <Input
                     label={`Game ${g.game_number} — Team A`}
-                    type="number"
-                    min={0}
+                    type="text"
+                    inputMode="numeric"
                     value={g.side_a_score}
-                    onChange={(e) => setGameScore(i, 'a', parseInt(e.target.value) || 0)}
+                    onChange={(e) => setGameScore(i, 'a', e.target.value.replace(/\D/g, ''))}
                   />
                   <Input
                     label={`Game ${g.game_number} — Team B`}
-                    type="number"
-                    min={0}
+                    type="text"
+                    inputMode="numeric"
                     value={g.side_b_score}
-                    onChange={(e) => setGameScore(i, 'b', parseInt(e.target.value) || 0)}
+                    onChange={(e) => setGameScore(i, 'b', e.target.value.replace(/\D/g, ''))}
                   />
                 </div>
               ))}

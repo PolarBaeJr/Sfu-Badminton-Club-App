@@ -162,3 +162,56 @@ export function nextPowerOf2(n: number): number {
   while (p < n) p *= 2;
   return p;
 }
+
+// Per-format scoring rules: how many games the match is a best-of, the target a
+// game is played to, and the deuce cap. Rally scoring: reach the target, but win
+// by two — so at 20-20 play continues (22-20, 23-21, …) until the cap, where the
+// next point takes it (30-29). 21-20 is therefore NOT a legal finish, while
+// 30-29 is.
+//
+// NOTE: the 21-point cap of 30 is the BWF rule. The caps for the 15- and
+// 11-point club formats are our own convention — adjust here if the club plays
+// them differently; nothing else needs to change.
+export const FORMAT_RULES: Record<MatchFormat, { bestOf: number; target: number; cap: number }> = {
+  bo3_21:    { bestOf: 3, target: 21, cap: 30 },
+  single_21: { bestOf: 1, target: 21, cap: 30 },
+  single_15: { bestOf: 1, target: 15, cap: 21 },
+  single_11: { bestOf: 1, target: 11, cap: 15 },
+};
+
+/** Highest score legally reachable in this format — the deuce cap. */
+export function getMaxScoreForFormat(format: MatchFormat): number {
+  return FORMAT_RULES[format].cap;
+}
+
+/**
+ * Is this a legal way for a single game to end?
+ *
+ * Legal finishes, for target T and cap C:
+ *  - exactly T, with the loser at most T-2      (21-19, 21-0)
+ *  - above T but below C, winning by exactly 2  (22-20, 23-21, … 29-27)
+ *  - at C, with the loser on C-2 or C-1         (30-28 win-by-two, 30-29 the cap)
+ */
+export function isLegalGameScore(a: number, b: number, format: MatchFormat): boolean {
+  const { target, cap } = FORMAT_RULES[format];
+  const winner = Math.max(a, b);
+  const loser = Math.min(a, b);
+  if (a === b) return false;                       // a game must be won
+  if (loser < 0 || winner > cap) return false;
+  if (winner === target) return loser <= target - 2;
+  if (winner > target && winner < cap) return winner - loser === 2;
+  if (winner === cap) return loser >= cap - 2;
+  return false;                                    // winner never reached target
+}
+
+/**
+ * How many games a best-of-N match should contain, given who won each.
+ * A match stops the moment someone clinches, so a best-of-3 is 2 games (2-0) or
+ * 3 (2-1) — never 3-0, because game three would never have been played.
+ */
+export function isLegalGameCount(winnerGames: number, loserGames: number, format: MatchFormat): boolean {
+  const { bestOf } = FORMAT_RULES[format];
+  const needed = Math.floor(bestOf / 2) + 1;
+  if (winnerGames !== needed) return false;        // winner must reach exactly the clinch
+  return loserGames <= needed - 1;                 // and no games played after it
+}

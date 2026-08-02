@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { rateLimit, getClientIp } from '../utils/rate-limit';
 import { getMarginMultiplier, calculateEloUpdate } from '../elo/engine';
-import { SWEEP_MARGIN_MULTIPLIER } from '../utils/constants';
+import { SWEEP_MARGIN_MULTIPLIER, isLegalGameScore, isLegalGameCount } from '../utils/constants';
 import { escapeHtml, challengeReceivedEmail, disputeOpenedEmail } from '../email/templates';
 
 function req(headers: Record<string, string>): Request {
@@ -111,5 +111,48 @@ describe('getMarginMultiplier (Elo margin-of-victory scaling)', () => {
     // loser of a sweep drops by the same magnitude the winner gains
     const loser = calculateEloUpdate({ ...base, won: false, marginMultiplier: getMarginMultiplier(0, 2) });
     expect(Math.abs(loser.delta)).toBe(swept.delta);
+  });
+});
+
+describe('badminton score legality', () => {
+  it('accepts a clean finish and a whitewash', () => {
+    expect(isLegalGameScore(21, 19, 'bo3_21')).toBe(true);
+    expect(isLegalGameScore(21, 0, 'bo3_21')).toBe(true);
+  });
+
+  it('rejects 21-20 — rally scoring requires winning by two', () => {
+    expect(isLegalGameScore(21, 20, 'bo3_21')).toBe(false);
+  });
+
+  it('accepts deuce finishes and the 30-29 cap', () => {
+    expect(isLegalGameScore(22, 20, 'bo3_21')).toBe(true);
+    expect(isLegalGameScore(29, 27, 'bo3_21')).toBe(true);
+    expect(isLegalGameScore(30, 28, 'bo3_21')).toBe(true);
+    expect(isLegalGameScore(30, 29, 'bo3_21')).toBe(true); // the cap decides it
+  });
+
+  it('rejects scores past the cap, short of the target, and ties', () => {
+    expect(isLegalGameScore(31, 29, 'bo3_21')).toBe(false);
+    expect(isLegalGameScore(20, 18, 'bo3_21')).toBe(false);
+    expect(isLegalGameScore(21, 21, 'bo3_21')).toBe(false);
+  });
+
+  it('scales the target and cap per format', () => {
+    expect(isLegalGameScore(15, 13, 'single_15')).toBe(true);
+    expect(isLegalGameScore(21, 19, 'single_15')).toBe(true);  // 15-point cap is 21
+    expect(isLegalGameScore(11, 10, 'single_11')).toBe(false); // must win by two
+    expect(isLegalGameScore(15, 14, 'single_11')).toBe(true);  // 11-point cap is 15
+  });
+
+  it('a best-of-3 is 2-0 or 2-1 — never 3-0', () => {
+    expect(isLegalGameCount(2, 0, 'bo3_21')).toBe(true);
+    expect(isLegalGameCount(2, 1, 'bo3_21')).toBe(true);
+    expect(isLegalGameCount(3, 0, 'bo3_21')).toBe(false); // match ended at 2-0
+    expect(isLegalGameCount(1, 0, 'bo3_21')).toBe(false); // nobody clinched
+  });
+
+  it('a single-game format is exactly one game', () => {
+    expect(isLegalGameCount(1, 0, 'single_21')).toBe(true);
+    expect(isLegalGameCount(2, 0, 'single_21')).toBe(false);
   });
 });
