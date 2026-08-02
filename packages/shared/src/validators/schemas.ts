@@ -42,6 +42,11 @@ export const challengeCreateSchema = z.object({
   type: z.enum(['singles', 'doubles']),
   rated_flag: z.boolean(),
   format: z.enum(['bo3_21', 'single_21', 'single_15', 'single_11']),
+  // Optional custom shape: "best of X games to Y points". When set these win
+  // over the preset (see migration 00031). Best-of must be odd so a majority
+  // always exists; bounds keep a "best of 99 to 500" off the ladder.
+  games_per_match: z.number().int().min(1).max(7).refine((n) => n % 2 === 1, 'Games must be an odd number').optional(),
+  points_per_game: z.number().int().min(5).max(30).optional(),
   event_type: z.enum(['rated_challenge', 'casual']).default('rated_challenge'),
   opponent_id: z.string().uuid(),
   partner_id: z.string().uuid().optional(),

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { rateLimit, getClientIp } from '../utils/rate-limit';
 import { getMarginMultiplier, calculateEloUpdate } from '../elo/engine';
-import { SWEEP_MARGIN_MULTIPLIER, isLegalGameScore, isLegalGameCount } from '../utils/constants';
+import { SWEEP_MARGIN_MULTIPLIER, isLegalGameScore, isLegalGameCount, derivedFormatWeight } from '../utils/constants';
 import { escapeHtml, challengeReceivedEmail, disputeOpenedEmail } from '../email/templates';
 
 function req(headers: Record<string, string>): Request {
@@ -149,9 +149,9 @@ describe('badminton score legality', () => {
 
   it('scales the target and cap per format', () => {
     expect(isLegalGameScore(15, 13, 'single_15')).toBe(true);
-    expect(isLegalGameScore(21, 19, 'single_15')).toBe(true);  // 15-point cap is 21
+    expect(isLegalGameScore(24, 23, 'single_15')).toBe(true);  // 15-point cap is 24
     expect(isLegalGameScore(11, 10, 'single_11')).toBe(false); // must win by two
-    expect(isLegalGameScore(15, 14, 'single_11')).toBe(true);  // 11-point cap is 15
+    expect(isLegalGameScore(20, 19, 'single_11')).toBe(true);  // 11-point cap is 20
   });
 
   it('a best-of-3 is 2-0 or 2-1 — never 3-0', () => {
@@ -173,12 +173,37 @@ describe('score rules apply to tournament formats too', () => {
     expect(isLegalGameScore(30, 29, 'best_of_3_to_21')).toBe(true);  // the cap
     expect(isLegalGameScore(22, 20, 'one_game_21')).toBe(true);
     expect(isLegalGameScore(11, 10, 'one_game_11')).toBe(false);     // win by two
-    expect(isLegalGameScore(15, 14, 'one_game_11')).toBe(true);      // 11-pt cap
+    expect(isLegalGameScore(20, 19, 'one_game_11')).toBe(true);      // 11-pt cap
   });
 
   it('applies the clinch rule to tournament best-of-3', () => {
     expect(isLegalGameCount(2, 1, 'best_of_3_to_21')).toBe(true);
     expect(isLegalGameCount(3, 0, 'best_of_3_to_21')).toBe(false);
     expect(isLegalGameCount(1, 0, 'one_game_21')).toBe(true);
+  });
+});
+
+describe('custom formats (best of X to Y)', () => {
+  it('derives an Elo weight that reproduces the presets', () => {
+    expect(derivedFormatWeight(3, 21)).toBeCloseTo(1.25, 2); // bo3_21
+    expect(derivedFormatWeight(1, 21)).toBeCloseTo(1.0, 2);  // single_21
+  });
+
+  it('clamps so a trivial or oversized format cannot be farmed', () => {
+    expect(derivedFormatWeight(1, 5)).toBeGreaterThanOrEqual(0.25);
+    expect(derivedFormatWeight(7, 30)).toBeLessThanOrEqual(1.5);
+  });
+
+  it('validates scores against the custom target, not the preset', () => {
+    // best of 5 to 15: cap is 24, so 24-23 decides it and 15-14 does not
+    expect(isLegalGameScore(24, 23, 'bo3_21', 5, 15)).toBe(true);
+    expect(isLegalGameScore(15, 14, 'bo3_21', 5, 15)).toBe(false);
+    expect(isLegalGameScore(15, 13, 'bo3_21', 5, 15)).toBe(true);
+  });
+
+  it('applies the clinch rule to the custom best-of', () => {
+    expect(isLegalGameCount(3, 1, 'bo3_21', 5)).toBe(true);  // best of 5
+    expect(isLegalGameCount(2, 1, 'bo3_21', 5)).toBe(false); // nobody clinched
+    expect(isLegalGameCount(4, 1, 'bo3_21', 5)).toBe(false); // played past it
   });
 });
