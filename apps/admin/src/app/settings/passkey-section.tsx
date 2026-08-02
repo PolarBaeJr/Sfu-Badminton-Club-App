@@ -6,6 +6,7 @@ import { startRegistration } from '@simplewebauthn/browser';
 import { Button, Input, useConfirm } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { removePasskey } from './actions';
+import { friendlyPasskeyError } from '@/lib/passkey/errors';
 
 interface Passkey {
   id: string;
@@ -62,7 +63,7 @@ export function PasskeySection({ passkeys }: { passkeys: Passkey[] }) {
       setNickname('');
       router.refresh();
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Passkey enrollment failed', 'error');
+      toast(friendlyPasskeyError(err, 'Passkey enrollment failed'), 'error');
     }
     setAdding(false);
   }
@@ -75,7 +76,7 @@ export function PasskeySection({ passkeys }: { passkeys: Passkey[] }) {
       toast('Passkey removed', 'success');
       router.refresh();
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Failed to remove passkey', 'error');
+      toast(friendlyPasskeyError(err, 'Failed to remove passkey'), 'error');
     }
     setRemovingId(null);
   }

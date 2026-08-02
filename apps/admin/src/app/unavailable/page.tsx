@@ -6,6 +6,7 @@ import { startAuthentication } from '@simplewebauthn/browser';
 import { createClient } from '@/lib/supabase-browser';
 import { Button } from '@badminton/ui';
 import { KeyRound, LogOut } from 'lucide-react';
+import { friendlyPasskeyError } from '@/lib/passkey/errors';
 
 // Only allow same-app relative paths (no protocol-relative '//', no
 // backslash tricks) so ?next= can't be used as an open redirect.
@@ -53,7 +54,7 @@ function UnavailableContent() {
 
       router.replace(sanitizeNext(searchParams.get('next')));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Passkey login failed');
+      setError(friendlyPasskeyError(err, 'Passkey login failed'));
     } finally {
       setLoading(false);
     }
