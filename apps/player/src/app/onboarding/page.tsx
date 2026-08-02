@@ -5,7 +5,7 @@ import { completeOnboarding, getLegalDocuments } from '@/lib/actions';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/toast-provider';
 import { LegalMarkdown } from '@badminton/ui';
-import { LEGAL_DOCUMENT_LABELS, sortLegalDocuments } from '@badminton/shared';
+import { LEGAL_DOCUMENT_LABELS, sortLegalDocuments, CHECKIN_TOKEN_REGEX } from '@badminton/shared';
 import { User, Phone, Sparkles, Trophy, ChevronRight, ChevronLeft, Loader2, Rocket } from 'lucide-react';
 
 const steps = [
@@ -13,6 +13,16 @@ const steps = [
   { number: 2, title: 'Waiver' },
   { number: 3, title: 'Confirm' },
 ];
+
+// Someone can arrive here by scanning a session QR before finishing setup — the
+// middleware forwards the token as ?checkin=<token> rather than dropping it.
+// Finish onboarding, then do the check-in they were actually trying to do.
+// Single-purpose like /login's equivalent: only a well-formed token is honoured,
+// so this can never become an open redirect.
+function destinationAfterOnboarding(): string {
+  const token = new URLSearchParams(window.location.search).get('checkin') ?? '';
+  return CHECKIN_TOKEN_REGEX.test(token) ? `/checkin/${token}` : '/feed';
+}
 
 // Defined at module scope (NOT inside OnboardingPage): a component declared
 // inside the page body gets a new identity on every render, so React would
@@ -150,7 +160,7 @@ export default function OnboardingPage() {
         setLoading(false);
         return;
       }
-      router.push('/feed');
+      router.push(destinationAfterOnboarding());
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }

@@ -1,5 +1,9 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+// Deep import, not the '@badminton/shared' barrel: the barrel re-exports the
+// whole package and pulling it into the middleware bundle — which runs on every
+// request — grew it from 208 kB to 371 kB. constants.ts has no dependencies.
+import { CHECKIN_TOKEN_REGEX } from '@badminton/shared/src/utils/constants';
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -40,9 +44,20 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/api/calendar') ||
     pathname === '/leaderboard';
 
+  // A scanned session QR points at /checkin/<token>, which is not public — so
+  // this redirect is what a signed-out scanner actually hits, before the page
+  // itself ever runs. Rewriting the path without the token dropped it, leaving
+  // the scanner on /feed after sign-in and making the ?checkin= chain that
+  // /login, /auth/callback and /auth/post-login all implement unreachable.
+  // Only a well-formed token travels, so nothing arbitrary can ride along.
+  const checkinToken = pathname.match(/^\/checkin\/([^/]+)$/)?.[1];
+  const checkinSuffix =
+    checkinToken && CHECKIN_TOKEN_REGEX.test(checkinToken) ? `?checkin=${checkinToken}` : '';
+
   if (!user && !isPublic) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
+    url.search = checkinSuffix;
     return NextResponse.redirect(url);
   }
 
@@ -70,7 +85,9 @@ export async function middleware(request: NextRequest) {
     } else if (!self?.onboarding_completed) {
       const url = request.nextUrl.clone();
       url.pathname = '/onboarding';
-      url.search = '';
+      // Same reasoning as the sign-in redirect above: a member who scans the QR
+      // before finishing setup should still end up checked in, not stranded.
+      url.search = checkinSuffix;
       return NextResponse.redirect(url);
     }
   }
