@@ -51,6 +51,7 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
   const [loading, setLoading] = useState(false);
   const [players, setPlayers] = useState<PlayerOption[]>([]);
   const [myElo, setMyElo] = useState({ singles: 400, doubles: 400 });
+  const [myName, setMyName] = useState('');
   const router = useRouter();
   const { toast } = useToast();
 
@@ -62,13 +63,14 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
 
       const { data: me } = await supabase
         .from('players')
-        .select('id, ratings(singles_elo, doubles_elo)')
+        .select('id, full_name, ratings(singles_elo, doubles_elo)')
         .eq('user_id', user.id)
         .single();
 
       if (me) {
         const r = Array.isArray(me.ratings) ? me.ratings[0] : me.ratings;
         setMyElo({ singles: r?.singles_elo ?? 400, doubles: r?.doubles_elo ?? 400 });
+        setMyName(me.full_name ?? '');
       }
 
       const { data } = await supabase
@@ -158,6 +160,16 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
     label: `${p.full_name} (${type === 'singles' ? p.singles_elo : p.doubles_elo})`,
   }));
 
+  // Nobody can fill two slots on the court. Each select drops whoever is
+  // already chosen elsewhere, while keeping its own current value so the field
+  // still shows what it is set to. This has to be symmetric now that the fields
+  // are grouped by side: the old one-directional filters only worked because
+  // Opponent was always picked first.
+  const availableFor = (current: string) =>
+    playerOptions.filter(
+      (p) => p.value === current || ![opponentId, partnerId, opponentPartnerId].includes(p.value),
+    );
+
   return (
     <div className="max-w-lg mx-auto space-y-5 pb-28 px-4 sm:px-0">
       {/* Back link */}
@@ -217,28 +229,54 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
               </div>
             </div>
 
-            <Select
-              label="Opponent"
-              value={opponentId}
-              onChange={(e) => setOpponentId(e.target.value)}
-              options={[{ value: '', label: 'Select opponent...' }, ...playerOptions]}
-            />
-
-            {type === 'doubles' && (
+            {/* Grouped by side. Listing Opponent between "Your Partner" and
+                "Opponent's Partner" interleaved the two halves, so the form read
+                as three unrelated people instead of two pairs. Your side first,
+                since that is the half the player already knows. */}
+            {type === 'doubles' ? (
               <>
-                <Select
-                  label="Your Partner"
-                  value={partnerId}
-                  onChange={(e) => setPartnerId(e.target.value)}
-                  options={[{ value: '', label: 'Select partner...' }, ...playerOptions.filter((p) => p.value !== opponentId)]}
-                />
-                <Select
-                  label="Opponent's Partner"
-                  value={opponentPartnerId}
-                  onChange={(e) => setOpponentPartnerId(e.target.value)}
-                  options={[{ value: '', label: 'Select...' }, ...playerOptions.filter((p) => p.value !== opponentId && p.value !== partnerId)]}
-                />
+                <div className="space-y-3">
+                  <label className="eyebrow block">Your Side</label>
+                  {/* Static, not a disabled <Select> — you are never a choice,
+                      and a greyed-out dropdown reads as "not available yet". */}
+                  <div>
+                    <label className="eyebrow block mb-2">You</label>
+                    <div className="flex items-center justify-between rounded-xl border border-[var(--border)] bg-white/[0.03] px-3 min-h-[44px] text-sm text-[var(--text-secondary)]">
+                      <span>{myName || 'You'}</span>
+                      <span className="mono text-xs text-[var(--text-muted)]">{myElo.doubles}</span>
+                    </div>
+                  </div>
+                  <Select
+                    label="Partner"
+                    value={partnerId}
+                    onChange={(e) => setPartnerId(e.target.value)}
+                    options={[{ value: '', label: 'Select partner...' }, ...availableFor(partnerId)]}
+                  />
+                </div>
+
+                <div className="space-y-3">
+                  <label className="eyebrow block">Opponents</label>
+                  <Select
+                    label="Opponent"
+                    value={opponentId}
+                    onChange={(e) => setOpponentId(e.target.value)}
+                    options={[{ value: '', label: 'Select opponent...' }, ...availableFor(opponentId)]}
+                  />
+                  <Select
+                    label="Their Partner"
+                    value={opponentPartnerId}
+                    onChange={(e) => setOpponentPartnerId(e.target.value)}
+                    options={[{ value: '', label: 'Select...' }, ...availableFor(opponentPartnerId)]}
+                  />
+                </div>
               </>
+            ) : (
+              <Select
+                label="Opponent"
+                value={opponentId}
+                onChange={(e) => setOpponentId(e.target.value)}
+                options={[{ value: '', label: 'Select opponent...' }, ...availableFor(opponentId)]}
+              />
             )}
 
             {/* The four presets were just (games, points) pairs — "Best of 3 to

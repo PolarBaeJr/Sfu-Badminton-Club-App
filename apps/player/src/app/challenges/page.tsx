@@ -21,8 +21,13 @@ export default async function ChallengesPage() {
     .from('challenge_participants')
     .select('id, confirmation_status, challenge:challenges(id, created_by, type, format, rated_flag, status, created_at, creator:players!challenges_created_by_fkey(id, full_name, avatar_url), challenge_participants(id, player_id, role, team_side, player:players(id, full_name)))')
     .eq('player_id', player.id)
-    .order('created_at', { ascending: false, referencedTable: 'challenges' })
-    .limit(20);
+    // No server-side order: challenge_participants has no timestamp of its own,
+    // and the previous `referencedTable: 'challenges'` order sorted *within* the
+    // embedded resource — which is to-one, so it did nothing. Rows therefore came
+    // back arbitrarily, and a LIMIT over an unordered set silently dropped
+    // whichever challenges the planner happened not to return. Order below, on
+    // the embedded created_at, once the rows are in hand.
+    .limit(200);
 
   type CP = NonNullable<typeof myChallenges>[number];
   type Challenge = {
@@ -42,7 +47,12 @@ export default async function ChallengesPage() {
     if (!c) return null;
     return Array.isArray(c) ? (c[0] ?? null) : (c as Challenge);
   }
-  const all = (myChallenges ?? []).map((cp) => ({ cp, c: pickChallenge(cp) })).filter((x): x is { cp: CP; c: Challenge } => Boolean(x.c));
+  // Newest first, once — every section below derives from this, so they all
+  // inherit a sensible order instead of the arbitrary one the query returned.
+  const all = (myChallenges ?? [])
+    .map((cp) => ({ cp, c: pickChallenge(cp) }))
+    .filter((x): x is { cp: CP; c: Challenge } => Boolean(x.c))
+    .sort((a, b) => new Date(b.c.created_at).getTime() - new Date(a.c.created_at).getTime());
 
   const incoming = all.filter(({ cp, c }) => c.created_by !== player.id && cp.confirmation_status === 'pending');
   const active   = all.filter(({ c }) => ['accepted', 'partially_confirmed'].includes(c.status));
@@ -158,8 +168,17 @@ export default async function ChallengesPage() {
             <Section title="Archived" count={completed.length + archived.length}>
               {/* Completed and rejected/cancelled both live here; each card keeps
                   its own status badge (Completed / Rejected / Cancelled) so they
-                  stay distinguishable within the single archived group. */}
-              {[...completed, ...archived].map(({ cp, c }) => <ChallengeCard key={cp.id} c={c} />)}
+                  stay distinguishable within the single archived group.
+
+                  Sorted singles-then-doubles, newest first within each. Simply
+                  concatenating the two lists grouped by status instead, which is
+                  already on every card, and left the dates unordered. */}
+              {[...completed, ...archived]
+                .sort((a, b) =>
+                  a.c.type !== b.c.type
+                    ? a.c.type === 'singles' ? -1 : 1
+                    : new Date(b.c.created_at).getTime() - new Date(a.c.created_at).getTime())
+                .map(({ cp, c }) => <ChallengeCard key={cp.id} c={c} />)}
             </Section>
           )}
         </div>
