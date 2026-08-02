@@ -15,9 +15,10 @@
 -- reminder_sent_at makes every run after the first a no-op — so the first run
 -- on or after midnight local does the work and the other 23 cost a round-trip.
 --
--- Requires cron.settings.reminder_secret and .admin_url to be set (see the
--- ALTER DATABASE at the bottom) — they are NOT hardcoded here so the secret
--- never lands in the repo.
+-- The URL and shared secret live in a locked-down table rather than custom
+-- GUCs: Supabase's `postgres` role is not a superuser, so
+-- `ALTER DATABASE ... SET cron.settings.*` is refused. A table also means the
+-- values can be changed with a plain UPDATE, and never appear in this repo.
 -- ============================================================
 
 -- Dedupe: without this a retry, or the next hourly run, re-notifies everyone.
@@ -35,26 +36,41 @@ CREATE EXTENSION IF NOT EXISTS pg_net;
 SELECT cron.unschedule('session-reminders')
   WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'session-reminders');
 
+-- Config for the job. Readable only by its owner (and service_role) — the
+-- secret must never be reachable from `authenticated`.
+CREATE TABLE IF NOT EXISTS cron_config (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+ALTER TABLE cron_config ENABLE ROW LEVEL SECURITY;  -- no policies = no access
+REVOKE ALL ON cron_config FROM PUBLIC, anon, authenticated;
+
+INSERT INTO cron_config (key, value)
+VALUES ('admin_url', 'https://admin.sfubadminton.com')
+ON CONFLICT (key) DO NOTHING;
+
 SELECT cron.schedule(
   'session-reminders',
   '7 * * * *',   -- once an hour, off the hour to avoid the busy minute
   $$
   SELECT net.http_post(
-    url     := current_setting('cron.settings.admin_url', true) || '/api/cron/session-reminders',
+    url     := (SELECT value FROM cron_config WHERE key = 'admin_url') || '/api/cron/session-reminders',
     headers := jsonb_build_object(
                  'Content-Type', 'application/json',
-                 'Authorization', 'Bearer ' || current_setting('cron.settings.reminder_secret', true)
+                 'Authorization', 'Bearer ' || (SELECT value FROM cron_config WHERE key = 'reminder_secret')
                ),
     body    := '{}'::jsonb
-  );
+  )
+  WHERE EXISTS (SELECT 1 FROM cron_config WHERE key = 'reminder_secret');
   $$
 );
 
--- Set these once, out of band (they hold a secret, so they are not in the repo):
+-- Set the secret once, out of band (same value as CRON_SECRET in the admin env):
 --
---   ALTER DATABASE postgres SET cron.settings.admin_url        = 'https://admin.sfubadminton.com';
---   ALTER DATABASE postgres SET cron.settings.reminder_secret  = '<same value as CRON_SECRET in the admin env>';
+--   INSERT INTO cron_config (key, value) VALUES ('reminder_secret', '<secret>')
+--     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 --
--- and the admin container needs CRON_SECRET set to that same value. Until both
--- exist the route answers 503 (not configured) or 401, and no reminder is sent
--- — it fails closed rather than sending unauthenticated.
+-- Until it exists the scheduled statement's WHERE EXISTS makes the job a no-op,
+-- so nothing is ever POSTed without a credential. If the two values disagree the
+-- route answers 401. Either way it fails closed rather than firing
+-- unauthenticated.
