@@ -4,6 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import { PASSKEY_VERIFIED_COOKIE } from './passkey/config';
 import { verifyPayload } from './passkey/cookie';
+import { AUTH_COOKIE_NAME } from '@badminton/shared';
 
 // NOTE: generated `Database` type is available from '@badminton/shared' but not
 // applied here — see comments in apps/player/src/lib/supabase-server.ts.
@@ -15,6 +16,7 @@ async function createServerSupabaseClient() {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      cookieOptions: { name: AUTH_COOKIE_NAME },
       cookies: {
         getAll() {
           return cookieStore.getAll();

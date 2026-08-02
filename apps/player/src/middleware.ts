@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 // Deep import, not the '@badminton/shared' barrel: the barrel re-exports the
 // whole package and pulling it into the middleware bundle — which runs on every
 // request — grew it from 208 kB to 371 kB. constants.ts has no dependencies.
-import { CHECKIN_TOKEN_REGEX } from '@badminton/shared/src/utils/constants';
+import { CHECKIN_TOKEN_REGEX, AUTH_COOKIE_NAME } from '@badminton/shared/src/utils/constants';
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -12,6 +12,7 @@ export async function middleware(request: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      cookieOptions: { name: AUTH_COOKIE_NAME },
       cookies: {
         getAll() {
           return request.cookies.getAll();

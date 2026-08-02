@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
+import { AUTH_COOKIE_NAME } from '@badminton/shared';
 
 // NOTE: generated `Database` type is available from '@badminton/shared' but not
 // applied to the clients here — typed clients flip many `select('*, foo(*)')`
@@ -22,6 +23,7 @@ export async function createServerSupabaseClient() {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      cookieOptions: { name: AUTH_COOKIE_NAME },
       cookies: {
         getAll() {
           return cookieStore.getAll();
