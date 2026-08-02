@@ -5,7 +5,7 @@
 import * as Sentry from '@sentry/nextjs';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { PostHog } from 'posthog-node';
-import { getMissingLegalDocuments, isPushCategoryEnabled, type NotificationCategory } from '@badminton/shared';
+import { getMissingLegalDocuments, isPushCategoryEnabled, ExpectedError, isExpectedError, type NotificationCategory } from '@badminton/shared';
 import { sendPushToPlayers, type PushPayload } from '@badminton/shared/src/push/send';
 import { getCurrentPlayer, createServiceRoleClient } from '../supabase-server';
 
@@ -28,7 +28,9 @@ export async function runAction<T>(fn: () => Promise<T>): Promise<ActionResult<T
     // Returning the error as a value (so it survives Next.js's prod redaction)
     // means it never reaches Sentry's automatic server-action capture — report
     // it here so the error is still logged, then return the user-facing message.
-    Sentry.captureException(err);
+    // ExpectedErrors are ordinary user-facing rejections (failed validation, an
+    // unapproved account); they still reach the caller, they just aren't faults.
+    if (!isExpectedError(err)) Sentry.captureException(err);
     return { ok: false, error: err instanceof Error ? err.message : 'Something went wrong' };
   }
 }
@@ -62,22 +64,22 @@ export async function requirePlayer() {
     // Clear any Sentry user context left over from a previous request handler
     // sharing this Node process — avoids misattributing the next error.
     Sentry.setUser(null);
-    throw new Error('Not authenticated');
+    throw new ExpectedError('Not authenticated');
   }
   if (player.status === 'pending_approval') {
     Sentry.setUser(null);
-    throw new Error('Account pending approval');
+    throw new ExpectedError('Account pending approval');
   }
   if (player.status === 'suspended') {
     Sentry.setUser(null);
-    throw new Error('Account suspended');
+    throw new ExpectedError('Account suspended');
   }
   // is_banned is an independent column, not folded into status — without this
   // a banned player could still create/accept challenges, check into sessions
   // and submit rated results (tournament register/check-in already re-check it).
   if (player.is_banned) {
     Sentry.setUser(null);
-    throw new Error('Account suspended pending reinstatement');
+    throw new ExpectedError('Account suspended pending reinstatement');
   }
   Sentry.setUser({ id: player.id });
   return player;
@@ -104,7 +106,7 @@ export async function assertCurrentWaiver(
 
   const missing = getMissingLegalDocuments(docs, player.waiver_acceptances ?? [], new Date(), player.waiver_reset_at);
   if (missing.length > 0) {
-    throw new Error("Please accept the club's current legal documents before playing");
+    throw new ExpectedError("Please accept the club's current legal documents before playing");
   }
 }
 
