@@ -204,6 +204,29 @@ async function reportWalkoverImpl(input: WalkoverReportInput) {
   if (!['accepted', 'partially_confirmed'].includes(challenge.status)) {
     throw new Error('Challenge is not in a state that can be forfeited');
   }
+
+  // A challenge keeps status 'accepted' while a submitted result waits to be
+  // confirmed, so the status check above passes and a walkover could be filed
+  // on a match that had already been played and reported — flipping the
+  // challenge to walkover_pending and burying the pending result. Someone who
+  // disagrees with a submitted result has the dispute flow; forfeiting is for
+  // a match that did not happen.
+  //
+  // Service-role read: the answer must be authoritative. Under RLS a row the
+  // caller cannot see would look like no match at all, and the guard would fail
+  // open exactly when it matters.
+  const { data: existingMatch } = await createServiceRoleClient()
+    .from('matches')
+    .select('id, result_status')
+    .eq('challenge_id', input.challenge_id)
+    .maybeSingle();
+  if (existingMatch) {
+    throw new Error(
+      existingMatch.result_status === 'pending_confirmation'
+        ? 'A result has already been submitted for this match — confirm or dispute it instead'
+        : 'This match already has a result and cannot be forfeited'
+    );
+  }
   const cps = (challenge.challenge_participants as { player_id: string; team_side: string }[] | null) ?? [];
   const reporter = cps.find((cp) => cp.player_id === player.id);
   if (!reporter) throw new Error('Not a participant');
