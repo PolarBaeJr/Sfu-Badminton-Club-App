@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { rateLimit, getClientIp } from '../utils/rate-limit';
 import { getMarginMultiplier, calculateEloUpdate } from '../elo/engine';
 import { SWEEP_MARGIN_MULTIPLIER, isLegalGameScore, isLegalGameCount, derivedFormatWeight } from '../utils/constants';
-import { ExpectedError, isExpectedError } from '../utils/expected-error';
+import { ExpectedError, isExpectedError, dbError, isExpectedDbGuard } from '../utils/expected-error';
 import { parseOrThrow } from '../validators/parse';
 import { z } from 'zod';
 import { escapeHtml, challengeReceivedEmail, disputeOpenedEmail } from '../email/templates';
@@ -232,5 +232,65 @@ describe('ExpectedError (Sentry noise suppression)', () => {
       // the user-facing message is unchanged
       expect((err as Error).message).toContain('description');
     }
+  });
+});
+
+describe('dbError (RPC guard classification)', () => {
+  it('marks the guards a user trips by retrying or using a stale page', () => {
+    for (const message of [
+      'Match not pending confirmation',
+      'A match has already been submitted for this challenge',
+      'The submitter cannot confirm their own result',
+      'Only a participant can confirm this match',
+      'Challenge is not accepted',
+      'Walkover not found or not pending',
+    ]) {
+      const err = dbError({ message });
+      expect(isExpectedError(err)).toBe(true);
+      // The member still sees exactly what the database said.
+      expect(err.message).toBe(message);
+    }
+  });
+
+  it('keeps data-inconsistency guards reportable — they mean a real bug', () => {
+    // A match whose games contradict its recorded winner is not a user mistake;
+    // if it ever happens again it must show up in Sentry.
+    expect(isExpectedError(dbError({ message: 'winner_side does not match game scores' }))).toBe(false);
+    expect(isExpectedError(dbError({ message: 'Games won are tied; cannot derive winner' }))).toBe(false);
+    expect(isExpectedError(dbError({ message: 'No decisive games recorded for match' }))).toBe(false);
+  });
+
+  it('defaults an unrecognised failure to a fault, never a silent pass', () => {
+    expect(isExpectedError(dbError({ message: 'permission denied for table players' }))).toBe(false);
+    expect(isExpectedError(dbError({ message: 'could not connect to server' }))).toBe(false);
+    expect(isExpectedError(dbError(null))).toBe(false);
+  });
+
+  it('falls back to a generic message when the error has none', () => {
+    expect(dbError(null).message).toBe('Something went wrong');
+    expect(dbError({ message: '   ' }, 'Could not save').message).toBe('Could not save');
+  });
+
+  it('ignores surrounding whitespace when classifying', () => {
+    expect(isExpectedDbGuard('  Match not pending confirmation  ')).toBe(true);
+    expect(isExpectedDbGuard('Match not pending confirmation!')).toBe(false);
+  });
+
+  // These guards interpolate the offending value, so exact matching can't reach
+  // them — they are the most common score-entry mistakes and must not page.
+  it('matches the guards that embed runtime values', () => {
+    expect(isExpectedDbGuard('Not a possible score for this format: 25-3')).toBe(true);
+    expect(isExpectedDbGuard('This match cannot be disputed (status: confirmed)')).toBe(true);
+    expect(
+      isExpectedDbGuard('A best-of-3 needs 2 game(s) to win and stops there — 1 to 0 is not a possible result')
+    ).toBe(true);
+    expect(
+      isExpectedDbGuard('A single game needs 1 game(s) to win and stops there — 0 to 0 is not a possible result')
+    ).toBe(true);
+  });
+
+  it('does not let a prefix rule swallow an unrelated failure', () => {
+    expect(isExpectedDbGuard('This match cannot be disputed because the server exploded')).toBe(false);
+    expect(isExpectedDbGuard('needs a game to win')).toBe(false);
   });
 });

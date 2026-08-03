@@ -11,6 +11,8 @@ import {
   disputeSchema,
   walkoverReportSchema,
   parseOrThrow,
+  ExpectedError,
+  dbError,
   type MatchResultInput,
   type WalkoverReportInput,
 } from '@badminton/shared';
@@ -21,8 +23,10 @@ export async function submitMatchResult(challengeId: string, input: MatchResultI
 }
 
 async function submitMatchResultImpl(challengeId: string, input: MatchResultInput) {
-  const parsed = matchResultSchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? 'Invalid match result');
+  // parseOrThrow, not a hand-rolled safeParse: the hand-rolled version rethrew
+  // the Zod message as a plain Error, so ordinary score-entry mistakes ("winner
+  // side does not match game scores") were filed in Sentry as faults.
+  parseOrThrow(matchResultSchema, input);
 
   const player = await requirePlayer();
   const supabase = await createServerSupabaseClient();
@@ -41,13 +45,15 @@ async function submitMatchResultImpl(challengeId: string, input: MatchResultInpu
   // PGRST116 is genuinely "no rows"; anything else (a permission error, say) is
   // a real fault and must not be flattened into a misleading "not found".
   if (challengeError && challengeError.code !== 'PGRST116') throw new Error(challengeError.message);
-  if (!challenge) throw new Error('Challenge not found');
-  if (challenge.status !== 'accepted') throw new Error('Challenge not accepted');
+  // A challenge that has moved on, or that this player isn't on, is a stale page
+  // — not a fault. (A genuine permission error still throws above.)
+  if (!challenge) throw new ExpectedError('Challenge not found');
+  if (challenge.status !== 'accepted') throw new ExpectedError('Challenge not accepted');
 
   const isParticipant = (challenge.challenge_participants as { player_id: string }[] | null)?.some(
     (cp) => cp.player_id === player.id
   );
-  if (!isParticipant) throw new Error('Not a participant');
+  if (!isParticipant) throw new ExpectedError('Not a participant');
 
   // One RPC replaces what used to be three separate writes (match ->
   // participants -> games). Those were non-atomic: a crash between the match
@@ -62,7 +68,7 @@ async function submitMatchResultImpl(challengeId: string, input: MatchResultInpu
     p_games: input.games.map((g) => ({ side_a_score: g.side_a_score, side_b_score: g.side_b_score })),
     p_completed: input.completed,
   });
-  if (submitError) throw new Error(submitError.message);
+  if (submitError) throw dbError(submitError);
   const matchId = newMatchId as string;
 
   // Notify other participants — batch insert + parallel email lookup.
@@ -127,19 +133,19 @@ async function confirmMatchResultImpl(matchId: string) {
     .from('match_participants')
     .select('player_id')
     .eq('match_id', matchId);
-  if (!mp?.some((row) => row.player_id === player.id)) throw new Error('Not a participant');
+  if (!mp?.some((row) => row.player_id === player.id)) throw new ExpectedError('Not a participant');
 
   const { error } = await supabase.rpc('apply_match_result', {
     p_match_id: matchId,
     p_confirmed_by: player.id,
   });
 
-  if (error) {
-    Sentry.captureException(new Error(`Match confirmation failed: ${error.message}`), {
-      extra: { matchId, playerId: player.id },
-    });
-    throw new Error(error.message);
-  }
+  // No captureException here: runAction already reports whatever this throws,
+  // so capturing as well filed every confirm failure in Sentry twice — once as
+  // "Match confirmation failed: X" and once as bare "X". dbError decides which
+  // ones are faults at all; confirming a match that someone already confirmed
+  // or disputed is a stale button, not a defect.
+  if (error) throw dbError(error);
 
   trackServerEvent(player.id, 'match_result_confirmed', { ...getPlayerProps(player), match_id: matchId });
   revalidatePath('/challenges');
@@ -167,7 +173,7 @@ async function disputeMatchResultImpl(matchId: string, reason: string, category:
     p_reason_category: category,
     p_description: reason,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw dbError(error);
 
   const [adminsRes, matchRes] = await Promise.all([
     createServiceRoleClient() /* 00032: email is not readable by `authenticated` */.from('players').select('email').eq('role', 'admin'),
@@ -200,9 +206,9 @@ async function reportWalkoverImpl(input: WalkoverReportInput) {
     .eq('id', input.challenge_id)
     .single();
   if (challengeError && challengeError.code !== 'PGRST116') throw new Error(challengeError.message);
-  if (!challenge) throw new Error('Challenge not found');
+  if (!challenge) throw new ExpectedError('Challenge not found');
   if (!['accepted', 'partially_confirmed'].includes(challenge.status)) {
-    throw new Error('Challenge is not in a state that can be forfeited');
+    throw new ExpectedError('Challenge is not in a state that can be forfeited');
   }
 
   // A challenge keeps status 'accepted' while a submitted result waits to be
@@ -221,7 +227,7 @@ async function reportWalkoverImpl(input: WalkoverReportInput) {
     .eq('challenge_id', input.challenge_id)
     .maybeSingle();
   if (existingMatch) {
-    throw new Error(
+    throw new ExpectedError(
       existingMatch.result_status === 'pending_confirmation'
         ? 'A result has already been submitted for this match — confirm or dispute it instead'
         : 'This match already has a result and cannot be forfeited'
@@ -229,19 +235,19 @@ async function reportWalkoverImpl(input: WalkoverReportInput) {
   }
   const cps = (challenge.challenge_participants as { player_id: string; team_side: string }[] | null) ?? [];
   const reporter = cps.find((cp) => cp.player_id === player.id);
-  if (!reporter) throw new Error('Not a participant');
+  if (!reporter) throw new ExpectedError('Not a participant');
   const forfeit = cps.find((cp) => cp.player_id === input.forfeit_player_id);
-  if (!forfeit) throw new Error('Forfeit player is not in this challenge');
+  if (!forfeit) throw new ExpectedError('Forfeit player is not in this challenge');
 
   // For withdrawal the reporter forfeits (their team); for no_show the reporter
   // accuses the opposing team. Either way the forfeit player must be on the
   // opposite team from whomever is staying in the match.
   const reporterIsForfeiting = input.walkover_type === 'withdrawal';
   if (reporterIsForfeiting && forfeit.team_side !== reporter.team_side) {
-    throw new Error('Withdrawal must name a teammate (or yourself)');
+    throw new ExpectedError('Withdrawal must name a teammate (or yourself)');
   }
   if (!reporterIsForfeiting && forfeit.team_side === reporter.team_side) {
-    throw new Error('No-show must name a player on the opposing team');
+    throw new ExpectedError('No-show must name a player on the opposing team');
   }
 
   const { error } = await supabase.from('walkovers').insert({
@@ -251,7 +257,7 @@ async function reportWalkoverImpl(input: WalkoverReportInput) {
     walkover_type: input.walkover_type,
     notice_hours: input.notice_hours,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw dbError(error);
 
   // Service-role for the same RLS reason as acceptChallenge.
   const adminClient = createServiceRoleClient();

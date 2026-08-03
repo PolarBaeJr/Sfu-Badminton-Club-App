@@ -88,11 +88,18 @@ export function ChallengeDetailActions({
         if (!res.ok) { toast(res.error, 'error'); setLoading(''); return; }
         toast('Challenge cancelled', 'info');
       }
+      // Deliberately no setLoading('') on the success path. router.refresh() is
+      // async: clearing it here re-enabled the button while the page still
+      // showed the old state, so a second click landed on a match that had
+      // already been confirmed or disputed and failed with "Match not pending
+      // confirmation". Every one of these actions changes the challenge state,
+      // so the refresh re-renders this component and the button goes away on
+      // its own.
       router.refresh();
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
+      setLoading('');
     }
-    setLoading('');
   }
 
   async function handleSubmitResult() {
@@ -113,11 +120,13 @@ export function ChallengeDetailActions({
       if (!res.ok) { toast(res.error, 'error'); setLoading(''); return; }
       toast('Result submitted! Waiting for confirmation.', 'success');
       setShowSubmit(false);
+      // Stays disabled until the refresh lands — see handleAction. A second
+      // submit would hit "A match has already been submitted for this challenge".
       router.refresh();
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
+      setLoading('');
     }
-    setLoading('');
   }
 
   async function handleDispute() {
@@ -132,8 +141,8 @@ export function ChallengeDetailActions({
       router.refresh();
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
+      setLoading('');
     }
-    setLoading('');
   }
 
   async function handleWalkover(type: 'no_show' | 'withdrawal') {
@@ -165,8 +174,8 @@ export function ChallengeDetailActions({
       router.refresh();
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
+      setLoading('');
     }
-    setLoading('');
   }
 
   return (
