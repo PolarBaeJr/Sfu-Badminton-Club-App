@@ -45,9 +45,12 @@ async function submitMatchResultImpl(challengeId: string, input: MatchResultInpu
   // PGRST116 is genuinely "no rows"; anything else (a permission error, say) is
   // a real fault and must not be flattened into a misleading "not found".
   if (challengeError && challengeError.code !== 'PGRST116') throw new Error(challengeError.message);
-  // A challenge that has moved on, or that this player isn't on, is a stale page
-  // — not a fault. (A genuine permission error still throws above.)
-  if (!challenge) throw new ExpectedError('Challenge not found');
+  // Plain Error, not ExpectedError: under RLS an invisible row looks exactly
+  // like a deleted one, so keeping this reportable is what surfaces a
+  // row-visibility regression (see expected-error.ts).
+  if (!challenge) throw new Error('Challenge not found');
+  // A challenge that has moved on, or that this player isn't on, is a stale
+  // page, not a fault.
   if (challenge.status !== 'accepted') throw new ExpectedError('Challenge not accepted');
 
   const isParticipant = (challenge.challenge_participants as { player_id: string }[] | null)?.some(
@@ -206,7 +209,7 @@ async function reportWalkoverImpl(input: WalkoverReportInput) {
     .eq('id', input.challenge_id)
     .single();
   if (challengeError && challengeError.code !== 'PGRST116') throw new Error(challengeError.message);
-  if (!challenge) throw new ExpectedError('Challenge not found');
+  if (!challenge) throw new Error('Challenge not found');
   if (!['accepted', 'partially_confirmed'].includes(challenge.status)) {
     throw new ExpectedError('Challenge is not in a state that can be forfeited');
   }

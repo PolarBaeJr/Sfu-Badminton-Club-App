@@ -36,6 +36,15 @@ export function isExpectedError(err: unknown): boolean {
 // derive winner' can only happen if a match's games and its recorded winner
 // disagree, which is a bug worth a Sentry report every time. Keeping the list
 // explicit means a new guard defaults to being reported.
+//
+// 'Challenge not found' / 'Match not found' are deliberately absent even though
+// they look like the stalest of stale-page errors. Under RLS a row the caller
+// cannot SEE is not an error at all — PostgREST returns zero rows and the code
+// above reports "not found" — so an RLS row-visibility regression is
+// indistinguishable from a genuinely deleted challenge. That is the shape of the
+// 00032 fallout ("submitting a result failed with Challenge not found"), and it
+// has to stay loud. A missing column grant still surfaces as 42501 and reports
+// either way; it is the row-level case that would go dark.
 // Every string here was taken from the RAISE EXCEPTION statements in the live
 // functions (submit_match_result, apply_match_result, dispute_match_result,
 // apply_walkover_result), so a typo here shows up as noise rather than as a
@@ -45,11 +54,9 @@ const EXPECTED_DB_GUARDS: readonly string[] = [
   // clicked twice.
   'A match has already been submitted for this challenge',
   'Match not pending confirmation',
-  'Match not found',
   'A dispute is already open for this match',
   'Walkover not found or not pending',
   // The action no longer applies to this challenge's state.
-  'Challenge not found',
   'Challenge is not accepted',
   // Score entry the format does not allow.
   'At least one game is required',

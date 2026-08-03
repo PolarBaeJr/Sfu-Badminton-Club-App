@@ -157,7 +157,10 @@ async function acceptChallengeImpl(challengeId: string) {
   // must surface as itself rather than be flattened into a misleading
   // "not found" on a challenge that exists.
   if (challengeError && challengeError.code !== 'PGRST116') throw new Error(challengeError.message);
-  if (!challenge) throw new ExpectedError('Challenge not found');
+  // Plain Error, not ExpectedError: under RLS an invisible row looks exactly
+  // like a deleted one, so keeping this reportable is what surfaces a
+  // row-visibility regression (see expected-error.ts).
+  if (!challenge) throw new Error('Challenge not found');
   if (challenge.created_by === player.id) throw new ExpectedError('Cannot accept your own challenge');
 
   const cps = (challenge.challenge_participants as { player_id: string; confirmation_status: string }[] | null) ?? [];
@@ -229,7 +232,7 @@ async function rejectChallengeImpl(challengeId: string) {
   // must surface as itself rather than be flattened into a misleading
   // "not found" on a challenge that exists.
   if (challengeError && challengeError.code !== 'PGRST116') throw new Error(challengeError.message);
-  if (!challenge) throw new ExpectedError('Challenge not found');
+  if (!challenge) throw new Error('Challenge not found');
   if (challenge.created_by === player.id) throw new ExpectedError('Cannot reject your own challenge');
 
   const cps = (challenge.challenge_participants as { player_id: string; confirmation_status: string }[] | null) ?? [];
@@ -288,7 +291,7 @@ async function cancelChallengeImpl(challengeId: string) {
   // must surface as itself rather than be flattened into a misleading
   // "not found" on a challenge that exists.
   if (challengeError && challengeError.code !== 'PGRST116') throw new Error(challengeError.message);
-  if (!challenge) throw new ExpectedError('Challenge not found');
+  if (!challenge) throw new Error('Challenge not found');
   if (challenge.created_by !== player.id) throw new ExpectedError('Only the creator can cancel');
   if (!['proposed', 'partially_confirmed'].includes(challenge.status)) {
     throw new ExpectedError('Challenge cannot be cancelled in its current state');

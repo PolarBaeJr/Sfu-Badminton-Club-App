@@ -260,6 +260,14 @@ describe('dbError (RPC guard classification)', () => {
     expect(isExpectedError(dbError({ message: 'No decisive games recorded for match' }))).toBe(false);
   });
 
+  // Under RLS a row the caller cannot see comes back as "not found", so
+  // filtering this would hide a row-visibility regression — the exact shape of
+  // the 00032 fallout.
+  it('keeps "not found" reportable, so an RLS regression cannot go dark', () => {
+    expect(isExpectedError(dbError({ message: 'Challenge not found' }))).toBe(false);
+    expect(isExpectedError(dbError({ message: 'Match not found' }))).toBe(false);
+  });
+
   it('defaults an unrecognised failure to a fault, never a silent pass', () => {
     expect(isExpectedError(dbError({ message: 'permission denied for table players' }))).toBe(false);
     expect(isExpectedError(dbError({ message: 'could not connect to server' }))).toBe(false);
