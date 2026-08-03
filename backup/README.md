@@ -104,3 +104,73 @@ docker exec -i supabase-db pg_restore -U postgres -d postgres \
 restore replaces current data with the backup. **Test a restore into a scratch
 database at least once** before you rely on it — an untested backup is a hope,
 not a backup.
+
+---
+
+## Troubleshooting the off-site upload
+
+### Symptom: local dumps fine, nothing reaching Drive
+
+The nightly dump and the upload fail independently, and until Aug 2026 only the
+dump was visible from the outside — so a broken upload looked like a healthy
+backup. Check the upload state file first, it is the fastest signal:
+
+```sh
+cat ~/ssd/db-backups/.last-upload        # timestamp of the last VERIFIED upload
+grep -c 'BACKUP UPLOAD FAILED' ~/ssd/db-backups/backup.log
+rclone lsf gcrypt: | sort | tail -5      # is today's dump actually there?
+```
+
+`backup-db.sh` writes `.last-upload` only after confirming the uploaded object
+exists at the expected size, prints a greppable `BACKUP UPLOAD FAILED` line on
+any failure, and exits non-zero — but it still writes the local dump and still
+runs local retention, so one broken leg never costs you the other.
+
+### `oauth2: "invalid_client" — The OAuth client was not found.`
+
+This is what a corrupted `rclone.conf` looks like. Seen 2026-07-29 → 2026-08-03:
+the `[gdrive]` section's `client_id` had been overwritten with the OAuth **token
+JSON** (`client_id` was byte-identical to `token`), and `client_secret` was
+absent — so rclone sent a JSON blob as its client id. 15 days of dumps never
+left the Pi.
+
+Inspect without printing secrets:
+
+```sh
+python3 -c "
+import configparser, os
+c = configparser.ConfigParser(); c.read(os.path.expanduser('~/.config/rclone/rclone.conf'))
+g = dict(c.items('gdrive'))
+print({k: f'<{len(v)} chars>' for k, v in g.items()})
+print('client_id looks like a token:', g.get('client_id','').lstrip().startswith('{'))
+"
+```
+
+Fix: back up the config, delete the bogus `client_id` line from `[gdrive]`, and
+rclone falls back to its built-in OAuth client. The existing `refresh_token`
+keeps working, so **no re-authorisation is needed** — verify with
+`rclone lsd gdrive:`.
+
+### 403 `Quota exceeded ... 'Queries per minute'`
+
+rclone's built-in OAuth client is shared by every rclone user, so Google
+rate-limits it globally — expect roughly one failure in three on any given
+call. It clears in seconds, which is why the upload retries (`--retries 8
+--retries-sleep 15s`).
+
+To remove it entirely, create your own Drive OAuth client (free) and set both
+values — this is the only part that needs a browser:
+
+1. Google Cloud Console → new project → enable the **Google Drive API**.
+2. OAuth consent screen → External → add your own account as a test user.
+3. Credentials → Create OAuth client ID → **Desktop app**.
+4. On the Pi: `rclone config update gdrive client_id <ID> client_secret <SECRET>`
+   then `rclone config reconnect gdrive:` (run `rclone authorize "drive"` on a
+   machine with a browser and paste the token back).
+
+### Archival snapshots
+
+The remote retention sweep is scoped to `badminton-*.dump`, matching the local
+one. Anything named differently — `pre-rework-*.dump`, say — is kept
+indefinitely on both sides. Park one-off point-in-time copies under a distinct
+name and neither sweep will reap them.
