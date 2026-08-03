@@ -9,7 +9,13 @@ Sentry.init({
   tracesSampleRate: 1.0 /* beta: full sampling — lower after beta */,
   replaysSessionSampleRate: 0,
   replaysOnErrorSampleRate: 0,
-  ignoreErrors: ['NEXT_NOT_FOUND'],
+  ignoreErrors: [
+    'NEXT_NOT_FOUND',
+    // Injected by link-scanning extensions and mail-client webviews (Outlook
+    // Safe Links is the one we see), not by anything in this app. It arrives as
+    // an unhandled rejection on whatever page the member opened from a link.
+    /Object Not Found Matching Id:/,
+  ],
   integrations: [
     // Names every browser-side Supabase call as a DB span so the flame graph
     // shows which query/RPC is slow (not just that a request was slow).

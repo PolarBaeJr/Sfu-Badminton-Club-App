@@ -47,9 +47,11 @@ async function resolveDisputeImpl(data: DisputeResolveInput) {
       p_confirmed_by: admin.id,
     });
     if (error) {
-      Sentry.captureException(new Error(`Match confirmation failed during dispute resolution: ${error.message}`), {
-        extra: { disputeId: data.dispute_id, matchId: dispute.match_id },
-      });
+      // Context on the scope, not a second captureException: runAction already
+      // reports whatever this throws, so capturing here filed every failure
+      // twice. The thrown message stays the raw one so the admin's toast still
+      // says what actually went wrong.
+      Sentry.getCurrentScope().setExtras({ disputeId: data.dispute_id, matchId: dispute.match_id });
       throw new Error(error.message);
     }
   } else if (data.resolution_type === 'edited') {
@@ -87,9 +89,8 @@ async function resolveDisputeImpl(data: DisputeResolveInput) {
       p_confirmed_by: admin.id,
     });
     if (applyErr) {
-      Sentry.captureException(new Error(`Match confirmation failed during edited dispute resolution: ${applyErr.message}`), {
-        extra: { disputeId: data.dispute_id, matchId: dispute.match_id },
-      });
+      // Same as the 'accepted' branch: scope context, single report by runAction.
+      Sentry.getCurrentScope().setExtras({ disputeId: data.dispute_id, matchId: dispute.match_id, edited: true });
       throw new Error(applyErr.message);
     }
   }

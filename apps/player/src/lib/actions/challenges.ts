@@ -10,6 +10,7 @@ import {
   MATCH_FORMAT_LABELS,
   challengeCreateSchema,
   parseOrThrow,
+  ExpectedError,
   type ChallengeCreateInput,
 } from '@badminton/shared';
 import { requirePlayer, getPlayerProps, trackServerEvent, notifyPlayers, assertCurrentWaiver, runAction, type ActionResult } from './_shared';
@@ -40,8 +41,11 @@ async function createChallengeImpl(input: ChallengeCreateInput) {
   if (validationError) throw new Error(validationError.message);
   if (!validation) throw new Error('Could not validate this challenge — please try again.');
   if (!validation.valid) {
+    // The club's own rules saying no (self-challenge, suspended opponent, too
+    // many open challenges, same opponent too soon). The rules working is not a
+    // fault — only validationError above is.
     const errors = (validation.errors ?? ['Challenge is not allowed']) as string[];
-    throw new Error(errors.join(', '));
+    throw new ExpectedError(errors.join(', '));
   }
 
   const eventType = input.rated_flag ? 'rated_challenge' : 'casual';
@@ -153,13 +157,16 @@ async function acceptChallengeImpl(challengeId: string) {
   // must surface as itself rather than be flattened into a misleading
   // "not found" on a challenge that exists.
   if (challengeError && challengeError.code !== 'PGRST116') throw new Error(challengeError.message);
+  // Plain Error, not ExpectedError: under RLS an invisible row looks exactly
+  // like a deleted one, so keeping this reportable is what surfaces a
+  // row-visibility regression (see expected-error.ts).
   if (!challenge) throw new Error('Challenge not found');
-  if (challenge.created_by === player.id) throw new Error('Cannot accept your own challenge');
+  if (challenge.created_by === player.id) throw new ExpectedError('Cannot accept your own challenge');
 
   const cps = (challenge.challenge_participants as { player_id: string; confirmation_status: string }[] | null) ?? [];
   const myParticipant = cps.find((cp) => cp.player_id === player.id);
-  if (!myParticipant) throw new Error('Not a participant');
-  if (myParticipant.confirmation_status !== 'pending') throw new Error('Already responded to this challenge');
+  if (!myParticipant) throw new ExpectedError('Not a participant');
+  if (myParticipant.confirmation_status !== 'pending') throw new ExpectedError('Already responded to this challenge');
 
   const { error } = await supabase
     .from('challenge_participants')
@@ -226,12 +233,12 @@ async function rejectChallengeImpl(challengeId: string) {
   // "not found" on a challenge that exists.
   if (challengeError && challengeError.code !== 'PGRST116') throw new Error(challengeError.message);
   if (!challenge) throw new Error('Challenge not found');
-  if (challenge.created_by === player.id) throw new Error('Cannot reject your own challenge');
+  if (challenge.created_by === player.id) throw new ExpectedError('Cannot reject your own challenge');
 
   const cps = (challenge.challenge_participants as { player_id: string; confirmation_status: string }[] | null) ?? [];
   const myParticipant = cps.find((cp) => cp.player_id === player.id);
-  if (!myParticipant) throw new Error('Not a participant');
-  if (myParticipant.confirmation_status !== 'pending') throw new Error('Already responded to this challenge');
+  if (!myParticipant) throw new ExpectedError('Not a participant');
+  if (myParticipant.confirmation_status !== 'pending') throw new ExpectedError('Already responded to this challenge');
 
   await supabase
     .from('challenge_participants')
@@ -285,9 +292,9 @@ async function cancelChallengeImpl(challengeId: string) {
   // "not found" on a challenge that exists.
   if (challengeError && challengeError.code !== 'PGRST116') throw new Error(challengeError.message);
   if (!challenge) throw new Error('Challenge not found');
-  if (challenge.created_by !== player.id) throw new Error('Only the creator can cancel');
+  if (challenge.created_by !== player.id) throw new ExpectedError('Only the creator can cancel');
   if (!['proposed', 'partially_confirmed'].includes(challenge.status)) {
-    throw new Error('Challenge cannot be cancelled in its current state');
+    throw new ExpectedError('Challenge cannot be cancelled in its current state');
   }
 
   await supabase.from('challenges').update({ status: 'cancelled' }).eq('id', challengeId);
