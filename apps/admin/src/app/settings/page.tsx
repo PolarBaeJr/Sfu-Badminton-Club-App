@@ -130,7 +130,9 @@ export default async function SettingsPage() {
               <div>
                 <div className="settings-row-label">App version</div>
               </div>
-              <div className="settings-row-control font-mono text-xs text-[var(--text-muted)]">v0.0.1</div>
+              <div className="settings-row-control font-mono text-xs text-[var(--text-muted)]">
+                v{process.env.NEXT_PUBLIC_APP_VERSION}
+              </div>
             </div>
           </section>
         </div>
