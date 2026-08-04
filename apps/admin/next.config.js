@@ -13,8 +13,15 @@ const securityHeaders = [
 // workspace root here means the only way to change it is to bump the manifest.
 const appVersion = require('../../package.json').version;
 
+const path = require('path');
+
 const nextConfig = {
   output: 'standalone',
+  // Pin the tracing root to the workspace. Left to infer it, Next walks up
+  // looking for lockfiles and can land outside the repo entirely (a stray
+  // ~/package-lock.json is enough), which decides what gets copied into the
+  // standalone bundle the container runs.
+  outputFileTracingRoot: path.join(__dirname, '../..'),
   // Inlined at build time, so the standalone server needs nothing at runtime.
   env: { NEXT_PUBLIC_APP_VERSION: appVersion },
   // No basePath: the admin console has its own subdomain
