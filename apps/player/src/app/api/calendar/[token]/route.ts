@@ -18,8 +18,9 @@ export const dynamic = 'force-dynamic';
 // players keep their feed: the track filter naturally limits what they see.
 export async function GET(
   request: Request,
-  { params }: { params: { token: string } }
+  { params }: { params: Promise<{ token: string }> }
 ) {
+  const { token } = await params;
   // Rate limit: 30 feed fetches per IP per minute (calendar apps poll hourly;
   // this only throttles token enumeration).
   const rl = rateLimit(`cal-feed:${getClientIp(request)}`, 30, 60_000);
@@ -28,7 +29,7 @@ export async function GET(
   }
 
   // 48 hex chars = randomBytes(24).toString('hex') from the token actions.
-  if (!/^[0-9a-f]{48}$/.test(params.token)) {
+  if (!/^[0-9a-f]{48}$/.test(token)) {
     return new NextResponse('Not found', { status: 404 });
   }
 
@@ -37,7 +38,7 @@ export async function GET(
   const { data: tokenRow } = await supabase
     .from('calendar_feed_tokens')
     .select('player_id')
-    .eq('token', params.token)
+    .eq('token', token)
     .maybeSingle();
   if (!tokenRow) {
     return new NextResponse('Not found', { status: 404 });
