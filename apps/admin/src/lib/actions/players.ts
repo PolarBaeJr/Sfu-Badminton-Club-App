@@ -9,6 +9,7 @@ import {
   adminPlayerCreateSchema,
   adminPlayerUpdateSchema,
   joinName,
+  sendPlayerApprovedEmail,
   type AdminPlayerUpdateInput,
 } from '@badminton/shared';
 import { getAdminPlayer } from './_shared';
@@ -43,6 +44,18 @@ async function approvePlayerImpl(playerId: string, status: 'competitive' | 'recr
     new_value: { status },
     reason,
   }, { playerId });
+
+  // Tell them they are in. Until now approval was silent: a member who signed
+  // up sat at "pending approval" with no way to know it had changed except by
+  // opening the app again and guessing.
+  //
+  // Best-effort — the approval itself is already committed and audited, and a
+  // mail failure must not roll that back or surface as a failed action.
+  if (oldPlayer?.email) {
+    await sendPlayerApprovedEmail(oldPlayer.email, oldPlayer.full_name ?? 'there').catch((err) => {
+      Sentry.captureException(err, { extra: { step: 'player-approved-email', playerId } });
+    });
+  }
 
   revalidatePath('/players');
   revalidatePath('/dashboard');
