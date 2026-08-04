@@ -42,6 +42,9 @@ export async function updateNotificationPreferences(
     const clean: Record<string, boolean | number> = {};
     for (const c of NOTIFICATION_CATEGORIES) {
       if (c.key in prefs) clean[c.key] = prefs[c.key] !== false;
+      // Email toggles share this blob under an `email_` prefix.
+      const emailKey = `email_${c.key}`;
+      if (emailKey in prefs) clean[emailKey] = prefs[emailKey] !== false;
     }
     // How much notice this player wants before a session. Clamped to the
     // sendable range, so a crafted request can't schedule a reminder a year out.
@@ -49,9 +52,26 @@ export async function updateNotificationPreferences(
       clean.session_reminder_lead_minutes = getReminderLeadMinutes(prefs);
     }
 
+    // MERGE onto what is stored rather than replacing it. This used to write
+    // `clean` directly, which silently destroyed every key the client did not
+    // send — so a member flipping one push toggle would wipe an email
+    // unsubscribe and put themselves back on the mailing list without either
+    // side noticing. The whitelist above still governs what a caller may SET;
+    // merging governs what survives.
+    const { data: existing } = await supabase
+      .from('players')
+      .select('notification_preferences')
+      .eq('id', player.id)
+      .maybeSingle();
+
+    const merged = {
+      ...((existing?.notification_preferences as Record<string, unknown> | null) ?? {}),
+      ...clean,
+    };
+
     const { error } = await supabase
       .from('players')
-      .update({ notification_preferences: clean })
+      .update({ notification_preferences: merged })
       .eq('id', player.id);
 
     if (error) {

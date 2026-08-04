@@ -55,6 +55,54 @@ export function normalizeNotificationPreferences(
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Email delivery preferences
+// ---------------------------------------------------------------------------
+// Same categories, same JSONB blob, same opt-out default — but a SEPARATE key
+// per category, prefixed `email_`. Push and email are different enough that one
+// switch for both is wrong: push is a phone buzzing during a match, email is
+// something you read later. Turning off push notifications must not silently
+// stop the emails, and vice versa.
+//
+// Bare keys (`challenges`) stay push-only so existing stored preferences keep
+// meaning exactly what they meant before this was added.
+const EMAIL_PREFIX = 'email_';
+
+/** True unless the player has explicitly turned this category's EMAIL off. */
+export function isEmailCategoryEnabled(
+  preferences: unknown,
+  category: NotificationCategory,
+): boolean {
+  if (!preferences || typeof preferences !== 'object') return true;
+  return (preferences as Record<string, unknown>)[EMAIL_PREFIX + category] !== false;
+}
+
+/** The preferences patch that turns one category's email off (or back on). */
+export function emailCategoryPatch(
+  category: NotificationCategory,
+  enabled: boolean,
+): Record<string, boolean> {
+  return { [EMAIL_PREFIX + category]: enabled };
+}
+
+/** Explicit on/off map over every category, for rendering the settings UI. */
+export function normalizeEmailPreferences(
+  preferences: unknown,
+): Record<NotificationCategory, boolean> {
+  const out = {} as Record<NotificationCategory, boolean>;
+  for (const c of NOTIFICATION_CATEGORIES) {
+    out[c.key] = isEmailCategoryEnabled(preferences, c.key);
+  }
+  return out;
+}
+
+/** Turns every category's email off — what "unsubscribe from all" writes. */
+export function allEmailCategoriesOff(): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const c of NOTIFICATION_CATEGORIES) out[EMAIL_PREFIX + c.key] = false;
+  return out;
+}
+
 // How far ahead of a session a member wants their reminder — any interval they
 // like, stored as minutes in players.notification_preferences beside the
 // category toggles, so no new column is needed.

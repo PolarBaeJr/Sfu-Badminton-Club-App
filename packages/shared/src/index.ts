@@ -18,6 +18,7 @@ export * from './validators/schemas';
 export * from './validators/parse';
 export * from './email/templates';
 export * from './email/sender';
+export * from './email/unsubscribe';
 // NOTE: './push/send' is intentionally NOT exported here — web-push is
 // Node-only (net/tls) and would break client bundles that import this barrel.
 // Server code imports it via '@badminton/shared/src/push/send'.
