@@ -1383,10 +1383,14 @@ export type Database = {
           elo_multiplier: number | null
           event_type: string
           format: string
+          games_per_match: number | null
           id: string
           match_format: string
           max_participants: number | null
           placement_bonus_enabled: boolean | null
+          points_per_game: number | null
+          seed_by: string | null
+          seeded_from_event_id: string | null
           seeding_method: string
           status: string
           tournament_id: string
@@ -1398,10 +1402,14 @@ export type Database = {
           elo_multiplier?: number | null
           event_type: string
           format: string
+          games_per_match?: number | null
           id?: string
           match_format?: string
           max_participants?: number | null
           placement_bonus_enabled?: boolean | null
+          points_per_game?: number | null
+          seed_by?: string | null
+          seeded_from_event_id?: string | null
           seeding_method?: string
           status?: string
           tournament_id: string
@@ -1413,16 +1421,27 @@ export type Database = {
           elo_multiplier?: number | null
           event_type?: string
           format?: string
+          games_per_match?: number | null
           id?: string
           match_format?: string
           max_participants?: number | null
           placement_bonus_enabled?: boolean | null
+          points_per_game?: number | null
+          seed_by?: string | null
+          seeded_from_event_id?: string | null
           seeding_method?: string
           status?: string
           tournament_id?: string
           updated_at?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "tournament_events_seeded_from_event_id_fkey"
+            columns: ["seeded_from_event_id"]
+            isOneToOne: false
+            referencedRelation: "tournament_events"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "tournament_events_tournament_id_fkey"
             columns: ["tournament_id"]

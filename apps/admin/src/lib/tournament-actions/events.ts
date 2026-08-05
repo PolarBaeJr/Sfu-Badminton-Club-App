@@ -4,12 +4,15 @@ import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
+import { runAction, type ActionResult } from '../action-result';
+import { CUSTOM_FORMAT_BOUNDS, ExpectedError } from '@badminton/shared';
 import type {
   TournamentEventType,
   TournamentEventFormat,
   TournamentMatchFormat,
   TournamentSeedingMethod,
   TournamentEventStatus,
+  SeedBy,
 } from '@badminton/shared';
 import { getExecOrAdmin, revalidateEventPaths, assertTournamentNotSuspended } from './_internal';
 
@@ -17,12 +20,55 @@ import { getExecOrAdmin, revalidateEventPaths, assertTournamentNotSuspended } fr
 // Event Management
 // ============================================================
 
-export async function createTournamentEvent(
+// Typed match format (00046). The CHECK constraint is the real enforcement;
+// this exists so a typo comes back as a sentence instead of a Postgres
+// constraint name, and so a half-filled pair is caught here rather than
+// silently meaning "custom points, preset games".
+function normalizeTypedFormat(games?: number | null, points?: number | null): { games_per_match: number | null; points_per_game: number | null } {
+  const g = games == null || Number.isNaN(games) ? null : Math.trunc(games);
+  const p = points == null || Number.isNaN(points) ? null : Math.trunc(points);
+  const { minGames, maxGames, minPoints, maxPoints } = CUSTOM_FORMAT_BOUNDS;
+  if (g !== null && (g < minGames || g > maxGames || g % 2 === 0)) {
+    throw new ExpectedError(`Games per match must be an odd number between ${minGames} and ${maxGames} — an even best-of cannot be decided.`);
+  }
+  if (p !== null && (p < minPoints || p > maxPoints)) {
+    throw new ExpectedError(`Points per game must be between ${minPoints} and ${maxPoints}.`);
+  }
+  return { games_per_match: g, points_per_game: p };
+}
+
+// A seeding link is only meaningful within one tournament, and the self-seed
+// case would deadlock generation on standings it is supposed to produce.
+async function assertSeedSourceUsable(
+  adminClient: ReturnType<typeof createAdminClient>,
+  tournamentId: string,
+  eventId: string | null,
+  sourceId: string,
+) {
+  if (eventId && sourceId === eventId) throw new ExpectedError('An event cannot seed from itself.');
+  const { data: source } = await adminClient.from('tournament_events')
+    .select('id, tournament_id, seeded_from_event_id')
+    .eq('id', sourceId)
+    .maybeSingle();
+  if (!source) throw new ExpectedError('That pool event does not exist.');
+  if (source.tournament_id !== tournamentId) throw new ExpectedError('A pool must belong to the same tournament.');
+  // One hop is all the model supports; a source that itself seeds from
+  // somewhere could be pointed back at this event and make a cycle.
+  if (eventId && source.seeded_from_event_id === eventId) {
+    throw new ExpectedError('Those two events would seed from each other.');
+  }
+}
+
+async function createTournamentEventImpl(
   tournamentId: string,
   config: {
     event_type: TournamentEventType;
     format: TournamentEventFormat;
     match_format?: TournamentMatchFormat;
+    games_per_match?: number | null;
+    points_per_game?: number | null;
+    seeded_from_event_id?: string | null;
+    seed_by?: SeedBy | null;
     max_participants?: number;
     seeding_method?: TournamentSeedingMethod;
     elo_multiplier?: number;
@@ -32,11 +78,21 @@ export async function createTournamentEvent(
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
+  const typedFormat = normalizeTypedFormat(config.games_per_match, config.points_per_game);
+  if (config.seeded_from_event_id) {
+    await assertSeedSourceUsable(adminClient, tournamentId, null, config.seeded_from_event_id);
+  }
+
   const { data, error } = await adminClient.from('tournament_events').insert({
     tournament_id: tournamentId,
     event_type: config.event_type,
     format: config.format,
     match_format: config.match_format ?? 'best_of_3_to_21',
+    ...typedFormat,
+    seeded_from_event_id: config.seeded_from_event_id ?? null,
+    // seed_by is only read when a source is set; storing it without one would
+    // leave a stale choice behind if a source is added later.
+    seed_by: config.seeded_from_event_id ? (config.seed_by ?? 'wins') : null,
     max_participants: config.max_participants ?? null,
     seeding_method: config.seeding_method ?? 'elo',
     elo_multiplier: config.elo_multiplier ?? 1.25,
@@ -60,10 +116,14 @@ export async function createTournamentEvent(
   return data;
 }
 
-export async function updateTournamentEvent(
+async function updateTournamentEventImpl(
   eventId: string,
   updates: {
     match_format?: TournamentMatchFormat;
+    games_per_match?: number | null;
+    points_per_game?: number | null;
+    seeded_from_event_id?: string | null;
+    seed_by?: SeedBy | null;
     max_participants?: number | null;
     seeding_method?: TournamentSeedingMethod;
     elo_multiplier?: number;
@@ -75,10 +135,41 @@ export async function updateTournamentEvent(
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
-  if (event.status !== 'registration') throw new Error('Can only update events in registration status');
+
+  // The old gate was status === 'registration', which locked the match format
+  // the moment check-in opened — the exact point at which an exec discovers the
+  // day is running late and wants to shorten the games. What actually must not
+  // change is a format the draw has already been played under, so the gate is
+  // now the existence of matches: no bracket, still editable.
+  const { count: matchCount } = await adminClient.from('tournament_matches')
+    .select('id', { count: 'exact', head: true })
+    .eq('event_id', eventId);
+  if ((matchCount ?? 0) > 0) {
+    throw new ExpectedError('This event already has a draw. Regenerate it after voiding the matches if the format really has to change.');
+  }
+  if (event.status !== 'registration' && event.status !== 'checkin') {
+    throw new ExpectedError('Can only update events before the draw is made');
+  }
+
+  const patch: Record<string, unknown> = { ...updates };
+
+  if ('games_per_match' in updates || 'points_per_game' in updates) {
+    Object.assign(patch, normalizeTypedFormat(updates.games_per_match, updates.points_per_game));
+  }
+
+  if ('seeded_from_event_id' in updates) {
+    const sourceId = updates.seeded_from_event_id;
+    if (sourceId) {
+      await assertSeedSourceUsable(adminClient, event.tournament_id, eventId, sourceId);
+      patch.seed_by = updates.seed_by ?? 'wins';
+    } else {
+      patch.seeded_from_event_id = null;
+      patch.seed_by = null;
+    }
+  }
 
   const { error } = await adminClient.from('tournament_events')
-    .update({ ...updates, updated_at: new Date().toISOString() })
+    .update({ ...patch, updated_at: new Date().toISOString() })
     .eq('id', eventId);
 
   if (error) {
@@ -91,10 +182,31 @@ export async function updateTournamentEvent(
     event_id: eventId,
     action: 'event_updated',
     performed_by: admin.id,
-    details: updates as Record<string, unknown>,
+    details: patch,
   });
 
   revalidateEventPaths(event.tournament_id, eventId);
+}
+
+// Public entry points. The format validation these two now carry is only
+// useful if the exec can read it, and Next.js replaces anything thrown out of a
+// Server Action in production with a generic message — so the refusal comes
+// back as a value, and runAction keeps it out of Sentry.
+export async function createTournamentEvent(
+  tournamentId: string,
+  config: Parameters<typeof createTournamentEventImpl>[1],
+): Promise<ActionResult<{ id: string }>> {
+  return runAction(async () => {
+    const created = await createTournamentEventImpl(tournamentId, config);
+    return { id: created.id as string };
+  });
+}
+
+export async function updateTournamentEvent(
+  eventId: string,
+  updates: Parameters<typeof updateTournamentEventImpl>[1],
+): Promise<ActionResult<void>> {
+  return runAction(async () => { await updateTournamentEventImpl(eventId, updates); });
 }
 
 export async function deleteTournamentEvent(eventId: string) {

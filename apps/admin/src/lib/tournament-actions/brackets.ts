@@ -3,13 +3,16 @@
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
-import { isDoublesEvent, nextPowerOf2, getRoundName } from '@badminton/shared';
+import { runAction, type ActionResult } from '../action-result';
+import { isDoublesEvent, nextPowerOf2, getRoundName, ExpectedError } from '@badminton/shared';
+import type { SeedBy } from '@badminton/shared';
 import {
   getExecOrAdmin,
   revalidateEventPaths,
   notifyPlayers,
   getStandardSeedPositions,
   assertTournamentNotSuspended,
+  computeRoundRobinStandings,
 } from './_internal';
 
 // Block (re)generating a draw once any match has a recorded result —
@@ -27,10 +30,204 @@ async function assertNoResultsEntered(adminClient: ReturnType<typeof createAdmin
 }
 
 // ============================================================
+// Pool -> bracket seeding
+// ============================================================
+
+type FieldEntry = { id: string; seed: number | null; elo: number };
+
+// A pair may be entered with the two players in either order, so the key has to
+// be order-independent or the same pair in the pool and in the bracket would
+// look like two different teams.
+function pairKey(a: string, b: string): string {
+  return [a, b].sort().join('|');
+}
+
+/**
+ * Build the bracket's field from a finished pool's standings (00046).
+ *
+ * The point of pool-then-bracket is that the exec does not enter the field
+ * twice: whoever finished top N of the pool IS the draw. So this promotes the
+ * qualifiers into this event — reusing their existing entry when they are
+ * already registered here, creating one when they are not — and returns them
+ * already seeded in finishing order.
+ *
+ * N is max_participants, the event's own capacity. A pool with fewer finishers
+ * than that is not an error: the field is simply shorter and the draw gets the
+ * byes it would get for any undersized entry list.
+ */
+async function buildFieldFromPool(
+  adminClient: ReturnType<typeof createAdminClient>,
+  event: Record<string, unknown>,
+  doubles: boolean,
+  adminId: string,
+): Promise<{ entries: FieldEntry[]; promoted: number; skipped: number }> {
+  const eventId = event.id as string;
+  const sourceId = event.seeded_from_event_id as string;
+  const seedBy = ((event.seed_by as SeedBy | null) ?? 'wins') as SeedBy;
+
+  const { data: source } = await adminClient.from('tournament_events')
+    .select('id, tournament_id, event_type')
+    .eq('id', sourceId)
+    .maybeSingle();
+  // The FK is ON DELETE SET NULL, so a missing source means the row was read
+  // before the delete landed — either way there is nothing to seed from.
+  if (!source) throw new ExpectedError('The pool this event seeds from no longer exists. Pick another pool, or clear the link.');
+  if (source.tournament_id !== event.tournament_id) {
+    throw new ExpectedError('That pool belongs to a different tournament.');
+  }
+  // Singles standings are participant rows and doubles standings are pair rows;
+  // there is no sensible way to carry one into the other.
+  if (isDoublesEvent(source.event_type) !== doubles) {
+    throw new ExpectedError('A doubles event cannot be seeded from a singles pool, or the other way round.');
+  }
+
+  // Same definition of "played out" that finalizeEvent uses, so an exec cannot
+  // be told the pool is finished by one screen and unfinished by another.
+  // Empty bracket slots and byes are not real matches and never complete.
+  const { data: poolMatches } = await adminClient.from('tournament_matches')
+    .select('status, is_bye, participant_a_id, participant_b_id, pair_a_id, pair_b_id')
+    .eq('event_id', sourceId);
+  if (!poolMatches || poolMatches.length === 0) {
+    throw new ExpectedError('That pool has no matches yet, so there is nothing to seed from.');
+  }
+  const unplayed = poolMatches.filter((m) => {
+    if (['completed', 'walkover', 'voided'].includes(m.status as string) || m.is_bye) return false;
+    return doubles ? (m.pair_a_id || m.pair_b_id) : (m.participant_a_id || m.participant_b_id);
+  });
+  if (unplayed.length > 0) {
+    throw new ExpectedError(
+      `${unplayed.length} pool match(es) have not been played. Seeding off a half-finished pool would produce the wrong draw — finish the pool first.`
+    );
+  }
+
+  const standings = await computeRoundRobinStandings(sourceId, seedBy);
+  if (standings.length === 0) throw new ExpectedError('That pool has no finishers to seed from.');
+
+  // Source rows carry the identity (which player) and the rating to inherit;
+  // the standings carry only the order.
+  const sourceKeys = new Map<string, { key: string; elo: number; name: string | null; players: string[] }>();
+  if (doubles) {
+    const { data: pairs } = await adminClient.from('tournament_pairs')
+      .select('id, player1_id, player2_id, pair_name, combined_elo')
+      .eq('event_id', sourceId);
+    for (const p of pairs ?? []) {
+      sourceKeys.set(p.id, {
+        key: pairKey(p.player1_id, p.player2_id),
+        elo: p.combined_elo ?? 400,
+        name: p.pair_name,
+        players: [p.player1_id, p.player2_id],
+      });
+    }
+  } else {
+    const { data: parts } = await adminClient.from('tournament_participants')
+      .select('id, player_id, elo_before, elo_after')
+      .eq('event_id', sourceId);
+    for (const p of parts ?? []) {
+      // elo_after is where the pool left them; it is what the bracket should
+      // inherit, with elo_before as the fallback for a player who never played.
+      sourceKeys.set(p.id, { key: p.player_id, elo: p.elo_after ?? p.elo_before ?? 400, name: null, players: [p.player_id] });
+    }
+  }
+
+  // Anyone already entered here — including withdrawals, which must be seen so
+  // a withdrawal is skipped rather than re-created by the promotion insert.
+  const existing = new Map<string, { id: string; status: string }>();
+  if (doubles) {
+    const { data: pairs } = await adminClient.from('tournament_pairs')
+      .select('id, player1_id, player2_id, status')
+      .eq('event_id', eventId);
+    for (const p of pairs ?? []) existing.set(pairKey(p.player1_id, p.player2_id), { id: p.id, status: p.status });
+  } else {
+    const { data: parts } = await adminClient.from('tournament_participants')
+      .select('id, player_id, status')
+      .eq('event_id', eventId);
+    for (const p of parts ?? []) existing.set(p.player_id, { id: p.id, status: p.status });
+  }
+
+  const capacity = (event.max_participants as number | null) ?? standings.length;
+  const entries: FieldEntry[] = [];
+  let promoted = 0;
+  let skipped = 0;
+
+  for (const standing of standings) {
+    if (entries.length >= capacity) break;
+    const src = sourceKeys.get(standing.id);
+    if (!src) continue;
+
+    const already = existing.get(src.key);
+    // A qualifier who has withdrawn from the bracket does not take a slot, and
+    // is not resurrected by re-inserting them — the next finisher moves up.
+    if (already && (already.status === 'withdrawn' || already.status === 'disqualified')) {
+      skipped++;
+      continue;
+    }
+
+    const seed = entries.length + 1;
+    if (already) {
+      entries.push({ id: already.id, seed, elo: src.elo });
+      continue;
+    }
+
+    // Status 'checked_in' rather than 'registered': they have just finished
+    // playing the pool, so they are demonstrably present.
+    const insert = doubles
+      ? {
+          event_id: eventId,
+          player1_id: src.players[0],
+          player2_id: src.players[1],
+          pair_name: src.name,
+          combined_elo: src.elo,
+          status: 'checked_in',
+          seed_number: seed,
+          added_by: adminId,
+        }
+      : {
+          event_id: eventId,
+          player_id: src.players[0],
+          elo_before: src.elo,
+          status: 'checked_in',
+          seed_number: seed,
+          added_by: adminId,
+        };
+
+    const { data: created, error } = await adminClient
+      .from(doubles ? 'tournament_pairs' : 'tournament_participants')
+      .insert(insert)
+      .select('id')
+      .single();
+    if (error || !created) {
+      Sentry.captureException(error);
+      throw new Error(`Could not enter a pool qualifier into the bracket: ${error?.message ?? 'unknown error'}`);
+    }
+    promoted++;
+    entries.push({ id: created.id, seed, elo: src.elo });
+  }
+
+  if (entries.length < 2) {
+    throw new ExpectedError('The pool produced fewer than 2 available finishers, which is not a bracket.');
+  }
+
+  // Persist the pool order onto the entries that were already here — the ones
+  // just created were inserted with their seed. Independent rows, no contention.
+  const seedResults = await Promise.allSettled(
+    entries.map(e => Promise.resolve(
+      adminClient.from(doubles ? 'tournament_pairs' : 'tournament_participants')
+        .update({ seed_number: e.seed })
+        .eq('id', e.id)
+    ))
+  );
+  for (const r of seedResults) {
+    if (r.status === 'rejected') Sentry.captureException(r.reason);
+  }
+
+  return { entries, promoted, skipped };
+}
+
+// ============================================================
 // Bracket Generation — Single Elimination
 // ============================================================
 
-export async function generateSingleEliminationBracket(eventId: string) {
+async function generateSingleEliminationBracketImpl(eventId: string) {
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
@@ -43,9 +240,20 @@ export async function generateSingleEliminationBracket(eventId: string) {
   const doubles = isDoublesEvent(event.event_type);
 
   // Fetch eligible participants/pairs
-  let entries: Array<{ id: string; seed: number | null; elo: number }> = [];
+  let entries: FieldEntry[] = [];
+  // A pool-seeded event takes its field and its order from the pool, so the
+  // Elo/seed_number path below must not run — it would re-sort the draw by
+  // rating and throw away the result everyone just played for.
+  const seededFromPool = Boolean(event.seeded_from_event_id);
+  let poolPromoted = 0;
+  let poolSkipped = 0;
 
-  if (doubles) {
+  if (seededFromPool) {
+    const field = await buildFieldFromPool(adminClient, event, doubles, admin.id);
+    entries = field.entries;
+    poolPromoted = field.promoted;
+    poolSkipped = field.skipped;
+  } else if (doubles) {
     const { data: pairs } = await adminClient.from('tournament_pairs')
       .select('id, seed_number, combined_elo, status')
       .eq('event_id', eventId)
@@ -65,7 +273,7 @@ export async function generateSingleEliminationBracket(eventId: string) {
   if (N < 2) throw new Error('Need at least 2 participants to generate a bracket');
 
   // If not yet seeded, auto-seed by Elo
-  const needsSeeding = entries.some(e => e.seed === null);
+  const needsSeeding = !seededFromPool && entries.some(e => e.seed === null);
   if (needsSeeding) {
     entries.sort((a, b) => b.elo - a.elo);
     entries.forEach((e, i) => { e.seed = i + 1; });
@@ -246,18 +454,40 @@ export async function generateSingleEliminationBracket(eventId: string) {
     event_id: eventId,
     action: 'bracket_generated',
     performed_by: admin.id,
-    details: { bracket_size: bracketSize, participants: N, byes: numByes },
+    details: {
+      bracket_size: bracketSize,
+      participants: N,
+      byes: numByes,
+      // Recorded because a pool-seeded draw is not reproducible from the event
+      // row alone — the pool can be edited afterwards.
+      ...(seededFromPool
+        ? {
+            seeded_from_event_id: event.seeded_from_event_id,
+            seed_by: event.seed_by ?? 'wins',
+            promoted_from_pool: poolPromoted,
+            qualifiers_skipped: poolSkipped,
+          }
+        : {}),
+    },
   });
 
-  // Notify all participants that bracket is published
+  // Notify all participants that bracket is published. A pool-seeded event may
+  // hold entries who did not make the cut, so it notifies the drawn field only
+  // — telling someone their bracket is published when they are not in it is
+  // worse than telling them nothing.
   const bracketPlayerIds: string[] = [];
+  const fieldIds = entries.map(e => e.id);
   if (doubles) {
-    const { data: allPairs } = await adminClient.from('tournament_pairs')
+    let q = adminClient.from('tournament_pairs')
       .select('player1_id, player2_id').eq('event_id', eventId).in('status', ['registered', 'checked_in']);
+    if (seededFromPool) q = q.in('id', fieldIds);
+    const { data: allPairs } = await q;
     for (const p of allPairs ?? []) { bracketPlayerIds.push(p.player1_id, p.player2_id); }
   } else {
-    const { data: allParts } = await adminClient.from('tournament_participants')
+    let q = adminClient.from('tournament_participants')
       .select('player_id').eq('event_id', eventId).in('status', ['registered', 'checked_in']);
+    if (seededFromPool) q = q.in('id', fieldIds);
+    const { data: allParts } = await q;
     for (const p of allParts ?? []) { bracketPlayerIds.push(p.player_id); }
   }
   const { data: tournamentInfo } = await adminClient.from('tournaments').select('name').eq('id', event.tournament_id).single();
@@ -275,7 +505,7 @@ export async function generateSingleEliminationBracket(eventId: string) {
 // Bracket Generation — Round Robin
 // ============================================================
 
-export async function generateRoundRobinMatches(eventId: string) {
+async function generateRoundRobinMatchesImpl(eventId: string) {
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
@@ -378,6 +608,23 @@ export async function generateRoundRobinMatches(eventId: string) {
   });
 
   revalidateEventPaths(event.tournament_id, eventId);
+}
+
+// ============================================================
+// Public entry points
+// ============================================================
+// Same reasoning as the result actions: Next.js sanitises anything thrown out
+// of a Server Action in a production build, so a guard that throws is invisible
+// exactly where it matters. Generation now returns its refusal as a value —
+// "3 pool matches have not been played" is the whole point of the guard — and
+// runAction keeps those refusals out of Sentry, which only wants real faults.
+
+export async function generateSingleEliminationBracket(eventId: string): Promise<ActionResult<void>> {
+  return runAction(async () => { await generateSingleEliminationBracketImpl(eventId); });
+}
+
+export async function generateRoundRobinMatches(eventId: string): Promise<ActionResult<void>> {
+  return runAction(async () => { await generateRoundRobinMatchesImpl(eventId); });
 }
 
 // ============================================================

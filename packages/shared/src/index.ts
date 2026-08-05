@@ -19,6 +19,7 @@ export * from './utils/tournament-window';
 export * from './utils/membership';
 export * from './utils/match-result';
 export * from './utils/season';
+export * from './utils/standings';
 export * from './validators/schemas';
 export * from './validators/parse';
 export * from './email/templates';

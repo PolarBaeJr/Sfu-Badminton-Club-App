@@ -1,7 +1,7 @@
 import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
 import { Card, Badge, PageHeader } from '@badminton/ui';
 import { TournamentCheckinQr } from './checkin-qr';
-import { formatDate, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS } from '@badminton/shared';
+import { formatDate, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS, describeMatchShape } from '@badminton/shared';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Users, Calendar, Zap, Crown, Plus, Swords, DollarSign } from 'lucide-react';
 import Link from 'next/link';
@@ -124,7 +124,10 @@ export default async function TournamentDetailPage({ params }: { params: Promise
             <h2 className="text-lg font-semibold text-[var(--text-primary)]">Events ({events?.length ?? 0})</h2>
           </div>
           {(tournament.status === 'draft' || tournament.status === 'active') && (
-            <CreateEventButton tournamentId={id} />
+            <CreateEventButton
+              tournamentId={id}
+              siblings={(events ?? []).map((ev) => ({ id: ev.id, event_type: ev.event_type, format: ev.format }))}
+            />
           )}
         </div>
 
@@ -154,7 +157,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
                       {eventCounts[ev.id] ?? 0}{ev.max_participants ? `/${ev.max_participants}` : ''}
                     </span>
                     <span>&middot;</span>
-                    <span>{ev.match_format.replace(/_/g, ' ')}</span>
+                    <span>{describeMatchShape(ev)}</span>
                   </div>
                 </div>
               </Link>

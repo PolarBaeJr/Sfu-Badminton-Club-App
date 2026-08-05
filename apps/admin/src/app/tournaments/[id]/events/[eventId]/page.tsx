@@ -22,6 +22,15 @@ export default async function EventPage({
 
   const doubles = isDoublesEvent(event.event_type);
 
+  // Other events in the same tournament — the candidates this one can be
+  // seeded from. Excludes itself: the schema forbids a self-seed outright.
+  const { data: siblingEvents } = await supabase
+    .from('tournament_events')
+    .select('id, event_type, format')
+    .eq('tournament_id', tournamentId)
+    .neq('id', eventId)
+    .order('created_at');
+
   // Fetch participants or pairs
   let participants: ParticipantWithPlayer[] = [];
   let pairs: PairWithPlayers[] = [];
@@ -74,6 +83,7 @@ export default async function EventPage({
         pairs={pairs}
         matches={matches ?? []}
         allPlayers={allPlayers ?? []}
+        siblingEvents={siblingEvents ?? []}
         isDoubles={doubles}
       />
     </div>

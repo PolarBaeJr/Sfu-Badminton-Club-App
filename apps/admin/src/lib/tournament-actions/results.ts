@@ -4,8 +4,8 @@ import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { runAction, type ActionResult } from '../action-result';
-import { isDoublesEvent, getMaxGamesForFormat, isLegalGameScore, isLegalGameCount, ExpectedError } from '@badminton/shared';
-import type { TournamentEventType, TournamentMatchFormat } from '@badminton/shared';
+import { isDoublesEvent, getEventRules, describeMatchShape, isLegalGameScore, isLegalGameCount, ExpectedError } from '@badminton/shared';
+import type { TournamentEventType, TournamentMatchFormat, EventMatchShape } from '@badminton/shared';
 import {
   getExecOrAdmin,
   revalidateEventPaths,
@@ -52,10 +52,17 @@ async function enterMatchResultImpl(
     );
   }
 
+  // The event's typed shape wins over the match_format enum when it has one
+  // (00046) — a pool run at 1 game to 15 must reject a 21-19 that the enum
+  // fallback would have waved through.
+  const shape = event as unknown as EventMatchShape;
   const matchFormat = event.match_format as TournamentMatchFormat;
-  const maxGames = getMaxGamesForFormat(matchFormat);
+  const games = shape.games_per_match ?? null;
+  const points = shape.points_per_game ?? null;
+  const shapeLabel = describeMatchShape(shape);
+  const maxGames = getEventRules(shape).bestOf;
   if (scores.length > maxGames) {
-    throw new Error(`Too many games for format ${matchFormat}. Max: ${maxGames}`);
+    throw new Error(`Too many games for ${shapeLabel}. Max: ${maxGames}`);
   }
 
   // Same scoring rules challenges get (00030): a game is won by reaching the
@@ -64,15 +71,15 @@ async function enterMatchResultImpl(
   // of games, so an impossible 21-20 — or a 3-0 best-of-3 — was accepted here
   // even though the identical result was rejected on the challenge path.
   for (const g of scores) {
-    if (!isLegalGameScore(g.a, g.b, matchFormat)) {
+    if (!isLegalGameScore(g.a, g.b, matchFormat, games, points)) {
       throw new Error(`Not a possible score for this format: ${g.a}-${g.b}`);
     }
   }
   const aGames = scores.filter((g) => g.a > g.b).length;
   const bGames = scores.filter((g) => g.b > g.a).length;
-  if (!isLegalGameCount(Math.max(aGames, bGames), Math.min(aGames, bGames), matchFormat)) {
+  if (!isLegalGameCount(Math.max(aGames, bGames), Math.min(aGames, bGames), matchFormat, games)) {
     throw new Error(
-      `${aGames}-${bGames} is not a possible result for ${matchFormat} — the match ends once a side clinches.`
+      `${aGames}-${bGames} is not a possible result for ${shapeLabel} — the match ends once a side clinches.`
     );
   }
 

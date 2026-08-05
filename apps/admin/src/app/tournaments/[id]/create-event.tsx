@@ -2,37 +2,50 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Select, Input } from '@badminton/ui';
-import { TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_MATCH_FORMAT_LABELS } from '@badminton/shared';
+import { TOURNAMENT_EVENT_TYPE_LABELS } from '@badminton/shared';
 import { createTournamentEvent } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { Plus } from 'lucide-react';
-import type { TournamentEventType, TournamentEventFormat, TournamentMatchFormat, TournamentSeedingMethod } from '@badminton/shared';
+import type { TournamentEventType, TournamentEventFormat, TournamentSeedingMethod } from '@badminton/shared';
+import {
+  EventFormatFields,
+  EMPTY_FORMAT_VALUES,
+  toFormatPayload,
+  type EventFormatValues,
+  type SiblingEvent,
+} from './event-format-fields';
 
-export function CreateEventButton({ tournamentId }: { tournamentId: string }) {
+export function CreateEventButton({ tournamentId, siblings = [] }: { tournamentId: string; siblings?: SiblingEvent[] }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [eventType, setEventType] = useState<TournamentEventType>('mens_singles');
   const [format, setFormat] = useState<TournamentEventFormat>('single_elimination');
-  const [matchFormat, setMatchFormat] = useState<TournamentMatchFormat>('best_of_3_to_21');
+  const [formatValues, setFormatValues] = useState<EventFormatValues>(EMPTY_FORMAT_VALUES);
   const [maxParticipants, setMaxParticipants] = useState('');
   const [seedingMethod, setSeedingMethod] = useState<TournamentSeedingMethod>('elo');
   const [eloMultiplier, setEloMultiplier] = useState('1.25');
   const { toast } = useToast();
   const router = useRouter();
 
+  // A round robin has no draw to seed, so the pool picker is meaningless there.
+  const seedableSiblings = format === 'round_robin' ? [] : siblings;
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     try {
-      await createTournamentEvent(tournamentId, {
+      const res = await createTournamentEvent(tournamentId, {
         event_type: eventType,
         format,
-        match_format: matchFormat,
+        ...toFormatPayload(format === 'round_robin' ? { ...formatValues, seededFrom: '' } : formatValues),
         max_participants: maxParticipants ? Number(maxParticipants) : undefined,
         seeding_method: seedingMethod,
         elo_multiplier: Number(eloMultiplier) || 1.25,
       });
+      // Format and pool-link validation come back as a refusal message, not an
+      // exception — show the exec which field they need to fix.
+      if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
       toast('Event created', 'success');
       setOpen(false);
       router.refresh();
@@ -43,7 +56,6 @@ export function CreateEventButton({ tournamentId }: { tournamentId: string }) {
   }
 
   const eventTypeOptions = Object.entries(TOURNAMENT_EVENT_TYPE_LABELS).map(([value, label]) => ({ value, label }));
-  const matchFormatOptions = Object.entries(TOURNAMENT_MATCH_FORMAT_LABELS).map(([value, label]) => ({ value, label }));
 
   return (
     <>
@@ -67,12 +79,7 @@ export function CreateEventButton({ tournamentId }: { tournamentId: string }) {
               { value: 'round_robin', label: 'Round Robin' },
             ]}
           />
-          <Select
-            label="Match Format"
-            value={matchFormat}
-            onChange={(e) => setMatchFormat(e.target.value as TournamentMatchFormat)}
-            options={matchFormatOptions}
-          />
+          <EventFormatFields value={formatValues} onChange={setFormatValues} siblings={seedableSiblings} />
           <Input
             label="Max Participants (optional)"
             type="number"

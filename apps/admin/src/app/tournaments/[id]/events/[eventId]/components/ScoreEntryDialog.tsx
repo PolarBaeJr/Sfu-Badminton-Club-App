@@ -2,8 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Input, Select } from '@badminton/ui';
-import { getMaxGamesForFormat, previewEloChange } from '@badminton/shared';
-import type { TournamentMatchFormat, MatchFormat } from '@badminton/shared';
+import { getEventRules } from '@badminton/shared';
 import { enterMatchResult, enterWalkover, voidMatch } from '@/lib/tournament-actions';
 import { tallyGames } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
@@ -19,18 +18,10 @@ interface Props {
   onClose: () => void;
 }
 
-function toEloFormat(mf: TournamentMatchFormat): MatchFormat {
-  switch (mf) {
-    case 'best_of_3_to_21': return 'bo3_21';
-    case 'one_game_21': return 'single_21';
-    case 'one_game_15': return 'single_15';
-    case 'one_game_11': return 'single_11';
-  }
-}
-
 export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, onClose }: Props) {
-  const matchFormat = event.match_format as TournamentMatchFormat;
-  const maxGames = getMaxGamesForFormat(matchFormat);
+  // The typed shape wins over the enum, so an event shortened to one game to 15
+  // offers one score row rather than three.
+  const maxGames = getEventRules(event).bestOf;
 
   const aId = isDoubles ? match.pair_a_id : match.participant_a_id;
   const bId = isDoubles ? match.pair_b_id : match.participant_b_id;

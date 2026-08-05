@@ -256,6 +256,44 @@ export function getRulesFor(
   return { bestOf: gamesPerMatch ?? preset.bestOf, target, cap: pointsCap(target) };
 }
 
+/**
+ * The format columns a tournament event carries. games_per_match /
+ * points_per_game are the typed shape added in 00046 and are NULL on every
+ * event created before it, which is why they are optional here — the enum
+ * remains the meaning of an event that never set them.
+ */
+export interface EventMatchShape {
+  match_format: TournamentMatchFormat | string;
+  games_per_match?: number | null;
+  points_per_game?: number | null;
+}
+
+/**
+ * Scoring rules for a tournament event: the typed shape when it has one, the
+ * match_format enum otherwise. Every caller that used to read match_format
+ * alone should go through this, or an event set to "1 game to 15" would still
+ * be scored — and rated — as best of 3 to 21.
+ */
+export function getEventRules(event: EventMatchShape): { bestOf: number; target: number; cap: number } {
+  return getRulesFor(event.match_format as AnyMatchFormat, event.games_per_match, event.points_per_game);
+}
+
+/** True when this event overrides the enum with an explicit shape. */
+export function hasTypedFormat(event: EventMatchShape): boolean {
+  return event.games_per_match != null || event.points_per_game != null;
+}
+
+/**
+ * Human label for whatever shape an event is played at, derived from the rules
+ * rather than the enum so a custom "best of 5 to 15" reads the same way the
+ * four presets do — the preset strings in TOURNAMENT_MATCH_FORMAT_LABELS are
+ * exactly what this produces for them.
+ */
+export function describeMatchShape(event: EventMatchShape): string {
+  const { bestOf, target } = getEventRules(event);
+  return bestOf > 1 ? `Best of ${bestOf} to ${target}` : `1 Game to ${target}`;
+}
+
 /** Elo weight for a custom shape — mirrors derived_format_weight (00031). */
 export function derivedFormatWeight(bestOf: number, target: number): number {
   const raw = (target / 21) * (bestOf > 1 ? 1.25 : 1.0);
