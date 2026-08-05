@@ -71,7 +71,7 @@ export default async function PlayersPage({
   // doesn't cost a second query.
   const { data: countRows } = await supabase
     .from('players')
-    .select('id, full_name, email, user_id, status, is_banned, active_flag')
+    .select('id, full_name, email, avatar_url, user_id, status, is_banned, active_flag')
     .order('full_name')
     .limit(5000);
   const forCount = countRows ?? [];
@@ -104,6 +104,7 @@ export default async function PlayersPage({
                 id: p.id,
                 full_name: p.full_name,
                 email: p.email,
+                avatar_url: p.avatar_url,
                 has_login: p.user_id !== null,
                 status: p.status,
               }))}

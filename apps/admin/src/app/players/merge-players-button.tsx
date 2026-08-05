@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Dialog, Select } from '@badminton/ui';
+import { Button, Dialog, PlayerPicker } from '@badminton/ui';
 import { previewPlayerMerge, mergePlayers, type MergePreviewRow } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
@@ -11,6 +11,7 @@ interface MergeCandidate {
   id: string;
   full_name: string;
   email: string;
+  avatar_url?: string | null;
   has_login: boolean;
   status: string;
 }
@@ -67,10 +68,14 @@ export function MergePlayersButton({ players }: Props) {
     router.refresh();
   }
 
-  const options = [{ value: '', label: 'Select a player…' }, ...players.map((p) => ({
-    value: p.id,
-    label: `${p.full_name} · ${p.email}${p.has_login ? ' · has login' : ' · no login'}`,
-  }))];
+  // The email/login line is the whole point here — two duplicates share a name,
+  // so it is the only thing that tells the admin which record is which.
+  const options = players.map((p) => ({
+    id: p.id,
+    name: p.full_name,
+    avatarUrl: p.avatar_url,
+    meta: `${p.email} · ${p.has_login ? 'has login' : 'no login'}`,
+  }));
 
   return (
     <>
@@ -86,17 +91,17 @@ export function MergePlayersButton({ players }: Props) {
             status; only the login is carried over.
           </p>
 
-          <Select
+          <PlayerPicker
             label="Keep this account (admin-entered record)"
-            options={options}
+            players={options}
             value={keepId}
-            onChange={(e) => { setKeepId(e.target.value); setBlockers(null); }}
+            onChange={(id) => { setKeepId(id); setBlockers(null); }}
           />
-          <Select
+          <PlayerPicker
             label="Remove this account (will be deleted)"
-            options={options}
+            players={options}
             value={removeId}
-            onChange={(e) => { setRemoveId(e.target.value); setBlockers(null); }}
+            onChange={(id) => { setRemoveId(id); setBlockers(null); }}
           />
 
           {keep && remove && keepId === removeId && (

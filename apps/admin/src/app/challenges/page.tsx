@@ -18,7 +18,7 @@ export default async function ChallengesPage() {
   // Get all active players for the create challenge form
   const { data: allPlayers } = await supabase
     .from('players')
-    .select('id, full_name')
+    .select('id, full_name, avatar_url')
     .eq('active_flag', true)
     .neq('status', 'pending_approval')
     .order('full_name');

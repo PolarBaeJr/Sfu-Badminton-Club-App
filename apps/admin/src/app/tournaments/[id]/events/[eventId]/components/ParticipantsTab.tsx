@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { Button, Dialog, Select, AvatarChip } from '@badminton/ui';
+import { Button, Dialog, PlayerPicker, AvatarChip } from '@badminton/ui';
 import {
   addParticipantToEvent,
   removeParticipantFromEvent,
@@ -22,7 +22,7 @@ interface Props {
   event: TournamentEventRow;
   participants: ParticipantWithPlayer[];
   pairs: PairWithPlayers[];
-  allPlayers: Array<{ id: string; full_name: string }>;
+  allPlayers: Array<{ id: string; full_name: string; avatar_url?: string | null }>;
   isDoubles: boolean;
 }
 
@@ -237,7 +237,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   );
 
   const availablePlayers = allPlayers.filter(p => !registeredPlayerIds.has(p.id));
-  const playerOptions = [{ value: '', label: 'Select player...' }, ...availablePlayers.map(p => ({ value: p.id, label: p.full_name }))];
+  const playerOptions = availablePlayers.map(p => ({ id: p.id, name: p.full_name, avatarUrl: p.avatar_url }));
 
   return (
     <div className="space-y-4">
@@ -406,18 +406,18 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
       {/* Add Dialog */}
       <Dialog open={addOpen} onClose={() => setAddOpen(false)} title={isDoubles ? 'Add Pair' : 'Add Participant'}>
         <form onSubmit={handleAdd} className="space-y-4">
-          <Select
+          <PlayerPicker
             label={isDoubles ? 'Player 1' : 'Player'}
             value={playerId}
-            onChange={(e) => setPlayerId(e.target.value)}
-            options={playerOptions}
+            onChange={setPlayerId}
+            players={playerOptions}
           />
           {isDoubles && (
-            <Select
+            <PlayerPicker
               label="Player 2"
               value={player2Id}
-              onChange={(e) => setPlayer2Id(e.target.value)}
-              options={playerOptions.filter(p => p.value !== playerId)}
+              onChange={setPlayer2Id}
+              players={playerOptions.filter(p => p.id !== playerId)}
             />
           )}
           <div className="flex gap-2 pt-2">

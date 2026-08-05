@@ -1,11 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Dialog, Input, Select, Switch, Textarea, DatePicker } from '@badminton/ui';
+import { Button, Dialog, Input, PlayerPicker, Select, Switch, Textarea, DatePicker } from '@badminton/ui';
 import { adminCreateChallenge } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 
-type Player = { id: string; full_name: string };
+type Player = { id: string; full_name: string; avatar_url?: string | null };
 
 export function CreateChallengeForm({ players }: { players: Player[] }) {
   const [open, setOpen] = useState(false);
@@ -53,7 +53,7 @@ export function CreateChallengeForm({ players }: { players: Player[] }) {
     setLoading(false);
   }
 
-  const playerOptions = [{ value: '', label: 'Select player...' }, ...players.map(p => ({ value: p.id, label: p.full_name }))];
+  const playerOptions = players.map(p => ({ id: p.id, name: p.full_name, avatarUrl: p.avatar_url }));
 
   return (
     <>
@@ -88,19 +88,21 @@ export function CreateChallengeForm({ players }: { players: Player[] }) {
             <span className="text-sm text-[var(--text-secondary)]">Rated</span>
           </div>
 
-          <div className="border border-[var(--border)] rounded-lg p-3 space-y-3">
-            <p className="text-xs font-medium text-[var(--text-muted)] uppercase">Side A</p>
-            <Select label="Player 1" value={sideA1} onChange={(e) => setSideA1(e.target.value)} options={playerOptions} />
+          {/* role=group ties the two pickers to their side heading — without it a
+              screen reader hears "Player 1" twice with nothing to tell them apart. */}
+          <div className="border border-[var(--border)] rounded-lg p-3 space-y-3" role="group" aria-labelledby="challenge-side-a">
+            <p className="text-xs font-medium text-[var(--text-muted)] uppercase" id="challenge-side-a">Side A</p>
+            <PlayerPicker label="Player 1" value={sideA1} onChange={setSideA1} players={playerOptions} />
             {type === 'doubles' && (
-              <Select label="Player 2" value={sideA2} onChange={(e) => setSideA2(e.target.value)} options={playerOptions} />
+              <PlayerPicker label="Player 2" value={sideA2} onChange={setSideA2} players={playerOptions} />
             )}
           </div>
 
-          <div className="border border-[var(--border)] rounded-lg p-3 space-y-3">
-            <p className="text-xs font-medium text-[var(--text-muted)] uppercase">Side B</p>
-            <Select label="Player 1" value={sideB1} onChange={(e) => setSideB1(e.target.value)} options={playerOptions} />
+          <div className="border border-[var(--border)] rounded-lg p-3 space-y-3" role="group" aria-labelledby="challenge-side-b">
+            <p className="text-xs font-medium text-[var(--text-muted)] uppercase" id="challenge-side-b">Side B</p>
+            <PlayerPicker label="Player 1" value={sideB1} onChange={setSideB1} players={playerOptions} />
             {type === 'doubles' && (
-              <Select label="Player 2" value={sideB2} onChange={(e) => setSideB2(e.target.value)} options={playerOptions} />
+              <PlayerPicker label="Player 2" value={sideB2} onChange={setSideB2} players={playerOptions} />
             )}
           </div>
 

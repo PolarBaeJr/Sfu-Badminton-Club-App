@@ -29,7 +29,7 @@ export default async function MatchesPage() {
   const allPlayers = unwrap(
     await supabase
       .from('players')
-      .select('id, full_name')
+      .select('id, full_name, avatar_url')
       .eq('active_flag', true)
       .neq('status', 'pending_approval')
       .order('full_name')
