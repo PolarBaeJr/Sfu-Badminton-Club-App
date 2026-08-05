@@ -287,7 +287,11 @@ export default function LoginPage() {
           </div>
         ) : (
           <>
-            {canUsePasskeys && (
+            {/* Sign-in only. A passkey proves you are an account that already
+                exists, so offering it under "Sign up" invites people to try
+                the one route that cannot possibly work for them. Google stays
+                in both modes because it can genuinely create an account. */}
+            {canUsePasskeys && mode === 'signin' && (
               <button
                 type="button"
                 onClick={handlePasskeyLogin}
