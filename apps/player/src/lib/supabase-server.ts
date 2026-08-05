@@ -60,7 +60,9 @@ export async function getExecutives(): Promise<{
   id: string;
   name: string;
   exec_title: string | null;
-  avatar_url: string | null;
+  // Deliberately not avatar_url — the exec page has its own photos (00042).
+  exec_photo_url: string | null;
+  bio: string | null;
 }[]> {
   const supabase = await createServerSupabaseClient();
   const { data } = await supabase.rpc('get_executives');

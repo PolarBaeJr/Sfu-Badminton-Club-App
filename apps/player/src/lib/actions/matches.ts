@@ -7,6 +7,7 @@ import {
   sendResultPendingEmail,
   sendDisputeOpenedEmail,
   sendWalkoverReportedEmail,
+  sendMatchConfirmedEmail,
   matchResultSchema,
   disputeSchema,
   walkoverReportSchema,
@@ -150,10 +151,57 @@ async function confirmMatchResultImpl(matchId: string) {
   // or disputed is a stale button, not a defect.
   if (error) throw dbError(error);
 
+  // Tell the OTHER participants it went through, with their own rating change.
+  // Only after apply_match_result succeeds: pre/post ratings and rating_delta
+  // are written by that RPC, so reading them any earlier gives nulls.
+  //
+  // Not the confirmer — they are looking at the screen that just did this.
+  await notifyMatchConfirmed(matchId, player.id).catch((err) => {
+    // Never fail a confirmed match over an email. The rating change is already
+    // committed; the notification is a courtesy.
+    Sentry.captureException(err, { extra: { step: 'match-confirmed-email', matchId } });
+  });
+
   trackServerEvent(player.id, 'match_result_confirmed', { ...getPlayerProps(player), match_id: matchId });
   revalidatePath('/challenges');
   revalidatePath('/leaderboard');
   revalidatePath('/my-stats');
+}
+
+async function notifyMatchConfirmed(matchId: string, confirmerId: string) {
+  // Service role: 00032 revoked blanket SELECT on players, so email is not
+  // readable by `authenticated` even for a teammate.
+  const admin = createServiceRoleClient();
+
+  const [{ data: match }, { data: parts }] = await Promise.all([
+    admin.from('matches').select('score_summary, match_type').eq('id', matchId).single(),
+    admin
+      .from('match_participants')
+      .select('player_id, team_side, post_rating, rating_delta, players(full_name, email)')
+      .eq('match_id', matchId),
+  ]);
+  if (!match || !parts?.length) return;
+
+  const nameOf = (p: (typeof parts)[number]) =>
+    (p.players as { full_name?: string } | null)?.full_name ?? 'your opponent';
+
+  for (const p of parts) {
+    if (p.player_id === confirmerId) continue;
+    const email = (p.players as { email?: string } | null)?.email;
+    // rating_delta is null for an unrated match — there is no Elo change worth
+    // mailing about, so skip rather than send "+null Elo".
+    if (!email || p.rating_delta === null || p.post_rating === null) continue;
+
+    const opponents = parts.filter((o) => o.team_side !== p.team_side).map(nameOf);
+    await sendMatchConfirmedEmail(
+      email,
+      opponents.join(' & ') || 'your opponent',
+      match.score_summary ?? 'N/A',
+      p.rating_delta,
+      p.post_rating,
+      match.match_type ?? 'match',
+    );
+  }
 }
 
 export async function disputeMatchResult(matchId: string, reason: string, category: string): Promise<ActionResult> {

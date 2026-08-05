@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Input, Textarea, Switch, Select, PageHeader, Dialog } from '@badminton/ui';
 import { updateProfile, updateNotificationPreferences, deleteMyAccount } from '@/lib/actions';
-import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, type NotificationCategory } from '@badminton/shared';
+import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, normalizeEmailPreferences, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, type NotificationCategory } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -76,6 +76,12 @@ export default function SettingsPage() {
   const [notifPrefs, setNotifPrefs] = useState<Record<NotificationCategory, boolean>>(
     () => normalizeNotificationPreferences({}),
   );
+  // Email is tracked separately from push: they are different enough that one
+  // switch for both is wrong — push is a phone buzzing mid-match, email is
+  // something you read later.
+  const [emailPrefs, setEmailPrefs] = useState<Record<NotificationCategory, boolean>>(
+    () => normalizeEmailPreferences({}),
+  );
   // Free-form: a number plus a unit, stored as minutes.
   const [leadValue, setLeadValue] = useState('2');
   const [leadUnit, setLeadUnit] = useState<'minutes' | 'hours' | 'days'>('hours');
@@ -114,6 +120,7 @@ export default function SettingsPage() {
         setShowOnLeaderboard(!data.hide_from_leaderboard);
         setShowActivity(data.show_activity_status !== false);
         setNotifPrefs(normalizeNotificationPreferences(data.notification_preferences));
+        setEmailPrefs(normalizeEmailPreferences(data.notification_preferences));
         const mins = getReminderLeadMinutes(data.notification_preferences);
         // Show it back in the largest unit that divides evenly, so "120" reads
         // as "2 hours" rather than a raw minute count.
@@ -208,6 +215,21 @@ export default function SettingsPage() {
     if (!res.ok) toast(res.error, 'error');
   }
 
+  async function handleEmailPrefToggle(category: NotificationCategory, value: boolean) {
+    const previous = emailPrefs;
+    const next = { ...emailPrefs, [category]: value };
+    setEmailPrefs(next); // optimistic
+    // Sent under the `email_` prefix the server whitelists. The action merges
+    // onto the stored blob, so this cannot clobber the push toggles.
+    const res = await updateNotificationPreferences(
+      Object.fromEntries(Object.entries(next).map(([k, v]) => [`email_${k}`, v])),
+    );
+    if (!res.ok) {
+      setEmailPrefs(previous); // revert
+      toast(res.error, 'error');
+    }
+  }
+
   async function handleNotifPrefToggle(category: NotificationCategory, value: boolean) {
     const previous = notifPrefs;
     const next = { ...notifPrefs, [category]: value };
@@ -275,6 +297,15 @@ export default function SettingsPage() {
               <Input label="Display name / nickname" value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Optional" />
               <Input label="Phone"               value={phone}       onChange={(e) => setPhone(e.target.value.replace(/[^\d\s+\-()]/g, ''))} placeholder="Optional" inputMode="tel" />
               <Textarea label="Bio"              value={bio}         onChange={(e) => setBio(e.target.value)} placeholder="A few words about yourself" />
+              {/* Execs only: their bio is published on the public /exec page
+                  (00042). Saying so here matters — the field predates that page
+                  by a long way, so an exec may have written it expecting it to
+                  stay private. */}
+              {isExec && (
+                <p className="muted" style={{ fontSize: 12, marginTop: -6 }}>
+                  As an exec, your bio is shown publicly on the club&apos;s exec page.
+                </p>
+              )}
               <button
                 type="submit"
                 disabled={loading}
@@ -435,6 +466,28 @@ export default function SettingsPage() {
                 <span className="muted" style={{ fontSize: 13 }}>Push notifications not supported in this browser.</span>
               </div>
             )}
+
+            {/* Outside the push check on purpose: email works whether or not
+                this browser supports push, and burying these behind that check
+                would leave someone with no way to stop the mail. */}
+            <div className="sep" />
+            <div className="card-head" style={{ marginBottom: 10 }}>
+              <h3 className="card-title" style={{ fontSize: 15 }}>Email</h3>
+            </div>
+            <p className="muted" style={{ fontSize: 12, marginTop: 0, marginBottom: 12 }}>
+              Sign-in codes are always sent — you need them to get into your account.
+            </p>
+            {NOTIFICATION_CATEGORIES.map((c, i) => (
+              <div key={`email-${c.key}`}>
+                {i > 0 && <div className="sep" />}
+                <Switch
+                  checked={emailPrefs[c.key]}
+                  onChange={(v) => handleEmailPrefToggle(c.key, v)}
+                  label={c.label}
+                  description={c.description}
+                />
+              </div>
+            ))}
           </Section>
 
           <Section icon={Shield} title="Privacy">

@@ -9,6 +9,7 @@ import {
   adminPlayerCreateSchema,
   adminPlayerUpdateSchema,
   joinName,
+  sendPlayerApprovedEmail,
   type AdminPlayerUpdateInput,
 } from '@badminton/shared';
 import { getAdminPlayer } from './_shared';
@@ -43,6 +44,18 @@ async function approvePlayerImpl(playerId: string, status: 'competitive' | 'recr
     new_value: { status },
     reason,
   }, { playerId });
+
+  // Tell them they are in. Until now approval was silent: a member who signed
+  // up sat at "pending approval" with no way to know it had changed except by
+  // opening the app again and guessing.
+  //
+  // Best-effort — the approval itself is already committed and audited, and a
+  // mail failure must not roll that back or surface as a failed action.
+  if (oldPlayer?.email) {
+    await sendPlayerApprovedEmail(oldPlayer.email, oldPlayer.full_name ?? 'there').catch((err) => {
+      Sentry.captureException(err, { extra: { step: 'player-approved-email', playerId } });
+    });
+  }
 
   revalidatePath('/players');
   revalidatePath('/dashboard');
@@ -134,6 +147,7 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
   if (data.is_exec !== undefined) playerUpdate.is_exec = data.is_exec;
   if (data.exec_title !== undefined) playerUpdate.exec_title = data.exec_title;
   if (data.fee_exempt !== undefined) playerUpdate.fee_exempt = data.fee_exempt;
+  if (data.exec_photo_url !== undefined) playerUpdate.exec_photo_url = data.exec_photo_url;
   if (Object.keys(playerUpdate).length > 0) {
     const { error } = await adminClient.from('players').update(playerUpdate).eq('id', playerId);
     if (error) throw new Error(error.message);
