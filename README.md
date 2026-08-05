@@ -52,8 +52,6 @@ npm run dev:player   # http://localhost:3000
 npm run dev:admin    # http://localhost:3001
 ```
 
-Full setup (database, migrations, secrets, gotchas): **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)**.
-
 ## Common scripts
 
 | Command | Does |
@@ -78,8 +76,6 @@ Push to the `deploy/docker-prod` branch → GitHub Actions builds ARM64 images t
 | Area | Where |
 |------|-------|
 | **Project overview** (for execs) | [docs/project/](docs/project/README.md) — what it is, what's built, roadmap, security, ops, tech stack |
-| **Local development** | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) |
-| **Architecture & data model** | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **Operations runbook** | [docs/ops/RUNBOOK.md](docs/ops/RUNBOOK.md) |
 | **Credentials & custody** | [docs/ops/CREDENTIALS.md](docs/ops/CREDENTIALS.md) |
 | **Admin/exec user guide** | [docs/guides/admin-guide.md](docs/guides/admin-guide.md) |
