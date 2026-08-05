@@ -145,6 +145,15 @@ async function buildFieldFromPool(
   }
 
   const capacity = (event.max_participants as number | null) ?? standings.length;
+  // Promoted qualifiers arrive checked in: they have just finished playing the
+  // pool, so they are demonstrably present. checked_in_at is set alongside the
+  // status because the attendance list keys on the timestamp, not the enum —
+  // status is overwritten by a later withdrawal, the timestamp is not.
+  const promotedAttendance = {
+    status: 'checked_in',
+    checked_in_at: new Date().toISOString(),
+    checked_in_by: adminId,
+  };
   const entries: FieldEntry[] = [];
   let promoted = 0;
   let skipped = 0;
@@ -168,8 +177,6 @@ async function buildFieldFromPool(
       continue;
     }
 
-    // Status 'checked_in' rather than 'registered': they have just finished
-    // playing the pool, so they are demonstrably present.
     const insert = doubles
       ? {
           event_id: eventId,
@@ -177,7 +184,7 @@ async function buildFieldFromPool(
           player2_id: src.players[1],
           pair_name: src.name,
           combined_elo: src.elo,
-          status: 'checked_in',
+          ...promotedAttendance,
           seed_number: seed,
           added_by: adminId,
         }
@@ -185,7 +192,7 @@ async function buildFieldFromPool(
           event_id: eventId,
           player_id: src.players[0],
           elo_before: src.elo,
-          status: 'checked_in',
+          ...promotedAttendance,
           seed_number: seed,
           added_by: adminId,
         };

@@ -92,7 +92,10 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
     live: 'Finalize Tournament',
   };
 
-  const actionDisabled = status === 'checkin' && checkedIn < 2;
+  // A pool-seeded event usually has NOBODY entered yet — its field arrives at
+  // generation, promoted from the pool. Gating on checked-in entries would make
+  // the one button that can fill it permanently unpressable.
+  const actionDisabled = status === 'checkin' && checkedIn < 2 && !seededFromPool;
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6 space-y-5">
