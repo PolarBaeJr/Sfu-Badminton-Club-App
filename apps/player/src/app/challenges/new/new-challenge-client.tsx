@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
-import { Select, Input, Textarea, DatePicker, Button } from '@badminton/ui';
+import { Select, Input, Textarea, DatePicker, Button, PlayerPicker } from '@badminton/ui';
 import { previewEloChange } from '@badminton/shared';
 import { createChallenge } from '@/lib/actions';
 import { useRouter } from 'next/navigation';
@@ -24,6 +24,7 @@ import Link from 'next/link';
 interface PlayerOption {
   id: string;
   full_name: string;
+  avatar_url?: string | null;
   singles_elo: number;
   doubles_elo: number;
 }
@@ -75,7 +76,7 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
 
       const { data } = await supabase
         .from('players')
-        .select('id, full_name, ratings(singles_elo, doubles_elo)')
+        .select('id, full_name, avatar_url, ratings(singles_elo, doubles_elo)')
         .eq('active_flag', true)
         .not('status', 'in', '("pending_approval","suspended")')
         .neq('id', me?.id ?? '');
@@ -155,9 +156,14 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
     setLoading(false);
   }
 
+  // Rating goes in `meta`, not the label. Glued into the name it made the
+  // search match "(1423)" as if it were part of someone's name; as a secondary
+  // line it stays visible AND searchable without polluting the name.
   const playerOptions = players.map((p) => ({
-    value: p.id,
-    label: `${p.full_name} (${type === 'singles' ? p.singles_elo : p.doubles_elo})`,
+    id: p.id,
+    name: p.full_name,
+    avatarUrl: p.avatar_url ?? null,
+    meta: String(type === 'singles' ? p.singles_elo : p.doubles_elo),
   }));
 
   // Nobody can fill two slots on the court. Each select drops whoever is
@@ -167,7 +173,7 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
   // Opponent was always picked first.
   const availableFor = (current: string) =>
     playerOptions.filter(
-      (p) => p.value === current || ![opponentId, partnerId, opponentPartnerId].includes(p.value),
+      (p) => p.id === current || ![opponentId, partnerId, opponentPartnerId].includes(p.id),
     );
 
   return (
@@ -246,36 +252,40 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
                       <span className="mono text-xs text-[var(--text-muted)]">{myElo.doubles}</span>
                     </div>
                   </div>
-                  <Select
+                  <PlayerPicker
                     label="Partner"
                     value={partnerId}
-                    onChange={(e) => setPartnerId(e.target.value)}
-                    options={[{ value: '', label: 'Select partner...' }, ...availableFor(partnerId)]}
+                    onChange={setPartnerId}
+                    players={availableFor(partnerId)}
+                    placeholder="Search for a partner…"
                   />
                 </div>
 
                 <div className="space-y-3">
                   <label className="eyebrow block">Opponents</label>
-                  <Select
+                  <PlayerPicker
                     label="Opponent"
                     value={opponentId}
-                    onChange={(e) => setOpponentId(e.target.value)}
-                    options={[{ value: '', label: 'Select opponent...' }, ...availableFor(opponentId)]}
+                    onChange={setOpponentId}
+                    players={availableFor(opponentId)}
+                    placeholder="Search for an opponent…"
                   />
-                  <Select
+                  <PlayerPicker
                     label="Their Partner"
                     value={opponentPartnerId}
-                    onChange={(e) => setOpponentPartnerId(e.target.value)}
-                    options={[{ value: '', label: 'Select...' }, ...availableFor(opponentPartnerId)]}
+                    onChange={setOpponentPartnerId}
+                    players={availableFor(opponentPartnerId)}
+                    placeholder="Search…"
                   />
                 </div>
               </>
             ) : (
-              <Select
+              <PlayerPicker
                 label="Opponent"
                 value={opponentId}
-                onChange={(e) => setOpponentId(e.target.value)}
-                options={[{ value: '', label: 'Select opponent...' }, ...availableFor(opponentId)]}
+                onChange={setOpponentId}
+                players={availableFor(opponentId)}
+                placeholder="Search for an opponent…"
               />
             )}
 
