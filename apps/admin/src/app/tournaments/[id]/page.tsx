@@ -1,5 +1,6 @@
 import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
 import { Card, Badge, PageHeader } from '@badminton/ui';
+import { TournamentCheckinQr } from './checkin-qr';
 import { formatDate, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS } from '@badminton/shared';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Users, Calendar, Zap, Crown, Plus, Swords, DollarSign } from 'lucide-react';
@@ -84,7 +85,10 @@ export default async function TournamentDetailPage({ params }: { params: Promise
               </span>
             }
           />
-          <div className="flex gap-2 mt-3">
+          <div className="flex gap-2 mt-3 items-center">
+            {/* One code for the whole tournament — a scan checks the player
+                into every event they are entered in. */}
+            <TournamentCheckinQr tournamentId={tournament.id} />
             <Badge variant={tournament.status === 'active' ? 'success' : tournament.status === 'completed' ? 'neutral' : 'warning'}>
               <span className="sr-only">Tournament status: </span>{tournament.status}
             </Badge>

@@ -154,14 +154,23 @@ export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registra
         <h1 className="display-lg">Self Check-In</h1>
         <p className="text-[var(--text-muted)] text-sm mt-1">{playerName}</p>
       </div>
+      {/* Self-service check-in by button is gone: a member could check
+          themselves in from anywhere, which made "checked in" mean nothing more
+          than "tapped a button at home". Check-in is now proof of presence —
+          scan the code an exec is showing at the door. One scan covers every
+          event you are entered in, so this page no longer needs a per-event
+          action at all. */}
       <Button
-        onClick={handleCheckIn}
-        loading={loading}
+        onClick={() => router.push('/tournaments/checkin')}
         size="lg"
         className="press w-full max-w-xs min-h-[52px]"
       >
-        Confirm Check-In
+        Scan check-in code
       </Button>
+      <p className="text-[var(--text-muted)] text-xs max-w-xs text-center">
+        An exec will display the code. Scanning it checks you into every event
+        you are entered in.
+      </p>
       <Link
         href={backLink}
         className="text-sm text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors min-h-[44px] flex items-center"

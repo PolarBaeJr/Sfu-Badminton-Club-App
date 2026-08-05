@@ -50,6 +50,10 @@ export async function middleware(request: NextRequest) {
     // spam button instead. On SES a complaint rate is what suspends sending, so
     // gating this behind /login defeats the entire point of the feature.
     pathname.startsWith('/unsubscribe') ||
+    // Tournament check-in QR. Someone scanning at the door may well be
+    // logged out; the page itself requires a session before it changes
+    // anything, so letting it render is safe and avoids a dead redirect.
+    pathname.startsWith('/tournaments/checkin') ||
     pathname === '/leaderboard';
 
   // A scanned session QR points at /checkin/<token>, which is not public — so
