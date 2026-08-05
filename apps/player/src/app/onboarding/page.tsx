@@ -6,7 +6,8 @@ import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/toast-provider';
 import { LegalMarkdown } from '@badminton/ui';
 import { LEGAL_DOCUMENT_LABELS, sortLegalDocuments, CHECKIN_TOKEN_REGEX } from '@badminton/shared';
-import { User, Phone, Sparkles, Trophy, ChevronRight, ChevronLeft, Loader2, Rocket } from 'lucide-react';
+import { User, Phone, Sparkles, Trophy, ChevronRight, ChevronLeft, Loader2, Rocket, KeyRound, Check } from 'lucide-react';
+import { enrollPasskey, supportsPasskeys } from '@/lib/passkey-client';
 
 const steps = [
   { number: 1, title: 'Profile' },
@@ -120,6 +121,12 @@ export default function OnboardingPage() {
   const [displayName, setDisplayName] = useState('');
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
+  // Offered on the last step, never required. A passkey is a convenience on top
+  // of the emailed code, and gating "Enter the club" on hardware some phones
+  // don't have would lock people out of onboarding entirely.
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
+  const [passkeyAdded, setPasskeyAdded] = useState(false);
+  const [canUsePasskeys, setCanUsePasskeys] = useState(false);
   const [docs, setDocs] = useState<{ document: string; version: string; content: string }[] | null>(null);
   const [waiverAccepted, setWaiverAccepted] = useState(false);
   const [cocAccepted, setCocAccepted] = useState(false);
@@ -137,6 +144,22 @@ export default function OnboardingPage() {
       .catch(() => toast('Failed to load the waiver — please refresh', 'error'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    setCanUsePasskeys(supportsPasskeys());
+  }, []);
+
+  async function handleAddPasskey() {
+    setPasskeyBusy(true);
+    const result = await enrollPasskey();
+    setPasskeyBusy(false);
+    if (result.ok) {
+      setPasskeyAdded(true);
+      toast('Passkey saved — you can use it to sign in', 'success');
+    } else if (result.error) {
+      toast(result.error, 'error');
+    }
+  }
 
   const allAccepted = waiverAccepted && cocAccepted && termsAccepted && ageAttested;
   // Only the first name is required (profileSchema); mononyms are real names.
@@ -319,6 +342,38 @@ export default function OnboardingPage() {
                 <div className="stat-value" style={{ marginTop: 4, fontSize: 18 }}>—</div>
               </div>
             </div>
+
+            {canUsePasskeys && (
+              <div className="card-base" style={{ padding: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                  <KeyRound size={16} style={{ marginTop: 2, flexShrink: 0 }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>Skip the email next time</div>
+                    <div className="muted" style={{ fontSize: 12, marginTop: 2, lineHeight: 1.5 }}>
+                      Set up a passkey and sign in with your fingerprint, face or
+                      device PIN — no waiting for a code.
+                    </div>
+                  </div>
+                  {passkeyAdded ? (
+                    <span
+                      className="mono"
+                      style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}
+                    >
+                      <Check size={14} /> Added
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      disabled={passkeyBusy}
+                      onClick={() => void handleAddPasskey()}
+                    >
+                      {passkeyBusy ? <Loader2 size={14} className="animate-spin" /> : 'Set up'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div
               style={{

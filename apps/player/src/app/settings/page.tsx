@@ -11,6 +11,7 @@ import Link from 'next/link';
 import { isPushSupported, isPushEnabled, subscribeToPush, unsubscribeFromPush } from '@/lib/push-client';
 import { AvatarUpload } from '@/components/AvatarUpload';
 import { CalendarFeed } from './calendar-feed';
+import { PasskeyManager } from '@/components/passkey-manager';
 import {
   User,
   Calendar,
@@ -19,6 +20,7 @@ import {
   Monitor,
   Bell,
   BellOff,
+  KeyRound,
   Shield,
   LogOut,
   Info,
@@ -507,6 +509,10 @@ export default function SettingsPage() {
                 description="Others can see when you were last active."
               />
             </div>
+          </Section>
+
+          <Section icon={KeyRound} title="Passkeys">
+            <PasskeyManager />
           </Section>
 
           <Section icon={Info} title="About">

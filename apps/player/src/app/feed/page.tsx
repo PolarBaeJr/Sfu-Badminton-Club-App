@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { Plus, ChevronRight, Crosshair } from 'lucide-react';
 import { PageHeader, AvatarChip } from '@badminton/ui';
+import { PasskeyNudge } from '@/components/passkey-nudge';
 
 type Person = { id: string; full_name: string | null; avatar_url?: string | null };
 type ParticipantRow = {
@@ -132,6 +133,10 @@ export default async function FeedPage() {
           ) : undefined
         }
       />
+
+      {/* Renders nothing unless this account has no passkey yet and the device
+          supports them, so it self-retires once everyone is enrolled. */}
+      <PasskeyNudge />
 
       {/* Hiding the gated features without saying why leaves a new member
           staring at a half-empty app wondering what they did wrong. Say it
