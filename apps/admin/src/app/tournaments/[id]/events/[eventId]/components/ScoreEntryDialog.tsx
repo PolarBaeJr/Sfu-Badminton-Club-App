@@ -108,6 +108,18 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
     setWalkoverLoading(false);
   }
 
+  async function handleDoubleNoShow() {
+    setWalkoverLoading(true);
+    try {
+      const res = await recordDoubleNoShow(match.id, walkoverReason || 'Neither side present');
+      if (!res.ok) { toast(res.error, 'error'); setWalkoverLoading(false); return; }
+      done('Recorded — neither side present');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed', 'error');
+    }
+    setWalkoverLoading(false);
+  }
+
   async function handleVoid() {
     setWalkoverLoading(true);
     try {
@@ -371,6 +383,24 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
                 Walkover → {nameB}
               </Button>
             </div>
+            {/* Neither side present. Distinct from a walkover, which needs
+                somebody to award it to, and from a plain void, which says
+                nothing about why. Disabled unless BOTH sides are known — one
+                empty side is an unopposed walkover, not a no-show. */}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleDoubleNoShow}
+              loading={walkoverLoading}
+              disabled={!aId || !bId}
+              className="w-full text-[var(--color-warning)] focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+            >
+              Neither side turned up
+            </Button>
+            <p className="text-xs text-[var(--text-muted)]">
+              &ldquo;Neither side turned up&rdquo; marks both entries as a no-show — which counts toward
+              their reliability record — and leaves the next round empty for you to fill.
+            </p>
             <p className="text-xs text-[var(--text-muted)]">
               Voiding erases the match: any Elo it applied is reversed and its winner is taken back out
               of the next round. It can be restored later.

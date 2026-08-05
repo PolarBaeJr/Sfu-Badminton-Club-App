@@ -2,7 +2,7 @@
 
 How to run the club from the admin console. Non-technical — for execs and admins using the app, not developers.
 
-**Console:** [badminton.polardev.org/admin](https://badminton.polardev.org/admin)
+**Console:** [Admin.sfubadminton.com](https://admin.sfubadminton.com)
 
 ## Access levels
 
