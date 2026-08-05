@@ -43,6 +43,13 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/legal') ||
     // ICS feed for calendar clients — token-authenticated, no session cookie.
     pathname.startsWith('/api/calendar') ||
+    // One-click unsubscribe. Authenticated by the signed token in the link, not
+    // by a session — and it MUST work without one. RFC 8058 is a machine POST
+    // from the mail client with no cookies at all, and a mail client treats any
+    // non-2xx as a failed unsubscribe, which pushes the recipient toward the
+    // spam button instead. On SES a complaint rate is what suspends sending, so
+    // gating this behind /login defeats the entire point of the feature.
+    pathname.startsWith('/unsubscribe') ||
     pathname === '/leaderboard';
 
   // A scanned session QR points at /checkin/<token>, which is not public — so
