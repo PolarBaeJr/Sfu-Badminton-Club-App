@@ -14,6 +14,10 @@ import {
   PLACEMENT_BONUSES,
   DEFAULT_ELO,
   PROVISIONAL_THRESHOLD,
+  CUSTOM_FORMAT_BOUNDS,
+  isLegalCustomGames,
+  isLegalCustomPoints,
+  customFormatHint,
 } from '../utils/constants';
 import type {
   PlayerStatus,
@@ -357,5 +361,53 @@ describe('business constants', () => {
     expect(champion).toBeGreaterThan(finalist);
     expect(finalist).toBeGreaterThan(semifinalist);
     expect(semifinalist).toBeGreaterThan(quarterfinalist);
+  });
+});
+
+// =============================================
+// Typed "best of X to Y" shapes
+// =============================================
+// The numbers are typed into the admin forms rather than picked from a list, so
+// these guards are what stands between a slip of the keyboard and a shape the
+// challenges_custom_format_sane CHECK (00031) would reject.
+describe('custom format validation', () => {
+  it('accepts the odd best-ofs inside the bounds', () => {
+    expect(isLegalCustomGames(1)).toBe(true);
+    expect(isLegalCustomGames(3)).toBe(true);
+    expect(isLegalCustomGames(7)).toBe(true);
+  });
+
+  it('rejects an even best-of — it can end level and never be decided', () => {
+    expect(isLegalCustomGames(2)).toBe(false);
+    expect(isLegalCustomGames(4)).toBe(false);
+  });
+
+  it('rejects a best-of outside the bounds', () => {
+    expect(isLegalCustomGames(0)).toBe(false);
+    expect(isLegalCustomGames(9)).toBe(false);
+    expect(isLegalCustomGames(-3)).toBe(false);
+  });
+
+  it('rejects a fractional best-of', () => {
+    expect(isLegalCustomGames(3.5)).toBe(false);
+  });
+
+  it('accepts points at the bounds and rejects points outside them', () => {
+    expect(isLegalCustomPoints(CUSTOM_FORMAT_BOUNDS.minPoints)).toBe(true);
+    expect(isLegalCustomPoints(21)).toBe(true);
+    expect(isLegalCustomPoints(CUSTOM_FORMAT_BOUNDS.maxPoints)).toBe(true);
+    expect(isLegalCustomPoints(CUSTOM_FORMAT_BOUNDS.minPoints - 1)).toBe(false);
+    expect(isLegalCustomPoints(CUSTOM_FORMAT_BOUNDS.maxPoints + 1)).toBe(false);
+    expect(isLegalCustomPoints(21.5)).toBe(false);
+  });
+
+  it('explains what is wrong, naming the offending half of the shape', () => {
+    expect(customFormatHint(2, 21)).toContain('odd');
+    expect(customFormatHint(3, 99)).toContain('Points per game');
+  });
+
+  it('states the deuce cap once the shape is legal', () => {
+    expect(customFormatHint(3, 21)).toContain('30');
+    expect(customFormatHint(5, 15)).toContain('24');
   });
 });
