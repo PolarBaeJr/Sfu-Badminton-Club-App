@@ -11,7 +11,7 @@
 | Layer | Technology |
 |-------|-----------|
 | **Language** | TypeScript 5.5 |
-| **Framework** | Next.js 14.2 (App Router, standalone output) + React 18.3 |
+| **Framework** | Next.js 15.5 (App Router, standalone output) + React 19.2 |
 | **Styling** | Tailwind CSS 3.4, Radix UI primitives, lucide-react icons, Framer Motion |
 | **Backend / database** | Supabase (self-hosted) — PostgreSQL 17, Auth, REST, Storage, Realtime |
 | **Serverless jobs** | Supabase Edge Functions (Deno runtime) |
@@ -27,8 +27,8 @@
 ## Detail
 
 ### Frontend
-- **Next.js 14.2.35** — React framework, using the App Router and **server actions** (form/data logic runs securely on the server). Built in **standalone** mode for lean Docker images.
-- **React 18.3**.
+- **Next.js 15.5.22** — React framework, using the App Router and **server actions** (form/data logic runs securely on the server). Built in **standalone** mode for lean Docker images.
+- **React 19.2**. Pinned to a single copy by root `overrides`; `packages/ui` takes react as a *peer* dependency. Two copies in one tree cause React error #31 at runtime.
 - **Tailwind CSS 3.4** for styling, with PostCSS + Autoprefixer. Helpers: `class-variance-authority`, `clsx`, `tailwind-merge`, `tw-animate-css`.
 - **Radix UI** primitives + **shadcn**-style components for accessible UI building blocks.
 - **lucide-react** icon set; **Framer Motion** for animation (player app).
