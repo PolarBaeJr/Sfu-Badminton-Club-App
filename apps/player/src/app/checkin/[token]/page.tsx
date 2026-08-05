@@ -12,7 +12,8 @@ export const dynamic = 'force-dynamic';
 // the SESSION only; the player is whoever is signed in on the scanning phone.
 // It has to be a page rather than a route handler because the person holding
 // the camera needs to see whether it worked.
-export default async function CheckinPage({ params }: { params: { token: string } }) {
+export default async function CheckinPage({ params }: { params: Promise<{ token: string }> }) {
+  const { token } = await params;
   // Rate limit: 20 scans per IP per minute. A gym full of players on one wifi
   // NAT shares a bucket, so the limit is generous — it only throttles someone
   // walking the token space.
@@ -34,8 +35,8 @@ export default async function CheckinPage({ params }: { params: { token: string 
   if (!player) {
     // Carry the token through sign-in — /login has no generic `next=` support.
     // Only a well-formed token travels, so nothing arbitrary can ride along.
-    redirect(CHECKIN_TOKEN_REGEX.test(params.token) ? `/login?checkin=${params.token}` : '/login');
+    redirect(CHECKIN_TOKEN_REGEX.test(token) ? `/login?checkin=${token}` : '/login');
   }
 
-  return <CheckinClient token={params.token} />;
+  return <CheckinClient token={token} />;
 }

@@ -13,17 +13,24 @@ const securityHeaders = [
 // workspace root here means the only way to change it is to bump the manifest.
 const appVersion = require('../../package.json').version;
 
+const path = require('path');
+
 const nextConfig = {
   output: 'standalone',
+  // Pin the tracing root to the workspace. Left to infer it, Next walks up
+  // looking for lockfiles and can land outside the repo entirely (a stray
+  // ~/package-lock.json is enough), which decides what gets copied into the
+  // standalone bundle the container runs.
+  outputFileTracingRoot: path.join(__dirname, '../..'),
   // Inlined at build time, so the standalone server needs nothing at runtime.
   env: { NEXT_PUBLIC_APP_VERSION: appVersion },
   // No basePath: the admin console has its own subdomain
   // (admin.sfubadminton.com) and serves from the root. It previously lived at
   // sfubadminton.com/admin, which is why asset and cookie paths below were
   // prefixed — those moved with it.
-  // Required in Next 14 for src/instrumentation.ts (Sentry server/edge init) to
-  // run; default-on in Next 15.
-  experimental: { instrumentationHook: true },
+  // src/instrumentation.ts (Sentry server/edge init) needed an experimental
+  // flag on 14; it is default-on from 15, and leaving the flag set now only
+  // earns an "unrecognised experimental option" warning.
   transpilePackages: ['@badminton/shared', '@badminton/ui'],
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }];

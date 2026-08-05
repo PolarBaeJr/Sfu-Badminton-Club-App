@@ -8,11 +8,18 @@ const securityHeaders = [
   { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
 ];
 
+const path = require('path');
+
 const nextConfig = {
   output: 'standalone',
-  // Required in Next 14 for src/instrumentation.ts (Sentry server/edge init) to
-  // run; default-on in Next 15.
-  experimental: { instrumentationHook: true },
+  // Pin the tracing root to the workspace. Left to infer it, Next walks up
+  // looking for lockfiles and can land outside the repo entirely (a stray
+  // ~/package-lock.json is enough), which decides what gets copied into the
+  // standalone bundle the container runs.
+  outputFileTracingRoot: path.join(__dirname, '../..'),
+  // src/instrumentation.ts (Sentry server/edge init) needed an experimental
+  // flag on 14; it is default-on from 15, and leaving the flag set now only
+  // earns an "unrecognised experimental option" warning.
   transpilePackages: ['@badminton/shared', '@badminton/ui'],
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }];

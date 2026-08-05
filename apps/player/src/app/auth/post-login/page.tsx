@@ -11,8 +11,9 @@ export const dynamic = 'force-dynamic';
 export default async function PostLoginPage({
   searchParams,
 }: {
-  searchParams: { checkin?: string };
+  searchParams: Promise<{ checkin?: string }>;
 }) {
+  const { checkin } = await searchParams;
   const player = await getCurrentPlayer();
   // Not just a missing profile: a row can exist with setup unfinished (the
   // signup function inserts it with onboarding_completed FALSE), and sending
@@ -20,8 +21,8 @@ export default async function PostLoginPage({
   if (!player || !player.onboarding_completed) redirect('/onboarding');
   // Single-purpose token, re-validated here: it can only ever name a /checkin
   // route, so there's no arbitrary redirect target to abuse.
-  if (searchParams.checkin && CHECKIN_TOKEN_REGEX.test(searchParams.checkin)) {
-    redirect(`/checkin/${searchParams.checkin}`);
+  if (checkin && CHECKIN_TOKEN_REGEX.test(checkin)) {
+    redirect(`/checkin/${checkin}`);
   }
   redirect('/feed');
 }
