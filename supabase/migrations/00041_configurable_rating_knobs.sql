@@ -328,5 +328,4 @@ BEGIN
   INSERT INTO audit_logs (actor_id, action_type, target_type, target_id, reason)
   VALUES (p_confirmed_by, 'match_confirmed', 'match', p_match_id, 'Match result confirmed and Elo applied');
 END;
-$function$
-
+$function$;
