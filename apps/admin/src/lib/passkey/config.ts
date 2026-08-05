@@ -6,6 +6,11 @@ const DEFAULT_ADMIN_URL = 'http://localhost:3001';
 
 export const PASSKEY_VERIFIED_COOKIE = 'admin_passkey_verified';
 export const PASSKEY_CHALLENGE_COOKIE = 'admin_passkey_challenge';
+// Deliberately NOT the same cookie as the step-up gate above. /api/passkey/login
+// is reachable without a session, so anyone can make a browser set its challenge
+// cookie; sharing one name would let an unauthenticated request clobber a signed-
+// in admin's in-flight enrol/step-up challenge. Two names, two independent flows.
+export const PASSKEY_LOGIN_CHALLENGE_COOKIE = 'admin_passkey_login_challenge';
 
 export const VERIFIED_TTL_SECONDS = 12 * 60 * 60; // 12h
 export const CHALLENGE_TTL_SECONDS = 5 * 60; // 5min
@@ -57,4 +62,25 @@ export function getCookieSecret(): string {
   }
   // Deterministic dev fallback so local sessions survive restarts.
   return 'admin-passkey-dev-secret-do-not-use-in-production';
+}
+
+/**
+ * Whether the sign-in-with-a-passkey routes can operate — i.e. whether
+ * getCookieSecret() would return rather than throw.
+ *
+ * The throw above is right for the gate: a gate with no secret must fail closed,
+ * and every caller of it is already past authentication, so a 500 is a bug
+ * report, not a lockout. The login routes are different — they are the FIRST
+ * thing an unauthenticated visitor touches. Letting the throw escape there turns
+ * a missing env var into an unhandled 500 on a public endpoint (and a stack
+ * trace in Sentry for every click of the button).
+ *
+ * So the login routes still fail closed — no secret means no signed challenge
+ * means no passkey sign-in — but they say so with a clean 503, the button hides
+ * itself, and Google/magic-link carry on working. Nobody is locked out of the
+ * console; they just lose one of three ways in.
+ */
+export function isPasskeyLoginConfigured(): boolean {
+  if (process.env.ADMIN_PASSKEY_COOKIE_SECRET) return true;
+  return process.env.NODE_ENV !== 'production';
 }
