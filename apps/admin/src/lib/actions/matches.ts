@@ -4,7 +4,14 @@ import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
-import { parseOrThrow, adminMatchCreateSchema } from '@badminton/shared';
+import {
+  parseOrThrow,
+  adminMatchCreateSchema,
+  isLegalCustomGames,
+  isLegalCustomPoints,
+  CUSTOM_FORMAT_BOUNDS,
+  ExpectedError,
+} from '@badminton/shared';
 import { getExecOrAdmin, getAdminPlayer } from './_shared';
 import { runAction, type ActionResult } from '../action-result';
 
@@ -117,6 +124,10 @@ async function convertMatchToCasualImpl(matchId: string, reason: string) {
 export async function adminCreateMatch(data: {
   match_type: string;
   format: string;
+  // "Best of X games to Y points", typed in the form. The enum above stays as
+  // the fallback the DB coalesces to; these win when present (migration 00031).
+  games_per_match?: number;
+  points_per_game?: number;
   rated_flag: boolean;
   side_a_players: string[];
   side_b_players: string[];
@@ -130,6 +141,10 @@ export async function adminCreateMatch(data: {
 async function adminCreateMatchImpl(data: {
   match_type: string;
   format: string;
+  // "Best of X games to Y points", typed in the form. The enum above stays as
+  // the fallback the DB coalesces to; these win when present (migration 00031).
+  games_per_match?: number;
+  points_per_game?: number;
   rated_flag: boolean;
   side_a_players: string[];
   side_b_players: string[];
@@ -140,10 +155,17 @@ async function adminCreateMatchImpl(data: {
   parseOrThrow(adminMatchCreateSchema, data);
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
-  const { getFormatWeight } = await import('@badminton/shared');
+  const { getFormatWeight, derivedFormatWeight } = await import('@badminton/shared');
 
   const activeSeason = await adminClient.from('seasons').select('id').eq('active_flag', true).single();
-  const formatWeight = getFormatWeight(data.format as import('@badminton/shared').MatchFormat);
+  // A custom shape has no hand-picked weight, so derive it exactly as
+  // derived_format_weight (00031) does — otherwise the same "best of 5 to 15"
+  // would be worth one thing entered by an admin and another played through a
+  // challenge. trigger_set_match_weights recomputes this on insert anyway; we
+  // send the matching value rather than a stale preset weight.
+  const formatWeight = data.points_per_game
+    ? derivedFormatWeight(data.games_per_match ?? 1, data.points_per_game)
+    : getFormatWeight(data.format as import('@badminton/shared').MatchFormat);
 
   const scoreSummary = data.games.map(g => `${g.side_a_score}-${g.side_b_score}`).join(', ');
 
@@ -152,6 +174,8 @@ async function adminCreateMatchImpl(data: {
     event_type: 'admin_entered',
     rated_flag: data.rated_flag,
     format: data.format,
+    games_per_match: data.games_per_match ?? null,
+    points_per_game: data.points_per_game ?? null,
     format_weight: formatWeight,
     event_multiplier: 1.0,
     completed_flag: true,
@@ -249,6 +273,9 @@ async function adminCreateMatchImpl(data: {
 export async function adminCreateChallenge(data: {
   type: string;
   format: string;
+  // See adminCreateMatch: the enum is the fallback, this pair is the real shape.
+  games_per_match?: number;
+  points_per_game?: number;
   rated_flag: boolean;
   side_a_players: string[];
   side_b_players: string[];
@@ -262,6 +289,9 @@ export async function adminCreateChallenge(data: {
 async function adminCreateChallengeImpl(data: {
   type: string;
   format: string;
+  // See adminCreateMatch: the enum is the fallback, this pair is the real shape.
+  games_per_match?: number;
+  points_per_game?: number;
   rated_flag: boolean;
   side_a_players: string[];
   side_b_players: string[];
@@ -275,12 +305,27 @@ async function adminCreateChallengeImpl(data: {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
+  // This action has no zod schema of its own, and the shape is now typed rather
+  // than chosen from a list — so check it here. Otherwise a typo reaches the
+  // challenges_custom_format_sane CHECK and comes back as a Postgres constraint
+  // string no admin can act on.
+  if (data.points_per_game !== undefined || data.games_per_match !== undefined) {
+    if (!isLegalCustomGames(data.games_per_match ?? 0) || !isLegalCustomPoints(data.points_per_game ?? 0)) {
+      throw new ExpectedError(
+        `Best of must be an odd number from ${CUSTOM_FORMAT_BOUNDS.minGames} to ${CUSTOM_FORMAT_BOUNDS.maxGames}, ` +
+        `and points per game between ${CUSTOM_FORMAT_BOUNDS.minPoints} and ${CUSTOM_FORMAT_BOUNDS.maxPoints}.`,
+      );
+    }
+  }
+
   const eventType = data.rated_flag ? 'rated_challenge' : 'casual';
 
   const { data: challenge, error } = await adminClient.from('challenges').insert({
     type: data.type,
     rated_flag: data.rated_flag,
     format: data.format,
+    games_per_match: data.games_per_match ?? null,
+    points_per_game: data.points_per_game ?? null,
     event_type: eventType,
     scheduled_date: data.scheduled_date || null,
     scheduled_time: data.scheduled_time || null,

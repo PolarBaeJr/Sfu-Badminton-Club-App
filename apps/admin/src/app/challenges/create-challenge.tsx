@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Input, Select, Switch, Textarea, DatePicker } from '@badminton/ui';
+import { customFormatHint, isLegalCustomGames, isLegalCustomPoints } from '@badminton/shared';
 import { adminCreateChallenge } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 
@@ -11,7 +12,16 @@ export function CreateChallengeForm({ players }: { players: Player[] }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [type, setType] = useState('singles');
-  const [format, setFormat] = useState('single_21');
+  // The four presets were only (games, points) pairs — "Best of 3 to 21" IS 3
+  // and 21 — so the dropdown was a step with nothing behind it. Both numbers are
+  // typed instead. Held as text so a field can be cleared while it is retyped;
+  // the defaults are the old bo3_21.
+  const [customGames, setCustomGames] = useState('3');
+  const [customPoints, setCustomPoints] = useState('21');
+  const formatInvalid = !isLegalCustomGames(Number(customGames)) || !isLegalCustomPoints(Number(customPoints));
+  // The enum is only what the DB coalesces to when the custom columns are null
+  // (migration 00031), so all it has to record is "more than one game or not".
+  const format = Number(customGames) > 1 ? 'bo3_21' : 'single_21';
   const [rated, setRated] = useState(true);
   const [sideA1, setSideA1] = useState('');
   const [sideA2, setSideA2] = useState('');
@@ -26,6 +36,7 @@ export function CreateChallengeForm({ players }: { players: Player[] }) {
     e.preventDefault();
     if (!sideA1 || !sideB1) { toast('Select players for both sides', 'error'); return; }
     if (type === 'doubles' && (!sideA2 || !sideB2)) { toast('Doubles requires 2 players per side', 'error'); return; }
+    if (formatInvalid) { toast(customFormatHint(Number(customGames), Number(customPoints)), 'error'); return; }
 
     const sideAPlayers = type === 'doubles' ? [sideA1, sideA2] : [sideA1];
     const sideBPlayers = type === 'doubles' ? [sideB1, sideB2] : [sideB1];
@@ -34,7 +45,10 @@ export function CreateChallengeForm({ players }: { players: Player[] }) {
     try {
       const res = await adminCreateChallenge({
         type,
+        // The enum stays the fallback; the custom columns win when present.
         format,
+        games_per_match: Number(customGames),
+        points_per_game: Number(customPoints),
         rated_flag: rated,
         side_a_players: sideAPlayers,
         side_b_players: sideBPlayers,
@@ -60,27 +74,36 @@ export function CreateChallengeForm({ players }: { players: Player[] }) {
       <Button onClick={() => setOpen(true)}>New Challenge</Button>
       <Dialog open={open} onClose={() => setOpen(false)} title="Create Challenge (Admin)">
         <form onSubmit={handleCreate} className="space-y-4">
+          <Select
+            label="Type"
+            value={type}
+            onChange={(e) => setType(e.target.value)}
+            options={[
+              { value: 'singles', label: 'Singles' },
+              { value: 'doubles', label: 'Doubles' },
+            ]}
+          />
+
           <div className="grid grid-cols-2 gap-4">
-            <Select
-              label="Type"
-              value={type}
-              onChange={(e) => setType(e.target.value)}
-              options={[
-                { value: 'singles', label: 'Singles' },
-                { value: 'doubles', label: 'Doubles' },
-              ]}
+            <Input
+              label="Best of (games)"
+              type="text"
+              inputMode="numeric"
+              value={customGames}
+              onChange={(e) => setCustomGames(e.target.value.replace(/\D/g, '').slice(0, 1))}
+              placeholder="3"
             />
-            <Select
-              label="Format"
-              value={format}
-              onChange={(e) => setFormat(e.target.value)}
-              options={[
-                { value: 'bo3_21', label: 'Best of 3 to 21' },
-                { value: 'single_21', label: '1 Game to 21' },
-                { value: 'single_15', label: '1 Game to 15' },
-                { value: 'single_11', label: '1 Game to 11' },
-              ]}
+            <Input
+              label="Points per game"
+              type="text"
+              inputMode="numeric"
+              value={customPoints}
+              onChange={(e) => setCustomPoints(e.target.value.replace(/\D/g, '').slice(0, 2))}
+              placeholder="21"
             />
+            <p className={`col-span-2 text-xs ${formatInvalid ? 'text-[var(--color-danger)]' : 'text-[var(--text-muted)]'}`}>
+              {customFormatHint(Number(customGames), Number(customPoints))}
+            </p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -112,7 +135,7 @@ export function CreateChallengeForm({ players }: { players: Player[] }) {
           <Textarea label="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
 
           <div className="flex gap-2">
-            <Button type="submit" loading={loading}>Create Challenge</Button>
+            <Button type="submit" loading={loading} disabled={formatInvalid}>Create Challenge</Button>
             <Button variant="ghost" onClick={() => setOpen(false)} type="button">Cancel</Button>
           </div>
         </form>

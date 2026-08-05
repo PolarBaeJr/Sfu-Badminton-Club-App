@@ -234,6 +234,45 @@ export const CUSTOM_FORMAT_BOUNDS = {
   minPoints: 5, maxPoints: 30,
 } as const;
 
+/**
+ * Is this a best-of a match could actually be decided by? An even best-of has
+ * no majority, so it can end level and never resolve — the reason the CHECK in
+ * migration 00031 demands an odd number. Typed into a form rather than picked
+ * from a list, that is a mistake worth catching before the insert does.
+ */
+export function isLegalCustomGames(gamesPerMatch: number): boolean {
+  const { minGames, maxGames } = CUSTOM_FORMAT_BOUNDS;
+  return Number.isInteger(gamesPerMatch)
+    && gamesPerMatch % 2 === 1
+    && gamesPerMatch >= minGames
+    && gamesPerMatch <= maxGames;
+}
+
+/** Companion to isLegalCustomGames for the points half of the shape. */
+export function isLegalCustomPoints(pointsPerGame: number): boolean {
+  const { minPoints, maxPoints } = CUSTOM_FORMAT_BOUNDS;
+  return Number.isInteger(pointsPerGame)
+    && pointsPerGame >= minPoints
+    && pointsPerGame <= maxPoints;
+}
+
+/**
+ * The one line of help that sits under a typed "best of X to Y" pair: what is
+ * wrong with it, or — once it is valid — the rule the scores will be judged
+ * against, since the cap is not obvious from the target. Shared so every form
+ * that lets the numbers be typed says the same thing.
+ */
+export function customFormatHint(gamesPerMatch: number, pointsPerGame: number): string {
+  const { minGames, maxGames, minPoints, maxPoints } = CUSTOM_FORMAT_BOUNDS;
+  if (!isLegalCustomGames(gamesPerMatch)) {
+    return `Best of must be an odd number from ${minGames} to ${maxGames} — an even best-of can end level, so it could never be decided.`;
+  }
+  if (!isLegalCustomPoints(pointsPerGame)) {
+    return `Points per game must be between ${minPoints} and ${maxPoints}.`;
+  }
+  return `A game is won by two clear points, or at ${pointsCap(pointsPerGame)}.`;
+}
+
 export const FORMAT_RULES: Record<MatchFormat, { bestOf: number; target: number; cap: number }> = {
   bo3_21:    { bestOf: 3, target: 21, cap: pointsCap(21) },
   single_21: { bestOf: 1, target: 21, cap: pointsCap(21) },

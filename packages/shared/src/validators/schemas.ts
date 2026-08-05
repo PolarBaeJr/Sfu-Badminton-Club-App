@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { MIN_ELO, MAX_ELO } from '../utils/constants';
+import { MIN_ELO, MAX_ELO, CUSTOM_FORMAT_BOUNDS, pointsCap } from '../utils/constants';
 
 // Empty optional strings come from form fields where the user left the input blank.
 // Coerce them to undefined so downstream code doesn't have to discriminate "" vs unset.
@@ -38,15 +38,30 @@ export const profileSchema = z.object({
   show_activity_status: z.boolean().optional(),
 });
 
+// Optional custom shape: "best of X games to Y points". When set these win over
+// the preset (see migration 00031). Best-of must be odd so a majority always
+// exists; the bounds keep a "best of 99 to 500" off the ladder. Shared by the
+// player challenge form and admin entry, so both sides accept exactly what the
+// challenges_custom_format_sane CHECK does.
+const customFormatFields = {
+  games_per_match: z
+    .number().int()
+    .min(CUSTOM_FORMAT_BOUNDS.minGames)
+    .max(CUSTOM_FORMAT_BOUNDS.maxGames)
+    .refine((n) => n % 2 === 1, 'Games must be an odd number')
+    .optional(),
+  points_per_game: z
+    .number().int()
+    .min(CUSTOM_FORMAT_BOUNDS.minPoints)
+    .max(CUSTOM_FORMAT_BOUNDS.maxPoints)
+    .optional(),
+};
+
 export const challengeCreateSchema = z.object({
   type: z.enum(['singles', 'doubles']),
   rated_flag: z.boolean(),
   format: z.enum(['bo3_21', 'single_21', 'single_15', 'single_11']),
-  // Optional custom shape: "best of X games to Y points". When set these win
-  // over the preset (see migration 00031). Best-of must be odd so a majority
-  // always exists; bounds keep a "best of 99 to 500" off the ladder.
-  games_per_match: z.number().int().min(1).max(7).refine((n) => n % 2 === 1, 'Games must be an odd number').optional(),
-  points_per_game: z.number().int().min(5).max(30).optional(),
+  ...customFormatFields,
   event_type: z.enum(['rated_challenge', 'casual']).default('rated_challenge'),
   opponent_id: z.string().uuid(),
   partner_id: z.string().uuid().optional(),
@@ -61,6 +76,16 @@ const matchGameSchema = z.object({
   game_number: z.number().int().positive(),
   side_a_score: z.number().int().min(0).max(30),
   side_b_score: z.number().int().min(0).max(30),
+});
+
+// 30 is the deuce cap of a 21-point game, which is as high as the presets go —
+// but an admin now types the target, and a game to 30 legally reaches 39-37. So
+// admin entry is bounded by the cap of the highest target anyone can ask for.
+// Still only a sanity bound: which scores can actually end a game is
+// isLegalGameScore, judged against that match's own target.
+const adminMatchGameSchema = matchGameSchema.extend({
+  side_a_score: z.number().int().min(0).max(pointsCap(CUSTOM_FORMAT_BOUNDS.maxPoints)),
+  side_b_score: z.number().int().min(0).max(pointsCap(CUSTOM_FORMAT_BOUNDS.maxPoints)),
 });
 
 // Server-side integrity checks mirroring apply_match_result: no tied games,
@@ -253,11 +278,14 @@ export const adminPlayerCreateSchema = z.object({
 export const adminMatchCreateSchema = z.object({
   match_type: z.enum(['singles', 'doubles']),
   format: z.enum(['bo3_21', 'single_21', 'single_15', 'single_11']),
+  ...customFormatFields,
   rated_flag: z.boolean(),
   side_a_players: z.array(z.string().uuid()).min(1).max(2),
   side_b_players: z.array(z.string().uuid()).min(1).max(2),
   winner_side: z.enum(['a', 'b']),
-  games: z.array(matchGameSchema).min(1).max(3),
+  // A best-of-7 is seven games, so the old cap of 3 would have rejected every
+  // custom shape longer than the presets.
+  games: z.array(adminMatchGameSchema).min(1).max(CUSTOM_FORMAT_BOUNDS.maxGames),
   admin_note: z.string().max(500).optional(),
 });
 
