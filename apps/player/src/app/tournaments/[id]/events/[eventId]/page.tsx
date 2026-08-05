@@ -23,6 +23,18 @@ import Link from 'next/link';
 import { FadeIn } from '@/components/motion-wrapper';
 import { EventActions } from './EventActions';
 
+/**
+ * Bracket geometry — one source of truth for the card size, the column offsets
+ * and the connector elbows. Every card is forced to BRACKET_CARD_H so a round's
+ * pitch is exactly BRACKET_PITCH no matter what a card contains; the elbows are
+ * positioned off the same numbers.
+ */
+const BRACKET_CARD_H = 92;                                  // fixed outer height of a match card
+const BRACKET_GAP    = 12;                                  // gap between sibling cards in round 1
+const BRACKET_PITCH  = BRACKET_CARD_H + BRACKET_GAP;        // centre-to-centre distance in round 1
+const BRACKET_HEAD_H = 30;                                  // round heading block, equal in every column
+const BRACKET_FOOT_H = 22;                                  // card footer strip (score / status)
+
 export default async function EventDetailPage({
   params,
 }: {
@@ -137,12 +149,13 @@ export default async function EventDetailPage({
   const sortedRounds = Array.from(roundsMap.entries()).sort(([a], [b]) => a - b);
 
   function getEntryName(match: Record<string, unknown>, side: 'a' | 'b'): string {
-    if (match.is_bye) return 'BYE';
     const key = doubles
       ? side === 'a' ? 'pair_a_id' : 'pair_b_id'
       : side === 'a' ? 'participant_a_id' : 'participant_b_id';
     const pid = match[key] as string | null;
-    if (!pid) return 'TBD';
+    // A skip match has one real entry and one empty slot — label only the empty
+    // side, otherwise both names read as the placeholder.
+    if (!pid) return match.is_bye ? 'SKIP' : 'TBD';
     return participantNameMap[pid] || 'TBD';
   }
 
@@ -255,97 +268,92 @@ export default async function EventDetailPage({
                 {sortedRounds.map(([roundNum, roundMatches], roundIdx) => {
                   const isFirstRound = roundIdx === 0;
                   const isLastRound  = roundIdx === sortedRounds.length - 1;
-                  const MATCH_H      = 68;
-                  const BASE_GAP     = 10;
                   const roundMult    = Math.pow(2, roundIdx);
-                  const gap          = isFirstRound ? BASE_GAP : (MATCH_H + BASE_GAP) * roundMult - MATCH_H;
-                  const topPadding   = isFirstRound ? 0 : ((MATCH_H + BASE_GAP) * (roundMult - 1)) / 2;
+                  // Everything below is derived from BRACKET_CARD_H / BRACKET_GAP so the
+                  // elbows and the column offsets can never drift apart. The card height
+                  // is enforced on the card itself — the old value was a guess that no
+                  // card actually matched, which is why the lines missed the boxes.
+                  const gap          = roundMult * BRACKET_PITCH - BRACKET_CARD_H;
+                  const topPadding   = ((roundMult - 1) * BRACKET_PITCH) / 2;
 
                   return (
                     <div
                       key={roundNum}
-                      className="relative flex flex-col min-w-[200px]"
+                      className="flex flex-col min-w-[210px]"
                       role="rowgroup"
                       aria-label={getRoundName(roundNum, totalRounds)}
-                      style={{ gap: `${gap}px`, paddingTop: `${topPadding}px` }}
                     >
+                      {/* Headings live outside the gapped column — as a flex child they
+                          picked up the round's own (doubling) gap and shoved each round
+                          down by a different amount. */}
                       <h3
-                        className="eyebrow text-center pb-2"
+                        className="eyebrow text-center flex items-center justify-center shrink-0"
                         role="columnheader"
-                        style={{
-                          marginTop:  topPadding > 0 ? `-${topPadding}px` : undefined,
-                          paddingTop: topPadding > 0 ? `${topPadding}px` : undefined,
-                        }}
+                        style={{ height: `${BRACKET_HEAD_H}px` }}
                       >
                         {getRoundName(roundNum, totalRounds)}
                       </h3>
-                      {roundMatches.map((m, matchIdx) => {
-                        const matchStatus = m.status as TournamentMatchStatus;
-                        const scores      = m.scores as Array<{ a: number; b: number }> | null;
-                        const scoreStr    = formatScores(scores);
+                      <div
+                        className="flex flex-col"
+                        style={{ gap: `${gap}px`, paddingTop: `${topPadding}px`, paddingBottom: `${topPadding}px` }}
+                      >
+                        {roundMatches.map((m, matchIdx) => {
+                          const matchStatus = m.status as TournamentMatchStatus;
+                          const scores      = m.scores as Array<{ a: number; b: number }> | null;
+                          const scoreStr    = formatScores(scores);
+                          const isSkip      = !!m.is_bye;
+                          const footer      = scoreStr
+                            || (isSkip ? 'Skip' : matchStatus === 'completed' ? 'W/O' : 'vs');
 
-                        if (m.is_bye) {
                           return (
-                            <div key={m.id as string} className="relative">
+                            <div key={m.id as string} className="relative" style={{ height: `${BRACKET_CARD_H}px` }}>
                               {!isLastRound && <div className="absolute top-1/2 -right-[16px] w-[16px] border-t border-[var(--border)]" />}
                               {!isFirstRound && <div className="absolute top-1/2 -left-[16px] w-[16px] border-t border-[var(--border)]" />}
                               {!isLastRound && matchIdx % 2 === 0 && matchIdx + 1 < roundMatches.length && (
-                                <div className="absolute border-r border-[var(--border)]" style={{ right: '-16px', top: '50%', height: `${MATCH_H + gap}px` }} />
+                                <div className="absolute border-r border-[var(--border)]" style={{ right: '-16px', top: '50%', height: `${BRACKET_CARD_H + gap}px` }} />
                               )}
-                              <div className="border border-[var(--border)] rounded-xl overflow-hidden opacity-40">
-                                <div className="p-2.5 text-sm text-[var(--text-muted)] bg-white/[0.02]">
-                                  {getEntryName(m, 'a')} (BYE)
+                              <div
+                                className={`h-full flex flex-col border border-[var(--border)] rounded-xl overflow-hidden card-surface ${
+                                  isSkip ? 'opacity-50' : 'card-interactive'
+                                }`}
+                              >
+                                {(['a', 'b'] as const).map((side) => {
+                                  const name = getEntryName(m, side);
+                                  const seed = getEntrySeed(m, side);
+                                  const won  = isWinner(m, side);
+                                  return (
+                                    <div
+                                      key={side}
+                                      className={`flex-1 min-h-0 px-2.5 text-sm flex items-center gap-2 ${
+                                        side === 'b' ? 'border-t border-[var(--border)]' : ''
+                                      } ${
+                                        won
+                                          ? 'match-winner'
+                                          : 'bg-white/[0.02] text-[var(--text-secondary)]'
+                                      }`}
+                                    >
+                                      <span className="nums text-[10px] text-[var(--text-dim)] w-4 text-right shrink-0">
+                                        {seed ?? ''}
+                                      </span>
+                                      <span className="truncate flex-1">{name}</span>
+                                      {won && <span className="sr-only">(Winner)</span>}
+                                      {won && matchStatus === 'completed' && (
+                                        <Crown className="w-3 h-3 text-[var(--color-gold)] shrink-0" aria-hidden="true" />
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                                <div
+                                  className="nums flex items-center justify-center text-[11px] text-[var(--text-dim)] border-t border-[var(--border)] shrink-0"
+                                  style={{ height: `${BRACKET_FOOT_H}px` }}
+                                >
+                                  {footer}
                                 </div>
                               </div>
                             </div>
                           );
-                        }
-
-                        return (
-                          <div key={m.id as string} className="relative">
-                            {!isLastRound && <div className="absolute top-1/2 -right-[16px] w-[16px] border-t border-[var(--border)]" />}
-                            {!isFirstRound && <div className="absolute top-1/2 -left-[16px] w-[16px] border-t border-[var(--border)]" />}
-                            {!isLastRound && matchIdx % 2 === 0 && matchIdx + 1 < roundMatches.length && (
-                              <div className="absolute border-r border-[var(--border)]" style={{ right: '-16px', top: '50%', height: `${MATCH_H + gap}px` }} />
-                            )}
-                            <div className="border border-[var(--border)] rounded-xl overflow-hidden card-surface card-interactive">
-                              {(['a', 'b'] as const).map((side) => {
-                                const name = getEntryName(m, side);
-                                const seed = getEntrySeed(m, side);
-                                const won  = isWinner(m, side);
-                                return (
-                                  <div
-                                    key={side}
-                                    className={`p-2.5 text-sm flex items-center gap-2 ${
-                                      side === 'b' ? 'border-t border-[var(--border)]' : ''
-                                    } ${
-                                      won
-                                        ? 'match-winner'
-                                        : 'bg-white/[0.02] text-[var(--text-secondary)]'
-                                    }`}
-                                  >
-                                    {seed && (
-                                      <span className="nums text-[10px] text-[var(--text-dim)] w-4 text-right shrink-0">
-                                        [{seed}]
-                                      </span>
-                                    )}
-                                    <span className="truncate flex-1">{name}</span>
-                                    {won && <span className="sr-only">(Winner)</span>}
-                                    {won && matchStatus === 'completed' && (
-                                      <Crown className="w-3 h-3 text-[var(--color-gold)] shrink-0 ml-auto" aria-hidden="true" />
-                                    )}
-                                  </div>
-                                );
-                              })}
-                              {scoreStr && (
-                                <div className="nums text-center text-xs text-[var(--text-dim)] py-1.5 border-t border-[var(--border)]">
-                                  {scoreStr}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
+                        })}
+                      </div>
                     </div>
                   );
                 })}
