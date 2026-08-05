@@ -1456,6 +1456,7 @@ export type Database = {
           scheduled_time: string | null
           scores: Json | null
           status: string
+          time_exceeded: boolean
           updated_at: string | null
           walkover_reason: string | null
           walkover_winner: string | null
@@ -1487,6 +1488,7 @@ export type Database = {
           scheduled_time?: string | null
           scores?: Json | null
           status?: string
+          time_exceeded?: boolean
           updated_at?: string | null
           walkover_reason?: string | null
           walkover_winner?: string | null
@@ -1518,6 +1520,7 @@ export type Database = {
           scheduled_time?: string | null
           scores?: Json | null
           status?: string
+          time_exceeded?: boolean
           updated_at?: string | null
           walkover_reason?: string | null
           walkover_winner?: string | null

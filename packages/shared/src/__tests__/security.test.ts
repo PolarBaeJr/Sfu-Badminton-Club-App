@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { rateLimit, getClientIp } from '../utils/rate-limit';
 import { getMarginMultiplier, calculateEloUpdate } from '../elo/engine';
-import { SWEEP_MARGIN_MULTIPLIER, isLegalGameScore, isLegalGameCount, derivedFormatWeight } from '../utils/constants';
+import { SWEEP_MARGIN_MULTIPLIER, isLegalGameScore, isLegalTimeExceededScore, isLegalGameCount, derivedFormatWeight } from '../utils/constants';
 import { ExpectedError, isExpectedError, dbError, isExpectedDbGuard } from '../utils/expected-error';
 import { parseOrThrow } from '../validators/parse';
 import { z } from 'zod';
@@ -183,6 +183,44 @@ describe('score rules apply to tournament formats too', () => {
     expect(isLegalGameCount(2, 1, 'best_of_3_to_21')).toBe(true);
     expect(isLegalGameCount(3, 0, 'best_of_3_to_21')).toBe(false);
     expect(isLegalGameCount(1, 0, 'one_game_21')).toBe(true);
+  });
+});
+
+// The club plays inside a booked gym slot, so the exec can call time mid-game
+// and the score at that moment stands (00047). These cover the relaxation and,
+// more importantly, its edges — the flag must not become a way to record a
+// scoreline that could not have happened at all.
+describe('time-exceeded scores', () => {
+  it('accepts a game the clock cut short, which the normal rules reject', () => {
+    expect(isLegalGameScore(15, 2, 'best_of_3_to_21', null, null, true)).toBe(true);
+    expect(isLegalGameScore(15, 2, 'best_of_3_to_21')).toBe(false);
+  });
+
+  it('still needs a winner — a tie is not a result either way', () => {
+    expect(isLegalGameScore(15, 15, 'best_of_3_to_21', null, null, true)).toBe(false);
+    expect(isLegalGameScore(15, 15, 'best_of_3_to_21')).toBe(false);
+  });
+
+  it('still refuses anything past the cap, flag or no flag', () => {
+    // Past 30 the game would have ended on its own, so the clock cannot be what
+    // stopped it.
+    expect(isLegalGameScore(31, 2, 'best_of_3_to_21', null, null, true)).toBe(false);
+    expect(isLegalGameScore(31, 2, 'best_of_3_to_21')).toBe(false);
+    expect(isLegalGameScore(30, 29, 'best_of_3_to_21', null, null, true)).toBe(true);
+  });
+
+  it('rejects negatives and non-integer scores', () => {
+    expect(isLegalGameScore(15, -1, 'best_of_3_to_21', null, null, true)).toBe(false);
+    expect(isLegalGameScore(15.5, 2, 'best_of_3_to_21', null, null, true)).toBe(false);
+  });
+
+  it('takes the cap from the format rather than assuming 30', () => {
+    // 11-point format: cap 20, so 20-3 is a plausible stoppage and 21-3 is not.
+    expect(isLegalTimeExceededScore(20, 3, 'one_game_11')).toBe(true);
+    expect(isLegalTimeExceededScore(21, 3, 'one_game_11')).toBe(false);
+    // …and a custom best-of-5-to-15 gets 24, not the preset's 30.
+    expect(isLegalTimeExceededScore(24, 3, 'bo3_21', 5, 15)).toBe(true);
+    expect(isLegalTimeExceededScore(25, 3, 'bo3_21', 5, 15)).toBe(false);
   });
 });
 

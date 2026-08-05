@@ -22,7 +22,8 @@ import {
 async function enterMatchResultImpl(
   matchId: string,
   scores: Array<{ a: number; b: number }>,
-  winnerSide: 'a' | 'b'
+  winnerSide: 'a' | 'b',
+  timeExceeded: boolean
 ) {
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
@@ -55,7 +56,7 @@ async function enterMatchResultImpl(
   const matchFormat = event.match_format as TournamentMatchFormat;
   const maxGames = getMaxGamesForFormat(matchFormat);
   if (scores.length > maxGames) {
-    throw new Error(`Too many games for format ${matchFormat}. Max: ${maxGames}`);
+    throw new ExpectedError(`Too many games for format ${matchFormat}. Max: ${maxGames}`);
   }
 
   // Same scoring rules challenges get (00030): a game is won by reaching the
@@ -63,15 +64,28 @@ async function enterMatchResultImpl(
   // the moment someone clinches. Previously tournaments only checked the number
   // of games, so an impossible 21-20 — or a 3-0 best-of-3 — was accepted here
   // even though the identical result was rejected on the challenge path.
+  //
+  // timeExceeded relaxes the first of those rules only (00047): the exec called
+  // time on a game that had not finished, so it owes nothing to the target or
+  // the margin — but it still needs a winner and still cannot exceed the cap.
+  // This check, not the dialog's toggle, is what enforces it: the toggle is a
+  // client-supplied boolean like the scores themselves, so it decides which
+  // rules apply here rather than deciding anything on its own.
   for (const g of scores) {
-    if (!isLegalGameScore(g.a, g.b, matchFormat)) {
-      throw new Error(`Not a possible score for this format: ${g.a}-${g.b}`);
+    if (!isLegalGameScore(g.a, g.b, matchFormat, null, null, timeExceeded)) {
+      throw new ExpectedError(
+        timeExceeded
+          ? `Not a possible score even for a match cut short: ${g.a}-${g.b}`
+          : `Not a possible score for this format: ${g.a}-${g.b}. If the clock ran out mid-game, mark the match time exceeded.`,
+      );
     }
   }
+  // The clinch rule is untouched by the clock. A best-of-3 called at 1-0 has no
+  // winner to record, however the games themselves ended.
   const aGames = scores.filter((g) => g.a > g.b).length;
   const bGames = scores.filter((g) => g.b > g.a).length;
   if (!isLegalGameCount(Math.max(aGames, bGames), Math.min(aGames, bGames), matchFormat)) {
-    throw new Error(
+    throw new ExpectedError(
       `${aGames}-${bGames} is not a possible result for ${matchFormat} — the match ends once a side clinches.`
     );
   }
@@ -97,8 +111,11 @@ async function enterMatchResultImpl(
   }
 
   // Update match
+  // time_exceeded rides along with the scores it explains (00047) — without it
+  // on the row, a later reader cannot tell a called-for-time 15-2 from a typo.
   const { error } = await adminClient.from('tournament_matches').update({
     scores,
+    time_exceeded: timeExceeded,
     [winnerIdField]: winnerId,
     [loserIdField]: loserId,
     status: 'completed',
@@ -149,7 +166,7 @@ async function enterMatchResultImpl(
     match_id: matchId,
     action: 'result_entered',
     performed_by: admin.id,
-    details: { scores, winner_side: winnerSide },
+    details: { scores, winner_side: winnerSide, time_exceeded: timeExceeded },
   });
 
   // Notify both players of match result
@@ -488,6 +505,9 @@ async function undoMatchResultImpl(matchId: string) {
   // Reset match itself
   const resetData: Record<string, unknown> = {
     scores: null,
+    // Cleared with the scores it described — a match with no result cannot
+    // still be claiming the clock ended it.
+    time_exceeded: false,
     status: 'ready',
     walkover_winner: null,
     walkover_reason: null,
@@ -541,8 +561,11 @@ export async function enterMatchResult(
   matchId: string,
   scores: Array<{ a: number; b: number }>,
   winnerSide: 'a' | 'b',
+  // Defaults to false so the strict rules stay the default everywhere — an
+  // older caller, or one that simply forgets, gets the pre-00047 behaviour.
+  timeExceeded = false,
 ): Promise<ActionResult<void>> {
-  return runAction(async () => { await enterMatchResultImpl(matchId, scores, winnerSide); });
+  return runAction(async () => { await enterMatchResultImpl(matchId, scores, winnerSide, timeExceeded); });
 }
 
 export async function enterWalkover(

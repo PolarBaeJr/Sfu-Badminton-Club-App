@@ -296,6 +296,9 @@ export function getMaxScoreForFormat(format: AnyMatchFormat): number {
  *  - exactly T, with the loser at most T-2      (21-19, 21-0)
  *  - above T but below C, winning by exactly 2  (22-20, 23-21, … 29-27)
  *  - at C, with the loser on C-2 or C-1         (30-28 win-by-two, 30-29 the cap)
+ *
+ * `timeExceeded` switches to the relaxed rules below — pass it only when the
+ * exec has said the match was cut short (00047).
  */
 export function isLegalGameScore(
   a: number,
@@ -303,7 +306,9 @@ export function isLegalGameScore(
   format: AnyMatchFormat,
   gamesPerMatch?: number | null,
   pointsPerGame?: number | null,
+  timeExceeded?: boolean,
 ): boolean {
+  if (timeExceeded) return isLegalTimeExceededScore(a, b, format, gamesPerMatch, pointsPerGame);
   const { target, cap } = getRulesFor(format, gamesPerMatch, pointsPerGame);
   const winner = Math.max(a, b);
   const loser = Math.min(a, b);
@@ -313,6 +318,39 @@ export function isLegalGameScore(
   if (winner > target && winner < cap) return winner - loser === 2;
   if (winner === cap) return loser >= cap - 2;
   return false;                                    // winner never reached target
+}
+
+/**
+ * Is this a legal way for a game to have been STOPPED?
+ *
+ * Club sessions run to a clock, so the exec can call time mid-game and the
+ * score at that moment is the result (00047). Such a game never reached the
+ * target and owes nothing to the two-point margin — 15-2 in a game to 21 is
+ * exactly what a cut-short game looks like — so both of those rules are off.
+ *
+ * What survives is everything that stays true no matter when play stopped:
+ *  - not a tie: someone has to have been ahead for there to be a winner
+ *  - no negatives
+ *  - neither side above the cap: past the cap the game would already have
+ *    ended on its own, so the clock could not have been what stopped it
+ *
+ * The cap is whatever this format's rules say (getRulesFor -> pointsCap), so a
+ * custom 15-point event gets 24, not the 21-point 30.
+ */
+export function isLegalTimeExceededScore(
+  a: number,
+  b: number,
+  format: AnyMatchFormat,
+  gamesPerMatch?: number | null,
+  pointsPerGame?: number | null,
+): boolean {
+  const { cap } = getRulesFor(format, gamesPerMatch, pointsPerGame);
+  // Integers only. The strict path is pinned to whole numbers by its equalities
+  // against target and cap; this one compares nothing but bounds, so without
+  // the check a client posting 15.5 would sail through.
+  if (!Number.isInteger(a) || !Number.isInteger(b)) return false;
+  if (a === b) return false;                       // no winner, no result
+  return Math.min(a, b) >= 0 && Math.max(a, b) <= cap;
 }
 
 /**
