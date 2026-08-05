@@ -93,6 +93,14 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
   // Seed lookup
   const seedMap: Record<string, number> = {};
   const entries: Array<ParticipantWithPlayer | PairWithPlayers> = isDoubles ? pairs : participants;
+
+  // Candidates the slot editor may place into an orphaned bracket position.
+  // Withdrawn and disqualified entries are excluded here and refused again
+  // server-side — the client list is a convenience, not the rule.
+  const placeableEntries = entries
+    .filter((e) => e.status !== 'withdrawn' && e.status !== 'disqualified')
+    .map((e) => ({ id: e.id, name: nameMap[e.id] ?? 'Unknown' }))
+    .sort((a, b) => a.name.localeCompare(b.name));
   for (const p of entries) {
     if (p.seed_number) seedMap[p.id] = p.seed_number;
   }
@@ -194,6 +202,7 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
           nameMap={nameMap}
           seedMap={seedMap}
           isDoubles={isDoubles}
+          entries={placeableEntries}
           onClose={() => setScoreMatch(null)}
         />
       )}
@@ -219,6 +228,11 @@ function MatchCard({ m, isDoubles, isLive, getEntryName, getSeed, onEnterScore }
   const isReady = m.status === 'ready' && aId && bId;
   const canEnterScore =
     isLive && (isReady || m.status === 'live' || m.status === 'pending') && aId && bId && !isCompleted && !isSkip;
+  // A voided match, or one missing a side, used to render with NO action at all
+  // — which is exactly how a bracket got stuck on TBD forever. Both now open the
+  // dialog, on its restore or slot-editing panel.
+  const isVoided = m.status === 'voided';
+  const canRecover = isLive && !isCompleted && !isSkip && !canEnterScore;
 
   const scores = m.scores as GameScore[] | null;
   // Either side can be the empty one — the generator gives the skip to whichever
@@ -277,6 +291,14 @@ function MatchCard({ m, isDoubles, isLive, getEntryName, getSeed, onEnterScore }
             className="w-full h-full text-xs font-medium text-[var(--color-accent)] bg-[var(--bg-elevated)] hover:bg-[color-mix(in_srgb,var(--color-accent)_10%,transparent)] transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
           >
             Enter Score
+          </button>
+        ) : canRecover ? (
+          <button
+            onClick={onEnterScore}
+            aria-label={`${isVoided ? 'Restore match' : 'Fix slots for match'} ${m.match_number ?? ''}`}
+            className="w-full h-full text-xs font-medium text-[var(--color-warning)] bg-[var(--bg-elevated)] hover:bg-[color-mix(in_srgb,var(--color-warning)_10%,transparent)] transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-warning)] focus-visible:outline-none"
+          >
+            {isVoided ? 'Restore Match' : 'Fix Slots'}
           </button>
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-[var(--bg-elevated)]">
