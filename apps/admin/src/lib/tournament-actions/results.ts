@@ -26,8 +26,8 @@ function sideField(side: 'a' | 'b', doubles: boolean): string {
 }
 
 // Pull `entryId` back out of the slot this match feeds and demote the
-// downstream match out of 'ready' — 'ready' asserts both sides are known, and
-// one of them just stopped being known.
+// downstream match back to 'pending' — 'ready' and 'live' both assert both
+// sides are known, and one of them just stopped being known.
 //
 // The write is conditional on the slot actually still holding this match's
 // winner. A slot can also be set by hand (setMatchEntry) or by a neighbouring
@@ -56,7 +56,7 @@ async function clearAdvancedEntry(
   await adminClient.from('tournament_matches')
     .update({
       [field]: null,
-      status: nextRow.status === 'ready' ? 'pending' : (nextRow.status as string),
+      status: nextRow.status === 'ready' || nextRow.status === 'live' ? 'pending' : (nextRow.status as string),
       updated_at: new Date().toISOString(),
     })
     .eq('id', nextId);
