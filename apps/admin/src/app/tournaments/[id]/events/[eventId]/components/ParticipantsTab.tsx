@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { Button, Dialog, Select, AvatarChip } from '@badminton/ui';
+import { Button, Dialog, Select, AvatarChip, useConfirm } from '@badminton/ui';
 import {
   addParticipantToEvent,
   removeParticipantFromEvent,
@@ -11,11 +11,13 @@ import {
   updateParticipantSeed,
   updatePairSeed,
   clearSeeds,
+  withdrawParticipant,
+  withdrawPair,
 } from '@/lib/tournament-actions';
-import { nextPowerOf2, pickOne } from '@badminton/shared';
+import { nextPowerOf2, pickOne, eventHasDraw, isOutOfEvent } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil } from 'lucide-react';
+import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil, UserMinus } from 'lucide-react';
 import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';
 
 interface Props {
@@ -155,13 +157,21 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const { toast } = useToast();
   const router = useRouter();
+  const confirm = useConfirm();
 
   const entries: Array<ParticipantWithPlayer | PairWithPlayers> = isDoubles ? pairs : participants;
-  const activeEntries = entries.filter((e) => !['withdrawn', 'disqualified'].includes(e.status));
+  const activeEntries = entries.filter((e) => !isOutOfEvent(e.status));
   const bracketSize = nextPowerOf2(activeEntries.length);
   const byes = bracketSize - activeEntries.length;
   const canModify = event.status === 'registration';
   const drawLocked = event.draw_locked as boolean;
+  // Deleting an entry is only safe before a draw exists. After that the only
+  // coherent exit is a withdrawal, which forfeits the matches they are already
+  // seeded into — and it has to be reachable here, because this is the moment
+  // the player themselves is no longer allowed to do it.
+  const eventLive = event.status === 'live';
+  const canWithdraw = eventHasDraw(event.status) && event.status !== 'completed';
+  const showActions = (canModify && !drawLocked) || canWithdraw;
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -201,6 +211,44 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     setActionLoading(null);
   }
 
+  async function handleWithdraw(id: string, name: string) {
+    const ok = await confirm({
+      title: `Withdraw ${name}?`,
+      message: eventLive
+        ? 'Their unplayed matches are forfeited to their opponents, and the winners advance. Matches already played are left alone.'
+        : 'The event has not started, so nothing is forfeited yet. Regenerate the bracket to drop them from the draw, or go live and their matches will be forfeited then.',
+      confirmLabel: 'Withdraw',
+      danger: true,
+    });
+    if (!ok) return;
+
+    setActionLoading(id);
+    const res = isDoubles ? await withdrawPair(id) : await withdrawParticipant(id);
+    if (!res.ok) {
+      toast(res.error, 'error');
+      setActionLoading(null);
+      return;
+    }
+    const { forfeited, unresolved, deferredToGoLive } = res.data;
+    toast(
+      forfeited > 0
+        ? `Withdrawn — ${forfeited} match${forfeited === 1 ? '' : 'es'} forfeited`
+        : 'Withdrawn',
+      'success',
+    );
+    if (deferredToGoLive) {
+      toast('They are still in the draw. Regenerate the bracket, or their matches will be forfeited when the event goes live.', 'info');
+    }
+    // Their opponent is not decided yet, so there is nothing to forfeit to
+    // until the feeder match finishes. Say it rather than let it look like the
+    // forfeit silently missed one.
+    if (unresolved > 0) {
+      toast(`${unresolved} match${unresolved === 1 ? '' : 'es'} will be forfeited once the opponent is known`, 'info');
+    }
+    router.refresh();
+    setActionLoading(null);
+  }
+
   async function handleAutoSeed() {
     setLoading(true);
     try {
@@ -224,6 +272,32 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed to update seed', 'error');
     }
+  }
+
+  function renderActions(id: string, name: string, status: string) {
+    // An entry that is already out of the event has no next step — offering
+    // "withdraw" on someone who has withdrawn is how a bracket gets a second
+    // forfeit applied to it.
+    if (isOutOfEvent(status)) return <span className="text-xs text-[var(--text-muted)]">—</span>;
+
+    if (canModify && !drawLocked) {
+      return (
+        <Button size="sm" variant="ghost" onClick={() => handleRemove(id)} loading={actionLoading === id} aria-label={`Remove ${name}`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
+          <Trash2 className="w-3.5 h-3.5 text-[var(--color-danger)]" />
+        </Button>
+      );
+    }
+
+    if (canWithdraw) {
+      return (
+        <Button size="sm" variant="ghost" onClick={() => handleWithdraw(id, name)} loading={actionLoading === id} aria-label={`Withdraw ${name}`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
+          <UserMinus className="w-3.5 h-3.5 mr-1 text-[var(--color-danger)]" />
+          <span className="text-xs">Withdraw</span>
+        </Button>
+      );
+    }
+
+    return null;
   }
 
   const usedSeeds = new Set(
@@ -310,8 +384,8 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               </th>
               <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-24">Elo</th>
               <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-28">Status</th>
-              {canModify && !drawLocked && (
-                <th className="text-right text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-24">Actions</th>
+              {showActions && (
+                <th className="text-right text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-32">Actions</th>
               )}
             </tr>
           </thead>
@@ -339,14 +413,12 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                   </td>
                   <td className="px-4 py-3">
                     <span className="text-xs font-medium px-2 py-0.5 rounded-full" role="status" style={{ color: STATUS_COLORS[pair.status], backgroundColor: `${STATUS_COLORS[pair.status]}15` }}>
-                      <span className="sr-only">Status: </span>{pair.status}
+                      <span className="sr-only">Status: </span>{statusLabel(pair.status)}
                     </span>
                   </td>
-                  {canModify && !drawLocked && (
+                  {showActions && (
                     <td className="px-4 py-3 text-right">
-                      <Button size="sm" variant="ghost" onClick={() => handleRemove(pair.id)} loading={actionLoading === pair.id} aria-label={`Remove pair ${pair.pair_name ?? ''}`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
-                        <Trash2 className="w-3.5 h-3.5 text-[var(--color-danger)]" />
-                      </Button>
+                      {renderActions(pair.id, pair.pair_name ?? `${pair.player1?.full_name} / ${pair.player2?.full_name}`, pair.status)}
                     </td>
                   )}
                 </tr>
@@ -379,14 +451,12 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                     </td>
                     <td className="px-4 py-3">
                       <span className="text-xs font-medium px-2 py-0.5 rounded-full" role="status" style={{ color: STATUS_COLORS[p.status], backgroundColor: `${STATUS_COLORS[p.status]}15` }}>
-                        <span className="sr-only">Status: </span>{p.status}
+                        <span className="sr-only">Status: </span>{statusLabel(p.status)}
                       </span>
                     </td>
-                    {canModify && !drawLocked && (
+                    {showActions && (
                       <td className="px-4 py-3 text-right">
-                        <Button size="sm" variant="ghost" onClick={() => handleRemove(p.id)} loading={actionLoading === p.id} aria-label={`Remove participant ${player?.full_name ?? ''}`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
-                          <Trash2 className="w-3.5 h-3.5 text-[var(--color-danger)]" />
-                        </Button>
+                        {renderActions(p.id, player?.full_name ?? 'participant', p.status)}
                       </td>
                     )}
                   </tr>

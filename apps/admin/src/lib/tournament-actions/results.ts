@@ -13,6 +13,8 @@ import {
   applyTournamentMatchElo,
   reverseEloSnapshot,
   assertTournamentNotSuspended,
+  advanceWinner,
+  recordWalkover,
 } from './_internal';
 
 // ============================================================
@@ -112,36 +114,15 @@ async function enterMatchResultImpl(
     throw new Error(error.message);
   }
 
-  // Advance winner to next match (single elimination only)
-  if (match.winner_to_match_id) {
-    const advanceField = doubles
-      ? (match.winner_to_position === 'a' ? 'pair_a_id' : 'pair_b_id')
-      : (match.winner_to_position === 'a' ? 'participant_a_id' : 'participant_b_id');
-
-    await adminClient.from('tournament_matches')
-      .update({ [advanceField]: winnerId })
-      .eq('id', match.winner_to_match_id);
-
-    // Check if next match now has both sides → set to ready
-    const { data: nextMatch } = await adminClient.from('tournament_matches')
-      .select('*')
-      .eq('id', match.winner_to_match_id)
-      .single();
-
-    if (nextMatch) {
-      const hasBoth = doubles
-        ? (nextMatch.pair_a_id && nextMatch.pair_b_id)
-        : (nextMatch.participant_a_id && nextMatch.participant_b_id);
-      if (hasBoth) {
-        await adminClient.from('tournament_matches')
-          .update({ status: 'ready' })
-          .eq('id', match.winner_to_match_id);
-      }
-    }
-  }
-
-  // Apply Elo
+  // Apply Elo before advancing — advancing can settle the next match too (if
+  // the opponent waiting there has since withdrawn), and those ratings must
+  // build on this one.
   await applyTournamentMatchElo(matchId);
+
+  // Advance winner to next match (single elimination only). Advancing can also
+  // settle that match outright — the opponent waiting there may have withdrawn
+  // since the draw was published.
+  await advanceWinner(adminClient, match, doubles, winnerId, admin.id);
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id as string,
@@ -213,58 +194,9 @@ async function enterWalkoverImpl(
 
   const doubles = isDoublesEvent(event.event_type as TournamentEventType);
 
-  let winnerId: string;
-  let loserId: string;
-
-  if (doubles) {
-    winnerId = winnerPosition === 'a' ? match.pair_a_id : match.pair_b_id;
-    loserId = winnerPosition === 'a' ? match.pair_b_id : match.pair_a_id;
-  } else {
-    winnerId = winnerPosition === 'a' ? match.participant_a_id : match.participant_b_id;
-    loserId = winnerPosition === 'a' ? match.participant_b_id : match.participant_a_id;
-  }
-
-  const winnerField = doubles ? 'winner_pair_id' : 'winner_participant_id';
-  const loserField = doubles ? 'loser_pair_id' : 'loser_participant_id';
-
-  await adminClient.from('tournament_matches').update({
-    status: 'walkover',
-    walkover_winner: winnerPosition,
-    walkover_reason: reason,
-    [winnerField]: winnerId,
-    [loserField]: loserId,
-    result_entered_by: admin.id,
-    result_entered_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  }).eq('id', matchId);
-
-  // Advance winner
-  if (match.winner_to_match_id) {
-    const advanceField = doubles
-      ? (match.winner_to_position === 'a' ? 'pair_a_id' : 'pair_b_id')
-      : (match.winner_to_position === 'a' ? 'participant_a_id' : 'participant_b_id');
-
-    await adminClient.from('tournament_matches')
-      .update({ [advanceField]: winnerId })
-      .eq('id', match.winner_to_match_id);
-
-    // Check if next match is now ready
-    const { data: nextMatch } = await adminClient.from('tournament_matches')
-      .select('*')
-      .eq('id', match.winner_to_match_id)
-      .single();
-
-    if (nextMatch) {
-      const hasBoth = doubles
-        ? (nextMatch.pair_a_id && nextMatch.pair_b_id)
-        : (nextMatch.participant_a_id && nextMatch.participant_b_id);
-      if (hasBoth) {
-        await adminClient.from('tournament_matches')
-          .update({ status: 'ready' })
-          .eq('id', match.winner_to_match_id);
-      }
-    }
-  }
+  // Elo applies to walkovers too — losing party still gets penalised, winner
+  // still gains — which is why the event-is-live gate above matters.
+  await recordWalkover(adminClient, match, doubles, winnerPosition, reason, admin.id);
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id as string,
@@ -274,9 +206,6 @@ async function enterWalkoverImpl(
     performed_by: admin.id,
     details: { winner_position: winnerPosition, reason },
   });
-
-  // Apply Elo for walkovers too — losing party still gets penalised, winner still gains.
-  await applyTournamentMatchElo(matchId);
 
   revalidateEventPaths(event.tournament_id as string, match.event_id as string);
 }
