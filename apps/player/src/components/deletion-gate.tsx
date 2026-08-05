@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { Loader2, LogOut } from 'lucide-react';
 import { createClient } from '@/lib/supabase-browser';
+// Deep import, not the '@badminton/shared' barrel — see the player middleware.
+import { clearHostOnlyAuthCookies } from '@badminton/shared/src/utils/constants';
 import { restoreMyAccount } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 
@@ -67,6 +69,9 @@ export function DeletionGate({ deletionRequestedAt }: { deletionRequestedAt: str
   async function handleSignOut() {
     const supabase = createClient();
     await supabase.auth.signOut();
+    // See clearHostOnlyAuthCookies: signOut alone can leave a pre-migration
+    // host-only cookie behind, which would still read as a live session.
+    clearHostOnlyAuthCookies();
     router.push('/login');
   }
 

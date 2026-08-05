@@ -20,6 +20,8 @@ services:
         - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
         - NEXT_PUBLIC_PLAYER_URL=${NEXT_PUBLIC_PLAYER_URL}
         - NEXT_PUBLIC_ADMIN_URL=${NEXT_PUBLIC_ADMIN_URL}
+        # Shared auth cookie scope. Build-time only — see the Dockerfile ARG.
+        - NEXT_PUBLIC_AUTH_COOKIE_DOMAIN=${NEXT_PUBLIC_AUTH_COOKIE_DOMAIN}
         - NEXT_PUBLIC_VAPID_PUBLIC_KEY=${NEXT_PUBLIC_VAPID_PUBLIC_KEY}
         - NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN}
         - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY}
@@ -62,6 +64,10 @@ services:
         - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
         - NEXT_PUBLIC_PLAYER_URL=${NEXT_PUBLIC_PLAYER_URL}
         - NEXT_PUBLIC_ADMIN_URL=${NEXT_PUBLIC_ADMIN_URL}
+        # Shared auth cookie scope. Must be IDENTICAL to the player app's value
+        # — the two write the same cookie, and a mismatch produces two cookies
+        # of the same name on different scopes.
+        - NEXT_PUBLIC_AUTH_COOKIE_DOMAIN=${NEXT_PUBLIC_AUTH_COOKIE_DOMAIN}
         - NEXT_PUBLIC_VAPID_PUBLIC_KEY=${NEXT_PUBLIC_VAPID_PUBLIC_KEY}
         - NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN}
     env_file: .env

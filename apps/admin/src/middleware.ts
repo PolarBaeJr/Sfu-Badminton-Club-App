@@ -3,16 +3,29 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { canAccess, type AccessLevel } from '@/lib/permissions';
 import { PASSKEY_VERIFIED_COOKIE } from '@/lib/passkey/config';
 import { verifyPayload } from '@/lib/passkey/cookie';
-import { AUTH_COOKIE_NAME } from '@badminton/shared/src/utils/constants';
+import {
+  AUTH_COOKIE_OPTIONS,
+  hostOnlyAuthCookieClears,
+  duplicateAuthCookieClears,
+} from '@badminton/shared/src/utils/constants';
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
+
+  // See the identical block in the player middleware: expires host-only auth
+  // cookies left behind when the cookie became domain-scoped, on whichever
+  // response this function returns.
+  const staleClears = duplicateAuthCookieClears(request.headers.get('cookie'));
+  const finish = <T extends NextResponse>(response: T): T => {
+    staleClears.forEach((c) => response.headers.append('set-cookie', c));
+    return response;
+  };
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
-      cookieOptions: { name: AUTH_COOKIE_NAME },
+      cookieOptions: AUTH_COOKIE_OPTIONS,
       cookies: {
         getAll() {
           return request.cookies.getAll();
@@ -24,6 +37,11 @@ export async function middleware(request: NextRequest) {
           supabaseResponse = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) =>
             supabaseResponse.cookies.set(name, value, options as any)
+          );
+          // Raw append, not .cookies.set: ResponseCookies is keyed by name
+          // alone and would clobber the domain-scoped write above.
+          hostOnlyAuthCookieClears(cookiesToSet).forEach((c) =>
+            supabaseResponse.headers.append('set-cookie', c)
           );
         },
       },
@@ -48,7 +66,7 @@ export async function middleware(request: NextRequest) {
     if (!user && !isPublicRoute) {
       const url = request.nextUrl.clone();
       url.pathname = '/login';
-      return NextResponse.redirect(url);
+      return finish(NextResponse.redirect(url));
     }
 
     if (user && !isPublicRoute) {
@@ -56,7 +74,7 @@ export async function middleware(request: NextRequest) {
       if (!canAccess((level as AccessLevel | null) ?? null, request.nextUrl.pathname)) {
         const url = request.nextUrl.clone();
         url.pathname = '/unauthorized';
-        return NextResponse.redirect(url);
+        return finish(NextResponse.redirect(url));
       }
 
       // Passkey gate: once a user has enrolled a passkey, every page needs a
@@ -78,7 +96,7 @@ export async function middleware(request: NextRequest) {
               url.pathname = '/unavailable';
               url.search = '';
               url.searchParams.set('next', pathname + request.nextUrl.search);
-              return NextResponse.redirect(url);
+              return finish(NextResponse.redirect(url));
             }
             // No enrolled passkeys → grace period, proceed.
           }
@@ -90,10 +108,10 @@ export async function middleware(request: NextRequest) {
   } catch {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
-    return NextResponse.redirect(url);
+    return finish(NextResponse.redirect(url));
   }
 
-  return supabaseResponse;
+  return finish(supabaseResponse);
 }
 
 export const config = {

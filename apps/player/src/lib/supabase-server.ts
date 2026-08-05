@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
-import { AUTH_COOKIE_NAME } from '@badminton/shared';
+import { AUTH_COOKIE_OPTIONS } from '@badminton/shared';
 
 // NOTE: generated `Database` type is available from '@badminton/shared' but not
 // applied to the clients here — typed clients flip many `select('*, foo(*)')`
@@ -23,11 +23,18 @@ export async function createServerSupabaseClient() {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
-      cookieOptions: { name: AUTH_COOKIE_NAME },
+      cookieOptions: AUTH_COOKIE_OPTIONS,
       cookies: {
         getAll() {
           return cookieStore.getAll();
         },
+        // No companion host-only clear here, unlike the middleware and route
+        // handlers: next/headers' cookie store is keyed by name and offers no
+        // way to append a second Set-Cookie, so writing one would delete the
+        // session instead of moving it. Server actions rarely refresh a token
+        // (the middleware has already done it for the same request), and any
+        // duplicate that does slip through is caught by the middleware's
+        // duplicateAuthCookieClears on the next request.
         setAll(cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) {
           try {
             cookiesToSet.forEach(({ name, value, options }) =>

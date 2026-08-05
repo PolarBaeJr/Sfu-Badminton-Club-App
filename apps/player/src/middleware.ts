@@ -3,16 +3,31 @@ import { NextResponse, type NextRequest } from 'next/server';
 // Deep import, not the '@badminton/shared' barrel: the barrel re-exports the
 // whole package and pulling it into the middleware bundle — which runs on every
 // request — grew it from 208 kB to 371 kB. constants.ts has no dependencies.
-import { CHECKIN_TOKEN_REGEX, AUTH_COOKIE_NAME } from '@badminton/shared/src/utils/constants';
+import {
+  CHECKIN_TOKEN_REGEX,
+  AUTH_COOKIE_OPTIONS,
+  hostOnlyAuthCookieClears,
+  duplicateAuthCookieClears,
+} from '@badminton/shared/src/utils/constants';
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
+
+  // Stale host-only auth cookies left over from before the cookie became
+  // domain-scoped. Computed from the raw header (request.cookies hides the
+  // duplicate) and appended to whichever response we end up returning —
+  // including the redirects below, which replace supabaseResponse entirely.
+  const staleClears = duplicateAuthCookieClears(request.headers.get('cookie'));
+  const finish = <T extends NextResponse>(response: T): T => {
+    staleClears.forEach((c) => response.headers.append('set-cookie', c));
+    return response;
+  };
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
-      cookieOptions: { name: AUTH_COOKIE_NAME },
+      cookieOptions: AUTH_COOKIE_OPTIONS,
       cookies: {
         getAll() {
           return request.cookies.getAll();
@@ -24,6 +39,11 @@ export async function middleware(request: NextRequest) {
           supabaseResponse = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) =>
             supabaseResponse.cookies.set(name, value, options as any)
+          );
+          // Appended as raw headers, not via .cookies.set: ResponseCookies is
+          // keyed by name alone and the second set would clobber the first.
+          hostOnlyAuthCookieClears(cookiesToSet).forEach((c) =>
+            supabaseResponse.headers.append('set-cookie', c)
           );
         },
       },
@@ -75,7 +95,7 @@ export async function middleware(request: NextRequest) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
     url.search = checkinSuffix;
-    return NextResponse.redirect(url);
+    return finish(NextResponse.redirect(url));
   }
 
   // Onboarding gate. onboarding_completed was read by `/` alone, so anyone who
@@ -105,11 +125,11 @@ export async function middleware(request: NextRequest) {
       // Same reasoning as the sign-in redirect above: a member who scans the QR
       // before finishing setup should still end up checked in, not stranded.
       url.search = checkinSuffix;
-      return NextResponse.redirect(url);
+      return finish(NextResponse.redirect(url));
     }
   }
 
-  return supabaseResponse;
+  return finish(supabaseResponse);
 }
 
 export const config = {

@@ -2,7 +2,7 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { CHECKIN_TOKEN_REGEX, rateLimit, getClientIp } from '@badminton/shared';
-import { AUTH_COOKIE_NAME } from '@badminton/shared';
+import { AUTH_COOKIE_OPTIONS, hostOnlyAuthCookieClears } from '@badminton/shared';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -35,7 +35,7 @@ export async function GET(request: Request) {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
-      cookieOptions: { name: AUTH_COOKIE_NAME },
+      cookieOptions: AUTH_COOKIE_OPTIONS,
       cookies: {
         getAll() {
           return cookieStore.getAll();
@@ -44,6 +44,12 @@ export async function GET(request: Request) {
           cookiesToSet.forEach(({ name, value, options }) => {
             response.cookies.set(name, value, options as any);
           });
+          // Expire the old host-only cookie in the same response that mints the
+          // domain-scoped one, so the two never coexist. Raw append because
+          // ResponseCookies is keyed by name and would clobber the write above.
+          hostOnlyAuthCookieClears(cookiesToSet).forEach((c) =>
+            response.headers.append('set-cookie', c)
+          );
         },
       },
     }
