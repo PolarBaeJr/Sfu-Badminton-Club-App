@@ -5,6 +5,7 @@ import {
   TOURNAMENT_EVENT_TYPE_LABELS,
   TOURNAMENT_EVENT_STATUS_LABELS,
   TOURNAMENT_STATUS_TAG,
+  hasTournamentEnded,
 } from '@badminton/shared';
 import type { TournamentEventType, TournamentEventStatus } from '@badminton/shared';
 import { notFound } from 'next/navigation';
@@ -201,7 +202,10 @@ export default async function TournamentDetailPage({ params }: { params: Promise
         </div>
       )}
 
-      {currentPlayer && (
+      {/* Only once the event is over. Rating a tournament that has not happened
+          yet is not feedback, and it is the exec team's only read on how an
+          event actually went. The server action enforces the same rule. */}
+      {currentPlayer && hasTournamentEnded(tournament) && (
         <div style={{ marginTop: 24 }}>
           <FeedbackForm
             tournamentId={id}

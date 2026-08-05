@@ -3,8 +3,15 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Dialog, Input, useConfirm } from '@badminton/ui';
+import { resolvePaymentMethod } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { markFeePaid, waiveFee, markFeeUnpaid, addManualFee, removeManualFee } from '@/lib/actions';
+import {
+  PaymentMethodFields,
+  paymentMethodInvalid,
+  EMPTY_PAYMENT_METHOD,
+  type PaymentMethodState,
+} from './payment-method-fields';
 
 interface FeeActionsProps {
   playerId: string;
@@ -20,7 +27,7 @@ export function FeeActions({ playerId, playerName, seasonId, seasonName, default
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [amount, setAmount] = useState((defaultFeeCents / 100).toFixed(2));
-  const [method, setMethod] = useState('');
+  const [payment, setPayment] = useState<PaymentMethodState>(EMPTY_PAYMENT_METHOD);
   const { toast } = useToast();
   const router = useRouter();
   const confirm = useConfirm();
@@ -33,11 +40,12 @@ export function FeeActions({ playerId, playerName, seasonId, seasonName, default
           player_id: playerId,
           season_id: seasonId,
           amount_cents: dollars ? Math.round(dollars * 100) : undefined,
-          method: method || undefined,
+          method: resolvePaymentMethod(payment.method, payment.customMethod),
+          reference: payment.reference.trim() || undefined,
         });
         toast('Fee marked as paid', 'success');
         setOpen(false);
-        setMethod('');
+        setPayment(EMPTY_PAYMENT_METHOD);
         router.refresh();
       } catch (err) {
         toast(err instanceof Error ? err.message : 'Failed to mark fee paid', 'error');
@@ -86,7 +94,6 @@ export function FeeActions({ playerId, playerName, seasonId, seasonName, default
     );
   }
 
-  // Note: manually typing 'waived' as a Mark Paid method renders as Waived — accepted.
   return (
     <>
       <Button variant="ghost" size="sm" onClick={handleWaive} loading={isPending}>Skip (Waive)</Button>
@@ -96,13 +103,11 @@ export function FeeActions({ playerId, playerName, seasonId, seasonName, default
           <p className="text-sm text-[var(--text-secondary)]">
             Season: <strong className="text-[var(--text-primary)]">{seasonName}</strong>
           </p>
-          <div className="flex gap-2">
-            <Input label="Amount $ (optional)" type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 15.00" />
-            <Input label="Method (optional)" value={method} onChange={(e) => setMethod(e.target.value)} placeholder="e.g. e-transfer, cash" />
-          </div>
+          <Input label="Amount $ (optional)" type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 15.00" />
+          <PaymentMethodFields value={payment} onChange={setPayment} disabled={isPending} />
           <div className="flex gap-2">
             <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={handleMarkPaid} loading={isPending} className="flex-1">
+            <Button onClick={handleMarkPaid} loading={isPending} disabled={paymentMethodInvalid(payment)} className="flex-1">
               Mark Paid
             </Button>
           </div>
@@ -116,7 +121,7 @@ export function AddManualFee({ seasonId, seasonName }: { seasonId: string; seaso
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
-  const [method, setMethod] = useState('');
+  const [payment, setPayment] = useState<PaymentMethodState>(EMPTY_PAYMENT_METHOD);
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
   const router = useRouter();
@@ -129,11 +134,12 @@ export function AddManualFee({ seasonId, seasonName }: { seasonId: string; seaso
           season_id: seasonId,
           manual_name: name.trim(),
           amount_cents: dollars ? Math.round(dollars * 100) : undefined,
-          method: method || undefined,
+          method: resolvePaymentMethod(payment.method, payment.customMethod),
+          reference: payment.reference.trim() || undefined,
         });
         toast(`Added ${name.trim()}`, 'success');
         setOpen(false);
-        setName(''); setAmount(''); setMethod('');
+        setName(''); setAmount(''); setPayment(EMPTY_PAYMENT_METHOD);
         router.refresh();
       } catch (err) {
         toast(err instanceof Error ? err.message : 'Failed to add name', 'error');
@@ -151,13 +157,11 @@ export function AddManualFee({ seasonId, seasonName }: { seasonId: string; seaso
             <strong className="text-[var(--text-primary)]">{seasonName}</strong>.
           </p>
           <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Jane Doe" />
-          <div className="flex gap-2">
-            <Input label="Amount $ (optional)" type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 15.00" />
-            <Input label="Method (optional)" value={method} onChange={(e) => setMethod(e.target.value)} placeholder="e.g. e-transfer, cash" />
-          </div>
+          <Input label="Amount $ (optional)" type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 15.00" />
+          <PaymentMethodFields value={payment} onChange={setPayment} disabled={isPending} />
           <div className="flex gap-2">
             <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={handleAdd} loading={isPending} className="flex-1" disabled={!name.trim()}>
+            <Button onClick={handleAdd} loading={isPending} className="flex-1" disabled={!name.trim() || paymentMethodInvalid(payment)}>
               Add
             </Button>
           </div>

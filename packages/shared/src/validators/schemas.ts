@@ -252,6 +252,7 @@ export const feeMarkSchema = z.object({
   season_id: z.string().uuid(),
   amount_cents: z.number().int().positive().optional(),
   method: z.string().max(40).optional(),
+  reference: z.string().max(120).optional(),
 });
 
 // One-time season-fee waiver: stored as a paid row with amount_cents 0 and
@@ -273,6 +274,7 @@ export const manualFeeSchema = z.object({
   manual_name: z.string().min(1).max(80),
   amount_cents: z.number().int().positive().optional(),
   method: z.string().max(40).optional(),
+  reference: z.string().max(120).optional(),
 });
 
 export const feeTierSchema = z.object({
@@ -288,6 +290,7 @@ export const tournamentFeeMarkSchema = z.object({
   tier_id: z.string().uuid().optional(),
   amount_cents: z.number().int().nonnegative().optional(),
   method: z.string().max(40).optional(),
+  reference: z.string().max(120).optional(),
 });
 
 export const reinstatementSchema = z.object({

@@ -3,7 +3,13 @@
 import * as Sentry from '@sentry/nextjs';
 import { revalidatePath } from 'next/cache';
 import { createServiceRoleClient } from '../supabase-server';
-import { eventFeedbackSchema, parseOrThrow, type EventFeedbackInput } from '@badminton/shared';
+import {
+  eventFeedbackSchema,
+  parseOrThrow,
+  hasTournamentEnded,
+  ExpectedError,
+  type EventFeedbackInput,
+} from '@badminton/shared';
 import { requirePlayer, runAction, type ActionResult } from './_shared';
 
 // Submit (or revise) feedback on a tournament. Stored with the player's id so
@@ -17,6 +23,21 @@ async function submitEventFeedbackImpl(input: EventFeedbackInput) {
   parseOrThrow(eventFeedbackSchema, input);
   const player = await requirePlayer();
   const supabase = createServiceRoleClient();
+
+  // The page hides the form until the event is over; this enforces it. Hiding a
+  // control is a UI convenience, not a rule — the action is directly callable,
+  // and without this a stale page left open before the event would still post.
+  const { data: tournament } = await supabase
+    .from('tournaments')
+    .select('status, start_date, end_date')
+    .eq('id', input.tournament_id)
+    .maybeSingle();
+
+  if (!hasTournamentEnded(tournament)) {
+    // ExpectedError: a closed feedback window is a normal state, not a fault,
+    // so it surfaces as a message instead of being filed in Sentry.
+    throw new ExpectedError('Feedback opens once the event has finished.');
+  }
 
   const { error } = await supabase.from('event_feedback').upsert(
     {

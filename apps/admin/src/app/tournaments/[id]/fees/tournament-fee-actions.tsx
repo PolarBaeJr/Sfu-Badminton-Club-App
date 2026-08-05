@@ -5,6 +5,13 @@ import { useRouter } from 'next/navigation';
 import { Button, Card, Dialog, Input, Select, Switch, Badge } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import type { TournamentFeeTier } from '@badminton/shared';
+import { resolvePaymentMethod } from '@badminton/shared';
+import {
+  PaymentMethodFields,
+  paymentMethodInvalid,
+  EMPTY_PAYMENT_METHOD,
+  type PaymentMethodState,
+} from '@/app/fees/payment-method-fields';
 import {
   createFeeTier,
   updateFeeTier,
@@ -86,7 +93,7 @@ export function TournamentFeeActions({ mode, tournamentId, tiers, playerId, play
   const defaultTier = tiers.find((t) => t.is_default) ?? tiers[0] ?? null;
   const [tierId, setTierId] = useState(defaultTier?.id ?? '');
   const [amount, setAmount] = useState(defaultTier ? (defaultTier.amount_cents / 100).toFixed(2) : '');
-  const [method, setMethod] = useState('');
+  const [payment, setPayment] = useState<PaymentMethodState>(EMPTY_PAYMENT_METHOD);
   const { toast } = useToast();
   const router = useRouter();
 
@@ -117,11 +124,12 @@ export function TournamentFeeActions({ mode, tournamentId, tiers, playerId, play
           player_id: playerId!,
           tier_id: tierId || undefined,
           amount_cents: dollars != null && !Number.isNaN(dollars) ? Math.round(dollars * 100) : undefined,
-          method: method || undefined,
+          method: resolvePaymentMethod(payment.method, payment.customMethod),
+          reference: payment.reference.trim() || undefined,
         });
         toast('Fee marked as paid', 'success');
         setMarkOpen(false);
-        setMethod('');
+        setPayment(EMPTY_PAYMENT_METHOD);
         router.refresh();
       } catch (err) {
         toast(err instanceof Error ? err.message : 'Failed to mark fee paid', 'error');
@@ -201,13 +209,11 @@ export function TournamentFeeActions({ mode, tournamentId, tiers, playerId, play
               options={tiers.map((t) => ({ value: t.id, label: `${t.name} — $${(t.amount_cents / 100).toFixed(2)}` }))}
             />
           )}
-          <div className="flex gap-2">
-            <Input label="Amount $ (optional)" type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 10.00" />
-            <Input label="Method (optional)" value={method} onChange={(e) => setMethod(e.target.value)} placeholder="e.g. e-transfer, cash" />
-          </div>
+          <Input label="Amount $ (optional)" type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 10.00" />
+          <PaymentMethodFields value={payment} onChange={setPayment} disabled={isPending} />
           <div className="flex gap-2">
             <Button variant="ghost" onClick={() => setMarkOpen(false)}>Cancel</Button>
-            <Button onClick={handleMarkPaid} loading={isPending} className="flex-1">
+            <Button onClick={handleMarkPaid} loading={isPending} disabled={paymentMethodInvalid(payment)} className="flex-1">
               Mark Paid
             </Button>
           </div>

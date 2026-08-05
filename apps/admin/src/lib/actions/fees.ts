@@ -83,6 +83,7 @@ export async function markFeePaid(input: FeeMarkInput) {
       marked_by: admin.id,
       amount_cents: amountCents,
       method: input.method ?? null,
+      reference: input.reference ?? null,
     }, { onConflict: 'player_id,season_id' })
     .select('id')
     .single();
@@ -98,6 +99,7 @@ export async function markFeePaid(input: FeeMarkInput) {
       season_id: input.season_id,
       amount_cents: amountCents,
       method: input.method ?? null,
+      reference: input.reference ?? null,
     },
   }, { playerId: input.player_id });
 
@@ -190,6 +192,7 @@ export async function addManualFee(input: ManualFeeInput) {
       marked_by: admin.id,
       amount_cents: input.amount_cents ?? null,
       method: input.method ?? null,
+      reference: input.reference ?? null,
     })
     .select('id')
     .single();
@@ -205,6 +208,7 @@ export async function addManualFee(input: ManualFeeInput) {
       season_id: input.season_id,
       amount_cents: input.amount_cents ?? null,
       method: input.method ?? null,
+      reference: input.reference ?? null,
     },
   });
 

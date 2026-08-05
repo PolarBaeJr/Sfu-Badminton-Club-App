@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { createAdminClient } from '@/lib/supabase-server';
 import { Badge, Card, AvatarChip, EmptyState, PageHeader } from '@badminton/ui';
-import { unwrap, unwrapMaybe } from '@badminton/shared';
+import { unwrap, unwrapMaybe, formatPaymentMethod } from '@badminton/shared';
 import type { Season } from '@badminton/shared';
 import { FeeActions, AddManualFee, RemoveManualFee } from './fee-actions';
 
@@ -53,7 +53,7 @@ export default async function FeesPage() {
   const fees = unwrap(
     await supabase
       .from('club_fees')
-      .select('id, player_id, manual_name, amount_cents, paid_at, method')
+      .select('id, player_id, manual_name, amount_cents, paid_at, method, reference')
       .eq('season_id', season.id)
   );
   const feeByPlayer = new Map(
@@ -144,7 +144,10 @@ export default async function FeesPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">
-                      {(paid && fee?.method) || '-'}
+                      {paid && fee?.method ? formatPaymentMethod(fee.method) : '-'}
+                      {paid && fee?.reference && (
+                        <span className="block font-mono text-xs text-[var(--text-muted)]">{fee.reference}</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <FeeActions
@@ -180,7 +183,10 @@ export default async function FeesPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">
-                    {fee.method || '-'}
+                    {fee.method ? formatPaymentMethod(fee.method) : '-'}
+                    {fee.reference && (
+                      <span className="block font-mono text-xs text-[var(--text-muted)]">{fee.reference}</span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <RemoveManualFee id={fee.id} name={fee.manual_name} />

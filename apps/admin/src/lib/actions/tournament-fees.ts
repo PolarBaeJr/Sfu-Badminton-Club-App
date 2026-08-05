@@ -148,6 +148,7 @@ export async function markTournamentFeePaid(input: TournamentFeeMarkInput) {
       paid_at: new Date().toISOString(),
       marked_by: admin.id,
       method: input.method ?? null,
+      reference: input.reference ?? null,
     }, { onConflict: 'tournament_id,player_id' })
     .select('id')
     .single();
@@ -164,6 +165,7 @@ export async function markTournamentFeePaid(input: TournamentFeeMarkInput) {
       tier_id: tierId,
       amount_cents: amountCents,
       method: input.method ?? null,
+      reference: input.reference ?? null,
     },
   }, { tournamentId: input.tournament_id, playerId: input.player_id });
 
