@@ -96,16 +96,25 @@ const FIELD_META: Record<string, Record<string, FieldMeta>> = {
   repeat_opponent_caps: {
     max_rated_singles_vs_same_7days: {
       label: 'Rated singles vs same opponent',
-      hint: 'Rated singles against the same opponent allowed in a rolling 7-day window.',
+      hint: 'Rated singles against the same opponent allowed within the window below.',
       type: 'number',
       min: 0,
       step: 1,
     },
     max_rated_doubles_same_combo_7days: {
       label: 'Rated doubles, same combo',
-      hint: 'Rated doubles with the same team combination allowed in a rolling 7-day window.',
+      hint: 'Rated doubles with the same team combination allowed within the window below.',
       type: 'number',
       min: 0,
+      step: 1,
+    },
+    // The window was hardcoded at 7 days and only implied by the key names
+    // above, which are kept as-is so existing stored values keep working.
+    window_days: {
+      label: 'Rolling window (days)',
+      hint: 'How far back the two caps above look. Defaults to 7.',
+      type: 'number',
+      min: 1,
       step: 1,
     },
   },

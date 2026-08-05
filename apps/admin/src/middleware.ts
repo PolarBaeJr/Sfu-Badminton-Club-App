@@ -6,6 +6,22 @@ import { verifyPayload } from '@/lib/passkey/cookie';
 import { AUTH_COOKIE_NAME } from '@badminton/shared/src/utils/constants';
 
 export async function middleware(request: NextRequest) {
+  // Passkey SIGN-IN is let through before anything else, including before the
+  // Supabase client is built. Two reasons it can't just join isPublicRoute
+  // below:
+  //   1. It has no session by definition — it is how you get one.
+  //   2. The catch at the bottom of this function redirects to /login WITHOUT
+  //      consulting isPublicRoute, so any blip in auth.getUser() would 307 these
+  //      endpoints to the login page. fetch() follows redirects silently, so the
+  //      browser would hand login-page HTML to startAuthentication() and report
+  //      a cheerful 200 — the same trap /api/cron fell into (see below).
+  // Trailing slash so a route like /api/passkey/loginfoo can never match. The
+  // enrol (/register) and step-up (/auth) endpoints deliberately stay behind the
+  // session check: those are second factors, not ways in.
+  if (request.nextUrl.pathname.startsWith('/api/passkey/login/')) {
+    return NextResponse.next();
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
