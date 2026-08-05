@@ -4,7 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import { PASSKEY_VERIFIED_COOKIE } from './passkey/config';
 import { verifyPayload } from './passkey/cookie';
-import { AUTH_COOKIE_NAME } from '@badminton/shared';
+import { AUTH_COOKIE_OPTIONS } from '@badminton/shared';
 
 // NOTE: generated `Database` type is available from '@badminton/shared' but not
 // applied here — see comments in apps/player/src/lib/supabase-server.ts.
@@ -16,11 +16,14 @@ async function createServerSupabaseClient() {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
-      cookieOptions: { name: AUTH_COOKIE_NAME },
+      cookieOptions: AUTH_COOKIE_OPTIONS,
       cookies: {
         getAll() {
           return cookieStore.getAll();
         },
+        // No companion host-only clear — see the note in the player app's
+        // supabase-server.ts: next/headers' store cannot append a second
+        // Set-Cookie for the same name, and the middleware catches duplicates.
         setAll(cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) {
           try {
             cookiesToSet.forEach(({ name, value, options }) =>

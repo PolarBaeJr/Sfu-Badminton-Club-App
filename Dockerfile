@@ -25,6 +25,13 @@ ARG NEXT_PUBLIC_ADMIN_URL
 # Passkey scope — see apps/admin/src/lib/passkey/config.ts. Must be the parent
 # domain so one credential covers the apex and the admin subdomain.
 ARG NEXT_PUBLIC_PASSKEY_RP_ID
+# Auth cookie scope — see AUTH_COOKIE_DOMAIN in packages/shared. Set to
+# ".sfubadminton.com" so one sign-in covers the player app and the admin
+# console; leave EMPTY for a host-only cookie (the original behaviour, and the
+# right answer on localhost). Build-time only: the browser writes this cookie
+# too, so the value must be inlined into the client bundle — putting it in the
+# runtime .env alone has no effect.
+ARG NEXT_PUBLIC_AUTH_COOKIE_DOMAIN
 ARG NEXT_PUBLIC_VAPID_PUBLIC_KEY
 ARG NEXT_PUBLIC_SENTRY_DSN
 ARG NEXT_PUBLIC_POSTHOG_KEY

@@ -1,12 +1,18 @@
 'use client';
 
 import { createClient } from '@/lib/supabase-browser';
+// Deep import, not the '@badminton/shared' barrel — see the player middleware:
+// the barrel drags the whole package into the bundle.
+import { clearHostOnlyAuthCookies } from '@badminton/shared/src/utils/constants';
 import { Shield, LogOut } from 'lucide-react';
 
 export default function UnauthorizedPage() {
   async function handleSignOut() {
     const supabase = createClient();
     await supabase.auth.signOut();
+    // See clearHostOnlyAuthCookies: signOut alone can leave a pre-migration
+    // host-only cookie behind, which would still read as a live session.
+    clearHostOnlyAuthCookies();
     window.location.href = '/login';
   }
 

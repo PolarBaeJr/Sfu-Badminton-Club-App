@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@badminton/ui';
+// Deep import, not the '@badminton/shared' barrel — see the player middleware.
+import { clearHostOnlyAuthCookies } from '@badminton/shared/src/utils/constants';
 import {
   LayoutDashboard,
   Users,
@@ -75,6 +77,10 @@ export function Sidebar() {
   async function handleSignOut() {
     const supabase = createClient();
     await supabase.auth.signOut();
+    // The library's own sign-out only clears the cookie on its configured
+    // scope; a leftover host-only copy from before the switch would still be a
+    // valid session. No-op once no such copy exists.
+    clearHostOnlyAuthCookies();
     window.location.href = '/login';
   }
 

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Input, Textarea, Switch, Select, PageHeader, Dialog } from '@badminton/ui';
 import { updateProfile, updateNotificationPreferences, deleteMyAccount } from '@/lib/actions';
-import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, normalizeEmailPreferences, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, type NotificationCategory } from '@badminton/shared';
+import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, normalizeEmailPreferences, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, clearHostOnlyAuthCookies, type NotificationCategory } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -246,6 +246,10 @@ export default function SettingsPage() {
   async function handleSignOut() {
     const supabase = createClient();
     await supabase.auth.signOut();
+    // The library's own sign-out only clears the cookie on its configured
+    // scope; a leftover host-only copy from before the switch would still be a
+    // valid session. No-op once no such copy exists.
+    clearHostOnlyAuthCookies();
     router.push('/login');
   }
 
@@ -262,6 +266,7 @@ export default function SettingsPage() {
       // after the account is scheduled for deletion.
       const supabase = createClient();
       await supabase.auth.signOut();
+      clearHostOnlyAuthCookies();
       window.location.href = '/';
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed to delete account', 'error');

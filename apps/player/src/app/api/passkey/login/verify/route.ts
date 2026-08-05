@@ -5,7 +5,13 @@ import { verifyAuthenticationResponse } from '@simplewebauthn/server';
 import type { AuthenticationResponseJSON, AuthenticatorTransportFuture } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { z } from 'zod';
-import { rateLimit, getClientIp, parseOrThrow, AUTH_COOKIE_NAME } from '@badminton/shared';
+import {
+  rateLimit,
+  getClientIp,
+  parseOrThrow,
+  AUTH_COOKIE_OPTIONS,
+  hostOnlyAuthCookieClears,
+} from '@badminton/shared';
 import { createServiceRoleClient } from '@/lib/supabase-server';
 import { verifyPayload } from '@/lib/passkey/cookie';
 import {
@@ -137,7 +143,7 @@ export async function POST(request: Request) {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
-      cookieOptions: { name: AUTH_COOKIE_NAME },
+      cookieOptions: AUTH_COOKIE_OPTIONS,
       cookies: {
         getAll() {
           return cookieStore.getAll();
@@ -146,6 +152,12 @@ export async function POST(request: Request) {
           cookiesToSet.forEach(({ name, value, options }) => {
             response.cookies.set(name, value, options as any);
           });
+          // Expire the old host-only cookie in the same response that mints the
+          // domain-scoped one, so the two never coexist. Raw append because
+          // ResponseCookies is keyed by name and would clobber the write above.
+          hostOnlyAuthCookieClears(cookiesToSet).forEach((c) =>
+            response.headers.append('set-cookie', c)
+          );
         },
       },
     }

@@ -24,6 +24,8 @@ services:
         # (build-images.yml); mirrored here so a fallback `--build` on the Pi
         # can't silently rescope credentials to a hostname and lock admins out.
         - NEXT_PUBLIC_PASSKEY_RP_ID=${NEXT_PUBLIC_PASSKEY_RP_ID}
+        # Shared auth cookie scope. Build-time only — see the Dockerfile ARG.
+        - NEXT_PUBLIC_AUTH_COOKIE_DOMAIN=${NEXT_PUBLIC_AUTH_COOKIE_DOMAIN}
         - NEXT_PUBLIC_VAPID_PUBLIC_KEY=${NEXT_PUBLIC_VAPID_PUBLIC_KEY}
         - NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN}
         - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY}
@@ -70,6 +72,10 @@ services:
         # (build-images.yml); mirrored here so a fallback `--build` on the Pi
         # can't silently rescope credentials to a hostname and lock admins out.
         - NEXT_PUBLIC_PASSKEY_RP_ID=${NEXT_PUBLIC_PASSKEY_RP_ID}
+        # Shared auth cookie scope. Must be IDENTICAL to the player app's value
+        # — the two write the same cookie, and a mismatch produces two cookies
+        # of the same name on different scopes.
+        - NEXT_PUBLIC_AUTH_COOKIE_DOMAIN=${NEXT_PUBLIC_AUTH_COOKIE_DOMAIN}
         - NEXT_PUBLIC_VAPID_PUBLIC_KEY=${NEXT_PUBLIC_VAPID_PUBLIC_KEY}
         - NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN}
     env_file: .env

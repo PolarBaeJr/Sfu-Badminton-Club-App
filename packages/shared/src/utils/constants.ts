@@ -123,6 +123,162 @@ export const CHECKIN_TOKEN_REGEX = /^[0-9a-f]{48}$/;
 // string must keep matching cookies already in browsers.
 export const AUTH_COOKIE_NAME = 'sb-badminton-auth-token';
 
+// Domain the auth cookie is scoped to, or undefined for a host-only cookie.
+//
+// Host-only (unset) is what shipped originally: the cookie is set for
+// sfubadminton.com and is NEVER sent to admin.sfubadminton.com, so signing in
+// on the player app leaves you signed out on the admin console. Setting this to
+// ".sfubadminton.com" makes one session cover the apex and every subdomain.
+//
+// Why NEXT_PUBLIC_ and not a plain server var: the BROWSER client writes this
+// cookie too — every token refresh and every sign-out goes through
+// document.cookie — and Next only inlines NEXT_PUBLIC_* into client bundles. A
+// server-only variable would give server-writes-with-domain plus
+// browser-writes-without, which manufactures a second cookie of the same name
+// on every refresh. That duplicate is the precise failure this feature exists
+// to avoid, so the two halves must read the same value.
+//
+// Consequence: this is baked at BUILD time (Dockerfile ARG -> compose/CI build
+// arg). Adding it to the Pi's runtime .env alone does nothing.
+//
+// Unset is also the correct default for local dev: a `domain` of ".localhost"
+// is rejected by some browsers, which would drop the cookie entirely.
+export const AUTH_COOKIE_DOMAIN: string | undefined =
+  process.env.NEXT_PUBLIC_AUTH_COOKIE_DOMAIN || undefined;
+
+// The single object every createServerClient/createBrowserClient call passes as
+// `cookieOptions`. @supabase/ssr spreads it over its DEFAULT_COOKIE_OPTIONS for
+// both writes and deletions, so `domain` lands on both — which is what makes a
+// domain-scoped cookie deletable again.
+//
+// With AUTH_COOKIE_DOMAIN unset the object is `{ name }`, exactly what the call
+// sites passed before, so the emitted Set-Cookie is byte-identical to today.
+export const AUTH_COOKIE_OPTIONS: { name: string; domain?: string } = AUTH_COOKIE_DOMAIN
+  ? { name: AUTH_COOKIE_NAME, domain: AUTH_COOKIE_DOMAIN }
+  : { name: AUTH_COOKIE_NAME };
+
+// Every cookie name @supabase/ssr derives from AUTH_COOKIE_NAME:
+//   sb-badminton-auth-token                    the session
+//   sb-badminton-auth-token.0 .1 …             chunks, when the session exceeds ~3.2 kB
+//   sb-badminton-auth-token-code-verifier      PKCE verifier (storageKey is the cookie name)
+// The verifier matters as much as the session: a duplicated one fails the code
+// exchange outright, which is "cannot log in", not "logged out".
+export function isAuthCookieName(name: string): boolean {
+  if (!name.startsWith(AUTH_COOKIE_NAME)) return false;
+  const suffix = name.slice(AUTH_COOKIE_NAME.length);
+  return suffix === '' || /^\.\d+$/.test(suffix) || /^-code-verifier(\.\d+)?$/.test(suffix);
+}
+
+// A Set-Cookie line that expires the HOST-ONLY cookie of this name and nothing
+// else. Cookies are keyed by (name, domain, path), so a deletion that omits
+// Domain can only ever match the host-only variant — the domain-scoped cookie
+// written alongside it in the same response survives untouched. Path and
+// SameSite mirror @supabase/ssr's DEFAULT_COOKIE_OPTIONS so the key matches;
+// Secure is deliberately absent, matching the library (and keeping it valid
+// over plain http on localhost).
+function hostOnlyClear(name: string): string {
+  return `${name}=; Path=/; Max-Age=0; SameSite=Lax`;
+}
+
+/**
+ * Companion deletions to emit alongside a domain-scoped cookie write.
+ *
+ * The migration hazard: the day the domain is switched on, a browser still
+ * holds the old host-only cookie. The moment the server writes the new
+ * domain-scoped one, BOTH exist under the same name, both are sent on every
+ * request, and header order is explicitly not something a server may rely on
+ * (RFC 6265 §5.4). Reading the stale one presents as a login loop.
+ *
+ * Killing the host-only variant in the same response that creates the
+ * domain-scoped one means the overlap never lasts beyond a single Set-Cookie
+ * batch. Because @supabase/ssr routes deletions through the same setAll, this
+ * also fixes the mirror-image problem: a sign-out would otherwise clear only
+ * the domain-scoped cookie and leave the host-only one alive and valid.
+ *
+ * Returns raw header strings rather than calling response.cookies.set(): Next's
+ * ResponseCookies is a map keyed by NAME ALONE, so setting the same name twice
+ * silently drops the first — which would delete the session instead of moving
+ * it. These must be appended with headers.append('set-cookie', …).
+ *
+ * No-op when AUTH_COOKIE_DOMAIN is unset.
+ */
+export function hostOnlyAuthCookieClears(
+  cookiesToSet: readonly { name: string }[]
+): string[] {
+  if (!AUTH_COOKIE_DOMAIN) return [];
+  const seen = new Set<string>();
+  const clears: string[] = [];
+  for (const { name } of cookiesToSet) {
+    if (!isAuthCookieName(name) || seen.has(name)) continue;
+    seen.add(name);
+    clears.push(hostOnlyClear(name));
+  }
+  return clears;
+}
+
+/**
+ * Safety net for duplicates the companion deletions above cannot reach — chiefly
+ * a browser-side token refresh (which writes the domain-scoped cookie through
+ * the library's own document.cookie path) and server-action writes through
+ * next/headers, whose cookie store offers no way to append a second header.
+ *
+ * Reads the RAW Cookie header on purpose: Next's RequestCookies de-duplicates
+ * last-wins, so by the time you reach request.cookies the second copy is
+ * invisible. A name appearing twice can only be the host-only/domain-scoped
+ * pair, and the host-only one is always the stale side.
+ *
+ * Limit worth knowing: this fires on the request that already carried the
+ * duplicate, so that one request may still have read the stale cookie. Worst
+ * case is a single re-login, not a loop — the next request is unambiguous.
+ * Deliberately does NOT redirect: middleware also handles POST server actions,
+ * and replaying those through a redirect is a far worse failure than one
+ * ambiguous read.
+ *
+ * No-op when AUTH_COOKIE_DOMAIN is unset.
+ */
+export function duplicateAuthCookieClears(cookieHeader: string | null | undefined): string[] {
+  if (!AUTH_COOKIE_DOMAIN || !cookieHeader) return [];
+  const counts = new Map<string, number>();
+  for (const pair of cookieHeader.split(';')) {
+    const eq = pair.indexOf('=');
+    if (eq < 0) continue;
+    const name = pair.slice(0, eq).trim();
+    if (!isAuthCookieName(name)) continue;
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  const clears: string[] = [];
+  counts.forEach((count, name) => {
+    if (count > 1) clears.push(hostOnlyClear(name));
+  });
+  return clears;
+}
+
+/**
+ * Browser-side counterpart, to be called after supabase.auth.signOut().
+ *
+ * createBrowserClient is given no `cookies` implementation, so its deletions go
+ * through the library's own document.cookie path and carry the domain — leaving
+ * any host-only cookie of the same name alive. During the migration window that
+ * makes "sign out" appear to do nothing: the next navigation still finds a
+ * valid session. Clearing the host-only variants here closes that gap without
+ * reimplementing the library's cookie handling.
+ *
+ * No-op when AUTH_COOKIE_DOMAIN is unset, and outside a browser.
+ */
+export function clearHostOnlyAuthCookies(): void {
+  if (!AUTH_COOKIE_DOMAIN || typeof document === 'undefined') return;
+  const names = new Set<string>();
+  for (const pair of document.cookie.split(';')) {
+    const eq = pair.indexOf('=');
+    if (eq < 0) continue;
+    const name = pair.slice(0, eq).trim();
+    if (isAuthCookieName(name)) names.add(name);
+  }
+  names.forEach((name) => {
+    document.cookie = hostOnlyClear(name);
+  });
+}
+
 export const PROVISIONAL_THRESHOLD = 8;
 
 // Margin-of-victory bonus applied when a multi-game match ends in a sweep
