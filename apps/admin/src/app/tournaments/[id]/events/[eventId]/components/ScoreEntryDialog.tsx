@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Dialog, Input, Select } from '@badminton/ui';
+import { Button, Dialog, Input, Select, Switch } from '@badminton/ui';
 import { getMaxGamesForFormat, previewEloChange } from '@badminton/shared';
 import type { TournamentMatchFormat, MatchFormat } from '@badminton/shared';
 import { enterMatchResult, enterWalkover, voidMatch } from '@/lib/tournament-actions';
@@ -43,6 +43,11 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, on
     Array.from({ length: maxGames === 1 ? 1 : 2 }, () => ({ a: '', b: '' }))
   );
   const [loading, setLoading] = useState(false);
+  // The gym slot ends before the game does often enough that this needs to be
+  // one tap away, not a support request (00047). It only widens what the server
+  // will accept — the server re-checks the score against the same rules either
+  // way, so flipping it cannot smuggle in an impossible scoreline.
+  const [timeExceeded, setTimeExceeded] = useState(false);
   const [walkoverLoading, setWalkoverLoading] = useState(false);
   const [walkoverReason, setWalkoverReason] = useState('');
   const [showWalkover, setShowWalkover] = useState(false);
@@ -68,7 +73,7 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, on
       const scores = games
         .filter(g => g.a || g.b)
         .map(g => ({ a: parseInt(g.a) || 0, b: parseInt(g.b) || 0 }));
-      const res = await enterMatchResult(match.id, scores, autoWinner);
+      const res = await enterMatchResult(match.id, scores, autoWinner, timeExceeded);
       if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
       toast('Score submitted', 'success');
       onClose();
@@ -163,6 +168,16 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, on
             {games.length < maxGames && (
               <Button variant="ghost" size="sm" onClick={addGame} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">+ Add Game</Button>
             )}
+
+            {/* Time exceeded — the score stands as it was when time was called */}
+            <div className="rounded-lg bg-[var(--bg-elevated)] px-3">
+              <Switch
+                checked={timeExceeded}
+                onChange={setTimeExceeded}
+                label="Time exceeded"
+                description="Court time ran out mid-game — record the score as it stood."
+              />
+            </div>
 
             {/* Winner indicator */}
             {autoWinner && (
