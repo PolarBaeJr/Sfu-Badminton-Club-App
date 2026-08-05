@@ -49,7 +49,8 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
     if (!undoConfirmId) return;
     setUndoLoading(true);
     try {
-      await undoMatchResult(undoConfirmId);
+      const res = await undoMatchResult(undoConfirmId);
+      if (!res.ok) { toast(res.error, 'error'); return; }
       toast('Match result undone', 'success');
       router.refresh();
     } catch (err) {

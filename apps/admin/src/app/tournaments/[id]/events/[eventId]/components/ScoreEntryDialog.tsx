@@ -68,7 +68,8 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, on
       const scores = games
         .filter(g => g.a || g.b)
         .map(g => ({ a: parseInt(g.a) || 0, b: parseInt(g.b) || 0 }));
-      await enterMatchResult(match.id, scores, autoWinner);
+      const res = await enterMatchResult(match.id, scores, autoWinner);
+      if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
       toast('Score submitted', 'success');
       onClose();
       router.refresh();
@@ -82,7 +83,8 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, on
     if (!walkoverReason.trim()) { toast('Enter a reason', 'error'); return; }
     setWalkoverLoading(true);
     try {
-      await enterWalkover(match.id, winner, walkoverReason);
+      const res = await enterWalkover(match.id, winner, walkoverReason);
+      if (!res.ok) { toast(res.error, 'error'); setWalkoverLoading(false); return; }
       toast('Walkover recorded', 'success');
       onClose();
       router.refresh();
@@ -95,7 +97,8 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, on
   async function handleVoid() {
     setWalkoverLoading(true);
     try {
-      await voidMatch(match.id, walkoverReason || 'Voided by admin');
+      const res = await voidMatch(match.id, walkoverReason || 'Voided by admin');
+      if (!res.ok) { toast(res.error, 'error'); setWalkoverLoading(false); return; }
       toast('Match voided', 'success');
       onClose();
       router.refresh();

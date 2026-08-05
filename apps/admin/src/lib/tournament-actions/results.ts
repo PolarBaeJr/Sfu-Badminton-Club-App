@@ -3,6 +3,7 @@
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
+import { runAction, type ActionResult } from '../action-result';
 import { isDoublesEvent, getMaxGamesForFormat, isLegalGameScore, isLegalGameCount, ExpectedError } from '@badminton/shared';
 import type { TournamentEventType, TournamentMatchFormat } from '@badminton/shared';
 import {
@@ -18,7 +19,7 @@ import {
 // Score Entry & Advancement
 // ============================================================
 
-export async function enterMatchResult(
+async function enterMatchResultImpl(
   matchId: string,
   scores: Array<{ a: number; b: number }>,
   winnerSide: 'a' | 'b'
@@ -174,7 +175,7 @@ export async function enterMatchResult(
   revalidateEventPaths(event.tournament_id as string, match.event_id as string);
 }
 
-export async function enterWalkover(
+async function enterWalkoverImpl(
   matchId: string,
   winnerPosition: 'a' | 'b',
   reason: string
@@ -280,7 +281,7 @@ export async function enterWalkover(
   revalidateEventPaths(event.tournament_id as string, match.event_id as string);
 }
 
-export async function voidMatch(matchId: string, reason: string) {
+async function voidMatchImpl(matchId: string, reason: string) {
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
@@ -400,7 +401,7 @@ export async function editMatchResult(
 // Undo Match Result
 // ============================================================
 
-export async function undoMatchResult(matchId: string) {
+async function undoMatchResultImpl(matchId: string) {
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
@@ -515,4 +516,40 @@ export async function undoMatchResult(matchId: string) {
   });
 
   revalidateEventPaths(event.tournament_id as string, match.event_id as string);
+}
+
+// ============================================================
+// Public entry points
+// ============================================================
+// These return ActionResult rather than throwing. Next.js SANITISES errors
+// thrown out of a Server Action in a production build — the client gets
+// "An error occurred in the Server Components render", never the message. This
+// module threw for everything, so every guard in it was invisible in prod: a
+// user entering a score before the event went live saw an opaque red banner
+// instead of "Start the event before entering results."
+//
+// runAction also keeps ExpectedError out of Sentry, so a refused-but-normal
+// action stops being filed as a fault.
+export async function enterMatchResult(
+  matchId: string,
+  scores: Array<{ a: number; b: number }>,
+  winnerSide: 'a' | 'b',
+): Promise<ActionResult<void>> {
+  return runAction(async () => { await enterMatchResultImpl(matchId, scores, winnerSide); });
+}
+
+export async function enterWalkover(
+  matchId: string,
+  winnerPosition: 'a' | 'b',
+  reason: string,
+): Promise<ActionResult<void>> {
+  return runAction(async () => { await enterWalkoverImpl(matchId, winnerPosition, reason); });
+}
+
+export async function voidMatch(matchId: string, reason: string): Promise<ActionResult<void>> {
+  return runAction(async () => { await voidMatchImpl(matchId, reason); });
+}
+
+export async function undoMatchResult(matchId: string): Promise<ActionResult<void>> {
+  return runAction(async () => { await undoMatchResultImpl(matchId); });
 }
