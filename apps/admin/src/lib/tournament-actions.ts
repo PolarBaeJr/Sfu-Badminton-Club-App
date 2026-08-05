@@ -6,7 +6,8 @@
 //   - participants.ts — singles participants, doubles pairs, check-in / no-show
 //   - seeding.ts      — manual seeds, auto-seed by Elo, clear seeds
 //   - brackets.ts     — bracket / round robin generation, draw lock
-//   - results.ts      — score entry, walkovers, void / edit / undo results
+//   - results.ts      — score entry, walkovers, void / restore / edit / undo
+//                       results, manual draw-slot repair
 //   - finalize.ts     — placement bonuses + event finalization
 //   - _internal.ts    — private helpers (NOT 'use server' — revalidation,
 //                       notifications, Elo apply/reverse, standings)
@@ -49,6 +50,8 @@ export {
   enterMatchResult,
   enterWalkover,
   voidMatch,
+  unvoidMatch,
+  setMatchEntry,
   editMatchResult,
   undoMatchResult,
 } from './tournament-actions/results';

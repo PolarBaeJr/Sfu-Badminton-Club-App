@@ -44,6 +44,15 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles }
     return { nameMap, seedMap };
   }, [entries, isDoubles]);
 
+  // Round robin has no advancement, so the slot editor is inert here — the list
+  // exists only to satisfy the shared dialog's contract.
+  const placeableEntries = useMemo(
+    () => entries
+      .filter((e) => e.status !== 'withdrawn' && e.status !== 'disqualified')
+      .map((e) => ({ id: e.id, name: nameMap[e.id] ?? 'Unknown' })),
+    [entries, nameMap],
+  );
+
   // Compute standings
   const standings = useMemo(() => {
     const stats: Record<string, RoundRobinStanding> = {};
@@ -136,7 +145,12 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles }
                 const bId = isDoubles ? m.pair_b_id : m.participant_b_id;
                 const winnerId = isDoubles ? m.winner_pair_id : m.winner_participant_id;
                 const isCompleted = m.status === 'completed' || m.status === 'walkover';
-                const canScore = isLive && aId && bId && !isCompleted;
+                // A voided round robin match is just as unplayable as a voided
+                // bracket match — the Score button offered here always failed
+                // with "not in a playable state". Offer the restore instead.
+                const isVoided = m.status === 'voided';
+                const canScore = isLive && aId && bId && !isCompleted && !isVoided;
+                const canRestore = isLive && isVoided;
 
                 return (
                   <div key={m.id} className="flex items-center justify-between p-3 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)]">
@@ -164,6 +178,15 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles }
                         Score
                       </button>
                     )}
+                    {canRestore && (
+                      <button
+                        onClick={() => setScoreMatch(m)}
+                        aria-label={`Restore voided match ${m.match_number ?? ''}`}
+                        className="text-xs text-[var(--color-warning)] font-medium ml-2 hover:underline focus-visible:ring-2 focus-visible:ring-[var(--color-warning)] focus-visible:outline-none rounded"
+                      >
+                        Restore
+                      </button>
+                    )}
                   </div>
                 );
               })}
@@ -179,6 +202,7 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles }
           nameMap={nameMap}
           seedMap={seedMap}
           isDoubles={isDoubles}
+          entries={placeableEntries}
           onClose={() => setScoreMatch(null)}
         />
       )}

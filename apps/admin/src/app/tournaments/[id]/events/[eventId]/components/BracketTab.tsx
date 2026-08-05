@@ -64,6 +64,13 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
     if (p.seed_number) seedMap[p.id] = p.seed_number;
   }
 
+  // Candidates the slot editor may place into an orphaned bracket position.
+  // Withdrawn/disqualified entries are excluded here and refused server-side.
+  const placeableEntries = entries
+    .filter((e) => e.status !== 'withdrawn' && e.status !== 'disqualified')
+    .map((e) => ({ id: e.id, name: nameMap[e.id] ?? 'Unknown' }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
   function getEntryName(id: string | null) {
     if (!id) return 'TBD';
     return nameMap[id] ?? 'TBD';
@@ -93,8 +100,15 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                   const winnerId = isDoubles ? m.winner_pair_id : m.winner_participant_id;
                   const isCompleted = m.status === 'completed' || m.status === 'walkover';
                   const isBye = m.is_bye;
+                  const isVoided = m.status === 'voided';
                   const isReady = m.status === 'ready' && aId && bId;
                   const canEnterScore = isLive && (isReady || m.status === 'live' || m.status === 'pending') && aId && bId && !isCompleted && !isBye;
+                  // A voided match, or one missing a side, used to render with no
+                  // action at all — which is exactly how a bracket got stuck on
+                  // "TBD" forever. Both now open the dialog, on the restore or
+                  // slot-editing panel respectively.
+                  const canRecover = isLive && !isCompleted && !isBye && !canEnterScore;
+                  const actionLabel = isVoided ? 'Restore Match' : 'Fix Slots';
 
                   return (
                     <div
@@ -183,6 +197,17 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                         </button>
                       )}
 
+                      {/* Recovery entry point */}
+                      {canRecover && (
+                        <button
+                          onClick={() => setScoreMatch(m)}
+                          aria-label={`${actionLabel} for match ${m.match_number ?? ''}`}
+                          className="w-full text-center text-xs text-[var(--color-warning)] py-1.5 bg-[var(--bg-elevated)] hover:bg-[var(--color-warning)]/10 transition-colors border-t border-[var(--border)] font-medium focus-visible:ring-2 focus-visible:ring-[var(--color-warning)] focus-visible:outline-none"
+                        >
+                          {actionLabel}
+                        </button>
+                      )}
+
                       {/* Status badges */}
                       {m.status === 'walkover' && (
                         <div className="text-center py-1 border-t border-[var(--border)]">
@@ -210,6 +235,7 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
           nameMap={nameMap}
           seedMap={seedMap}
           isDoubles={isDoubles}
+          entries={placeableEntries}
           onClose={() => setScoreMatch(null)}
         />
       )}
