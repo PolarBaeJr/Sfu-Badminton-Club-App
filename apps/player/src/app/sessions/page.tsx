@@ -2,6 +2,7 @@ import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-ser
 import { getCheckinSettings } from '@/lib/checkin-settings';
 import { CLUB_TIMEZONE, formatDate, formatTime, getCheckinWindow, isCheckinOpen, type AttendanceStatus, type SessionIntent } from '@badminton/shared';
 import { redirect } from 'next/navigation';
+import { SubscribeAllButton } from './subscribe-all';
 import { Calendar, MapPin, FileText, Users, UserCheck, Clock } from 'lucide-react';
 import { PageHeader } from '@badminton/ui';
 import { CheckInButton } from './check-in-button';
@@ -104,7 +105,12 @@ export default async function SessionsPage() {
               <h3 className="card-title">Upcoming</h3>
               <div className="card-sub">{upcomingCount === 0 ? 'No sessions on the calendar.' : `${upcomingCount} session${upcomingCount === 1 ? '' : 's'} accepting check-ins.`}</div>
             </div>
-            {upcomingCount > 0 && <span className="tag tag-win">{upcomingCount} OPEN</span>}
+            <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+              {/* Subscribing beats adding sessions one by one, and unlike a
+                  downloaded .ics it keeps itself right when one moves. */}
+              {upcomingCount > 0 && <SubscribeAllButton />}
+              {upcomingCount > 0 && <span className="tag tag-win">{upcomingCount} OPEN</span>}
+            </div>
           </div>
           {upcomingCount === 0 ? (
             <div className="empty">

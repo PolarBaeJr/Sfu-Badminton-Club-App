@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Badge, Button, Dialog, Input, PlayerPicker, Select, useConfirm, DatePicker } from '@badminton/ui';
 import { createSession, updateSession, archiveSession, deleteSession, markAttendance, clearAttendanceMark, sendSessionReminders, getOrCreateSessionCheckinToken, rotateSessionCheckinToken } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
+import { LocationField } from './location-field';
 import { MoreVertical, Users, QrCode } from 'lucide-react';
 import type { SessionGroupInput, AttendanceStatus, AttendanceStatusInput } from '@badminton/shared';
 
@@ -380,7 +381,7 @@ export function CreateSessionForm() {
             <Input label="Start time" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
             <Input label="End time" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
           </div>
-          <Input label="Location" value={location} onChange={(e) => setLocation(e.target.value)} required placeholder="e.g. SFU Gym A" />
+          <LocationField value={location} onChange={setLocation} />
           <Select label="Track" options={TRACK_OPTIONS} value={track} onChange={(e) => setTrack(e.target.value as SessionGroupInput)} />
           <Input label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Any additional info..." />
           <div className="flex items-center justify-between pt-2">
@@ -542,7 +543,7 @@ export function SessionCardMenu({ session }: SessionCardMenuProps) {
             <Input label="Start time" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
             <Input label="End time" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
           </div>
-          <Input label="Location" value={location} onChange={(e) => setLocation(e.target.value)} required placeholder="e.g. SFU Gym A" />
+          <LocationField value={location} onChange={setLocation} />
           <Select label="Track" options={TRACK_OPTIONS} value={track} onChange={(e) => setTrack(e.target.value as SessionGroupInput)} />
           <Input label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Any additional info..." />
           <div className="flex items-center justify-between pt-2">
