@@ -16,6 +16,11 @@ export interface PlayerOption {
    *  so an admin can disambiguate two people with the same name by typing the
    *  email instead of the name. */
   meta?: string | null;
+  /** Short value pinned to the END of the row — a rating, a seed. Kept out of
+   *  `name` so searching cannot match it as if it were part of someone's name,
+   *  and out of `meta` because a number reads as a stat beside the name, not as
+   *  a subtitle under it. Displayed only; not searched. */
+  trailing?: string | null;
 }
 
 interface PlayerPickerProps {
@@ -239,6 +244,11 @@ export function PlayerPicker({
                 <span className="block text-sm text-[var(--text-primary)] truncate">{p.name}</span>
                 {p.meta && <span className="block text-xs text-[var(--text-muted)] truncate">{p.meta}</span>}
               </span>
+              {p.trailing && (
+                <span className="shrink-0 font-mono text-xs text-[var(--text-muted)] tabular-nums">
+                  {p.trailing}
+                </span>
+              )}
               {isSelected && <Check className="w-4 h-4 shrink-0 text-[var(--color-accent)]" />}
             </div>
           );

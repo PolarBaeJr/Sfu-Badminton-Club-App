@@ -88,7 +88,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
           <div className="flex gap-2 mt-3 items-center">
             {/* One code for the whole tournament — a scan checks the player
                 into every event they are entered in. */}
-            <TournamentCheckinQr tournamentId={tournament.id} />
+            <TournamentCheckinQr tournamentId={tournament.id} tournamentName={tournament.name} />
             <Badge variant={tournament.status === 'active' ? 'success' : tournament.status === 'completed' ? 'neutral' : 'warning'}>
               <span className="sr-only">Tournament status: </span>{tournament.status}
             </Badge>

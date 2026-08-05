@@ -156,14 +156,15 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
     setLoading(false);
   }
 
-  // Rating goes in `meta`, not the label. Glued into the name it made the
-  // search match "(1423)" as if it were part of someone's name; as a secondary
-  // line it stays visible AND searchable without polluting the name.
+  // Rating is pinned to the END of the row, not glued into the name and not a
+  // subtitle under it. In the name it made the search match "(1423)" as though
+  // it were part of someone's name; under the name it read as a caption rather
+  // than the stat it is.
   const playerOptions = players.map((p) => ({
     id: p.id,
     name: p.full_name,
     avatarUrl: p.avatar_url ?? null,
-    meta: String(type === 'singles' ? p.singles_elo : p.doubles_elo),
+    trailing: String(type === 'singles' ? p.singles_elo : p.doubles_elo),
   }));
 
   // Nobody can fill two slots on the court. Each select drops whoever is
