@@ -4,8 +4,9 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase-browser';
 import { CHECKIN_TOKEN_REGEX } from '@badminton/shared';
-import { Mail, CheckCircle2, ChevronRight, Loader2 } from 'lucide-react';
+import { Mail, CheckCircle2, ChevronRight, Loader2, KeyRound } from 'lucide-react';
 import { ShuttleMark } from '@/components/shuttle-mark';
+import { signInWithPasskey, supportsPasskeys } from '@/lib/passkey-client';
 
 // Supabase auth errors reach the client as raw strings; a gateway 503 arrives
 // with a "{}" body and rate limits phrase themselves oddly. Map both to
@@ -43,6 +44,28 @@ export default function LoginPage() {
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [seasonName, setSeasonName] = useState('');
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
+  // Resolved in an effect, never during render: browserSupportsWebAuthn()
+  // touches window, so deciding this inline would mismatch the server HTML.
+  const [canUsePasskeys, setCanUsePasskeys] = useState(false);
+
+  useEffect(() => {
+    setCanUsePasskeys(supportsPasskeys());
+  }, []);
+
+  async function handlePasskeyLogin() {
+    setPasskeyLoading(true);
+    setError('');
+    const result = await signInWithPasskey();
+    if (result.ok) {
+      window.location.href = `/auth/post-login${checkinSuffix()}`;
+      return;
+    }
+    // An empty message means the user dismissed the system prompt — that is a
+    // deliberate action, not a failure to report back at them.
+    if (result.error) setError(result.error);
+    setPasskeyLoading(false);
+  }
 
   // The login page is logged-out, so it can't read the seasons table under RLS.
   // The anon-safe get_active_season() RPC surfaces just the season name.
@@ -264,6 +287,23 @@ export default function LoginPage() {
           </div>
         ) : (
           <>
+            {canUsePasskeys && (
+              <button
+                type="button"
+                onClick={handlePasskeyLogin}
+                disabled={passkeyLoading}
+                className="btn btn-ghost btn-lg"
+                style={{ width: '100%', justifyContent: 'center', height: 48, gap: 10, marginBottom: 10 }}
+              >
+                {passkeyLoading ? (
+                  <Loader2 size={18} className="animate-spin" />
+                ) : (
+                  <KeyRound size={18} />
+                )}
+                Sign in with a passkey
+              </button>
+            )}
+
             <button
               type="button"
               onClick={handleGoogleLogin}

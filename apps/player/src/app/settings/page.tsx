@@ -11,6 +11,7 @@ import Link from 'next/link';
 import { isPushSupported, isPushEnabled, subscribeToPush, unsubscribeFromPush } from '@/lib/push-client';
 import { AvatarUpload } from '@/components/AvatarUpload';
 import { CalendarFeed } from './calendar-feed';
+import { PasskeyManager } from '@/components/passkey-manager';
 import {
   User,
   Calendar,
@@ -19,6 +20,7 @@ import {
   Monitor,
   Bell,
   BellOff,
+  KeyRound,
   Shield,
   LogOut,
   Info,
@@ -509,11 +511,15 @@ export default function SettingsPage() {
             </div>
           </Section>
 
+          <Section icon={KeyRound} title="Passkeys">
+            <PasskeyManager />
+          </Section>
+
           <Section icon={Info} title="About">
             <div className="settings-row">
               <div className="settings-row-label">Version</div>
               <div className="settings-row-control">
-                <span className="mono tag">0.0.1</span>
+                <span className="mono tag">v{process.env.NEXT_PUBLIC_APP_VERSION}</span>
               </div>
             </div>
           </Section>

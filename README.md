@@ -2,7 +2,7 @@
 
 A members' web app (installable PWA) for running a university badminton club: a live **ELO ladder** (singles + doubles), **seasons & fees**, **sessions with attendance**, a full **tournament system**, and a private **admin console** — plus a public landing page, leaderboard, and exec roster.
 
-**Live:** [sfubadminton.com](https://sfubadminton.com) · admin console at [admin.sfubadminton.com](https://admin.sfubadminton.com) · **Status:** executive beta (August 2026)
+**Live:** [sfubadminton.com](https://sfubadminton.com) · admin console at [admin.sfubadminton.com](https://admin.sfubadminton.com) · **Status:** executive beta (August 2026) · **Version:** 1.1.0
 
 > New here? Start with the plain-language overview in **[docs/project/](docs/project/README.md)**.
 
@@ -14,8 +14,8 @@ This is an **npm-workspaces + Turborepo** monorepo:
 
 ```
 apps/
-  player/        Next.js 14 app — the members' experience (sfubadminton.com)
-  admin/         Next.js 14 app — the exec/admin console (admin.sfubadminton.com)
+  player/        Next.js 15 app — the members' experience (sfubadminton.com)
+  admin/         Next.js 15 app — the exec/admin console (admin.sfubadminton.com)
 packages/
   shared/        ELO rating engine, Zod validators, email + push senders
   ui/            Reusable React component library (~2 dozen components)
@@ -30,9 +30,14 @@ docs/            Documentation (see below)
 
 ## Tech stack (short version)
 
-TypeScript · Next.js 14 (App Router) · React 18 · Tailwind CSS · Supabase (self-hosted Postgres 17, Auth, RLS) · pg_cron for scheduled work · Docker · GitHub Actions → GHCR · self-hosted on a Raspberry Pi.
+TypeScript · Next.js 15 (App Router) · React 19 · Tailwind CSS · Supabase (self-hosted Postgres 17, Auth, RLS) · pg_cron for scheduled work · Docker · GitHub Actions → GHCR · self-hosted on a Raspberry Pi.
 
 Full breakdown: **[docs/project/06-tech-stack.md](docs/project/06-tech-stack.md)**.
+
+> **React is pinned at the workspace root.** `packages/ui` declares react and
+> react-dom as *peer* dependencies, and the root `package.json` `overrides` force
+> a single copy. Two copies of React in one tree produce error #31 at runtime —
+> add react to a package's `dependencies` and you will reintroduce it.
 
 ## Quick start (local development)
 

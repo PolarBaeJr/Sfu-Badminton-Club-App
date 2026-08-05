@@ -54,6 +54,11 @@ export async function middleware(request: NextRequest) {
     // logged out; the page itself requires a session before it changes
     // anything, so letting it render is safe and avoids a dead redirect.
     pathname.startsWith('/tournaments/checkin') ||
+    // Passkey sign-in. Necessarily reachable without a session — completing it
+    // is what creates one. Only the /login pair is public; the /register pair
+    // below it still requires a session, since enrolling a passkey must be
+    // bound to an account you have already proven you own.
+    pathname.startsWith('/api/passkey/login') ||
     pathname === '/leaderboard';
 
   // A scanned session QR points at /checkin/<token>, which is not public — so
