@@ -1,5 +1,4 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { AvatarChip } from '@badminton/ui';
 import {
   formatDate,
   isDoublesEvent,
@@ -18,10 +17,11 @@ import type {
   TournamentMatchStatus,
 } from '@badminton/shared';
 import { notFound } from 'next/navigation';
-import { Trophy, Users, ArrowLeft, Crown, Swords, Medal, Star } from 'lucide-react';
+import { Trophy, ArrowLeft, Crown, Swords, Medal, Star } from 'lucide-react';
 import Link from 'next/link';
 import { FadeIn } from '@/components/motion-wrapper';
 import { EventActions } from './EventActions';
+import { ParticipantsList, type ParticipantEntry } from './ParticipantsList';
 
 export default async function EventDetailPage({
   params,
@@ -123,6 +123,39 @@ export default async function EventDetailPage({
       participantSeedMap[p.id as string] = p.seed_number as number | null;
     }
   }
+
+  // The participants card filters by name in the browser, so it is a client
+  // component: flatten singles and pairs into one shape here rather than
+  // shipping raw rows and branching again on the client.
+  const participantEntries: ParticipantEntry[] = doubles
+    ? pairs.map((p) => {
+        const p1 = p.player1 as Record<string, unknown> | null;
+        const p2 = p.player2 as Record<string, unknown> | null;
+        return {
+          id:            p.id as string,
+          name:          participantNameMap[p.id as string] ?? 'Unknown Pair',
+          seed:          p.seed_number as number | null,
+          status:        p.status as string,
+          finalPosition: p.final_position as number | null,
+          avatars: [
+            { name: (p1?.full_name as string) || '', url: (p1?.avatar_url as string | null) ?? null },
+            { name: (p2?.full_name as string) || '', url: (p2?.avatar_url as string | null) ?? null },
+          ],
+        };
+      })
+    : participants.map((p) => {
+        const player = p.player as Record<string, unknown> | null;
+        return {
+          id:            p.id as string,
+          name:          participantNameMap[p.id as string] ?? 'Unknown',
+          seed:          p.seed_number as number | null,
+          status:        p.status as string,
+          finalPosition: p.final_position as number | null,
+          avatars: [
+            { name: (player?.full_name as string) || '', url: (player?.avatar_url as string | null) ?? null },
+          ],
+        };
+      });
 
   const roundsMap = new Map<number, Array<Record<string, unknown>>>();
   let maxRound = 0;
@@ -402,96 +435,18 @@ export default async function EventDetailPage({
         </FadeIn>
       )}
 
-      {/* Participants / Pairs List */}
-      <FadeIn delay={0.1}>
-        <div className="card-elevated rounded-2xl overflow-hidden">
-          <div className="flex items-center gap-2 p-4 pb-0 mb-3">
-            <Users className="w-4 h-4 text-[var(--color-accent)]" />
-            <h2 className="display-md">{doubles ? 'Pairs' : 'Participants'}</h2>
-          </div>
-          <div className="px-4 pb-4 space-y-2">
-            {doubles
-              ? pairs.map((p, pi) => {
-                  const p1      = p.player1 as Record<string, unknown> | null;
-                  const p2      = p.player2 as Record<string, unknown> | null;
-                  const seed    = p.seed_number as number | null;
-                  const status  = p.status as string;
-                  const finalPos= p.final_position as number | null;
-                  const revealIdx = pi < 3 ? `reveal-${pi + 1}` : '';
-
-                  return (
-                    <div key={p.id as string} className={`reveal ${revealIdx} flex items-center justify-between p-2.5 bg-[var(--on-surface-soft)] rounded-xl border border-[var(--border)] gap-2`}>
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        {seed && (
-                          <span className="nums text-xs text-[var(--text-muted)] w-5 text-center shrink-0">#{seed}</span>
-                        )}
-                        <div className="flex -space-x-2">
-                          <AvatarChip name={(p1?.full_name as string) || ''} src={p1?.avatar_url as string | null} size="sm" id={p1?.id as string | undefined} />
-                          <AvatarChip name={(p2?.full_name as string) || ''} src={p2?.avatar_url as string | null} size="sm" id={p2?.id as string | undefined} />
-                        </div>
-                        <span className="text-sm text-[var(--text-primary)] font-medium truncate">
-                          {p1?.full_name as string} &amp; {p2?.full_name as string}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        {finalPos === 1 && <Crown className="w-3.5 h-3.5 text-[var(--color-gold)]" aria-hidden />}
-                        {finalPos && (
-                          <span className={`chip ${finalPos === 1 ? 'chip-gold' : ''}`}>
-                            <span className="sr-only">Position </span>#{finalPos}
-                          </span>
-                        )}
-                        {status === 'withdrawn'    && <span className="chip">Withdrawn</span>}
-                        {status === 'disqualified' && <span className="chip chip-red">DQ</span>}
-                      </div>
-                    </div>
-                  );
-                })
-              : participants.map((p, pi) => {
-                  const player  = p.player as Record<string, unknown> | null;
-                  const seed    = p.seed_number as number | null;
-                  const status  = p.status as string;
-                  const finalPos= p.final_position as number | null;
-                  const revealIdx = pi < 3 ? `reveal-${pi + 1}` : '';
-
-                  return (
-                    <div key={p.id as string} className={`reveal ${revealIdx} flex items-center justify-between p-2.5 bg-[var(--on-surface-soft)] rounded-xl border border-[var(--border)] gap-2`}>
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        {seed && (
-                          <span className="nums text-xs text-[var(--text-muted)] w-5 text-center shrink-0">#{seed}</span>
-                        )}
-                        <AvatarChip name={(player?.full_name as string) || ''} src={player?.avatar_url as string | null} size="sm" id={player?.id as string | undefined} />
-                        <span className="text-sm text-[var(--text-primary)] font-medium truncate">{player?.full_name as string}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        {finalPos === 1 && <Crown className="w-3.5 h-3.5 text-[var(--color-gold)]" aria-hidden />}
-                        {finalPos && (
-                          <span className={`chip ${finalPos === 1 ? 'chip-gold' : ''}`}>
-                            <span className="sr-only">Position </span>#{finalPos}
-                          </span>
-                        )}
-                        {status === 'withdrawn'    && <span className="chip">Withdrawn</span>}
-                        {status === 'disqualified' && <span className="chip chip-red">DQ</span>}
-                      </div>
-                    </div>
-                  );
-                })}
-
-            {participants.length === 0 && pairs.length === 0 && (
-              <p className="text-[var(--text-muted)] text-sm text-center py-6">
-                No {doubles ? 'pairs' : 'participants'} yet
-              </p>
-            )}
-          </div>
-        </div>
-      </FadeIn>
-
-      {/* Your Matches */}
+      {/* Your Matches — above the participant list: someone opening this page at
+          the venue came for their own next match, and the roster below can run
+          long enough to push it off a phone screen. */}
       {playerParticipantId && allMatches.length > 0 && (
-        <FadeIn delay={0.15}>
+        <FadeIn delay={0.1}>
           <div className="card-elevated rounded-2xl overflow-hidden">
-            <div className="flex items-center gap-2 p-4 pb-0 mb-3">
-              <Star className="w-4 h-4 text-[var(--color-gold)]" />
-              <h2 className="display-md">Your Matches</h2>
+            <div className="p-4 pb-0 mb-3">
+              <p className="eyebrow mb-1">For you</p>
+              <div className="flex items-center gap-2">
+                <Star className="w-4 h-4 text-[var(--color-gold)]" />
+                <h2 className="display-md">Your Matches</h2>
+              </div>
             </div>
             <div className="px-4 pb-4 space-y-2">
               {allMatches
@@ -551,6 +506,13 @@ export default async function EventDetailPage({
           </div>
         </FadeIn>
       )}
+
+      {/* Participants / Pairs List — reference material: it keeps the heading
+          but gives up the accent icon and the eyebrow, so the "for you" block
+          above is the only thing on the page shouting. */}
+      <FadeIn delay={0.15}>
+        <ParticipantsList entries={participantEntries} doubles={doubles} />
+      </FadeIn>
 
       {/* Final Standings */}
       {eventStatus === 'completed' && (
