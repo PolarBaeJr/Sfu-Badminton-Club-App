@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Input, Select, Switch, Textarea } from '@badminton/ui';
-import { PLAYER_STATUS_LABELS, MIN_ELO, MAX_ELO } from '@badminton/shared';
+import { PLAYER_STATUS_LABELS, MIN_ELO, MAX_ELO, MEMBERSHIP_TYPES } from '@badminton/shared';
 import { updatePlayer, approvePlayer } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import type { Player, Rating } from '@badminton/shared';
@@ -24,6 +24,9 @@ export function PlayerEditForm({ player, rating }: { player: Player; rating: Rat
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState(player.status);
   const [roleValue, setRoleValue] = useState(toRoleValue(player.role, player.is_exec ?? false));
+  const [membershipType, setMembershipType] = useState(
+    (player as { membership_type?: string }).membership_type ?? 'internal',
+  );
   const [singlesElo, setSinglesElo] = useState(rating?.singles_elo ?? 400);
   const [doublesElo, setDoublesElo] = useState(rating?.doubles_elo ?? 400);
   const [execTitle, setExecTitle] = useState(player.exec_title ?? '');
@@ -48,6 +51,10 @@ export function PlayerEditForm({ player, rating }: { player: Player; rating: Rat
         const res = await updatePlayer(player.id, {
           status: status !== player.status ? status as Player['status'] : undefined,
           role: role !== player.role ? role as Player['role'] : undefined,
+          membership_type:
+            membershipType !== ((player as { membership_type?: string }).membership_type ?? 'internal')
+              ? (membershipType as 'internal' | 'alumni' | 'external')
+              : undefined,
           singles_elo: singlesElo !== (rating?.singles_elo ?? 400) ? singlesElo : undefined,
           doubles_elo: doublesElo !== (rating?.doubles_elo ?? 400) ? doublesElo : undefined,
           is_exec: isExec !== (player.is_exec ?? false) ? isExec : undefined,
@@ -82,6 +89,17 @@ export function PlayerEditForm({ player, rating }: { player: Player; rating: Rat
         value={roleValue}
         onChange={(e) => setRoleValue(e.target.value)}
       />
+      {/* Separate from Role on purpose: an exec is still an internal member,
+          so promoting someone must not change which events they can enter. */}
+      <Select
+        label="Membership"
+        options={MEMBERSHIP_TYPES.map((m) => ({ value: m.value, label: m.label }))}
+        value={membershipType}
+        onChange={(e) => setMembershipType(e.target.value)}
+      />
+      <p className="text-xs text-[var(--text-muted)] -mt-2">
+        {MEMBERSHIP_TYPES.find((m) => m.value === membershipType)?.description}
+      </p>
       <div className="grid grid-cols-2 gap-3">
         <Input
           label="Singles Elo"

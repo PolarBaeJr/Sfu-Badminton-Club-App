@@ -130,6 +130,7 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
   const playerUpdate: Record<string, unknown> = {};
   if (data.status) playerUpdate.status = data.status;
   if (data.role) playerUpdate.role = data.role;
+  if (data.membership_type) playerUpdate.membership_type = data.membership_type;
   if (data.is_exec !== undefined) playerUpdate.is_exec = data.is_exec;
   if (data.exec_title !== undefined) playerUpdate.exec_title = data.exec_title;
   if (data.fee_exempt !== undefined) playerUpdate.fee_exempt = data.fee_exempt;

@@ -169,6 +169,14 @@ export const tournamentCreateSchema = z.object({
   bracket_size: z.number().int().min(2).max(128).default(8),
   event_multiplier: z.number().min(1).max(2).default(1.15),
   placement_bonus_enabled: z.boolean().default(true),
+  // Which membership groups may register. Defaults to all three so a tournament
+  // created without touching this stays open, matching the column default.
+  // Rejects the empty array: that bars everyone, and is only ever the shape you
+  // get from a form with nothing ticked.
+  allowed_memberships: z
+    .array(z.enum(['internal', 'alumni', 'external']))
+    .min(1, 'Pick at least one group')
+    .default(['internal', 'alumni', 'external']),
   waiver_text: z.string().max(50000).optional(),
 });
 
@@ -182,6 +190,9 @@ export const adminPlayerUpdateSchema = z.object({
     'competitive', 'recreational', 'suspended', 'pending_approval',
   ]).optional(),
   role: z.enum(['player', 'admin']).optional(),
+  // Which group of the club they belong to. Independent of role/is_exec —
+  // an exec is still an internal member. Drives tournament eligibility.
+  membership_type: z.enum(['internal', 'alumni', 'external']).optional(),
   singles_elo: z.number().int().min(MIN_ELO).max(MAX_ELO).optional(),
   doubles_elo: z.number().int().min(MIN_ELO).max(MAX_ELO).optional(),
   // Club-executive markers (no gameplay effect). is_exec adds the player to the

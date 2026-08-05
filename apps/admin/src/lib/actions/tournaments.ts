@@ -10,6 +10,7 @@ import { getExecOrAdmin } from './_shared';
 export async function createTournament(data: {
   name: string;
   scope: string;
+  allowed_memberships?: string[];
   type: string;
   format: string;
   start_date: string;
@@ -28,6 +29,9 @@ export async function createTournament(data: {
   const { data: tournament, error } = await adminClient.from('tournaments').insert({
     name: data.name,
     scope: data.scope,
+    // Omitted -> leave the column default (all three) rather than writing
+    // an empty array, which the CHECK constraint rejects.
+    ...(data.allowed_memberships?.length ? { allowed_memberships: data.allowed_memberships } : {}),
     type: data.type,
     format: data.format,
     start_date: data.start_date,
@@ -107,6 +111,7 @@ export async function updateTournamentStatus(tournamentId: string, status: strin
 export async function updateTournament(tournamentId: string, data: {
   name: string;
   scope: string;
+  allowed_memberships?: string[];
   type: string;
   format: string;
   start_date: string;
@@ -124,6 +129,9 @@ export async function updateTournament(tournamentId: string, data: {
   const { error } = await adminClient.from('tournaments').update({
     name: data.name,
     scope: data.scope,
+    // Omitted -> leave the column default (all three) rather than writing
+    // an empty array, which the CHECK constraint rejects.
+    ...(data.allowed_memberships?.length ? { allowed_memberships: data.allowed_memberships } : {}),
     type: data.type,
     format: data.format,
     start_date: data.start_date,

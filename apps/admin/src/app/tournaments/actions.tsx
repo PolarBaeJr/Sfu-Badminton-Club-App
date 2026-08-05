@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Dialog, Input, Select, Switch, Dropdown, Textarea, DatePicker } from '@badminton/ui';
+import { MEMBERSHIP_TYPES, ALL_MEMBERSHIP_TYPES } from '@badminton/shared';
 import { createTournament, updateTournament, archiveTournament, deleteTournament } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { MoreVertical } from 'lucide-react';
@@ -43,6 +44,10 @@ function TournamentFormDialog({
   const [eventMultiplier, setEventMultiplier] = useState(tournament?.event_multiplier ?? 1.15);
   const [placementBonus, setPlacementBonus] = useState(tournament?.placement_bonus_enabled ?? true);
   const [waiverText, setWaiverText] = useState(tournament?.waiver_text ?? '');
+  const [allowedMemberships, setAllowedMemberships] = useState<string[]>(
+    (tournament as { allowed_memberships?: string[] } | undefined)?.allowed_memberships
+      ?? ALL_MEMBERSHIP_TYPES,
+  );
   const { toast } = useToast();
   const router = useRouter();
 
@@ -58,6 +63,7 @@ function TournamentFormDialog({
         start_date: startDate,
         end_date: endDate || undefined,
         bracket_size: bracketSize,
+        allowed_memberships: allowedMemberships,
         event_multiplier: eventMultiplier,
         placement_bonus_enabled: placementBonus,
         waiver_text: waiverText,
@@ -87,6 +93,36 @@ function TournamentFormDialog({
     <Dialog open={open} onClose={onClose} title={isEdit ? 'Edit Tournament' : 'Create Tournament'}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required />
+        {/* Who may register. Unticking a group stops it at registration — the
+            check is in the server action, since that path uses the service-role
+            key and bypasses RLS entirely. At least one must stay ticked; an
+            empty list bars everyone, including admins. */}
+        <fieldset className="space-y-1">
+          <legend className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5">
+            Open to
+          </legend>
+          <div className="flex flex-wrap gap-3">
+            {MEMBERSHIP_TYPES.map((m) => {
+              const checked = allowedMemberships.includes(m.value);
+              const isLastChecked = checked && allowedMemberships.length === 1;
+              return (
+                <label key={m.value} className="flex items-center gap-2 text-sm" title={m.description}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={isLastChecked}
+                    onChange={(e) =>
+                      setAllowedMemberships((prev) =>
+                        e.target.checked ? [...prev, m.value] : prev.filter((v) => v !== m.value),
+                      )
+                    }
+                  />
+                  {m.label}
+                </label>
+              );
+            })}
+          </div>
+        </fieldset>
         <div className="grid grid-cols-2 gap-4">
           <Select
             label="Scope"
