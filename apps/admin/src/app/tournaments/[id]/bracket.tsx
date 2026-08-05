@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { Card, Badge, Button, Dialog, Input, Select } from '@badminton/ui';
+import { Card, Badge, Button, Dialog, Input } from '@badminton/ui';
+import { tallyGames } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 
@@ -38,14 +39,22 @@ interface Props {
   placementBonusEnabled: boolean;
 }
 
+function sideName(match: MatchData, side: 'a' | 'b') {
+  const names = match.match_participants?.filter(p => p.team_side === side).map(p => p.player?.full_name).join(' & ');
+  return names || (side === 'a' ? 'Side A' : 'Side B');
+}
+
 export function TournamentBracket({ tournamentId, bracketSize, matches, participants, status, placementBonusEnabled }: Props) {
   const [scoreDialogOpen, setScoreDialogOpen] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState<MatchData | null>(null);
-  const [winnerSide, setWinnerSide] = useState('a');
   const [games, setGames] = useState([{ game_number: 1, side_a_score: '', side_b_score: '' }]);
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
+
+  // Same helper as the challenge form and the event score dialog: the winner is
+  // read off the scores, never asked for alongside them.
+  const tally = tallyGames(games);
 
   // Calculate rounds
   const totalRounds = Math.log2(bracketSize);
@@ -58,7 +67,6 @@ export function TournamentBracket({ tournamentId, bracketSize, matches, particip
 
   function openScoreDialog(match: MatchData) {
     setSelectedMatch(match);
-    setWinnerSide('a');
     setGames([{ game_number: 1, side_a_score: '', side_b_score: '' }]);
     setScoreDialogOpen(true);
   }
@@ -69,6 +77,7 @@ export function TournamentBracket({ tournamentId, bracketSize, matches, particip
 
   async function submitScore() {
     if (!selectedMatch) return;
+    if (!tally.winner) { toast('Games are level or incomplete — enter the scores that decide the match', 'error'); return; }
     setLoading(true);
     try {
       const res = await fetch('/api/tournament-match-score', {
@@ -76,7 +85,7 @@ export function TournamentBracket({ tournamentId, bracketSize, matches, particip
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           match_id: selectedMatch.id,
-          winner_side: winnerSide,
+          winner_side: tally.winner,
           games: games.map(g => ({
             game_number: g.game_number,
             side_a_score: parseInt(g.side_a_score) || 0,
@@ -215,15 +224,6 @@ export function TournamentBracket({ tournamentId, bracketSize, matches, particip
       <Dialog open={scoreDialogOpen} onClose={() => setScoreDialogOpen(false)} title="Enter Match Score">
         {selectedMatch && (
           <div className="space-y-4">
-            <Select
-              label="Winner"
-              options={[
-                { value: 'a', label: selectedMatch.match_participants?.filter(p => p.team_side === 'a').map(p => p.player?.full_name).join(' & ') || 'Side A' },
-                { value: 'b', label: selectedMatch.match_participants?.filter(p => p.team_side === 'b').map(p => p.player?.full_name).join(' & ') || 'Side B' },
-              ]}
-              value={winnerSide}
-              onChange={(e) => setWinnerSide(e.target.value)}
-            />
             {games.map((g, i) => (
               <div key={i} className="flex gap-2 items-end">
                 <Input
@@ -252,6 +252,16 @@ export function TournamentBracket({ tournamentId, bracketSize, matches, particip
             {games.length < 3 && (
               <Button variant="ghost" size="sm" onClick={addGame}>+ Add Game</Button>
             )}
+            {/* Read-only, with the games tally alongside so a mistyped score
+                shows up as a wrong count rather than a silent wrong winner. */}
+            <div className="dialog-group" role="status" aria-live="polite">
+              <p className="dialog-group-label">Winner</p>
+              <p className={`text-sm font-medium ${tally.winner ? 'text-[var(--color-success)]' : 'text-[var(--text-muted)]'}`}>
+                {tally.winner
+                  ? `${sideName(selectedMatch, tally.winner)} — ${tally.aGamesWon}-${tally.bGamesWon} in games`
+                  : `Level or incomplete (${tally.aGamesWon}-${tally.bGamesWon} in games) — enter the deciding scores`}
+              </p>
+            </div>
             <div className="flex gap-2">
               <Button variant="ghost" onClick={() => setScoreDialogOpen(false)}>Cancel</Button>
               <Button onClick={submitScore} loading={loading} className="flex-1">Submit Score</Button>

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Input, Select, Switch, Textarea } from '@badminton/ui';
+import { tallyGames } from '@badminton/shared';
 import { adminCreateMatch } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 
@@ -24,10 +25,14 @@ export function CreateMatchForm({ players }: { players: Player[] }) {
   const [sideA2, setSideA2] = useState('');
   const [sideB1, setSideB1] = useState('');
   const [sideB2, setSideB2] = useState('');
-  const [winnerSide, setWinnerSide] = useState('a');
   const [games, setGames] = useState([{ game_number: 1, side_a_score: 0, side_b_score: 0 }]);
   const [note, setNote] = useState('');
   const { toast } = useToast();
+
+  // Derived from the scores rather than held in state — the same helper the
+  // challenge form and the tournament bracket use, so no two entry points can
+  // disagree about who won the same scoreline.
+  const tally = tallyGames(games);
 
   function addGame() {
     if (games.length >= 3) return;
@@ -50,6 +55,9 @@ export function CreateMatchForm({ players }: { players: Player[] }) {
     e.preventDefault();
     if (!sideA1 || !sideB1) { toast('Select players for both sides', 'error'); return; }
     if (matchType === 'doubles' && (!sideA2 || !sideB2)) { toast('Doubles requires 2 players per side', 'error'); return; }
+    // Level or unplayed games have no winner, and guessing one here would write
+    // a rating change nobody could trace back to a wrong scoreline.
+    if (!tally.winner) { toast('Games are level or incomplete — enter the scores that decide the match', 'error'); return; }
 
     const sideAPlayers = matchType === 'doubles' ? [sideA1, sideA2] : [sideA1];
     const sideBPlayers = matchType === 'doubles' ? [sideB1, sideB2] : [sideB1];
@@ -62,7 +70,7 @@ export function CreateMatchForm({ players }: { players: Player[] }) {
         rated_flag: rated,
         side_a_players: sideAPlayers,
         side_b_players: sideBPlayers,
-        winner_side: winnerSide,
+        winner_side: tally.winner,
         games,
         admin_note: note || undefined,
       });
@@ -129,16 +137,6 @@ export function CreateMatchForm({ players }: { players: Player[] }) {
             )}
           </div>
 
-          <Select
-            label="Winner"
-            value={winnerSide}
-            onChange={(e) => setWinnerSide(e.target.value)}
-            options={[
-              { value: 'a', label: 'Side A' },
-              { value: 'b', label: 'Side B' },
-            ]}
-          />
-
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <p className="text-sm font-medium text-[var(--text-secondary)]">Games</p>
@@ -164,6 +162,18 @@ export function CreateMatchForm({ players }: { players: Player[] }) {
                 />
               </div>
             ))}
+          </div>
+
+          {/* Read-only: the scores above already answer this. The tally is shown
+              alongside so a typo is visible as a wrong games count, not just as
+              a winner the admin has no way to check. */}
+          <div className="dialog-group" role="status" aria-live="polite">
+            <p className="dialog-group-label">Winner</p>
+            <p className={`text-sm font-medium ${tally.winner ? 'text-[var(--color-success)]' : 'text-[var(--text-muted)]'}`}>
+              {tally.winner
+                ? `${tally.winner === 'a' ? 'Side A' : 'Side B'} — ${tally.aGamesWon}-${tally.bGamesWon} in games`
+                : `Level or incomplete (${tally.aGamesWon}-${tally.bGamesWon} in games) — enter the deciding scores`}
+            </p>
           </div>
 
           <Textarea label="Admin Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} onInput={autoGrow} />

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Button, Dialog, Select, Textarea, Input } from '@badminton/ui';
+import { tallyGames } from '@badminton/shared';
 import { resolveDispute } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { createClient } from '@/lib/supabase-browser';
@@ -13,7 +14,6 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
   const [resType, setResType] = useState<'accepted' | 'edited' | 'voided' | 'converted_to_casual'>('accepted');
   const [note, setNote] = useState('');
   const [loading, setLoading] = useState(false);
-  const [editedWinner, setEditedWinner] = useState<'a' | 'b'>('a');
   // Scores held as text: with `parseInt(x) || 0` the input snapped back to 0 as
   // soon as it was cleared, so the zero could never be deleted to type over.
   const [editedGames, setEditedGames] = useState<
@@ -23,6 +23,11 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
   const [hydrated, setHydrated] = useState(false);
   const { toast } = useToast();
 
+  // The edited winner follows the edited scores. A dispute is usually opened
+  // *because* the recorded result is wrong, so an exec correcting the scoreline
+  // must not be able to leave a stale winner sitting beside it.
+  const editedTally = tallyGames(editedGames);
+
   useEffect(() => {
     if (!open || hydrated) return;
     let cancelled = false;
@@ -30,7 +35,7 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
       const supabase = createClient();
       const { data: m } = await supabase
         .from('matches')
-        .select('format, winner_side, match_games(game_number, side_a_score, side_b_score)')
+        .select('format, match_games(game_number, side_a_score, side_b_score)')
         .eq('id', matchId)
         .single();
       if (cancelled || !m) return;
@@ -48,7 +53,6 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
         ? [1, 2, 3].map((n) => asText(games.find((g) => g.game_number === n), n))
         : [asText(games[0], 1)];
       setEditedGames(filled);
-      setEditedWinner(((m.winner_side as 'a' | 'b' | null) ?? 'a'));
       setMatchFormat(formatStr);
       setHydrated(true);
     })();
@@ -57,9 +61,14 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
 
   async function handleResolve() {
     if (!note.trim()) { toast('Resolution note required', 'error'); return; }
+    // Built here rather than at the call site so the winner sent is the one
+    // these guards proved the corrected games actually produce.
+    let edited: { edited_winner_side: 'a' | 'b'; edited_games: ReturnType<typeof toNumericGames> } | undefined;
     if (resType === 'edited') {
-      const valid = toNumericGames().length > 0;
-      if (!valid) { toast('Enter scores for each game', 'error'); return; }
+      const games = toNumericGames();
+      if (games.length === 0) { toast('Enter scores for each game', 'error'); return; }
+      if (!editedTally.winner) { toast('Games are level or incomplete — the corrected scores must decide the match', 'error'); return; }
+      edited = { edited_winner_side: editedTally.winner, edited_games: games };
     }
     setLoading(true);
     try {
@@ -67,7 +76,7 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
         dispute_id: disputeId,
         resolution_type: resType,
         resolution_note: note,
-        ...(resType === 'edited' ? { edited_winner_side: editedWinner, edited_games: toNumericGames() } : {}),
+        ...edited,
       });
       if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
       toast('Dispute resolved', 'success');
@@ -115,15 +124,6 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
 
           {resType === 'edited' && (
             <div className="space-y-3">
-              <Select
-                label="Winner"
-                value={editedWinner}
-                onChange={(e) => setEditedWinner(e.target.value as 'a' | 'b')}
-                options={[
-                  { value: 'a', label: 'Team A' },
-                  { value: 'b', label: 'Team B' },
-                ]}
-              />
               {editedGames.map((g, i) => (
                 <div key={i} className="grid grid-cols-2 gap-3">
                   <Input
@@ -145,6 +145,16 @@ export function DisputeActions({ disputeId, matchId }: { disputeId: string; matc
               {matchFormat === 'bo3_21' && (
                 <p className="text-xs text-[var(--text-muted)]">BO3: leave game 3 at 0–0 if it wasn&apos;t played.</p>
               )}
+              {/* Read-only: the corrected scores decide this, and the games
+                  tally is shown so a mistyped score reads as a wrong count. */}
+              <div className="dialog-group" role="status" aria-live="polite">
+                <p className="dialog-group-label">Winner</p>
+                <p className={`text-sm font-medium ${editedTally.winner ? 'text-[var(--color-success)]' : 'text-[var(--text-muted)]'}`}>
+                  {editedTally.winner
+                    ? `${editedTally.winner === 'a' ? 'Team A' : 'Team B'} — ${editedTally.aGamesWon}-${editedTally.bGamesWon} in games`
+                    : `Level or incomplete (${editedTally.aGamesWon}-${editedTally.bGamesWon} in games) — enter the deciding scores`}
+                </p>
+              </div>
             </div>
           )}
 
