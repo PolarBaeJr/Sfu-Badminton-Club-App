@@ -3,7 +3,12 @@
 import { headers } from 'next/headers';
 import { createServiceRoleClient } from './supabase-server';
 import { revalidatePath } from 'next/cache';
-import { isDoublesEvent } from '@badminton/shared';
+import {
+  isDoublesEvent,
+  isMembershipAllowed,
+  membershipRefusalMessage,
+  ExpectedError,
+} from '@badminton/shared';
 import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
 import { requirePlayer, assertCurrentWaiver, runAction, type ActionResult } from './actions/_shared';
 
@@ -23,6 +28,13 @@ function pickSuspension(embed: unknown): { suspended_at: string | null; suspensi
   return (row as { suspended_at: string | null; suspension_reason: string | null; waiver_text?: string | null } | null) ?? null;
 }
 
+// Same object-or-array unwrap as pickSuspension, for the eligibility list.
+function pickAllowedMemberships(embed: unknown): string[] | null {
+  const row = Array.isArray(embed) ? embed[0] : embed;
+  const value = (row as { allowed_memberships?: string[] | null } | null)?.allowed_memberships;
+  return Array.isArray(value) ? value : null;
+}
+
 export async function registerForEvent(eventId: string, opts?: { eventWaiverAccepted?: boolean }): Promise<ActionResult> {
   return runAction(() => registerForEventImpl(eventId, opts));
 }
@@ -40,7 +52,7 @@ async function registerForEventImpl(eventId: string, opts?: { eventWaiverAccepte
   // surfaced as a thrown PGRST116 error.
   const [eventRes, existingRes, ratingRes] = await Promise.all([
     service.from('tournament_events')
-      .select('id, status, event_type, tournament_id, max_participants, tournament:tournaments(suspended_at, suspension_reason, waiver_text)')
+      .select('id, status, event_type, tournament_id, max_participants, tournament:tournaments(suspended_at, suspension_reason, waiver_text, allowed_memberships)')
       .eq('id', eventId).maybeSingle(),
     service.from('tournament_participants')
       .select('id').eq('event_id', eventId).eq('player_id', player.id).maybeSingle(),
@@ -53,6 +65,18 @@ async function registerForEventImpl(eventId: string, opts?: { eventWaiverAccepte
   if (regTournament?.suspended_at) {
     throw new Error(`This tournament is currently suspended${regTournament.suspension_reason ? `: ${regTournament.suspension_reason}` : ''}`);
   }
+  // Membership gate. Some events are internal-only, some admit alumni, some are
+  // open. Enforced here rather than in RLS because this action uses the
+  // service-role key, which bypasses policies entirely — a policy would look
+  // like protection and do nothing.
+  //
+  // Admin-added participants deliberately skip this: adding someone by hand in
+  // the admin app is an explicit override, not a loophole.
+  const allowedMemberships = pickAllowedMemberships(event.tournament);
+  if (!isMembershipAllowed(player.membership_type, allowedMemberships)) {
+    throw new ExpectedError(membershipRefusalMessage(allowedMemberships));
+  }
+
   if (event.status !== 'registration') throw new Error('Registration is closed');
   if (isDoublesEvent(event.event_type)) throw new Error('Use pair registration for doubles events');
   if (existingRes.data) throw new Error('Already registered');
