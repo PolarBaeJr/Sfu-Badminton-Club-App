@@ -9,10 +9,34 @@ import { RequireWaiverResignatureButton } from './require-waiver-resignature-but
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Shield, Target, Trophy, Swords, TrendingUp, Flame, FileText, AlertTriangle, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import Link from 'next/link';
+import { SeasonPicker } from './season-picker';
 
-export default async function PlayerDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function PlayerDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ season?: string }>;
+}) {
   const { id } = await params;
+  const { season: seasonParam } = await searchParams;
   const supabase = createAdminClient();
+
+  // Which season this page is showing. Defaults to the active one; ?season=
+  // overrides it so a particular season's view is a shareable link.
+  const { data: seasons } = await supabase
+    .from('seasons')
+    .select('id, term, year, active_flag, start_date, end_date')
+    .order('year', { ascending: false })
+    .order('term');
+  const seasonList = seasons ?? [];
+  const selectedSeason =
+    seasonList.find((s) => s.id === seasonParam)
+    ?? seasonList.find((s) => s.active_flag)
+    ?? seasonList[0]
+    ?? null;
+  const seasonId = selectedSeason?.id ?? null;
+  const isActiveSeason = Boolean(selectedSeason?.active_flag);
 
   const [
     { data: player },
@@ -26,25 +50,50 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
     supabase.from('players').select('*').eq('id', id).single(),
     supabase.from('ratings').select('*').eq('player_id', id).single(),
     supabase.from('reliability_metrics').select('*').eq('player_id', id).maybeSingle(),
+    // !inner so the season filter on the embedded matches row actually
+    // excludes the participant row rather than just nulling the embed.
     supabase.from('match_participants')
-      .select('*, match:matches(*, match_games(*))')
+      .select('*, match:matches!inner(*, match_games(*))')
       .eq('player_id', id)
+      .eq('matches.season_id', seasonId ?? '')
       .order('created_at', { ascending: false, referencedTable: 'matches' })
       .limit(10),
     supabase.from('varsity_notes').select('*, author:players!varsity_notes_author_id_fkey(full_name)').eq('player_id', id).order('created_at', { ascending: false }),
+    // walkovers carries no season_id and reaches a match only through the
+    // challenge, which has none either — so it is scoped by date against the
+    // season window instead of a two-hop embed filter.
     supabase.from('walkovers')
       .select('id, walkover_type, notice_hours, reported_at, status, admin_notes, challenge:challenges(type), reporter:players!walkovers_reported_by_fkey(full_name)')
       .eq('forfeit_player_id', id)
+      .gte('reported_at', selectedSeason?.start_date ?? '1970-01-01')
+      .lte('reported_at', selectedSeason?.end_date ?? '2999-12-31')
       .order('reported_at', { ascending: false }),
     supabase.from('tournament_participants')
-      .select('id, status, event:tournament_events(event_type, tournament:tournaments(name))')
+      .select('id, status, event:tournament_events!inner(event_type, tournament:tournaments!inner(name, season_id))')
       .eq('player_id', id)
+      .eq('tournament_events.tournaments.season_id', seasonId ?? '')
       .eq('status', 'no_show'),
   ]);
 
   if (!player) notFound();
 
-  const r = rating;
+  // ratings holds ONE cumulative Elo with no season dimension, so it is only
+  // the right answer for the season currently running. For a past season the
+  // archived snapshot is what that season actually ended on; showing today's
+  // live rating under a 2024 heading would be plainly wrong.
+  let r = rating;
+  if (!isActiveSeason && seasonId) {
+    const { data: archived } = await supabase
+      .from('season_final_ratings')
+      .select('singles_elo, doubles_elo')
+      .eq('player_id', id)
+      .eq('season_id', seasonId)
+      .maybeSingle();
+    // No snapshot means the player did not finish that season — null rather
+    // than falling back to the live rating, which would silently misattribute
+    // their current standing to a season they were not in.
+    r = archived ? ({ ...rating, ...archived } as typeof rating) : null;
+  }
 
   return (
     <div className="space-y-6">
@@ -75,6 +124,18 @@ export default async function PlayerDetailPage({ params }: { params: Promise<{ i
             </>
           }
         />
+      </div>
+
+      {/* Season switcher. Everything below is scoped to this season EXCEPT
+          varsity notes and reliability — those are a player's standing record
+          and follow them across seasons. */}
+      <div className="flex items-end justify-between gap-4">
+        <SeasonPicker seasons={seasonList} selectedId={seasonId} />
+        {!isActiveSeason && (
+          <p className="text-xs text-[var(--text-muted)]">
+            Viewing a past season. Ratings shown are that season&apos;s final archived values.
+          </p>
+        )}
       </div>
 
       {/* Pending self-service account deletion */}
