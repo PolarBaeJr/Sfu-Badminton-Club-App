@@ -16,6 +16,7 @@ import type {
   ParticipantWithPlayer,
   PairWithPlayers,
 } from '@/lib/tournament-types';
+import type { SiblingEvent } from '../../../event-format-fields';
 import { EventHeader } from './EventHeader';
 import { ParticipantsTab } from './ParticipantsTab';
 import { CheckInTab } from './CheckInTab';
@@ -32,11 +33,14 @@ interface Props {
   participants: ParticipantWithPlayer[];
   pairs: PairWithPlayers[];
   matches: TournamentMatchRow[];
+  // avatar_url feeds the searchable player picker; siblingEvents feeds the
+  // pool-seeding picker. Both are pass-through.
   allPlayers: Array<{ id: string; full_name: string; avatar_url?: string | null }>;
+  siblingEvents: SiblingEvent[];
   isDoubles: boolean;
 }
 
-export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, isDoubles }: Props) {
+export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles }: Props) {
   const status = event.status as TournamentEventStatus;
   const eventType = event.event_type as TournamentEventType;
   const format = event.format;
@@ -82,6 +86,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
       <EventHeader
         tournament={tournament}
         event={event}
+        siblingEvents={siblingEvents}
         isDoubles={isDoubles}
         totalEntries={totalEntries}
         checkedIn={checkedIn}

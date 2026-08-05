@@ -4,8 +4,8 @@ import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { runAction, type ActionResult } from '../action-result';
-import { isDoublesEvent, getMaxGamesForFormat, isLegalGameScore, isLegalGameCount, ExpectedError } from '@badminton/shared';
-import type { TournamentEventType, TournamentMatchFormat } from '@badminton/shared';
+import { isDoublesEvent, getEventRules, describeMatchShape, isLegalGameScore, isLegalGameCount, ExpectedError } from '@badminton/shared';
+import type { TournamentEventType, TournamentMatchFormat, EventMatchShape } from '@badminton/shared';
 import {
   getExecOrAdmin,
   revalidateEventPaths,
@@ -130,10 +130,17 @@ async function enterMatchResultImpl(
     );
   }
 
+  // The event's typed shape wins over the match_format enum when it has one
+  // (00046) — a pool run at 1 game to 15 must reject a 21-19 that the enum
+  // fallback would have waved through.
+  const shape = event as unknown as EventMatchShape;
   const matchFormat = event.match_format as TournamentMatchFormat;
-  const maxGames = getMaxGamesForFormat(matchFormat);
+  const games = shape.games_per_match ?? null;
+  const points = shape.points_per_game ?? null;
+  const shapeLabel = describeMatchShape(shape);
+  const maxGames = getEventRules(shape).bestOf;
   if (scores.length > maxGames) {
-    throw new ExpectedError(`Too many games for format ${matchFormat}. Max: ${maxGames}`);
+    throw new ExpectedError(`Too many games for ${shapeLabel}. Max: ${maxGames}`);
   }
 
   // Same scoring rules challenges get (00030): a game is won by reaching the
@@ -149,11 +156,13 @@ async function enterMatchResultImpl(
   // client-supplied boolean like the scores themselves, so it decides which
   // rules apply here rather than deciding anything on its own.
   for (const g of scores) {
-    if (!isLegalGameScore(g.a, g.b, matchFormat, null, null, timeExceeded)) {
+    // Typed format (games/points) decides the rules; timeExceeded decides
+    // WHICH rules — a match cut short is bounded by the cap alone.
+    if (!isLegalGameScore(g.a, g.b, matchFormat, games, points, timeExceeded)) {
       throw new ExpectedError(
         timeExceeded
           ? `Not a possible score even for a match cut short: ${g.a}-${g.b}`
-          : `Not a possible score for this format: ${g.a}-${g.b}. If the clock ran out mid-game, mark the match time exceeded.`,
+          : `Not a possible score for ${shapeLabel}: ${g.a}-${g.b}. If the clock ran out mid-game, mark the match time exceeded.`,
       );
     }
   }
@@ -161,9 +170,9 @@ async function enterMatchResultImpl(
   // winner to record, however the games themselves ended.
   const aGames = scores.filter((g) => g.a > g.b).length;
   const bGames = scores.filter((g) => g.b > g.a).length;
-  if (!isLegalGameCount(Math.max(aGames, bGames), Math.min(aGames, bGames), matchFormat)) {
+  if (!isLegalGameCount(Math.max(aGames, bGames), Math.min(aGames, bGames), matchFormat, games)) {
     throw new ExpectedError(
-      `${aGames}-${bGames} is not a possible result for ${matchFormat} — the match ends once a side clinches.`
+      `${aGames}-${bGames} is not a possible result for ${shapeLabel} — the match ends once a side clinches.`
     );
   }
 
@@ -391,6 +400,108 @@ async function voidMatchImpl(matchId: string, reason: string) {
     action: 'match_voided',
     performed_by: admin.id,
     details: { reason, reversed_elo: reversedElo, cleared_next_slot: clearedNextSlot },
+  });
+
+  revalidateEventPaths(event.tournament_id as string, match.event_id as string);
+}
+
+// ============================================================
+// Double no-show — nobody turned up
+// ============================================================
+//
+// enterWalkover is typed `winnerPosition: 'a' | 'b'`, so it cannot express
+// "neither side came". Before this, the desk had to do three separate things in
+// the right order — mark both participants no_show, void the match, then walk
+// the survivor of the OTHER half into the next round — and stopping halfway
+// left both players flagged while the match still advertised READY.
+//
+// Doing it as one action also lets the audit row say what actually happened.
+// A voided match records only "voided": nothing distinguishes "nobody came"
+// from "the score was entered against the wrong pair".
+async function recordDoubleNoShowImpl(matchId: string, reason: string) {
+  const admin = await getExecOrAdmin();
+  const adminClient = createAdminClient();
+
+  const { data: match } = await adminClient.from('tournament_matches')
+    .select('*, event:tournament_events(*)')
+    .eq('id', matchId)
+    .single();
+  if (!match) throw new ExpectedError('Match not found');
+
+  const event = match.event as Record<string, unknown>;
+  assertEventResultsMutable(event, 'recording a no-show');
+
+  if (match.status === 'completed' || match.status === 'walkover') {
+    throw new ExpectedError('This match already has a result. Undo it first.');
+  }
+  if (match.status === 'voided') {
+    throw new ExpectedError('This match is already voided.');
+  }
+  // A bye has one real side by construction; "nobody came" cannot describe it.
+  if (match.is_bye) {
+    throw new ExpectedError('A bye is not a played match.');
+  }
+
+  const doubles = isDoublesEvent(event.event_type as TournamentEventType);
+  const aId = (doubles ? match.pair_a_id : match.participant_a_id) as string | null;
+  const bId = (doubles ? match.pair_b_id : match.participant_b_id) as string | null;
+
+  // Both sides must actually be known. One empty side is not a double no-show —
+  // it is an unopposed walkover, and routing it here would mark a phantom
+  // entry absent and deny the present player their advance.
+  if (!aId || !bId) {
+    throw new ExpectedError(
+      'Only one side is filled — award the walkover to whoever turned up instead.',
+    );
+  }
+
+  await assertDownstreamUndecided(adminClient, match, 'record a no-show');
+
+  // Unplayed, so unrated. If a result had already been applied, its delta is
+  // still sitting on the players' ratings — reverse it for the same reason
+  // voiding does, or the match keeps moving Elo after being erased.
+  const reversedElo = Boolean(match.elo_snapshot);
+  if (reversedElo) {
+    await reverseEloSnapshot(adminClient, match);
+  }
+
+  // Nobody advances. Anyone previously parked in the next round on the strength
+  // of this match comes back out.
+  const priorWinnerId = (doubles ? match.winner_pair_id : match.winner_participant_id) as string | null;
+  const clearedNextSlot = priorWinnerId
+    ? await clearAdvancedEntry(adminClient, match, priorWinnerId, doubles)
+    : false;
+
+  // Mark both entries absent. This is the half that feeds reliability —
+  // check_noshow_threshold auto-flags at 3 and auto-suspends at 5 — and it is
+  // the half most easily forgotten when doing this by hand.
+  const entryTable = doubles ? 'tournament_pairs' : 'tournament_participants';
+  const { error: entryErr } = await adminClient
+    .from(entryTable)
+    .update({ status: 'no_show' })
+    .in('id', [aId, bId]);
+  if (entryErr) throw new Error(entryErr.message);
+
+  await adminClient.from('tournament_matches').update({
+    status: 'voided',
+    winner_participant_id: null,
+    winner_pair_id: null,
+    loser_participant_id: null,
+    loser_pair_id: null,
+    scores: null,
+    notes: reason,
+    updated_at: new Date().toISOString(),
+  }).eq('id', matchId);
+
+  await logAudit(adminClient, {
+    tournament_id: event.tournament_id as string,
+    event_id: match.event_id,
+    match_id: matchId,
+    // Distinct from 'match_voided' on purpose — six months on, this is the only
+    // thing that says the court was empty rather than the entry being wrong.
+    action: 'match_double_no_show',
+    performed_by: admin.id,
+    details: { reason, reversed_elo: reversedElo, cleared_next_slot: clearedNextSlot, entries: [aId, bId] },
   });
 
   revalidateEventPaths(event.tournament_id as string, match.event_id as string);
@@ -827,6 +938,10 @@ export async function undoMatchResult(matchId: string): Promise<ActionResult<voi
 
 // Put a voided match back into play. Pairs with voidMatch: both reverse any Elo
 // the match applied, so a void → restore → replay cycle counts the match once.
+export async function recordDoubleNoShow(matchId: string, reason: string): Promise<ActionResult<void>> {
+  return runAction(async () => { await recordDoubleNoShowImpl(matchId, reason); });
+}
+
 export async function unvoidMatch(matchId: string, reason: string): Promise<ActionResult<void>> {
   return runAction(async () => { await unvoidMatchImpl(matchId, reason); });
 }

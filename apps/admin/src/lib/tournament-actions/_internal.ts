@@ -8,17 +8,23 @@ import {
   calculateEloUpdate,
   getKFactor,
   getFormatWeight,
+  getEventRules,
+  hasTypedFormat,
+  derivedFormatWeight,
   isDoublesEvent,
   isOutOfEvent,
   isOpenMatch,
   forfeitOutcome,
   OPEN_MATCH_STATUSES,
+  sortStandings,
 } from '@badminton/shared';
 import type {
   TournamentEventType,
   TournamentMatchFormat,
   MatchFormat,
   RatingSettings,
+  SeedBy,
+  EventMatchShape,
 } from '@badminton/shared';
 
 // The tournament engine rates matches in TypeScript while challenges are rated
@@ -168,10 +174,16 @@ export async function applyTournamentMatchElo(matchId: string) {
 
   const event = match.event as Record<string, unknown>;
   const doubles = isDoublesEvent(event.event_type as TournamentEventType);
-  const matchFormat = event.match_format as TournamentMatchFormat;
+  const shape = event as unknown as EventMatchShape;
+  const rules = getEventRules(shape);
   const eloMultiplier = Number(event.elo_multiplier) || 1.25;
-  const eloFormat = toEloFormat(matchFormat);
-  const formatWeight = getFormatWeight(eloFormat);
+  // A typed format has no entry in the weight table, so its weight is derived
+  // from the shape the same way 00031 derives it for custom challenges. Without
+  // this, a pool played at 1 game to 15 would move ratings as if it were the
+  // event's fallback enum — usually best of 3 to 21, worth 2.5x as much.
+  const formatWeight = hasTypedFormat(shape)
+    ? derivedFormatWeight(rules.bestOf, rules.target)
+    : getFormatWeight(toEloFormat(event.match_format as TournamentMatchFormat));
 
   // Per-player snapshot of this match's Elo change, persisted on the match row.
   // Enables perfect reversal in undoMatchResult / editMatchResult for both singles
@@ -629,7 +641,10 @@ export async function forfeitOutOfEventEntries(
 // Round Robin Standings (utility)
 // ============================================================
 
-export async function computeRoundRobinStandings(eventId: string) {
+// seedBy picks the FIRST sort key only — see sortStandings. It exists so that
+// pool-to-bracket seeding and the leaderboard tally the same figures from the
+// same query and differ only in how the finished table is read.
+export async function computeRoundRobinStandings(eventId: string, seedBy: SeedBy = 'wins') {
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
@@ -715,20 +730,7 @@ export async function computeRoundRobinStandings(eventId: string) {
     }
   }
 
-  // Sort: wins desc, head-to-head wins desc (pairwise), games differential desc,
-  // point differential desc, points for desc. Head-to-head only breaks ties
-  // between the two entries being compared — it's not transitive, so multi-way
-  // ties fall through to the differential tiebreakers.
-  return Object.values(stats).sort((a, b) => {
-    if (b.wins !== a.wins) return b.wins - a.wins;
-    const h2h = (b.h2h[a.id] ?? 0) - (a.h2h[b.id] ?? 0);
-    if (h2h !== 0) return h2h;
-    const aGameDiff = a.gamesFor - a.gamesAgainst;
-    const bGameDiff = b.gamesFor - b.gamesAgainst;
-    if (bGameDiff !== aGameDiff) return bGameDiff - aGameDiff;
-    const aDiff = a.pointsFor - a.pointsAgainst;
-    const bDiff = b.pointsFor - b.pointsAgainst;
-    if (bDiff !== aDiff) return bDiff - aDiff;
-    return b.pointsFor - a.pointsFor;
-  });
+  // Ordering lives in @badminton/shared so it is testable without a database
+  // and so seeding a bracket off this table cannot drift from the table itself.
+  return sortStandings(Object.values(stats), seedBy);
 }

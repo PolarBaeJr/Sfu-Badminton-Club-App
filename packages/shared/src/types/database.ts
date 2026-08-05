@@ -1,5 +1,7 @@
 // Generated types matching the SQL schema
 
+import type { SeedBy } from '../utils/standings';
+
 export type PlayerStatus =
   | 'competitive'
   | 'recreational'
@@ -596,6 +598,12 @@ export interface TournamentEvent {
   event_type: TournamentEventType;
   format: TournamentEventFormat;
   match_format: TournamentMatchFormat;
+  // Typed shape (00046). NULL means the match_format enum still decides.
+  games_per_match: number | null;
+  points_per_game: number | null;
+  // Pool this event draws its field from, and how to rank that pool (00046).
+  seeded_from_event_id: string | null;
+  seed_by: SeedBy | null;
   max_participants: number | null;
   seeding_method: TournamentSeedingMethod;
   elo_multiplier: number;

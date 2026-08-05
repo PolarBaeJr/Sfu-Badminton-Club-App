@@ -5,7 +5,7 @@ import {
   TOURNAMENT_EVENT_TYPE_LABELS,
   TOURNAMENT_EVENT_STATUS_LABELS,
   TOURNAMENT_EVENT_STATUS_COLORS,
-  TOURNAMENT_MATCH_FORMAT_LABELS,
+  describeMatchShape,
   getRoundName,
   isOutOfEvent,
   unwrap,
@@ -14,7 +14,6 @@ import {
 import type {
   TournamentEventType,
   TournamentEventStatus,
-  TournamentMatchFormat,
   TournamentMatchStatus,
 } from '@badminton/shared';
 import { notFound } from 'next/navigation';
@@ -62,7 +61,9 @@ export default async function EventDetailPage({
 
   const eventType   = event.event_type as TournamentEventType;
   const eventStatus = event.status as TournamentEventStatus;
-  const matchFormat = event.match_format as TournamentMatchFormat;
+  // Reads the typed shape when the event has one, so a player sees the format
+  // they will actually play rather than the enum it fell back from.
+  const matchShape = describeMatchShape(event);
   const doubles     = isDoublesEvent(eventType);
   const statusColor = TOURNAMENT_EVENT_STATUS_COLORS[eventStatus];
 
@@ -256,7 +257,7 @@ export default async function EventDetailPage({
                 {isSingleElim ? 'Single Elim' : 'Round Robin'}
               </span>
               <span className="chip">
-                {TOURNAMENT_MATCH_FORMAT_LABELS[matchFormat]}
+                {matchShape}
               </span>
               {playerRegistration && (
                 <span className={`chip ${

@@ -7,6 +7,7 @@ import {
   TOURNAMENT_EVENT_STATUS_LABELS,
   TOURNAMENT_EVENT_STATUS_COLORS,
   nextPowerOf2,
+  describeMatchShape,
 } from '@badminton/shared';
 import type { TournamentEventType, TournamentEventStatus } from '@badminton/shared';
 import {
@@ -19,11 +20,15 @@ import {
 } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { Trophy, Users, CheckCircle, Swords, BarChart3, ChevronRight, Lock, Unlock } from 'lucide-react';
+import { Trophy, Users, CheckCircle, Swords, BarChart3, ChevronRight, Lock, Unlock, SlidersHorizontal } from 'lucide-react';
+import { EventSettingsDialog } from './EventSettingsDialog';
+import type { SiblingEvent } from '../../../event-format-fields';
+import type { TournamentEventRow } from '@/lib/tournament-types';
 
 interface Props {
   tournament: Record<string, unknown>;
   event: Record<string, unknown>;
+  siblingEvents: SiblingEvent[];
   isDoubles: boolean;
   totalEntries: number;
   checkedIn: number;
@@ -33,9 +38,10 @@ interface Props {
 
 const STATUS_STEPS: TournamentEventStatus[] = ['registration', 'checkin', 'bracket_generated', 'live', 'completed'];
 
-export function EventHeader({ tournament, event, isDoubles, totalEntries, checkedIn, totalMatches, completedMatches }: Props) {
+export function EventHeader({ tournament, event, siblingEvents, isDoubles, totalEntries, checkedIn, totalMatches, completedMatches }: Props) {
   const [loading, setLoading] = useState(false);
   const [lockLoading, setLockLoading] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
   const drawLocked = event.draw_locked as boolean;
@@ -46,6 +52,9 @@ export function EventHeader({ tournament, event, isDoubles, totalEntries, checke
   const currentStepIdx = STATUS_STEPS.indexOf(status);
   const bracketSize = nextPowerOf2(totalEntries);
   const byes = bracketSize - totalEntries;
+  // Same rule the server applies: the format is editable until a draw exists.
+  const settingsEditable = totalMatches === 0 && (status === 'registration' || status === 'checkin');
+  const seededFromPool = Boolean(event.seeded_from_event_id);
 
   async function handleAction() {
     setLoading(true);
@@ -54,11 +63,13 @@ export function EventHeader({ tournament, event, isDoubles, totalEntries, checke
         await setEventStatus(event.id as string, 'checkin');
         toast('Check-in opened', 'success');
       } else if (status === 'checkin') {
-        if (format === 'round_robin') {
-          await generateRoundRobinMatches(event.id as string);
-        } else {
-          await generateSingleEliminationBracket(event.id as string);
-        }
+        const res = format === 'round_robin'
+          ? await generateRoundRobinMatches(event.id as string)
+          : await generateSingleEliminationBracket(event.id as string);
+        // Generation refuses for ordinary reasons — an unfinished pool, a locked
+        // draw — and the exec needs to read which one, so the message is shown
+        // rather than swallowed by a generic failure toast.
+        if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
         toast('Bracket generated', 'success');
       } else if (status === 'bracket_generated') {
         await setEventStatus(event.id as string, 'live');
@@ -81,7 +92,10 @@ export function EventHeader({ tournament, event, isDoubles, totalEntries, checke
     live: 'Finalize Tournament',
   };
 
-  const actionDisabled = status === 'checkin' && checkedIn < 2;
+  // A pool-seeded event usually has NOBODY entered yet — its field arrives at
+  // generation, promoted from the pool. Gating on checked-in entries would make
+  // the one button that can fill it permanently unpressable.
+  const actionDisabled = status === 'checkin' && checkedIn < 2 && !seededFromPool;
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6 space-y-5">
@@ -113,12 +127,29 @@ export function EventHeader({ tournament, event, isDoubles, totalEntries, checke
               <span className="sr-only">Event status: </span>{TOURNAMENT_EVENT_STATUS_LABELS[status]}
             </span>
             <Badge variant="default">{format === 'round_robin' ? 'Round Robin' : 'Single Elimination'}</Badge>
-            <Badge variant="default">{(event.match_format as string).replace(/_/g, ' ')}</Badge>
+            <Badge variant="default">{describeMatchShape(event as unknown as TournamentEventRow)}</Badge>
+            {seededFromPool && (
+              <Badge variant="default">
+                Seeded from pool by {(event.seed_by as string) === 'points' ? 'points' : 'wins'}
+              </Badge>
+            )}
             {drawLocked && <Badge variant="default">Draw Locked</Badge>}
           </div>
         </div>
 
         <div className="flex gap-2">
+          {settingsEditable && (
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label="Event settings"
+              className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+              onClick={() => setSettingsOpen(true)}
+            >
+              <SlidersHorizontal className="w-4 h-4 mr-1" />
+              Settings
+            </Button>
+          )}
           {['bracket_generated', 'live'].includes(status) && (
             <Button
               variant="ghost"
@@ -216,6 +247,14 @@ export function EventHeader({ tournament, event, isDoubles, totalEntries, checke
           color="var(--color-warning)"
         />
       </div>
+
+      {settingsOpen && (
+        <EventSettingsDialog
+          event={event as unknown as TournamentEventRow}
+          siblings={siblingEvents}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
     </div>
   );
 }

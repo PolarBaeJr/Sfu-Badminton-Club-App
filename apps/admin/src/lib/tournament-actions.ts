@@ -53,6 +53,7 @@ export {
   enterWalkover,
   voidMatch,
   unvoidMatch,
+  recordDoubleNoShow,
   setMatchEntry,
   editMatchResult,
   undoMatchResult,

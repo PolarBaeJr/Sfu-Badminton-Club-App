@@ -2,10 +2,10 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Input, Select, Switch } from '@badminton/ui';
-import { getMaxGamesForFormat, previewEloChange, tallyGames } from '@badminton/shared';
+import { getEventRules, previewEloChange, tallyGames } from '@badminton/shared';
 import type { TournamentMatchFormat, MatchFormat } from '@badminton/shared';
 import {
-  enterMatchResult, enterWalkover, voidMatch, unvoidMatch, setMatchEntry,
+  enterMatchResult, enterWalkover, voidMatch, unvoidMatch, setMatchEntry, recordDoubleNoShow,
 } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
@@ -29,7 +29,9 @@ type View = 'score' | 'walkover' | 'slots' | 'restore';
 
 export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, entries, onClose }: Props) {
   const matchFormat = event.match_format as TournamentMatchFormat;
-  const maxGames = getMaxGamesForFormat(matchFormat);
+  // The typed shape wins over the enum, so an event shortened to one game to 15
+  // offers one score row rather than three.
+  const maxGames = getEventRules(event).bestOf;
 
   const aId = isDoubles ? match.pair_a_id : match.participant_a_id;
   const bId = isDoubles ? match.pair_b_id : match.participant_b_id;
