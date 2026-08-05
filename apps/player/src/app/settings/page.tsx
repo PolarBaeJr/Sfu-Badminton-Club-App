@@ -513,7 +513,7 @@ export default function SettingsPage() {
             <div className="settings-row">
               <div className="settings-row-label">Version</div>
               <div className="settings-row-control">
-                <span className="mono tag">0.0.1</span>
+                <span className="mono tag">v{process.env.NEXT_PUBLIC_APP_VERSION}</span>
               </div>
             </div>
           </Section>
