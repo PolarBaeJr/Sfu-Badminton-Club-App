@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Dialog, Input, Select, Switch, Textarea } from '@badminton/ui';
+import { Button, Dialog, Input, PlayerPicker, Select, Switch, Textarea } from '@badminton/ui';
 import {
   tallyGames,
   CUSTOM_FORMAT_BOUNDS,
@@ -12,7 +12,7 @@ import {
 import { adminCreateMatch } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 
-type Player = { id: string; full_name: string };
+type Player = { id: string; full_name: string; avatar_url?: string | null };
 
 /** Auto-grow the textarea with its content, capped at ~60vh (dialog scrolls past that). */
 function autoGrow(e: React.FormEvent<HTMLTextAreaElement>) {
@@ -114,7 +114,7 @@ export function CreateMatchForm({ players }: { players: Player[] }) {
     setLoading(false);
   }
 
-  const playerOptions = [{ value: '', label: 'Select player...' }, ...players.map(p => ({ value: p.id, label: p.full_name }))];
+  const playerOptions = players.map(p => ({ id: p.id, name: p.full_name, avatarUrl: p.avatar_url }));
 
   return (
     <>
@@ -167,19 +167,21 @@ export function CreateMatchForm({ players }: { players: Player[] }) {
             <span className="text-sm text-[var(--text-secondary)]">Rated match</span>
           </div>
 
-          <div className="dialog-group space-y-3">
-            <p className="dialog-group-label">Side A</p>
-            <Select label="Player 1" value={sideA1} onChange={(e) => setSideA1(e.target.value)} options={playerOptions} />
+          {/* role=group ties the two pickers to their side heading — without it a
+              screen reader hears "Player 1" twice with nothing to tell them apart. */}
+          <div className="dialog-group space-y-3" role="group" aria-labelledby="side-a-heading">
+            <p className="dialog-group-label" id="side-a-heading">Side A</p>
+            <PlayerPicker label="Player 1" value={sideA1} onChange={setSideA1} players={playerOptions} />
             {matchType === 'doubles' && (
-              <Select label="Player 2" value={sideA2} onChange={(e) => setSideA2(e.target.value)} options={playerOptions} />
+              <PlayerPicker label="Player 2" value={sideA2} onChange={setSideA2} players={playerOptions} />
             )}
           </div>
 
-          <div className="dialog-group space-y-3">
-            <p className="dialog-group-label">Side B</p>
-            <Select label="Player 1" value={sideB1} onChange={(e) => setSideB1(e.target.value)} options={playerOptions} />
+          <div className="dialog-group space-y-3" role="group" aria-labelledby="side-b-heading">
+            <p className="dialog-group-label" id="side-b-heading">Side B</p>
+            <PlayerPicker label="Player 1" value={sideB1} onChange={setSideB1} players={playerOptions} />
             {matchType === 'doubles' && (
-              <Select label="Player 2" value={sideB2} onChange={(e) => setSideB2(e.target.value)} options={playerOptions} />
+              <PlayerPicker label="Player 2" value={sideB2} onChange={setSideB2} players={playerOptions} />
             )}
           </div>
 

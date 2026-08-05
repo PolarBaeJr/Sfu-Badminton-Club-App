@@ -3,6 +3,7 @@ export { Input } from './Input';
 export { DatePicker } from './DatePicker';
 export { Textarea } from './Textarea';
 export { Select } from './Select';
+export { PlayerPicker, type PlayerOption } from './PlayerPicker';
 export { Switch } from './Switch';
 export { Badge } from './Badge';
 export { Card } from './Card';

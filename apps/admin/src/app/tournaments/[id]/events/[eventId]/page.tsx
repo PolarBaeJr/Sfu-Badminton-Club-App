@@ -53,7 +53,7 @@ export default async function EventPage({
   // Fetch all eligible players for participant add (includes admins)
   const { data: allPlayers } = await supabase
     .from('players')
-    .select('id, full_name')
+    .select('id, full_name, avatar_url')
     .not('status', 'in', '("suspended","pending_approval")')
     .order('full_name');
 

@@ -32,7 +32,7 @@ interface Props {
   participants: ParticipantWithPlayer[];
   pairs: PairWithPlayers[];
   matches: TournamentMatchRow[];
-  allPlayers: Array<{ id: string; full_name: string }>;
+  allPlayers: Array<{ id: string; full_name: string; avatar_url?: string | null }>;
   isDoubles: boolean;
 }
 

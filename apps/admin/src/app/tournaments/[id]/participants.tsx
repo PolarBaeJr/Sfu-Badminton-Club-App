@@ -1,11 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Dialog, Input, Select } from '@badminton/ui';
+import { Button, Dialog, Input, PlayerPicker } from '@badminton/ui';
 import { addTournamentParticipant, removeTournamentParticipant, updateTournamentStatus } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 
-type Player = { id: string; full_name: string };
+type Player = { id: string; full_name: string; avatar_url?: string | null };
 
 export function AddParticipantForm({
   tournamentId,
@@ -43,25 +43,26 @@ export function AddParticipantForm({
     setLoading(false);
   }
 
-  const playerOptions = players.map(p => ({ value: p.id, label: p.full_name }));
+  const playerOptions = players.map(p => ({ id: p.id, name: p.full_name, avatarUrl: p.avatar_url }));
 
   return (
     <>
       <Button size="sm" onClick={() => setOpen(true)}>Add Participant</Button>
       <Dialog open={open} onClose={() => setOpen(false)} title="Add Participant">
         <form onSubmit={handleAdd} className="space-y-4">
-          <Select
+          <PlayerPicker
             label="Player"
             value={playerId}
-            onChange={(e) => setPlayerId(e.target.value)}
-            options={[{ value: '', label: 'Select player...' }, ...playerOptions]}
+            onChange={setPlayerId}
+            players={playerOptions}
           />
           {format === 'doubles' && (
-            <Select
+            <PlayerPicker
               label="Partner"
               value={partnerId}
-              onChange={(e) => setPartnerId(e.target.value)}
-              options={[{ value: '', label: 'Select partner...' }, ...playerOptions]}
+              onChange={setPartnerId}
+              placeholder="Search partners…"
+              players={playerOptions.filter(p => p.id !== playerId)}
             />
           )}
           <Input label="Seed (optional)" type="number" value={seed} onChange={(e) => setSeed(e.target.value)} />

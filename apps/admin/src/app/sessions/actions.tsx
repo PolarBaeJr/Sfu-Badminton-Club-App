@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Badge, Button, Dialog, Input, Select, useConfirm, DatePicker } from '@badminton/ui';
+import { Badge, Button, Dialog, Input, PlayerPicker, Select, useConfirm, DatePicker } from '@badminton/ui';
 import { createSession, updateSession, archiveSession, deleteSession, markAttendance, clearAttendanceMark, sendSessionReminders, getOrCreateSessionCheckinToken, rotateSessionCheckinToken } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { MoreVertical, Users, QrCode } from 'lucide-react';
@@ -30,7 +30,7 @@ interface Attendee {
 interface AttendanceDialogProps {
   sessionId: string;
   attendees: Attendee[];
-  players: { id: string; full_name: string }[];
+  players: { id: string; full_name: string; avatar_url?: string | null }[];
 }
 
 const ATTENDANCE_BADGES: Record<AttendanceStatus, { label: string; variant: 'success' | 'warning' | 'danger' }> = {
@@ -143,11 +143,11 @@ export function AttendanceDialog({ sessionId, attendees, players }: AttendanceDi
         {addablePlayers.length > 0 && (
           <div className="flex items-end gap-2 pt-4 mt-2 border-t border-[var(--border)]">
             <div className="flex-1">
-              <Select
+              <PlayerPicker
                 label="Add player"
-                options={[{ value: '', label: 'Select a player...' }, ...addablePlayers.map((p) => ({ value: p.id, label: p.full_name }))]}
+                players={addablePlayers.map((p) => ({ id: p.id, name: p.full_name, avatarUrl: p.avatar_url }))}
                 value={addPlayerId}
-                onChange={(e) => setAddPlayerId(e.target.value)}
+                onChange={setAddPlayerId}
               />
             </div>
             <Button disabled={!addPlayerId || busyPlayerId !== null} onClick={handleAdd}>

@@ -24,7 +24,7 @@ export default async function SessionsPage() {
 
   const { data: activePlayers } = await supabase
     .from('players')
-    .select('id, full_name')
+    .select('id, full_name, avatar_url')
     .eq('active_flag', true)
     .order('full_name');
 
