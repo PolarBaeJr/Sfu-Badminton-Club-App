@@ -49,7 +49,7 @@ npm run dev           # both, via Turborepo
 
 ## 4. Database & migrations
 
-The schema lives in `supabase/migrations/` as a **7-file baseline**:
+The schema lives in `supabase/migrations/`. `00001`–`00007` are the **baseline**; everything after is a forward-only change on top (currently up to `00047`).
 
 | File | Contents |
 |------|----------|
@@ -63,11 +63,33 @@ The schema lives in `supabase/migrations/` as a **7-file baseline**:
 
 **Applying migrations:**
 - **Local:** run the SQL files against your dev database (Supabase CLI `supabase db reset`, or `psql`).
-- **Production:** migrations are applied **manually** and are **forward-only** — the live DB has real data, so never edit the baseline or re-apply it destructively. New changes = a new `00008_*.sql` (ALTER/CREATE) file. See [ops/RUNBOOK.md](ops/RUNBOOK.md#applying-a-database-migration).
+- **Production:** migrations are applied **manually** and are **forward-only** — the live DB has real data, so never edit the baseline or re-apply it destructively. New changes = the next numbered file, `ALTER`/`CREATE` only.
 
-## 5. Edge functions (optional in local dev)
+Practical rules learned the hard way:
+- **Apply before deploying.** App code that reads a new column breaks the moment
+  the containers roll, and they roll on their own within ~10 minutes of a push.
+- **Wrap each file in `BEGIN; … COMMIT;`** with `ON_ERROR_STOP=1`, so a failure
+  rolls that file back instead of leaving the schema half-changed.
+- **`pg_get_functiondef` output has no trailing semicolon.** If you rebuild a
+  function from it, terminate it yourself — otherwise whatever follows is parsed
+  as part of the function body.
+- **`CREATE OR REPLACE FUNCTION` only replaces an exact signature match.** Adding
+  a parameter creates a sibling overload and silently orphans the original; the
+  callers keep using the old one.
+- **Redefining a trigger function replaces it wholesale** — every guard it used
+  to contain must be carried forward, including ones added by a change you are
+  not looking at. See [ops/RUNBOOK.md](ops/RUNBOOK.md#applying-a-database-migration).
 
-Deno-based cron functions live in `supabase/functions/`. They require the `x-cron-secret` header and fail closed without `CRON_SECRET` set. See `supabase/functions/DEPLOY.md` for the deploy/secret steps.
+## 5. Scheduled work
+
+The live jobs are **pg_cron → an admin app route**, because Postgres cannot send
+a web push or an email itself. They read their URL and shared secret from the
+locked-down `cron_config` table and are a no-op until that secret exists, so
+nothing is ever POSTed unauthenticated.
+
+The Deno functions in `supabase/functions/` are **dormant** — they exist and are
+mounted, but nothing schedules them on the self-hosted stack. Do not assume
+logic living there is running.
 
 ## 6. Quality checks
 
@@ -81,7 +103,9 @@ npm run build         # Production build of both apps
 ## Gotchas
 
 - **Turbo cold-cache race:** on a clean cache, `admin:build` can recreate `.next/types` while `admin:type-check` reads it (TS6053). Run `build` before `type-check`, or re-run.
-- **The ELO engine is duplicated on purpose:** the TypeScript engine (`packages/shared/src/elo/engine.ts`) and the SQL functions (`00003_functions.sql`: `calculate_elo_update`) must stay in sync. Change both together.
+- **The ELO engine is duplicated on purpose:** the TypeScript engine (`packages/shared/src/elo/engine.ts`, tournaments) and the SQL functions (`calculate_elo_update`, applied by `apply_match_result`, challenges) must stay in sync. Change both together, and remember both now read their knobs from `platform_settings.rating_defaults`.
+- **Tailwind opacity shorthand does not work on CSS variables.** `bg-[var(--color-success)]/10` emits **no CSS at all** in Tailwind 3.4 — it fails silently, so the element simply has no background. Use `color-mix(in srgb, var(--x) 10%, transparent)`.
+- **Working in a git worktree?** It has no `node_modules`, so Node resolves `@badminton/shared` and `@badminton/ui` up to the main checkout. A green build there is **meaningless** for shared-package changes. Run `npm install` in the worktree, or verify in the main checkout.
 - **`packages/ui` and `packages/shared` have no build step** — they're consumed from source (`main` points at `src/index.ts`). No compilation needed at this size.
 - **Two enforcement truths:** server actions use the service-role client (bypasses RLS), so the **gate helpers** in `apps/admin/src/lib/supabase-server.ts` are the real security boundary — not RLS. RLS is the backstop for direct/anon-key access.
 

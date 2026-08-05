@@ -59,6 +59,10 @@ Anonymous visitors can touch **nothing** at the table level (no `TO anon` RLS po
 
 - `get_active_season()` · `get_executives()` · `get_leaderboard()`
 
+`get_executives()` also returns each exec's `bio` and `exec_photo_url`. Both are
+public **for execs only** — the function is `SECURITY DEFINER` filtered to
+`is_exec = TRUE`, so it cannot leak an ordinary member's bio.
+
 This is the pattern to extend for any future public/API read (see roadmap A5).
 
 ## Core data model
@@ -89,19 +93,64 @@ This is the pattern to extend for any future public/API read (see roadmap A5).
 | `event_waiver_acceptances` | Per-player acceptance of a tournament's `waiver_text`; `waiver_hash` (SHA-256) re-requires acceptance after edits |
 | `calendar_feed_tokens` | Per-player secret token backing the ICS/webcal feed; resettable (revokes old links) |
 | `passkey_credentials` | Enrolled WebAuthn passkeys gating the admin console |
+| `email_suppressions` | Addresses the app must not mail — hard bounce, complaint, or one-click unsubscribe. RLS on with **zero policies**, so only the service role reaches it |
+| `tournament_checkin_tokens` | One opaque token per tournament backing the check-in QR; rotating it revokes every printed copy. Same zero-policy RLS |
+| `cron_config` | URL + shared secret for the pg_cron jobs; unreadable by `authenticated` |
+
+Columns worth knowing, added later:
+
+| Column | Why |
+|--------|-----|
+| `players.membership_type` | `internal` / `alumni` / `external`. **Independent of `role`/`is_exec`** — an exec is still an internal member — and gates tournament entry |
+| `players.exec_photo_url` | Public exec-page photo, deliberately separate from `avatar_url` so a profile change never alters the club page |
+| `tournaments.allowed_memberships` | Which groups may register; defaults to all three |
+| `tournament_events.games_per_match` / `points_per_game` | Typed match shape; NULL falls back to the `match_format` enum |
+| `tournament_events.seeded_from_event_id` / `seed_by` | Pool → bracket: seed this event from another's standings, by wins or points |
+| `tournament_matches.time_exceeded` | The clock ended the game — relaxes score legality to the cap alone |
+| `club_fees.reference` / `tournament_fees.reference` | Transaction id, so a bank export can be reconciled against a flat fee |
+| `seasons.term` / `year` | Real columns behind the season picker; `name` is derived by trigger so it cannot drift |
 
 ## The ELO engine
 
-- Logistic expected score with `ELO_SCALE = 800`; start 400, top ~1300, hard-capped to a safe range.
-- K-factors: provisional (<8 matches) higher, then settle.
-- Match importance via `format_weight` × `event_multiplier` (+ optional override).
-- Implemented **twice, kept in sync**: TypeScript (`packages/shared/src/elo/engine.ts`) and SQL (`00003_functions.sql` → `calculate_elo_update`, applied by `apply_match_result`).
+- Logistic expected score with `ELO_SCALE = 800`; members start at 400.
+- **Every knob is configurable** from admin Settings, stored in
+  `platform_settings.rating_defaults`: the four K-factors, the provisional
+  threshold, the sweep multiplier, and `min_elo`/`max_elo`. Missing, zero,
+  negative or inverted values fall back to the hardcoded defaults rather than
+  freezing or collapsing the ladder.
+- Match importance via `format_weight` × `event_multiplier` (+ optional
+  override), and a coarse margin bonus for a clean sweep.
+- Implemented **twice and kept in sync**: TypeScript
+  (`packages/shared/src/elo/engine.ts`, used by tournaments) and SQL
+  (`calculate_elo_update`, applied by `apply_match_result`, used by challenges).
+  Both read the same settings — if they ever diverge, the same scoreline moves
+  ratings differently depending on where it was played.
 
-## Edge functions (Deno, scheduled)
+**The cap is lossy.** The new rating is clamped and the delta derived from the
+clamped value, so at the ceiling the winner gains nothing while the loser still
+drops in full — rating leaves the ladder with none created. Keep `max_elo` well
+clear of your strongest player.
 
-`expire-challenges`, `expire-walkover-pending`, `send-challenge-reminders`, `send-session-reminders`, `send-stale-confirmation-alerts`, `detect-noshow-patterns`, `mark-inactive-players`, `apply-season-compression`, `capture-season-snapshot`, `purge-deleted-accounts` (anonymizes accounts past the 30-day deletion grace).
+## Scheduled work
 
-All gated by `x-cron-secret` (constant-time check; fail closed if `CRON_SECRET` unset), running with the service-role client.
+Two jobs run, both **pg_cron → an admin app route** (`cron.job`):
+
+| Job | Schedule | Route |
+|-----|----------|-------|
+| `session-reminders` | `*/5 * * * *` | `/api/cron/session-reminders` |
+| `weekly-digest` | `0 17 * * 1` | `/api/cron/weekly-digest` |
+
+Postgres cannot send a web push (VAPID key) or an email (provider SDK) itself,
+so it POSTs the app and the app does the work. Both authenticate with a shared
+secret from the locked-down `cron_config` table, and both fail **closed** — the
+scheduled statement is a no-op until the secret row exists, so nothing is ever
+POSTed unauthenticated.
+
+**The Deno edge functions are not wired up.** `supabase/functions/*`
+(`expire-challenges`, `apply-season-compression`, `capture-season-snapshot`,
+`detect-noshow-patterns`, …) exist and are mounted in the `supabase-edge-functions`
+container, but **nothing schedules them** on the self-hosted stack — there is no
+hosted cron. Treat them as dormant: the logic they contain is not running.
 
 ## Observability
 
@@ -111,13 +160,33 @@ All gated by `x-cron-secret` (constant-time check; fail closed if `CRON_SECRET` 
 ## Deploy pipeline
 
 ```
-git push deploy/docker-prod
+git push origin HEAD:deploy/docker-prod
       │
       ▼
 GitHub Actions ── builds ARM64 images ──► GHCR (tags: latest + sha-<commit>)
       │
       ▼
-Server (Raspberry Pi) ── docker compose pull + up -d ──► recreates the serving containers
+self-hosted proxy ── auto-update poll (~10 min) ──► rolls the containers
 ```
 
-The serving containers are **compose-managed** and recreated on the server after a build (see [ops/RUNBOOK.md](ops/RUNBOOK.md) for the exact commands and the runtime-env gotcha). Migrations are applied **manually** and never run by CI or the app — so an image deploy is DB-safe.
+The reverse proxy that fronts and auto-deploys these containers is a **separate
+self-hosted project** with its own repository and docs — it is not part of this
+app, and its internals are deliberately not documented here.
+
+**Do not run `docker compose pull` / `up -d` for the player or admin apps.** The
+serving containers are owned by the proxy, not by compose —
+they are named `goproxy-badminton-{player,admin}-N` and the index increments on
+every deploy. Reaching for compose fights the proxy and detaches the
+containers from auto-update.
+
+Verifying a deploy: the container index incrementing is the signal. The
+`image.revision` label is **not** trustworthy — check behaviour, or grep the
+compiled bundle inside the running container for a string you know is new.
+
+Rollback is a *replace* with an explicit `sha-<commit>` tag — every commit is
+published, not just `latest`. Turn auto-update **off** first, or it pulls
+`latest` straight back over the rollback.
+
+Migrations are applied **manually** and never by CI or the app, so an image
+deploy is DB-safe — but the converse matters too: an app deploy that expects a
+column will break until its migration is applied. Apply first, deploy second.

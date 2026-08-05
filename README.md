@@ -2,7 +2,7 @@
 
 A members' web app (installable PWA) for running a university badminton club: a live **ELO ladder** (singles + doubles), **seasons & fees**, **sessions with attendance**, a full **tournament system**, and a private **admin console** — plus a public landing page, leaderboard, and exec roster.
 
-**Live:** [badminton.polardev.org](https://badminton.polardev.org) · **Status:** executive beta (July 2026)
+**Live:** [sfubadminton.com](https://sfubadminton.com) · admin console at [admin.sfubadminton.com](https://admin.sfubadminton.com) · **Status:** executive beta (August 2026)
 
 > New here? Start with the plain-language overview in **[docs/project/](docs/project/README.md)**.
 
@@ -14,22 +14,23 @@ This is an **npm-workspaces + Turborepo** monorepo:
 
 ```
 apps/
-  player/        Next.js 14 app — the members' experience (badminton.polardev.org)
-  admin/         Next.js 14 app — the exec/admin console (/admin)
+  player/        Next.js 14 app — the members' experience (sfubadminton.com)
+  admin/         Next.js 14 app — the exec/admin console (admin.sfubadminton.com)
 packages/
   shared/        ELO rating engine, Zod validators, email + push senders
   ui/            Reusable React component library (~2 dozen components)
   config/        Shared configuration
 supabase/
-  migrations/    Database schema, functions, RLS (00001–00007 baseline)
-  functions/     Deno edge functions (cron jobs: reminders, expiries, snapshots)
+  migrations/    Database schema, functions, RLS — applied MANUALLY, never by CI
+  functions/     Deno edge functions — present but NOT scheduled on the
+                 self-hosted stack; the live jobs are pg_cron -> app routes
 backup/          Nightly DB backup scripts (pg_dump → local + encrypted off-site)
 docs/            Documentation (see below)
 ```
 
 ## Tech stack (short version)
 
-TypeScript · Next.js 14 (App Router) · React 18 · Tailwind CSS · Supabase (self-hosted Postgres 17, Auth, RLS) · Deno edge functions · Docker · GitHub Actions → GHCR · self-hosted on a Raspberry Pi.
+TypeScript · Next.js 14 (App Router) · React 18 · Tailwind CSS · Supabase (self-hosted Postgres 17, Auth, RLS) · pg_cron for scheduled work · Docker · GitHub Actions → GHCR · self-hosted on a Raspberry Pi.
 
 Full breakdown: **[docs/project/06-tech-stack.md](docs/project/06-tech-stack.md)**.
 
@@ -66,7 +67,11 @@ Full setup (database, migrations, secrets, gotchas): **[docs/DEVELOPMENT.md](doc
 
 ## Deployment
 
-Push to the `deploy/docker-prod` branch → GitHub Actions builds ARM64 images to GHCR (tagged `latest` + `sha-<commit>`) → the self-hosted proxy auto-deploys the new image. **Never** run `docker compose --build` on the Pi, and **never** `docker pull` the `latest` tag on the Pi manually (it masks the auto-update check). See **[docs/ops/RUNBOOK.md](docs/ops/RUNBOOK.md)**.
+Push to the `deploy/docker-prod` branch → GitHub Actions builds ARM64 images to GHCR (tagged `latest` + `sha-<commit>`) → the self-hosted proxy auto-deploys within ~10 minutes.
+
+**Apply migrations BEFORE pushing.** An image deploy is DB-safe, but app code that expects a new column breaks the moment the containers roll.
+
+**Never** run `docker compose --build`, `docker compose up -d`, or a manual `docker pull` for the player/admin containers on the Pi — they are owned by the proxy, not compose, and doing so detaches them from auto-update. See **[docs/ops/RUNBOOK.md](docs/ops/RUNBOOK.md)**.
 
 ## Documentation
 
