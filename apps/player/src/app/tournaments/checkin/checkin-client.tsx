@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@badminton/ui';
 import { QrScanner } from '@/components/qr-scanner';
@@ -55,9 +55,18 @@ export function TournamentCheckInClient({ initialToken }: { initialToken?: strin
 
   // Arrived via the native camera with ?token= already present — check in
   // immediately rather than asking them to scan the code they just scanned.
-  if (initialToken && !result && !error && !submitting) {
+  //
+  // MUST be an effect. Calling a server action during render throws on Next 15
+  // ("Server Functions cannot be called during initial render"), which broke
+  // exactly the path most people use: scanning the printed code with the phone
+  // camera. Next 14 tolerated it, so this only surfaced by running the built
+  // app rather than by compiling it.
+  const autoRan = useRef(false);
+  useEffect(() => {
+    if (!initialToken || autoRan.current) return;
+    autoRan.current = true;
     void submit(initialToken);
-  }
+  }, [initialToken, submit]);
 
   if (result) {
     return (

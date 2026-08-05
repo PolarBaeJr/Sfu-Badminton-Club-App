@@ -177,31 +177,38 @@ async function buildFieldFromPool(
       continue;
     }
 
-    const insert = doubles
-      ? {
-          event_id: eventId,
-          player1_id: src.players[0],
-          player2_id: src.players[1],
-          pair_name: src.name,
-          combined_elo: src.elo,
-          ...promotedAttendance,
-          seed_number: seed,
-          added_by: adminId,
-        }
-      : {
-          event_id: eventId,
-          player_id: src.players[0],
-          elo_before: src.elo,
-          ...promotedAttendance,
-          seed_number: seed,
-          added_by: adminId,
-        };
-
-    const { data: created, error } = await adminClient
-      .from(doubles ? 'tournament_pairs' : 'tournament_participants')
-      .insert(insert)
-      .select('id')
-      .single();
+    // Split rather than one ternary insert. With both the table name AND the
+    // row shape chosen by the same condition, the client cannot narrow them
+    // together — it checks the union of shapes against whichever table it
+    // resolved, and rejects the pairs row for missing participant columns and
+    // vice versa. Two calls, each with one table and one shape, type cleanly.
+    const { data: created, error } = doubles
+      ? await adminClient
+          .from('tournament_pairs')
+          .insert({
+            event_id: eventId,
+            player1_id: src.players[0],
+            player2_id: src.players[1],
+            pair_name: src.name,
+            combined_elo: src.elo,
+            ...promotedAttendance,
+            seed_number: seed,
+            added_by: adminId,
+          })
+          .select('id')
+          .single()
+      : await adminClient
+          .from('tournament_participants')
+          .insert({
+            event_id: eventId,
+            player_id: src.players[0],
+            elo_before: src.elo,
+            ...promotedAttendance,
+            seed_number: seed,
+            added_by: adminId,
+          })
+          .select('id')
+          .single();
     if (error || !created) {
       Sentry.captureException(error);
       throw new Error(`Could not enter a pool qualifier into the bracket: ${error?.message ?? 'unknown error'}`);
