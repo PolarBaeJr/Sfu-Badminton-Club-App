@@ -294,6 +294,13 @@ async function voidMatchImpl(matchId: string, reason: string) {
 
   const event = match.event as Record<string, unknown>;
 
+  // Same gate as entering a result or a walkover. Voiding a match in an event
+  // that has not started is meaningless — there is nothing to undo — and it
+  // was the one action in this module that skipped the check.
+  if (event.status !== 'live' && event.status !== 'completed') {
+    throw new ExpectedError('Start the event before voiding matches.');
+  }
+
   await adminClient.from('tournament_matches').update({
     status: 'voided',
     notes: reason,

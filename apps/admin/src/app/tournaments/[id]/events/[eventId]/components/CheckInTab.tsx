@@ -29,7 +29,11 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
   const router = useRouter();
 
   const entries: Array<ParticipantWithPlayer | PairWithPlayers> = isDoubles ? pairs : participants;
-  const checkedIn = entries.filter(e => e.status === 'checked_in');
+  // Keyed on checked_in_at, not status. status is a single enum, so
+  // withdrawing OVERWRITES 'checked_in' and the person vanishes from this list
+  // — but they did turn up, and the attendance record should say so. The
+  // timestamp is never cleared, so it is the honest source for "was here".
+  const checkedIn = entries.filter(e => e.checked_in_at != null);
   const notCheckedIn = entries.filter(e => e.status === 'registered');
   const noShows = entries.filter(e => e.status === 'no_show');
   const progress = entries.length > 0 ? (checkedIn.length / entries.length) * 100 : 0;

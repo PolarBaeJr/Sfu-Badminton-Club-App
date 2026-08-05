@@ -26,6 +26,23 @@ interface Props {
   isDoubles: boolean;
 }
 
+// Raw enum values ("checked_in") leaked straight into the table. Underscores
+// and lowercase read as database internals rather than a status an exec is
+// meant to act on.
+const STATUS_LABELS: Record<string, string> = {
+  registered: 'Registered',
+  checked_in: 'Checked In',
+  withdrawn: 'WITHDRAWN',
+  disqualified: 'DISQUALIFIED',
+  no_show: 'NO SHOW',
+};
+
+// The two that take someone OUT of the event are shouted, so they are
+// unmissable when scanning a long list; the ordinary states are not.
+function statusLabel(status: string): string {
+  return STATUS_LABELS[status] ?? status.replace(/_/g, ' ');
+}
+
 const STATUS_COLORS: Record<string, string> = {
   registered: 'var(--text-muted)',
   checked_in: 'var(--color-success)',
