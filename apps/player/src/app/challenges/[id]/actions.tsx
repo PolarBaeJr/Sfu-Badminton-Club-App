@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Card, Input, Select, Dialog, Textarea, useConfirm } from '@badminton/ui';
+import { tallyGames } from '@badminton/shared';
 import { acceptChallenge, rejectChallenge, submitMatchResult, confirmMatchResult, disputeMatchResult, reportWalkover, cancelChallenge } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
@@ -42,7 +43,12 @@ export function ChallengeDetailActions({
       ? [{ game_number: 1, side_a_score: '', side_b_score: '' }, { game_number: 2, side_a_score: '', side_b_score: '' }, { game_number: 3, side_a_score: '', side_b_score: '' }]
       : [{ game_number: 1, side_a_score: '', side_b_score: '' }]
   );
-  const [winnerSide, setWinnerSide] = useState<'a' | 'b'>('a');
+  // Derived from the scores below rather than held in state — there is no
+  // separate answer for the two to drift apart into.
+  const tally = tallyGames(
+    games.map((g) => ({ side_a_score: g.side_a_score, side_b_score: g.side_b_score })),
+  );
+  const derivedWinner = tally.winner;
 
   // Dispute state
   const [disputeReason, setDisputeReason] = useState('');
@@ -112,8 +118,13 @@ export function ChallengeDetailActions({
         side_a_score: Number(g.side_a_score || 0),
         side_b_score: Number(g.side_b_score || 0),
       }));
+      if (!derivedWinner) {
+        toast('Enter the game scores — the winner is worked out from them.', 'error');
+        setLoading('');
+        return;
+      }
       const res = await submitMatchResult(challengeId, {
-        winner_side: winnerSide,
+        winner_side: derivedWinner,
         games: validGames,
         completed: true,
       });
@@ -251,15 +262,21 @@ export function ChallengeDetailActions({
       {/* Submit Result Dialog */}
       <Dialog open={showSubmit} onClose={() => setShowSubmit(false)} title="Submit Match Result">
         <div className="space-y-4">
-          <Select
-            label="Winner"
-            value={winnerSide}
-            onChange={(e) => setWinnerSide(e.target.value as 'a' | 'b')}
-            options={[
-              { value: 'a', label: labelA },
-              { value: 'b', label: labelB },
-            ]}
-          />
+          {/* Winner is derived from the scores below, not asked for. A
+              dropdown beside the scores can disagree with them, and a
+              mis-tapped winner on a correct scoreline produces a wrong rating
+              change that nobody notices until the ladder looks odd. */}
+          <div className="card-base" role="status" aria-live="polite">
+            <div className="card-title">
+              {derivedWinner
+                ? `Winner: ${derivedWinner === 'a' ? labelA : labelB}`
+                : 'Winner: enter the game scores'}
+            </div>
+            <div className="card-sub">
+              {tally.aGamesWon}–{tally.bGamesWon} in games
+              {derivedWinner ? '' : ' — tied or incomplete, so the result cannot be submitted yet'}
+            </div>
+          </div>
           {games.map((g, i) => (
             <div key={i} className="grid grid-cols-2 gap-3">
               <Input

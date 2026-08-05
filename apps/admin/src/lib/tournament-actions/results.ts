@@ -3,7 +3,7 @@
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
-import { isDoublesEvent, getMaxGamesForFormat, isLegalGameScore, isLegalGameCount } from '@badminton/shared';
+import { isDoublesEvent, getMaxGamesForFormat, isLegalGameScore, isLegalGameCount, ExpectedError } from '@badminton/shared';
 import type { TournamentEventType, TournamentMatchFormat } from '@badminton/shared';
 import {
   getExecOrAdmin,
@@ -38,6 +38,19 @@ export async function enterMatchResult(
 
   const event = match.event as Record<string, unknown>;
   await assertTournamentNotSuspended(adminClient, event.tournament_id as string);
+  // The event must actually be under way. match.status alone does not say so:
+  // a match is created 'pending' the moment the bracket is generated, which is
+  // one step BEFORE the event goes live (registration -> checkin ->
+  // bracket_generated -> live). Without this, results could be recorded — and
+  // Elo applied — for a tournament that had not started.
+  if (event.status !== 'live') {
+    throw new ExpectedError(
+      event.status === 'completed'
+        ? 'This event is finished. Edit the result instead of entering a new one.'
+        : 'Start the event before entering results.',
+    );
+  }
+
   const matchFormat = event.match_format as TournamentMatchFormat;
   const maxGames = getMaxGamesForFormat(matchFormat);
   if (scores.length > maxGames) {
@@ -184,6 +197,19 @@ export async function enterWalkover(
 
   const event = match.event as Record<string, unknown>;
   await assertTournamentNotSuspended(adminClient, event.tournament_id as string);
+  // The event must actually be under way. match.status alone does not say so:
+  // a match is created 'pending' the moment the bracket is generated, which is
+  // one step BEFORE the event goes live (registration -> checkin ->
+  // bracket_generated -> live). Without this, results could be recorded — and
+  // Elo applied — for a tournament that had not started.
+  if (event.status !== 'live') {
+    throw new ExpectedError(
+      event.status === 'completed'
+        ? 'This event is finished. Edit the result instead of entering a new one.'
+        : 'Start the event before entering results.',
+    );
+  }
+
   const doubles = isDoublesEvent(event.event_type as TournamentEventType);
 
   let winnerId: string;

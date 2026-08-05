@@ -17,6 +17,7 @@ export * from './utils/challenge-qr';
 export * from './utils/payment-methods';
 export * from './utils/tournament-window';
 export * from './utils/membership';
+export * from './utils/match-result';
 export * from './validators/schemas';
 export * from './validators/parse';
 export * from './email/templates';

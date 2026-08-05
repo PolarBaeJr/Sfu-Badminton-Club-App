@@ -5,6 +5,7 @@ import { Button, Dialog, Input, Select } from '@badminton/ui';
 import { getMaxGamesForFormat, previewEloChange } from '@badminton/shared';
 import type { TournamentMatchFormat, MatchFormat } from '@badminton/shared';
 import { enterMatchResult, enterWalkover, voidMatch } from '@/lib/tournament-actions';
+import { tallyGames } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import type { TournamentEventRow, TournamentMatchRow } from '@/lib/tournament-types';
@@ -48,16 +49,11 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, on
   const { toast } = useToast();
   const router = useRouter();
 
-  // Auto-detect winner
-  let aGamesWon = 0;
-  let bGamesWon = 0;
-  for (const g of games) {
-    const a = parseInt(g.a) || 0;
-    const b = parseInt(g.b) || 0;
-    if (a > b) aGamesWon++;
-    else if (b > a) bGamesWon++;
-  }
-  const autoWinner: 'a' | 'b' | null = aGamesWon > bGamesWon ? 'a' : bGamesWon > aGamesWon ? 'b' : null;
+  // Shared with the challenge result form so the two cannot disagree about who
+  // won the same scoreline.
+  const { aGamesWon, bGamesWon, winner: autoWinner } = tallyGames(
+    games.map((g) => ({ side_a_score: g.a, side_b_score: g.b })),
+  );
 
   function addGame() {
     if (games.length < maxGames) {
