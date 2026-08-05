@@ -4,15 +4,20 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase-browser';
 import { Button, Input, Card } from '@badminton/ui';
-import { Shield, Mail, Loader2, Globe, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Shield, Mail, Loader2, Globe, CheckCircle2, AlertCircle, KeyRound } from 'lucide-react';
+import { signInWithPasskey, supportsPasskeys } from '@/lib/passkey-client';
 
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState('');
+  // Resolved in an effect, never during render: browserSupportsWebAuthn()
+  // touches window, so deciding this inline would mismatch the server HTML.
+  const [canUsePasskeys, setCanUsePasskeys] = useState(false);
   // The player and admin apps share one auth cookie on this domain. If an admin
   // is already signed in (e.g. via the player app), forward them straight in
   // instead of making them sign in a second time.
@@ -34,6 +39,27 @@ export default function LoginPage() {
       })
       .catch(() => setCheckingSession(false));
   }, [router]);
+
+  useEffect(() => {
+    setCanUsePasskeys(supportsPasskeys());
+  }, []);
+
+  async function handlePasskeyLogin() {
+    setPasskeyLoading(true);
+    setError('');
+    const result = await signInWithPasskey();
+    if (result.ok) {
+      // A full navigation, not router.replace(): the session cookie arrived on a
+      // fetch() response, so the in-memory Supabase browser client still thinks
+      // it is logged out. Reloading rebuilds it from the cookie.
+      window.location.href = '/dashboard';
+      return;
+    }
+    // An empty message means the user dismissed the system prompt — that is a
+    // deliberate action, not a failure to report back at them.
+    if (result.error) setError(result.error);
+    setPasskeyLoading(false);
+  }
 
   async function handleGoogleLogin() {
     setGoogleLoading(true);
@@ -131,6 +157,38 @@ export default function LoginPage() {
             </div>
           ) : (
             <div className="space-y-6">
+              {/* Passkey sign-in. Listed first: for an exec who has enrolled one
+                  it is the fastest way in and the only one that needs neither an
+                  inbox nor a third party. Hidden entirely where WebAuthn is
+                  unavailable rather than shown broken. */}
+              {canUsePasskeys && (
+                <button
+                  onClick={handlePasskeyLogin}
+                  disabled={passkeyLoading}
+                  className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl font-medium text-sm transition-all duration-200 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                  style={{
+                    background: 'var(--bg-elevated)',
+                    border: '1px solid var(--border)',
+                    color: 'var(--text-primary)',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = 'rgba(233,69,96,0.4)';
+                    e.currentTarget.style.boxShadow = '0 0 16px rgba(233,69,96,0.08)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--border)';
+                    e.currentTarget.style.boxShadow = 'none';
+                  }}
+                >
+                  {passkeyLoading ? (
+                    <Loader2 className="w-5 h-5 animate-spin" style={{ color: 'var(--text-muted)' }} />
+                  ) : (
+                    <KeyRound className="w-5 h-5" style={{ color: 'var(--text-muted)' }} />
+                  )}
+                  Sign in with a passkey
+                </button>
+              )}
+
               {/* Google Login Button */}
               <button
                 onClick={handleGoogleLogin}
