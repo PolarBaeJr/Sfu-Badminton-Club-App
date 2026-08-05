@@ -25,6 +25,8 @@ export {
   markParticipantNoShow,
   withdrawParticipant,
   disqualifyParticipant,
+  withdrawPair,
+  disqualifyPair,
   addPairToEvent,
   removePairFromEvent,
   checkInPair,

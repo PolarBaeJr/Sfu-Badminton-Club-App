@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Dialog, LegalMarkdown, useConfirm } from '@badminton/ui';
+import { eventHasDraw, isOutOfEvent } from '@badminton/shared';
 import { registerForEvent, withdrawFromEvent, selfCheckIn } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
@@ -158,6 +159,12 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
   }
 
   const regStatus = playerRegistration.status;
+  const stillIn = regStatus === 'registered' || regStatus === 'checked_in';
+  const outOfEvent = isOutOfEvent(regStatus);
+  // Once the bracket exists, withdrawing has to forfeit your matches and move
+  // the round above — an admin action, not a self-service one. The server
+  // refuses it either way; hiding the button keeps the two in step.
+  const drawPublished = eventHasDraw(eventStatus);
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
@@ -172,7 +179,7 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
           Check In
         </Button>
       )}
-      {(regStatus === 'registered' || regStatus === 'checked_in') && eventStatus !== 'completed' && (
+      {stillIn && !drawPublished && (
         <Button
           onClick={handleWithdraw}
           loading={loading}
@@ -183,6 +190,20 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
           <UserMinus className="w-3.5 h-3.5 mr-1.5" />
           Withdraw
         </Button>
+      )}
+      {/* The button does not just disappear — say who can do it now, or the
+          only reading available is that the app has lost the option. */}
+      {stillIn && drawPublished && (
+        <p className="text-xs text-[var(--text-secondary)] italic">
+          You are in the draw. Ask a tournament admin if you need to withdraw.
+        </p>
+      )}
+      {outOfEvent && (
+        <p className="text-xs text-[var(--text-secondary)] italic">
+          {regStatus === 'withdrawn'
+            ? 'You have withdrawn from this event.'
+            : 'You have been disqualified from this event.'}
+        </p>
       )}
     </div>
   );

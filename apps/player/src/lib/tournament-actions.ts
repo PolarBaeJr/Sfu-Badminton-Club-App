@@ -7,6 +7,7 @@ import {
   isDoublesEvent,
   isMembershipAllowed,
   membershipRefusalMessage,
+  eventHasDraw,
   ExpectedError,
 } from '@badminton/shared';
 import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
@@ -131,11 +132,27 @@ async function withdrawFromEventImpl(eventId: string) {
   const service = createServiceRoleClient();
 
   const { data: participant } = await service.from('tournament_participants')
-    .select('id, status, event:tournament_events(tournament_id)')
+    .select('id, status, event:tournament_events(tournament_id, status)')
     .eq('event_id', eventId).eq('player_id', player.id).maybeSingle();
   if (!participant) throw new Error('Not registered');
   if (participant.status !== 'registered' && participant.status !== 'checked_in') {
-    throw new Error('Cannot withdraw at this stage');
+    throw new ExpectedError('Cannot withdraw at this stage');
+  }
+
+  const event = (Array.isArray(participant.event) ? participant.event[0] : participant.event) as
+    { tournament_id: string; status: string } | null;
+
+  // Self-withdrawal stops the moment the draw is published. Up to that point
+  // leaving only affects you; afterwards it hands your opponent a rated
+  // walkover, shifts the round above, and can strand a slot at TBD. That is a
+  // tournament-desk decision, and the machinery that makes it coherent (the
+  // forfeit cascade and its Elo snapshots) lives in the admin app — reachable
+  // only by an exec. Letting the button through here would leave the bracket
+  // exactly as broken as doing nothing.
+  if (eventHasDraw(event?.status)) {
+    throw new ExpectedError(
+      'The draw is already published — ask a tournament admin to withdraw you so your matches can be forfeited properly.',
+    );
   }
 
   const { error } = await service.from('tournament_participants')
@@ -143,8 +160,7 @@ async function withdrawFromEventImpl(eventId: string) {
     .eq('id', participant.id);
   if (error) throw new Error(error.message);
 
-  const tid = (participant.event as unknown as { tournament_id: string } | null)?.tournament_id;
-  if (tid) revalidateTournamentPaths(tid, eventId);
+  if (event?.tournament_id) revalidateTournamentPaths(event.tournament_id, eventId);
   else revalidatePath('/tournaments');
 }
 

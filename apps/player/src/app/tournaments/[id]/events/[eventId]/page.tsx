@@ -7,6 +7,7 @@ import {
   TOURNAMENT_EVENT_STATUS_COLORS,
   TOURNAMENT_MATCH_FORMAT_LABELS,
   getRoundName,
+  isOutOfEvent,
   unwrap,
   unwrapMaybe,
 } from '@badminton/shared';
@@ -116,6 +117,8 @@ export default async function EventDetailPage({
       playerParticipantId = reg.id;
     }
   }
+
+  const playerOutOfEvent = isOutOfEvent(playerRegistration?.status);
 
   const participantNameMap: Record<string, string> = {};
   const participantSeedMap: Record<string, number | null> = {};
@@ -256,9 +259,13 @@ export default async function EventDetailPage({
                 {TOURNAMENT_MATCH_FORMAT_LABELS[matchFormat]}
               </span>
               {playerRegistration && (
-                <span className={`chip ${playerRegistration.status === 'checked_in' ? 'chip-success' : 'chip-info'}`}>
+                <span className={`chip ${
+                  playerOutOfEvent ? 'chip-red' : playerRegistration.status === 'checked_in' ? 'chip-success' : 'chip-info'
+                }`}>
                   <span className="sr-only">Your status: </span>
-                  {playerRegistration.status === 'checked_in' ? 'Checked In' : 'Registered'}
+                  {playerOutOfEvent
+                    ? (playerRegistration.status === 'withdrawn' ? 'Withdrawn' : 'Disqualified')
+                    : playerRegistration.status === 'checked_in' ? 'Checked In' : 'Registered'}
                 </span>
               )}
               {tournament.suspended_at && (
@@ -456,6 +463,14 @@ export default async function EventDetailPage({
                 <h2 className="display-md">Your Matches</h2>
               </div>
             </div>
+            {/* An entry that is out of the event still owns rows here — the
+                matches it played stay on the record. Say so once at the top so
+                an unplayed one below is not read as "still on". */}
+            {playerOutOfEvent && (
+              <p className="px-4 pb-2 text-xs text-[var(--text-secondary)]" role="status">
+                You are no longer in this event. Any unplayed match here is forfeited to your opponent.
+              </p>
+            )}
             <div className="px-4 pb-4 space-y-2">
               {allMatches
                 .filter((m) => {
@@ -504,7 +519,13 @@ export default async function EventDetailPage({
                             )}
                           </>
                         ) : (
-                          <span className="chip capitalize">{matchStatus}</span>
+                          // "Ready" on a match you can no longer play is an
+                          // invitation to turn up for it.
+                          <span className="chip capitalize">
+                            {playerOutOfEvent
+                              ? (playerRegistration?.status === 'withdrawn' ? 'Withdrawn' : 'Disqualified')
+                              : matchStatus}
+                          </span>
                         )}
                       </div>
                     </div>

@@ -3,7 +3,8 @@
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
-import { calculateTeamRating, isDoublesEvent } from '@badminton/shared';
+import { calculateTeamRating, isDoublesEvent, eventHasDraw, ExpectedError } from '@badminton/shared';
+import { runAction, type ActionResult } from '../action-result';
 import {
   getExecOrAdmin,
   revalidateEventPaths,
@@ -11,6 +12,9 @@ import {
   participantContextSelect,
   pairContextSelect,
   assertTournamentNotSuspended,
+  forfeitOpenMatchesForEntry,
+  FORFEIT_REASON,
+  type DrawExitStatus,
 } from './_internal';
 
 // ============================================================
@@ -167,40 +171,118 @@ export async function markParticipantNoShow(participantId: string) {
   if (ctx) revalidateEventPaths(ctx.tid, ctx.eventId);
 }
 
-export async function withdrawParticipant(participantId: string, reason?: string) {
-  await getExecOrAdmin();
-  const adminClient = createAdminClient();
+// ============================================================
+// Taking an entry OUT of the event
+// ============================================================
+// Withdrawal and disqualification are the same operation with different
+// paperwork: the entry stops being part of the event. Once a draw exists that
+// has to reach the bracket as well, because bracket generation only ever saw a
+// point-in-time snapshot of who was in — leave it at a status change and the
+// entry stays seeded, their match stays READY, and someone turns up to play a
+// player who is not coming.
 
-  const { data, error } = await adminClient.from('tournament_participants')
-    .update({ status: 'withdrawn', notes: reason ?? null })
-    .eq('id', participantId)
-    .select(participantContextSelect)
-    .single();
-
-  if (error) {
-    Sentry.captureException(error);
-    throw new Error(error.message);
-  }
-  const ctx = extractEventContext(data);
-  if (ctx) revalidateEventPaths(ctx.tid, ctx.eventId);
+export interface DrawExitResult {
+  /** Matches forfeited to an opponent right now. */
+  forfeited: number;
+  /**
+   * Matches whose opposing slot is still TBD. They are settled automatically
+   * the moment the feeder match resolves.
+   */
+  unresolved: number;
+  /**
+   * The draw exists but the event has not started, so nothing was forfeited.
+   * Regenerating the bracket is the cleaner fix at this stage; failing that,
+   * going live sweeps them.
+   */
+  deferredToGoLive: boolean;
 }
 
-export async function disqualifyParticipant(participantId: string, reason?: string) {
-  await getExecOrAdmin();
+async function exitDrawImpl(
+  entryId: string,
+  isPair: boolean,
+  status: DrawExitStatus,
+  reason?: string,
+): Promise<DrawExitResult> {
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
-  const { data, error } = await adminClient.from('tournament_participants')
-    .update({ status: 'disqualified', notes: reason ?? null })
-    .eq('id', participantId)
-    .select(participantContextSelect)
-    .single();
+  const table = isPair ? 'tournament_pairs' : 'tournament_participants';
+  const { data: entry } = await adminClient.from(table)
+    .select('id, status, event_id, event:tournament_events(id, status, event_type, tournament_id)')
+    .eq('id', entryId)
+    .maybeSingle();
+  if (!entry) throw new ExpectedError('Entry not found');
 
+  const event = (Array.isArray(entry.event) ? entry.event[0] : entry.event) as {
+    id: string; status: string; event_type: string; tournament_id: string;
+  } | null;
+  if (!event) throw new ExpectedError('Entry is not attached to an event');
+
+  // A finished event's results and Elo are already settled. Pulling someone out
+  // now would forfeit nothing and only contradict the standings.
+  if (event.status === 'completed') {
+    throw new ExpectedError('This event is finished — void the affected matches instead.');
+  }
+  if (entry.status === status) {
+    throw new ExpectedError(status === 'withdrawn' ? 'Already withdrawn.' : 'Already disqualified.');
+  }
+
+  const { error } = await adminClient.from(table)
+    .update({ status, notes: reason ?? null })
+    .eq('id', entryId);
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
   }
-  const ctx = extractEventContext(data);
-  if (ctx) revalidateEventPaths(ctx.tid, ctx.eventId);
+
+  // Only a live event gets its matches forfeited. Between bracket generation
+  // and the first serve nothing has been played: a walkover there could not be
+  // rated, and recording one counts as a result, which would block the admin
+  // from simply regenerating the draw without this entry. setEventStatus
+  // sweeps whatever is still outstanding when the event goes live.
+  let outcome: DrawExitResult = {
+    forfeited: 0,
+    unresolved: 0,
+    deferredToGoLive: eventHasDraw(event.status),
+  };
+  if (event.status === 'live') {
+    outcome = {
+      ...await forfeitOpenMatchesForEntry(
+        adminClient, event.id, entryId, isPair, FORFEIT_REASON[status], admin.id,
+      ),
+      deferredToGoLive: false,
+    };
+  }
+
+  await logAudit(adminClient, {
+    tournament_id: event.tournament_id,
+    event_id: event.id,
+    action: status === 'withdrawn' ? 'participant_withdrawn' : 'participant_disqualified',
+    performed_by: admin.id,
+    details: { entry_id: entryId, is_pair: isPair, reason: reason ?? null, ...outcome },
+  });
+
+  revalidateEventPaths(event.tournament_id, event.id);
+  return outcome;
+}
+
+// These return ActionResult rather than throwing: Next.js redacts errors thrown
+// out of a Server Action in production, so "This event is finished" would reach
+// the exec as an opaque banner. Same contract the result actions already use.
+export async function withdrawParticipant(participantId: string, reason?: string): Promise<ActionResult<DrawExitResult>> {
+  return runAction(() => exitDrawImpl(participantId, false, 'withdrawn', reason));
+}
+
+export async function disqualifyParticipant(participantId: string, reason?: string): Promise<ActionResult<DrawExitResult>> {
+  return runAction(() => exitDrawImpl(participantId, false, 'disqualified', reason));
+}
+
+export async function withdrawPair(pairId: string, reason?: string): Promise<ActionResult<DrawExitResult>> {
+  return runAction(() => exitDrawImpl(pairId, true, 'withdrawn', reason));
+}
+
+export async function disqualifyPair(pairId: string, reason?: string): Promise<ActionResult<DrawExitResult>> {
+  return runAction(() => exitDrawImpl(pairId, true, 'disqualified', reason));
 }
 
 // ============================================================

@@ -11,7 +11,13 @@ import type {
   TournamentSeedingMethod,
   TournamentEventStatus,
 } from '@badminton/shared';
-import { getExecOrAdmin, revalidateEventPaths, assertTournamentNotSuspended } from './_internal';
+import { isDoublesEvent } from '@badminton/shared';
+import {
+  getExecOrAdmin,
+  revalidateEventPaths,
+  assertTournamentNotSuspended,
+  forfeitOutOfEventEntries,
+} from './_internal';
 
 // ============================================================
 // Event Management
@@ -160,11 +166,28 @@ export async function setEventStatus(eventId: string, status: TournamentEventSta
     throw new Error(error.message);
   }
 
+  // Anyone who withdrew while the draw was merely published is still sitting in
+  // the bracket — bracket generation only ever saw a point-in-time snapshot of
+  // who was in. Going live is the first moment their matches can be forfeited
+  // properly (a walkover is rated, and rating anything before the event starts
+  // is exactly what the result actions refuse to do), so settle them here
+  // rather than let a live event open with matches nobody can play.
+  let sweep = { forfeited: 0, unresolved: 0 };
+  if (status === 'live') {
+    sweep = await forfeitOutOfEventEntries(
+      adminClient,
+      eventId,
+      isDoublesEvent(event.event_type),
+      admin.id,
+    );
+  }
+
   await logAudit(adminClient, {
     tournament_id: event.tournament_id,
     event_id: eventId,
     action: `status_changed_to_${status}`,
     performed_by: admin.id,
+    details: sweep.forfeited > 0 || sweep.unresolved > 0 ? sweep : undefined,
   });
 
   revalidateEventPaths(event.tournament_id, eventId);

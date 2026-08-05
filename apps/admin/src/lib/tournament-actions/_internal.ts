@@ -9,6 +9,10 @@ import {
   getKFactor,
   getFormatWeight,
   isDoublesEvent,
+  isOutOfEvent,
+  isOpenMatch,
+  forfeitOutcome,
+  OPEN_MATCH_STATUSES,
 } from '@badminton/shared';
 import type {
   TournamentEventType,
@@ -389,6 +393,236 @@ export async function reverseEloSnapshot(
   for (const r of results) {
     if (r.status === 'rejected') Sentry.captureException(r.reason);
   }
+}
+
+// ============================================================
+// Walkovers, advancement, and late withdrawals
+// ============================================================
+
+export type DrawExitStatus = 'withdrawn' | 'disqualified';
+
+// Written onto a match forfeited automatically, so the opponent's walkover
+// says why rather than just appearing.
+export const FORFEIT_REASON: Record<DrawExitStatus, string> = {
+  withdrawn: 'Opponent withdrew from the event',
+  disqualified: 'Opponent was disqualified',
+};
+
+/**
+ * The mechanical half of a walkover: stamp the result on the match, rate it,
+ * and advance the winner. Shared by the admin's manual walkover entry and by
+ * the forfeit cascade a late withdrawal triggers, so both write an identical
+ * match row — including the elo_snapshot that undo/edit reverse. A second
+ * hand-rolled forfeit path would be a second set of rating invariants.
+ *
+ * Always rated. Every caller reaches here only on a live event: a walkover
+ * recorded earlier could not be rated at all, and it would count as a result,
+ * which blocks regenerating the draw — the remedy that belongs at that stage.
+ */
+export async function recordWalkover(
+  adminClient: ReturnType<typeof createAdminClient>,
+  match: Record<string, unknown>,
+  doubles: boolean,
+  winnerPosition: 'a' | 'b',
+  reason: string,
+  enteredBy: string,
+) {
+  const matchId = match.id as string;
+
+  const winnerId = (doubles
+    ? (winnerPosition === 'a' ? match.pair_a_id : match.pair_b_id)
+    : (winnerPosition === 'a' ? match.participant_a_id : match.participant_b_id)) as string | null;
+  const loserId = (doubles
+    ? (winnerPosition === 'a' ? match.pair_b_id : match.pair_a_id)
+    : (winnerPosition === 'a' ? match.participant_b_id : match.participant_a_id)) as string | null;
+
+  const winnerField = doubles ? 'winner_pair_id' : 'winner_participant_id';
+  const loserField = doubles ? 'loser_pair_id' : 'loser_participant_id';
+
+  await adminClient.from('tournament_matches').update({
+    status: 'walkover',
+    walkover_winner: winnerPosition,
+    walkover_reason: reason,
+    [winnerField]: winnerId,
+    [loserField]: loserId,
+    result_entered_by: enteredBy,
+    result_entered_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }).eq('id', matchId);
+
+  // Rate BEFORE advancing. Advancing can cascade into another forfeit further
+  // up the bracket, and a player's later matches must be rated against the
+  // rating their earlier ones left them on, not the other way round.
+  await applyTournamentMatchElo(matchId);
+
+  if (winnerId) await advanceWinner(adminClient, match, doubles, winnerId, enteredBy);
+}
+
+/**
+ * Move `winnerId` into the match this one feeds, then decide that match's
+ * state. Callers used to inline this; the withdrawal cascade needs the exact
+ * same rule, and a slot filled by a slightly different one is how a bracket
+ * ends up disagreeing with itself.
+ */
+export async function advanceWinner(
+  adminClient: ReturnType<typeof createAdminClient>,
+  match: Record<string, unknown>,
+  doubles: boolean,
+  winnerId: string,
+  enteredBy: string,
+) {
+  const nextMatchId = match.winner_to_match_id as string | null;
+  if (!nextMatchId) return;
+
+  const advanceField = doubles
+    ? (match.winner_to_position === 'a' ? 'pair_a_id' : 'pair_b_id')
+    : (match.winner_to_position === 'a' ? 'participant_a_id' : 'participant_b_id');
+
+  await adminClient.from('tournament_matches')
+    .update({ [advanceField]: winnerId })
+    .eq('id', nextMatchId);
+
+  await settleAdvancedMatch(adminClient, nextMatchId, doubles, enteredBy);
+}
+
+/**
+ * A match becomes READY once both slots are filled — but only if both
+ * occupants are still in the event. Someone who withdrew after the draw was
+ * published is still sitting in their slot, so without this check the arriving
+ * winner is shown a live match against a player who is not coming. That is the
+ * half of a late withdrawal the withdrawal itself cannot fix: at the time they
+ * pulled out their next opponent was still TBD.
+ */
+async function settleAdvancedMatch(
+  adminClient: ReturnType<typeof createAdminClient>,
+  matchId: string,
+  doubles: boolean,
+  enteredBy: string,
+) {
+  const { data: next } = await adminClient.from('tournament_matches')
+    .select('*')
+    .eq('id', matchId)
+    .single();
+  if (!next) return;
+
+  const aId = (doubles ? next.pair_a_id : next.participant_a_id) as string | null;
+  const bId = (doubles ? next.pair_b_id : next.participant_b_id) as string | null;
+  if (!aId || !bId) return;
+
+  const table = doubles ? 'tournament_pairs' : 'tournament_participants';
+  const { data: entries } = await adminClient.from(table)
+    .select('id, status')
+    .in('id', [aId, bId]);
+
+  const statusOf = (id: string) => entries?.find(e => e.id === id)?.status as string | undefined;
+  const aOut = isOutOfEvent(statusOf(aId));
+  const bOut = isOutOfEvent(statusOf(bId));
+
+  // Exactly one side gone → the other walks over. Both gone is a draw an admin
+  // has to unpick by hand, so it still surfaces as READY rather than silently
+  // awarding a win to someone who is also not playing.
+  if (aOut !== bOut) {
+    const goneStatus = statusOf(aOut ? aId : bId) as DrawExitStatus;
+    await recordWalkover(adminClient, next, doubles, aOut ? 'b' : 'a', FORFEIT_REASON[goneStatus], enteredBy);
+    return;
+  }
+
+  await adminClient.from('tournament_matches')
+    .update({ status: 'ready' })
+    .eq('id', matchId);
+}
+
+/**
+ * Forfeit every still-playable match belonging to `entryId` to its opponent.
+ * Called when an entry is withdrawn or disqualified after the draw exists —
+ * bracket generation only ever saw a point-in-time snapshot of who was in, so
+ * without this the entry stays seeded and their matches stay READY.
+ *
+ * Finished matches are left exactly as they are: a walkover cannot rewrite a
+ * result that was actually played, and a first-round bye is unrated, so it
+ * carries no Elo to unwind.
+ */
+export async function forfeitOpenMatchesForEntry(
+  adminClient: ReturnType<typeof createAdminClient>,
+  eventId: string,
+  entryId: string,
+  doubles: boolean,
+  reason: string,
+  enteredBy: string,
+): Promise<{ forfeited: number; unresolved: number }> {
+  const { data: candidates } = await adminClient.from('tournament_matches')
+    .select('id, round_number, participant_a_id, participant_b_id, pair_a_id, pair_b_id')
+    .eq('event_id', eventId)
+    .in('status', [...OPEN_MATCH_STATUSES])
+    .order('round_number', { ascending: true });
+
+  let forfeited = 0;
+  let unresolved = 0;
+
+  for (const candidate of candidates ?? []) {
+    if (!forfeitOutcome(candidate, entryId, doubles)) continue;
+
+    // Re-read before acting: an earlier forfeit in this loop advances an
+    // opponent, which can settle a later match on this very list.
+    const { data: match } = await adminClient.from('tournament_matches')
+      .select('*')
+      .eq('id', candidate.id)
+      .single();
+    if (!match || !isOpenMatch(match.status as string) || match.is_bye) continue;
+
+    const outcome = forfeitOutcome(match, entryId, doubles);
+    if (!outcome) continue;
+
+    // Opponent slot still TBD — there is nobody to award the walkover to.
+    // settleAdvancedMatch forfeits it the moment the feeder match resolves.
+    if (!outcome.winnerId) { unresolved++; continue; }
+
+    await recordWalkover(adminClient, match, doubles, outcome.winnerSide, reason, enteredBy);
+    forfeited++;
+  }
+
+  return { forfeited, unresolved };
+}
+
+/**
+ * Forfeit the open matches of everyone who is no longer in the event.
+ *
+ * Run when an event goes live. Between the draw being published and the first
+ * serve, a withdrawal deliberately does NOT touch the bracket — nothing has
+ * been played, so the honest remedy is to regenerate the draw without them,
+ * and a walkover recorded then would be unrated AND would block that
+ * regeneration. Go-live is the moment that stops being true: the draw is now
+ * the draw, and a forfeit finally carries the Elo it is supposed to.
+ */
+export async function forfeitOutOfEventEntries(
+  adminClient: ReturnType<typeof createAdminClient>,
+  eventId: string,
+  doubles: boolean,
+  enteredBy: string,
+): Promise<{ forfeited: number; unresolved: number }> {
+  const table = doubles ? 'tournament_pairs' : 'tournament_participants';
+  const { data: entries } = await adminClient.from(table)
+    .select('id, status')
+    .eq('event_id', eventId)
+    .in('status', ['withdrawn', 'disqualified']);
+
+  let forfeited = 0;
+  let unresolved = 0;
+
+  for (const entry of entries ?? []) {
+    const outcome = await forfeitOpenMatchesForEntry(
+      adminClient,
+      eventId,
+      entry.id,
+      doubles,
+      FORFEIT_REASON[entry.status as DrawExitStatus],
+      enteredBy,
+    );
+    forfeited += outcome.forfeited;
+    unresolved += outcome.unresolved;
+  }
+
+  return { forfeited, unresolved };
 }
 
 // ============================================================
