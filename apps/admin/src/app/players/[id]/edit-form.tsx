@@ -27,6 +27,9 @@ export function PlayerEditForm({ player, rating }: { player: Player; rating: Rat
   const [singlesElo, setSinglesElo] = useState(rating?.singles_elo ?? 400);
   const [doublesElo, setDoublesElo] = useState(rating?.doubles_elo ?? 400);
   const [execTitle, setExecTitle] = useState(player.exec_title ?? '');
+  const [execPhotoUrl, setExecPhotoUrl] = useState(
+    (player as { exec_photo_url?: string | null }).exec_photo_url ?? '',
+  );
   const [feeExempt, setFeeExempt] = useState(player.fee_exempt ?? false);
   const [reason, setReason] = useState('');
 
@@ -52,6 +55,10 @@ export function PlayerEditForm({ player, rating }: { player: Player; rating: Rat
           doubles_elo: doublesElo !== (rating?.doubles_elo ?? 400) ? doublesElo : undefined,
           is_exec: isExec !== (player.is_exec ?? false) ? isExec : undefined,
           exec_title: execTitle !== (player.exec_title ?? '') ? execTitle : undefined,
+          exec_photo_url:
+            execPhotoUrl !== ((player as { exec_photo_url?: string | null }).exec_photo_url ?? '')
+              ? execPhotoUrl
+              : undefined,
           fee_exempt: feeExempt !== (player.fee_exempt ?? false) ? feeExempt : undefined,
           reason,
         });
@@ -102,13 +109,29 @@ export function PlayerEditForm({ player, rating }: { player: Player; rating: Rat
       </div>
       <div className="rounded-lg border border-[var(--border)] p-3 space-y-1">
         {isExec && (
-          <Input
-            label="Executive title"
-            value={execTitle}
-            onChange={(e) => setExecTitle(e.target.value)}
-            placeholder="e.g. President, VP, Treasurer"
-            maxLength={60}
-          />
+          <>
+            <Input
+              label="Executive title"
+              value={execTitle}
+              onChange={(e) => setExecTitle(e.target.value)}
+              placeholder="e.g. President, VP, Treasurer"
+              maxLength={60}
+            />
+            {/* Separate from their profile avatar on purpose — this is the
+                club's public-facing page, and it should not change because
+                someone updated their ladder picture. */}
+            <Input
+              label="Exec photo URL"
+              value={execPhotoUrl}
+              onChange={(e) => setExecPhotoUrl(e.target.value)}
+              placeholder="https://…"
+              maxLength={500}
+            />
+            <p className="text-xs text-[var(--text-muted)]">
+              Shown on the public exec page, along with this member&apos;s bio. Falls
+              back to their initials if left blank. Their profile avatar is never used here.
+            </p>
+          </>
         )}
         <Switch
           label="Fee exempt"

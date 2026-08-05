@@ -32,7 +32,11 @@ export default async function ExecPage() {
           {execs.map((e) => (
             <div key={e.id} className="card-base card-interactive" style={{ textAlign: 'center', padding: 24 }}>
               <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
-                <AvatarChip name={e.name} src={e.avatar_url} size="lg" id={e.id} />
+                {/* exec_photo_url, NOT the ladder avatar: this page gets proper
+                    posed photos, and pointing it at avatar_url would mean a
+                    profile-picture change silently altered the club page.
+                    Falls back to initials when no exec photo is set. */}
+                <AvatarChip name={e.name} src={e.exec_photo_url} size="lg" id={e.id} />
               </div>
               <div style={{ fontWeight: 700, fontSize: 16 }}>{e.name}</div>
               {e.exec_title && (
@@ -42,6 +46,14 @@ export default async function ExecPage() {
                 >
                   {e.exec_title}
                 </div>
+              )}
+              {e.bio && (
+                <p
+                  className="muted"
+                  style={{ fontSize: 13, marginTop: 10, textAlign: 'left', whiteSpace: 'pre-wrap' }}
+                >
+                  {e.bio}
+                </p>
               )}
             </div>
           ))}

@@ -190,6 +190,9 @@ export const adminPlayerUpdateSchema = z.object({
   is_exec: z.boolean().optional(),
   exec_title: blankAsUndefined(z.string().max(60)),
   fee_exempt: z.boolean().optional(),
+  // Photo for the public /exec page. Separate from avatar_url so a profile
+  // picture change never alters the club's public page.
+  exec_photo_url: blankAsUndefined(z.string().url().max(500)),
   reason: z.string().min(2, 'Reason is required'),
 });
 
