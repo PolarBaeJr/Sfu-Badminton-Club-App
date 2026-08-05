@@ -248,7 +248,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
             {activeEntries.length} {isDoubles ? 'pairs' : 'players'}
             {event.format !== 'round_robin' && ` → ${bracketSize}-slot bracket`}
             {byes > 0 && event.format !== 'round_robin' && (
-              <span className="text-[var(--color-warning)]"> ({byes} byes)</span>
+              <span className="text-[var(--color-warning)]"> ({byes} skip{byes > 1 ? 's' : ''})</span>
             )}
           </span>
           {drawLocked && (
@@ -284,12 +284,12 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
         </div>
       </div>
 
-      {/* Bye preview */}
+      {/* Skip preview */}
       {byes > 0 && event.format !== 'round_robin' && (
         <div className="flex items-center gap-2 p-3 rounded-lg bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/20">
           <AlertTriangle className="w-4 h-4 text-[var(--color-warning)] flex-shrink-0" />
           <span className="text-sm text-[var(--color-warning)]">
-            {activeEntries.length} {isDoubles ? 'pairs' : 'players'} → {bracketSize}-slot bracket with {byes} bye{byes > 1 ? 's' : ''}. Seeds #1–{byes} get first-round byes.
+            {activeEntries.length} {isDoubles ? 'pairs' : 'players'} → {bracketSize}-slot bracket with {byes} skip{byes > 1 ? 's' : ''}. Seeds #1–{byes} skip the first round.
           </span>
         </div>
       )}

@@ -1,10 +1,9 @@
 'use client';
 
-import { useState } from 'react';
-import { Button, Badge } from '@badminton/ui';
+import { Fragment, useState } from 'react';
 import { getRoundName } from '@badminton/shared';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
-import { Trophy, ChevronRight } from 'lucide-react';
+import { Trophy } from 'lucide-react';
 import { getName } from './entry-name';
 import type {
   TournamentEventRow,
@@ -13,6 +12,30 @@ import type {
   PairWithPlayers,
   GameScore,
 } from '@/lib/tournament-types';
+
+/**
+ * Bracket geometry — the single source of truth for every offset on this page.
+ * Connectors are absolutely positioned from these numbers, so a card that grows
+ * or a gap that changes only needs an edit here; nothing else is hand-tuned.
+ * CARD_H is enforced on every card (see MatchCard) because the elbow maths only
+ * holds while all cards in a column are the same height — a shorter skip card
+ * or a taller "Enter Score" card is what throws the lines off centre.
+ */
+const CARD_H = 100;               // fixed outer height of one match card
+const CARD_GAP = 16;              // gap between sibling cards in the first round
+const PITCH = CARD_H + CARD_GAP;  // centre-to-centre distance in the first round
+const COL_W = 244;                // width of a round column
+const LINK_W = 40;                // width of the connector gutter between rounds
+const HEAD_H = 34;                // round heading block; keeps gutters in step
+const META_H = 20;                // card meta strip (match number / court)
+const FOOT_H = 26;                // card footer strip (status / score button)
+
+/** Vertical centre of match `idx` in the round at 0-based depth `depth`. */
+function cardCentre(depth: number, idx: number) {
+  const mult = Math.pow(2, depth);
+  const padTop = ((mult - 1) * PITCH) / 2;
+  return padTop + idx * mult * PITCH + CARD_H / 2;
+}
 
 interface Props {
   event: TournamentEventRow;
@@ -44,6 +67,16 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
   }
   const roundNumbers = Object.keys(rounds).map(Number).sort((a, b) => a - b);
   const totalRounds = Math.max(...roundNumbers);
+
+  const columns = roundNumbers.map((roundNum) => ({
+    roundNum,
+    matches: rounds[roundNum]!.slice().sort((a, b) => a.bracket_position - b.bracket_position),
+  }));
+
+  // Every column is padded to the same height, so the bracket sits in one tidy
+  // block and the connector gutters share the first round's coordinate space.
+  const firstRoundCount = columns[0]?.matches.length ?? 1;
+  const bracketH = (firstRoundCount - 1) * PITCH + CARD_H;
 
   // Build name lookup
   const nameMap: Record<string, string> = {};
@@ -77,127 +110,78 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
   return (
     <>
       <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4 overflow-x-auto" role="region" aria-label="Tournament bracket">
-        <div className="flex gap-6 min-w-fit" role="table" aria-label="Bracket rounds">
-          {roundNumbers.map((roundNum) => {
-            const roundMatches = rounds[roundNum]!.sort((a, b) => a.bracket_position - b.bracket_position);
-            const roundName = roundMatches[0]?.round_name ?? getRoundName(roundNum, totalRounds);
+        <div className="flex items-start min-w-fit" role="table" aria-label="Bracket rounds">
+          {columns.map((col, depth) => {
+            const roundMatches = col.matches;
+            const roundName = roundMatches[0]?.round_name ?? getRoundName(col.roundNum, totalRounds);
+            const isFinal = col.roundNum === totalRounds;
+
+            const mult = Math.pow(2, depth);
+            const padY = ((mult - 1) * PITCH) / 2;
+            const gap = mult * PITCH - CARD_H;
+
+            const next = columns[depth + 1];
+            // Elbows are only meaningful when the next round is exactly half the
+            // size of this one; anything else means the bracket data is odd and
+            // a guessed line would point at the wrong card.
+            const canLink = !!next && roundMatches.length === next.matches.length * 2;
 
             return (
-              <div key={roundNum} className="flex flex-col min-w-[260px]" role="rowgroup" aria-label={roundName} style={{ gap: `${Math.pow(2, roundNum - 1) * 0.5}rem` }}>
-                <h3 className="text-xs font-bold text-[var(--text-muted)] text-center uppercase tracking-wider mb-2" role="columnheader">
-                  {roundName}
-                </h3>
-                {roundMatches.map((m) => {
-                  const aId = isDoubles ? m.pair_a_id : m.participant_a_id;
-                  const bId = isDoubles ? m.pair_b_id : m.participant_b_id;
-                  const winnerId = isDoubles ? m.winner_pair_id : m.winner_participant_id;
-                  const isCompleted = m.status === 'completed' || m.status === 'walkover';
-                  const isBye = m.is_bye;
-                  const isReady = m.status === 'ready' && aId && bId;
-                  const canEnterScore = isLive && (isReady || m.status === 'live' || m.status === 'pending') && aId && bId && !isCompleted && !isBye;
-
-                  return (
-                    <div
-                      key={m.id}
-                      role="row"
-                      aria-label={`Match ${m.match_number ?? ''}: ${getEntryName(aId)} vs ${getEntryName(bId)}${isCompleted ? `, winner: ${getEntryName(winnerId)}` : ''}`}
-                      className={`rounded-lg border overflow-hidden transition-all ${
-                        isReady && isLive
-                          ? 'border-[var(--color-accent)]/40 shadow-[0_0_8px_rgba(233,69,96,0.15)]'
-                          : isBye
-                          ? 'border-[var(--border)] opacity-50'
-                          : 'border-[var(--border)]'
+              <Fragment key={col.roundNum}>
+                <div className="flex flex-col shrink-0" style={{ width: COL_W }} role="rowgroup" aria-label={roundName}>
+                  <div className="flex items-center justify-center" style={{ height: HEAD_H }}>
+                    <h3
+                      role="columnheader"
+                      className={`text-[11px] font-bold uppercase tracking-[0.12em] ${
+                        isFinal ? 'text-[var(--color-warning)]' : 'text-[var(--text-muted)]'
                       }`}
                     >
-                      {/* Match number */}
-                      {m.match_number && (
-                        <div className="text-[10px] text-[var(--text-muted)] text-center py-0.5 bg-[var(--bg-elevated)] border-b border-[var(--border)] font-mono">
-                          M{m.match_number}{m.court ? ` · Court ${m.court}` : ''}
-                        </div>
-                      )}
+                      {roundName}
+                    </h3>
+                  </div>
 
-                      {/* Side A */}
-                      <div className={`px-3 py-2 flex items-center justify-between text-sm ${
-                        isCompleted && winnerId === aId ? 'bg-[var(--color-success)]/10' : 'bg-[var(--bg-card)]'
-                      }`}>
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          {isCompleted && winnerId === aId && (
-                            <span aria-hidden="true" className="text-[var(--color-success)] font-bold">✓</span>
-                          )}
-                          {getSeed(aId) && <span className="text-[10px] font-mono text-[var(--text-muted)]">[{getSeed(aId)}]</span>}
-                          <span className={`truncate ${
-                            isCompleted && winnerId === aId
-                              ? 'text-[var(--color-success)] font-semibold'
-                              : isCompleted && winnerId === bId
-                              ? 'text-[var(--text-muted)] line-through'
-                              : 'text-[var(--text-secondary)]'
-                          }`}>
-                            {isBye && !aId ? 'BYE' : getEntryName(aId)}
-                          </span>
-                          {isCompleted && winnerId === aId && <span className="sr-only">(Winner)</span>}
-                        </div>
-                        {m.scores && (
-                          <span className="font-mono text-xs text-[var(--text-muted)] ml-2">
-                            {(m.scores as GameScore[]).map((g) => `${g.a}-${g.b}`).join(', ')}
-                          </span>
-                        )}
-                      </div>
+                  <div
+                    className="flex flex-col"
+                    style={{ paddingTop: padY, paddingBottom: padY, gap: `${gap}px` }}
+                  >
+                    {roundMatches.map((m) => (
+                      <MatchCard
+                        key={m.id}
+                        m={m}
+                        isDoubles={isDoubles}
+                        isLive={isLive}
+                        getEntryName={getEntryName}
+                        getSeed={getSeed}
+                        onEnterScore={() => setScoreMatch(m)}
+                      />
+                    ))}
+                  </div>
+                </div>
 
-                      <div className="border-t border-[var(--border)]" />
-
-                      {/* Side B */}
-                      <div className={`px-3 py-2 flex items-center justify-between text-sm ${
-                        isCompleted && winnerId === bId ? 'bg-[var(--color-success)]/10' : 'bg-[var(--bg-card)]'
-                      }`}>
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          {isCompleted && winnerId === bId && (
-                            <span aria-hidden="true" className="text-[var(--color-success)] font-bold">✓</span>
-                          )}
-                          {getSeed(bId) && <span className="text-[10px] font-mono text-[var(--text-muted)]">[{getSeed(bId)}]</span>}
-                          <span className={`truncate ${
-                            isCompleted && winnerId === bId
-                              ? 'text-[var(--color-success)] font-semibold'
-                              : isCompleted && winnerId === aId
-                              ? 'text-[var(--text-muted)] line-through'
-                              : 'text-[var(--text-secondary)]'
-                          }`}>
-                            {isBye && !bId ? 'BYE' : getEntryName(bId)}
-                          </span>
-                          {isCompleted && winnerId === bId && <span className="sr-only">(Winner)</span>}
-                        </div>
-                        {m.scores && (
-                          <span className="font-mono text-xs text-[var(--text-muted)] ml-2">
-                            {(m.scores as GameScore[]).map((g) => `${g.b}-${g.a}`).join(', ')}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Enter Score button */}
-                      {canEnterScore && (
-                        <button
-                          onClick={() => setScoreMatch(m)}
-                          aria-label={`Enter score for match ${m.match_number ?? ''}`}
-                          className="w-full text-center text-xs text-[var(--color-accent)] py-1.5 bg-[var(--bg-elevated)] hover:bg-[var(--color-accent)]/10 transition-colors border-t border-[var(--border)] font-medium focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
-                        >
-                          Enter Score
-                        </button>
-                      )}
-
-                      {/* Status badges */}
-                      {m.status === 'walkover' && (
-                        <div className="text-center py-1 border-t border-[var(--border)]">
-                          <span className="text-[10px] text-[var(--color-warning)] font-medium" role="status">⚠ W/O WALKOVER</span>
-                        </div>
-                      )}
-                      {m.status === 'voided' && (
-                        <div className="text-center py-1 border-t border-[var(--border)]">
-                          <span className="text-[10px] text-[var(--color-danger)] font-medium" role="status">✕ VOIDED</span>
-                        </div>
-                      )}
+                {next && (
+                  <div className="flex flex-col shrink-0" style={{ width: LINK_W }} aria-hidden="true">
+                    <div style={{ height: HEAD_H }} />
+                    <div className="relative" style={{ height: bracketH }}>
+                      {canLink &&
+                        next.matches.map((_, k) => {
+                          const yTop = cardCentre(depth, k * 2);
+                          const yBottom = cardCentre(depth, k * 2 + 1);
+                          const yMid = cardCentre(depth + 1, k);
+                          const half = LINK_W / 2;
+                          return (
+                            <div key={k}>
+                              {/* stubs out of each feeder, the riser joining them, then into the winner's card */}
+                              <span className="absolute bg-[var(--border-hover)]" style={{ left: 0, top: yTop, width: half, height: 1 }} />
+                              <span className="absolute bg-[var(--border-hover)]" style={{ left: 0, top: yBottom, width: half, height: 1 }} />
+                              <span className="absolute bg-[var(--border-hover)]" style={{ left: half, top: yTop, width: 1, height: yBottom - yTop }} />
+                              <span className="absolute bg-[var(--border-hover)]" style={{ left: half, top: yMid, width: half, height: 1 }} />
+                            </div>
+                          );
+                        })}
                     </div>
-                  );
-                })}
-              </div>
+                  </div>
+                )}
+              </Fragment>
             );
           })}
         </div>
@@ -215,4 +199,153 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
       )}
     </>
   );
+}
+
+interface CardProps {
+  m: TournamentMatchRow;
+  isDoubles: boolean;
+  isLive: boolean;
+  getEntryName: (id: string | null) => string;
+  getSeed: (id: string | null) => number | null;
+  onEnterScore: () => void;
+}
+
+function MatchCard({ m, isDoubles, isLive, getEntryName, getSeed, onEnterScore }: CardProps) {
+  const aId = isDoubles ? m.pair_a_id : m.participant_a_id;
+  const bId = isDoubles ? m.pair_b_id : m.participant_b_id;
+  const winnerId = isDoubles ? m.winner_pair_id : m.winner_participant_id;
+  const isCompleted = m.status === 'completed' || m.status === 'walkover';
+  const isSkip = m.is_bye;
+  const isReady = m.status === 'ready' && aId && bId;
+  const canEnterScore =
+    isLive && (isReady || m.status === 'live' || m.status === 'pending') && aId && bId && !isCompleted && !isSkip;
+
+  const scores = m.scores as GameScore[] | null;
+  const label = `Match ${m.match_number ?? ''}: ${getEntryName(aId)} vs ${
+    isSkip && !bId ? 'skip' : getEntryName(bId)
+  }${isCompleted ? `, winner: ${getEntryName(winnerId)}` : ''}`;
+
+  return (
+    <div
+      role="row"
+      aria-label={label}
+      style={{ height: CARD_H }}
+      className={`flex flex-col rounded-lg border overflow-hidden transition-colors ${
+        isReady && isLive
+          ? 'border-[var(--color-accent)]/50 shadow-[0_0_0_1px_rgba(204,0,0,0.18)]'
+          : isSkip
+          ? 'border-dashed border-[var(--border)] opacity-60'
+          : 'border-[var(--border)]'
+      }`}
+    >
+      <div
+        className="flex items-center justify-between px-2.5 text-[10px] font-mono text-[var(--text-muted)] bg-[var(--bg-elevated)] border-b border-[var(--border)] shrink-0"
+        style={{ height: META_H }}
+      >
+        <span>{m.match_number ? `M${m.match_number}` : ''}</span>
+        <span>{m.court ? `Court ${m.court}` : ''}</span>
+      </div>
+
+      <Side
+        name={isSkip && !aId ? 'SKIP' : getEntryName(aId)}
+        seed={getSeed(aId)}
+        isPlaceholder={!aId}
+        won={isCompleted && winnerId === aId}
+        lost={isCompleted && !!winnerId && winnerId !== aId}
+        score={scores?.map((g) => `${g.a}-${g.b}`).join(' ') ?? null}
+      />
+      <div className="border-t border-[var(--border)]" />
+      <Side
+        name={isSkip && !bId ? 'SKIP' : getEntryName(bId)}
+        seed={getSeed(bId)}
+        isPlaceholder={!bId}
+        won={isCompleted && winnerId === bId}
+        lost={isCompleted && !!winnerId && winnerId !== bId}
+        score={scores?.map((g) => `${g.b}-${g.a}`).join(' ') ?? null}
+      />
+
+      <div className="shrink-0 border-t border-[var(--border)]" style={{ height: FOOT_H }}>
+        {canEnterScore ? (
+          <button
+            onClick={onEnterScore}
+            aria-label={`Enter score for match ${m.match_number ?? ''}`}
+            className="w-full h-full text-xs font-medium text-[var(--color-accent)] bg-[var(--bg-elevated)] hover:bg-[var(--color-accent)]/10 transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+          >
+            Enter Score
+          </button>
+        ) : (
+          <div className="w-full h-full flex items-center justify-center bg-[var(--bg-elevated)]">
+            <StatusLabel status={m.status} isSkip={!!isSkip} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Side({
+  name,
+  seed,
+  isPlaceholder,
+  won,
+  lost,
+  score,
+}: {
+  name: string;
+  seed: number | null;
+  isPlaceholder: boolean;
+  won: boolean;
+  lost: boolean;
+  score: string | null;
+}) {
+  return (
+    <div
+      className={`flex-1 min-h-0 flex items-center gap-2 px-2.5 text-sm ${
+        // Inset bar rather than a real border so the winner's name stays on the
+        // same baseline as the loser's.
+        won ? 'bg-[var(--color-success)]/10 shadow-[inset_2px_0_0_var(--color-success)]' : 'bg-[var(--bg-card)]'
+      }`}
+    >
+      <span className="w-5 shrink-0 text-right font-mono text-[10px] text-[var(--text-muted)]">
+        {seed ? seed : ''}
+      </span>
+      <span
+        className={`flex-1 truncate ${
+          won
+            ? 'text-[var(--color-success)] font-semibold'
+            : lost
+            ? 'text-[var(--text-muted)] line-through'
+            : isPlaceholder
+            ? 'text-[var(--text-muted)] italic'
+            : 'text-[var(--text-secondary)]'
+        }`}
+      >
+        {name}
+      </span>
+      {won && <span className="sr-only">(Winner)</span>}
+      {score && <span className="shrink-0 font-mono text-xs text-[var(--text-muted)]">{score}</span>}
+    </div>
+  );
+}
+
+function StatusLabel({ status, isSkip }: { status: string; isSkip: boolean }) {
+  if (status === 'walkover') {
+    return <span className="text-[10px] font-medium text-[var(--color-warning)]" role="status">⚠ WALKOVER</span>;
+  }
+  if (status === 'voided') {
+    return <span className="text-[10px] font-medium text-[var(--color-danger)]" role="status">✕ VOIDED</span>;
+  }
+  if (isSkip) {
+    return <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--text-muted)]">Skip · auto-advance</span>;
+  }
+  if (status === 'completed') {
+    return <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--color-success)]">Final</span>;
+  }
+  if (status === 'live') {
+    return <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--color-accent)]" role="status">In progress</span>;
+  }
+  if (status === 'ready') {
+    return <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--text-secondary)]">Ready</span>;
+  }
+  return <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--text-muted)]">Pending</span>;
 }

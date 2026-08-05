@@ -212,7 +212,7 @@ export function EventHeader({ tournament, event, isDoubles, totalEntries, checke
         <StatCard
           icon={<BarChart3 className="w-4 h-4" />}
           label="Bracket Info"
-          value={format === 'round_robin' ? `${totalEntries} entries` : `${bracketSize}-slot${byes > 0 ? ` (${byes} byes)` : ''}`}
+          value={format === 'round_robin' ? `${totalEntries} entries` : `${bracketSize}-slot${byes > 0 ? ` (${byes} skip${byes > 1 ? 's' : ''})` : ''}`}
           color="var(--color-warning)"
         />
       </div>
