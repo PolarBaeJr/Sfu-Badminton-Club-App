@@ -221,9 +221,12 @@ function MatchCard({ m, isDoubles, isLive, getEntryName, getSeed, onEnterScore }
     isLive && (isReady || m.status === 'live' || m.status === 'pending') && aId && bId && !isCompleted && !isSkip;
 
   const scores = m.scores as GameScore[] | null;
-  const label = `Match ${m.match_number ?? ''}: ${getEntryName(aId)} vs ${
-    isSkip && !bId ? 'skip' : getEntryName(bId)
-  }${isCompleted ? `, winner: ${getEntryName(winnerId)}` : ''}`;
+  // Either side can be the empty one — the generator gives the skip to whichever
+  // slot the seed landed in, not always slot B.
+  const sideLabel = (id: string | null) => (isSkip && !id ? 'skip' : getEntryName(id));
+  const label = `Match ${m.match_number ?? ''}: ${sideLabel(aId)} vs ${sideLabel(bId)}${
+    isCompleted ? `, winner: ${getEntryName(winnerId)}` : ''
+  }`;
 
   return (
     <div
@@ -232,7 +235,7 @@ function MatchCard({ m, isDoubles, isLive, getEntryName, getSeed, onEnterScore }
       style={{ height: CARD_H }}
       className={`flex flex-col rounded-lg border overflow-hidden transition-colors ${
         isReady && isLive
-          ? 'border-[var(--color-accent)]/50 shadow-[0_0_0_1px_rgba(204,0,0,0.18)]'
+          ? 'border-[color-mix(in_srgb,var(--color-accent)_50%,transparent)] shadow-[0_0_0_1px_rgba(204,0,0,0.18)]'
           : isSkip
           ? 'border-dashed border-[var(--border)] opacity-60'
           : 'border-[var(--border)]'
@@ -251,7 +254,9 @@ function MatchCard({ m, isDoubles, isLive, getEntryName, getSeed, onEnterScore }
         seed={getSeed(aId)}
         isPlaceholder={!aId}
         won={isCompleted && winnerId === aId}
-        lost={isCompleted && !!winnerId && winnerId !== aId}
+        // An empty slot has no result to strike through — a skip match is
+        // "completed" with a winner, so without the id guard SKIP renders struck.
+        lost={isCompleted && !!winnerId && !!aId && winnerId !== aId}
         score={scores?.map((g) => `${g.a}-${g.b}`).join(' ') ?? null}
       />
       <div className="border-t border-[var(--border)]" />
@@ -260,7 +265,7 @@ function MatchCard({ m, isDoubles, isLive, getEntryName, getSeed, onEnterScore }
         seed={getSeed(bId)}
         isPlaceholder={!bId}
         won={isCompleted && winnerId === bId}
-        lost={isCompleted && !!winnerId && winnerId !== bId}
+        lost={isCompleted && !!winnerId && !!bId && winnerId !== bId}
         score={scores?.map((g) => `${g.b}-${g.a}`).join(' ') ?? null}
       />
 
@@ -269,7 +274,7 @@ function MatchCard({ m, isDoubles, isLive, getEntryName, getSeed, onEnterScore }
           <button
             onClick={onEnterScore}
             aria-label={`Enter score for match ${m.match_number ?? ''}`}
-            className="w-full h-full text-xs font-medium text-[var(--color-accent)] bg-[var(--bg-elevated)] hover:bg-[var(--color-accent)]/10 transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+            className="w-full h-full text-xs font-medium text-[var(--color-accent)] bg-[var(--bg-elevated)] hover:bg-[color-mix(in_srgb,var(--color-accent)_10%,transparent)] transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
           >
             Enter Score
           </button>
@@ -302,8 +307,11 @@ function Side({
     <div
       className={`flex-1 min-h-0 flex items-center gap-2 px-2.5 text-sm ${
         // Inset bar rather than a real border so the winner's name stays on the
-        // same baseline as the loser's.
-        won ? 'bg-[var(--color-success)]/10 shadow-[inset_2px_0_0_var(--color-success)]' : 'bg-[var(--bg-card)]'
+        // same baseline as the loser's. The wash is spelled out as color-mix
+        // because Tailwind 3 silently drops `/10` on an arbitrary var() colour.
+        won
+          ? 'bg-[color-mix(in_srgb,var(--color-success)_12%,transparent)] shadow-[inset_2px_0_0_var(--color-success)]'
+          : 'bg-[var(--bg-card)]'
       }`}
     >
       <span className="w-5 shrink-0 text-right font-mono text-[10px] text-[var(--text-muted)]">
