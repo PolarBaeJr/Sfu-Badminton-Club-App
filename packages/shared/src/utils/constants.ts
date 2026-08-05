@@ -36,9 +36,44 @@ export const DEFAULT_ELO = 400;
 export const MAX_ELO = 1500;
 export const MIN_ELO = 100;
 
-// Clamp a rating to the allowed [MIN_ELO, MAX_ELO] range.
-export function clampElo(rating: number): number {
-  return Math.min(MAX_ELO, Math.max(MIN_ELO, rating));
+// Clamp a rating to the allowed range.
+//
+// The bounds were hardcoded here and duplicated as LEAST(1500, GREATEST(100,…))
+// in SQL, so raising the ceiling meant a migration AND a redeploy, in lockstep
+// or the two engines would disagree. They now come from
+// platform_settings.rating_defaults; the constants remain the fallback for any
+// caller that has no settings to hand.
+//
+// An inverted or non-finite pair is ignored rather than honoured — max <= min
+// collapses every rating to one value, and that must not be reachable from a
+// settings typo.
+export interface EloBounds {
+  min?: number | null;
+  max?: number | null;
+}
+
+export function resolveEloBounds(bounds?: EloBounds | null): { min: number; max: number } {
+  // Number(null) is 0 and Number('') is 0, both finite — so an absent bound
+  // would silently become a floor of zero rather than falling back. The SQL
+  // side checks for NULL explicitly; this has to match it or the two engines
+  // clamp differently.
+  const min = toBound(bounds?.min);
+  const max = toBound(bounds?.max);
+  if (min === null || max === null || max <= min) {
+    return { min: MIN_ELO, max: MAX_ELO };
+  }
+  return { min, max };
+}
+
+function toBound(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+export function clampElo(rating: number, bounds?: EloBounds | null): number {
+  const { min, max } = resolveEloBounds(bounds);
+  return Math.min(max, Math.max(min, rating));
 }
 
 export const CLUB_TIMEZONE = 'America/Vancouver';

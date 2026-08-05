@@ -169,6 +169,20 @@ const FIELD_META: Record<string, Record<string, FieldMeta>> = {
       max: 2,
       step: 0.05,
     },
+    max_elo: {
+      label: 'Maximum Elo',
+      hint: 'Rating ceiling. At the cap a win gains nothing while the loser still drops in full, so ratings leak out of the ladder — keep this well clear of your strongest player.',
+      type: 'number',
+      min: 1,
+      step: 50,
+    },
+    min_elo: {
+      label: 'Minimum Elo',
+      hint: 'Rating floor. Applied the same way as the ceiling, in reverse.',
+      type: 'number',
+      min: 0,
+      step: 50,
+    },
     provisional_threshold: {
       label: 'Provisional threshold',
       hint: 'Rated matches a player must complete before their rating counts as established.',

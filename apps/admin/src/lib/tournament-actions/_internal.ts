@@ -14,7 +14,28 @@ import type {
   TournamentEventType,
   TournamentMatchFormat,
   MatchFormat,
+  RatingSettings,
 } from '@badminton/shared';
+
+// The tournament engine rates matches in TypeScript while challenges are rated
+// by apply_match_result in SQL. Both must read the SAME knobs or the identical
+// scoreline moves ratings differently depending on where it was played — the
+// cross-engine hazard the rounding comment in the Elo engine already warns
+// about. This is the TS half of migration 00041.
+//
+// Fetched per call rather than cached: finalising an event is not a hot path,
+// and a cache is how a mid-tournament settings change ends up applying to some
+// matches and not others.
+async function getRatingSettings(
+  adminClient: ReturnType<typeof createAdminClient>,
+): Promise<RatingSettings | null> {
+  const { data } = await adminClient
+    .from('platform_settings')
+    .select('value')
+    .eq('key', 'rating_defaults')
+    .maybeSingle();
+  return (data?.value as RatingSettings | null) ?? null;
+}
 
 export { getExecOrAdmin } from '../actions/_shared';
 
@@ -184,20 +205,24 @@ export async function applyTournamentMatchElo(matchId: string) {
 
     // Single batched ratings fetch for all 4 players
     const allPlayerIds = [winnerPair.player1_id, winnerPair.player2_id, loserPair.player1_id, loserPair.player2_id];
-    const { data: ratings } = await adminClient.from('ratings')
-      .select('player_id, doubles_elo, doubles_provisional, doubles_matches_played')
-      .in('player_id', allPlayerIds);
+    const [{ data: ratings }, ratingSettings] = await Promise.all([
+      adminClient.from('ratings')
+        .select('player_id, doubles_elo, doubles_provisional, doubles_matches_played')
+        .in('player_id', allPlayerIds),
+      getRatingSettings(adminClient),
+    ]);
 
     const computeFor = (playerId: string, opponentElo: number, won: boolean) => {
       const rating = ratings?.find(r => r.player_id === playerId);
       const before = rating?.doubles_elo ?? 400;
-      const k = getKFactor('doubles', rating?.doubles_provisional ?? true, rating?.doubles_matches_played);
+      const k = getKFactor('doubles', rating?.doubles_provisional ?? true, rating?.doubles_matches_played, ratingSettings);
       const result = calculateEloUpdate({
         playerRating: before,
         opponentRating: opponentElo,
         kFactor: k,
         formatWeight,
         eventMultiplier: eloMultiplier,
+      bounds: { min: ratingSettings?.min_elo, max: ratingSettings?.max_elo },
         won,
       });
       snapshotEntries.push({ player_id: playerId, before, after: result.newRating, delta: result.delta });
@@ -249,8 +274,9 @@ export async function applyTournamentMatchElo(matchId: string) {
     const winnerElo = winnerRating?.singles_elo ?? winnerP.elo_before ?? 400;
     const loserElo = loserRating?.singles_elo ?? loserP.elo_before ?? 400;
 
-    const winK = getKFactor('singles', winnerRating?.singles_provisional ?? true, winnerRating?.singles_matches_played);
-    const loseK = getKFactor('singles', loserRating?.singles_provisional ?? true, loserRating?.singles_matches_played);
+    const ratingSettings = await getRatingSettings(adminClient);
+    const winK = getKFactor('singles', winnerRating?.singles_provisional ?? true, winnerRating?.singles_matches_played, ratingSettings);
+    const loseK = getKFactor('singles', loserRating?.singles_provisional ?? true, loserRating?.singles_matches_played, ratingSettings);
 
     const winResult = calculateEloUpdate({
       playerRating: winnerElo,
@@ -258,6 +284,7 @@ export async function applyTournamentMatchElo(matchId: string) {
       kFactor: winK,
       formatWeight,
       eventMultiplier: eloMultiplier,
+      bounds: { min: ratingSettings?.min_elo, max: ratingSettings?.max_elo },
       won: true,
     });
 
@@ -267,6 +294,7 @@ export async function applyTournamentMatchElo(matchId: string) {
       kFactor: loseK,
       formatWeight,
       eventMultiplier: eloMultiplier,
+      bounds: { min: ratingSettings?.min_elo, max: ratingSettings?.max_elo },
       won: false,
     });
 

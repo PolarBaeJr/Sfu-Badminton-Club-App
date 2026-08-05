@@ -1,5 +1,5 @@
 import type { MatchFormat, EventType } from '../types/database';
-import { clampElo, DEFAULT_ELO, PROVISIONAL_THRESHOLD, SWEEP_MARGIN_MULTIPLIER, derivedFormatWeight } from '../utils/constants';
+import { clampElo, DEFAULT_ELO, PROVISIONAL_THRESHOLD, SWEEP_MARGIN_MULTIPLIER, derivedFormatWeight, type EloBounds } from '../utils/constants';
 
 export const FORMAT_WEIGHTS: Record<MatchFormat, number> = {
   bo3_21: 1.25,
@@ -31,6 +31,8 @@ export interface EloCalcInput {
   eloWeightOverride?: number;
   /** Margin-of-victory scaling — see getMarginMultiplier(). Defaults to 1.0. */
   marginMultiplier?: number;
+  /** Configured rating range; falls back to [MIN_ELO, MAX_ELO] when absent. */
+  bounds?: EloBounds | null;
 }
 
 export interface EloCalcResult {
@@ -92,7 +94,7 @@ export function calculateEloUpdate(input: EloCalcInput): EloCalcResult {
 
   // Clamp the resulting rating to [MIN_ELO, MAX_ELO], then derive the delta from
   // the clamped rating so newRating and delta stay consistent at the bounds.
-  const newRating = clampElo(input.playerRating + rawDelta);
+  const newRating = clampElo(input.playerRating + rawDelta, input.bounds);
   const delta = newRating - input.playerRating;
 
   return {
@@ -110,22 +112,52 @@ export function getEventMultiplier(eventType: EventType): number {
   return EVENT_MULTIPLIERS[eventType];
 }
 
+/**
+ * Configured K-factors and provisional threshold, from
+ * platform_settings.rating_defaults. Every field is optional; anything missing
+ * or non-numeric falls back to the hardcoded default, so a malformed settings
+ * row degrades to today's behaviour rather than zeroing out rating movement.
+ */
+export interface RatingSettings {
+  provisional_threshold?: number | null;
+  singles_k_provisional?: number | null;
+  singles_k_established?: number | null;
+  doubles_k_provisional?: number | null;
+  doubles_k_established?: number | null;
+  min_elo?: number | null;
+  max_elo?: number | null;
+}
+
+function num(value: unknown, fallback: number): number {
+  const n = Number(value);
+  // A K of 0 would freeze every rating, so it is treated as unset rather than
+  // honoured — same reasoning as the SQL side's bounds check.
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 export function getKFactor(
   matchType: 'singles' | 'doubles',
   provisional: boolean,
-  matchesPlayed?: number
+  matchesPlayed?: number,
+  settings?: RatingSettings | null,
 ): number {
   // Provisional threshold: fewer than PROVISIONAL_THRESHOLD matches = provisional
   // K-factor. Uses the shared constant so tuning it can't silently drift from
   // the rest of the app.
-  const isProvisional = provisional || (matchesPlayed !== undefined && matchesPlayed < PROVISIONAL_THRESHOLD);
-  // K-factors are doubled from the classic 40/24 (singles) and 32/18 (doubles)
+  const threshold = num(settings?.provisional_threshold, PROVISIONAL_THRESHOLD);
+  const isProvisional = provisional || (matchesPlayed !== undefined && matchesPlayed < threshold);
+  // Defaults are doubled from the classic 40/24 (singles) and 32/18 (doubles)
   // to match the 2x-stretched ELO_SCALE — this keeps each delta the same
   // fraction of the scale, so convergence speed and volatility are unchanged.
+  // They are now only defaults; the live values come from settings.
   if (matchType === 'singles') {
-    return isProvisional ? 80 : 48;
+    return isProvisional
+      ? num(settings?.singles_k_provisional, 80)
+      : num(settings?.singles_k_established, 48);
   }
-  return isProvisional ? 64 : 36;
+  return isProvisional
+    ? num(settings?.doubles_k_provisional, 64)
+    : num(settings?.doubles_k_established, 36);
 }
 
 export function calculateTeamRating(ratings: number[]): number {
