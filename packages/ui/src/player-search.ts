@@ -1,0 +1,83 @@
+/**
+ * Searching people by name — the matching, not the control.
+ *
+ * This lives in a plain .ts module with no React import and no JSX on purpose.
+ * It began inside PlayerPicker.tsx, whose comment already promised it was
+ * "pure and React-free"; sitting in a `'use client'` component file made that
+ * true only in spirit, and meant it could not be imported by anything that was
+ * not already rendering — a unit test, most obviously. Every caller still
+ * reaches it through `@badminton/ui`, which re-exports both functions, so the
+ * move is invisible to them.
+ *
+ * One implementation, three callers: the challenge picker (PlayerPicker), the
+ * admin roster, and the two-sided lists (challenges, matches). They cannot
+ * drift, which is the whole point — an admin who learns that typing "chen"
+ * finds Chen in one place should not have to relearn it in the next.
+ */
+
+const norm = (s: string) => s.toLowerCase().trim();
+
+/** Prefix > word-prefix > substring, so typing "ma" surfaces "Matthew" ahead of
+ *  "Roman". Ties keep the caller's order (usually alphabetical). */
+function rankOf(option: { name: string }, q: string): number {
+  const name = norm(option.name);
+  if (name.startsWith(q)) return 0;
+  if (name.split(/\s+/).some((w) => w.startsWith(q))) return 1;
+  if (name.includes(q)) return 2;
+  return 3;
+}
+
+/**
+ * Rank and filter a list of people: same ranking, same email fallback, same
+ * "empty query means everyone" wherever it is used. Generic over the row type
+ * because a roster row carries a rendered table row alongside its name; only
+ * `name` and `meta` are read.
+ */
+export function filterPlayerOptions<T extends { name: string; meta?: string | null }>(
+  options: T[],
+  query: string,
+): T[] {
+  const q = norm(query);
+  if (!q) return options;
+  return options
+    .map((p, i) => ({ p, i, rank: rankOf(p, q) }))
+    .filter(({ p, rank }) => rank < 3 || norm(p.meta ?? '').includes(q))
+    .sort((a, b) => a.rank - b.rank || a.i - b.i)
+    .map(({ p }) => p);
+}
+
+/**
+ * The same matching, for a row that is about SEVERAL people rather than one —
+ * a challenge, a match, anything with two sides. A row matches when ANY name on
+ * it matches: either side, your partner or your opponent. That is the question
+ * an admin actually asks ("show me Chen's games"), and narrowing to one side or
+ * to an exact pairing would answer a question nobody asked while hiding half
+ * the rows that mention the person typed.
+ *
+ * Two deliberate differences from filterPlayerOptions:
+ *
+ *  - Names are joined with spaces and NOTHING else. The "&" and "vs" a row
+ *    displays are not part of the search key, or typing "vs" would match every
+ *    doubles row on the page.
+ *  - The caller's order is preserved. filterPlayerOptions re-ranks, which is
+ *    right for a picker and wrong here: these lists are newest-first, and that
+ *    ordering is information. So the shared function decides only WHICH rows
+ *    match; the page keeps deciding what order they come in.
+ */
+export function filterRowsByPlayers<T extends { id: string; players: string[]; meta?: string | null }>(
+  rows: T[],
+  query: string,
+): T[] {
+  if (!norm(query)) return rows;
+  const matched = new Set(
+    filterPlayerOptions(
+      rows.map((r) => ({
+        id: r.id,
+        name: r.players.filter(Boolean).join(' '),
+        meta: r.meta,
+      })),
+      query,
+    ).map((k) => k.id),
+  );
+  return rows.filter((r) => matched.has(r.id));
+}

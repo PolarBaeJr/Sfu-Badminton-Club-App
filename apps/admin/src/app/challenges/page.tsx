@@ -1,7 +1,8 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
+import { Card, Badge, TableCard, Atomic } from '@badminton/ui';
 import { MATCH_FORMAT_LABELS, formatRelativeTime } from '@badminton/shared';
+import { SearchableTable } from '@/components/searchable-table';
 import { ChallengeActions } from './actions';
 import { CreateChallengeForm } from './create-challenge';
 import { Swords, Plus, Clock, CheckCircle2, XCircle, Users, Trophy } from 'lucide-react';
@@ -58,6 +59,79 @@ export default async function ChallengesPage() {
   const activeCount = challenges?.filter(c =>
     ['proposed', 'partially_confirmed', 'accepted'].includes(c.status)
   ).length ?? 0;
+
+  // Both renderings of a row are built here, from one set of names, so the
+  // desktop <tr> and the phone <TableCard> cannot come to disagree about who is
+  // on a challenge — and so the search has one key to match rather than two.
+  const challengeRows = (challenges ?? []).map((c) => {
+    const creatorName = (c.creator as Record<string, unknown>)?.full_name as string | undefined;
+    const participantNames: string[] = (c.challenge_participants ?? [])
+      .map((p: Record<string, unknown>) => (p.player as Record<string, unknown>)?.full_name as string)
+      .filter(Boolean);
+    const actions = ['proposed', 'partially_confirmed', 'accepted'].includes(c.status)
+      ? <ChallengeActions challengeId={c.id} />
+      : undefined;
+
+    return {
+      id: c.id as string,
+      // The creator is in the key alongside the participants: they have their
+      // own column, and on a challenge nobody has answered yet they can be the
+      // only person named on the row.
+      players: Array.from(new Set([creatorName, ...participantNames].filter(Boolean) as string[])),
+      card: (
+        <TableCard
+          title={<Atomic separator=",">{participantNames.join(', ')}</Atomic>}
+          badges={
+            <>
+              <Badge variant={c.type === 'singles' ? 'default' : 'info'}>{c.type}</Badge>
+              {c.rated_flag && <Badge variant="warning">Rated</Badge>}
+              <span className="inline-flex items-center gap-1.5">
+                <StatusIcon status={c.status} />
+                <Badge variant={statusVariant(c.status)}>{c.status}</Badge>
+              </span>
+            </>
+          }
+          fields={[
+            { label: 'Creator', value: <Atomic>{creatorName}</Atomic> },
+            { label: 'Created', value: formatRelativeTime(c.created_at) },
+            { label: 'Format', value: MATCH_FORMAT_LABELS[c.format as keyof typeof MATCH_FORMAT_LABELS], wide: true },
+          ]}
+          actions={actions}
+        />
+      ),
+      row: (
+        <tr className="hover:bg-white/5 transition-colors">
+          <td style={{ padding: '1rem 1.25rem', fontSize: '0.875rem', color: 'var(--text-primary)', fontWeight: 500 }}>
+            {creatorName}
+          </td>
+          <td style={{ padding: '1rem 1.25rem', fontSize: '0.875rem', color: 'var(--text-muted)' }}>
+            {participantNames.join(', ')}
+          </td>
+          <td style={{ padding: '1rem 1.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+              <Badge variant={c.type === 'singles' ? 'default' : 'info'}>{c.type}</Badge>
+              {c.rated_flag && <Badge variant="warning" className="ml-1">Rated</Badge>}
+            </div>
+          </td>
+          <td style={{ padding: '1rem 1.25rem', fontSize: '0.875rem', color: 'var(--text-muted)' }}>
+            {MATCH_FORMAT_LABELS[c.format as keyof typeof MATCH_FORMAT_LABELS]}
+          </td>
+          <td style={{ padding: '1rem 1.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+              <StatusIcon status={c.status} />
+              <Badge variant={statusVariant(c.status)}>{c.status}</Badge>
+            </div>
+          </td>
+          <td style={{ padding: '1rem 1.25rem', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+            {formatRelativeTime(c.created_at)}
+          </td>
+          <td style={{ padding: '1rem 1.25rem', textAlign: 'right' }}>
+            {actions}
+          </td>
+        </tr>
+      ),
+    };
+  });
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
@@ -194,142 +268,69 @@ export default async function ChallengesPage() {
 
       {/* Challenges Table */}
       <Card padding={false}>
-        <ResponsiveTable
-          cards={(challenges ?? []).map((c) => {
-            const participants = (c.challenge_participants ?? [])
-              .map((p: Record<string, unknown>) => (p.player as Record<string, unknown>)?.full_name as string)
-              .join(', ');
-            return (
-              <TableCard
-                key={c.id}
-                title={<Atomic separator=",">{participants}</Atomic>}
-                badges={
-                  <>
-                    <Badge variant={c.type === 'singles' ? 'default' : 'info'}>{c.type}</Badge>
-                    {c.rated_flag && <Badge variant="warning">Rated</Badge>}
-                    <span className="inline-flex items-center gap-1.5">
-                      <StatusIcon status={c.status} />
-                      <Badge variant={statusVariant(c.status)}>{c.status}</Badge>
-                    </span>
-                  </>
-                }
-                fields={[
-                  { label: 'Creator', value: <Atomic>{(c.creator as Record<string, unknown>)?.full_name as string}</Atomic> },
-                  { label: 'Created', value: formatRelativeTime(c.created_at) },
-                  { label: 'Format', value: MATCH_FORMAT_LABELS[c.format as keyof typeof MATCH_FORMAT_LABELS], wide: true },
-                ]}
-                actions={
-                  ['proposed', 'partially_confirmed', 'accepted'].includes(c.status)
-                    ? <ChallengeActions challengeId={c.id} />
-                    : undefined
-                }
-              />
-            );
-          })}
-        >
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <th style={{ padding: '0.875rem 1.25rem', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                  Creator
-                </th>
-                <th style={{ padding: '0.875rem 1.25rem', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                  Participants
-                </th>
-                <th style={{ padding: '0.875rem 1.25rem', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                  Type
-                </th>
-                <th style={{ padding: '0.875rem 1.25rem', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                  Format
-                </th>
-                <th style={{ padding: '0.875rem 1.25rem', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                  Status
-                </th>
-                <th style={{ padding: '0.875rem 1.25rem', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                  Created
-                </th>
-                <th style={{ padding: '0.875rem 1.25rem', textAlign: 'right', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {challenges?.map((c, index) => (
-                <tr
-                  key={c.id}
-                  className="hover:bg-white/5 transition-colors"
-                  style={{
-                    borderBottom: index < (challenges?.length ?? 0) - 1 ? '1px solid var(--border)' : 'none',
-                  }}
-                >
-                  <td style={{ padding: '1rem 1.25rem', fontSize: '0.875rem', color: 'var(--text-primary)', fontWeight: 500 }}>
-                    {(c.creator as Record<string, unknown>)?.full_name as string}
-                  </td>
-                  <td style={{ padding: '1rem 1.25rem', fontSize: '0.875rem', color: 'var(--text-muted)' }}>
-                    {c.challenge_participants?.map((p: Record<string, unknown>) =>
-                      ((p.player as Record<string, unknown>)?.full_name as string)
-                    ).join(', ')}
-                  </td>
-                  <td style={{ padding: '1rem 1.25rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <Badge variant={c.type === 'singles' ? 'default' : 'info'}>{c.type}</Badge>
-                      {c.rated_flag && <Badge variant="warning" className="ml-1">Rated</Badge>}
-                    </div>
-                  </td>
-                  <td style={{ padding: '1rem 1.25rem', fontSize: '0.875rem', color: 'var(--text-muted)' }}>
-                    {MATCH_FORMAT_LABELS[c.format as keyof typeof MATCH_FORMAT_LABELS]}
-                  </td>
-                  <td style={{ padding: '1rem 1.25rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <StatusIcon status={c.status} />
-                      <Badge variant={statusVariant(c.status)}>{c.status}</Badge>
-                    </div>
-                  </td>
-                  <td style={{ padding: '1rem 1.25rem', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-                    {formatRelativeTime(c.created_at)}
-                  </td>
-                  <td style={{ padding: '1rem 1.25rem', textAlign: 'right' }}>
-                    {['proposed', 'partially_confirmed', 'accepted'].includes(c.status) && (
-                      <ChallengeActions challengeId={c.id} />
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </ResponsiveTable>
-
-        {/* Empty State */}
-        {(!challenges || challenges.length === 0) && (
-          <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '4rem 2rem',
-            gap: '1rem',
-          }}>
+        <SearchableTable
+          head={
+            <tr style={{ borderBottom: '1px solid var(--border)' }}>
+              <th style={{ padding: '0.875rem 1.25rem', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Creator
+              </th>
+              <th style={{ padding: '0.875rem 1.25rem', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Participants
+              </th>
+              <th style={{ padding: '0.875rem 1.25rem', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Type
+              </th>
+              <th style={{ padding: '0.875rem 1.25rem', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Format
+              </th>
+              <th style={{ padding: '0.875rem 1.25rem', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Status
+              </th>
+              <th style={{ padding: '0.875rem 1.25rem', textAlign: 'left', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Created
+              </th>
+              <th style={{ padding: '0.875rem 1.25rem', textAlign: 'right', fontSize: '0.6875rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Actions
+              </th>
+            </tr>
+          }
+          rows={challengeRows}
+          label="Search challenges by player"
+          // "any player" rather than "opponent": a row matches on whoever is
+          // named on it, which is the question an admin is actually asking.
+          placeholder="Search by any player…"
+          noun="challenge"
+          empty={
             <div style={{
-              width: '64px',
-              height: '64px',
-              borderRadius: '16px',
-              background: 'var(--border)',
               display: 'flex',
+              flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
+              padding: '4rem 2rem',
+              gap: '1rem',
             }}>
-              <Swords size={28} style={{ color: 'var(--text-muted)' }} />
+              <div style={{
+                width: '64px',
+                height: '64px',
+                borderRadius: '16px',
+                background: 'var(--border)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+                <Swords size={28} style={{ color: 'var(--text-muted)' }} />
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <p style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>
+                  No challenges yet
+                </p>
+                <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>
+                  Create a new challenge to get players competing against each other.
+                </p>
+              </div>
             </div>
-            <div style={{ textAlign: 'center' }}>
-              <p style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>
-                No challenges yet
-              </p>
-              <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>
-                Create a new challenge to get players competing against each other.
-              </p>
-            </div>
-          </div>
-        )}
+          }
+        />
       </Card>
     </div>
   );

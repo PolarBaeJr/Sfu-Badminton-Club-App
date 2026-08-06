@@ -12,6 +12,7 @@ import { redirect } from 'next/navigation';
 import { Plus, ChevronRight, Inbox, Crosshair } from 'lucide-react';
 import { PageHeader, AvatarChip } from '@badminton/ui';
 import { StandingNote } from '@/components/standing-notice';
+import { ChallengeSections } from './challenge-sections';
 
 export default async function ChallengesPage() {
   const player = await getCurrentPlayer();
@@ -119,17 +120,40 @@ export default async function ChallengesPage() {
     );
   }
 
-  function Section({ title, count, children }: { title: string; count?: number; children: React.ReactNode }) {
-    return (
-      <div className="card-base">
-        <div className="card-head">
-          <h3 className="card-title">{title}</h3>
-          {count !== undefined && <span className="tag">{count}</span>}
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{children}</div>
-      </div>
-    );
+  // Everyone named on a challenge, for the search key. Creator included: on one
+  // nobody has answered yet they may be the only other person on the card.
+  function namesOn(c: Challenge): string[] {
+    const creator = pickOne(c.creator)?.full_name;
+    const participants = c.challenge_participants
+      .map((p) => pickOne(p.player)?.full_name)
+      .filter(Boolean) as string[];
+    return Array.from(new Set([creator, ...participants].filter(Boolean) as string[]));
   }
+
+  const toItems = (list: { cp: CP; c: Challenge }[]) =>
+    list.map(({ cp, c }) => ({ id: cp.id, players: namesOn(c), card: <ChallengeCard c={c} /> }));
+
+  const sections = [
+    { title: 'Incoming', items: toItems(incoming) },
+    { title: 'Active', items: toItems(active) },
+    { title: 'Your challenges', items: toItems(outgoing) },
+    {
+      title: 'Archived',
+      // Completed and rejected/cancelled both live here; each card keeps its
+      // own status badge (Completed / Rejected / Cancelled) so they stay
+      // distinguishable within the single archived group.
+      //
+      // Sorted singles-then-doubles, newest first within each. Simply
+      // concatenating the two lists grouped by status instead, which is
+      // already on every card, and left the dates unordered.
+      items: toItems(
+        [...completed, ...archived].sort((a, b) =>
+          a.c.type !== b.c.type
+            ? a.c.type === 'singles' ? -1 : 1
+            : new Date(b.c.created_at).getTime() - new Date(a.c.created_at).getTime())
+      ),
+    },
+  ];
 
   return (
     <div data-screen-label="Challenges">
@@ -162,40 +186,7 @@ export default async function ChallengesPage() {
           </div>
         </div>
       ) : (
-        <div className="feed-col">
-          {incoming.length > 0 && (
-            <Section title="Incoming" count={incoming.length}>
-              {incoming.map(({ cp, c }) => <ChallengeCard key={cp.id} c={c} />)}
-            </Section>
-          )}
-          {active.length > 0 && (
-            <Section title="Active" count={active.length}>
-              {active.map(({ cp, c }) => <ChallengeCard key={cp.id} c={c} />)}
-            </Section>
-          )}
-          {outgoing.length > 0 && (
-            <Section title="Your challenges" count={outgoing.length}>
-              {outgoing.map(({ cp, c }) => <ChallengeCard key={cp.id} c={c} />)}
-            </Section>
-          )}
-          {(completed.length > 0 || archived.length > 0) && (
-            <Section title="Archived" count={completed.length + archived.length}>
-              {/* Completed and rejected/cancelled both live here; each card keeps
-                  its own status badge (Completed / Rejected / Cancelled) so they
-                  stay distinguishable within the single archived group.
-
-                  Sorted singles-then-doubles, newest first within each. Simply
-                  concatenating the two lists grouped by status instead, which is
-                  already on every card, and left the dates unordered. */}
-              {[...completed, ...archived]
-                .sort((a, b) =>
-                  a.c.type !== b.c.type
-                    ? a.c.type === 'singles' ? -1 : 1
-                    : new Date(b.c.created_at).getTime() - new Date(a.c.created_at).getTime())
-                .map(({ cp, c }) => <ChallengeCard key={cp.id} c={c} />)}
-            </Section>
-          )}
-        </div>
+        <ChallengeSections sections={sections} />
       )}
     </div>
   );
