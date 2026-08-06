@@ -67,12 +67,14 @@ export function rosterActionsFor(
   player: RosterRowState,
   viewer: RosterViewerState = {},
 ): RosterAction[] {
-  // Remove takes someone off the roster entirely; it is not the same act as a
-  // ban and the owner wants it back. Admin-only, and never offered on the tabs
-  // that list already-removed rows — there is nothing left to remove.
-  const remove: RosterAction[] =
-    viewer.isAdmin && tab !== 'inactive' && tab !== 'suspended' ? [{ kind: 'remove' }] : [];
-
+  // Remove is deliberately not offered anywhere. It wrote
+  // { status: 'suspended', active_flag: false } — the same deactivation as
+  // "Inactive", plus a silent suspension nobody asked for, which then put the
+  // member on the Suspended tab offering to lift a ban that never happened.
+  // "Inactive" does the reversible half and is undone from the Inactive tab, so
+  // the two buttons were one action with a worse version of itself attached.
+  // removePlayer() is still exported for an off-console/bulk path; it is the
+  // button that was wrong, not the audited action.
   switch (tab) {
     case 'inactive':
       return [{ kind: 'edit' }, { kind: 'restore' }];
@@ -83,7 +85,6 @@ export function rosterActionsFor(
         { kind: 'edit' },
         { kind: 'assign', status: 'recreational' },
         { kind: 'assign', status: 'competitive' },
-        ...remove,
       ];
     default: {
       // "when a user is suspended please make it so they cannot be marked as
@@ -98,7 +99,6 @@ export function rosterActionsFor(
         { kind: 'edit' },
         player.is_banned ? { kind: 'unban' } : { kind: 'ban' },
         ...(moderated ? [] : [{ kind: 'inactive' } as RosterAction]),
-        ...remove,
       ];
     }
   }
