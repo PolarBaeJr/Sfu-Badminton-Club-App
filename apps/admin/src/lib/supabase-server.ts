@@ -5,6 +5,7 @@ import * as Sentry from '@sentry/nextjs';
 import { PASSKEY_VERIFIED_COOKIE } from './passkey/config';
 import { verifyPayload } from './passkey/cookie';
 import { AUTH_COOKIE_OPTIONS, ExpectedError } from '@badminton/shared';
+import { accessLevelFor, atLeast, type AccessLevel } from './permissions';
 
 // NOTE: generated `Database` type is available from '@badminton/shared' but not
 // applied here — see comments in apps/player/src/lib/supabase-server.ts.
@@ -80,7 +81,19 @@ async function assertPasskeyVerified(
   }
 }
 
-export async function getAuthenticatedAdmin(options: { skipPasskey?: boolean } = {}) {
+// The one authenticated gate. Callers name the MINIMUM level they need and the
+// ordering lives in permissions.ts, so adding a fourth level never means
+// widening a boolean condition here — which is how `role === 'admin' ||
+// is_exec` would have grown a third clause and quietly admitted trainers to
+// every exec action in the app.
+//
+// `denial` is spelled per level because the message is user-facing and a
+// trainer told "admin or exec access required" has been told the truth.
+async function getAuthenticatedAtLeast(
+  required: AccessLevel,
+  denial: string,
+  options: { skipPasskey?: boolean } = {}
+) {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
@@ -101,9 +114,11 @@ export async function getAuthenticatedAdmin(options: { skipPasskey?: boolean } =
     Sentry.setUser(null);
     throw new ExpectedError('No player record found');
   }
-  if (player.role !== 'admin') {
+  // Same resolution the middleware gets from admin_access_level(), through the
+  // same helper — never a second inline copy of the rule.
+  if (!atLeast(accessLevelFor(player), required)) {
     Sentry.setUser(null);
-    throw new ExpectedError('Admin access required');
+    throw new ExpectedError(denial);
   }
 
   if (!options.skipPasskey) {
@@ -114,37 +129,27 @@ export async function getAuthenticatedAdmin(options: { skipPasskey?: boolean } =
   return player;
 }
 
+export async function getAuthenticatedAdmin(options: { skipPasskey?: boolean } = {}) {
+  return getAuthenticatedAtLeast('admin', 'Admin access required', options);
+}
+
 // Broader gate than getAuthenticatedAdmin: permits full admins OR execs.
 // Used by exec-allowed domain actions (matches, sessions, tournaments,
-// announcements, seasons). Admin-only actions keep getAuthenticatedAdmin.
+// announcements, seasons, and every mutating action under /players). Admin-only
+// actions keep getAuthenticatedAdmin.
+//
+// Deliberately NOT widened to trainers. A trainer may read the roster and write
+// varsity notes; approving, editing, banning, creating and removing players are
+// all exec work, and they all gate here. Widening this one function would have
+// handed a trainer every exec power in the app in a single line.
 export async function getAuthenticatedExecOrAdmin(options: { skipPasskey?: boolean } = {}) {
-  const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
-    Sentry.setUser(null);
-    throw new ExpectedError('Not authenticated');
-  }
+  return getAuthenticatedAtLeast('exec', 'Admin or exec access required', options);
+}
 
-  const adminClient = createAdminClient();
-  const { data: player } = await adminClient
-    .from('players')
-    .select('*')
-    .eq('user_id', user.id)
-    .maybeSingle();
-
-  if (!player) {
-    Sentry.setUser(null);
-    throw new ExpectedError('No player record found');
-  }
-  if (player.role !== 'admin' && player.is_exec !== true) {
-    Sentry.setUser(null);
-    throw new ExpectedError('Admin or exec access required');
-  }
-
-  if (!options.skipPasskey) {
-    await assertPasskeyVerified(user.id, player.id, adminClient);
-  }
-
-  Sentry.setUser({ id: player.id });
-  return player;
+// The bottom rung: anyone with any console access at all. Used by the read-only
+// surfaces a trainer legitimately needs (the roster pages, the dashboard shell,
+// their own passkey settings) and by the varsity-note actions, which are the one
+// thing a trainer may actually write.
+export async function getAuthenticatedConsoleUser(options: { skipPasskey?: boolean } = {}) {
+  return getAuthenticatedAtLeast('trainer', 'Admin console access required', options);
 }

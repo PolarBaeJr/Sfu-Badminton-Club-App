@@ -5,7 +5,7 @@ import { parseOrThrow } from '@badminton/shared';
 import {
   createAdminClient,
   getAuthenticatedAdmin,
-  getAuthenticatedExecOrAdmin,
+  getAuthenticatedConsoleUser,
 } from '@/lib/supabase-server';
 import { logAdminAudit } from '@/lib/audit';
 import { revalidatePath } from 'next/cache';
@@ -54,9 +54,14 @@ export async function updatePlatformSettings(
 
 // Removing a passkey always requires a passkey-verified session (the default
 // gate — no skipPasskey), so a stolen Supabase session can't strip the gate.
+//
+// Gated at the console-user level so a trainer can manage their OWN keys: the
+// row check below already pins it to `player.id`, so the lower gate widens
+// nothing beyond self-service. Leaving this on the exec gate would have shown a
+// trainer a Remove button on /settings that always threw.
 export async function removePasskey(credentialId: string) {
   const id = parseOrThrow(z.string().uuid(), credentialId);
-  const player = await getAuthenticatedExecOrAdmin();
+  const player = await getAuthenticatedConsoleUser();
   const adminClient = createAdminClient();
 
   const { data: row } = await adminClient

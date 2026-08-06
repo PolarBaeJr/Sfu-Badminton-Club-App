@@ -1,5 +1,5 @@
 export const dynamic = 'force-dynamic';
-import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
+import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
 import { PageHeader } from '@badminton/ui';
 import { sortLegalDocuments } from '@badminton/shared';
 import { SettingsForm } from './settings-form';
@@ -7,9 +7,9 @@ import { LegalDocumentsForm } from './legal-documents-form';
 import { PasskeySection } from './passkey-section';
 
 export default async function SettingsPage() {
-  let player: Awaited<ReturnType<typeof getAuthenticatedExecOrAdmin>> | null = null;
+  let player: Awaited<ReturnType<typeof getAuthenticatedConsoleUser>> | null = null;
   try {
-    player = await getAuthenticatedExecOrAdmin();
+    player = await getAuthenticatedConsoleUser();
   } catch {
     // Not authenticated or not exec/admin — show limited settings
   }

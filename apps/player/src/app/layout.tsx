@@ -84,7 +84,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       // user id, so the service role is scoped to the caller's own row.
       const { data: player } = await createServiceRoleClient()
         .from('players')
-        .select('id, full_name, avatar_url, status, role, is_exec, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo), waiver_acceptances(document, version, accepted_at)')
+        .select('id, full_name, avatar_url, status, role, is_exec, is_trainer, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo), waiver_acceptances(document, version, accepted_at)')
         .eq('user_id', user.id)
         .maybeSingle();
       playerName = player?.full_name ?? '';
@@ -92,7 +92,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       playerId = player?.id ?? null;
       playerStatus = player?.status ?? null;
       deletionRequestedAt = player?.deletion_requested_at ?? null;
-      isExecOrAdmin = !!(player?.is_exec || player?.role === 'admin');
+      // Anyone with ANY console level, which now includes varsity trainers —
+      // the link in the top bar is the only route they have to the console, and
+      // hiding it would leave the new role technically working and practically
+      // unreachable. Same predicate as admin_access_level(); is_trainer has to
+      // be in the select above too, or it reads as undefined and silently
+      // hides the link.
+      isExecOrAdmin = !!(player?.is_exec || player?.is_trainer || player?.role === 'admin');
 
       // A member needs the waiver gate when any of the four legal documents
       // lacks a valid acceptance — current version, and for the waiver also

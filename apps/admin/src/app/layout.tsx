@@ -3,7 +3,7 @@ import './globals.css';
 
 export const dynamic = 'force-dynamic';
 import { Sidebar } from '@/components/sidebar';
-import { getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
+import { getAuthenticatedConsoleUser } from '@/lib/supabase-server';
 import { accessLevelFor } from '@/lib/permissions';
 import { MainContent } from '@/components/main-content';
 import { ToastProvider } from '@/components/toast-provider';
@@ -54,7 +54,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // which is exactly when the sidebar renders nothing anyway.
   let initialAccessLevel = null;
   try {
-    initialAccessLevel = accessLevelFor(await getAuthenticatedExecOrAdmin({ skipPasskey: true }));
+    initialAccessLevel = accessLevelFor(await getAuthenticatedConsoleUser({ skipPasskey: true }));
   } catch {
     initialAccessLevel = null;
   }

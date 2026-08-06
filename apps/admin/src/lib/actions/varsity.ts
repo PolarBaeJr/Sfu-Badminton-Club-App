@@ -7,11 +7,15 @@ import { parseOrThrow, varsityNoteSchema, type VarsityNoteInput } from '@badmint
 // Varsity notes are coaching records on a player — squarely the roster
 // management the club owner handed to execs. author_id/actor_id record
 // whoever wrote it.
-import { getExecOrAdmin } from './_shared';
+//
+// getConsoleUser(), not getExecOrAdmin(): these two actions are the ENTIRE
+// write surface of the varsity-trainer level. Every other action in the app
+// stayed on getExecOrAdmin(), so widening happens here and only here.
+import { getConsoleUser } from './_shared';
 
 export async function createVarsityNote(input: VarsityNoteInput) {
   const data = parseOrThrow(varsityNoteSchema, input);
-  const actor = await getExecOrAdmin();
+  const actor = await getConsoleUser();
   const adminClient = createAdminClient();
 
   const { data: note, error } = await adminClient
@@ -38,7 +42,7 @@ export async function createVarsityNote(input: VarsityNoteInput) {
 }
 
 export async function deleteVarsityNote(noteId: string) {
-  const actor = await getExecOrAdmin();
+  const actor = await getConsoleUser();
   const adminClient = createAdminClient();
 
   const { data: oldNote } = await adminClient

@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import { generateRegistrationOptions } from '@simplewebauthn/server';
 import type { AuthenticatorTransportFuture } from '@simplewebauthn/server';
 import { rateLimit, getClientIp } from '@badminton/shared';
-import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
+import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
 import { signPayload, verifyPayload } from '@/lib/passkey/cookie';
 import {
   getRpId,
@@ -24,7 +24,7 @@ export async function POST(request: Request) {
   let player;
   try {
     // skipPasskey: these handlers are how an unverified session gets verified.
-    player = await getAuthenticatedExecOrAdmin({ skipPasskey: true });
+    player = await getAuthenticatedConsoleUser({ skipPasskey: true });
   } catch {
     return NextResponse.json({ error: 'Not authorized' }, { status: 401 });
   }

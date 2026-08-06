@@ -5,7 +5,7 @@ import type { RegistrationResponseJSON } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { z } from 'zod';
 import { rateLimit, getClientIp, parseOrThrow } from '@badminton/shared';
-import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
+import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
 import { logAdminAudit } from '@/lib/audit';
 import { signPayload, verifyPayload } from '@/lib/passkey/cookie';
 import {
@@ -35,7 +35,7 @@ export async function POST(request: Request) {
 
   let player;
   try {
-    player = await getAuthenticatedExecOrAdmin({ skipPasskey: true });
+    player = await getAuthenticatedConsoleUser({ skipPasskey: true });
   } catch {
     return NextResponse.json({ error: 'Not authorized' }, { status: 401 });
   }

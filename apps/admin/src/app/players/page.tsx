@@ -1,5 +1,5 @@
-import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
-import { accessLevelFor } from '@/lib/permissions';
+import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
+import { accessLevelFor, atLeast } from '@/lib/permissions';
 import { Badge, Card, AvatarChip, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS, getMissingLegalDocuments, getWinRate, unwrap } from '@badminton/shared';
 import Link from 'next/link';
@@ -34,13 +34,18 @@ export default async function PlayersPage({
   // Hiding those controls is cosmetic — the server actions are the real gate —
   // but showing a button that is guaranteed to fail is worse than not showing
   // it at all.
-  const viewer = await getAuthenticatedExecOrAdmin();
-  const isAdmin = accessLevelFor(viewer) === 'admin';
+  const viewer = await getAuthenticatedConsoleUser();
+  const level = accessLevelFor(viewer);
+  const isAdmin = level === 'admin';
+  // A varsity trainer reads this page and nothing more: they are here to find
+  // the player they are writing a note about. Every mutating action under
+  // /players gates on getExecOrAdmin(), so for them the roster is a directory.
+  const canManage = atLeast(level, 'exec');
   const supabase = createAdminClient();
 
   let query = supabase
     .from('players')
-    .select('id, full_name, email, avatar_url, status, role, is_exec, fee_exempt, is_banned, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
+    .select('id, full_name, email, avatar_url, status, role, is_exec, is_trainer, fee_exempt, is_banned, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
     .order('created_at', { ascending: false })
     .limit(500);
 
@@ -118,7 +123,7 @@ export default async function PlayersPage({
                 }))}
               />
             )}
-            <AddPlayerButton isAdmin={isAdmin} />
+            {canManage && <AddPlayerButton isAdmin={isAdmin} />}
           </div>
         }
       />
@@ -158,7 +163,7 @@ export default async function PlayersPage({
                 <th className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase">S W/L</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase">D W/L</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-[var(--text-muted)] uppercase">Waiver</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase">Actions</th>
+                {canManage && <th className="px-4 py-3 text-right text-xs font-medium text-[var(--text-muted)] uppercase">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border)]">
@@ -207,6 +212,7 @@ export default async function PlayersPage({
                           {PLAYER_STATUS_LABELS[player.status as keyof typeof PLAYER_STATUS_LABELS] || player.status}
                         </Badge>
                         {player.is_exec && <Badge variant="info">Exec</Badge>}
+                        {player.is_trainer && <Badge variant="info">Trainer</Badge>}
                         {player.fee_exempt && <Badge variant="neutral">Fee Exempt</Badge>}
                         {player.is_banned && <Badge variant="danger">Banned</Badge>}
                         {player.deletion_requested_at && (
@@ -240,6 +246,11 @@ export default async function PlayersPage({
                         <Badge variant="warning">Missing</Badge>
                       )}
                     </td>
+                    {/* Edit and Ban both call exec-gated actions; the column is
+                        dropped entirely for a trainer rather than rendered with
+                        disabled buttons, so nothing on screen implies a power
+                        they do not have. */}
+                    {canManage && (
                     <td className="px-4 py-3 text-right">
                       <div className="flex gap-1 justify-end">
                         <PlayerActions mode="edit" playerId={player.id} playerData={player} isAdmin={isAdmin} />
@@ -249,6 +260,7 @@ export default async function PlayersPage({
                         )}
                       </div>
                     </td>
+                    )}
                   </tr>
                 );
               })}
