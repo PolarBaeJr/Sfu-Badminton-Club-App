@@ -179,7 +179,14 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
   // another. The status compared is the one this write LEAVES BEHIND (an edit
   // that sets a division and clears the flag in the same call is fine);
   // is_banned is never written here, so the stored value is the live one.
-  if (playerUpdate.active_flag === false) {
+  //
+  // The rule is "cannot be MARKED inactive", so this gates the TRANSITION, not
+  // the value. The Edit dialog re-sends the current state — an already-inactive
+  // row saves as { status: undefined, active_flag: false } — so gating on the
+  // value alone would make every removed member (removePlayer writes
+  // status='suspended' alongside the flag) and every banned-and-inactive member
+  // permanently uneditable, which is the opposite of what this protects.
+  if (playerUpdate.active_flag === false && oldPlayer?.active_flag !== false) {
     const resultingStatus = (data.status ?? oldPlayer?.status) as string | undefined;
     if (resultingStatus === 'suspended' || resultingStatus === 'pending_approval') {
       throw new Error(
