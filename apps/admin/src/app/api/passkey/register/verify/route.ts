@@ -93,6 +93,10 @@ export async function POST(request: Request) {
       device_type: credentialDeviceType,
       backed_up: credentialBackedUp,
       nickname: body.nickname ?? null,
+      // Arms the admin passkey gate. Only credentials enrolled HERE do — a
+      // members'-app passkey is a convenience and must not silently impose a
+      // second factor on a different app (00051).
+      enrolled_via: 'admin',
     })
     .select('id')
     .single();
