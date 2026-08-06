@@ -43,12 +43,33 @@ const norm = (s: string) => s.toLowerCase().trim();
 
 /** Prefix > word-prefix > substring, so typing "ma" surfaces "Matthew" ahead of
  *  "Roman". Ties keep the caller's order (usually alphabetical). */
-function rankOf(option: PlayerOption, q: string): number {
+function rankOf(option: { name: string }, q: string): number {
   const name = norm(option.name);
   if (name.startsWith(q)) return 0;
   if (name.split(/\s+/).some((w) => w.startsWith(q))) return 1;
   if (name.includes(q)) return 2;
   return 3;
+}
+
+/**
+ * The picker's matching, on its own so a plain list can filter itself the same
+ * way the combobox does — same ranking, same email fallback, same "empty query
+ * means everyone". Generic over the row type because a roster row carries a
+ * rendered table row alongside its name; only `name` and `meta` are read.
+ *
+ * Pure and React-free: it is the searching, not the control.
+ */
+export function filterPlayerOptions<T extends { name: string; meta?: string | null }>(
+  options: T[],
+  query: string,
+): T[] {
+  const q = norm(query);
+  if (!q) return options;
+  return options
+    .map((p, i) => ({ p, i, rank: rankOf(p, q) }))
+    .filter(({ p, rank }) => rank < 3 || norm(p.meta ?? '').includes(q))
+    .sort((a, b) => a.rank - b.rank || a.i - b.i)
+    .map(({ p }) => p);
 }
 
 /**
@@ -89,15 +110,7 @@ export function PlayerPicker({
 
   const selected = useMemo(() => players.find((p) => p.id === value) ?? null, [players, value]);
 
-  const filtered = useMemo(() => {
-    const q = norm(query);
-    if (!q) return players;
-    return players
-      .map((p, i) => ({ p, i, rank: rankOf(p, q) }))
-      .filter(({ p, rank }) => rank < 3 || norm(p.meta ?? '').includes(q))
-      .sort((a, b) => a.rank - b.rank || a.i - b.i)
-      .map(({ p }) => p);
-  }, [players, query]);
+  const filtered = useMemo(() => filterPlayerOptions(players, query), [players, query]);
 
   // Opening should land on the current selection, not the top of the roster.
   useEffect(() => {

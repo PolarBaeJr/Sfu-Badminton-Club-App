@@ -273,7 +273,14 @@ async function requireWaiverResignatureImpl(playerId: string) {
 // Stays admin-only while the rest of player management opened up to execs.
 // The owner asked for management, not destruction: removal deactivates an
 // account and merge_players() deletes a row outright — neither is undoable from
-// the console. The buttons are hidden for execs on /players.
+// the console.
+//
+// NOTE: nothing in the console calls this any more. The club owner specified
+// the per-tab actions on /players as Edit / Ban / Inactive, and "Inactive" is
+// updatePlayer({ active_flag: false }) — the same deactivation without the
+// silent status: 'suspended' this also writes, and reversible from the Inactive
+// tab. Kept because it is the audited path a future bulk/CLI removal would use;
+// delete it only after checking nothing off-console depends on it.
 export async function removePlayer(playerId: string, reason: string): Promise<ActionResult<void>> {
   return runAction(() => removePlayerImpl(playerId, reason));
 }
