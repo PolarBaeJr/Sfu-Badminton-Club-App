@@ -203,7 +203,14 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
   // Coming back onto the roster re-arms the inactivity notice (00059), so a
   // member who lapses again later is told again. Mirrors what the members' app
   // does in reactivateLapsedMember().
-  if (playerUpdate.active_flag === true) playerUpdate.inactivity_notice_sent_at = null;
+  // Restoring someone from the console also stops the retention clock (00062),
+  // for the same reason the members' app clears it on sign-in: they are back on
+  // the roster, so the year that would have anonymised them must not keep
+  // running underneath.
+  if (playerUpdate.active_flag === true) {
+    playerUpdate.inactivity_notice_sent_at = null;
+    playerUpdate.inactive_since = null;
+  }
   if (data.role) playerUpdate.role = data.role;
   if (data.membership_type) playerUpdate.membership_type = data.membership_type;
   if (data.is_exec !== undefined) playerUpdate.is_exec = data.is_exec;

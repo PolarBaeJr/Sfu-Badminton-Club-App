@@ -124,6 +124,8 @@ export interface Player {
   waiver_reset_at: string | null;
   /** 00059 — when the "your membership is now inactive" notice was sent. Cleared whenever active_flag goes back to true. */
   inactivity_notice_sent_at: string | null;
+  /** 00062 — when the inactivity clock deactivated this member. Starts the retention countdown; NULL = never purgeable. Cleared on every reactivation. */
+  inactive_since: string | null;
   joined_at: string;
   last_active_at: string;
   created_at: string;

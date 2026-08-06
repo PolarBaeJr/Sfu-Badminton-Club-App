@@ -1,7 +1,12 @@
 import { NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '@/lib/supabase-server';
-import { sendAccountInactiveEmail, isSelfReactivatable, INACTIVITY_DAYS } from '@badminton/shared';
+import {
+  sendAccountInactiveEmail,
+  isSelfReactivatable,
+  INACTIVITY_DAYS,
+  INACTIVITY_PURGE_DAYS,
+} from '@badminton/shared';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,6 +48,11 @@ export async function POST(request: Request) {
       .maybeSingle();
     const thresholdDays: number =
       (setting?.value as Record<string, number> | null)?.inactive_threshold_days ?? INACTIVITY_DAYS;
+    // The retention period the email now promises. Read from the SAME settings
+    // row the purge job reads, so the copy cannot state a deadline the job does
+    // not enforce — an exec changing one changes both.
+    const purgeAfterDays: number =
+      (setting?.value as Record<string, number> | null)?.purge_after_days ?? INACTIVITY_PURGE_DAYS;
 
     // Deactivated and not yet told. status / is_banned / deletion_requested_at
     // come back so isSelfReactivatable can do the discrimination below rather
@@ -83,6 +93,7 @@ export async function POST(request: Request) {
         player.email as string,
         (player.full_name as string) || 'there',
         thresholdDays,
+        purgeAfterDays,
       ).catch((err) => {
         Sentry.captureException(err, {
           extra: { job: 'inactivity-notices', playerId: player.id },
