@@ -12,6 +12,7 @@ import { isPushSupported, isPushEnabled, subscribeToPush, unsubscribeFromPush } 
 import { AvatarUpload } from '@/components/AvatarUpload';
 import { CalendarFeed } from './calendar-feed';
 import { PasskeyManager } from '@/components/passkey-manager';
+import { ADMIN_PANEL_HREF, ADMIN_PANEL_IS_EXTERNAL } from '@/lib/admin-link';
 import {
   User,
   Calendar,
@@ -558,9 +559,12 @@ export default function SettingsPage() {
                 </div>
                 <div className="settings-row-control">
                   <a
-                    href={process.env.NEXT_PUBLIC_ADMIN_URL || '/admin'}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                    href={ADMIN_PANEL_HREF}
+                    /* See top-bar.tsx: a new tab for the subdomain console, an
+                       in-place navigation for the same-origin /admin mount so
+                       the installed PWA keeps the exec. */
+                    target={ADMIN_PANEL_IS_EXTERNAL ? '_blank' : undefined}
+                    rel={ADMIN_PANEL_IS_EXTERNAL ? 'noopener noreferrer' : undefined}
                     className="btn btn-danger-ghost"
                   >
                     <Shield size={14} />

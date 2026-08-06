@@ -1,9 +1,19 @@
-const CACHE_NAME = 'sfu-badminton-v3';
+// Bumped to v4 to drop caches written before the /admin bypass below existed —
+// an install that already cached admin responses would otherwise keep serving
+// them offline.
+const CACHE_NAME = 'sfu-badminton-v4';
 
 // Network-first caching strategy (same-origin GETs only)
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
-  if (new URL(event.request.url).origin !== self.location.origin) return;
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin) return;
+  // The admin console is now served same-origin at /admin (a separate
+  // container), so it lands in this handler's lap. Leave it to the browser:
+  // caching admin pages here would put another exec's console view in the
+  // player app's cache on a shared phone, and hand it back whenever the network
+  // drops.
+  if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) return;
 
   event.respondWith(
     fetch(event.request)

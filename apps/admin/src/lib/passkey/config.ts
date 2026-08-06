@@ -2,6 +2,8 @@
 // /api/passkey route handlers, and the server-action belt-and-braces check —
 // so keep this file free of Node-only imports.
 
+import { BASE_PATH } from '../base-path';
+
 const DEFAULT_ADMIN_URL = 'http://localhost:3001';
 
 export const PASSKEY_VERIFIED_COOKIE = 'admin_passkey_verified';
@@ -15,9 +17,15 @@ export const PASSKEY_LOGIN_CHALLENGE_COOKIE = 'admin_passkey_login_challenge';
 export const VERIFIED_TTL_SECONDS = 12 * 60 * 60; // 12h
 export const CHALLENGE_TTL_SECONDS = 5 * 60; // 5min
 
-// Served from the root of its own subdomain now, so the cookie scopes to '/'.
-// (It was '/admin' while the console lived under the player app's basePath.)
-export const PASSKEY_COOKIE_PATH = '/';
+// Scope the gate cookies to wherever the console is actually mounted: '/' on
+// the subdomain build (it owns that origin outright), '/admin' on the
+// path-mounted one. It was '/admin' once before, for the same reason.
+//
+// This is not cosmetic. The path-mounted console shares an origin with the
+// player app, so a '/' cookie here would be attached to every player-app
+// request made by every exec — an admin-gate token broadcast to an app that has
+// no business seeing it, on requests it has no business carrying.
+export const PASSKEY_COOKIE_PATH = BASE_PATH || '/';
 
 function adminUrl(): URL {
   return new URL(process.env.NEXT_PUBLIC_ADMIN_URL || DEFAULT_ADMIN_URL);

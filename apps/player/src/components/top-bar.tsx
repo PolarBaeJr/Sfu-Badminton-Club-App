@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@badminton/ui';
 import { ShuttleMark } from './shuttle-mark';
+import { ADMIN_PANEL_HREF, ADMIN_PANEL_IS_EXTERNAL } from '@/lib/admin-link';
 import {
   Home,
   Trophy,
@@ -36,7 +37,6 @@ export function TopBar({
   unreadCount,
   isAuthenticated,
   isExecOrAdmin,
-  adminUrl,
   activeSeasonName,
   isApproved = true,
 }: {
@@ -45,7 +45,6 @@ export function TopBar({
   unreadCount: number;
   isAuthenticated: boolean;
   isExecOrAdmin: boolean;
-  adminUrl?: string;
   activeSeasonName?: string;
   /** False while the account is pending approval or suspended. */
   isApproved?: boolean;
@@ -112,9 +111,12 @@ export function TopBar({
             <>
               {isExecOrAdmin && (
                 <a
-                  href={adminUrl || '/admin'}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  href={ADMIN_PANEL_HREF}
+                  /* Only pop a new tab for a cross-origin console. Doing it for
+                     the same-origin /admin mount would eject the exec from the
+                     installed PWA, which is the whole point of that mount. */
+                  target={ADMIN_PANEL_IS_EXTERNAL ? '_blank' : undefined}
+                  rel={ADMIN_PANEL_IS_EXTERNAL ? 'noopener noreferrer' : undefined}
                   className="icon-btn"
                   aria-label="Exec panel"
                   title="Exec panel"

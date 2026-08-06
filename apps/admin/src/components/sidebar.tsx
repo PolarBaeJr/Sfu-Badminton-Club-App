@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { cn } from '@badminton/ui';
 // Deep import, not the '@badminton/shared' barrel — see the player middleware.
 import { clearHostOnlyAuthCookies } from '@badminton/shared/src/utils/constants';
+import { withBase } from '@/lib/base-path';
 import {
   LayoutDashboard,
   Users,
@@ -81,7 +82,7 @@ export function Sidebar() {
     // scope; a leftover host-only copy from before the switch would still be a
     // valid session. No-op once no such copy exists.
     clearHostOnlyAuthCookies();
-    window.location.href = '/login';
+    window.location.href = withBase('/login');
   }
 
   if (isPublicRoute) return null;

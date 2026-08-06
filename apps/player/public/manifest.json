@@ -3,6 +3,7 @@
   "short_name": "SFU Badminton",
   "description": "Challenge, compete, and climb the ranks",
   "start_url": "/feed",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#0a0a0a",
   "theme_color": "#c00000",

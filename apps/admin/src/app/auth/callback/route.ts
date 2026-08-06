@@ -3,10 +3,14 @@ import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { rateLimit, getClientIp } from '@badminton/shared';
 import { AUTH_COOKIE_DOMAIN, AUTH_COOKIE_OPTIONS, hostOnlyAuthCookieClears } from '@badminton/shared';
+import { adminBaseUrl } from '@/lib/base-path';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const origin = process.env.NEXT_PUBLIC_ADMIN_URL || new URL(request.url).origin;
+  // Base URL of THIS console, prefix included — on the path-mounted build
+  // that is https://sfubadminton.com/admin, and every redirect below has to
+  // carry the /admin or it lands on the player app (a different container).
+  const origin = adminBaseUrl(new URL(request.url).origin);
   const code = searchParams.get('code');
   const token_hash = searchParams.get('token_hash');
   const type = searchParams.get('type');
