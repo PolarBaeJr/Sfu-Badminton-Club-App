@@ -1474,11 +1474,15 @@ html, body { overflow-x: clip; }
   }
 }
 
-/* Keep toasts clear of the mobile tabbar (Toast in packages/ui anchors at
-   bottom-4; the tabbar shows at ≤980px and would sit underneath them). */
+/* Keep toasts clear of the mobile tabbar (ToastViewport in packages/ui anchors
+   at --toast-offset, default 16px; the tabbar shows at ≤980px and would sit
+   underneath them). A custom property rather than a rule on the viewport
+   itself: the viewport sets `bottom` inline so that no app can accidentally
+   lose the fixed positioning, and an inline value would out-specify a class
+   selector here. */
 @media (max-width: 980px) {
-  .toast {
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 5rem);
+  :root {
+    --toast-offset: calc(env(safe-area-inset-bottom, 0px) + 5rem);
   }
 }
 

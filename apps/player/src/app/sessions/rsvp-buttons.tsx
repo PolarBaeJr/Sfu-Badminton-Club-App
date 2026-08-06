@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { setSessionIntent } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
+import { useStanding } from '@/components/standing-provider';
 
 interface RsvpButtonsProps {
   sessionId: string;
@@ -16,6 +17,18 @@ const inactive = 'bg-transparent border border-[var(--line)] text-[var(--text-mu
 export function RsvpButtons({ sessionId, myIntent }: RsvpButtonsProps) {
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+  const standing = useStanding();
+
+  // setSessionIntent -> requirePlayer() refuses this outright, so drop the
+  // buttons but keep whatever RSVP already exists on show — a member who was
+  // going before being suspended should still see that they said so. The
+  // schedule itself, and the one line explaining the missing buttons, are on
+  // the page around us.
+  if (!standing.ok) {
+    if (myIntent === 'going') return <span className="chip chip-success">Going</span>;
+    if (myIntent === 'declined') return <span className="chip">Not going</span>;
+    return null;
+  }
 
   async function choose(choice: 'going' | 'declined') {
     if (loading) return;

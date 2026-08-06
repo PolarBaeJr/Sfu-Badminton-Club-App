@@ -5,15 +5,21 @@ import {
   pickOne,
   CHALLENGE_STATUS_LABEL,
   CHALLENGE_STATUS_TAG,
+  getAccountStanding,
 } from '@badminton/shared';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { Plus, ChevronRight, Inbox, Crosshair } from 'lucide-react';
 import { PageHeader, AvatarChip } from '@badminton/ui';
+import { StandingNote } from '@/components/standing-notice';
 
 export default async function ChallengesPage() {
   const player = await getCurrentPlayer();
   if (!player) redirect('/login');
+  // The history stays — a suspended member should still be able to read what
+  // they played. Only the "issue one" entry points go, since createChallenge
+  // would refuse them.
+  const standing = getAccountStanding(player);
 
   const supabase = await createServerSupabaseClient();
 
@@ -131,9 +137,13 @@ export default async function ChallengesPage() {
         title="Challenges"
         sub="Issue, accept, and track challenges. Pending responses live at the top — answer them so the queue clears."
         actions={
-          <Link href="/challenges/new" className="btn btn-primary">
-            <Plus size={14} /> New challenge
-          </Link>
+          standing.ok ? (
+            <Link href="/challenges/new" className="btn btn-primary">
+              <Plus size={14} /> New challenge
+            </Link>
+          ) : (
+            <StandingNote standing={standing} activity="New challenges" />
+          )
         }
       />
 
@@ -142,9 +152,13 @@ export default async function ChallengesPage() {
           <div className="empty">
             <Inbox size={40} className="text-[var(--mute)]" style={{ display: 'block', margin: '0 auto 12px' }} />
             <div style={{ marginBottom: 12 }}>No challenges yet.</div>
-            <Link href="/challenges/new" className="btn btn-primary">
-              <Plus size={14} /> Issue your first challenge
-            </Link>
+            {standing.ok ? (
+              <Link href="/challenges/new" className="btn btn-primary">
+                <Plus size={14} /> Issue your first challenge
+              </Link>
+            ) : (
+              <StandingNote standing={standing} activity="New challenges" />
+            )}
           </div>
         </div>
       ) : (

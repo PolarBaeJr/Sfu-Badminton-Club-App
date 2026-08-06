@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useCallback } from 'react';
-import { Toast } from '@badminton/ui';
+import { Toast, ToastViewport } from '@badminton/ui';
 
 interface ToastItem { id: number; message: string; type: 'success' | 'error' | 'info'; }
 interface ToastContextType { toast: (message: string, type?: 'success' | 'error' | 'info') => void; }
@@ -24,9 +24,13 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={{ toast }}>
       {children}
-      {toasts.map((t) => (
-        <Toast key={t.id} message={t.message} type={t.type} onClose={() => remove(t.id)} />
-      ))}
+      {/* ToastViewport portals to document.body, so a toast no longer depends
+          on where this provider sits in the tree to be seen. */}
+      <ToastViewport>
+        {toasts.map((t) => (
+          <Toast key={t.id} message={t.message} type={t.type} onClose={() => remove(t.id)} />
+        ))}
+      </ToastViewport>
     </ToastContext.Provider>
   );
 }

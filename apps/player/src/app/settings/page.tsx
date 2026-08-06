@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Input, Textarea, Switch, Select, PageHeader, Dialog } from '@badminton/ui';
 import { updateProfile, updateNotificationPreferences, deleteMyAccount } from '@/lib/actions';
-import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, normalizeEmailPreferences, emailPreferenceKey, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, clearHostOnlyAuthCookies, hasConsoleAccess, type NotificationCategory } from '@badminton/shared';
+import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, normalizeEmailPreferences, emailPreferenceKey, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, clearHostOnlyAuthCookies, hasConsoleAccess, getAccountStanding, type NotificationCategory } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -98,10 +98,11 @@ export default function SettingsPage() {
   //                    can, so this is strictly wider than isExec.
   const [isExec, setIsExec] = useState(false);
   const [canOpenConsole, setCanOpenConsole] = useState(false);
-  // Fees and the calendar feed are member features the server rejects until an
-  // account is approved (requirePlayer throws "Account pending approval"), so
-  // showing them just produced a dead panel. Hidden until approval, same rule
-  // the nav uses.
+  // Fees and the calendar feed are member features the server rejects unless
+  // the account is in good standing (requirePlayer throws "Account pending
+  // approval" / "Account suspended"), so showing them just produced a dead
+  // panel. getAccountStanding is the same three checks requirePlayer makes —
+  // the hand-rolled status test this replaced missed is_banned entirely.
   const [isApproved, setIsApproved] = useState(true);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState('');
@@ -144,7 +145,9 @@ export default function SettingsPage() {
         // and nothing here. players_self is `SELECT *`, so the standing columns
         // hasConsoleAccess needs (is_banned, status, active_flag) are present.
         setCanOpenConsole(hasConsoleAccess(data));
-        setIsApproved(data.status !== 'pending_approval' && data.status !== 'suspended');
+        // getAccountStanding, not a hand-rolled status test: the old one missed
+        // is_banned, so a banned member kept every control on this page.
+        setIsApproved(getAccountStanding(data).ok);
         setLoaded(true);
       }
     }

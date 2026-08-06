@@ -1,5 +1,5 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { MATCH_FORMAT_LABELS, formatRelativeTime, getWinRate, pickOne, unwrap } from '@badminton/shared';
+import { MATCH_FORMAT_LABELS, formatRelativeTime, getWinRate, pickOne, unwrap, getAccountStanding } from '@badminton/shared';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { Plus, ChevronRight, Crosshair } from 'lucide-react';
@@ -98,9 +98,13 @@ export default async function FeedPage() {
     .slice(0, 5);
 
   // Every challenge/session/tournament action is rejected server-side by
-  // requirePlayer() until an account is approved, so the CTAs that lead there
-  // are hidden rather than left to fail on click (same rule as the nav).
-  const isApproved = player.status !== 'pending_approval' && player.status !== 'suspended';
+  // requirePlayer() until an account is in good standing, so the CTAs that
+  // lead there are hidden rather than left to fail on click. This used to test
+  // status alone, which let a BANNED account (is_banned is its own column and
+  // is never mirrored into status) keep every CTA — getAccountStanding is the
+  // same three checks requirePlayer makes, in one place.
+  const standing = getAccountStanding(player);
+  const isApproved = standing.ok;
   const firstName = player.full_name.split(' ')[0];
 
   const subBits: string[] = [];
@@ -113,7 +117,11 @@ export default async function FeedPage() {
     subBits.push('Issue your first challenge to start climbing.');
   } else {
     // Don't tell someone to do the one thing the server will refuse.
-    subBits.push('Your account is waiting on approval.');
+    subBits.push(
+      standing.block === 'pending_approval'
+        ? 'Your account is waiting on approval.'
+        : 'Your account is suspended.',
+    );
   }
   const subLine = subBits.join(' · ');
 
@@ -146,11 +154,11 @@ export default async function FeedPage() {
           className="card-base"
           style={{ marginBottom: 16, borderLeft: '3px solid var(--gold, #E0A800)' }}
         >
-          <h3 className="card-title" style={{ marginBottom: 6 }}>Waiting on approval</h3>
+          <h3 className="card-title" style={{ marginBottom: 6 }}>
+            {standing.block === 'pending_approval' ? 'Waiting on approval' : 'Account suspended'}
+          </h3>
           <p className="muted" style={{ fontSize: 14, lineHeight: 1.55, margin: 0 }}>
-            An exec still needs to approve your account. Once they do, you can issue
-            challenges, RSVP to sessions and enter tournaments. Until then you can browse
-            the leaderboard to see where everyone stands.
+            {standing.detail} You can still browse the leaderboard to see where everyone stands.
           </p>
         </div>
       )}

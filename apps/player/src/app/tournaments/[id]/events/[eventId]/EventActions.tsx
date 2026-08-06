@@ -5,6 +5,8 @@ import { Button, Dialog, LegalMarkdown, useConfirm } from '@badminton/ui';
 import { eventHasDraw, isOutOfEvent } from '@badminton/shared';
 import { registerForEvent, withdrawFromEvent, selfCheckIn } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
+import { useStanding } from '@/components/standing-provider';
+import { StandingNote } from '@/components/standing-notice';
 import { useRouter } from 'next/navigation';
 import { UserPlus, UserMinus, CheckCircle } from 'lucide-react';
 
@@ -26,6 +28,10 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
   const { toast } = useToast();
   const router = useRouter();
   const confirm = useConfirm();
+  // `suspended` above is the TOURNAMENT being suspended — a different thing
+  // from the member's own standing, which is what this is. registerForEvent,
+  // selfCheckIn and withdrawFromEvent all start with requirePlayer().
+  const standing = useStanding();
 
   if (isDoubles) {
     if (playerRegistration) {
@@ -104,6 +110,13 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
 
   const waiverText = eventWaiverText?.trim();
 
+  // Registration status chips (below) still render; only the live controls go.
+  if (!standing.ok && !playerRegistration) {
+    return eventStatus === 'registration'
+      ? <StandingNote standing={standing} activity="Entries" />
+      : null;
+  }
+
   if (!playerRegistration) {
     if (eventStatus === 'registration' && !suspended) {
       if (waiverText) {
@@ -168,7 +181,7 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      {regStatus === 'registered' && eventStatus === 'checkin' && !suspended && (
+      {regStatus === 'registered' && eventStatus === 'checkin' && !suspended && standing.ok && (
         <Button
           onClick={handleCheckIn}
           loading={loading}
@@ -179,7 +192,7 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
           Check In
         </Button>
       )}
-      {stillIn && !drawPublished && (
+      {stillIn && !drawPublished && standing.ok && (
         <Button
           onClick={handleWithdraw}
           loading={loading}
@@ -197,6 +210,11 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
         <p className="text-xs text-[var(--text-secondary)] italic">
           You are in the draw. Ask a tournament admin if you need to withdraw.
         </p>
+      )}
+      {/* Registered, but check-in and withdrawal are both server-refused —
+          say so rather than leave a bare chip where two buttons used to be. */}
+      {stillIn && !drawPublished && !standing.ok && (
+        <StandingNote standing={standing} activity="Check-in and withdrawal" />
       )}
       {outOfEvent && (
         <p className="text-xs text-[var(--text-secondary)] italic">

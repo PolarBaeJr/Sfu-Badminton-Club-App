@@ -21,13 +21,31 @@ Deno.serve(async (req) => {
   const thresholdDays: number = (setting?.value as Record<string, number>)?.inactive_threshold_days ?? INACTIVITY_DAYS;
   const cutoff = new Date(Date.now() - thresholdDays * 24 * 60 * 60 * 1000).toISOString();
 
-  // Find active players whose last_active_at is past the threshold
+  // Find active players whose last_active_at is past the threshold.
+  //
+  // Admins and execs are exempt. Since migration 00057 the admin console
+  // requires good standing, and admin_access_level() counts a cleared
+  // active_flag as bad standing — so this job, which measures attendance,
+  // silently revoked console access. An exec or admin runs the club and may
+  // legitimately not play for a whole term; taking the console off them on an
+  // attendance metric is a failure, and one nobody would connect to a nightly
+  // cron.
+  //
+  // Varsity trainers are NOT exempt, on purpose. A trainer's console access is
+  // scoped to reading the roster and writing notes; if they have gone inactive
+  // as a member, letting that lapse is the correct outcome and an exec undoes
+  // it by setting them active again.
+  //
+  // role and is_exec are both NOT NULL with defaults (00001_schema), so these
+  // filters have no NULL hole to fall through.
   const { data: toMark, error } = await supabase
     .from('players')
     .update({ active_flag: false, updated_at: new Date().toISOString() })
     .in('status', ['competitive', 'recreational'])
     .eq('active_flag', true)
     .lt('last_active_at', cutoff)
+    .neq('role', 'admin')
+    .eq('is_exec', false)
     .select('id, full_name');
 
   if (error) {

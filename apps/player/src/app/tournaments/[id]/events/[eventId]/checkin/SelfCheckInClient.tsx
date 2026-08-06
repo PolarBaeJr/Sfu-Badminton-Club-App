@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button } from '@badminton/ui';
 import { selfCheckIn } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
+import { useStanding } from '@/components/standing-provider';
 import { useRouter } from 'next/navigation';
 import { CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
 import Link from 'next/link';
@@ -22,6 +23,7 @@ export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registra
   const [success, setSuccess] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
+  const standing = useStanding();
 
   async function handleCheckIn() {
     setLoading(true);
@@ -58,6 +60,30 @@ export function SelfCheckInClient({ eventId, tournamentId, eventStatus, registra
           className="press inline-flex items-center gap-2 px-5 py-3 min-h-[48px] bg-[var(--color-success)]/10 text-[var(--color-success)] text-sm font-bold rounded-xl border border-[var(--color-success)]/25 hover:bg-[var(--color-success)]/20 transition-all duration-200"
         >
           View Event Details
+        </Link>
+      </div>
+    );
+  }
+
+  // The member's own standing, checked before the tournament's — selfCheckIn
+  // starts with requirePlayer(), so this refusal comes first there too, and
+  // someone at the desk should be told the reason that actually applies to
+  // them rather than one about the event.
+  if (!standing.ok) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-5 text-center px-6 pb-28">
+        <div className="w-20 h-20 rounded-full bg-[var(--color-accent)]/15 flex items-center justify-center">
+          <XCircle className="w-10 h-10 text-[var(--color-accent)]" />
+        </div>
+        <div>
+          <h1 className="display-md">Check-in Paused</h1>
+          <p className="text-[var(--text-muted)] text-sm mt-2" style={{ maxWidth: '44ch' }}>{standing.detail}</p>
+        </div>
+        <Link
+          href={backLink}
+          className="press text-sm text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors min-h-[44px] flex items-center"
+        >
+          Back to Event
         </Link>
       </div>
     );

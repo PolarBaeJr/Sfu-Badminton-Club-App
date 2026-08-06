@@ -1,6 +1,6 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { CHECKIN_TOKEN_REGEX, getClientIp, rateLimit } from '@badminton/shared';
+import { CHECKIN_TOKEN_REGEX, getClientIp, rateLimit, getAccountStanding } from '@badminton/shared';
 import { getCurrentPlayer } from '@/lib/supabase-server';
 import { CheckinClient } from './checkin-client';
 
@@ -36,6 +36,19 @@ export default async function CheckinPage({ params }: { params: Promise<{ token:
     // Carry the token through sign-in — /login has no generic `next=` support.
     // Only a well-formed token travels, so nothing arbitrary can ride along.
     redirect(CHECKIN_TOKEN_REGEX.test(token) ? `/login?checkin=${token}` : '/login');
+  }
+
+  // checkInWithToken -> requirePlayer() refuses before it even resolves the
+  // token, so say so on arrival. Someone standing at the door with a phone
+  // needs to know they are not on the list *now*, not after a spinner.
+  const standing = getAccountStanding(player);
+  if (!standing.ok) {
+    return (
+      <div className="max-w-md mx-auto py-16 px-4 text-center">
+        <h1 style={{ fontFamily: 'var(--display)', fontSize: 28, fontWeight: 700 }}>Can&apos;t check you in</h1>
+        <p className="page-sub" style={{ marginTop: 8 }}>{standing.detail}</p>
+      </div>
+    );
   }
 
   return <CheckinClient token={token} />;
