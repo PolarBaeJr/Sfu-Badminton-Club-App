@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge, PageHeader } from '@badminton/ui';
+import { Card, Badge, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { MATCH_FORMAT_LABELS, formatDateTime, unwrap } from '@badminton/shared';
 import { MatchActions } from './actions';
 import { CreateMatchForm } from './create-match';
@@ -65,6 +65,35 @@ export default async function MatchesPage() {
     walkoversByChallenge.set(w.challenge_id, existing);
   });
 
+  // Derived once so the desktop table and the mobile cards render the same
+  // sides, disputes and walkovers rather than two copies of the same joins.
+  const rows = (matches || []).map((m) => ({
+    m,
+    sideA: m.match_participants?.filter((p: Record<string, unknown>) => p.team_side === 'a') || [],
+    sideB: m.match_participants?.filter((p: Record<string, unknown>) => p.team_side === 'b') || [],
+    matchDisputes: disputesByMatch.get(m.id) || [],
+    matchWalkovers: m.challenge_id ? walkoversByChallenge.get(m.challenge_id) || [] : [],
+  }));
+
+  const names = (side: Record<string, unknown>[]) =>
+    side.map((p) => (p.player as Record<string, unknown>)?.full_name as string);
+
+  // Each name stays whole; the line may break between names.
+  const sideLine = (side: Record<string, unknown>[], won: boolean) => (
+    <span
+      className={`inline-flex flex-wrap items-baseline gap-x-1.5 ${
+        won ? 'text-[var(--color-success)] font-semibold' : 'text-[var(--text-secondary)]'
+      }`}
+    >
+      {names(side).map((n, i) => (
+        <span key={i} className="inline-flex items-baseline gap-x-1.5">
+          {i > 0 && <span className="text-[var(--text-muted)]">&amp;</span>}
+          <Atomic>{n}</Atomic>
+        </span>
+      ))}
+    </span>
+  );
+
   return (
     <div className="space-y-8">
       {/* Page Header */}
@@ -77,18 +106,126 @@ export default async function MatchesPage() {
 
       {/* Matches Table */}
       <Card padding={false}>
-        <div className="overflow-x-auto">
-          {(!matches || matches.length === 0) ? (
-            <div className="flex flex-col items-center justify-center py-20 px-6 text-center">
-              <div className="flex items-center justify-center w-14 h-14 rounded-full bg-[var(--border-hover)] mb-4">
-                <Inbox className="w-7 h-7 text-[var(--text-muted)]" />
-              </div>
-              <h3 className="text-base font-semibold text-[var(--text-primary)] mb-1">No matches yet</h3>
-              <p className="text-sm text-[var(--text-muted)] max-w-sm">
-                Matches will appear here once players start competing. Create a new match to get started.
-              </p>
+        {/* The empty state now sits outside the scroll wrapper: it has nothing
+            to scroll, and inside it would have been hidden below `md`. */}
+        {(!matches || matches.length === 0) ? (
+          <div className="flex flex-col items-center justify-center py-20 px-6 text-center">
+            <div className="flex items-center justify-center w-14 h-14 rounded-full bg-[var(--border-hover)] mb-4">
+              <Inbox className="w-7 h-7 text-[var(--text-muted)]" />
             </div>
-          ) : (
+            <h3 className="text-base font-semibold text-[var(--text-primary)] mb-1">No matches yet</h3>
+            <p className="text-sm text-[var(--text-muted)] max-w-sm">
+              Matches will appear here once players start competing. Create a new match to get started.
+            </p>
+          </div>
+        ) : (
+          <ResponsiveTable
+            cards={rows.map(({ m, sideA, sideB, matchDisputes, matchWalkovers }) => (
+              <TableCard
+                key={m.id}
+                title={
+                  <div className="space-y-0.5">
+                    {sideLine(sideA, m.winner_side === 'a')}
+                    <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--text-muted)]">vs</div>
+                    {sideLine(sideB, m.winner_side === 'b')}
+                  </div>
+                }
+                value={
+                  m.score_summary
+                    ? <Atomic separator=",">{m.score_summary}</Atomic>
+                    : <span className="text-[var(--text-muted)]">-</span>
+                }
+                badges={
+                  <>
+                    <Badge variant={m.rated_flag ? 'warning' : 'neutral'}>
+                      {m.rated_flag ? 'Rated' : 'Casual'}
+                    </Badge>
+                    <Badge
+                      variant={
+                        m.result_status === 'confirmed' ? 'success' :
+                        m.result_status === 'disputed' ? 'danger' :
+                        m.result_status === 'voided' ? 'neutral' :
+                        'warning'
+                      }
+                    >
+                      {m.result_status}
+                    </Badge>
+                    <span className="text-xs text-[var(--text-muted)]">{m.match_type}</span>
+                  </>
+                }
+                fields={[
+                  { label: 'Format', value: MATCH_FORMAT_LABELS[m.format as keyof typeof MATCH_FORMAT_LABELS] },
+                  { label: 'Date', value: m.played_at ? formatDateTime(m.played_at) : '-' },
+                  {
+                    label: 'Elo',
+                    wide: true,
+                    value: (
+                      <div className="flex flex-wrap gap-x-3 gap-y-1">
+                        {m.match_participants?.map((p: Record<string, unknown>) => {
+                          const delta = p.rating_delta as number;
+                          const hasDelta = delta !== null && delta !== undefined;
+                          const isPositive = hasDelta && delta > 0;
+                          const isNegative = hasDelta && delta < 0;
+                          return (
+                            <span
+                              key={p.id as string}
+                              className={`inline-flex items-center gap-1 whitespace-nowrap text-xs font-mono font-medium ${
+                                isPositive ? 'text-[var(--color-success)]' :
+                                isNegative ? 'text-[var(--color-danger)]' : 'text-[var(--text-muted)]'
+                              }`}
+                            >
+                              {hasDelta ? (
+                                <>
+                                  {isPositive && <ArrowUp className="w-3 h-3" />}
+                                  {isNegative && <ArrowDown className="w-3 h-3" />}
+                                  {!isPositive && !isNegative && <Minus className="w-3 h-3" />}
+                                  {isPositive ? '+' : ''}{delta}
+                                </>
+                              ) : (
+                                '-'
+                              )}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    ),
+                  },
+                ]}
+                actions={
+                  m.result_status !== 'voided'
+                    ? <MatchActions matchId={m.id} resultStatus={m.result_status} />
+                    : undefined
+                }
+              >
+                {(matchDisputes.length > 0 || matchWalkovers.length > 0) && (
+                  <div className="mt-3 space-y-1.5">
+                    {matchDisputes.map((d: Record<string, unknown>) => (
+                      <div
+                        key={d.id as string}
+                        className="flex items-start gap-1.5 text-xs border-l-2 border-[var(--color-danger)] pl-2.5 py-1"
+                      >
+                        <AlertTriangle className="w-3.5 h-3.5 text-[var(--color-danger)] mt-0.5 shrink-0" />
+                        <span className="text-[var(--color-danger)]">
+                          <span className="font-medium">Dispute ({d.status as string})</span>: {d.reason_category as string} — {d.description as string}
+                        </span>
+                      </div>
+                    ))}
+                    {matchWalkovers.map((w: Record<string, unknown>) => (
+                      <div
+                        key={w.id as string}
+                        className="flex items-start gap-1.5 text-xs border-l-2 border-[var(--color-warning)] pl-2.5 py-1"
+                      >
+                        <Clock className="w-3.5 h-3.5 text-[var(--color-warning)] mt-0.5 shrink-0" />
+                        <span className="text-[var(--color-warning)]">
+                          <span className="font-medium">Walkover ({w.walkover_type as string})</span>: {((w.forfeit as Record<string, unknown>)?.full_name as string)} — {w.status as string}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </TableCard>
+            ))}
+          >
             <table className="w-full">
               <thead>
                 <tr className="border-b-2 border-[var(--border)]">
@@ -103,14 +240,7 @@ export default async function MatchesPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
-                {matches?.map((m) => {
-                  const sideA = m.match_participants?.filter((p: Record<string, unknown>) => p.team_side === 'a') || [];
-                  const sideB = m.match_participants?.filter((p: Record<string, unknown>) => p.team_side === 'b') || [];
-                  const matchDisputes = disputesByMatch.get(m.id) || [];
-                  const matchWalkovers = m.challenge_id ? walkoversByChallenge.get(m.challenge_id) || [] : [];
-                  const hasIssues = matchDisputes.length > 0 || matchWalkovers.length > 0;
-
-                  return (
+                {rows.map(({ m, sideA, sideB, matchDisputes, matchWalkovers }) => (
                     <tr
                       key={m.id}
                       className="transition-colors duration-150 hover:bg-[var(--border-hover)]"
@@ -226,12 +356,11 @@ export default async function MatchesPage() {
                         )}
                       </td>
                     </tr>
-                  );
-                })}
+                ))}
               </tbody>
             </table>
-          )}
-        </div>
+          </ResponsiveTable>
+        )}
       </Card>
     </div>
   );

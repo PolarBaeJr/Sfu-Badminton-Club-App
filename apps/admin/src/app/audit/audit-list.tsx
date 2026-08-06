@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Badge } from '@badminton/ui';
+import { Badge, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { formatDateTime } from '@badminton/shared';
 import { User } from 'lucide-react';
 
@@ -144,7 +144,37 @@ export function AuditList({ logs }: { logs: AuditLogRow[] }) {
       </div>
 
       {/* Table — hairline dividers, no card chrome */}
-      <div className="overflow-x-auto">
+      <ResponsiveTable
+        cards={rows.map((log) => (
+          <TableCard
+            key={log.id}
+            title={
+              <span className="flex items-center gap-2">
+                <User className="w-3.5 h-3.5 shrink-0 text-[var(--text-muted)]" />
+                {log.actor?.full_name || <span className="italic text-[var(--text-muted)]">System</span>}
+              </span>
+            }
+            badges={<Badge variant={actionCategory(log.action_type)}>{log.action_type.replace(/_/g, ' ')}</Badge>}
+            fields={[
+              { label: 'Time', value: <Atomic separator=",">{formatDateTime(log.created_at)}</Atomic> },
+              {
+                label: 'Target',
+                value: (
+                  <>
+                    <span className="capitalize">{log.target_type}</span>
+                    {log.target_id && (
+                      <span className="ml-1.5 bg-[var(--border-hover)] px-1.5 py-0.5 font-mono text-xs text-[var(--text-muted)]">
+                        {String(log.target_id).slice(0, 8)}
+                      </span>
+                    )}
+                  </>
+                ),
+              },
+              { label: 'Reason', wide: true, value: log.reason || <span className="opacity-40">-</span> },
+            ]}
+          />
+        ))}
+      >
         <table className="w-full">
           <thead>
             <tr className="border-b border-[var(--border)]">
@@ -185,12 +215,12 @@ export function AuditList({ logs }: { logs: AuditLogRow[] }) {
             ))}
           </tbody>
         </table>
-        {rows.length === 0 && (
-          <p className="border-b border-[var(--border)] py-10 text-center text-sm text-[var(--text-muted)]">
-            No audit entries.
-          </p>
-        )}
-      </div>
+      </ResponsiveTable>
+      {rows.length === 0 && (
+        <p className="border-b border-[var(--border)] py-10 text-center text-sm text-[var(--text-muted)]">
+          No audit entries.
+        </p>
+      )}
     </div>
   );
 }
