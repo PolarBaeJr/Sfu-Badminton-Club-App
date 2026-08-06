@@ -39,9 +39,10 @@ export type RosterAction =
   /** approvePlayer (pending) / updatePlayer (anything else) into a division. */
   | { kind: 'assign'; status: 'recreational' | 'competitive' };
 
-/** Only the flag that changes which action applies — everything else is display. */
+/** Only what changes which action applies — everything else is display. */
 export interface RosterRowState {
   is_banned?: boolean | null;
+  status?: string | null;
 }
 
 /**
@@ -66,12 +67,21 @@ export function rosterActionsFor(tab: string, player: RosterRowState): RosterAct
         { kind: 'assign', status: 'recreational' },
         { kind: 'assign', status: 'competitive' },
       ];
-    default:
+    default: {
+      // "when a user is suspended please make it so they cannot be marked as
+      // inactive, since they may get removed from suspended" — the club owner.
+      // A banned member still appears on the roster tabs (they keep their
+      // status), and is_banned reads to a member as exactly the same thing a
+      // suspension does, so both withhold the button. updatePlayer() refuses
+      // the same pair server-side; this only stops offering a control that is
+      // certain to fail.
+      const moderated = player.is_banned === true || player.status === 'suspended';
       return [
         { kind: 'edit' },
         player.is_banned ? { kind: 'unban' } : { kind: 'ban' },
-        { kind: 'inactive' },
+        ...(moderated ? [] : [{ kind: 'inactive' } as RosterAction]),
       ];
+    }
   }
 }
 

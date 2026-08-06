@@ -5,9 +5,10 @@
 import * as Sentry from '@sentry/nextjs';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { PostHog } from 'posthog-node';
-import { getMissingLegalDocuments, isPushCategoryEnabled, ExpectedError, isExpectedFailure, type NotificationCategory } from '@badminton/shared';
+import { getMissingLegalDocuments, isPushCategoryEnabled, isSelfReactivatable, ExpectedError, isExpectedFailure, type NotificationCategory } from '@badminton/shared';
 import { sendPushToPlayers, type PushPayload } from '@badminton/shared/src/push/send';
 import { getCurrentPlayer, createServiceRoleClient } from '../supabase-server';
+import { reactivateLapsedMember } from '../reactivate';
 
 export type ActionResult<T = void> =
   | { ok: true; data: T }
@@ -82,6 +83,31 @@ export async function requirePlayer() {
   if (player.is_banned) {
     Sentry.setUser(null);
     throw new ExpectedError('Account suspended pending reinstatement');
+  }
+  // active_flag, last, and the ordering above is doing real work. By the time
+  // we get here the pending / suspended / banned rows have already thrown, so
+  // the ONLY deactivated accounts left are the nightly job's lapsed members and
+  // the ones that asked to be deleted. isSelfReactivatable() separates the two
+  // (and restates the earlier checks, because the sweep and getAccountStanding
+  // call it standalone) — a lapsed member is let back in, a deletion request is
+  // refused rather than silently undone.
+  //
+  // Sign-in is where reactivation normally happens (/auth/callback and
+  // /auth/post-login), which is once per session rather than once per action.
+  // This stays as the safety net because a member can be deactivated WITH a
+  // live session: last_active_at is only bumped by a session check-in, so
+  // someone who opens the app every day but does not play for the threshold
+  // gets marked inactive without ever signing in again. Costs a boolean
+  // comparison on every other call — the write is gated on active_flag being
+  // false, and it is false exactly once.
+  if (player.active_flag === false) {
+    if (!isSelfReactivatable(player)) {
+      Sentry.setUser(null);
+      throw new ExpectedError('Account scheduled for deletion');
+    }
+    // getCurrentPlayer() already returned this row, so hand the caller the
+    // state it now has rather than the stale copy it was fetched with.
+    if (await reactivateLapsedMember(player)) player.active_flag = true;
   }
   Sentry.setUser({ id: player.id });
   return player;

@@ -38,6 +38,22 @@ Deno.serve(async (req) => {
   //
   // role and is_exec are both NOT NULL with defaults (00001_schema), so these
   // filters have no NULL hole to fall through.
+  //
+  // is_banned is excluded for the reason the club owner gave about suspension:
+  // "when a user is suspended please make it so they cannot be marked as
+  // inactive, since they may get removed from suspended". The status filter
+  // below already keeps 'suspended' and 'pending_approval' out, but is_banned
+  // is a SEPARATE column that is never mirrored into status — a banned member
+  // still reads as 'competitive'. Without this line, a banned member idle past
+  // the threshold gets deactivated by the clock, and from then on nothing can
+  // tell their ban apart from an ordinary lapse: they are eligible for the
+  // self-reactivation the members' app now performs on sign-in, and lifting
+  // the ban later leaves them off the roster anyway.
+  //
+  // deletion_requested_at is excluded because deleteMyAccount has already
+  // cleared active_flag; there is nothing here to do, and re-stamping the row
+  // would only queue a "you have been marked inactive" notice (00059) at
+  // somebody who asked to be deleted.
   const { data: toMark, error } = await supabase
     .from('players')
     .update({ active_flag: false, updated_at: new Date().toISOString() })
@@ -46,6 +62,8 @@ Deno.serve(async (req) => {
     .lt('last_active_at', cutoff)
     .neq('role', 'admin')
     .eq('is_exec', false)
+    .eq('is_banned', false)
+    .is('deletion_requested_at', null)
     .select('id, full_name');
 
   if (error) {

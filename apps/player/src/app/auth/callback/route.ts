@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { CHECKIN_TOKEN_REGEX, rateLimit, getClientIp } from '@badminton/shared';
 import { AUTH_COOKIE_OPTIONS, hostOnlyAuthCookieClears } from '@badminton/shared';
+import { reactivateLapsedMemberByUserId } from '@/lib/reactivate';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -55,21 +56,33 @@ export async function GET(request: Request) {
     }
   );
 
+  let userId: string | null = null;
+
   if (code) {
     // OAuth or PKCE magic link flow
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
     if (error) {
       return NextResponse.redirect(`${origin}/login?error=auth_failed`);
     }
+    userId = data.user?.id ?? null;
   } else if (token_hash && type) {
     // Non-PKCE magic link flow
-    const { error } = await supabase.auth.verifyOtp({ token_hash, type: type as 'magiclink' | 'email' });
+    const { data, error } = await supabase.auth.verifyOtp({ token_hash, type: type as 'magiclink' | 'email' });
     if (error) {
       return NextResponse.redirect(`${origin}/login?error=auth_failed`);
     }
+    userId = data.user?.id ?? null;
   } else {
     return NextResponse.redirect(`${origin}/login`);
   }
+
+  // This route redirects to `/`, not to /auth/post-login, so it is its own
+  // sign-in entry point and needs its own reactivation. The user id comes off
+  // the exchange result rather than getCurrentPlayer(): the session cookie is
+  // being SET on this response, so next/headers cannot see it yet on this
+  // request. Best-effort — the requirePlayer() net catches anything missed
+  // here, and a failed lookup must not cost the member their sign-in.
+  if (userId) await reactivateLapsedMemberByUserId(userId);
 
   return response;
 }

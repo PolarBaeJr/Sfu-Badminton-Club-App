@@ -14,19 +14,64 @@
 //                            'competitive'/'recreational'/'inactive' are not.
 //   * players.is_banned    — its own boolean, set by banPlayer, never mirrored
 //                            into status.
-//   * players.active_flag  — cleared by deleteMyAccount and by the nightly
-//                            mark-inactive-players job. requirePlayer() does
-//                            NOT check it, so neither does this. (The admin
-//                            console's admin_access_level() DOES check it —
-//                            migration 00057 — which is a real inconsistency,
-//                            but closing it means changing what the server
-//                            allows and that is not this module's call.)
+//   * players.active_flag  — cleared by THREE different writers that must not
+//                            be treated alike. See isSelfReactivatable below;
+//                            requirePlayer() now checks it, so this does too.
 //
 // Note the deliberate asymmetry with the labels shown elsewhere: 'suspended'
 // and is_banned both read as "suspended" to a member, because that is what the
 // club calls both. They differ in what undoes them, so the copy differs there.
 
-export type AccountBlock = 'pending_approval' | 'suspended' | 'banned';
+export type AccountBlock =
+  | 'pending_approval'
+  | 'suspended'
+  | 'banned'
+  | 'deletion_pending';
+
+// WHO CLEARS active_flag, and which of them a member may undo by signing in.
+//
+// Three writers, three different meanings — the whole point of this predicate
+// is that they are NOT interchangeable:
+//
+//   1. mark-inactive-players (nightly edge function). Roster hygiene: no
+//      session check-in for inactivity_rules.inactive_threshold_days. Nobody
+//      decided anything about this person; a clock ran out. THIS is the one a
+//      member undoes by coming back.
+//   2. removePlayer (admin console) — writes status='suspended' AND
+//      active_flag=false together. An admin removed them. Undoing that on
+//      sign-in would let anyone reverse a moderation decision by logging in.
+//   3. deleteMyAccount (members' app) — writes deletion_requested_at AND
+//      active_flag=false. They asked to be deleted, with a 30-day grace window
+//      and an explicit restoreMyAccount to change their mind. Silently
+//      un-deleting on sign-in would be worse than refusing.
+//
+// So (2) is recognised by status='suspended' and (3) by deletion_requested_at.
+// pending_approval and is_banned are folded in for the same reason: neither is
+// a lapse, and a nightly clock must never launder either into "welcome back".
+//
+// COALESCE semantics, matching isInGoodStanding: a narrowed select that omits
+// is_banned/deletion_requested_at must read as "not banned, not deleting"
+// rather than silently refusing a member.
+export function isSelfReactivatable(
+  player:
+    | {
+        active_flag?: boolean | null;
+        status?: string | null;
+        is_banned?: boolean | null;
+        deletion_requested_at?: string | null;
+      }
+    | null
+    | undefined,
+): boolean {
+  if (!player) return false;
+  // Only a deactivated account can be reactivated; an active one is not "in"
+  // this state at all, and answering true would invite a pointless write.
+  if (player.active_flag !== false) return false;
+  if (player.deletion_requested_at) return false;
+  if (player.status === 'suspended' || player.status === 'pending_approval') return false;
+  if (player.is_banned === true) return false;
+  return true;
+}
 
 export interface AccountStanding {
   /** True when nothing about this account's standing will refuse an action. */
@@ -60,6 +105,11 @@ const BLOCKS: Record<AccountBlock, Omit<AccountStanding, 'ok' | 'block'>> = {
     detail:
       'Your account is suspended pending a reinstatement fee. Contact an admin to be reinstated, and club activity will come back.',
   },
+  deletion_pending: {
+    reason: 'your account is scheduled for deletion',
+    detail:
+      'You asked us to delete this account, so club activity is paused while the request stands. Cancel the deletion in Settings and everything comes straight back.',
+  },
 };
 
 /**
@@ -70,17 +120,33 @@ const BLOCKS: Record<AccountBlock, Omit<AccountStanding, 'ok' | 'block'>> = {
  *   whether they have a session.
  */
 export function getAccountStanding(
-  player: { status?: string | null; is_banned?: boolean | null } | null | undefined,
+  player:
+    | {
+        status?: string | null;
+        is_banned?: boolean | null;
+        active_flag?: boolean | null;
+        deletion_requested_at?: string | null;
+      }
+    | null
+    | undefined,
 ): AccountStanding {
   if (!player) return GOOD_STANDING;
 
-  // Order matches requirePlayer(): status first, then the ban. A member who is
-  // both suspended and banned sees the suspension message, exactly as the
-  // server action would have told them.
+  // Order matches requirePlayer(): status first, then the ban, then the flag.
+  // A member who is both suspended and banned sees the suspension message,
+  // exactly as the server action would have told them.
   let block: AccountBlock | null = null;
   if (player.status === 'pending_approval') block = 'pending_approval';
   else if (player.status === 'suspended') block = 'suspended';
   else if (player.is_banned) block = 'banned';
+  // A LAPSED member is deliberately NOT blocked here. requirePlayer() does not
+  // refuse them either — it reactivates them and carries on — so blocking them
+  // would hide controls the server would have allowed, which is the one
+  // direction this module must never drift in. What is left once the three
+  // checks above have passed is the deletion request, and only that.
+  else if (player.active_flag === false && !isSelfReactivatable(player)) {
+    block = 'deletion_pending';
+  }
 
   if (!block) return GOOD_STANDING;
   return { ok: false, block, ...BLOCKS[block] };

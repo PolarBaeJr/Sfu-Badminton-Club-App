@@ -122,6 +122,8 @@ export interface Player {
   bio: string | null;
   exec_title: string | null;
   waiver_reset_at: string | null;
+  /** 00059 — when the "your membership is now inactive" notice was sent. Cleared whenever active_flag goes back to true. */
+  inactivity_notice_sent_at: string | null;
   joined_at: string;
   last_active_at: string;
   created_at: string;
