@@ -196,8 +196,14 @@ export default async function PlayersPage({
               exec-allowed, so the column is dropped whole for a trainer rather
               than rendered with controls that reject on click. */}
           {canManage && (
-            <td className="px-4 py-3 text-right">
-              <div className="flex flex-wrap gap-1 justify-end">
+            <td className="px-4 py-3 text-right align-middle whitespace-nowrap">
+              {/* nowrap, not flex-wrap: three actions were folding onto a second
+                  line and shoving the row taller than every other one. The table
+                  already sits in an overflow-x-auto wrapper, so letting this
+                  column claim the width it needs costs a horizontal scroll on a
+                  narrow desktop instead of a ragged two-line row on every wide
+                  one. Mobile gets the card layout, which stacks these anyway. */}
+              <div className="inline-flex flex-nowrap gap-1 justify-end">
                 {rosterActionsFor(tab, player).map((action) => (
                   <PlayerActions
                     key={rosterActionKey(action)}
