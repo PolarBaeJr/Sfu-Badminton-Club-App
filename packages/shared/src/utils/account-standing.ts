@@ -56,9 +56,10 @@ const BLOCKS: Record<AccountBlock, Omit<AccountStanding, 'ok' | 'block'>> = {
       'Your account is suspended, so club activity is paused. Contact an exec if you think this is a mistake.',
   },
   banned: {
-    reason: 'your account is suspended pending reinstatement',
-    detail:
-      'Your account is suspended pending a reinstatement fee. Contact an admin to be reinstated, and club activity will come back.',
+    reason: 'your account is suspended',
+    // ban_reason is folded in by getAccountStanding when there is one — a
+    // member told only "you are suspended" has to go and ask what for.
+    detail: 'Your account is suspended. Contact an executive to be reinstated.',
   },
 };
 
@@ -70,7 +71,10 @@ const BLOCKS: Record<AccountBlock, Omit<AccountStanding, 'ok' | 'block'>> = {
  *   whether they have a session.
  */
 export function getAccountStanding(
-  player: { status?: string | null; is_banned?: boolean | null } | null | undefined,
+  player:
+    | { status?: string | null; is_banned?: boolean | null; ban_reason?: string | null }
+    | null
+    | undefined,
 ): AccountStanding {
   if (!player) return GOOD_STANDING;
 
@@ -83,5 +87,20 @@ export function getAccountStanding(
   else if (player.is_banned) block = 'banned';
 
   if (!block) return GOOD_STANDING;
+
+  // Say WHY. An exec writes a reason on every ban (it is required), and a
+  // member who is only told "suspended" has to go and ask what for. Quoted so
+  // it reads as the exec's words rather than the app's.
+  if (block === 'banned') {
+    const why = (player.ban_reason ?? '').trim();
+    return {
+      ok: false,
+      block,
+      ...BLOCKS[block],
+      detail: why
+        ? `Your account is suspended for "${why}". Contact an executive to be reinstated.`
+        : BLOCKS[block].detail,
+    };
+  }
   return { ok: false, block, ...BLOCKS[block] };
 }

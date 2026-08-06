@@ -93,7 +93,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         // is_banned has to be in the select or getAccountStanding reads it as
         // undefined and a banned member keeps every control — exactly the bug
         // this exists to fix. active_flag is here for hasConsoleAccess.
-        .select('id, full_name, avatar_url, status, is_banned, active_flag, role, is_exec, is_trainer, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo), waiver_acceptances(document, version, accepted_at)')
+        .select('id, full_name, avatar_url, status, is_banned, ban_reason, active_flag, role, is_exec, is_trainer, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo), waiver_acceptances(document, version, accepted_at)')
         .eq('user_id', user.id)
         .maybeSingle();
       standing = getAccountStanding(player);
