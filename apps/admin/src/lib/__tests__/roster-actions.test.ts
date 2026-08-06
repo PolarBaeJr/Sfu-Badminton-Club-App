@@ -34,6 +34,17 @@ describe('rosterActionsFor', () => {
     }
   });
 
+  it('never offers Inactive to a banned or suspended member', () => {
+    // "when a user is suspended please make it so they cannot be marked as
+    // inactive, since they may get removed from suspended" — the club owner.
+    // A banned member keeps their division, so they are still listed on the
+    // roster tabs; is_banned reads to a member as a suspension, so both count.
+    for (const tab of ['competitive', 'recreational', '']) {
+      expect(kinds(rosterActionsFor(tab, { is_banned: true }))).toEqual(['edit', 'unban']);
+      expect(kinds(rosterActionsFor(tab, { status: 'suspended' }))).toEqual(['edit', 'ban']);
+    }
+  });
+
   it('never offers Ban to someone already banned', () => {
     // A banned member keeps their status, so they still appear on the roster
     // tabs as well as under Suspended.

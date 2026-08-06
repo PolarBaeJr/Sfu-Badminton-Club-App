@@ -9,6 +9,7 @@ import {
   disputeOpenedEmail,
   walkoverReportedEmail,
   playerApprovedEmail,
+  accountInactiveEmail,
   weeklyDigestEmail,
 } from './templates';
 import { buildUnsubscribeUrl } from './unsubscribe';
@@ -277,6 +278,32 @@ export async function sendPlayerApprovedEmail(
   // in, and it is sent to an account whose preferences are still empty because
   // they have never seen the settings page. Gating it on an opt-in they have had
   // no opportunity to give would leave every new member staring at "pending".
+  return sendCategoryEmail(to, 'announcements', subject, html, { transactional: true });
+}
+
+export async function sendAccountInactiveEmail(
+  to: string,
+  name: string,
+  thresholdDays: number,
+): Promise<SendOutcome> {
+  const loginUrl = `${process.env.NEXT_PUBLIC_PLAYER_URL || 'http://localhost:3000'}/login`;
+  const { subject, html } = accountInactiveEmail(name, thresholdDays, loginUrl);
+  // Transactional, on the same reasoning as the approved email: this IS the
+  // event, not a subscription to a stream of them. Two things make it so.
+  //
+  // It is about the state of the recipient's own membership and the action
+  // needed to undo it — a member who muted "announcements" muted club news, and
+  // has not thereby consented to never being told their membership was
+  // deactivated. And since 00058 made preferences opt-IN, the population this
+  // reaches is exactly the population least likely to have opted into anything:
+  // people who stopped coming, many of whom never opened the settings page.
+  // Category-gating it would mean the notice arrives for almost nobody, which
+  // is indistinguishable from not building it.
+  //
+  // Gate 1 is untouched and must stay so: hard bounces, complaints and
+  // unsubscribe-from-all still block the send. The RFC 8058 headers and the
+  // unsubscribe footer are added unconditionally by sendCategoryEmail, so this
+  // notice carries them too — correct, and the same as the approved email.
   return sendCategoryEmail(to, 'announcements', subject, html, { transactional: true });
 }
 

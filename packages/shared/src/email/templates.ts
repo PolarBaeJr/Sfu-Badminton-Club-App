@@ -161,6 +161,50 @@ export function playerApprovedEmail(name: string, loginUrl: string): { subject: 
   return welcomeEmail(name, loginUrl);
 }
 
+// "Your membership went inactive" — sent once per lapse, by the console's
+// /api/cron/inactivity-notices sweep.
+//
+// THE WORDING IS THE CAREFUL PART. The club owner asked for this to say the
+// member's data would be deleted after a year. Nothing in this app deletes
+// inactive accounts on any timetable — purge-deleted-accounts handles the
+// 30-day window for people who ASKED to be deleted, and that is the whole of
+// the retention machinery. Promising a deletion that does not happen is the
+// worst property a data-retention notice can have: it is the one kind of
+// message a member may act on by doing nothing, and it would be false.
+//
+// So this states what is actually true today — off the active roster, nothing
+// removed, sign in and you are back, and here is how to request deletion if
+// that is what you want. If the club decides it does want a one-year purge,
+// that is a separate decision and a separate job, and this copy changes with
+// it rather than ahead of it.
+export function accountInactiveEmail(
+  name: string,
+  thresholdDays: number,
+  loginUrl: string,
+): { subject: string; html: string } {
+  return {
+    subject: subj('Your SFU Badminton membership is now inactive'),
+    html: wrap(`
+      <h2 style="color: #E94560; margin-bottom: 16px;">Your membership is inactive</h2>
+      <p>Hi ${escapeHtml(name)} — we haven't seen you at a club session in about
+         ${escapeHtml(thresholdDays)} days, so we've moved your membership off the active roster.</p>
+      ${DIVIDER}
+      <p><strong>Nothing has been deleted.</strong> Your match history, your rating and
+         your record are all exactly where you left them.</p>
+      <p>Being inactive just means club activity is paused: no challenges, RSVPs,
+         check-ins or tournament entries until you're back.</p>
+      <p><strong>Signing in is all it takes.</strong> Your membership reactivates by itself
+         the moment you log in — there is nothing to ask anyone for.</p>
+      <a href="${escapeHtml(loginUrl)}" style="${BUTTON_STYLES}">Sign in and come back</a>
+      ${DIVIDER}
+      <p style="${MUTED}">If you would rather we deleted your account and its personal
+         details, you can request that yourself under Settings once you're signed in.
+         We hold the account for 30 days after a deletion request, in case you change
+         your mind.</p>
+    `),
+  };
+}
+
 export function weeklyDigestEmail(
   name: string,
   data: {

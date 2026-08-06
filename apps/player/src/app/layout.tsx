@@ -92,7 +92,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         .from('players')
         // is_banned has to be in the select or getAccountStanding reads it as
         // undefined and a banned member keeps every control — exactly the bug
-        // this exists to fix. active_flag is here for hasConsoleAccess.
+        // this exists to fix. Same for active_flag + deletion_requested_at,
+        // which getAccountStanding now reads too (and which hasConsoleAccess
+        // and DeletionGate already needed). ban_reason is what lets the banner
+        // say WHY rather than just "suspended".
         .select('id, full_name, avatar_url, status, is_banned, ban_reason, active_flag, role, is_exec, is_trainer, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo), waiver_acceptances(document, version, accepted_at)')
         .eq('user_id', user.id)
         .maybeSingle();

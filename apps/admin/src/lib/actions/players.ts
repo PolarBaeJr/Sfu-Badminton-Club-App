@@ -164,6 +164,46 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
   if (data.status) playerUpdate.status = data.status;
   // Inactive is active_flag, not a status — see adminPlayerUpdateSchema.
   if (data.active_flag !== undefined) playerUpdate.active_flag = data.active_flag;
+
+  // A suspended or banned member cannot be marked inactive. The club owner:
+  // "when a user is suspended please make it so they cannot be marked as
+  // inactive, since they may get removed from suspended". Both flags are
+  // treated alike because they read identically to the member — the app calls
+  // is_banned "suspended pending reinstatement" — and the damage is the same
+  // either way: a deactivated suspension is indistinguishable from an ordinary
+  // lapse, so lifting the suspension later would leave them off the roster,
+  // and the sign-in reactivation would hand a moderated account its way back.
+  //
+  // Enforced here rather than only by hiding the button on /players, because
+  // the button is one caller of a server action and a hand-rolled POST is
+  // another. The status compared is the one this write LEAVES BEHIND (an edit
+  // that sets a division and clears the flag in the same call is fine);
+  // is_banned is never written here, so the stored value is the live one.
+  //
+  // The rule is "cannot be MARKED inactive", so this gates the TRANSITION, not
+  // the value. The Edit dialog re-sends the current state — an already-inactive
+  // row saves as { status: undefined, active_flag: false } — so gating on the
+  // value alone would make every removed member (removePlayer writes
+  // status='suspended' alongside the flag) and every banned-and-inactive member
+  // permanently uneditable, which is the opposite of what this protects.
+  if (playerUpdate.active_flag === false && oldPlayer?.active_flag !== false) {
+    const resultingStatus = (data.status ?? oldPlayer?.status) as string | undefined;
+    if (resultingStatus === 'suspended' || resultingStatus === 'pending_approval') {
+      throw new Error(
+        `A ${resultingStatus === 'suspended' ? 'suspended' : 'pending'} member cannot be marked inactive — lift the suspension first, or leave them where they are.`,
+      );
+    }
+    if (oldPlayer?.is_banned) {
+      throw new Error(
+        'A banned member cannot be marked inactive — unban them first, or leave them where they are.',
+      );
+    }
+  }
+
+  // Coming back onto the roster re-arms the inactivity notice (00059), so a
+  // member who lapses again later is told again. Mirrors what the members' app
+  // does in reactivateLapsedMember().
+  if (playerUpdate.active_flag === true) playerUpdate.inactivity_notice_sent_at = null;
   if (data.role) playerUpdate.role = data.role;
   if (data.membership_type) playerUpdate.membership_type = data.membership_type;
   if (data.is_exec !== undefined) playerUpdate.is_exec = data.is_exec;
