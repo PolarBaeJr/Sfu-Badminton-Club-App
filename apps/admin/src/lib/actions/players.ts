@@ -141,13 +141,13 @@ export async function updatePlayer(playerId: string, data: AdminPlayerUpdateInpu
 }
 
 async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) {
-  // Guard the PARSED payload: exec_title / exec_photo_url go through
-  // blankAsUndefined, so an untouched empty box arrives as '' and normalizes to
-  // undefined. Guarding the raw input would reject an exec for a field they
-  // never filled in.
   const parsed = parseOrThrow(adminPlayerUpdateSchema, data) as Record<string, unknown>;
   const actor = await getExecOrAdmin();
-  assertPlayerFieldAccess(actor, parsed);
+  // Both payloads, because the write below reads from raw `data` while
+  // exec_title / exec_photo_url normalize '' → undefined during parsing.
+  // Guarding only `parsed` would let a hand-rolled POST of { exec_title: '' }
+  // through the guard and into the update.
+  assertPlayerFieldAccess(actor, [data as Record<string, unknown>, parsed]);
   const adminClient = createAdminClient();
 
   const { data: oldPlayer } = await adminClient.from('players').select('*').eq('id', playerId).single();

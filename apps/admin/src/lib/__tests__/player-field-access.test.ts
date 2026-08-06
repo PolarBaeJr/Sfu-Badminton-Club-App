@@ -111,6 +111,25 @@ describe('updatePlayer field-level access', () => {
     expect(state.updates).toEqual([]);
   });
 
+  it('accepts the shape the exec UI actually sends: admin-only keys present but undefined', async () => {
+    // edit-form.tsx builds one object and sets every admin-only field to
+    // `isAdmin && changed ? value : undefined`, so the KEYS are there for an
+    // exec too. Presence means "!== undefined", not "key exists" — if that ever
+    // drifts, every exec save breaks and this is the test that says so.
+    asExec();
+    const res = await updatePlayer('player-9', {
+      status: 'competitive',
+      role: undefined,
+      is_exec: undefined,
+      exec_title: undefined,
+      exec_photo_url: undefined,
+      fee_exempt: undefined,
+      reason: 'Ordinary status change from the edit form',
+    });
+    expect(res.ok).toBe(true);
+    expect(state.updates).toContainEqual({ table: 'players', values: { status: 'competitive' } });
+  });
+
   it('lets an admin change role', async () => {
     asAdmin();
     const res = await updatePlayer('player-9', { role: 'admin', reason: 'Promotion' });
@@ -125,17 +144,19 @@ describe('updatePlayer field-level access', () => {
     expect(state.updates).toContainEqual({ table: 'players', values: { is_exec: true, fee_exempt: true } });
   });
 
-  it('does not reject an exec for an untouched blank exec_title', async () => {
-    // blankAsUndefined turns '' into undefined during parsing, which is why the
-    // guard inspects the PARSED payload. Guarding the raw input would fail an
-    // exec for a form field they never filled in.
+  it('rejects an exec who supplies a blank exec_title', async () => {
+    // The trap: blankAsUndefined turns '' into undefined during PARSING, but
+    // the write path reads the RAW payload, so '' still reaches the column. A
+    // guard that only looked at the parsed value waved this through and let an
+    // exec blank a colleague's entry on the public /exec page.
     asExec();
     const res = await updatePlayer('player-9', {
       status: 'competitive',
       exec_title: '',
-      reason: 'Status change from a form that always posts every field',
+      reason: 'Hand-rolled payload aimed straight at the server action',
     } as never);
-    expect(res.ok).toBe(true);
+    expect(res.ok).toBe(false);
+    expect(state.updates).toEqual([]);
   });
 });
 

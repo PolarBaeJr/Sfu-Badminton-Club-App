@@ -53,18 +53,20 @@ export function isAdminActor(actor: { role?: string | null } | null | undefined)
  * presence is the crisp boundary, and every caller in the UI is written to omit
  * fields it is not changing.
  *
- * Pass the PARSED payload, not the raw input — `exec_title` / `exec_photo_url`
- * go through blankAsUndefined, so a form field left empty arrives as `''` and
- * normalizes to undefined. Guarding the raw input would reject an exec for a
- * blank box they never touched.
+ * Check the RAW input as well as the parsed one, and for the same reason the
+ * write path uses raw: `exec_title` / `exec_photo_url` go through
+ * blankAsUndefined, so `''` parses to undefined while the raw `''` is still
+ * what gets written. Guarding only the parsed payload would let an exec post
+ * `{ exec_title: '' }` straight at the server action, sail past the guard, and
+ * blank a colleague's entry on the club's public exec page. Pass both.
  */
 export function assertPlayerFieldAccess(
   actor: { role?: string | null } | null | undefined,
-  parsed: Record<string, unknown>,
+  payloads: Record<string, unknown>[],
   fields: readonly string[] = ADMIN_ONLY_PLAYER_FIELDS,
 ): void {
   if (isAdminActor(actor)) return;
-  const supplied = fields.filter((f) => parsed[f] !== undefined);
+  const supplied = fields.filter((f) => payloads.some((p) => p[f] !== undefined));
   if (supplied.length > 0) {
     throw new ExpectedError(
       `Admin access required to change: ${supplied.join(', ')}`,
