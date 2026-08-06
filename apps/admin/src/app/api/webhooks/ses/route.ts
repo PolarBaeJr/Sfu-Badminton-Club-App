@@ -91,13 +91,36 @@ async function verifySignature(msg: Record<string, unknown>): Promise<boolean> {
   }
 }
 
-// Pin to our own topic when configured. A valid Amazon signature only proves
-// the message came from SNS — not that it came from a topic we own. Without
-// this, anyone could point their own topic at this URL and feed us whatever
-// bounces they liked, all correctly signed.
+// Pin to our own topic. A valid Amazon signature only proves the message came
+// from SNS — not that it came from a topic we own. Without this, anyone could
+// point their own topic at this URL and feed us whatever bounces they liked,
+// all correctly signed, and suppress any member's address at will.
+//
+// An UNSET ARN used to return true, which meant this endpoint's only real
+// defence was off by default — and it is unset on production today. It now
+// fails closed. That trades one silent failure for another, though (nothing
+// recorded, no bounces, complaint rate climbing exactly as before), so an
+// unset ARN is reported as the deploy fault it is. A mismatched ARN is not:
+// that is this check doing its job, and Sentry is for faults, not for
+// validation working.
+//
+// Once per process, not once per request: this runs before the signature check
+// on every POST, and SNS retries a rejected delivery, so a subscription created
+// before the ARN is set would otherwise file a burst of identical events for
+// one config mistake.
+let arnFaultReported = false;
+
 function topicAllowed(topicArn: unknown): boolean {
   const expected = process.env.SES_SNS_TOPIC_ARN;
-  if (!expected) return true;
+  if (!expected) {
+    if (!arnFaultReported) {
+      arnFaultReported = true;
+      Sentry.captureException(
+        new Error('SES_SNS_TOPIC_ARN is not set — rejecting every SNS notification'),
+      );
+    }
+    return false;
+  }
   return String(topicArn) === expected;
 }
 

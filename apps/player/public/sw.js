@@ -54,18 +54,42 @@ self.addEventListener('push', (event) => {
   );
 });
 
-// Notification click handler
+// Notification click handler.
+//
+// This is the ONLY service worker on the origin, so it fields the admin
+// console's notifications too. The console is served same-origin at /admin and
+// registers no worker of its own — deliberately; apps/admin/src/app/layout.tsx
+// has the full reasoning, the short version being that push_subscriptions has
+// no scope column, so a second registration would deliver every member
+// notification twice to any exec's phone.
+//
+// So a payload's `url` may point at either app, and the window we hand it to
+// matters. Picking the first client, as this used to, meant an admin
+// notification yanked whatever member's-app window happened to be open over to
+// /admin — and a member notification did the reverse to an open console.
+// Prefer a window already in the target's own section; only then fall back to
+// any window, which is exactly the old behaviour.
+function isAdminUrl(url) {
+  const path = new URL(url, self.location.origin).pathname;
+  return path === '/admin' || path.startsWith('/admin/');
+}
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const url = event.notification.data?.url || '/';
+  const wantAdmin = isAdminUrl(url);
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
-      for (const client of windowClients) {
-        if (client.url.includes(self.location.origin) && 'focus' in client) {
-          client.navigate(url);
-          return client.focus();
-        }
+      const sameOrigin = windowClients.filter(
+        (c) => c.url.startsWith(self.location.origin) && 'focus' in c
+      );
+      const target =
+        sameOrigin.find((c) => isAdminUrl(c.url) === wantAdmin) ?? sameOrigin[0];
+
+      if (target) {
+        target.navigate(url);
+        return target.focus();
       }
       return clients.openWindow(url);
     })
