@@ -63,7 +63,7 @@ const makeClient = vi.hoisted(() => () => {
     };
 
     const embed = (r: Row): Row =>
-      cols.includes('tournament_events(*)')
+      cols.includes('tournament_events(')
         ? { ...r, event: (store.db.tournament_events ?? []).find((e) => e.id === r.event_id) ?? null }
         : r;
 
@@ -125,6 +125,7 @@ vi.mock('../actions/_shared', () => ({ getExecOrAdmin: async () => ({ id: 'admin
 
 import { enterMatchResult, voidMatch } from '../tournament-actions/results';
 import { finalizeEvent, applyPlacementBonuses } from '../tournament-actions/finalize';
+import { withdrawParticipant } from '../tournament-actions/participants';
 import { settleWrites, assertWritesSucceeded } from '../tournament-actions/_internal';
 
 const QF = 'match-qf';
@@ -427,6 +428,73 @@ describe('finalizeEvent', () => {
 
     await expect(finalizeEvent('e1')).rejects.toThrow(/points/);
     expect(event().status).toBe('live');
+  });
+});
+
+describe('late withdrawal cascade', () => {
+  // A round-robin shape: Bob owes two matches, so a rating failure on the first
+  // forfeit leaves the second one still open. Single elimination cannot show
+  // this — an entry only ever has one live match at a time.
+  const RR1 = 'match-rr1';
+  const RR2 = 'match-rr2';
+
+  beforeEach(() => {
+    event().format = 'round_robin';
+    store.db.tournament_participants!.push({
+      id: 'p-carol', event_id: 'e1', player_id: 'pl-carol', elo_before: 1000,
+      elo_after: null, elo_change: null, final_position: null, points: null, status: 'checked_in',
+    });
+    store.db.ratings!.push({
+      player_id: 'pl-carol', singles_elo: 1000, singles_provisional: false, singles_matches_played: 30,
+    });
+    store.db.tournament_matches = [
+      {
+        id: RR1, event_id: 'e1', status: 'ready', is_bye: false,
+        participant_a_id: 'p-alice', participant_b_id: 'p-bob',
+        winner_participant_id: null, loser_participant_id: null,
+        winner_to_match_id: null, winner_to_position: null,
+        round_number: 1, scores: null, elo_snapshot: null, notes: null,
+      },
+      {
+        id: RR2, event_id: 'e1', status: 'ready', is_bye: false,
+        participant_a_id: 'p-carol', participant_b_id: 'p-bob',
+        winner_participant_id: null, loser_participant_id: null,
+        winner_to_match_id: null, winner_to_position: null,
+        round_number: 2, scores: null, elo_snapshot: null, notes: null,
+      },
+    ];
+  });
+
+  it('stops the cascade on a failed rating write and lets a retry finish it', async () => {
+    store.faults.push({
+      table: 'ratings', op: 'update', message: 'permission denied for table ratings',
+      when: ({ filters }) => filters.some(([c, v]) => c === 'player_id' && v === 'pl-alice'),
+    });
+
+    const first = await withdrawParticipant('p-bob', 'Sprained ankle');
+    expect(first.ok).toBe(false);
+
+    // Bob is out and his first match was forfeited, but the second never was.
+    expect(participant('p-bob').status).toBe('withdrawn');
+    expect(match(RR1).status).toBe('walkover');
+    expect(match(RR2).status).toBe('ready');
+
+    store.faults = [];
+    const second = await withdrawParticipant('p-bob', 'Sprained ankle');
+
+    // The old guard refused this outright with "Already withdrawn", leaving the
+    // remaining match live against someone who had gone home.
+    expect(second.ok).toBe(true);
+    expect(second.ok === true && second.data.forfeited).toBe(1);
+    expect(match(RR2).status).toBe('walkover');
+  });
+
+  it('still refuses a plain second press when there is nothing left to forfeit', async () => {
+    await withdrawParticipant('p-bob', 'Sprained ankle');
+
+    const again = await withdrawParticipant('p-bob', 'Sprained ankle');
+    expect(again.ok).toBe(false);
+    expect(again.ok === false && again.error).toMatch(/already withdrawn/i);
   });
 });
 

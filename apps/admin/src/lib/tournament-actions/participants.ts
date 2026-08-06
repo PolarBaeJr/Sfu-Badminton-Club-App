@@ -223,16 +223,30 @@ async function exitDrawImpl(
   if (event.status === 'completed') {
     throw new ExpectedError('This event is finished — void the affected matches instead.');
   }
-  if (entry.status === status) {
+  // A repeat press is normally nothing to do — but on a live event it is also
+  // the only way to finish a forfeit cascade that stopped partway, and that is
+  // now reachable: applyTournamentMatchElo raises a failed rating write instead
+  // of swallowing it, so an entry can end up marked withdrawn with some of its
+  // matches still open. The status is written before the cascade runs, so the
+  // old unconditional guard would have refused the very retry that fixes it —
+  // the same trap finalizeEvent used to set.
+  //
+  // Forfeiting only ever touches matches that are still open, so re-running it
+  // is idempotent. If there was genuinely nothing left, the original refusal
+  // still stands (below, once we know).
+  const alreadyOut = entry.status === status;
+  if (alreadyOut && event.status !== 'live') {
     throw new ExpectedError(status === 'withdrawn' ? 'Already withdrawn.' : 'Already disqualified.');
   }
 
-  const { error } = await adminClient.from(table)
-    .update({ status, notes: reason ?? null })
-    .eq('id', entryId);
-  if (error) {
-    Sentry.captureException(error);
-    throw new Error(error.message);
+  if (!alreadyOut) {
+    const { error } = await adminClient.from(table)
+      .update({ status, notes: reason ?? null })
+      .eq('id', entryId);
+    if (error) {
+      Sentry.captureException(error);
+      throw new Error(error.message);
+    }
   }
 
   // Only a live event gets its matches forfeited. Between bracket generation
@@ -252,6 +266,12 @@ async function exitDrawImpl(
       ),
       deferredToGoLive: false,
     };
+  }
+
+  // Nothing was left over after all — so this really was just a second press,
+  // and it gets the answer it always got.
+  if (alreadyOut && outcome.forfeited === 0) {
+    throw new ExpectedError(status === 'withdrawn' ? 'Already withdrawn.' : 'Already disqualified.');
   }
 
   await logAudit(adminClient, {
