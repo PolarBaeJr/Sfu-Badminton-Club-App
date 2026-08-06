@@ -210,6 +210,8 @@
 
 /* Motion + radius tokens (theme-independent) */
 :root {
+  /* How wide the app is allowed to get. See .page. */
+  --page-max: 2100px;
   --display: var(--font-display), ui-sans-serif, system-ui, sans-serif;
   --body:    var(--font-sans), ui-sans-serif, system-ui, sans-serif;
   --mono:    var(--font-mono), ui-monospace, monospace;
@@ -303,7 +305,7 @@ body {
   border-bottom: 1px solid var(--line);
 }
 .topbar-inner {
-  max-width: 1360px; margin: 0 auto;
+  max-width: var(--page-max); margin: 0 auto;
   padding: 14px 28px;
   display: flex; align-items: center; gap: 28px;
 }
@@ -794,9 +796,14 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
 .mono    { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .tabular { font-variant-numeric: tabular-nums; }
 
-/* Page container */
+/* Page container.
+   --page-max is the single source of truth for how wide the app gets. It was
+   three separate 1360px literals (.page, .topbar-inner, and an inline style in
+   the standing banner), which is how a header ends up not lining up with the
+   content under it. 2100px uses a 1440/1600/2560 display properly while still
+   leaving gutters; drop it back here if lines start reading too long. */
 .page {
-  max-width: 1360px;
+  max-width: var(--page-max);
   margin: 0 auto;
   padding: 28px;
   width: 100%;

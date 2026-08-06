@@ -32,7 +32,7 @@ export function StandingBanner() {
         padding: '10px 28px',
       }}
     >
-      <div style={{ maxWidth: 1360, margin: '0 auto' }}>
+      <div style={{ maxWidth: 'var(--page-max)', margin: '0 auto' }}>
         <strong style={{ color: 'var(--red)' }}>
           {standing.block === 'pending_approval' ? 'Awaiting approval' : 'Account suspended'}
         </strong>{' '}
