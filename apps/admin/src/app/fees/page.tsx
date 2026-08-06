@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase-server';
 import { Badge, Card, AvatarChip, EmptyState, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { unwrap, unwrapMaybe, formatPaymentMethod } from '@badminton/shared';
 import type { Season } from '@badminton/shared';
+import { isWaivedFee } from '@/lib/fee-status';
 import { FeeActions, AddManualFee, RemoveManualFee } from './fee-actions';
 
 /** Card identity line: the same avatar + name + sub-line the Player cell shows. */
@@ -74,8 +75,9 @@ export default async function FeesPage() {
   );
   const manualFees = fees.filter((f) => f.manual_name != null);
 
-  const isWaived = (fee?: { paid_at: string | null; method: string | null }) =>
-    Boolean(fee?.paid_at) && fee?.method === 'waived';
+  // Shared with waiveFee (lib/fee-status) so the page and the action cannot
+  // drift on what "already waived" means.
+  const isWaived = isWaivedFee;
 
   // Waived players count as neither Paid nor Outstanding.
   const waivedPlayers = players.filter((p) => isWaived(feeByPlayer.get(p.id))).length;
