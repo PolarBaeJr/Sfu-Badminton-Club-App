@@ -13,6 +13,7 @@ export { Dropdown } from './Dropdown';
 export { Spinner } from './Spinner';
 export { EmptyState } from './EmptyState';
 export { DataTable } from './DataTable';
+export { ResponsiveTable, TableCard, Atomic, type TableCardField } from './ResponsiveTable';
 export { Tabs } from './Tabs';
 export { StatCard } from './StatCard';
 export { PageHeader } from './PageHeader';

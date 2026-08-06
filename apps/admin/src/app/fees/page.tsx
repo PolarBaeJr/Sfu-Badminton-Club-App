@@ -1,9 +1,22 @@
 import Link from 'next/link';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Badge, Card, AvatarChip, EmptyState, PageHeader } from '@badminton/ui';
+import { Badge, Card, AvatarChip, EmptyState, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { unwrap, unwrapMaybe, formatPaymentMethod } from '@badminton/shared';
 import type { Season } from '@badminton/shared';
 import { FeeActions, AddManualFee, RemoveManualFee } from './fee-actions';
+
+/** Card identity line: the same avatar + name + sub-line the Player cell shows. */
+function personTitle(name: string, sub: string, avatarUrl?: string | null, id?: string) {
+  return (
+    <div className="flex items-center gap-3">
+      <AvatarChip name={name} src={avatarUrl ?? undefined} size="sm" id={id} />
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-[var(--text-primary)]">{name}</p>
+        <p className="text-xs font-normal text-[var(--text-muted)]">{sub}</p>
+      </div>
+    </div>
+  );
+}
 
 export default async function FeesPage() {
   const supabase = createAdminClient();
@@ -106,7 +119,55 @@ export default async function FeesPage() {
 
       {/* Fee Table */}
       <Card padding={false}>
-        <div className="overflow-x-auto">
+        <ResponsiveTable
+          cards={[
+            ...players.map((player) => {
+              const fee = feeByPlayer.get(player.id);
+              const waived = isWaived(fee);
+              const paid = Boolean(fee?.paid_at) && !waived;
+              return (
+                <TableCard
+                  key={player.id}
+                  title={personTitle(player.full_name, player.email, player.avatar_url, player.id)}
+                  value={paid && fee?.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}
+                  badges={
+                    <Badge variant={paid ? 'success' : waived ? 'neutral' : 'warning'}>
+                      {paid ? 'Paid' : waived ? 'Waived' : 'Unpaid'}
+                    </Badge>
+                  }
+                  fields={[
+                    { label: 'Method', value: paid && fee?.method ? formatPaymentMethod(fee.method) : '-' },
+                    { label: 'Reference', value: paid && fee?.reference ? <Atomic className="font-mono text-xs">{fee.reference}</Atomic> : '-' },
+                  ]}
+                  actions={
+                    <FeeActions
+                      playerId={player.id}
+                      playerName={player.full_name}
+                      seasonId={season.id}
+                      seasonName={season.name}
+                      defaultFeeCents={feeForStatus(player.status)}
+                      paid={paid}
+                      waived={waived}
+                    />
+                  }
+                />
+              );
+            }),
+            ...manualFees.map((fee) => (
+              <TableCard
+                key={fee.id}
+                title={personTitle(fee.manual_name, 'Manual entry')}
+                value={fee.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}
+                badges={<Badge variant="success">Paid</Badge>}
+                fields={[
+                  { label: 'Method', value: fee.method ? formatPaymentMethod(fee.method) : '-' },
+                  { label: 'Reference', value: fee.reference ? <Atomic className="font-mono text-xs">{fee.reference}</Atomic> : '-' },
+                ]}
+                actions={<RemoveManualFee id={fee.id} name={fee.manual_name} />}
+              />
+            )),
+          ]}
+        >
           <table className="w-full">
             <thead>
               <tr className="border-b border-[var(--border)]">
@@ -195,7 +256,7 @@ export default async function FeesPage() {
               ))}
             </tbody>
           </table>
-        </div>
+        </ResponsiveTable>
         {players.length === 0 && manualFees.length === 0 && (
           <p className="text-center text-[var(--text-muted)] py-8">No players owe fees for this season</p>
         )}

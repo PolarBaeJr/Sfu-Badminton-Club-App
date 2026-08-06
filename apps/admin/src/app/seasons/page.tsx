@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge, PageHeader } from '@badminton/ui';
+import { Card, Badge, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { formatDate } from '@badminton/shared';
 import { CreateSeasonForm, SeasonActions, SeasonFeesEditor } from './actions';
 import { Medal, Calendar, CheckCircle2, XCircle, Clock } from 'lucide-react';
@@ -12,6 +12,31 @@ export default async function SeasonsPage() {
     .from('seasons')
     .select('*')
     .order('start_date', { ascending: false });
+
+  // Shared by the table cell and the card so the two can't drift apart.
+  const statusBadge = (s: { active_flag: boolean; end_date: string | null }) =>
+    s.active_flag ? (
+      <Badge variant="success">
+        <span className="flex items-center gap-1.5">
+          <CheckCircle2 className="w-3.5 h-3.5" />
+          Active
+        </span>
+      </Badge>
+    ) : s.end_date ? (
+      <Badge variant="neutral">
+        <span className="flex items-center gap-1.5">
+          <XCircle className="w-3.5 h-3.5" />
+          Ended
+        </span>
+      </Badge>
+    ) : (
+      <Badge variant="warning">
+        <span className="flex items-center gap-1.5">
+          <Clock className="w-3.5 h-3.5" />
+          Inactive
+        </span>
+      </Badge>
+    );
 
   return (
     <div className="space-y-8">
@@ -26,7 +51,31 @@ export default async function SeasonsPage() {
       {/* Seasons Table */}
       <Card padding={false}>
         {seasons && seasons.length > 0 ? (
-          <div className="overflow-x-auto">
+          <ResponsiveTable
+            cards={seasons.map((s) => (
+              <TableCard
+                key={s.id}
+                title={s.name}
+                badges={statusBadge(s)}
+                fields={[
+                  { label: 'Start date', value: <Atomic>{formatDate(s.start_date)}</Atomic> },
+                  { label: 'End date', value: s.end_date ? <Atomic>{formatDate(s.end_date)}</Atomic> : '--' },
+                  {
+                    label: 'Fees',
+                    wide: true,
+                    value: (
+                      <SeasonFeesEditor
+                        seasonId={s.id}
+                        competitiveFeeCents={s.competitive_fee_cents ?? 0}
+                        recreationalFeeCents={s.recreational_fee_cents ?? 0}
+                      />
+                    ),
+                  },
+                ]}
+                actions={<SeasonActions seasonId={s.id} seasonName={s.name} isActive={s.active_flag} />}
+              />
+            ))}
+          >
             <table className="w-full">
               <thead>
                 <tr className="border-b-2 border-[var(--border)] bg-[var(--bg-surface)]/50">
@@ -82,28 +131,7 @@ export default async function SeasonsPage() {
                       )}
                     </td>
                     <td className="px-5 py-4">
-                      {s.active_flag ? (
-                        <Badge variant="success">
-                          <span className="flex items-center gap-1.5">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            Active
-                          </span>
-                        </Badge>
-                      ) : s.end_date ? (
-                        <Badge variant="neutral">
-                          <span className="flex items-center gap-1.5">
-                            <XCircle className="w-3.5 h-3.5" />
-                            Ended
-                          </span>
-                        </Badge>
-                      ) : (
-                        <Badge variant="warning">
-                          <span className="flex items-center gap-1.5">
-                            <Clock className="w-3.5 h-3.5" />
-                            Inactive
-                          </span>
-                        </Badge>
-                      )}
+                      {statusBadge(s)}
                     </td>
                     <td className="px-5 py-4">
                       <SeasonFeesEditor
@@ -119,7 +147,7 @@ export default async function SeasonsPage() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </ResponsiveTable>
         ) : (
           <div className="flex flex-col items-center justify-center py-16 px-4">
             <div className="flex items-center justify-center w-14 h-14 rounded-full bg-[var(--bg-surface)] mb-4">

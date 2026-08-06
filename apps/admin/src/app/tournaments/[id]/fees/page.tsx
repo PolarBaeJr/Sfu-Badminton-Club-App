@@ -1,11 +1,24 @@
 import { createAdminClient, getAuthenticatedAdmin } from '@/lib/supabase-server';
-import { Card, Badge, AvatarChip, PageHeader } from '@badminton/ui';
+import { Card, Badge, AvatarChip, PageHeader, ResponsiveTable, TableCard } from '@badminton/ui';
 import { unwrap } from '@badminton/shared';
 import type { TournamentFeeTier, TournamentFee, Player } from '@badminton/shared';
 import { notFound } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { TournamentFeeActions } from './tournament-fee-actions';
+
+/** Card identity line: the same avatar + name + email the Player cell shows. */
+function personTitle(name: string, sub: string, avatarUrl?: string | null, id?: string) {
+  return (
+    <div className="flex items-center gap-3">
+      <AvatarChip name={name} src={avatarUrl ?? undefined} size="sm" id={id} />
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-[var(--text-primary)]">{name}</p>
+        <p className="text-xs font-normal text-[var(--text-muted)]">{sub}</p>
+      </div>
+    </div>
+  );
+}
 
 export default async function TournamentFeesPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -102,7 +115,36 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
 
       {/* Fee Table */}
       <Card padding={false}>
-        <div className="overflow-x-auto">
+        <ResponsiveTable
+          cards={players.map((player) => {
+            const fee = feeByPlayer.get(player.id);
+            const paid = Boolean(fee?.paid_at);
+            const tier = fee?.tier_id ? tierById.get(fee.tier_id) : null;
+            const owedCents = fee?.amount_cents ?? defaultTier?.amount_cents ?? null;
+            return (
+              <TableCard
+                key={player.id}
+                title={personTitle(player.full_name, player.email ?? '', player.avatar_url, player.id)}
+                value={owedCents != null ? `$${(owedCents / 100).toFixed(2)}` : '-'}
+                badges={<Badge variant={paid ? 'success' : 'warning'}>{paid ? 'Paid' : 'Unpaid'}</Badge>}
+                fields={[
+                  { label: 'Tier', value: tier?.name ?? defaultTier?.name ?? '-' },
+                  { label: 'Method', value: (paid && fee?.method) || '-' },
+                ]}
+                actions={
+                  <TournamentFeeActions
+                    mode="mark"
+                    tournamentId={id}
+                    playerId={player.id}
+                    playerName={player.full_name}
+                    tiers={tiers}
+                    paid={paid}
+                  />
+                }
+              />
+            );
+          })}
+        >
           <table className="w-full">
             <thead>
               <tr className="border-b border-[var(--border)]">
@@ -160,7 +202,7 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
               })}
             </tbody>
           </table>
-        </div>
+        </ResponsiveTable>
         {players.length === 0 && (
           <p className="text-center text-[var(--text-muted)] py-8">No players owe fees for this tournament</p>
         )}

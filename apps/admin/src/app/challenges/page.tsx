@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge } from '@badminton/ui';
+import { Card, Badge, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { MATCH_FORMAT_LABELS, formatRelativeTime } from '@badminton/shared';
 import { ChallengeActions } from './actions';
 import { CreateChallengeForm } from './create-challenge';
@@ -61,8 +61,9 @@ export default async function ChallengesPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-      {/* Page Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      {/* Page Header — wraps so the New Challenge button drops below the title
+          on a phone instead of pushing the page sideways. */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <div style={{
             width: '48px',
@@ -93,10 +94,11 @@ export default async function ChallengesPage() {
         <CreateChallengeForm players={allPlayers || []} />
       </div>
 
-      {/* Stats Row */}
-      <div style={{ display: 'flex', gap: '1rem' }}>
+      {/* Stats Row — three equal tiles on desktop (same flex-grow, same basis),
+          wrapping to two-up on a phone rather than overflowing. */}
+      <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
         <div style={{
-          flex: 1,
+          flex: '1 1 150px',
           padding: '1rem 1.25rem',
           borderRadius: '10px',
           background: 'var(--bg-card)',
@@ -113,7 +115,7 @@ export default async function ChallengesPage() {
           </span>
         </div>
         <div style={{
-          flex: 1,
+          flex: '1 1 150px',
           padding: '1rem 1.25rem',
           borderRadius: '10px',
           background: 'var(--bg-card)',
@@ -130,7 +132,7 @@ export default async function ChallengesPage() {
           </span>
         </div>
         <div style={{
-          flex: 1,
+          flex: '1 1 150px',
           padding: '1rem 1.25rem',
           borderRadius: '10px',
           background: 'var(--bg-card)',
@@ -192,7 +194,39 @@ export default async function ChallengesPage() {
 
       {/* Challenges Table */}
       <Card padding={false}>
-        <div className="overflow-x-auto">
+        <ResponsiveTable
+          cards={(challenges ?? []).map((c) => {
+            const participants = (c.challenge_participants ?? [])
+              .map((p: Record<string, unknown>) => (p.player as Record<string, unknown>)?.full_name as string)
+              .join(', ');
+            return (
+              <TableCard
+                key={c.id}
+                title={<Atomic separator=",">{participants}</Atomic>}
+                badges={
+                  <>
+                    <Badge variant={c.type === 'singles' ? 'default' : 'info'}>{c.type}</Badge>
+                    {c.rated_flag && <Badge variant="warning">Rated</Badge>}
+                    <span className="inline-flex items-center gap-1.5">
+                      <StatusIcon status={c.status} />
+                      <Badge variant={statusVariant(c.status)}>{c.status}</Badge>
+                    </span>
+                  </>
+                }
+                fields={[
+                  { label: 'Creator', value: <Atomic>{(c.creator as Record<string, unknown>)?.full_name as string}</Atomic> },
+                  { label: 'Created', value: formatRelativeTime(c.created_at) },
+                  { label: 'Format', value: MATCH_FORMAT_LABELS[c.format as keyof typeof MATCH_FORMAT_LABELS], wide: true },
+                ]}
+                actions={
+                  ['proposed', 'partially_confirmed', 'accepted'].includes(c.status)
+                    ? <ChallengeActions challengeId={c.id} />
+                    : undefined
+                }
+              />
+            );
+          })}
+        >
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
@@ -263,7 +297,7 @@ export default async function ChallengesPage() {
               ))}
             </tbody>
           </table>
-        </div>
+        </ResponsiveTable>
 
         {/* Empty State */}
         {(!challenges || challenges.length === 0) && (
