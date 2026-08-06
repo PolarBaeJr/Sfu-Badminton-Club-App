@@ -89,6 +89,9 @@ export async function POST(request: Request) {
       device_type: credentialDeviceType,
       backed_up: credentialBackedUp,
       nickname: body.nickname ?? null,
+      // Explicit rather than relying on the column default: this credential
+      // must never arm the admin console's gate (00051).
+      enrolled_via: 'player',
     });
   if (error) {
     const response = NextResponse.json({ error: 'Failed to save passkey' }, { status: 500 });
