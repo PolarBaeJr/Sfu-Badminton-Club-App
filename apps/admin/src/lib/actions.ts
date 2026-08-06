@@ -17,7 +17,8 @@
 //   - reinstatement.ts — player ban / reinstatement (with reinstatement fee)
 //   - varsity.ts       — varsity notes
 //   - reliability.ts   — adjustReliability (manual reliability-counter edits)
-//   - settings.ts      — updateLegalDocument (waiver / code of conduct)
+//   - settings.ts      — updateLegalDocument (waiver / code of conduct),
+//                        updatePlatformSettings (/ratings + /accounts)
 //   - _shared.ts       — getAdminPlayer (NOT 'use server' — internal helper)
 export {
   approvePlayer,
@@ -120,4 +121,5 @@ export {
 export {
   updateLegalDocument,
   requireReacceptance,
+  updatePlatformSettings,
 } from './actions/settings';

@@ -14,6 +14,8 @@ import {
   Scale,
   ScrollText,
   Settings,
+  Gauge,
+  UserCog,
   Target,
   Calendar,
   DollarSign,
@@ -47,6 +49,10 @@ const navSections = [
     items: [
       { href: '/players', label: 'Players', icon: Users },
       { href: '/fees', label: 'Fees', icon: DollarSign },
+      // Platform configuration, split out of /settings — which stays trainer-level
+      // for passkey enrolment and no longer carries any of it.
+      { href: '/ratings', label: 'Ratings', icon: Gauge },
+      { href: '/accounts', label: 'Accounts', icon: UserCog },
       { href: '/legal', label: 'Legal', icon: Scale },
       { href: '/audit', label: 'Audit Log', icon: ScrollText },
       { href: '/settings', label: 'Settings', icon: Settings },

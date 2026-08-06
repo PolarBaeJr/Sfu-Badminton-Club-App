@@ -6,6 +6,55 @@ import { revalidatePath } from 'next/cache';
 import { parseOrThrow, legalDocumentUpdateSchema, waiverDocumentSchema, type LegalDocumentUpdateInput, type WaiverDocument } from '@badminton/shared';
 import { getAdminPlayer, getExecOrAdmin } from './_shared';
 
+// Platform configuration. Admin-only, and this is the boundary that matters:
+// /ratings and /accounts merely decide who is shown the form.
+export async function updatePlatformSettings(
+  updates: { key: string; value: Record<string, unknown> }[]
+) {
+  const admin = await getAdminPlayer();
+  const adminClient = createAdminClient();
+
+  for (const update of updates) {
+    const { data: oldSetting } = await adminClient
+      .from('platform_settings')
+      .select('value')
+      .eq('key', update.key)
+      .single();
+
+    const { error } = await adminClient
+      .from('platform_settings')
+      .update({
+        value: update.value,
+        updated_by: admin.id,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('key', update.key);
+
+    if (error) throw new Error(`Failed to update ${update.key}: ${error.message}`);
+
+    // Via logAdminAudit, not a bare insert: it checks the error and reports to
+    // Sentry. The bare insert this replaced passed update.key into the `uuid`
+    // target_id column and ignored the result, so every settings change since
+    // launch went unaudited without a single symptom.
+    await logAdminAudit(adminClient, {
+      actor_id: admin.id,
+      action_type: 'platform_setting_updated',
+      target_type: 'platform_setting',
+      target_id: null,
+      old_value: oldSetting?.value ?? null,
+      new_value: update.value,
+      // Key FIRST. With target_id null this is the only place it appears, and
+      // the /audit table truncates the reason cell at max-w-xs — "Platform
+      // setting "repeat_opponent_caps" updated" is cut before the key ends.
+      reason: `${update.key} — platform setting updated`,
+    });
+  }
+
+  // The form now lives on /ratings and /accounts, not /settings.
+  revalidatePath('/ratings');
+  revalidatePath('/accounts');
+}
+
 // Bumping re-requires acceptance from every member (the player app compares
 // accepted versions against the current one). Versions are date strings; a
 // same-day second bump appends '.2', '.3', ... so the string still changes.
@@ -46,15 +95,19 @@ export async function updateLegalDocument(input: LegalDocumentUpdateInput) {
     actor_id: admin.id,
     action_type: 'legal_document_updated',
     target_type: 'legal_document',
-    target_id: input.document,
+    // Keyed by `document`, not a uuid — see logAdminAudit. Passing the document
+    // name here made this insert fail too, silently, since Legal shipped.
+    target_id: null,
     old_value: { version: old.version, content_length: old.content.length },
     new_value: { version: newVersion, content_length: input.content.length },
+    // Document first, same reason as above.
     reason: input.bump_version
-      ? `Legal document "${input.document}" updated with version bump (re-acceptance required)`
-      : `Legal document "${input.document}" content updated`,
+      ? `${input.document} — legal document updated, version bumped (re-acceptance required)`
+      : `${input.document} — legal document content updated`,
   });
 
-  revalidatePath('/settings');
+  // Left over from when the documents were a block inside /settings.
+  revalidatePath('/legal');
 }
 
 // Force every member to re-sign a specific document on their next visit,
@@ -87,11 +140,11 @@ export async function requireReacceptance(document: WaiverDocument) {
     actor_id: admin.id,
     action_type: 'legal_document_reacceptance_required',
     target_type: 'legal_document',
-    target_id: document,
+    target_id: null,
     old_value: { reacceptance_required_since: old.reacceptance_required_since },
     new_value: { reacceptance_required_since: now },
-    reason: `All members must re-sign "${document}" on their next visit`,
+    reason: `${document} — all members must re-sign on their next visit`,
   });
 
-  revalidatePath('/settings');
+  revalidatePath('/legal');
 }

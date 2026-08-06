@@ -4,53 +4,14 @@ import { z } from 'zod';
 import { parseOrThrow } from '@badminton/shared';
 import {
   createAdminClient,
-  getAuthenticatedAdmin,
   getAuthenticatedConsoleUser,
 } from '@/lib/supabase-server';
 import { logAdminAudit } from '@/lib/audit';
 import { revalidatePath } from 'next/cache';
 
-async function getAdminPlayer() {
-  return getAuthenticatedAdmin();
-}
-
-export async function updatePlatformSettings(
-  updates: { key: string; value: Record<string, unknown> }[]
-) {
-  const admin = await getAdminPlayer();
-  const adminClient = createAdminClient();
-
-  for (const update of updates) {
-    const { data: oldSetting } = await adminClient
-      .from('platform_settings')
-      .select('value')
-      .eq('key', update.key)
-      .single();
-
-    const { error } = await adminClient
-      .from('platform_settings')
-      .update({
-        value: update.value,
-        updated_by: admin.id,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('key', update.key);
-
-    if (error) throw new Error(`Failed to update ${update.key}: ${error.message}`);
-
-    await adminClient.from('audit_logs').insert({
-      actor_id: admin.id,
-      action_type: 'platform_setting_updated',
-      target_type: 'platform_setting',
-      target_id: update.key,
-      old_value: oldSetting?.value ?? null,
-      new_value: update.value,
-      reason: `Platform setting "${update.key}" updated`,
-    });
-  }
-
-  revalidatePath('/settings');
-}
+// Platform configuration moved out to /ratings and /accounts;
+// updatePlatformSettings now lives in lib/actions/settings.ts with the rest of
+// the admin-only settings domain. What is left here is genuinely per-user.
 
 // Removing a passkey always requires a passkey-verified session (the default
 // gate — no skipPasskey), so a stolen Supabase session can't strip the gate.
