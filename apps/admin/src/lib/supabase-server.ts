@@ -4,7 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import { PASSKEY_VERIFIED_COOKIE } from './passkey/config';
 import { verifyPayload } from './passkey/cookie';
-import { AUTH_COOKIE_OPTIONS } from '@badminton/shared';
+import { AUTH_COOKIE_OPTIONS, ExpectedError } from '@badminton/shared';
 
 // NOTE: generated `Database` type is available from '@badminton/shared' but not
 // applied here — see comments in apps/player/src/lib/supabase-server.ts.
@@ -76,7 +76,7 @@ async function assertPasskeyVerified(
     .eq('enrolled_via', 'admin');
   if ((count ?? 0) >= 1) {
     Sentry.setUser(null);
-    throw new Error('Passkey verification required');
+    throw new ExpectedError('Passkey verification required');
   }
 }
 
@@ -87,7 +87,7 @@ export async function getAuthenticatedAdmin(options: { skipPasskey?: boolean } =
     // Clear any Sentry user context left over from a previous request handler
     // sharing this Node process — avoids misattributing the next error.
     Sentry.setUser(null);
-    throw new Error('Not authenticated');
+    throw new ExpectedError('Not authenticated');
   }
 
   const adminClient = createAdminClient();
@@ -99,11 +99,11 @@ export async function getAuthenticatedAdmin(options: { skipPasskey?: boolean } =
 
   if (!player) {
     Sentry.setUser(null);
-    throw new Error('No player record found');
+    throw new ExpectedError('No player record found');
   }
   if (player.role !== 'admin') {
     Sentry.setUser(null);
-    throw new Error('Admin access required');
+    throw new ExpectedError('Admin access required');
   }
 
   if (!options.skipPasskey) {
@@ -122,7 +122,7 @@ export async function getAuthenticatedExecOrAdmin(options: { skipPasskey?: boole
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     Sentry.setUser(null);
-    throw new Error('Not authenticated');
+    throw new ExpectedError('Not authenticated');
   }
 
   const adminClient = createAdminClient();
@@ -134,11 +134,11 @@ export async function getAuthenticatedExecOrAdmin(options: { skipPasskey?: boole
 
   if (!player) {
     Sentry.setUser(null);
-    throw new Error('No player record found');
+    throw new ExpectedError('No player record found');
   }
   if (player.role !== 'admin' && player.is_exec !== true) {
     Sentry.setUser(null);
-    throw new Error('Admin or exec access required');
+    throw new ExpectedError('Admin or exec access required');
   }
 
   if (!options.skipPasskey) {

@@ -89,6 +89,24 @@ export function dbError(error: { message: string } | null | undefined, fallback 
   return isExpectedDbGuard(message) ? new ExpectedError(message) : new Error(message);
 }
 
+// What runAction should actually ask before reporting a fault.
+//
+// isExpectedError alone only catches rejections someone remembered to construct
+// as an ExpectedError. A guard message that reaches a call site as a plain Error
+// — because it came back from PostgREST without going through dbError(), or was
+// rethrown somewhere along the way — was still filed as a Sentry fault even
+// though its text is on the allowlist. "Not a possible score for this format:"
+// is on that list and reported 8 times in one minute from a single member
+// mistyping a score.
+//
+// Checking the message as well closes that gap wherever the error came from,
+// and keeps the fail-safe direction: an unrecognised message is still a fault.
+export function isExpectedFailure(err: unknown): boolean {
+  if (isExpectedError(err)) return true;
+  const message = (err as { message?: unknown } | null)?.message;
+  return typeof message === 'string' && isExpectedDbGuard(message);
+}
+
 export function isExpectedDbGuard(message: string): boolean {
   const trimmed = message.trim();
   return (

@@ -2,7 +2,7 @@
 
 import * as Sentry from '@sentry/nextjs';
 import { revalidatePath } from 'next/cache';
-import { CHECKIN_TOKEN_REGEX, CLUB_TIMEZONE, formatTime, getCheckinWindow, isCheckinOpen } from '@badminton/shared';
+import { CHECKIN_TOKEN_REGEX, CLUB_TIMEZONE, ExpectedError, formatTime, getCheckinWindow, isCheckinOpen } from '@badminton/shared';
 import { createServerSupabaseClient, createServiceRoleClient } from '../supabase-server';
 import { getCheckinSettings } from '../checkin-settings';
 import { requirePlayer, getPlayerProps, trackServerEvent, assertCurrentWaiver, runAction, type ActionResult } from './_shared';
@@ -18,7 +18,7 @@ async function checkInToSessionImpl(sessionId: string) {
   const player = await requirePlayer();
   // The button flow treats a duplicate as an error; the QR flow doesn't.
   const { alreadyCheckedIn } = await performCheckIn(player, sessionId);
-  if (alreadyCheckedIn) throw new Error('Already checked in');
+  if (alreadyCheckedIn) throw new ExpectedError('Already checked in');
 }
 
 // The one place a player checks themselves in. `player` is always the caller's
@@ -54,9 +54,9 @@ async function performCheckIn(
         hour: '2-digit',
         minute: '2-digit',
       });
-      throw new Error(`Check-in opens at ${formatTime(opensLocal)}`);
+      throw new ExpectedError(`Check-in opens at ${formatTime(opensLocal)}`);
     }
-    throw new Error('Check-in for this session has ended');
+    throw new ExpectedError('Check-in for this session has ended');
   }
 
   const { error } = await supabase.from('session_attendance').insert({
