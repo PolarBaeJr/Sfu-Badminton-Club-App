@@ -63,10 +63,17 @@ async function assertPasskeyVerified(
     if (payload && payload.sub === userId) return;
   }
 
+  // Must match has_passkeys() in the database, which the middleware calls to
+  // make the SAME decision. Only admin-enrolled credentials arm this gate — a
+  // members'-app passkey is a convenience and must not impose a second factor
+  // here (00051). Without the enrolled_via filter this duplicate count let the
+  // middleware wave a request through and then threw from the server side,
+  // which is how an exec lost the panel with the migration already applied.
   const { count } = await adminClient
     .from('passkey_credentials')
     .select('id', { count: 'exact', head: true })
-    .eq('player_id', playerId);
+    .eq('player_id', playerId)
+    .eq('enrolled_via', 'admin');
   if ((count ?? 0) >= 1) {
     Sentry.setUser(null);
     throw new Error('Passkey verification required');
