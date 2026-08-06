@@ -12,9 +12,11 @@ import {
   NOTIFICATION_CATEGORIES,
   emailPreferenceKey,
   getReminderLeadMinutes,
+  ExpectedError,
   type LegalAcceptanceInput,
   type WaiverDocument,
 } from '@badminton/shared';
+import { buildRosterClaim, normalizeEmail } from '../roster-claim';
 import { createServerSupabaseClient, createServiceRoleClient, getCurrentPlayer } from '../supabase-server';
 import { requirePlayer, trackServerEvent, runAction, type ActionResult } from './_shared';
 
@@ -311,34 +313,73 @@ async function completeOnboardingImpl(data: {
   // two by hand. Matching on the email is safe here specifically because
   // sign-in is OTP/OAuth — the address is proven, not self-asserted — and we
   // only ever attach to a row nobody has claimed yet.
+  //
+  // What the claim may carry over is decided in lib/roster-claim: it links the
+  // login and never confers console privilege.
+  //
   // Needs the service-role client: under RLS the user cannot see or update a
   // players row that isn't linked to them yet.
   if (!existingPlayer && user.email) {
     const serviceClient = createServiceRoleClient();
-    const { data: unclaimed } = await serviceClient
+    // .eq, not .ilike — see normalizeEmail. limit(2) rather than maybeSingle():
+    // players_email_lower_key (00066) makes a second match impossible going
+    // forward, but maybeSingle() THROWS on two rows, and this code deploys
+    // independently of the migration. A throw here blocks that person's
+    // onboarding with no way out, so ask for two and refuse deliberately.
+    const { data: matches, error: lookupError } = await serviceClient
       .from('players')
-      .select('id')
+      .select('id, role, is_exec, is_trainer')
       .is('user_id', null)
-      .ilike('email', user.email)
-      .maybeSingle();
+      .eq('email', normalizeEmail(user.email))
+      .limit(2);
+    if (lookupError) {
+      Sentry.captureException(lookupError, { extra: { action: 'claimRosterRow', userId: user.id } });
+      throw new Error(lookupError.message);
+    }
+    if (matches && matches.length > 1) {
+      // Picking one would attach the member to an arbitrary row and its
+      // arbitrary history. Fail closed and name the fix.
+      throw new ExpectedError(
+        'There is more than one club record for your email address. Please contact an exec to have them merged before finishing setup.',
+      );
+    }
 
+    const unclaimed = matches?.[0];
     if (unclaimed) {
-      // The admin-entered name/email/status stay authoritative (same rule the
-      // merge tool follows); onboarding only supplies what the admin couldn't
-      // know and links the login.
-      const claim: Record<string, unknown> = {
-        user_id: user.id,
-        onboarding_completed: true,
-      };
-      if (data.display_name) claim.display_name = data.display_name;
-      if (data.phone) claim.phone = data.phone;
+      const { update, stripped } = buildRosterClaim(unclaimed, user.id, {
+        display_name: data.display_name,
+        phone: data.phone,
+      });
 
-      const { error } = await serviceClient.from('players').update(claim).eq('id', unclaimed.id);
+      const { error } = await serviceClient.from('players').update(update).eq('id', unclaimed.id);
       if (error) {
         Sentry.captureException(error, { extra: { action: 'claimRosterRow', userId: user.id } });
         throw new Error(error.message);
       }
       playerId = unclaimed.id;
+
+      // An admin pre-added this person WITH privileges and they came off. Say
+      // so on the record, or the admin has no way to know their intent was
+      // downgraded and no prompt to re-grant it deliberately.
+      if (stripped) {
+        const { error: auditError } = await serviceClient.from('audit_logs').insert({
+          actor_id: unclaimed.id,
+          action_type: 'roster_row_claimed_privileges_stripped',
+          target_type: 'player',
+          target_id: unclaimed.id,
+          old_value: stripped,
+          new_value: { role: 'player', is_exec: false, is_trainer: false },
+          reason:
+            'Roster row claimed at onboarding. A claim links a login and never grants console access — re-grant deliberately from Players → Edit if it was intended.',
+        });
+        // The claim itself succeeded; a failed audit write must not undo it or
+        // block the member. Sentry is the backstop.
+        if (auditError) {
+          Sentry.captureException(auditError, {
+            extra: { action: 'claimRosterRowAudit', playerId: unclaimed.id, stripped },
+          });
+        }
+      }
     }
   }
 
