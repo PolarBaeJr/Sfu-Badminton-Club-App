@@ -18,7 +18,7 @@ networks:
 
 services:
   player:
-    image: badminton-player:${STAGING_IMAGE_TAG:-staging}
+    image: ghcr.io/polarbaejr/badminton-player-staging:${STAGING_IMAGE_TAG:-latest}
     container_name: badminton-staging-player
     env_file: .env.staging
     extra_hosts:
@@ -36,11 +36,12 @@ services:
       proxy.port:       "3000"
       proxy.service:    "badminton-staging-player"
       proxy.unscalable: "true"
-      # MUST stay false. The auto-updater pulls the newest :latest for a service
-      # group; left on, it would replace this staging build with the production
-      # image — which carries production's Supabase URL and would quietly point
-      # this host at the production database.
-      proxy.autoupdate: "false"
+      # Safe because the image above is a *separate GHCR package*, not a second
+      # tag on production's. The auto-updater watches each container's own image
+      # reference (proxy-manager cmd/dashboard/autoupdate.go) and replaces it
+      # with the same reference, so this can only ever pull a staging build.
+      # It would NOT be safe if staging shared production's package.
+      proxy.autoupdate: "true"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
@@ -49,7 +50,7 @@ services:
       start_period: 20s
 
   admin:
-    image: badminton-admin:${STAGING_IMAGE_TAG:-staging}
+    image: ghcr.io/polarbaejr/badminton-admin-staging:${STAGING_IMAGE_TAG:-latest}
     container_name: badminton-staging-admin
     env_file: .env.staging
     extra_hosts:
@@ -68,7 +69,8 @@ services:
       proxy.port:       "3001"
       proxy.service:    "badminton-staging-admin"
       proxy.unscalable: "true"
-      proxy.autoupdate: "false"
+      # See the player service above — safe only because this is its own package.
+      proxy.autoupdate: "true"
     healthcheck:
       # Probe /admin, not /: with a basePath the root is a 404, and a status<500
       # test would cheerfully call that healthy.

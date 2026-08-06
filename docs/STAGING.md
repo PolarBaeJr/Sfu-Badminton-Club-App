@@ -9,10 +9,11 @@ database. Production is never touched by anything done here.
 | player / admin ports | 3011 / 3010 | 3013 / 3014 |
 | Supabase | `supabase-prod`, kong `:54321` | `supabase-staging`, kong `:64321` |
 | compose project | `supabase` | `supabase-staging` |
-| images | `ghcr.io/polarbaejr/badminton-*:latest` | `badminton-*:staging` (local) |
+| images | `ghcr.io/polarbaejr/badminton-*:latest` | `ghcr.io/polarbaejr/badminton-*-staging:latest` |
+| built from | `deploy/docker-prod` | `deploy/docker-staging` **and** `deploy/docker-prod` |
 | outbound email | Resend (real) | **mailpit — never leaves the Pi** |
 | Sentry / PostHog | on | off |
-| auto-update | on | **off** |
+| auto-update | on | on |
 
 ## Why staging needs its own image, not just its own config
 
@@ -23,10 +24,12 @@ only the server — every browser-side query would still go to the production
 database. That is worse than having no staging at all, so staging gets its own
 build.
 
-The same fact is why `proxy.autoupdate` is `"false"` on both staging
-containers. The auto-updater replaces a container with the newest image for its
-service group; left on, it would swap the staging build for the production one
-and silently point this host at production data.
+It is also why staging gets its **own GHCR package**
+(`badminton-player-staging`) rather than a second tag on production's. The
+auto-updater watches each container's own image reference and replaces it with
+that same reference, so a distinct package can only ever pull a staging build.
+Sharing production's package and distinguishing by tag would put one label typo
+between staging and the production database.
 
 ## Reading staging email
 
@@ -59,11 +62,40 @@ addresses.
 
 ## Deploying a change to staging
 
+**Push to `deploy/docker-staging`.** That is the whole flow:
+
+```
+push deploy/docker-staging
+  → .github/workflows/build-staging.yml builds both images on an arm64 runner
+  → pushes ghcr.io/polarbaejr/badminton-{player,admin}-staging:latest
+  → proxy-manager sees a new digest and replaces the staging containers
+```
+
+Pushes to `deploy/docker-prod` rebuild staging too, so staging is never behind
+what is live — otherwise it stops being a rehearsal of production.
+
+The workflow needs one repo secret, the anon key from
+`/mnt/ssd/Deploy/supabase-staging/.env` on the Pi:
+
+```bash
+gh secret set STAGING_SUPABASE_ANON_KEY
+```
+
+Without it the build fails immediately and says so, rather than shipping an
+image whose client bundle cannot reach any database.
+
+Staging is deliberately **not** gated on the test suite. Staging is where you go
+to find out whether something works; refusing to deploy a red commit there
+removes the one place it is safe to look at one.
+
+### Building by hand (while CI is unavailable)
+
 Images are built off the Pi and loaded onto it; the Pi never builds.
 
 ```bash
 # from the repo root on a machine with Docker (arm64 host — the Pi is aarch64)
-docker buildx build --target runner-player -t badminton-player:staging \
+docker buildx build --target runner-player \
+  -t ghcr.io/polarbaejr/badminton-player-staging:latest \
   --build-arg NEXT_PUBLIC_SUPABASE_URL=https://badminton.polardev.org/supabase \
   --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=<staging anon key> \
   --build-arg NEXT_PUBLIC_APP_URL=https://badminton.polardev.org \
@@ -71,7 +103,8 @@ docker buildx build --target runner-player -t badminton-player:staging \
   --build-arg NEXT_PUBLIC_ADMIN_URL=https://badminton.polardev.org/admin \
   --build-arg NEXT_PUBLIC_PASSKEY_RP_ID=badminton.polardev.org \
   --load .
-docker save badminton-player:staging | gzip -1 | ssh pi 'gunzip | docker load'
+docker save ghcr.io/polarbaejr/badminton-player-staging:latest \
+  | gzip -1 | ssh pi 'gunzip | docker load'
 
 # then on the Pi
 cd /mnt/ssd/Deploy/badminton
@@ -79,7 +112,8 @@ sudo docker compose -f docker-compose.staging.yml --env-file .env.staging up -d
 ```
 
 The admin image is the same command with `--target runner-admin`,
-`-t badminton-admin:staging`, and `--build-arg NEXT_PUBLIC_BASE_PATH=/admin`.
+`-t ghcr.io/polarbaejr/badminton-admin-staging:latest`, and
+`--build-arg NEXT_PUBLIC_BASE_PATH=/admin`.
 
 ## Routing
 
