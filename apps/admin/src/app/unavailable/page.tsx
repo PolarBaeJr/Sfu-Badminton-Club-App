@@ -9,6 +9,7 @@ import { clearHostOnlyAuthCookies } from '@badminton/shared/src/utils/constants'
 import { Button } from '@badminton/ui';
 import { KeyRound, LogOut } from 'lucide-react';
 import { friendlyPasskeyError } from '@/lib/passkey/errors';
+import { withBase } from '@/lib/base-path';
 
 // Only allow same-app relative paths (no protocol-relative '//', no
 // backslash tricks) so ?next= can't be used as an open redirect.
@@ -36,8 +37,9 @@ function UnavailableContent() {
     setLoading(true);
     setError('');
     try {
-      // NOTE: fetch() ignores Next's basePath — the /admin prefix must be explicit.
-      const optRes = await fetch('/api/passkey/auth/options', { method: 'POST' });
+      // withBase, not a bare path: fetch() does not apply Next's basePath, so
+      // on the path-mounted console this would hit the player app instead.
+      const optRes = await fetch(withBase('/api/passkey/auth/options'), { method: 'POST' });
       if (optRes.status === 400) {
         setNoCredentials(true);
         return;
@@ -47,7 +49,7 @@ function UnavailableContent() {
 
       const assertion = await startAuthentication({ optionsJSON });
 
-      const verifyRes = await fetch('/api/passkey/auth/verify', {
+      const verifyRes = await fetch(withBase('/api/passkey/auth/verify'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ credential: assertion }),
@@ -68,7 +70,7 @@ function UnavailableContent() {
     // See clearHostOnlyAuthCookies: signOut alone can leave a pre-migration
     // host-only cookie behind, which would still read as a live session.
     clearHostOnlyAuthCookies();
-    window.location.href = '/login';
+    window.location.href = withBase('/login');
   }
 
   return (

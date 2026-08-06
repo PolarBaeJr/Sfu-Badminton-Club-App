@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase-browser';
 import { Button, Input, Card } from '@badminton/ui';
 import { Shield, Mail, Loader2, Globe, CheckCircle2, AlertCircle, KeyRound } from 'lucide-react';
 import { signInWithPasskey, supportsPasskeys } from '@/lib/passkey-client';
+import { withBase } from '@/lib/base-path';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -52,7 +53,7 @@ export default function LoginPage() {
       // A full navigation, not router.replace(): the session cookie arrived on a
       // fetch() response, so the in-memory Supabase browser client still thinks
       // it is logged out. Reloading rebuilds it from the cookie.
-      window.location.href = '/dashboard';
+      window.location.href = withBase('/dashboard');
       return;
     }
     // An empty message means the user dismissed the system prompt — that is a
@@ -67,7 +68,7 @@ export default function LoginPage() {
     const supabase = createClient();
     const { error: authError } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
+      options: { redirectTo: `${window.location.origin}${withBase('/auth/callback')}` },
     });
     if (authError) {
       setError(authError.message);
@@ -82,7 +83,7 @@ export default function LoginPage() {
     const supabase = createClient();
     const { error: authError } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+      options: { emailRedirectTo: `${window.location.origin}${withBase('/auth/callback')}` },
     });
     if (authError) setError(authError.message);
     else setSent(true);

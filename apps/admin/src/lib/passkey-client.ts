@@ -6,6 +6,7 @@
 // them because it is the only one that talks to /api/passkey/login/*.
 import { startAuthentication, browserSupportsWebAuthn } from '@simplewebauthn/browser';
 import { friendlyPasskeyError } from './passkey/errors';
+import { withBase } from './base-path';
 
 export type PasskeyResult = { ok: true } | { ok: false; error: string };
 
@@ -39,7 +40,7 @@ export async function signInWithPasskey(): Promise<PasskeyResult> {
     return { ok: false, error: 'This device does not support passkeys.' };
   }
 
-  const optionsRes = await fetch('/api/passkey/login/options', { method: 'POST' });
+  const optionsRes = await fetch(withBase('/api/passkey/login/options'), { method: 'POST' });
   if (!optionsRes.ok) {
     return { ok: false, error: await errorFrom(optionsRes, 'Could not start passkey sign-in.') };
   }
@@ -52,7 +53,7 @@ export async function signInWithPasskey(): Promise<PasskeyResult> {
     return { ok: false, error: friendlyPasskeyError(err, 'No passkey was used.') };
   }
 
-  const verifyRes = await fetch('/api/passkey/login/verify', {
+  const verifyRes = await fetch(withBase('/api/passkey/login/verify'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ credential }),

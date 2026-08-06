@@ -26,6 +26,14 @@ jobs:
     strategy:
       matrix:
         app: [player, admin]
+        # Overlay, not a third image: adds base_path to the `admin` combination
+        # only. Next bakes basePath in at build time, so the console's mount
+        # point (/admin, same origin as the player app) has to be a build arg —
+        # see apps/admin/next.config.js. base_path is unset, hence empty, for
+        # the player.
+        include:
+          - app: admin
+            base_path: /admin
     steps:
       - uses: actions/checkout@v4
 
@@ -63,6 +71,7 @@ jobs:
             NEXT_PUBLIC_APP_URL=${{ secrets.NEXT_PUBLIC_APP_URL }}
             NEXT_PUBLIC_PLAYER_URL=${{ secrets.NEXT_PUBLIC_PLAYER_URL }}
             NEXT_PUBLIC_ADMIN_URL=${{ secrets.NEXT_PUBLIC_ADMIN_URL }}
+            NEXT_PUBLIC_BASE_PATH=${{ matrix.base_path }}
             NEXT_PUBLIC_PASSKEY_RP_ID=${{ secrets.NEXT_PUBLIC_PASSKEY_RP_ID }}
             NEXT_PUBLIC_AUTH_COOKIE_DOMAIN=${{ secrets.NEXT_PUBLIC_AUTH_COOKIE_DOMAIN }}
             NEXT_PUBLIC_VAPID_PUBLIC_KEY=${{ secrets.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}

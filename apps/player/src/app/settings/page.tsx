@@ -557,10 +557,11 @@ export default function SettingsPage() {
                   <div className="settings-row-hint">Open the club administration panel.</div>
                 </div>
                 <div className="settings-row-control">
+                  {/* See top-bar.tsx: same-origin, plain <a>, and no
+                      target="_blank" — a new tab would eject the exec from the
+                      installed PWA. */}
                   <a
-                    href={process.env.NEXT_PUBLIC_ADMIN_URL || '/admin'}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                    href="/admin"
                     className="btn btn-danger-ghost"
                   >
                     <Shield size={14} />

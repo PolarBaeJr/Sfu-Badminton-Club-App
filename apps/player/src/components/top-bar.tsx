@@ -36,7 +36,6 @@ export function TopBar({
   unreadCount,
   isAuthenticated,
   isExecOrAdmin,
-  adminUrl,
   activeSeasonName,
   isApproved = true,
 }: {
@@ -45,7 +44,6 @@ export function TopBar({
   unreadCount: number;
   isAuthenticated: boolean;
   isExecOrAdmin: boolean;
-  adminUrl?: string;
   activeSeasonName?: string;
   /** False while the account is pending approval or suspended. */
   isApproved?: boolean;
@@ -110,11 +108,15 @@ export function TopBar({
         <div className="top-right">
           {isAuthenticated ? (
             <>
+              {/* Same-origin, and deliberately a plain anchor rather than a
+                  next/link: /admin is a different Next app behind the proxy, so
+                  client-side routing has nothing to route to. No target="_blank"
+                  either — the player app is an installed PWA, and opening the
+                  console in a new tab is exactly the ejection that moving it
+                  onto this origin was meant to stop. */}
               {isExecOrAdmin && (
                 <a
-                  href={adminUrl || '/admin'}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  href="/admin"
                   className="icon-btn"
                   aria-label="Exec panel"
                   title="Exec panel"

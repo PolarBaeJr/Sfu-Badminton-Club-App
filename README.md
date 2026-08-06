@@ -2,7 +2,7 @@
 
 A members' web app (installable PWA) for running a university badminton club: a live **ELO ladder** (singles + doubles), **seasons & fees**, **sessions with attendance**, a full **tournament system**, and a private **admin console** — plus a public landing page, leaderboard, and exec roster.
 
-**Live:** [sfubadminton.com](https://sfubadminton.com) · admin console at [admin.sfubadminton.com](https://admin.sfubadminton.com) · **Status:** executive beta (August 2026) · **Version:** 1.1.0
+**Live:** [sfubadminton.com](https://sfubadminton.com) · admin console at [sfubadminton.com/admin](https://sfubadminton.com/admin) · **Status:** executive beta (August 2026) · **Version:** 1.1.0
 
 > New here? Start with the plain-language overview in **[docs/project/](docs/project/README.md)**.
 
@@ -15,7 +15,7 @@ This is an **npm-workspaces + Turborepo** monorepo:
 ```
 apps/
   player/        Next.js 15 app — the members' experience (sfubadminton.com)
-  admin/         Next.js 15 app — the exec/admin console (admin.sfubadminton.com)
+  admin/         Next.js 15 app — the exec/admin console (sfubadminton.com/admin)
 packages/
   shared/        ELO rating engine, Zod validators, email + push senders
   ui/            Reusable React component library (~2 dozen components)

@@ -5,6 +5,7 @@ import { Card, Badge, Button, Dialog, Input } from '@badminton/ui';
 import { tallyGames } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
+import { withBase } from '@/lib/base-path';
 
 interface MatchData {
   id: string;
@@ -80,7 +81,7 @@ export function TournamentBracket({ tournamentId, bracketSize, matches, particip
     if (!tally.winner) { toast('Games are level or incomplete — enter the scores that decide the match', 'error'); return; }
     setLoading(true);
     try {
-      const res = await fetch('/api/tournament-match-score', {
+      const res = await fetch(withBase('/api/tournament-match-score'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -106,7 +107,7 @@ export function TournamentBracket({ tournamentId, bracketSize, matches, particip
   async function applyBonuses() {
     setLoading(true);
     try {
-      const res = await fetch('/api/tournament-bonuses', {
+      const res = await fetch(withBase('/api/tournament-bonuses'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tournament_id: tournamentId }),

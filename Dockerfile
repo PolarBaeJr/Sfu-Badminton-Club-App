@@ -21,9 +21,18 @@ ARG NEXT_PUBLIC_SUPABASE_URL
 ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
 ARG NEXT_PUBLIC_APP_URL
 ARG NEXT_PUBLIC_PLAYER_URL
+# The console's public base URL, path prefix included:
+# https://sfubadminton.com/admin. Self-referential redirects are built from it,
+# and its ORIGIN (path dropped) is what the WebAuthn check compares against.
 ARG NEXT_PUBLIC_ADMIN_URL
+# Where the admin console is mounted — "/admin". Next bakes basePath into the
+# build, so this cannot be a runtime setting; see apps/admin/next.config.js.
+# Empty builds a root-mounted console (localhost, or a fallback subdomain).
+# Consumed by the admin image only; harmless on the player build.
+ARG NEXT_PUBLIC_BASE_PATH
 # Passkey scope — see apps/admin/src/lib/passkey/config.ts. Must be the parent
-# domain so one credential covers the apex and the admin subdomain.
+# domain so one credential covers the apex and any subdomain, and survives the
+# console moving between them.
 ARG NEXT_PUBLIC_PASSKEY_RP_ID
 # Auth cookie scope — see AUTH_COOKIE_DOMAIN in packages/shared. Set to
 # ".sfubadminton.com" so one sign-in covers the player app and the admin

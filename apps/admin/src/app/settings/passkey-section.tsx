@@ -7,6 +7,7 @@ import { Button, Input, useConfirm } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { removePasskey } from './actions';
 import { friendlyPasskeyError } from '@/lib/passkey/errors';
+import { withBase } from '@/lib/base-path';
 
 interface Passkey {
   id: string;
@@ -36,8 +37,9 @@ export function PasskeySection({ passkeys }: { passkeys: Passkey[] }) {
   async function handleAdd() {
     setAdding(true);
     try {
-      // NOTE: fetch() ignores Next's basePath — the /admin prefix must be explicit.
-      const optRes = await fetch('/api/passkey/register/options', { method: 'POST' });
+      // withBase, not a bare path: fetch() does not apply Next's basePath, so
+      // on the path-mounted console this would hit the player app instead.
+      const optRes = await fetch(withBase('/api/passkey/register/options'), { method: 'POST' });
       if (!optRes.ok) {
         const body = await optRes.json().catch(() => null);
         throw new Error(body?.error || 'Could not start passkey enrollment');
@@ -46,7 +48,7 @@ export function PasskeySection({ passkeys }: { passkeys: Passkey[] }) {
 
       const attestation = await startRegistration({ optionsJSON });
 
-      const verifyRes = await fetch('/api/passkey/register/verify', {
+      const verifyRes = await fetch(withBase('/api/passkey/register/verify'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
