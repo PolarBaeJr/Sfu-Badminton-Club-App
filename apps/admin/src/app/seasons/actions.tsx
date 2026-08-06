@@ -108,13 +108,13 @@ export function SeasonFeesEditor({
 
 const ELO_POLICY_OPTIONS: { value: SeasonEloPolicy; label: string }[] = [
   { value: 'carry', label: 'Carry over ELO (no reset)' },
-  { value: 'soft', label: 'Soft reset (compress toward 400, keep tiers)' },
+  { value: 'soft', label: 'Soft reset (compress toward the ladder floor, keep tiers)' },
   { value: 'full', label: 'Full reset (everyone back to 400)' },
 ];
 
 const POLICY_WARNING: Record<SeasonEloPolicy, string | null> = {
   carry: null,
-  soft: 'Every player’s ELO will be compressed toward 400 (they keep at least their 200-point tier). Match history and win–loss records are preserved.',
+  soft: 'Every player’s ELO is compressed toward the ladder floor, and nobody drops below the tier they earned. The floor, the compression factor and the tier size are all set in Settings → Rating Defaults and Season Settings. Match history and win–loss records are preserved.',
   full: 'Every player’s ELO will be reset to 400 and made provisional again. Match history and win–loss records are preserved, but the current ladder standings are wiped.',
 };
 
