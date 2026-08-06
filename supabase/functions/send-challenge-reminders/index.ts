@@ -62,7 +62,8 @@ Deno.serve(async (req) => {
             title: 'Unplayed Challenge',
             body: 'You have an accepted challenge that is past its scheduled date. Please play it or cancel.',
             url: `/challenges/${c.id}`,
-          }
+          },
+          'challenges'
         );
       }
     }
@@ -97,7 +98,7 @@ Deno.serve(async (req) => {
           title: 'Challenge Expiring Soon',
           body: 'A challenge awaiting your response expires in less than 12 hours.',
           url: `/challenges/${c.id}`,
-        });
+        }, 'challenges');
       }
     }
   }

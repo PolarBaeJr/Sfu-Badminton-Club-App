@@ -87,12 +87,21 @@ export type SendOutcome =
  *
  * Sign-in codes do NOT come through here: those are issued by GoTrue, and a
  * member must always be able to get into their account.
+ *
+ * `transactional` skips gate 2 only. It is for the one-off mail that IS the
+ * event rather than a subscription to it — currently just "your account has
+ * been approved", which a brand-new member has to receive to know the app is
+ * open to them. Since 00058 made preferences opt-in, a new member's blob is
+ * empty, so without this that email would never arrive and the account would
+ * look stuck at "pending" forever. Gate 1 (suppressions, bounces, complaints,
+ * unsubscribe-from-all) still applies — nothing bypasses that.
  */
 async function sendCategoryEmail(
   to: string,
   category: NotificationCategory,
   subject: string,
   html: string,
+  options: { transactional?: boolean } = {},
 ): Promise<SendOutcome> {
   const address = to.trim().toLowerCase();
   const db = getAdmin();
@@ -106,16 +115,24 @@ async function sendCategoryEmail(
     if (blocked) return { sent: false, reason: 'suppressed' };
 
     // Preferences are looked up by address because that is all the call sites
-    // have. No row (an admin-created member who has not onboarded, or a
-    // recipient who is not a player at all) means no stored preference, which
-    // means the opt-out default applies and we send.
-    const { data: player } = await db
-      .from('players')
-      .select('notification_preferences')
-      .eq('email', address)
-      .maybeSingle();
-    if (player && !isEmailCategoryEnabled(player.notification_preferences, category)) {
-      return { sent: false, reason: 'opted_out' };
+    // have. Since 00058 the model is opt-IN: a stored preference now has to say
+    // `true` for the mail to go out.
+    //
+    // A MISSING row still sends, exactly as before. Every call site takes the
+    // address straight off a players row, so "no row" in practice means the
+    // lookup missed — an address stored with different casing, say — and
+    // treating a failed lookup as a refusal would silently stop that member's
+    // mail with nothing to show for it. Failing open here is deliberate; the
+    // suppression list above is the gate that must never fail open.
+    if (!options.transactional) {
+      const { data: player } = await db
+        .from('players')
+        .select('notification_preferences')
+        .eq('email', address)
+        .maybeSingle();
+      if (player && !isEmailCategoryEnabled(player.notification_preferences, category)) {
+        return { sent: false, reason: 'opted_out' };
+      }
     }
   }
   // A missing service-role key means we cannot check, and silently dropping
@@ -256,7 +273,11 @@ export async function sendPlayerApprovedEmail(
 ): Promise<SendOutcome> {
   const loginUrl = `${process.env.NEXT_PUBLIC_PLAYER_URL || 'http://localhost:3000'}/login`;
   const { subject, html } = playerApprovedEmail(name, loginUrl);
-  return sendCategoryEmail(to, 'announcements', subject, html);
+  // Transactional: this is the message that tells someone the club has let them
+  // in, and it is sent to an account whose preferences are still empty because
+  // they have never seen the settings page. Gating it on an opt-in they have had
+  // no opportunity to give would leave every new member staring at "pending".
+  return sendCategoryEmail(to, 'announcements', subject, html, { transactional: true });
 }
 
 export async function sendWeeklyDigestEmail(

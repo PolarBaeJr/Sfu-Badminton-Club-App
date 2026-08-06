@@ -10,10 +10,11 @@ export const dynamic = 'force-dynamic';
 // reason (Postgres cannot talk to the mail provider itself).
 //
 // This is the ONLY scheduled mail the app sends. Everything else is a direct
-// consequence of somebody acting on the recipient's account, which is why the
-// opt-out matters more here than anywhere else: sendWeeklyDigestEmail runs
-// through sendCategoryEmail, so a member who muted the category or is on the
-// suppression list is skipped before the provider is ever called.
+// consequence of somebody acting on the recipient's account, which is why
+// consent matters more here than anywhere else: sendWeeklyDigestEmail runs
+// through sendCategoryEmail, so anyone who has not opted into the announcements
+// category — the default since 00058 — or who is on the suppression list is
+// skipped before the provider is ever called.
 export async function POST(request: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret) return NextResponse.json({ error: 'Not configured' }, { status: 503 });

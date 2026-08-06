@@ -12,7 +12,7 @@ import { PostHogProvider } from '@/components/posthog-provider';
 import { PostHogIdentify } from '@/components/posthog-identify';
 import { SentryUserInit } from '@/components/sentry-user-init';
 import { cookies } from 'next/headers';
-import { getMissingLegalDocuments } from '@badminton/shared';
+import { getMissingLegalDocuments, hasConsoleAccess } from '@badminton/shared';
 import { createServiceRoleClient, createServerSupabaseClient, getActiveSeason } from '@/lib/supabase-server';
 import { Barlow, Barlow_Condensed, JetBrains_Mono } from "next/font/google";
 import { cn } from "@/lib/utils";
@@ -84,7 +84,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       // user id, so the service role is scoped to the caller's own row.
       const { data: player } = await createServiceRoleClient()
         .from('players')
-        .select('id, full_name, avatar_url, status, role, is_exec, is_trainer, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo), waiver_acceptances(document, version, accepted_at)')
+        .select('id, full_name, avatar_url, status, role, is_exec, is_trainer, is_banned, active_flag, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo), waiver_acceptances(document, version, accepted_at)')
         .eq('user_id', user.id)
         .maybeSingle();
       playerName = player?.full_name ?? '';
@@ -95,10 +95,16 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       // Anyone with ANY console level, which now includes varsity trainers —
       // the link in the top bar is the only route they have to the console, and
       // hiding it would leave the new role technically working and practically
-      // unreachable. Same predicate as admin_access_level(); is_trainer has to
-      // be in the select above too, or it reads as undefined and silently
-      // hides the link.
-      isExecOrAdmin = !!(player?.is_exec || player?.is_trainer || player?.role === 'admin');
+      // unreachable.
+      //
+      // hasConsoleAccess is the shared predicate (@badminton/shared), the same
+      // one the settings page and the admin app use, mirroring
+      // admin_access_level() in 00057: standing first, then level. A banned or
+      // deactivated exec is shown no route in — the console would reject them
+      // anyway, and a link that always errors is worse than no link. Every
+      // column it reads has to be in the select above, or it reads as undefined
+      // and the link silently disappears.
+      isExecOrAdmin = hasConsoleAccess(player);
 
       // A member needs the waiver gate when any of the four legal documents
       // lacks a valid acceptance — current version, and for the waiver also

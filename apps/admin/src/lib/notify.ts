@@ -14,8 +14,9 @@ interface NotifyInput {
   metadata?: Record<string, unknown>;
 }
 
-// Drop players who turned this category's push off. In-app rows are inserted
-// for everyone regardless — only push honors per-category preferences.
+// Keep only players who opted into this category's push. In-app rows are
+// inserted for everyone regardless — only push honors per-category preferences,
+// and the bell means nothing is lost when a push is withheld.
 async function filterPushRecipients(
   adminClient: ReturnType<typeof createAdminClient>,
   playerIds: string[],
@@ -25,7 +26,19 @@ async function filterPushRecipients(
     .from('players')
     .select('id, notification_preferences')
     .in('id', playerIds);
-  if (error || !data) return playerIds; // fail open — a pref lookup error shouldn't mute everyone
+  // Fail CLOSED. This used to fall back to the full list on the reasoning that
+  // a lookup error should not mute everyone — sound under the old opt-out
+  // model, where the fallback matched the default. Under opt-in (00058) it
+  // inverts: pushing because we could not read the preferences means buzzing
+  // people who never said yes. The in-app notification row is already inserted,
+  // so the message still arrives.
+  if (error || !data) {
+    Sentry.captureException(
+      new Error(`Push preference lookup failed, withholding push: ${error?.message ?? 'no data'}`),
+      { extra: { category, playerIds } },
+    );
+    return [];
+  }
   return data
     .filter((p) => isPushCategoryEnabled(p.notification_preferences, category))
     .map((p) => p.id);

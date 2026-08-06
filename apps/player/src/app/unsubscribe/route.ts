@@ -52,10 +52,28 @@ async function apply(token: string | null): Promise<{ ok: boolean; message: stri
     // Mirror it into preferences too, so the settings screen reflects reality
     // if they do log in later. Best-effort: the suppression above is what
     // actually stops the mail.
-    await db
+    //
+    // MERGED, not replaced. This used to write allEmailCategoriesOff() over the
+    // whole blob, which also erased the push toggles and the session reminder
+    // lead time. Under the opt-in model (00058) erasing them means turning them
+    // OFF — so unsubscribing from email would silently kill this member's push
+    // notifications as well. An email link may only ever change email keys.
+    const { data: current } = await db
       .from('players')
-      .update({ notification_preferences: allEmailCategoriesOff() })
-      .eq('email', claim.email);
+      .select('notification_preferences')
+      .eq('email', claim.email)
+      .maybeSingle();
+    if (current) {
+      await db
+        .from('players')
+        .update({
+          notification_preferences: {
+            ...((current.notification_preferences as Record<string, unknown> | null) ?? {}),
+            ...allEmailCategoriesOff(),
+          },
+        })
+        .eq('email', claim.email);
+    }
 
     return { ok: true, message: 'You will no longer receive any emails from SFU Badminton Club.' };
   }

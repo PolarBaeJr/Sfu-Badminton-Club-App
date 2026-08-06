@@ -15,7 +15,16 @@ interface Passkey {
   created_at: string;
   last_used_at: string | null;
   transports: string[] | null;
+  enrolled_via: 'admin' | 'player';
 }
+
+// Every credential the member owns is listed on both this page and the members'
+// app; this only says where it came from. Only the admin-enrolled ones arm the
+// console gate (00051), which is why the two are labelled differently.
+const ORIGIN_LABEL: Record<string, string> = {
+  admin: 'enrolled here',
+  player: 'enrolled in the members’ app',
+};
 
 function formatDate(iso: string | null): string {
   if (!iso) return 'never';
@@ -33,6 +42,7 @@ export function PasskeySection({ passkeys }: { passkeys: Passkey[] }) {
   const [nickname, setNickname] = useState('');
   const [adding, setAdding] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const armsTheGate = passkeys.filter((pk) => pk.enrolled_via === 'admin').length;
 
   async function handleAdd() {
     setAdding(true);
@@ -91,6 +101,7 @@ export function PasskeySection({ passkeys }: { passkeys: Passkey[] }) {
             <div className="settings-row-label">{pk.nickname || `Passkey ${i + 1}`}</div>
             <div className="settings-row-hint font-mono text-xs">
               added {formatDate(pk.created_at)} · last used {formatDate(pk.last_used_at)}
+              {ORIGIN_LABEL[pk.enrolled_via] ? ` · ${ORIGIN_LABEL[pk.enrolled_via]}` : ''}
             </div>
           </div>
           <div className="settings-row-control">
@@ -110,8 +121,12 @@ export function PasskeySection({ passkeys }: { passkeys: Passkey[] }) {
         <div>
           <div className="settings-row-label">Add passkey</div>
           <div className="settings-row-hint">
-            {passkeys.length === 0
-              ? 'No passkeys enrolled yet — the console is in the grace period. Enrolling one turns the gate on.'
+            {/* Counts only admin-enrolled credentials. Since 00051 a passkey
+                added in the members' app does NOT arm the gate, so testing
+                `passkeys.length` told an exec the console was gated when it was
+                still in the grace period. */}
+            {armsTheGate === 0
+              ? 'No passkeys enrolled here yet — the console is in the grace period. Enrolling one turns the gate on.'
               : 'Adding another passkey requires having logged in with an existing passkey.'}
           </div>
         </div>

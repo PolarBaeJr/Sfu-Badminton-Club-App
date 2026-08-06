@@ -47,11 +47,14 @@ Deno.serve(async (req) => {
 
       const adminIds = admins.map((admin: { id: string }) => admin.id);
       for (const m of stale as Array<{ id: string; format: string }>) {
+        // 'matches' — the same category the in-app result/dispute notifications
+        // use. An admin is a member too, and an operational buzz nobody asked
+        // for is how people learn to turn every notification off.
         await sendPushToPlayers(supabase, adminIds, {
           title: 'Stale Match Confirmation',
           body: `${m.format} match awaiting confirmation for ${WALKOVER_REVIEW_HOURS}+ hours.`,
           url: '/notifications',
-        });
+        }, 'matches');
       }
     }
   }

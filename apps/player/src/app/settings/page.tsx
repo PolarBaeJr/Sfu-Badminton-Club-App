@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Input, Textarea, Switch, Select, PageHeader, Dialog } from '@badminton/ui';
 import { updateProfile, updateNotificationPreferences, deleteMyAccount } from '@/lib/actions';
-import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, normalizeEmailPreferences, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, clearHostOnlyAuthCookies, type NotificationCategory } from '@badminton/shared';
+import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, normalizeEmailPreferences, emailPreferenceKey, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, clearHostOnlyAuthCookies, hasConsoleAccess, type NotificationCategory } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -90,7 +90,14 @@ export default function SettingsPage() {
   const [playerId, setPlayerId] = useState('');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  // TWO different questions, deliberately kept apart:
+  //   isExec         — is this person on the club exec? Drives the note about
+  //                    their bio being published on the public /exec page (00042).
+  //                    A varsity trainer is NOT an exec and their bio is private.
+  //   canOpenConsole — may this person open the admin console at all? Trainers
+  //                    can, so this is strictly wider than isExec.
   const [isExec, setIsExec] = useState(false);
+  const [canOpenConsole, setCanOpenConsole] = useState(false);
   // Fees and the calendar feed are member features the server rejects until an
   // account is approved (requirePlayer throws "Account pending approval"), so
   // showing them just produced a dead panel. Hidden until approval, same rule
@@ -130,6 +137,13 @@ export default function SettingsPage() {
         else if (mins % 60 === 0) { setLeadValue(String(mins / 60)); setLeadUnit('hours'); }
         else { setLeadValue(String(mins)); setLeadUnit('minutes'); }
         setIsExec(data.is_exec || data.role === 'admin');
+        // The SAME predicate the top bar uses (layout.tsx) and the same one the
+        // console itself enforces — never a second hand-rolled boolean. This
+        // page used to test `is_exec || role === 'admin'`, which predates the
+        // varsity trainer role, so trainers saw the console link in the top bar
+        // and nothing here. players_self is `SELECT *`, so the standing columns
+        // hasConsoleAccess needs (is_banned, status, active_flag) are present.
+        setCanOpenConsole(hasConsoleAccess(data));
         setIsApproved(data.status !== 'pending_approval' && data.status !== 'suspended');
         setLoaded(true);
       }
@@ -224,7 +238,9 @@ export default function SettingsPage() {
     // Sent under the `email_` prefix the server whitelists. The action merges
     // onto the stored blob, so this cannot clobber the push toggles.
     const res = await updateNotificationPreferences(
-      Object.fromEntries(Object.entries(next).map(([k, v]) => [`email_${k}`, v])),
+      Object.fromEntries(
+        Object.entries(next).map(([k, v]) => [emailPreferenceKey(k as NotificationCategory), v]),
+      ),
     );
     if (!res.ok) {
       setEmailPrefs(previous); // revert
@@ -400,73 +416,96 @@ export default function SettingsPage() {
             </div>
           </Section>
 
+          {/* Push and email are the SAME five categories, chosen separately and
+              laid out identically. Push used to be one blanket switch —
+              "challenges, results, and announcements" — which meant the only way
+              to stop one kind of buzz was to stop all of them, while email had
+              had per-category control for a while. Two channels, one list. */}
           <Section icon={Bell} title="Notifications">
-            {pushSupported ? (
-              <div className="row" style={{ gap: 12, alignItems: 'flex-start' }}>
-                {pushEnabled ? <Bell size={16} className="text-[var(--red)]" style={{ marginTop: 2 }} /> : <BellOff size={16} className="text-[var(--mute)]" style={{ marginTop: 2 }} />}
-                <div style={{ flex: 1 }}>
-                  <Switch
-                    checked={pushEnabled}
-                    onChange={handlePushToggle}
-                    label="Push notifications"
-                    description="Get notified about challenges, results, and announcements."
-                    disabled={pushLoading}
-                  />
+            <p className="muted" style={{ fontSize: 12, marginTop: 0, marginBottom: 14 }}>
+              Everything here starts off. Turn on whatever you want to hear about —
+              the in-app inbox keeps a copy either way, so nothing is lost.
+            </p>
 
-                  {pushEnabled && (
-                    <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      <p className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
-                        Choose which push notifications you receive. The in-app inbox always keeps them all.
-                      </p>
-                      <div style={{ marginBottom: 14 }}>
-                        <label className="eyebrow block mb-2">Remind me before a session</label>
-                        <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
-                          <Input
-                            aria-label="Amount"
-                            type="text"
-                            inputMode="numeric"
-                            value={leadValue}
-                            onChange={(e) => setLeadValue(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                            onBlur={() => saveReminderLead(leadMinutes)}
-                            style={{ maxWidth: 96 }}
-                          />
-                          <Select
-                            aria-label="Unit"
-                            value={leadUnit}
-                            onChange={(e) => {
-                              const u = e.target.value as 'minutes' | 'hours' | 'days';
-                              setLeadUnit(u);
-                              const m = (Number(leadValue) || 0) * (u === 'days' ? 1440 : u === 'hours' ? 60 : 1);
-                              if (m >= REMINDER_LEAD_MIN_MINUTES && m <= REMINDER_LEAD_MAX_MINUTES) saveReminderLead(m);
-                            }}
-                            options={[
-                              { value: 'minutes', label: 'minutes before' },
-                              { value: 'hours', label: 'hours before' },
-                              { value: 'days', label: 'days before' },
-                            ]}
-                          />
-                        </div>
-                        <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                          {leadInvalid
-                            ? 'Pick anything from 5 minutes to 7 days.'
-                            : "Only for sessions you said you're going to, and only if they have a start time."}
-                        </p>
-                      </div>
-                      {NOTIFICATION_CATEGORIES.map((c, i) => (
-                        <div key={c.key}>
-                          {i > 0 && <div className="sep" />}
-                          <Switch
-                            checked={notifPrefs[c.key]}
-                            onChange={(v) => handleNotifPrefToggle(c.key, v)}
-                            label={c.label}
-                            description={c.description}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  )}
+            <div className="card-head" style={{ marginBottom: 10 }}>
+              <h3 className="card-title" style={{ fontSize: 15 }}>Push</h3>
+            </div>
+            {pushSupported ? (
+              <>
+                <div className="row" style={{ gap: 12, alignItems: 'flex-start' }}>
+                  {pushEnabled ? <Bell size={16} className="text-[var(--red)]" style={{ marginTop: 14 }} /> : <BellOff size={16} className="text-[var(--mute)]" style={{ marginTop: 14 }} />}
+                  <div style={{ flex: 1 }}>
+                    <Switch
+                      checked={pushEnabled}
+                      onChange={handlePushToggle}
+                      label="Allow push on this device"
+                      description="Needed before any push can reach this browser."
+                      disabled={pushLoading}
+                    />
+                  </div>
                 </div>
-              </div>
+                <div className="sep" />
+                {/* Same list, same order, same labels as the email block below.
+                    Disabled rather than hidden while the device is unsubscribed:
+                    hiding them made the categories look like they did not exist. */}
+                {NOTIFICATION_CATEGORIES.map((c, i) => (
+                  <div key={c.key}>
+                    {i > 0 && <div className="sep" />}
+                    <Switch
+                      checked={notifPrefs[c.key]}
+                      onChange={(v) => handleNotifPrefToggle(c.key, v)}
+                      label={c.label}
+                      description={c.description}
+                      disabled={!pushEnabled}
+                    />
+                  </div>
+                ))}
+                {!pushEnabled && (
+                  <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+                    Allow push on this device to choose categories.
+                  </p>
+                )}
+
+                {pushEnabled && (
+                  <>
+                    <div className="sep" />
+                    <div style={{ marginTop: 4 }}>
+                      <label className="eyebrow block mb-2">Remind me before a session</label>
+                      <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
+                        <Input
+                          aria-label="Amount"
+                          type="text"
+                          inputMode="numeric"
+                          value={leadValue}
+                          onChange={(e) => setLeadValue(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                          onBlur={() => saveReminderLead(leadMinutes)}
+                          style={{ maxWidth: 96 }}
+                        />
+                        <Select
+                          aria-label="Unit"
+                          value={leadUnit}
+                          onChange={(e) => {
+                            const u = e.target.value as 'minutes' | 'hours' | 'days';
+                            setLeadUnit(u);
+                            const m = (Number(leadValue) || 0) * (u === 'days' ? 1440 : u === 'hours' ? 60 : 1);
+                            if (m >= REMINDER_LEAD_MIN_MINUTES && m <= REMINDER_LEAD_MAX_MINUTES) saveReminderLead(m);
+                          }}
+                          options={[
+                            { value: 'minutes', label: 'minutes before' },
+                            { value: 'hours', label: 'hours before' },
+                            { value: 'days', label: 'days before' },
+                          ]}
+                        />
+                      </div>
+                      <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                        {leadInvalid
+                          ? 'Pick anything from 5 minutes to 7 days.'
+                          : "Only for sessions you said you're going to, and only if they have a start time."}
+                      </p>
+                    </div>
+                  </>
+                )}
+              </>
             ) : (
               <div className="row" style={{ gap: 10, padding: 12, background: 'var(--surface-2)' }}>
                 <BellOff size={14} className="text-[var(--mute)]" />
@@ -550,7 +589,7 @@ export default function SettingsPage() {
 
           <div className="danger-zone">
             <h3 className="danger-title">Danger zone</h3>
-            {isExec && (
+            {canOpenConsole && (
               <div className="settings-row">
                 <div>
                   <div className="settings-row-label">EXEC PANEL</div>

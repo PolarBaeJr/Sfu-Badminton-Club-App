@@ -1,8 +1,23 @@
-// Notification categories drive the per-type push preferences shown in player
-// settings and stored on players.notification_preferences (JSONB). Categories
-// gate PUSH delivery only — the in-app bell always records every notification
-// so nothing is silently lost. A missing/true entry means the category is on
-// (opt-out model), so an empty {} preferences blob keeps every push enabled.
+// Notification categories drive the per-category PUSH and EMAIL preferences
+// shown in player settings and stored on players.notification_preferences
+// (JSONB). Categories gate DELIVERY only — the in-app bell always records every
+// notification, so nothing is ever silently lost.
+//
+// OPT-IN. A key is on only when it is stored as exactly `true`; missing, null
+// and false all mean off. An empty {} blob therefore means "nothing", which is
+// what a brand-new member gets until they choose otherwise.
+//
+// This was an opt-OUT model until migration 00058. The blob has never carried a
+// marker distinguishing "never set" from "explicitly on" — the settings UI only
+// ever wrote a key when a toggle was moved — so flipping the default here
+// reinterprets every stored-but-absent key and would have unsubscribed every
+// existing member in one deploy. 00058 therefore backfills the previous
+// effective answer (all categories on) onto every players row that existed at
+// the time, letting any explicitly stored value win. Existing members keep
+// exactly what they were getting; only rows created afterwards start empty.
+//
+// The consequence: THIS FILE AND 00058 MUST SHIP TOGETHER. Code without the
+// migration silences everyone; the migration without the code is a no-op.
 
 export const NOTIFICATION_CATEGORIES = [
   {
@@ -34,13 +49,13 @@ export const NOTIFICATION_CATEGORIES = [
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number]['key'];
 
-// True unless the player has explicitly turned this category's push off.
+// True only when the player has explicitly turned this category's push ON.
 export function isPushCategoryEnabled(
   preferences: unknown,
   category: NotificationCategory,
 ): boolean {
-  if (!preferences || typeof preferences !== 'object') return true;
-  return (preferences as Record<string, unknown>)[category] !== false;
+  if (!preferences || typeof preferences !== 'object') return false;
+  return (preferences as Record<string, unknown>)[category] === true;
 }
 
 // Normalize an arbitrary preferences blob to an explicit on/off map over every
@@ -58,7 +73,7 @@ export function normalizeNotificationPreferences(
 // ---------------------------------------------------------------------------
 // Email delivery preferences
 // ---------------------------------------------------------------------------
-// Same categories, same JSONB blob, same opt-out default — but a SEPARATE key
+// Same categories, same JSONB blob, same opt-in default — but a SEPARATE key
 // per category, prefixed `email_`. Push and email are different enough that one
 // switch for both is wrong: push is a phone buzzing during a match, email is
 // something you read later. Turning off push notifications must not silently
@@ -68,13 +83,18 @@ export function normalizeNotificationPreferences(
 // meaning exactly what they meant before this was added.
 const EMAIL_PREFIX = 'email_';
 
-/** True unless the player has explicitly turned this category's EMAIL off. */
+/** The stored key for a category's email preference. */
+export function emailPreferenceKey(category: NotificationCategory): string {
+  return EMAIL_PREFIX + category;
+}
+
+/** True only when the player has explicitly turned this category's EMAIL on. */
 export function isEmailCategoryEnabled(
   preferences: unknown,
   category: NotificationCategory,
 ): boolean {
-  if (!preferences || typeof preferences !== 'object') return true;
-  return (preferences as Record<string, unknown>)[EMAIL_PREFIX + category] !== false;
+  if (!preferences || typeof preferences !== 'object') return false;
+  return (preferences as Record<string, unknown>)[EMAIL_PREFIX + category] === true;
 }
 
 /** The preferences patch that turns one category's email off (or back on). */
