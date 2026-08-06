@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { cn } from '@badminton/ui';
 // Deep import, not the '@badminton/shared' barrel — see the player middleware.
 import { clearHostOnlyAuthCookies } from '@badminton/shared/src/utils/constants';
@@ -27,6 +27,9 @@ import { canAccess, type AccessLevel } from '@/lib/permissions';
 // Grouped by access level (see permissions.ts SECTION_ACCESS): the top section
 // is everything execs can reach; the bottom section is admin-only and filters
 // away entirely for execs.
+// How quickly a promotion or demotion reaches an already-open console tab.
+const POLL_MS = 5000;
+
 const navSections = [
   {
     title: 'Manage',
@@ -53,6 +56,7 @@ const navSections = [
 
 export function Sidebar({ initialAccessLevel = null }: { initialAccessLevel?: AccessLevel | null }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [userEmail, setUserEmail] = useState<string | null>(null);
   // Seeded from the server so the FIRST paint is already filtered. The effect
   // below still runs (it also fetches the email, and refreshes the level on a
@@ -67,18 +71,66 @@ export function Sidebar({ initialAccessLevel = null }: { initialAccessLevel?: Ac
     pathname === '/unauthorized' ||
     pathname === '/unavailable';
 
-  // Load user email + access level (drives nav filtering for execs)
+  // Load the email once, then keep the access level fresh.
+  //
+  // POLLED, not one-shot: a promotion or demotion has to reach an open tab
+  // without waiting for the person to navigate. Server components already read
+  // the level per request, and the middleware re-checks it on every request, so
+  // the only stale surface is a tab someone is sitting on — this closes it
+  // within POLL_MS.
+  //
+  // Paused while the tab is hidden. A console left open in a background tab
+  // overnight should not be doing anything.
   useEffect(() => {
     const supabase = createClient();
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
-      if (user) {
-        setUserEmail(user.email ?? null);
-        const { data: level } = await supabase.rpc('admin_access_level', { p_user_id: user.id });
-        setAccessLevel((level as AccessLevel | null) ?? null);
-      }
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    async function readLevel(): Promise<void> {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (cancelled) return;
+      if (!user) { setAccessLoaded(true); return; }
+      setUserEmail(user.email ?? null);
+
+      const { data: level, error } = await supabase.rpc('admin_access_level', { p_user_id: user.id });
+      if (cancelled) return;
+      // Only trust a SUCCESSFUL read. supabase-js returns data: null on error,
+      // so writing it unconditionally would turn a transient RPC failure into
+      // "you have no access" — and since the nav now fails closed, that emptied
+      // the whole sidebar until a reload.
+      if (error) { setAccessLoaded(true); return; }
+
+      const next = (level as AccessLevel | null) ?? null;
+      setAccessLevel((prev) => {
+        // Server components hold the old level too, so re-render them rather
+        // than leaving a half-updated page — the nav would say one thing and
+        // the page body another.
+        if (prev !== next) router.refresh();
+        return next;
+      });
       setAccessLoaded(true);
-    });
-  }, []);
+    }
+
+    void readLevel();
+
+    function start() {
+      if (timer === null) timer = setInterval(() => { void readLevel(); }, POLL_MS);
+    }
+    function stop() {
+      if (timer !== null) { clearInterval(timer); timer = null; }
+    }
+    function onVisibility() {
+      if (document.visibilityState === 'visible') { void readLevel(); start(); } else { stop(); }
+    }
+
+    if (document.visibilityState === 'visible') start();
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      cancelled = true;
+      stop();
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [router]);
 
   async function handleSignOut() {
     const supabase = createClient();
