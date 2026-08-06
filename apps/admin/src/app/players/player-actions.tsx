@@ -22,6 +22,10 @@ const STATUS_OPTIONS = [
   { value: 'recreational', label: 'Recreational' },
   { value: 'suspended', label: 'Suspended' },
   { value: 'pending_approval', label: 'Pending Approval' },
+  // Not a status column value: selecting this clears active_flag. Presented
+  // here because "inactive" is how the club thinks of it, and there was no
+  // way to set or clear it from the console at all.
+  { value: 'inactive', label: 'Inactive' },
 ];
 
 // ONE question — what console access does this person have — instead of a
@@ -60,7 +64,11 @@ function fromRoleValue(v: ExecRole): { role: 'player' | 'admin'; is_exec: boolea
 export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin }: Props) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
-  const [status, setStatus] = useState((playerData?.status as string) || 'pending_approval');
+  // active_flag=false presents as "Inactive" regardless of the stored status —
+  // that is what the badge shows and what the club calls it.
+  const [status, setStatus] = useState(
+    playerData?.active_flag === false ? 'inactive' : ((playerData?.status as string) || 'pending_approval')
+  );
   const [roleValue, setRoleValue] = useState(
     toRoleValue((playerData?.role as string) || 'player', Boolean(playerData?.is_exec), Boolean(playerData?.is_trainer))
   );
@@ -82,8 +90,16 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin 
       const { role, is_exec: isExec, is_trainer: wantsTrainer } = fromRoleValue(roleValue as ExecRole);
       const roleChanged = role !== ((playerData?.role as string) || 'player');
       try {
+        // "Inactive" is active_flag, not a status. Selecting it deactivates and
+        // leaves the stored status alone; selecting any real status reactivates,
+        // which is the only way back from removePlayer or the nightly
+        // mark-inactive-players job.
+        const isInactive = status === 'inactive';
         const res = await updatePlayer(playerId, {
-          status: status as 'competitive' | 'recreational' | 'suspended' | 'pending_approval',
+          status: isInactive
+            ? undefined
+            : (status as 'competitive' | 'recreational' | 'suspended' | 'pending_approval'),
+          active_flag: isInactive ? false : true,
           // Only sent when it actually changed. The server guard rejects a
           // non-admin who supplies `role` AT ALL, so sending it unconditionally
           // — as this dialog used to — would fail every exec's Save even when

@@ -162,6 +162,8 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
 
   const playerUpdate: Record<string, unknown> = {};
   if (data.status) playerUpdate.status = data.status;
+  // Inactive is active_flag, not a status — see adminPlayerUpdateSchema.
+  if (data.active_flag !== undefined) playerUpdate.active_flag = data.active_flag;
   if (data.role) playerUpdate.role = data.role;
   if (data.membership_type) playerUpdate.membership_type = data.membership_type;
   if (data.is_exec !== undefined) playerUpdate.is_exec = data.is_exec;

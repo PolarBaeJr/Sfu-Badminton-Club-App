@@ -214,6 +214,11 @@ export const adminPlayerUpdateSchema = z.object({
   status: z.enum([
     'competitive', 'recreational', 'suspended', 'pending_approval',
   ]).optional(),
+  // "Inactive" is not a status — it is active_flag. mark-inactive-players
+  // clears it after the configured threshold, and removePlayer clears it too,
+  // and until now nothing in the console could set it back. The Status control
+  // presents both as one list; this is the half that is not the enum.
+  active_flag: z.boolean().optional(),
   role: z.enum(['player', 'admin']).optional(),
   // Which group of the club they belong to. Independent of role/is_exec —
   // an exec is still an internal member. Drives tournament eligibility.

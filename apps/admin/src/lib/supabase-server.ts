@@ -114,6 +114,33 @@ async function getAuthenticatedAtLeast(
     Sentry.setUser(null);
     throw new ExpectedError('No player record found');
   }
+  // STANDING first, then level. Banning an exec used to leave their console
+  // access completely intact: banPlayer writes only players.is_banned, and
+  // removePlayer sets status/active_flag — none of which this gate read. So a
+  // banned exec lost the members' app entirely and kept the admin console,
+  // where reinstatePlayer is exec-level with no check that the target is not
+  // the caller. They could unban themselves, and the audit row would name them
+  // as the actor.
+  //
+  // The player app's requirePlayer() has always rejected these. This is the
+  // same rule, and it should have been in both places from the start.
+  if (player.is_banned) {
+    Sentry.setUser(null);
+    throw new ExpectedError('Account suspended pending reinstatement');
+  }
+  if (player.status === 'suspended' || player.status === 'pending_approval') {
+    Sentry.setUser(null);
+    throw new ExpectedError(
+      player.status === 'suspended' ? 'Account suspended' : 'Account pending approval'
+    );
+  }
+  // deleteMyAccount clears active_flag; a pending deletion should not keep the
+  // console open either.
+  if (player.active_flag === false) {
+    Sentry.setUser(null);
+    throw new ExpectedError('Account is inactive');
+  }
+
   // Same resolution the middleware gets from admin_access_level(), through the
   // same helper — never a second inline copy of the rule.
   if (!atLeast(accessLevelFor(player), required)) {
