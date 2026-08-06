@@ -5,6 +5,7 @@ import { Button, Card, Input, Select, Dialog, Textarea, useConfirm } from '@badm
 import { tallyGames } from '@badminton/shared';
 import { acceptChallenge, rejectChallenge, submitMatchResult, confirmMatchResult, disputeMatchResult, reportWalkover, cancelChallenge } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
+import { useStanding } from '@/components/standing-provider';
 import { useRouter } from 'next/navigation';
 
 interface Props {
@@ -28,6 +29,10 @@ export function ChallengeDetailActions({
   const { toast } = useToast();
   const router = useRouter();
   const confirm = useConfirm();
+  // Every action below goes through requirePlayer(): accept, reject, cancel,
+  // submit result, confirm, dispute, walkover. None of them will run for an
+  // account in bad standing, so none of them is offered.
+  const standing = useStanding();
   const [loading, setLoading] = useState('');
   const [showSubmit, setShowSubmit] = useState(false);
   const [showDispute, setShowDispute] = useState(false);
@@ -187,6 +192,30 @@ export function ChallengeDetailActions({
       toast(err instanceof Error ? err.message : 'Failed', 'error');
       setLoading('');
     }
+  }
+
+  // The challenge itself, its participants and its result all stay on screen —
+  // this only replaces the buttons, so the page reads as an account state
+  // rather than as a challenge that has lost its actions.
+  if (!standing.ok) {
+    return (
+      <div className="space-y-3">
+        {(matchStatus === 'disputed' || challengeStatus === 'walkover_pending') && (
+          <div className="card-base">
+            <div className="card-title">
+              {matchStatus === 'disputed' ? 'Result disputed' : 'Walkover reported'}
+            </div>
+            <div className="card-sub">
+              An exec is reviewing this and will settle it. Ratings stay unchanged until they do.
+            </div>
+          </div>
+        )}
+        <div className="card-base">
+          <div className="card-title">Actions paused</div>
+          <div className="card-sub">{standing.detail}</div>
+        </div>
+      </div>
+    );
   }
 
   return (

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useCallback } from 'react';
-import { Toast } from '@badminton/ui';
+import { Toast, ToastViewport } from '@badminton/ui';
 
 interface ToastItem {
   id: number;
@@ -36,9 +36,13 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={{ toast }}>
       {children}
-      {toasts.map((t) => (
-        <Toast key={t.id} message={t.message} type={t.type} onClose={() => remove(t.id)} />
-      ))}
+      {/* Same portal as the player app — the admin console's own Dropdown menus
+          sit at z-index 100 and used to cover a toast outright. */}
+      <ToastViewport>
+        {toasts.map((t) => (
+          <Toast key={t.id} message={t.message} type={t.type} onClose={() => remove(t.id)} />
+        ))}
+      </ToastViewport>
     </ToastContext.Provider>
   );
 }

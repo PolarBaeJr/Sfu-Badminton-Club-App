@@ -1,6 +1,7 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
 import { getCheckinSettings } from '@/lib/checkin-settings';
-import { CLUB_TIMEZONE, formatDate, formatTime, getCheckinWindow, isCheckinOpen, type AttendanceStatus, type SessionIntent } from '@badminton/shared';
+import { CLUB_TIMEZONE, formatDate, formatTime, getCheckinWindow, isCheckinOpen, getAccountStanding, type AttendanceStatus, type SessionIntent } from '@badminton/shared';
+import { StandingNote } from '@/components/standing-notice';
 import { redirect } from 'next/navigation';
 import { SubscribeAllButton } from './subscribe-all';
 import { Calendar, MapPin, FileText, Users, UserCheck, Clock } from 'lucide-react';
@@ -13,6 +14,10 @@ import { DeepLinkScroll } from './deep-link-scroll';
 export default async function SessionsPage() {
   const player = await getCurrentPlayer();
   if (!player) redirect('/login');
+  // The schedule stays visible for everyone — knowing when the club plays is
+  // not a privilege. RsvpButtons/CheckInButton read the same standing from
+  // context and withhold themselves; this is the line that says why.
+  const standing = getAccountStanding(player);
 
   const supabase = await createServerSupabaseClient();
 
@@ -104,6 +109,7 @@ export default async function SessionsPage() {
             <div>
               <h3 className="card-title">Upcoming</h3>
               <div className="card-sub">{upcomingCount === 0 ? 'No sessions on the calendar.' : `${upcomingCount} session${upcomingCount === 1 ? '' : 's'} accepting check-ins.`}</div>
+              <StandingNote standing={standing} activity="RSVP and check-in" style={{ marginTop: 6 }} />
             </div>
             <div className="row" style={{ gap: 8, alignItems: 'center' }}>
               {/* Subscribing beats adding sessions one by one, and unlike a

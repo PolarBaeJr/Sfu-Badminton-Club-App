@@ -7,7 +7,7 @@ export { PlayerPicker, type PlayerOption } from './PlayerPicker';
 export { Switch } from './Switch';
 export { Badge } from './Badge';
 export { Card } from './Card';
-export { Toast } from './Toast';
+export { Toast, ToastViewport, TOAST_Z_INDEX } from './Toast';
 export { Dialog } from './Dialog';
 export { Dropdown } from './Dropdown';
 export { Spinner } from './Spinner';

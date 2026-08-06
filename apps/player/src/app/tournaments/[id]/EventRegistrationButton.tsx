@@ -5,6 +5,7 @@ import { Button, Dialog, LegalMarkdown, useConfirm } from '@badminton/ui';
 import { registerForEvent, withdrawFromEvent, selfCheckIn } from '@/lib/tournament-actions';
 import type { ActionResult } from '@/lib/actions/_shared';
 import { useToast } from '@/components/toast-provider';
+import { useStanding } from '@/components/standing-provider';
 import { useRouter } from 'next/navigation';
 
 interface Props {
@@ -23,6 +24,11 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
   const { toast } = useToast();
   const router = useRouter();
   const confirm = useConfirm();
+  // Member standing, not the tournament's `suspended` flag above. This is the
+  // compact per-event row on the tournament page; the event's own page carries
+  // the explanation, and the app-wide banner carries it everywhere, so here we
+  // only withhold the buttons and leave the status chips.
+  const standing = useStanding();
 
   if (isDoubles) {
     if (registration) {
@@ -63,7 +69,7 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
   const waiverText = eventWaiverText?.trim();
 
   if (!registration) {
-    if (eventStatus === 'registration' && !suspended) {
+    if (eventStatus === 'registration' && !suspended && standing.ok) {
       if (waiverText) {
         return (
           <>
@@ -128,7 +134,7 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
 
   return (
     <div className="flex items-center gap-1.5" onClick={(e) => e.preventDefault()}>
-      {s === 'registered' && eventStatus === 'checkin' && !suspended && (
+      {s === 'registered' && eventStatus === 'checkin' && !suspended && standing.ok && (
         <Button
           size="sm"
           loading={loading}
@@ -138,7 +144,7 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
           Check In
         </Button>
       )}
-      {(s === 'registered' || s === 'checked_in') && eventStatus !== 'completed' && (
+      {(s === 'registered' || s === 'checked_in') && eventStatus !== 'completed' && standing.ok && (
         <Button
           size="sm"
           variant="ghost"

@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { checkInToSession } from '@/lib/actions';
 import { CheckCircle2 } from 'lucide-react';
 import { useToast } from '@/components/toast-provider';
+import { useStanding } from '@/components/standing-provider';
 
 interface CheckInButtonProps {
   sessionId: string;
@@ -15,6 +16,7 @@ interface CheckInButtonProps {
 export function CheckInButton({ sessionId, myStatus, canCheckIn, windowLabel, myIntent }: CheckInButtonProps) {
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+  const standing = useStanding();
 
   if (myStatus === 'checked_in' || myStatus === 'present') {
     return (
@@ -36,6 +38,13 @@ export function CheckInButton({ sessionId, myStatus, canCheckIn, windowLabel, my
   // Declined ("Not going") — don't offer check-in; the RSVP row keeps a way to
   // switch to Going.
   if (myIntent === 'declined') {
+    return null;
+  }
+
+  // checkInToSession -> requirePlayer() refuses this. The attendance chips
+  // above still render, so a member who was already checked in keeps that on
+  // screen; only the live button goes. The Upcoming card head says why.
+  if (!standing.ok) {
     return null;
   }
 

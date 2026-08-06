@@ -11,8 +11,10 @@ import { DeletionGate } from '@/components/deletion-gate';
 import { PostHogProvider } from '@/components/posthog-provider';
 import { PostHogIdentify } from '@/components/posthog-identify';
 import { SentryUserInit } from '@/components/sentry-user-init';
+import { StandingProvider } from '@/components/standing-provider';
+import { StandingBanner } from '@/components/standing-banner';
 import { cookies } from 'next/headers';
-import { getMissingLegalDocuments } from '@badminton/shared';
+import { getMissingLegalDocuments, getAccountStanding, type AccountStanding } from '@badminton/shared';
 import { createServiceRoleClient, createServerSupabaseClient, getActiveSeason } from '@/lib/supabase-server';
 import { Barlow, Barlow_Condensed, JetBrains_Mono } from "next/font/google";
 import { cn } from "@/lib/utils";
@@ -60,6 +62,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   let missingLegalDocs: string[] = [];
   let deletionRequestedAt: string | null = null;
   let isExecOrAdmin = false;
+  // Published to every client control via StandingProvider so none of them has
+  // to re-derive it (or, as before, offer a button the server is certain to
+  // refuse). Defaults to good standing, which is what a signed-out visitor is.
+  let standing: AccountStanding = getAccountStanding(null);
 
   try {
     activeSeasonName = (await getActiveSeason())?.name ?? '';
@@ -84,9 +90,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       // user id, so the service role is scoped to the caller's own row.
       const { data: player } = await createServiceRoleClient()
         .from('players')
-        .select('id, full_name, avatar_url, status, role, is_exec, is_trainer, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo), waiver_acceptances(document, version, accepted_at)')
+        // is_banned has to be in the select or getAccountStanding reads it as
+        // undefined and a banned member keeps every control — which is exactly
+        // the bug this exists to fix.
+        .select('id, full_name, avatar_url, status, is_banned, role, is_exec, is_trainer, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo), waiver_acceptances(document, version, accepted_at)')
         .eq('user_id', user.id)
         .maybeSingle();
+      standing = getAccountStanding(player);
       playerName = player?.full_name ?? '';
       avatarUrl = player?.avatar_url ?? null;
       playerId = player?.id ?? null;
@@ -149,22 +159,30 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <PostHogProvider>
           <ToastProvider>
             <ConfirmProvider>
-              <SentryUserInit playerId={playerId} />
-              <PostHogIdentify
-                playerId={playerId}
-                playerStatus={playerStatus}
-                singlesElo={singlesElo}
-                doublesElo={doublesElo}
-              />
-              <OfflineBanner />
-              <DeletionGate deletionRequestedAt={deletionRequestedAt} />
-              {/* Deletion screen wins when both gates would apply. */}
-              <WaiverGate missingDocs={deletionRequestedAt ? [] : missingLegalDocs} />
-              <TopBar isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} playerName={playerName} avatarUrl={avatarUrl} unreadCount={unreadCount} isAuthenticated={isAuthenticated} isExecOrAdmin={isExecOrAdmin} activeSeasonName={activeSeasonName} />
-              <main className="page pb-safe-nav">
-                {children}
-              </main>
-              <BottomNav isAuthenticated={isAuthenticated} isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} />
+              <StandingProvider standing={standing}>
+                <SentryUserInit playerId={playerId} />
+                <PostHogIdentify
+                  playerId={playerId}
+                  playerStatus={playerStatus}
+                  singlesElo={singlesElo}
+                  doublesElo={doublesElo}
+                />
+                <OfflineBanner />
+                <DeletionGate deletionRequestedAt={deletionRequestedAt} />
+                {/* Deletion screen wins when both gates would apply. */}
+                <WaiverGate missingDocs={deletionRequestedAt ? [] : missingLegalDocs} />
+                <TopBar isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} playerName={playerName} avatarUrl={avatarUrl} unreadCount={unreadCount} isAuthenticated={isAuthenticated} isExecOrAdmin={isExecOrAdmin} activeSeasonName={activeSeasonName} />
+                {/* Under the top bar, above the page: the one place that says
+                    why the controls below are missing. Nav gating is left as
+                    it was — a link that still loads its page is not a control
+                    the server refuses, and the per-surface notes need those
+                    pages to stay reachable. */}
+                <StandingBanner />
+                <main className="page pb-safe-nav">
+                  {children}
+                </main>
+                <BottomNav isAuthenticated={isAuthenticated} isApproved={playerStatus !== 'pending_approval' && playerStatus !== 'suspended'} />
+              </StandingProvider>
             </ConfirmProvider>
           </ToastProvider>
         </PostHogProvider>

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@badminton/ui';
 import { QrScanner } from '@/components/qr-scanner';
+import { useStanding } from '@/components/standing-provider';
 import { checkInToTournament, type TournamentCheckInResult } from '@/lib/tournament-checkin';
 
 // The QR encodes a full URL so a phone's native camera also works — scanning
@@ -26,6 +27,9 @@ export function TournamentCheckInClient({ initialToken }: { initialToken?: strin
   const [submitting, setSubmitting] = useState(false);
   const [scanning, setScanning] = useState(!initialToken);
   const router = useRouter();
+  // Signed-out visitors read as good standing here (this page is public), so
+  // they keep the existing behaviour of scanning and being sent to sign in.
+  const standing = useStanding();
 
   const submit = useCallback(async (token: string) => {
     setSubmitting(true);
@@ -64,9 +68,24 @@ export function TournamentCheckInClient({ initialToken }: { initialToken?: strin
   const autoRan = useRef(false);
   useEffect(() => {
     if (!initialToken || autoRan.current) return;
+    // Don't fire a request the server is certain to refuse; the screen below
+    // already explains why, and an auto-run would race it with an error state.
+    if (!standing.ok) return;
     autoRan.current = true;
     void submit(initialToken);
-  }, [initialToken, submit]);
+  }, [initialToken, submit, standing.ok]);
+
+  // checkInToTournament starts with requirePlayer(), so don't open the camera
+  // to someone it will refuse — being told at the door, before scanning, is
+  // the difference between a queue moving and a queue stopping.
+  if (!standing.ok) {
+    return (
+      <div className="card-base" role="status">
+        <h2 className="card-title">Check-in paused</h2>
+        <p className="muted" style={{ fontSize: 13, marginTop: 6, maxWidth: '52ch' }}>{standing.detail}</p>
+      </div>
+    );
+  }
 
   if (result) {
     return (

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Input, Textarea, Switch, Select, PageHeader, Dialog } from '@badminton/ui';
 import { updateProfile, updateNotificationPreferences, deleteMyAccount } from '@/lib/actions';
-import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, normalizeEmailPreferences, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, clearHostOnlyAuthCookies, type NotificationCategory } from '@badminton/shared';
+import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, normalizeEmailPreferences, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, clearHostOnlyAuthCookies, getAccountStanding, type NotificationCategory } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -91,10 +91,11 @@ export default function SettingsPage() {
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [isExec, setIsExec] = useState(false);
-  // Fees and the calendar feed are member features the server rejects until an
-  // account is approved (requirePlayer throws "Account pending approval"), so
-  // showing them just produced a dead panel. Hidden until approval, same rule
-  // the nav uses.
+  // Fees and the calendar feed are member features the server rejects unless
+  // the account is in good standing (requirePlayer throws "Account pending
+  // approval" / "Account suspended"), so showing them just produced a dead
+  // panel. getAccountStanding is the same three checks requirePlayer makes —
+  // the hand-rolled status test this replaced missed is_banned entirely.
   const [isApproved, setIsApproved] = useState(true);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState('');
@@ -130,7 +131,7 @@ export default function SettingsPage() {
         else if (mins % 60 === 0) { setLeadValue(String(mins / 60)); setLeadUnit('hours'); }
         else { setLeadValue(String(mins)); setLeadUnit('minutes'); }
         setIsExec(data.is_exec || data.role === 'admin');
-        setIsApproved(data.status !== 'pending_approval' && data.status !== 'suspended');
+        setIsApproved(getAccountStanding(data).ok);
         setLoaded(true);
       }
     }

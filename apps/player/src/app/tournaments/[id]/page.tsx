@@ -6,7 +6,9 @@ import {
   TOURNAMENT_EVENT_STATUS_LABELS,
   TOURNAMENT_STATUS_TAG,
   hasTournamentEnded,
+  getAccountStanding,
 } from '@badminton/shared';
+import { StandingNote } from '@/components/standing-notice';
 import type { TournamentEventType, TournamentEventStatus } from '@badminton/shared';
 import { notFound } from 'next/navigation';
 import { Trophy, Users, Zap, ArrowLeft, ChevronRight } from 'lucide-react';
@@ -54,6 +56,10 @@ export default async function TournamentDetailPage({ params }: { params: Promise
       .maybeSingle();
     myFeedback = (fb as { rating: number | null; comment: string | null } | null) ?? null;
   }
+
+  // The member's own standing — distinct from tournament.suspended_at, which is
+  // the event being paused for everyone.
+  const standing = getAccountStanding(currentPlayer);
 
   return (
     <div data-screen-label="Tournament">
@@ -118,7 +124,12 @@ export default async function TournamentDetailPage({ params }: { params: Promise
       )}
 
       <div className="card-head" style={{ marginBottom: 14 }}>
-        <h3 className="card-title">Events</h3>
+        <div>
+          <h3 className="card-title">Events</h3>
+          {/* The draw, the entries and the results all stay readable; only the
+              Register/Check in/Withdraw buttons are withheld. */}
+          <StandingNote standing={standing} activity="Entries and check-in" style={{ marginTop: 6 }} />
+        </div>
         {events && events.length > 0 && <span className="tag">{events.length}</span>}
       </div>
 
@@ -207,11 +218,20 @@ export default async function TournamentDetailPage({ params }: { params: Promise
           event actually went. The server action enforces the same rule. */}
       {currentPlayer && hasTournamentEnded(tournament) && (
         <div style={{ marginTop: 24 }}>
-          <FeedbackForm
-            tournamentId={id}
-            initialRating={myFeedback?.rating ?? null}
-            initialComment={myFeedback?.comment ?? null}
-          />
+          {/* submitEventFeedback also starts with requirePlayer(), so a form
+              that could only ever fail on submit is replaced by the reason. */}
+          {standing.ok ? (
+            <FeedbackForm
+              tournamentId={id}
+              initialRating={myFeedback?.rating ?? null}
+              initialComment={myFeedback?.comment ?? null}
+            />
+          ) : (
+            <div className="card-base" style={{ padding: 20 }}>
+              <div className="card-title">Feedback paused</div>
+              <p className="card-sub" style={{ marginTop: 6 }}>{standing.detail}</p>
+            </div>
+          )}
         </div>
       )}
     </div>

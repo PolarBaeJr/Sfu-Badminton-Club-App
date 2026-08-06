@@ -1,14 +1,18 @@
-import { createServerSupabaseClient } from '@/lib/supabase-server';
-import { PLAYER_STATUS_LABELS, getWinRate, getStreakDisplay, getPointDifferential, formatDate, buildChallengeQrUrl } from '@badminton/shared';
+import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
+import { PLAYER_STATUS_LABELS, getWinRate, getStreakDisplay, getPointDifferential, formatDate, buildChallengeQrUrl, getAccountStanding } from '@badminton/shared';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Crosshair, QrCode, Trophy } from 'lucide-react';
 import Link from 'next/link';
 import { AvatarChip } from '@badminton/ui';
+import { StandingNote } from '@/components/standing-notice';
 import QRCode from 'qrcode';
 
 export default async function PlayerProfilePage({ params }: { params: Promise<{ playerId: string }> }) {
   const { playerId } = await params;
   const supabase = await createServerSupabaseClient();
+  // The *viewer's* standing, not the profile's — this decides whether we offer
+  // them the Challenge link, which createChallenge would refuse.
+  const standing = getAccountStanding(await getCurrentPlayer());
 
   const [
     { data: player },
@@ -94,10 +98,16 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
             )}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-            {/* Kept alongside the QR — on desktop nobody scans their own screen. */}
-            <Link href={`/challenges/new?opponent=${playerId}`} className="btn btn-primary">
-              <Crosshair size={14} /> Challenge
-            </Link>
+            {/* Kept alongside the QR — on desktop nobody scans their own screen.
+                The QR stays either way: it is how someone ELSE challenges this
+                profile, so the viewer's own standing has no bearing on it. */}
+            {standing.ok ? (
+              <Link href={`/challenges/new?opponent=${playerId}`} className="btn btn-primary">
+                <Crosshair size={14} /> Challenge
+              </Link>
+            ) : (
+              <StandingNote standing={standing} activity="Challenges" />
+            )}
             {challengeQrSvg && (
               <details>
                 <summary

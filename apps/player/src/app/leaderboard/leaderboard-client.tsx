@@ -8,6 +8,8 @@ import { createClient } from '@/lib/supabase-browser';
 import { Search, Crosshair, Trophy } from 'lucide-react';
 import { AvatarChip, PageHeader } from '@badminton/ui';
 import { getWinRate, getWinRateNumeric } from '@badminton/shared';
+import { useStanding } from '@/components/standing-provider';
+import { StandingNote } from '@/components/standing-notice';
 
 type Ratings = {
   singles_elo: number;
@@ -73,6 +75,9 @@ export default function LeaderboardClient({
   const [sortBy, setSortBy] = useState<SortId>('elo');
   const [searchQuery, setSearchQuery] = useState('');
   const router = useRouter();
+  // The ladder itself stays for everyone — it is public. Only the CHALLENGE
+  // column goes, because createChallenge -> requirePlayer() would refuse it.
+  const standing = useStanding();
 
   const players = initialPlayers;
 
@@ -307,6 +312,9 @@ export default function LeaderboardClient({
                 <div className="card-sub">
                   Sorted by {isTpts ? 'points' : sortBy === 'win_rate' ? 'win rate' : 'ELO'} · {ranked.length} of {players.length}
                 </div>
+                {/* One line, so a ladder with no Challenge column reads as an
+                    account state rather than a broken page. */}
+                <StandingNote standing={standing} activity="Challenges" style={{ marginTop: 6 }} />
               </div>
               {!isTpts && (
                 <div className="chips">
@@ -344,7 +352,7 @@ export default function LeaderboardClient({
                       {!isTpts && <th className="num" style={{ width: 110, textAlign: 'right' }}>W–L</th>}
                       {!isTpts && <th className="num" style={{ width: 90, textAlign: 'right' }}>Win %</th>}
                       {!isTpts && <th className="num" style={{ width: 90, textAlign: 'right' }}>Streak</th>}
-                      <th style={{ width: 110 }} />
+                      {standing.ok && <th style={{ width: 110 }} />}
                     </tr>
                   </thead>
                   <tbody>
@@ -407,18 +415,20 @@ export default function LeaderboardClient({
                               )}
                             </td>
                           )}
-                          <td>
-                            <button
-                              className="btn btn-sm btn-ghost"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                router.push(`/challenges/new?opponent=${p.id}`);
-                              }}
-                              type="button"
-                            >
-                              <Crosshair size={12} /> Challenge
-                            </button>
-                          </td>
+                          {standing.ok && (
+                            <td>
+                              <button
+                                className="btn btn-sm btn-ghost"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  router.push(`/challenges/new?opponent=${p.id}`);
+                                }}
+                                type="button"
+                              >
+                                <Crosshair size={12} /> Challenge
+                              </button>
+                            </td>
+                          )}
                         </tr>
                       );
                     })}
