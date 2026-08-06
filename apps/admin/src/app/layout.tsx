@@ -3,6 +3,8 @@ import './globals.css';
 
 export const dynamic = 'force-dynamic';
 import { Sidebar } from '@/components/sidebar';
+import { getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
+import { accessLevelFor } from '@/lib/permissions';
 import { MainContent } from '@/components/main-content';
 import { ToastProvider } from '@/components/toast-provider';
 import { SentryUserInit } from '@/components/sentry-user-init';
@@ -41,6 +43,22 @@ export const viewport: Viewport = {
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Resolve the access level HERE, on the server, so the sidebar's first paint
+  // is already correct. It used to fetch this itself in a useEffect and render
+  // every nav item until the RPC came back — so an exec watched the admin-only
+  // sections sit there for the length of a round-trip and then vanish. Choosing
+  // between a flash of too much and a flash of an empty nav was a false choice:
+  // the layout is already an async server component and can just know.
+  //
+  // Throws on public routes (/login, /unauthorized) where there is no session,
+  // which is exactly when the sidebar renders nothing anyway.
+  let initialAccessLevel = null;
+  try {
+    initialAccessLevel = accessLevelFor(await getAuthenticatedExecOrAdmin({ skipPasskey: true }));
+  } catch {
+    initialAccessLevel = null;
+  }
+
   return (
     <html
       lang="en"
@@ -63,7 +81,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <ToastProvider>
           <ConfirmProvider>
             <SentryUserInit playerId={null} />
-            <Sidebar />
+            <Sidebar initialAccessLevel={initialAccessLevel} />
             <MainContent>
               {children}
             </MainContent>

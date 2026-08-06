@@ -49,11 +49,14 @@ const navSections = [
   },
 ];
 
-export function Sidebar() {
+export function Sidebar({ initialAccessLevel = null }: { initialAccessLevel?: AccessLevel | null }) {
   const pathname = usePathname();
   const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [accessLevel, setAccessLevel] = useState<AccessLevel | null>(null);
-  const [accessLoaded, setAccessLoaded] = useState(false);
+  // Seeded from the server so the FIRST paint is already filtered. The effect
+  // below still runs (it also fetches the email, and refreshes the level on a
+  // client-side navigation), but it no longer decides what the user sees first.
+  const [accessLevel, setAccessLevel] = useState<AccessLevel | null>(initialAccessLevel);
+  const [accessLoaded, setAccessLoaded] = useState(initialAccessLevel !== null);
 
   // Don't render header on public routes
   const isPublicRoute =
@@ -87,6 +90,9 @@ export function Sidebar() {
 
   if (isPublicRoute) return null;
 
+  // Only reachable when the server supplied no level (public route, or the
+  // lookup threw). Showing everything then is still better than an empty nav —
+  // the middleware and every server action gate independently.
   // Until the access level resolves, show everything (avoids an empty-nav
   // flash for the common admin case); once loaded, hide sections execs
   // can't reach. The server action is the real boundary — this is cosmetic.
