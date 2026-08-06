@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import { Badge, AvatarChip, Button, Dialog } from '@badminton/ui';
-import { PLACEMENT_BONUSES, isDoublesEvent } from '@badminton/shared';
-import type { TournamentEventType } from '@badminton/shared';
+import { isDoublesEvent, placementBonusFor } from '@badminton/shared';
+import type { TournamentEventType, TournamentBonusSettings } from '@badminton/shared';
 import { undoMatchResult } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
@@ -23,6 +23,7 @@ interface Props {
   pairs: PairWithPlayers[];
   matches: TournamentMatchRow[];
   isDoubles: boolean;
+  bonusSettings: TournamentBonusSettings;
 }
 
 const POSITION_LABELS: Record<number, string> = {
@@ -34,7 +35,7 @@ const POSITION_COLORS: Record<number, string> = {
   1: '#FFD700', 2: '#C0C0C0', 3: '#CD7F32', 4: '#CD7F32',
 };
 
-export function ResultsTab({ event, participants, pairs, matches, isDoubles }: Props) {
+export function ResultsTab({ event, participants, pairs, matches, isDoubles, bonusSettings }: Props) {
   const [undoConfirmId, setUndoConfirmId] = useState<string | null>(null);
   const [undoLoading, setUndoLoading] = useState(false);
   const { toast } = useToast();
@@ -42,7 +43,14 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
 
   const entries: Array<ParticipantWithPlayer | PairWithPlayers> = isDoubles ? pairs : participants;
   const eventType = event.event_type as TournamentEventType;
-  const bonuses = isDoubles ? PLACEMENT_BONUSES.doubles : PLACEMENT_BONUSES.singles;
+  const bonuses = isDoubles ? bonusSettings.doubles : bonusSettings.singles;
+  // Same two gates the finaliser applies. This column is a projection from
+  // final_position, not stored history, so when bonuses are off it must show
+  // nothing rather than a number nobody was ever awarded.
+  // placement_bonus_enabled is `boolean | null`; both finaliser gates treat null
+  // as "no bonus" (`!event.placement_bonus_enabled` / `event.x && ...`), so this
+  // must coerce rather than compare against false.
+  const bonusesApply = bonusSettings.enabled && !!event.placement_bonus_enabled;
   const completedMatchList = matches.filter((m) => m.status === 'completed' || m.status === 'walkover');
 
   async function handleUndo() {
@@ -123,10 +131,7 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles }: P
               const pos = e.final_position as number;
               const label = POSITION_LABELS[pos] ?? `#${pos}`;
               const color = POSITION_COLORS[pos] ?? 'var(--text-muted)';
-              const bonus = pos === 1 ? bonuses.champion
-                : pos === 2 ? bonuses.finalist
-                : pos <= 4 ? bonuses.semifinalist
-                : pos <= 8 ? bonuses.quarterfinalist : 0;
+              const bonus = bonusesApply ? placementBonusFor(pos, bonuses) : 0;
 
               return (
                 <tr key={e.id} className="border-b border-[var(--border)] last:border-b-0">

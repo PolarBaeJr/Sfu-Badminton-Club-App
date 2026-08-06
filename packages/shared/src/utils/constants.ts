@@ -294,6 +294,12 @@ export const INACTIVITY_DAYS = 45;
 
 // Absolute ELO point awards for tournament placement. Doubled from the classic
 // 16/10/6/3 (singles) and 14/9/5/2 (doubles) to match the 2x-stretched scale.
+//
+// FALLBACK ONLY. The live values come from platform_settings.tournament_bonuses
+// via parseTournamentBonusSettings() (utils/tournament-bonuses.ts); these apply
+// only when a key is absent or unparseable. Do not read this table directly at
+// an award or display site — that is how the panel and the engine drifted apart
+// in the first place.
 export const PLACEMENT_BONUSES = {
   singles: { champion: 32, finalist: 20, semifinalist: 12, quarterfinalist: 6 },
   doubles: { champion: 28, finalist: 18, semifinalist: 10, quarterfinalist: 4 },

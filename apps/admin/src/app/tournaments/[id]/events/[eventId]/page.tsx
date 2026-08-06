@@ -4,6 +4,7 @@ import { TOURNAMENT_EVENT_TYPE_LABELS, isDoublesEvent } from '@badminton/shared'
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { EventControlCenter } from './components/EventControlCenter';
+import { getTournamentBonusSettings } from '@/lib/platform-settings';
 import type { ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';
 
 export default async function EventPage({
@@ -59,6 +60,12 @@ export default async function EventPage({
     .order('round_number')
     .order('bracket_position');
 
+  // Placement bonus amounts + master switch. The Results tab projects the
+  // bonus column from final_position rather than reading stored history, so it
+  // has to use the same numbers (and the same on/off decision) the finaliser
+  // would — otherwise the panel says "off" while the table advertises +32.
+  const bonusSettings = await getTournamentBonusSettings(supabase);
+
   // Fetch all eligible players for participant add (includes admins)
   const { data: allPlayers } = await supabase
     .from('players')
@@ -85,6 +92,7 @@ export default async function EventPage({
         allPlayers={allPlayers ?? []}
         siblingEvents={siblingEvents ?? []}
         isDoubles={doubles}
+        bonusSettings={bonusSettings}
       />
     </div>
   );
