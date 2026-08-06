@@ -245,7 +245,11 @@ export async function requireWaiverResignature(playerId: string): Promise<Action
 }
 
 async function requireWaiverResignatureImpl(playerId: string) {
-  const admin = await getAdminPlayer();
+  // Exec-level, matching requireReacceptance (the club-wide equivalent). Asking
+  // someone to re-sign is operational — a returning member after months away —
+  // and cannot alter what they are agreeing to. Editing the waiver TEXT is
+  // still admin-only, which is where the legal exposure lives.
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: oldPlayer } = await adminClient.from('players').select('waiver_reset_at').eq('id', playerId).single();

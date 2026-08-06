@@ -4,7 +4,7 @@ import { useState, useTransition } from 'react';
 import { Button, Dialog, Input, Select, Switch, Textarea } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { updatePlayer, updatePlayerFlags, approvePlayer, banPlayer, reinstatePlayer } from '@/lib/actions';
+import { updatePlayer, updatePlayerFlags, approvePlayer, banPlayer, reinstatePlayer, requireWaiverResignature } from '@/lib/actions';
 
 interface Props {
   // One button per mode; /players decides WHICH modes a row gets from the tab
@@ -98,6 +98,10 @@ export function PlayerActions({ mode, assignStatus, playerId, playerName, player
     playerData?.status === 'competitive' ? 'competitive' : 'recreational'
   );
   const [banReason, setBanReason] = useState('');
+  // Someone coming back after months away should re-sign before playing. Opt-in
+  // rather than automatic: a player deactivated by mistake last week does not
+  // need to re-sign, and forcing it would block them at the door.
+  const [requireResign, setRequireResign] = useState(false);
   const [reinstateAmount, setReinstateAmount] = useState('');
   const [reinstateMethod, setReinstateMethod] = useState('');
   const { toast } = useToast();
@@ -175,12 +179,18 @@ export function PlayerActions({ mode, assignStatus, playerId, playerName, player
   // active_flag alone would leave a removed player active-but-suspended.
   function handleRestore() {
     run(
-      () => updatePlayer(playerId, {
-        status: restoreStatus as 'competitive' | 'recreational',
-        active_flag: true,
-        reason,
-      }),
-      'Player restored',
+      async () => {
+        const res = await updatePlayer(playerId, {
+          status: restoreStatus as 'competitive' | 'recreational',
+          active_flag: true,
+          reason,
+        });
+        // Only after the restore lands: a failed re-signature must not leave
+        // them un-restored, and a failed restore must not reset their waiver.
+        if (res.ok && requireResign) return requireWaiverResignature(playerId);
+        return res;
+      },
+      requireResign ? 'Player restored — waiver re-signature required' : 'Player restored',
       'Failed to restore player',
     );
   }
@@ -236,6 +246,9 @@ export function PlayerActions({ mode, assignStatus, playerId, playerName, player
           amount_cents: dollars != null && !Number.isNaN(dollars) ? Math.round(dollars * 100) : undefined,
           method: reinstateMethod || undefined,
         });
+        // After the unban lands, not before: a failed re-signature must not
+        // leave them banned, and a failed unban must not reset their waiver.
+        if (requireResign) await requireWaiverResignature(playerId);
         toast('Player unbanned', 'success');
         setOpen(false);
         setReinstateAmount('');
@@ -268,6 +281,12 @@ export function PlayerActions({ mode, assignStatus, playerId, playerName, player
                 <Input label="Method (optional)" value={reinstateMethod} onChange={(e) => setReinstateMethod(e.target.value)} placeholder="e.g. e-transfer, cash" />
               </div>
             )}
+            <Switch
+              label="Require waiver re-signature"
+              description="They re-sign the waiver on their next visit before they can play."
+              checked={requireResign}
+              onChange={setRequireResign}
+            />
             <div className="flex items-center justify-between">
               <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
               <Button onClick={handleReinstate} loading={isPending}>Unban</Button>
@@ -312,6 +331,12 @@ export function PlayerActions({ mode, assignStatus, playerId, playerName, player
               reactivates the account and sets which roster they rejoin.
             </p>
             <Select label="Restore to" options={RESTORE_STATUS_OPTIONS} value={restoreStatus} onChange={(e) => setRestoreStatus(e.target.value)} />
+            <Switch
+              label="Require waiver re-signature"
+              description="They re-sign the waiver on their next visit before they can play. Use this for someone who has been away a while."
+              checked={requireResign}
+              onChange={setRequireResign}
+            />
             <Textarea label="Reason (required)" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why is this player being restored?" />
             <div className="flex items-center justify-between">
               <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
