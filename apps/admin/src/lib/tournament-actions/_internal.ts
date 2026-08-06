@@ -7,6 +7,7 @@ import { revalidatePath } from 'next/cache';
 import {
   calculateEloUpdate,
   getKFactor,
+  getMarginMultiplier,
   getFormatWeight,
   getEventRules,
   hasTypedFormat,
@@ -36,7 +37,7 @@ import type {
 // Fetched per call rather than cached: finalising an event is not a hot path,
 // and a cache is how a mid-tournament settings change ends up applying to some
 // matches and not others.
-async function getRatingSettings(
+export async function getRatingSettings(
   adminClient: ReturnType<typeof createAdminClient>,
 ): Promise<RatingSettings | null> {
   const { data } = await adminClient
@@ -48,6 +49,86 @@ async function getRatingSettings(
 }
 
 export { getExecOrAdmin } from '../actions/_shared';
+
+// ============================================================
+// Batched writes
+// ============================================================
+
+/**
+ * A labelled PostgREST write, ready to be run as part of a batch.
+ * The label is what an exec reads when the batch fails, so name the row.
+ */
+export type LabelledWrite = readonly [label: string, write: PromiseLike<unknown>];
+
+export interface WriteFailure {
+  label: string;
+  message: string;
+}
+
+export interface SettledWrites {
+  /** Every write that did not land, in input order. */
+  failures: WriteFailure[];
+  /** Per-input-index: did this write actually land? Parallel to the input array. */
+  landed: boolean[];
+}
+
+function writeErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  const message = (err as { message?: unknown } | null)?.message;
+  return typeof message === 'string' && message.length > 0 ? message : 'unknown database error';
+}
+
+/**
+ * Run independent writes in parallel and report, per write, whether it landed.
+ *
+ * This exists because `Promise.allSettled` on its own is a trap here. A
+ * supabase-js PostgrestBuilder RESOLVES with `{ data, error }` and only rejects
+ * on a transport failure — `.throwOnError()` is opt-in and is used nowhere in
+ * this repo. So an RLS denial, a check-constraint violation or any other
+ * Postgres error arrives as a FULFILLED promise carrying `error`, and the
+ * `if (r.status === 'rejected')` idiom this replaces threw every one of them
+ * away. That is how a tournament result could report "saved" while one player's
+ * rating never moved: no Sentry event, no audit row, no toast.
+ *
+ * Inspecting `{ error }` rather than switching every builder to
+ * `.throwOnError()` is deliberate: it catches BOTH shapes (a rejected transport
+ * failure and a resolved Postgres error) in one place, and it needs no change
+ * at the ~40 call sites that build the writes.
+ */
+export async function settleWrites(writes: readonly LabelledWrite[]): Promise<SettledWrites> {
+  const settled = await Promise.allSettled(writes.map(([, write]) => Promise.resolve(write)));
+  const failures: WriteFailure[] = [];
+  const landed = settled.map((result, i) => {
+    const label = writes[i]![0];
+    if (result.status === 'rejected') {
+      failures.push({ label, message: writeErrorMessage(result.reason) });
+      return false;
+    }
+    const error = (result.value as { error?: unknown } | null)?.error;
+    if (error) {
+      failures.push({ label, message: writeErrorMessage(error) });
+      return false;
+    }
+    return true;
+  });
+  return { failures, landed };
+}
+
+/**
+ * Turn a partial batch failure into a thrown error the caller has to deal with.
+ *
+ * Nothing is reported to Sentry here on purpose. Every caller either throws out
+ * of a server action (Next's instrumentation captures it) or is wrapped in
+ * runAction (which captures it), so capturing here as well would file every
+ * one of these twice.
+ */
+export function assertWritesSucceeded(action: string, failures: readonly WriteFailure[]): void {
+  if (failures.length === 0) return;
+  const detail = failures.map(f => `${f.label} (${f.message})`).join('; ');
+  throw new Error(
+    `${action}: ${failures.length} database write(s) failed and the change is incomplete — ${detail}`,
+  );
+}
 
 // Revalidate both the tournament page and the event detail page so admin UIs
 // reflect mutations immediately. Pass eventId whenever it is in scope.
@@ -198,6 +279,34 @@ export async function applyTournamentMatchElo(matchId: string) {
 
   const nowIso = new Date().toISOString();
 
+  const ratingSettings = await getRatingSettings(adminClient);
+
+  // Margin-of-victory scaling, the other half of the knob-sharing this file
+  // already claims to do. apply_match_result passes
+  // get_margin_multiplier(games_won, games_lost) for every challenge; this path
+  // passed nothing, so marginMultiplier defaulted to 1.0 and the identical 2-0
+  // moved ratings 15% LESS in a tournament than as a challenge.
+  //
+  // Computed once for the match rather than per side: getMarginMultiplier is
+  // symmetric in (won, lost) — a sweep is a sweep for whoever was on the
+  // receiving end — so 2-0 and 0-2 both return the sweep value and 2-1 / 1-2
+  // both return 1.0. The SQL side evaluates it per participant and gets the
+  // same number; doing it once here removes any way to get the orientation
+  // wrong. A walkover carries no scores at all, so total games is 0 and the
+  // multiplier is 1.0 — which is what the SQL walkover branch does too.
+  const matchScores = (match.scores as Array<{ a: number; b: number }> | null) ?? [];
+  const gamesA = matchScores.filter(g => g.a > g.b).length;
+  const gamesB = matchScores.filter(g => g.b > g.a).length;
+  const marginMultiplier = getMarginMultiplier(
+    gamesA,
+    gamesB,
+    ratingSettings?.sweep_margin_multiplier ?? undefined,
+  );
+
+  // Filled by whichever branch runs; asserted once, after the snapshot is
+  // persisted, so a partial failure is still reversible.
+  let writeFailures: WriteFailure[] = [];
+
   if (doubles) {
     // For doubles, update both players in winning and losing pairs
     const winnerId = match.winner_pair_id;
@@ -221,12 +330,9 @@ export async function applyTournamentMatchElo(matchId: string) {
 
     // Single batched ratings fetch for all 4 players
     const allPlayerIds = [winnerPair.player1_id, winnerPair.player2_id, loserPair.player1_id, loserPair.player2_id];
-    const [{ data: ratings }, ratingSettings] = await Promise.all([
-      adminClient.from('ratings')
-        .select('player_id, doubles_elo, doubles_provisional, doubles_matches_played')
-        .in('player_id', allPlayerIds),
-      getRatingSettings(adminClient),
-    ]);
+    const { data: ratings } = await adminClient.from('ratings')
+      .select('player_id, doubles_elo, doubles_provisional, doubles_matches_played')
+      .in('player_id', allPlayerIds);
 
     const computeFor = (playerId: string, opponentElo: number, won: boolean) => {
       const rating = ratings?.find(r => r.player_id === playerId);
@@ -238,11 +344,11 @@ export async function applyTournamentMatchElo(matchId: string) {
         kFactor: k,
         formatWeight,
         eventMultiplier: eloMultiplier,
-      bounds: { min: ratingSettings?.min_elo, max: ratingSettings?.max_elo },
+        marginMultiplier,
+        bounds: { min: ratingSettings?.min_elo, max: ratingSettings?.max_elo },
         won,
       });
-      snapshotEntries.push({ player_id: playerId, before, after: result.newRating, delta: result.delta });
-      return { playerId, newRating: result.newRating };
+      return { playerId, before, newRating: result.newRating, delta: result.delta };
     };
 
     const computed = [
@@ -253,14 +359,24 @@ export async function applyTournamentMatchElo(matchId: string) {
     ];
 
     // Issue all 4 rating UPDATEs in parallel
-    const updateResults = await Promise.allSettled(
-      computed.map(c => adminClient.from('ratings')
-        .update({ doubles_elo: c.newRating, updated_at: nowIso })
-        .eq('player_id', c.playerId))
+    const { failures, landed } = await settleWrites(
+      computed.map(c => [
+        `ratings.doubles_elo for player ${c.playerId}`,
+        adminClient.from('ratings')
+          .update({ doubles_elo: c.newRating, updated_at: nowIso })
+          .eq('player_id', c.playerId),
+      ] as const)
     );
-    for (const r of updateResults) {
-      if (r.status === 'rejected') Sentry.captureException(r.reason);
-    }
+    writeFailures = failures;
+
+    // Snapshot only what actually landed. The snapshot is what undo/void/edit
+    // reverse, so recording a delta that was never applied would hand the
+    // player rating they never earned the next time the match is unwound.
+    computed.forEach((c, i) => {
+      if (landed[i]) {
+        snapshotEntries.push({ player_id: c.playerId, before: c.before, after: c.newRating, delta: c.delta });
+      }
+    });
   } else {
     // Singles
     const winnerId = match.winner_participant_id;
@@ -290,7 +406,6 @@ export async function applyTournamentMatchElo(matchId: string) {
     const winnerElo = winnerRating?.singles_elo ?? winnerP.elo_before ?? 400;
     const loserElo = loserRating?.singles_elo ?? loserP.elo_before ?? 400;
 
-    const ratingSettings = await getRatingSettings(adminClient);
     const winK = getKFactor('singles', winnerRating?.singles_provisional ?? true, winnerRating?.singles_matches_played, ratingSettings);
     const loseK = getKFactor('singles', loserRating?.singles_provisional ?? true, loserRating?.singles_matches_played, ratingSettings);
 
@@ -300,6 +415,7 @@ export async function applyTournamentMatchElo(matchId: string) {
       kFactor: winK,
       formatWeight,
       eventMultiplier: eloMultiplier,
+      marginMultiplier,
       bounds: { min: ratingSettings?.min_elo, max: ratingSettings?.max_elo },
       won: true,
     });
@@ -310,37 +426,63 @@ export async function applyTournamentMatchElo(matchId: string) {
       kFactor: loseK,
       formatWeight,
       eventMultiplier: eloMultiplier,
+      marginMultiplier,
       bounds: { min: ratingSettings?.min_elo, max: ratingSettings?.max_elo },
       won: false,
     });
 
-    // Issue all 4 UPDATEs in parallel (2 ratings + 2 participants)
-    const updateResults = await Promise.allSettled([
-      adminClient.from('ratings')
+    // Issue all 4 UPDATEs in parallel (2 ratings + 2 participants). The two
+    // rating writes come first so their landed flags line up with the two
+    // snapshot entries below; the participant writes carry no Elo of their own.
+    const { failures, landed } = await settleWrites([
+      [`ratings.singles_elo for player ${winnerP.player_id}`, adminClient.from('ratings')
         .update({ singles_elo: winResult.newRating, updated_at: nowIso })
-        .eq('player_id', winnerP.player_id),
-      adminClient.from('ratings')
+        .eq('player_id', winnerP.player_id)],
+      [`ratings.singles_elo for player ${loserP.player_id}`, adminClient.from('ratings')
         .update({ singles_elo: loseResult.newRating, updated_at: nowIso })
-        .eq('player_id', loserP.player_id),
-      adminClient.from('tournament_participants')
+        .eq('player_id', loserP.player_id)],
+      [`tournament_participants.elo_after for winner ${winnerId}`, adminClient.from('tournament_participants')
         .update({ elo_after: winResult.newRating, elo_change: winResult.delta })
-        .eq('id', winnerId),
-      adminClient.from('tournament_participants')
+        .eq('id', winnerId)],
+      [`tournament_participants.elo_after for loser ${loserId}`, adminClient.from('tournament_participants')
         .update({ elo_after: loseResult.newRating, elo_change: loseResult.delta })
-        .eq('id', loserId),
+        .eq('id', loserId)],
     ]);
-    for (const r of updateResults) {
-      if (r.status === 'rejected') Sentry.captureException(r.reason);
-    }
+    writeFailures = failures;
 
-    snapshotEntries.push({ player_id: winnerP.player_id, before: winnerElo, after: winResult.newRating, delta: winResult.delta });
-    snapshotEntries.push({ player_id: loserP.player_id, before: loserElo, after: loseResult.newRating, delta: loseResult.delta });
+    // Same rule as the doubles branch: the snapshot records what the ratings
+    // table actually took, nothing more.
+    if (landed[0]) {
+      snapshotEntries.push({ player_id: winnerP.player_id, before: winnerElo, after: winResult.newRating, delta: winResult.delta });
+    }
+    if (landed[1]) {
+      snapshotEntries.push({ player_id: loserP.player_id, before: loserElo, after: loseResult.newRating, delta: loseResult.delta });
+    }
   }
 
   // Persist snapshot on the match row so undo/edit can reverse it perfectly.
-  await adminClient.from('tournament_matches')
-    .update({ elo_snapshot: { discipline: snapshotDiscipline, entries: snapshotEntries } })
-    .eq('id', matchId);
+  //
+  // Written BEFORE the failure is raised, and only when something landed. An
+  // empty snapshot is still a truthy JSON value, and the idempotency guard at
+  // the top of this function reads any snapshot as "already rated" — so writing
+  // `{ entries: [] }` after a total failure would wedge the match as unratable
+  // forever. Leaving the column null lets edit/replay have another go.
+  if (snapshotEntries.length > 0) {
+    const { error: snapshotError } = await adminClient.from('tournament_matches')
+      .update({ elo_snapshot: { discipline: snapshotDiscipline, entries: snapshotEntries } })
+      .eq('id', matchId);
+    if (snapshotError) {
+      // The worst of the failure modes: rating moved with no record of by how
+      // much. Say so plainly — there is no automatic reversal from here, and a
+      // second attempt would apply the delta twice.
+      throw new Error(
+        `Ratings for match ${matchId} were updated but the reversal snapshot could not be saved (${snapshotError.message}). ` +
+        `Do not re-enter this result — the applied deltas must be corrected by hand.`
+      );
+    }
+  }
+
+  assertWritesSucceeded(`Elo update for match ${matchId}`, writeFailures);
 }
 
 // Reverse a previously applied Elo snapshot for a match. Resets ratings to their
@@ -362,9 +504,12 @@ export async function reverseEloSnapshot(
   const { data: currentRows, error: fetchErr } = await adminClient.from('ratings')
     .select(`player_id, ${ratingColumn}`)
     .in('player_id', playerIds);
+  // Returning here used to mean voidMatch reported success having reversed
+  // nothing — the delta stayed on the ladder and the snapshot stayed on the
+  // row. There is no safe way to continue without the current ratings, so the
+  // caller has to hear about it.
   if (fetchErr) {
-    Sentry.captureException(fetchErr);
-    return;
+    throw new Error(`Could not read current ratings to reverse match ${String(match.id)}: ${fetchErr.message}`);
   }
 
   const currentMap = new Map<string, number>();
@@ -379,32 +524,60 @@ export async function reverseEloSnapshot(
   // Issue all reversal UPDATEs in parallel — independent rows, no contention.
   // Apply inverse delta regardless of drift so net effect is zero even if
   // intermediate matches moved the rating.
-  const updatePromises = snapshot.entries
-    .filter(e => currentMap.has(e.player_id))
-    .map(e => adminClient.from('ratings')
-      .update({ [ratingColumn]: (currentMap.get(e.player_id) as number) - e.delta, updated_at: nowIso })
-      .eq('player_id', e.player_id));
+  //
+  // An entry whose ratings row came back missing cannot be reversed at all, and
+  // is counted as a failure rather than quietly dropped: skipping it is exactly
+  // how a delta outlives the match that produced it.
+  const reversible = snapshot.entries.filter(e => currentMap.has(e.player_id));
+  const unreadable: WriteFailure[] = snapshot.entries
+    .filter(e => !currentMap.has(e.player_id))
+    .map(e => ({ label: `ratings.${ratingColumn} for player ${e.player_id}`, message: 'no ratings row found' }));
 
-  // Clear singles participant snapshots in the same parallel batch.
+  const { failures: ratingFailures, landed } = await settleWrites(
+    reversible.map(e => [
+      `ratings.${ratingColumn} for player ${e.player_id}`,
+      adminClient.from('ratings')
+        .update({ [ratingColumn]: (currentMap.get(e.player_id) as number) - e.delta, updated_at: nowIso })
+        .eq('player_id', e.player_id),
+    ] as const)
+  );
+
+  // Whatever did NOT come back off the ladder stays on the snapshot, so a
+  // second attempt reverses the remainder and only the remainder. Clearing the
+  // snapshot wholesale after a partial reversal would strand the surviving
+  // deltas with nothing left pointing at them.
+  const reversed = new Set(reversible.filter((_, i) => landed[i]).map(e => e.player_id));
+  const remaining = snapshot.entries.filter(e => !reversed.has(e.player_id));
+
+  const trailingWrites: LabelledWrite[] = [];
+
+  // Clear singles participant snapshots.
   if (snapshot.discipline === 'singles') {
     const participantIds = [match.winner_participant_id, match.loser_participant_id]
       .filter((x): x is string => typeof x === 'string' && x.length > 0);
     if (participantIds.length > 0) {
-      updatePromises.push(adminClient.from('tournament_participants')
-        .update({ elo_after: null, elo_change: null })
-        .in('id', participantIds));
+      trailingWrites.push([
+        `tournament_participants.elo_after for ${participantIds.join(', ')}`,
+        adminClient.from('tournament_participants')
+          .update({ elo_after: null, elo_change: null })
+          .in('id', participantIds),
+      ]);
     }
   }
 
-  // Clear the snapshot on the match row in the same batch.
-  updatePromises.push(adminClient.from('tournament_matches')
-    .update({ elo_snapshot: null })
-    .eq('id', match.id as string));
+  trailingWrites.push([
+    `tournament_matches.elo_snapshot for match ${String(match.id)}`,
+    adminClient.from('tournament_matches')
+      .update({ elo_snapshot: remaining.length > 0 ? { discipline: snapshot.discipline, entries: remaining } : null })
+      .eq('id', match.id as string),
+  ]);
 
-  const results = await Promise.allSettled(updatePromises);
-  for (const r of results) {
-    if (r.status === 'rejected') Sentry.captureException(r.reason);
-  }
+  const { failures: trailingFailures } = await settleWrites(trailingWrites);
+
+  assertWritesSucceeded(
+    `Elo reversal for match ${String(match.id)}`,
+    [...ratingFailures, ...unreadable, ...trailingFailures],
+  );
 }
 
 // ============================================================
@@ -430,6 +603,14 @@ export const FORFEIT_REASON: Record<DrawExitStatus, string> = {
  * Always rated. Every caller reaches here only on a live event: a walkover
  * recorded earlier could not be rated at all, and it would count as a result,
  * which blocks regenerating the draw — the remedy that belongs at that stage.
+ *
+ * applyTournamentMatchElo now THROWS when a rating write fails, and that
+ * propagates: through advanceWinner's cascade, and out of the
+ * forfeitOpenMatchesForEntry loop that a withdrawal or disqualification runs.
+ * So a late withdrawal can now fail partway with some forfeits already
+ * recorded, and withdrawParticipant reports ok:false instead of a tidy
+ * { forfeited, unresolved }. That is the point: the alternative is a cascade
+ * that says it forfeited eight matches while silently rating none of them.
  */
 export async function recordWalkover(
   adminClient: ReturnType<typeof createAdminClient>,
