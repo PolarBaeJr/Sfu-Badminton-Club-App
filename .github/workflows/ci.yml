@@ -4,21 +4,26 @@ name: CI
 # workflow built Docker images, so a red test suite could — and did — reach
 # production without anything objecting.
 #
-# Three ways in:
+# Two ways in:
 #   pull_request     — gate a PR before it can be merged into the prod branch
-#   push             — a direct push to the prod branch is a deploy here, so it
-#                      gets the same treatment as a PR
 #   workflow_call    — build-images.yml calls this first, so an image is never
 #                      built from a commit that failed (see that file's `verify`)
+#
+# Note the absence of a `push` trigger on deploy/docker-prod. A direct push there
+# IS covered — build-images.yml calls this workflow before it builds. Adding a
+# push trigger on top would start a second, identical run of this same workflow
+# for the same commit, and the two would contend for the concurrency group
+# below. Whether they collide depends on how `github.workflow` resolves inside a
+# reusable call; if they do collide, cancel-in-progress kills one, and if the
+# casualty is the `verify` job then `needs: verify` fails and the images never
+# build. A deploy that silently does not ship is worse than the duplicate run,
+# so the trigger is simply not here.
 #
 # Deliberately needs no secrets: the repo is public, so a PR from a fork gets
 # none, and a check that only passes for the owner is a check people route
 # around. `next build` was verified to succeed with no NEXT_PUBLIC_* set — the
 # values only matter to the shipped bundle, not to whether the code compiles.
 on:
-  push:
-    branches:
-      - deploy/docker-prod
   pull_request:
     branches:
       - deploy/docker-prod
@@ -28,17 +33,17 @@ on:
 permissions:
   contents: read
 
-# One run per ref. Pushing twice in quick succession cancels the older run
-# rather than racing it.
+# One run per ref. Pushing twice to a PR branch cancels the older run rather
+# than racing it.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # Job id doubles as the status-check name branch protection has to match.
-  # Called from build-images.yml it reports as "verify / checks"; on a push or
-  # pull_request it reports as plain "checks". Renaming this job silently
-  # detaches any required-check rule that names it.
+  # Job id doubles as the status-check name branch protection has to match. On a
+  # pull_request it reports as plain "checks" — that is the name to require.
+  # Called from build-images.yml it reports as "verify / checks" instead.
+  # Renaming this job silently detaches any required-check rule that names it.
   checks:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
