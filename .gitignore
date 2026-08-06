@@ -57,3 +57,8 @@ scripts/
 
 # Internal working notes / security findings — keep out of the public repo
 docs/sensitive/
+
+# Supabase CLI local state. .temp/start-secrets holds generated keys — this
+# repo is public (see docs/ops/CREDENTIALS.md), so it must never be committable.
+supabase/.branches/
+supabase/.temp/
