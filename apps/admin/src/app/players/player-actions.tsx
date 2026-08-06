@@ -24,16 +24,37 @@ const STATUS_OPTIONS = [
   { value: 'pending_approval', label: 'Pending Approval' },
 ];
 
-const ROLE_OPTIONS = [
-  { value: 'player', label: 'Player' },
-  { value: 'exec', label: 'Executive' },
+// ONE question — what console access does this person have — instead of a
+// role select, an is_exec flag and a trainer switch that had to be combined in
+// the reader's head. "Admin + Executive" is gone because admin already outranks
+// exec everywhere (accessLevelFor resolves the highest level held, and
+// atLeast() orders admin > exec > trainer), so the pair was never a distinct
+// state — only a way to get it wrong.
+const EXEC_ROLE_OPTIONS = [
+  { value: 'none', label: 'None — ordinary member' },
+  { value: 'executive', label: 'Executive' },
+  { value: 'trainer', label: 'Varsity trainer' },
   { value: 'admin', label: 'Admin' },
-  { value: 'admin_exec', label: 'Admin + Executive' },
 ];
 
-function toRoleValue(role: string, isExec: boolean) {
-  if (role === 'admin') return isExec ? 'admin_exec' : 'admin';
-  return isExec ? 'exec' : 'player';
+type ExecRole = 'none' | 'executive' | 'trainer' | 'admin';
+
+function toRoleValue(role: string, isExec: boolean, isTrainer: boolean): ExecRole {
+  if (role === 'admin') return 'admin';
+  if (isExec) return 'executive';
+  if (isTrainer) return 'trainer';
+  return 'none';
+}
+
+// Admin implies is_exec: an admin already has every exec power, and the club's
+// admin sits on the exec team, so they belong on the public /exec page too.
+function fromRoleValue(v: ExecRole): { role: 'player' | 'admin'; is_exec: boolean; is_trainer: boolean } {
+  switch (v) {
+    case 'admin':     return { role: 'admin',  is_exec: true,  is_trainer: false };
+    case 'executive': return { role: 'player', is_exec: true,  is_trainer: false };
+    case 'trainer':   return { role: 'player', is_exec: false, is_trainer: true };
+    default:          return { role: 'player', is_exec: false, is_trainer: false };
+  }
 }
 
 export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin }: Props) {
@@ -41,7 +62,7 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin 
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState((playerData?.status as string) || 'pending_approval');
   const [roleValue, setRoleValue] = useState(
-    toRoleValue((playerData?.role as string) || 'player', Boolean(playerData?.is_exec))
+    toRoleValue((playerData?.role as string) || 'player', Boolean(playerData?.is_exec), Boolean(playerData?.is_trainer))
   );
   const [feeExempt, setFeeExempt] = useState(Boolean(playerData?.fee_exempt));
   const [isTrainer, setIsTrainer] = useState(Boolean(playerData?.is_trainer));
@@ -58,8 +79,7 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin 
 
   function handleEdit() {
     startTransition(async () => {
-      const role = roleValue === 'admin' || roleValue === 'admin_exec' ? 'admin' : 'player';
-      const isExec = roleValue === 'exec' || roleValue === 'admin_exec';
+      const { role, is_exec: isExec, is_trainer: wantsTrainer } = fromRoleValue(roleValue as ExecRole);
       const roleChanged = role !== ((playerData?.role as string) || 'player');
       try {
         const res = await updatePlayer(playerId, {
@@ -77,7 +97,7 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin 
           // rejects a non-admin who supplies this key at all, so sending it
           // unconditionally would break every exec's Save.
           is_trainer:
-            isAdmin && isTrainer !== Boolean(playerData?.is_trainer) ? isTrainer : undefined,
+            isAdmin && wantsTrainer !== Boolean(playerData?.is_trainer) ? wantsTrainer : undefined,
           reason,
         });
         if (!res.ok) { toast(res.error, 'error'); return; }
@@ -207,11 +227,8 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin 
             <Select label="Status" options={STATUS_OPTIONS} value={status} onChange={(e) => setStatus(e.target.value)} />
             {isAdmin && (
               <>
-                <Select label="Role" options={ROLE_OPTIONS} value={roleValue} onChange={(e) => setRoleValue(e.target.value)} />
+                <Select label="Console access" options={EXEC_ROLE_OPTIONS} value={roleValue} onChange={(e) => setRoleValue(e.target.value as ExecRole)} />
                 <Switch label="Fee Exempt" description="Exempted from the club fee (no gameplay effect)" checked={feeExempt} onChange={setFeeExempt} />
-                {/* Separate from the Role select because it composes with every
-                    value in it — a trainer may also be an exec or an admin. */}
-                <Switch label="Varsity Trainer" description="Console access limited to the roster and varsity notes" checked={isTrainer} onChange={setIsTrainer} />
               </>
             )}
             {isAdmin && (

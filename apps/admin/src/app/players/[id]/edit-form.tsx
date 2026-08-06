@@ -7,16 +7,35 @@ import { updatePlayer, approvePlayer } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import type { Player, Rating } from '@badminton/shared';
 
-const ROLE_OPTIONS = [
-  { value: 'player', label: 'Player' },
-  { value: 'exec', label: 'Executive' },
+// One question — what console access does this person have — instead of a role
+// select plus an is_exec flag plus a trainer switch. "Admin + Executive" is gone
+// because admin already outranks exec everywhere (accessLevelFor takes the
+// highest level held), so the pair was never a distinct state.
+const EXEC_ROLE_OPTIONS = [
+  { value: 'none', label: 'None — ordinary member' },
+  { value: 'executive', label: 'Executive' },
+  { value: 'trainer', label: 'Varsity trainer' },
   { value: 'admin', label: 'Admin' },
-  { value: 'admin_exec', label: 'Admin + Executive' },
 ];
 
-function toRoleValue(role: string, isExec: boolean) {
-  if (role === 'admin') return isExec ? 'admin_exec' : 'admin';
-  return isExec ? 'exec' : 'player';
+type ExecRole = 'none' | 'executive' | 'trainer' | 'admin';
+
+function toRoleValue(role: string, isExec: boolean, isTrainer: boolean): ExecRole {
+  if (role === 'admin') return 'admin';
+  if (isExec) return 'executive';
+  if (isTrainer) return 'trainer';
+  return 'none';
+}
+
+// Admin implies is_exec: they hold every exec power already, and the club's
+// admin sits on the exec team, so they belong on the public /exec page too.
+function fromRoleValue(v: ExecRole): { role: 'player' | 'admin'; is_exec: boolean; is_trainer: boolean } {
+  switch (v) {
+    case 'admin':     return { role: 'admin',  is_exec: true,  is_trainer: false };
+    case 'executive': return { role: 'player', is_exec: true,  is_trainer: false };
+    case 'trainer':   return { role: 'player', is_exec: false, is_trainer: true };
+    default:          return { role: 'player', is_exec: false, is_trainer: false };
+  }
 }
 
 // isAdmin gates the privilege/money block: role, exec title, exec photo,
@@ -34,7 +53,7 @@ export function PlayerEditForm({
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState(player.status);
-  const [roleValue, setRoleValue] = useState(toRoleValue(player.role, player.is_exec ?? false));
+  const [roleValue, setRoleValue] = useState<ExecRole>(toRoleValue(player.role, player.is_exec ?? false, player.is_trainer ?? false));
   const [membershipType, setMembershipType] = useState(
     (player as { membership_type?: string }).membership_type ?? 'internal',
   );
@@ -45,15 +64,10 @@ export function PlayerEditForm({
     (player as { exec_photo_url?: string | null }).exec_photo_url ?? '',
   );
   const [feeExempt, setFeeExempt] = useState(player.fee_exempt ?? false);
-  // Its own control rather than another entry in the Role select: is_trainer
-  // composes with role and is_exec, so folding it in would need a row per
-  // combination (trainer, exec+trainer, admin+trainer, ...).
-  const [isTrainer, setIsTrainer] = useState(player.is_trainer ?? false);
   const [reason, setReason] = useState('');
 
   const isPending = player.status === 'pending_approval';
-  const role = roleValue === 'admin' || roleValue === 'admin_exec' ? 'admin' : 'player';
-  const isExec = roleValue === 'exec' || roleValue === 'admin_exec';
+  const { role: nextRole, is_exec: isExec, is_trainer: wantsTrainer } = fromRoleValue(roleValue);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -70,7 +84,7 @@ export function PlayerEditForm({
           status: status !== player.status ? status as Player['status'] : undefined,
           // Guarded on presence server-side, so a non-admin must send nothing
           // at all for these — not even an unchanged value.
-          role: isAdmin && role !== player.role ? role as Player['role'] : undefined,
+          role: isAdmin && nextRole !== player.role ? nextRole as Player['role'] : undefined,
           membership_type:
             membershipType !== ((player as { membership_type?: string }).membership_type ?? 'internal')
               ? (membershipType as 'internal' | 'alumni' | 'external')
@@ -84,7 +98,7 @@ export function PlayerEditForm({
           // rejects a non-admin who supplies the key at all, so an
           // unconditional `is_trainer: false` would fail every exec's Save —
           // exactly the bug `role` had (see actions/players.ts).
-          is_trainer: isAdmin && isTrainer !== (player.is_trainer ?? false) ? isTrainer : undefined,
+          is_trainer: isAdmin && wantsTrainer !== (player.is_trainer ?? false) ? wantsTrainer : undefined,
           exec_title: isAdmin && execTitle !== (player.exec_title ?? '') ? execTitle : undefined,
           exec_photo_url:
             isAdmin && execPhotoUrl !== ((player as { exec_photo_url?: string | null }).exec_photo_url ?? '')
@@ -116,10 +130,10 @@ export function PlayerEditForm({
       />
       {isAdmin && (
         <Select
-          label="Role"
-          options={ROLE_OPTIONS}
+          label="Console access"
+          options={EXEC_ROLE_OPTIONS}
           value={roleValue}
-          onChange={(e) => setRoleValue(e.target.value)}
+          onChange={(e) => setRoleValue(e.target.value as ExecRole)}
         />
       )}
       {/* Separate from Role on purpose: an exec is still an internal member,
@@ -185,12 +199,6 @@ export function PlayerEditForm({
           description="Exempts a non-executive contributor from club and competition fees."
           checked={feeExempt}
           onChange={setFeeExempt}
-        />
-        <Switch
-          label="Varsity trainer"
-          description="Admin console access limited to reading the roster and writing varsity notes. Stacks with Executive or Admin — the higher level wins."
-          checked={isTrainer}
-          onChange={setIsTrainer}
         />
       </div>
       )}
