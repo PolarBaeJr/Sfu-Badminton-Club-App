@@ -70,40 +70,19 @@ export async function GET(request: Request) {
   if (user) {
     const { data: level } = await supabase.rpc('admin_access_level', { p_user_id: user.id });
     if (!level) {
-      // Build the unauthorized redirect *first* so the signOut clear-cookie headers
-      // land on the response that actually goes to the browser.
-      const unauthorized = NextResponse.redirect(`${origin}/unauthorized`);
-
-      // With a subdomain-shared cookie this signOut is no longer local to the
-      // console — it would destroy the player-app session of any member who
-      // simply tried to sign in on the wrong host, silently and everywhere. The
-      // session is legitimately shared now, and the middleware still blocks
-      // every non-public admin route on admin_access_level, so leaving it
-      // intact costs nothing. /unauthorized offers an explicit Sign out button
-      // for anyone who does want to end the session.
-      if (AUTH_COOKIE_DOMAIN) return unauthorized;
-
-      const signoutSupabase = createServerClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-        {
-          // Must match the client that set the cookie, or signOut clears nothing.
-          cookieOptions: AUTH_COOKIE_OPTIONS,
-          cookies: {
-            getAll() { return cookieStore.getAll(); },
-            setAll(cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) {
-              // No companion host-only clear: the guard above means this branch
-              // only ever runs with AUTH_COOKIE_DOMAIN unset, where the cookie
-              // is host-only and this signOut already clears it.
-              cookiesToSet.forEach(({ name, value, options }) => {
-                unauthorized.cookies.set(name, value, options as any);
-              });
-            },
-          },
-        }
-      );
-      await signoutSupabase.auth.signOut();
-      return unauthorized;
+      // Show them the door WITHOUT ending their session.
+      //
+      // This used to sign the user out, and only skipped that when the auth
+      // cookie was domain-scoped. That var is unset, so the destructive path is
+      // the one that actually runs: an ordinary member who wandered onto the
+      // admin login was signed out of the PLAYER app too — silently, with no
+      // hint that visiting the wrong URL had done it.
+      //
+      // Signing them out buys nothing. The middleware already blocks every
+      // non-public admin route on admin_access_level, so a session with no
+      // access level cannot reach anything here. /unauthorized offers an
+      // explicit Sign out button for anyone who genuinely wants to end it.
+      return NextResponse.redirect(`${origin}/unauthorized`);
     }
   }
 
