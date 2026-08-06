@@ -39,6 +39,10 @@ const SECTION_ACCESS: { [pathPrefix: string]: AccessLevel } = {
   '/seasons': 'exec',
   '/fees': 'admin',
   '/audit': 'admin',
+  // Execs read the documents and may require a re-signature; only admins edit
+  // the text. That split is enforced in the page and in the server actions —
+  // this line only decides who may open the section.
+  '/legal': 'exec',
   '/settings': 'trainer', // everyone with console access enrolls their own passkeys
   '/api/passkey': 'trainer', // passkey enrollment/verification endpoints
   // Execs run the roster: approve, edit, ban/unban, varsity notes. Granting

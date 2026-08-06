@@ -27,7 +27,16 @@ function autoGrow(e: React.FormEvent<HTMLTextAreaElement>) {
   el.style.height = `${Math.min(el.scrollHeight, window.innerHeight * 0.6)}px`;
 }
 
-export function LegalDocumentsForm({ documents }: { documents: LegalDocumentRow[] }) {
+export function LegalDocumentsForm({
+  documents,
+  canEdit,
+}: {
+  documents: LegalDocumentRow[];
+  // Execs see the documents and may require a re-signature; only admins edit
+  // the text. The server actions enforce this independently — hiding the
+  // editor is so nobody is offered a control that will reject them.
+  canEdit: boolean;
+}) {
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const { toast } = useToast();
@@ -92,14 +101,24 @@ export function LegalDocumentsForm({ documents }: { documents: LegalDocumentRow[
               </p>
             </div>
             <div className="settings-row-control wide">
-              <Textarea
-                value={currentValue}
-                onChange={(e) => setEdits((prev) => ({ ...prev, [doc.document]: e.target.value }))}
-                onInput={autoGrow}
-                rows={18}
-                className="font-mono text-xs"
-              />
+              {canEdit ? (
+                <Textarea
+                  value={currentValue}
+                  onChange={(e) => setEdits((prev) => ({ ...prev, [doc.document]: e.target.value }))}
+                  onInput={autoGrow}
+                  rows={18}
+                  className="font-mono text-xs"
+                />
+              ) : (
+                /* Read-only for execs. A disabled Textarea would look like an
+                   editor that is merely switched off; a pre block reads as the
+                   document it is. Same monospace so the two views match. */
+                <pre className="font-mono text-xs whitespace-pre-wrap break-words max-h-[60vh] overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3 text-[var(--text-secondary)]">
+                  {doc.content}
+                </pre>
+              )}
               <div className="flex items-center justify-end gap-2 mt-3">
+                {canEdit && (
                 <Button
                   variant="secondary"
                   onClick={() => handleSave(doc, false)}
@@ -108,6 +127,8 @@ export function LegalDocumentsForm({ documents }: { documents: LegalDocumentRow[
                 >
                   Save
                 </Button>
+                )}
+                {canEdit && (
                 <Button
                   variant="ghost"
                   className="border-[var(--red-border)] text-[var(--color-accent)] hover:bg-[var(--red-wash)] hover:text-[var(--color-accent)]"
@@ -117,6 +138,7 @@ export function LegalDocumentsForm({ documents }: { documents: LegalDocumentRow[
                 >
                   Save &amp; require re-acceptance
                 </Button>
+                )}
                 <Button
                   variant="ghost"
                   className="border-[var(--red-border)] text-[var(--color-accent)] hover:bg-[var(--red-wash)] hover:text-[var(--color-accent)]"

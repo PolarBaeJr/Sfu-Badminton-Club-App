@@ -11,6 +11,7 @@ import {
   Users,
   Trophy,
   Medal,
+  Scale,
   ScrollText,
   Settings,
   Target,
@@ -43,6 +44,7 @@ const navSections = [
     items: [
       { href: '/players', label: 'Players', icon: Users },
       { href: '/fees', label: 'Fees', icon: DollarSign },
+      { href: '/legal', label: 'Legal', icon: Scale },
       { href: '/audit', label: 'Audit Log', icon: ScrollText },
       { href: '/settings', label: 'Settings', icon: Settings },
     ],

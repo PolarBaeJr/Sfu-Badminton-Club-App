@@ -1,9 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
 import { PageHeader } from '@badminton/ui';
-import { sortLegalDocuments } from '@badminton/shared';
 import { SettingsForm } from './settings-form';
-import { LegalDocumentsForm } from './legal-documents-form';
 import { PasskeySection } from './passkey-section';
 
 export default async function SettingsPage() {
@@ -20,10 +18,6 @@ export default async function SettingsPage() {
     .select('*')
     .order('key');
 
-  const { data: legalDocuments } = await supabase
-    .from('legal_documents')
-    .select('document, version, content, updated_at');
-  const sortedLegalDocuments = sortLegalDocuments(legalDocuments ?? []);
 
   const { data: passkeys } = player
     ? await supabase
@@ -52,12 +46,6 @@ export default async function SettingsPage() {
             <a href="#security">
               <span className="rail-label block">Security</span>
               <span className="rail-sub block">Passkeys</span>
-            </a>
-          )}
-          {player?.role === 'admin' && (
-            <a href="#legal">
-              <span className="rail-label block">Legal Documents</span>
-              <span className="rail-sub block">Terms, privacy, waiver &amp; conduct</span>
             </a>
           )}
           <a href="#about">
@@ -112,16 +100,6 @@ export default async function SettingsPage() {
             </section>
           )}
 
-          {/* Legal Documents */}
-          {player?.role === 'admin' && sortedLegalDocuments.length > 0 && (
-            <section id="legal" className="scroll-mt-32">
-              <h2 className="settings-section-title">Legal documents</h2>
-              <p className="settings-section-desc">
-                Shown to every member during onboarding. Bumping a version forces all members to re-accept before playing.
-              </p>
-              <LegalDocumentsForm documents={sortedLegalDocuments} />
-            </section>
-          )}
 
           {/* About */}
           <section id="about" className="scroll-mt-32">

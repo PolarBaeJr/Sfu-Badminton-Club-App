@@ -4,7 +4,7 @@ import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import { parseOrThrow, legalDocumentUpdateSchema, waiverDocumentSchema, type LegalDocumentUpdateInput, type WaiverDocument } from '@badminton/shared';
-import { getAdminPlayer } from './_shared';
+import { getAdminPlayer, getExecOrAdmin } from './_shared';
 
 // Bumping re-requires acceptance from every member (the player app compares
 // accepted versions against the current one). Versions are date strings; a
@@ -61,9 +61,12 @@ export async function updateLegalDocument(input: LegalDocumentUpdateInput) {
 // without editing its text or bumping its version. Stamps
 // reacceptance_required_since = now(); the shared getMissingLegalDocuments
 // helper then treats any acceptance older than this as stale.
+// Exec-level on purpose: re-running the consent flow is operational — "everyone
+// re-sign before the tournament" — and it cannot change what anyone is agreeing
+// to. Editing the TEXT stays admin-only, which is where the legal exposure is.
 export async function requireReacceptance(document: WaiverDocument) {
   parseOrThrow(waiverDocumentSchema, document);
-  const admin = await getAdminPlayer();
+  const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: old, error: readError } = await adminClient
