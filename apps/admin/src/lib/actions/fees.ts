@@ -9,11 +9,13 @@ import {
   feeWaiveSchema,
   manualFeeSchema,
   playerFlagsSchema,
+  ExpectedError,
   type FeeMarkInput,
   type FeeWaiveInput,
   type ManualFeeInput,
   type PlayerFlagsInput,
 } from '@badminton/shared';
+import { isWaivedFee } from '../fee-status';
 import { getAdminPlayer } from './_shared';
 
 // Club-admin markers: is_exec (executive team) and fee_exempt (exempted from
@@ -114,6 +116,29 @@ export async function waiveFee(input: FeeWaiveInput) {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
+  // Read before writing. The upsert below sets amount_cents to 0, so running it
+  // over a row that records a real payment silently erases how much was
+  // collected — and the audit entry, written without an old_value, kept no copy
+  // of it either. There is a fee_waived row on production with an empty
+  // old_value for exactly this reason.
+  //
+  // Refuse rather than overwrite: reversing a payment is markFeeUnpaid, which
+  // preserves the amount and audits it. Re-waiving an already-waived row is
+  // still allowed — it is idempotent and destroys nothing.
+  const { data: existing } = await adminClient
+    .from('club_fees')
+    .select('id, player_id, season_id, amount_cents, paid_at, method, reference')
+    .eq('player_id', input.player_id)
+    .eq('season_id', input.season_id)
+    .maybeSingle();
+
+  if (existing?.paid_at && !isWaivedFee(existing)) {
+    throw new ExpectedError(
+      `That fee is already recorded as paid ($${((existing.amount_cents ?? 0) / 100).toFixed(2)}). ` +
+        'Mark it unpaid first if you really mean to waive it — waiving would overwrite the amount with $0.00.',
+    );
+  }
+
   const { data: fee, error } = await adminClient
     .from('club_fees')
     .upsert({
@@ -133,6 +158,7 @@ export async function waiveFee(input: FeeWaiveInput) {
     action_type: 'fee_waived',
     target_type: 'club_fee',
     target_id: fee.id,
+    old_value: existing ?? null,
     new_value: {
       player_id: input.player_id,
       season_id: input.season_id,
@@ -196,6 +222,16 @@ export async function addManualFee(input: ManualFeeInput) {
     })
     .select('id')
     .single();
+  // club_fees_manual_name_season_key (00065). Manual rows sit outside
+  // club_fees_player_id_season_id_key because player_id is NULL there, so until
+  // that index existed a double-submit filed the same payment twice and the
+  // season income figure — a plain SUM over paid rows — counted it twice.
+  if (error?.code === '23505') {
+    throw new ExpectedError(
+      `A manual fee for "${input.manual_name}" is already recorded for this season. ` +
+        'If this is a different person with the same name, add something to tell them apart.',
+    );
+  }
   if (error) throw new Error(error.message);
 
   await logAdminAudit(adminClient, {

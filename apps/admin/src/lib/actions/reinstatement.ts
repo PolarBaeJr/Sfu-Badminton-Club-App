@@ -59,28 +59,30 @@ export async function reinstatePlayer(input: ReinstatementInput) {
   }
   const adminClient = createAdminClient();
 
-  // Snapshot the ban reason onto the reinstatement record before clearing it.
+  // Snapshot the ban before touching it: banned_at identifies which ban this
+  // fee settles (00065) and ban_reason is copied onto the record before it is
+  // cleared.
   const { data: player } = await adminClient
     .from('players')
-    .select('ban_reason')
+    .select('is_banned, banned_at, ban_reason')
     .eq('id', input.player_id)
     .single();
+  if (!player) throw new ExpectedError('That member no longer exists.');
 
-  const { data: fee, error: feeError } = await adminClient
-    .from('reinstatement_fees')
-    .insert({
-      player_id: input.player_id,
-      amount_cents: input.amount_cents ?? null,
-      paid_at: new Date().toISOString(),
-      marked_by: actor.id,
-      method: input.method ?? null,
-      reference: input.reference ?? null,
-      ban_reason: player?.ban_reason ?? null,
-    })
-    .select('id')
-    .single();
-  if (feeError) throw new Error(feeError.message);
+  // There was no precondition here at all, so the Unban button could file a
+  // reinstatement fee — real money in the season ledger — for a ban that never
+  // happened. rosterActionsFor already tries not to offer Unban in that case;
+  // this is the guarantee rather than the suggestion, and it is also what stops
+  // a sequential double-click from charging twice.
+  if (!player.is_banned) {
+    throw new ExpectedError('That member is not banned, so there is nothing to reinstate.');
+  }
 
+  // Lift the ban FIRST, then record the money. The old order inserted the fee
+  // up front, so a failure on the update left the member charged AND still
+  // banned — the worst of the two possible half-states, and invisible until
+  // someone reconciled the ledger. This way the bad outcome is "unbanned but
+  // the payment was not recorded", which is visible on /fees and fixable.
   const { error } = await adminClient
     .from('players')
     .update({
@@ -92,13 +94,37 @@ export async function reinstatePlayer(input: ReinstatementInput) {
     .eq('id', input.player_id);
   if (error) throw new Error(error.message);
 
+  // Falls back to now() only if the row was banned without a banned_at, which
+  // banPlayer never does; the column is NOT NULL.
+  const banStartedAt = player.banned_at ?? new Date().toISOString();
+
+  const { data: fee, error: feeError } = await adminClient
+    .from('reinstatement_fees')
+    .insert({
+      player_id: input.player_id,
+      amount_cents: input.amount_cents ?? null,
+      paid_at: new Date().toISOString(),
+      marked_by: actor.id,
+      method: input.method ?? null,
+      reference: input.reference ?? null,
+      ban_reason: player.ban_reason ?? null,
+      ban_started_at: banStartedAt,
+    })
+    .select('id')
+    .single();
+
+  // Audited before the fee error is raised: the ban really was lifted, and that
+  // has to be on the record whether or not the money row landed.
   await logAdminAudit(adminClient, {
     actor_id: actor.id,
     action_type: 'player_reinstated',
     target_type: 'player',
     target_id: input.player_id,
+    old_value: { is_banned: true, banned_at: player.banned_at, ban_reason: player.ban_reason },
     new_value: {
-      reinstatement_fee_id: fee.id,
+      reinstatement_fee_id: fee?.id ?? null,
+      fee_recorded: !feeError,
+      ban_started_at: banStartedAt,
       amount_cents: input.amount_cents ?? null,
       method: input.method ?? null,
     },
@@ -106,4 +132,18 @@ export async function reinstatePlayer(input: ReinstatementInput) {
 
   revalidatePath('/players');
   revalidatePath('/fees');
+
+  if (feeError) {
+    // reinstatement_fees_player_ban_key (00065): two admins submitting the same
+    // reinstatement at once both read is_banned = true, so the precondition
+    // above cannot separate them — they snapshot the same banned_at and the
+    // index does. The member is unbanned either way; only the duplicate charge
+    // is refused.
+    if (feeError.code === '23505') {
+      throw new ExpectedError(
+        'The ban was lifted, but a reinstatement fee for it had already been recorded — this one was not charged again.',
+      );
+    }
+    throw new Error(feeError.message);
+  }
 }
