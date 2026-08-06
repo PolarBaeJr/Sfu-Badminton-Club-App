@@ -1,0 +1,78 @@
+name: CI
+
+# Type-check, lint and test the whole npm workspace. Until this existed the only
+# workflow built Docker images, so a red test suite could — and did — reach
+# production without anything objecting.
+#
+# Three ways in:
+#   pull_request     — gate a PR before it can be merged into the prod branch
+#   push             — a direct push to the prod branch is a deploy here, so it
+#                      gets the same treatment as a PR
+#   workflow_call    — build-images.yml calls this first, so an image is never
+#                      built from a commit that failed (see that file's `verify`)
+#
+# Deliberately needs no secrets: the repo is public, so a PR from a fork gets
+# none, and a check that only passes for the owner is a check people route
+# around. `next build` was verified to succeed with no NEXT_PUBLIC_* set — the
+# values only matter to the shipped bundle, not to whether the code compiles.
+on:
+  push:
+    branches:
+      - deploy/docker-prod
+  pull_request:
+    branches:
+      - deploy/docker-prod
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run per ref. Pushing twice in quick succession cancels the older run
+# rather than racing it.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Job id doubles as the status-check name branch protection has to match.
+  # Called from build-images.yml it reports as "verify / checks"; on a push or
+  # pull_request it reports as plain "checks". Renaming this job silently
+  # detaches any required-check rule that names it.
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the Dockerfile's node:20-bookworm-slim and the @types/node
+          # ^20 the apps compile against. There is no `engines` field or .nvmrc
+          # to read; the image is the only declaration of record, so CI must
+          # follow it or it type-checks against a Node that never runs the app.
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Cheap guard for the hand-mirrored edge-function constants, which no npm
+      # task can reach — see the script for why.
+      - name: Check edge-function constants have not drifted
+        run: node .github/ci/check-shared-drift.mjs
+
+      # No pipe, no `|| true`: the step's exit code has to be turbo's. Verified
+      # locally that a failing vitest case, an eslint error and a tsc error each
+      # exit non-zero (1, 1 and 2 respectively), and that a single failing
+      # package fails the whole run.
+      #
+      # --continue reports every failing task instead of stopping at the first,
+      # and still exits non-zero — confirmed. Without it one broken package
+      # hides the rest and the fix takes several round trips.
+      #
+      # `type-check` dependsOn `build` in turbo.json, so this also builds both
+      # Next apps and a broken build fails the job too. That is most of the wall
+      # clock, and it is the reason `build` is not listed separately.
+      - name: type-check, lint, test
+        run: npx turbo run type-check lint test --continue
