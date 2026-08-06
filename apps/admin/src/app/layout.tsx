@@ -10,6 +10,7 @@ import { ToastProvider } from '@/components/toast-provider';
 import { SentryUserInit } from '@/components/sentry-user-init';
 import { Barlow, Barlow_Condensed, JetBrains_Mono } from 'next/font/google';
 import { cn, ConfirmProvider } from '@badminton/ui';
+import { withBase } from '@/lib/base-path';
 
 const barlow = Barlow({ subsets: ['latin'], variable: '--font-sans', weight: ['400','500','600','700'] });
 const barlowCondensed = Barlow_Condensed({ subsets: ['latin'], variable: '--font-display', weight: ['400','600','700'] });
@@ -18,15 +19,26 @@ const jetbrainsMono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mon
 export const metadata: Metadata = {
   title: 'SFU Badminton - Admin',
   description: 'Admin dashboard for SFU Badminton Club',
-  // Assets serve from the subdomain root
-  // does not prepend basePath — so these URLs must include it explicitly.
-  manifest: '/manifest.json',
+  // Next prepends basePath to <Link>, redirect() and the router, but NOT to
+  // metadata.manifest or metadata.icons — those emit whatever string they are
+  // given. The console shares the player app's origin, so an unprefixed
+  // "/manifest.json" is not a 404, it is the MEMBERS' manifest: an exec doing
+  // Add to Home Screen from /admin got the members' app name and icon, and
+  // launching it opened /feed. Hence withBase() on every one of these.
+  //
+  // public/manifest.json itself uses RELATIVE members (scope "./", start_url
+  // "dashboard", icon "icon-192.png"). A manifest's URLs resolve against the
+  // manifest's own address, so one file is correct both here — served at
+  // /admin/manifest.json, giving scope /admin/ and start_url /admin/dashboard —
+  // and on a root-mounted localhost build, where basePath is ''. A static file
+  // cannot read BASE_PATH, and hard-coding /admin into it would break localhost.
+  manifest: withBase('/manifest.json'),
   icons: {
     icon: [
-      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
-      { url: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+      { url: withBase('/icon-192.png'), sizes: '192x192', type: 'image/png' },
+      { url: withBase('/icon-512.png'), sizes: '512x512', type: 'image/png' },
     ],
-    apple: '/apple-touch-icon.png',
+    apple: withBase('/apple-touch-icon.png'),
   },
   appleWebApp: {
     capable: true,
@@ -87,11 +99,32 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             </MainContent>
           </ConfirmProvider>
         </ToastProvider>
-        <script dangerouslySetInnerHTML={{ __html: `
-          if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/sw.js').catch(function() {});
-          }
-        `}} />
+        {/*
+          The console deliberately registers NO service worker.
+
+          It used to register '/sw.js' from a dangerouslySetInnerHTML string,
+          which Next cannot rewrite — so on the shared origin that was the
+          PLAYER app's service worker, installed at scope '/' for execs who may
+          never open the members' app. apps/admin/public/sw.js was dead code and
+          has been deleted with this change.
+
+          The console does not get its own worker either, and the reason is the
+          push schema, not tidiness: push_subscriptions has no scope column, and
+          sendPushToPlayers() fans a payload out to EVERY active row for a
+          player_id. A second registration at scope '/admin/' would mean a
+          second endpoint for the same device, so every member notification
+          would fire twice on an exec's phone — one copy rendered by each
+          worker. Two workers would also fight over caches (each activate
+          handler deletes every cache but its own) and would re-introduce the
+          /admin caching that apps/player/public/sw.js refuses on purpose, so a
+          shared phone cannot hand back another exec's console view offline.
+
+          Admin-targeted push therefore rides the one root worker, which honours
+          the payload's `url`. See the notificationclick handler there.
+
+          We do NOT unregister '/sw.js' from here: for the many execs who are
+          also members that is their real player-app worker.
+        */}
       </body>
     </html>
   );

@@ -26,6 +26,22 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Inbound webhooks get the same treatment, for the same second reason. SNS
+  // presents no session cookie, so /admin/api/webhooks/ses answered every POST
+  // with a 307 to /admin/login — SNS could not even complete subscription
+  // confirmation, so no bounce or complaint was ever recorded and the SES
+  // complaint rate climbed unseen. isPublicRoute alone would not be enough:
+  // the catch at the bottom redirects to /login without consulting it, so a
+  // blip in auth.getUser() would silently un-fix this. Each handler under
+  // /api/webhooks authenticates its own caller (the SES route verifies the
+  // Amazon signature and pins the topic ARN, failing closed on both).
+  // Trailing slash so a route like /api/webhooksfoo can never match. Skipping
+  // finish() here also skips the stale-cookie cleanup, deliberately: a webhook
+  // caller has no cookie jar to tidy.
+  if (request.nextUrl.pathname.startsWith('/api/webhooks/')) {
+    return NextResponse.next();
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   // See the identical block in the player middleware: expires host-only auth
@@ -131,5 +147,17 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  // PWA assets (manifest, icons) must stay public — an auth redirect here
+  // breaks installability. The player app has carried this exclusion list since
+  // it shipped; the console never got one, so /admin/manifest.json and
+  // /admin/icon-*.png all 307'd to /admin/login. That was invisible only while
+  // the console's <head> pointed at the origin root (i.e. at the PLAYER app's
+  // assets) — fixing that without this turns a cosmetic mix-up into a console
+  // that cannot be installed at all.
+  //
+  // Paths here are basePath-RELATIVE: Next strips /admin before matching.
+  // No sw.js entry: the console registers no service worker (see app/layout.tsx).
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|manifest.json|icon-192.png|icon-512.png|apple-touch-icon.png).*)',
+  ],
 };
