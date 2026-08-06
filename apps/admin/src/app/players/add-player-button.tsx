@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { Button, Dialog, Input, Select } from '@badminton/ui';
+import { Button, Dialog, Input, Select, Switch } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { createPlayer } from '@/lib/actions';
@@ -31,6 +31,7 @@ export function AddPlayerButton({ isAdmin }: { isAdmin: boolean }) {
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState('recreational');
   const [role, setRole] = useState('player');
+  const [isTrainer, setIsTrainer] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
 
@@ -48,6 +49,7 @@ export function AddPlayerButton({ isAdmin }: { isAdmin: boolean }) {
           status,
           role: 'player',
           is_exec: isAdmin && role === 'exec',
+          is_trainer: isAdmin && isTrainer,
         });
         if (!res.ok) { toast(res.error, 'error'); return; }
         toast('Player created', 'success');
@@ -57,6 +59,7 @@ export function AddPlayerButton({ isAdmin }: { isAdmin: boolean }) {
         setEmail('');
         setStatus('recreational');
         setRole('player');
+        setIsTrainer(false);
         router.refresh();
       } catch (err) {
         toast(err instanceof Error ? err.message : 'Failed to create player', 'error');
@@ -97,12 +100,21 @@ export function AddPlayerButton({ isAdmin }: { isAdmin: boolean }) {
             onChange={(e) => setStatus(e.target.value)}
           />
           {isAdmin && (
-            <Select
-              label="Role"
-              options={ROLE_OPTIONS}
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-            />
+            <>
+              <Select
+                label="Role"
+                options={ROLE_OPTIONS}
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+              />
+              {/* Beside Role, not inside it: a trainer may also be an exec. */}
+              <Switch
+                label="Varsity trainer"
+                description="Console access limited to the roster and varsity notes."
+                checked={isTrainer}
+                onChange={setIsTrainer}
+              />
+            </>
           )}
           <div className="flex items-center justify-between pt-2">
             <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>

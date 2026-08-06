@@ -72,6 +72,7 @@ export async function createPlayer(data: {
   status: string;
   role?: string;
   is_exec?: boolean;
+  is_trainer?: boolean;
 }): Promise<ActionResult<string>> {
   return runAction(() => createPlayerImpl(data));
 }
@@ -83,6 +84,7 @@ async function createPlayerImpl(data: {
   status: string;
   role?: string;
   is_exec?: boolean;
+  is_trainer?: boolean;
 }) {
   // Admin accounts cannot be created here — only promoted from existing
   // members via updatePlayer, so every admin went through real signup
@@ -119,8 +121,13 @@ async function createPlayerImpl(data: {
     throw new Error(error.message);
   }
 
-  if (data.is_exec) {
-    await adminClient.from('players').update({ is_exec: true }).eq('id', playerId);
+  // create_player_with_rating() predates both markers, so they are stamped in a
+  // follow-up update. Only issued when something is actually being granted.
+  if (data.is_exec || data.is_trainer) {
+    const flags: Record<string, boolean> = {};
+    if (data.is_exec) flags.is_exec = true;
+    if (data.is_trainer) flags.is_trainer = true;
+    await adminClient.from('players').update(flags).eq('id', playerId);
   }
 
   await logAdminAudit(adminClient, {
@@ -128,7 +135,7 @@ async function createPlayerImpl(data: {
     action_type: 'player_created',
     target_type: 'player',
     target_id: playerId,
-    new_value: { first_name: data.first_name, last_name: data.last_name ?? null, email: data.email, status: data.status, is_exec: data.is_exec ?? false },
+    new_value: { first_name: data.first_name, last_name: data.last_name ?? null, email: data.email, status: data.status, is_exec: data.is_exec ?? false, is_trainer: data.is_trainer ?? false },
     reason: 'Manual admin creation',
   });
 
@@ -158,6 +165,7 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
   if (data.role) playerUpdate.role = data.role;
   if (data.membership_type) playerUpdate.membership_type = data.membership_type;
   if (data.is_exec !== undefined) playerUpdate.is_exec = data.is_exec;
+  if (data.is_trainer !== undefined) playerUpdate.is_trainer = data.is_trainer;
   if (data.exec_title !== undefined) playerUpdate.exec_title = data.exec_title;
   if (data.fee_exempt !== undefined) playerUpdate.fee_exempt = data.fee_exempt;
   if (data.exec_photo_url !== undefined) playerUpdate.exec_photo_url = data.exec_photo_url;

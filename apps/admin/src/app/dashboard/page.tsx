@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
-import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
-import { accessLevelFor, canAccess } from '@/lib/permissions';
+import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
+import { accessLevelFor, atLeast, canAccess } from '@/lib/permissions';
 import { Badge, AvatarChip, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS } from '@badminton/shared';
 import Link from 'next/link';
@@ -13,6 +13,16 @@ import {
 } from 'lucide-react';
 import { ApproveButtons } from './approve-buttons';
 
+// Only needed to give the "trainer sees no matches" branch of the fetch below a
+// type to agree with — the admin client carries no generated Database type, so
+// the real query's rows are untyped.
+type DashboardMatch = {
+  id: string;
+  score_summary: string | null;
+  result_status: string;
+  match_participants?: Record<string, unknown>[] | null;
+};
+
 export default async function DashboardPage() {
   const supabase = createAdminClient();
 
@@ -20,13 +30,22 @@ export default async function DashboardPage() {
   // question the sidebar and middleware answer — through the SAME helper, not a
   // hand-kept second list. An exec used to see tiles for disputes, walkovers,
   // fees and challenges, every one of which bounced them to /unauthorized.
-  const viewer = await getAuthenticatedExecOrAdmin();
+  const viewer = await getAuthenticatedConsoleUser();
   const level = accessLevelFor(viewer);
   const showPlayers = canAccess(level, '/players');
   const showDisputes = canAccess(level, '/disputes');
   const showWalkovers = canAccess(level, '/walkovers');
   const showChallenges = canAccess(level, '/challenges');
   const showFees = canAccess(level, '/fees');
+  // Sections that used to be unconditional. A varsity trainer reaches the
+  // dashboard (it is where sign-in lands) but has no business in matches or
+  // tournaments, and both links bounce them to /unauthorized.
+  const showMatches = canAccess(level, '/matches');
+  const showTournaments = canAccess(level, '/tournaments');
+  // /players is trainer-readable, but approving is exec work — the approve
+  // buttons below call approvePlayer, which gates on getExecOrAdmin(). Asking
+  // the level directly rather than reusing showPlayers keeps the panel honest.
+  const canApprove = atLeast(level, 'exec');
 
   // Gate the FETCHES, not just the tiles: a hidden card whose query still ran
   // would ship admin-only counts into the RSC payload for anyone with devtools.
@@ -50,10 +69,12 @@ export default async function DashboardPage() {
     showPlayers ? supabase.from('players').select('id', { count: 'exact', head: true }).eq('status', 'pending_approval') : noCount,
     showDisputes ? supabase.from('disputes').select('id', { count: 'exact', head: true }).eq('status', 'open') : noCount,
     showWalkovers ? supabase.from('walkovers').select('id', { count: 'exact', head: true }).eq('status', 'pending') : noCount,
-    supabase.from('matches').select('id, score_summary, played_at, match_type, format, created_at, result_status, match_participants(player_id, team_side, win_flag, rating_delta, player:players(full_name))').order('created_at', { ascending: false }).limit(5),
-    supabase.from('tournaments').select('id', { count: 'exact', head: true }).eq('status', 'active'),
+    showMatches
+      ? supabase.from('matches').select('id, score_summary, played_at, match_type, format, created_at, result_status, match_participants(player_id, team_side, win_flag, rating_delta, player:players(full_name))').order('created_at', { ascending: false }).limit(5)
+      : Promise.resolve({ data: null as DashboardMatch[] | null }),
+    showTournaments ? supabase.from('tournaments').select('id', { count: 'exact', head: true }).eq('status', 'active') : noCount,
     showChallenges ? supabase.from('challenges').select('id', { count: 'exact', head: true }).in('status', ['proposed', 'partially_confirmed', 'accepted']) : noCount,
-    showPlayers
+    canApprove
       ? supabase
           .from('players')
           .select('id, full_name, email, avatar_url, created_at')
@@ -66,7 +87,7 @@ export default async function DashboardPage() {
   // Each term is gated too: the banner text names open disputes and pending
   // walkovers, so leaving it ungated would leak the counts the tiles hide.
   const alertTerms = [
-    showPlayers && pendingPlayers && pendingPlayers > 0 ? `${pendingPlayers} pending approval${pendingPlayers > 1 ? 's' : ''}` : null,
+    canApprove && pendingPlayers && pendingPlayers > 0 ? `${pendingPlayers} pending approval${pendingPlayers > 1 ? 's' : ''}` : null,
     showDisputes && openDisputes && openDisputes > 0 ? `${openDisputes} open dispute${openDisputes > 1 ? 's' : ''}` : null,
     showWalkovers && pendingWalkovers && pendingWalkovers > 0 ? `${pendingWalkovers} pending walkover${pendingWalkovers > 1 ? 's' : ''}` : null,
   ].filter(Boolean);
@@ -118,8 +139,10 @@ export default async function DashboardPage() {
       )}
 
       {/* Pending Players. Exec-allowed now that /players is — approvePlayer
-          takes getExecOrAdmin(), so the buttons here work for both. */}
-      {showPlayers && pendingPlayersList && pendingPlayersList.length > 0 && (
+          takes getExecOrAdmin(), so the buttons here work for both. Trainers
+          reach /players but cannot approve, so this whole panel is theirs to
+          not see: every row in it is a pair of buttons that would reject them. */}
+      {canApprove && pendingPlayersList && pendingPlayersList.length > 0 && (
         <div className="rounded-xl border border-[var(--color-warning)]/20 bg-[var(--bg-card)] overflow-hidden">
           <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -199,8 +222,10 @@ export default async function DashboardPage() {
       {/* Two Column Section. Collapses to one column when Challenges is hidden,
           so an exec gets a full-width Tournaments card rather than a half-width
           one floating beside a gap. */}
-      <div className={`grid grid-cols-1 gap-6 ${showChallenges ? 'lg:grid-cols-2' : ''}`}>
+      {(showTournaments || showChallenges) && (
+      <div className={`grid grid-cols-1 gap-6 ${showTournaments && showChallenges ? 'lg:grid-cols-2' : ''}`}>
         {/* Active Tournaments */}
+        {showTournaments && (
         <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
@@ -216,6 +241,7 @@ export default async function DashboardPage() {
             <p className="text-sm text-[var(--text-muted)] mb-1">active</p>
           </div>
         </div>
+        )}
 
         {/* Active Challenges */}
         {showChallenges && (
@@ -236,8 +262,10 @@ export default async function DashboardPage() {
         </div>
         )}
       </div>
+      )}
 
       {/* Recent Matches */}
+      {showMatches && (
       <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
         <div className="flex items-center justify-between p-6 pb-4">
           <div className="flex items-center gap-2">
@@ -290,6 +318,7 @@ export default async function DashboardPage() {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }

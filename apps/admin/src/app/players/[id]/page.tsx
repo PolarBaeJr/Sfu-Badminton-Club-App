@@ -1,5 +1,5 @@
-import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
-import { accessLevelFor } from '@/lib/permissions';
+import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
+import { accessLevelFor, atLeast } from '@/lib/permissions';
 import { Card, Badge, StatCard, AvatarChip, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, TOURNAMENT_EVENT_TYPE_LABELS, getWinRate, getStreakDisplay, getPointDifferential } from '@badminton/shared';
 import { PlayerEditForm } from './edit-form';
@@ -23,8 +23,13 @@ export default async function PlayerDetailPage({
   const { season: seasonParam } = await searchParams;
   // Execs manage this page; privilege, account lifecycle, the legal
   // re-signature gate and reliability counters stay with admins.
-  const viewer = await getAuthenticatedExecOrAdmin();
-  const isAdmin = accessLevelFor(viewer) === 'admin';
+  //
+  // A varsity trainer sees the same page with everything writable removed
+  // EXCEPT the varsity notes panel — which is the only reason they are here.
+  const viewer = await getAuthenticatedConsoleUser();
+  const level = accessLevelFor(viewer);
+  const isAdmin = level === 'admin';
+  const canManage = atLeast(level, 'exec');
   const supabase = createAdminClient();
 
   // Which season this page is showing. Defaults to the active one; ?season=
@@ -125,6 +130,8 @@ export default async function PlayerDetailPage({
                   <Shield className="w-3 h-3 inline mr-1" />
                   {player.role}
                 </Badge>
+                {player.is_exec && <Badge variant="info">Exec</Badge>}
+                {player.is_trainer && <Badge variant="info">Trainer</Badge>}
               </span>
             </>
           }
@@ -195,8 +202,12 @@ export default async function PlayerDetailPage({
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Edit Form */}
+      {/* Two columns for a trainer (no edit form), three for everyone else. */}
+      <div className={`grid grid-cols-1 gap-6 ${canManage ? 'lg:grid-cols-3' : 'lg:grid-cols-2'}`}>
+        {/* Edit Form. Dropped entirely for a trainer: updatePlayer gates on
+            getExecOrAdmin(), so every control in it — status, membership, the
+            reason box, Save — would reject them. */}
+        {canManage && (
         <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
           <h2 className="text-base font-semibold text-[var(--text-primary)] mb-4">Edit Player</h2>
           <PlayerEditForm player={player} rating={r} isAdmin={isAdmin} />
@@ -209,6 +220,7 @@ export default async function PlayerDetailPage({
             </div>
           )}
         </div>
+        )}
 
         {/* Reliability */}
         <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">

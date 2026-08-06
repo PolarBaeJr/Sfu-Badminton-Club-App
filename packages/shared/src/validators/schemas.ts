@@ -224,6 +224,9 @@ export const adminPlayerUpdateSchema = z.object({
   // executive team (shown on the public /exec page) and exempts them from fees;
   // exec_title is their role label; fee_exempt exempts non-exec contributors.
   is_exec: z.boolean().optional(),
+  // Varsity trainer. A separate marker rather than a role value because it
+  // composes: a trainer may also be an exec or an admin.
+  is_trainer: z.boolean().optional(),
   exec_title: blankAsUndefined(z.string().max(60)),
   fee_exempt: z.boolean().optional(),
   // Photo for the public /exec page. Separate from avatar_url so a profile
@@ -273,6 +276,7 @@ export const adminPlayerCreateSchema = z.object({
   // members (updatePlayer), never created directly.
   role: z.enum(['player']).optional(),
   is_exec: z.boolean().optional(),
+  is_trainer: z.boolean().optional(),
 });
 
 export const adminMatchCreateSchema = z.object({

@@ -7,6 +7,7 @@ import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { z } from 'zod';
 import { rateLimit, getClientIp, parseOrThrow, AUTH_COOKIE_NAME } from '@badminton/shared';
 import { createAdminClient } from '@/lib/supabase-server';
+import { accessLevelFor } from '@/lib/permissions';
 import { logAdminAudit } from '@/lib/audit';
 import { signPayload, verifyPayload } from '@/lib/passkey/cookie';
 import {
@@ -144,12 +145,18 @@ export async function POST(request: Request) {
 
   const { data: player } = await adminClient
     .from('players')
-    .select('id, user_id, role, is_exec')
+    .select('id, user_id, role, is_exec, is_trainer')
     .eq('id', stored.player_id)
     .maybeSingle();
   if (!player?.user_id) return fail();
-  // Same predicate as admin_access_level() and getAuthenticatedExecOrAdmin().
-  if (player.role !== 'admin' && player.is_exec !== true) return fail();
+  // Same predicate as admin_access_level(): anyone with ANY console level may
+  // sign in here. What they can then DO is decided per section and per action,
+  // not at the door — a trainer with a passkey who could not use it would
+  // simply have no way in.
+  //
+  // is_trainer must be in the select above as well as the test: a missing
+  // column reads as undefined, type-checks fine, and silently locks trainers out.
+  if (accessLevelFor(player) === null) return fail();
 
   // The canonical address lives on the auth user, not players.email — the
   // session must be minted for whatever GoTrue actually knows this account as.

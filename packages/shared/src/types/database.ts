@@ -107,6 +107,11 @@ export interface Player {
   role: UserRole;
   active_flag: boolean;
   is_exec: boolean;
+  // Varsity trainer (00054). Independent of role and is_exec: a trainer may be
+  // an exec or an admin too, and the highest level they hold is the one that
+  // applies. Grants the admin console, limited to reading the roster and
+  // writing varsity notes.
+  is_trainer: boolean;
   fee_exempt: boolean;
   is_banned: boolean;
   banned_at: string | null;

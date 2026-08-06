@@ -19,10 +19,13 @@ function toRoleValue(role: string, isExec: boolean) {
   return isExec ? 'exec' : 'player';
 }
 
-// isAdmin gates the privilege/money block: role, exec title, exec photo and
-// fee-exempt. Execs keep status, membership and the Elo fields. The server
-// action rejects the admin-only fields outright, so an exec must never be shown
-// a control that sends one.
+// isAdmin gates the privilege/money block: role, exec title, exec photo,
+// fee-exempt and the varsity-trainer marker. Execs keep status and membership.
+// The server action rejects the admin-only fields outright, so an exec must
+// never be shown a control that sends one.
+//
+// A varsity trainer never sees this form at all — the whole card is dropped on
+// the detail page, because updatePlayer does not admit them.
 export function PlayerEditForm({
   player,
   rating,
@@ -42,6 +45,10 @@ export function PlayerEditForm({
     (player as { exec_photo_url?: string | null }).exec_photo_url ?? '',
   );
   const [feeExempt, setFeeExempt] = useState(player.fee_exempt ?? false);
+  // Its own control rather than another entry in the Role select: is_trainer
+  // composes with role and is_exec, so folding it in would need a row per
+  // combination (trainer, exec+trainer, admin+trainer, ...).
+  const [isTrainer, setIsTrainer] = useState(player.is_trainer ?? false);
   const [reason, setReason] = useState('');
 
   const isPending = player.status === 'pending_approval';
@@ -73,6 +80,11 @@ export function PlayerEditForm({
           singles_elo: isAdmin && singlesElo !== (rating?.singles_elo ?? 400) ? singlesElo : undefined,
           doubles_elo: isAdmin && doublesElo !== (rating?.doubles_elo ?? 400) ? doublesElo : undefined,
           is_exec: isAdmin && isExec !== (player.is_exec ?? false) ? isExec : undefined,
+          // Sent ONLY when an admin actually changed it. The server guard
+          // rejects a non-admin who supplies the key at all, so an
+          // unconditional `is_trainer: false` would fail every exec's Save —
+          // exactly the bug `role` had (see actions/players.ts).
+          is_trainer: isAdmin && isTrainer !== (player.is_trainer ?? false) ? isTrainer : undefined,
           exec_title: isAdmin && execTitle !== (player.exec_title ?? '') ? execTitle : undefined,
           exec_photo_url:
             isAdmin && execPhotoUrl !== ((player as { exec_photo_url?: string | null }).exec_photo_url ?? '')
@@ -173,6 +185,12 @@ export function PlayerEditForm({
           description="Exempts a non-executive contributor from club and competition fees."
           checked={feeExempt}
           onChange={setFeeExempt}
+        />
+        <Switch
+          label="Varsity trainer"
+          description="Admin console access limited to reading the roster and writing varsity notes. Stacks with Executive or Admin — the higher level wins."
+          checked={isTrainer}
+          onChange={setIsTrainer}
         />
       </div>
       )}

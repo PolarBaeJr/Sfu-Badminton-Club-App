@@ -44,6 +44,7 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin 
     toRoleValue((playerData?.role as string) || 'player', Boolean(playerData?.is_exec))
   );
   const [feeExempt, setFeeExempt] = useState(Boolean(playerData?.fee_exempt));
+  const [isTrainer, setIsTrainer] = useState(Boolean(playerData?.is_trainer));
   const [singlesElo, setSinglesElo] = useState('');
   const [doublesElo, setDoublesElo] = useState('');
   const [reason, setReason] = useState('');
@@ -72,6 +73,11 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin 
           // bounds and margin rules.
           singles_elo: isAdmin && singlesElo ? parseInt(singlesElo) : undefined,
           doubles_elo: isAdmin && doublesElo ? parseInt(doublesElo) : undefined,
+          // Same "only when it changed" rule as `role` above: the server guard
+          // rejects a non-admin who supplies this key at all, so sending it
+          // unconditionally would break every exec's Save.
+          is_trainer:
+            isAdmin && isTrainer !== Boolean(playerData?.is_trainer) ? isTrainer : undefined,
           reason,
         });
         if (!res.ok) { toast(res.error, 'error'); return; }
@@ -203,6 +209,9 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin 
               <>
                 <Select label="Role" options={ROLE_OPTIONS} value={roleValue} onChange={(e) => setRoleValue(e.target.value)} />
                 <Switch label="Fee Exempt" description="Exempted from the club fee (no gameplay effect)" checked={feeExempt} onChange={setFeeExempt} />
+                {/* Separate from the Role select because it composes with every
+                    value in it — a trainer may also be an exec or an admin. */}
+                <Switch label="Varsity Trainer" description="Console access limited to the roster and varsity notes" checked={isTrainer} onChange={setIsTrainer} />
               </>
             )}
             {isAdmin && (
