@@ -90,14 +90,17 @@ export function Sidebar({ initialAccessLevel = null }: { initialAccessLevel?: Ac
 
   if (isPublicRoute) return null;
 
-  // Only reachable when the server supplied no level (public route, or the
-  // lookup threw). Showing everything then is still better than an empty nav —
-  // the middleware and every server action gate independently.
-  // Until the access level resolves, show everything (avoids an empty-nav
-  // flash for the common admin case); once loaded, hide sections execs
-  // can't reach. The server action is the real boundary — this is cosmetic.
+  // Fails CLOSED: nothing is shown until the access level is known. The layout
+  // seeds it from the server, so in practice this resolves before first paint
+  // and nothing flashes at all. It only bites on a public route or if the
+  // lookup threw — and an empty nav for a moment is the right failure, because
+  // the alternative was execs watching admin-only sections appear and vanish on
+  // every load.
+  //
+  // Still cosmetic, not a boundary: the middleware and every server action gate
+  // independently. This just stops the UI advertising doors that won't open.
   const visibleItems = navSections.map((section) =>
-    section.items.filter((item) => !accessLoaded || canAccess(accessLevel, item.href))
+    section.items.filter((item) => accessLoaded && canAccess(accessLevel, item.href))
   );
   const manageItems = visibleItems[0] ?? [];
   const adminItems = visibleItems[1] ?? [];
