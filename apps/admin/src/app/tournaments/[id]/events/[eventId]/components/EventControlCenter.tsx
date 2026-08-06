@@ -7,7 +7,7 @@ import {
   TOURNAMENT_EVENT_STATUS_LABELS,
   TOURNAMENT_EVENT_STATUS_COLORS,
 } from '@badminton/shared';
-import type { TournamentEventType, TournamentEventStatus } from '@badminton/shared';
+import type { TournamentEventType, TournamentEventStatus, TournamentBonusSettings } from '@badminton/shared';
 import { Trophy, Users, CheckCircle, BarChart3, Settings, Swords, ListOrdered, Pause } from 'lucide-react';
 import type {
   TournamentRow,
@@ -38,9 +38,12 @@ interface Props {
   allPlayers: Array<{ id: string; full_name: string; avatar_url?: string | null }>;
   siblingEvents: SiblingEvent[];
   isDoubles: boolean;
+  // Resolved from platform_settings on the server — client components cannot
+  // read the table, so the Results tab gets it as a prop.
+  bonusSettings: TournamentBonusSettings;
 }
 
-export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles }: Props) {
+export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings }: Props) {
   const status = event.status as TournamentEventStatus;
   const eventType = event.event_type as TournamentEventType;
   const format = event.format;
@@ -174,6 +177,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             pairs={pairs}
             matches={matches}
             isDoubles={isDoubles}
+            bonusSettings={bonusSettings}
           />
         )}
         {activeTab === 'leaderboard' && (

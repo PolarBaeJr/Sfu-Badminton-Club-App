@@ -16,6 +16,7 @@ export * from './utils/supabase-helpers';
 export * from './utils/challenge-qr';
 export * from './utils/payment-methods';
 export * from './utils/tournament-window';
+export * from './utils/tournament-bonuses';
 export * from './utils/tournament-withdrawal';
 export * from './utils/membership';
 export * from './utils/match-result';

@@ -3,7 +3,8 @@
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
-import { PLACEMENT_BONUSES, isDoublesEvent, clampElo } from '@badminton/shared';
+import { isDoublesEvent, clampElo, placementBonusFor } from '@badminton/shared';
+import { getTournamentBonusSettings } from '../platform-settings';
 import {
   getExecOrAdmin,
   revalidateEventPaths,
@@ -26,18 +27,23 @@ export async function applyPlacementBonuses(eventId: string) {
   if (!event.placement_bonus_enabled) throw new Error('Placement bonuses not enabled for this event');
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
+  // Two gates, both must allow it: the global master switch in
+  // platform_settings.tournament_bonuses.enabled, and the per-event column
+  // checked above. The global flag existed in the settings panel but was read
+  // by nothing, so the panel could say "off" while every finalise awarded
+  // bonuses. Callers reaching this action directly (the admin button) get a
+  // clear error; finalizeEvent checks the same flag up front so it never
+  // half-finalises — see the guard there.
+  const bonusSettings = await getTournamentBonusSettings(adminClient);
+  if (!bonusSettings.enabled) {
+    throw new Error('Placement bonuses are disabled platform-wide (Settings → Tournament Bonuses)');
+  }
+
   const doubles = isDoublesEvent(event.event_type);
-  const bonuses = doubles ? PLACEMENT_BONUSES.doubles : PLACEMENT_BONUSES.singles;
+  const bonuses = doubles ? bonusSettings.doubles : bonusSettings.singles;
 
   // Pure helper — pull bonus from final_position so the batched paths below stay tidy.
-  const bonusFor = (pos: number | null | undefined): number => {
-    if (!pos) return 0;
-    if (pos === 1) return bonuses.champion;
-    if (pos === 2) return bonuses.finalist;
-    if (pos <= 4) return bonuses.semifinalist;
-    if (pos <= 8) return bonuses.quarterfinalist;
-    return 0;
-  };
+  const bonusFor = (pos: number | null | undefined): number => placementBonusFor(pos, bonuses);
 
   const nowIso = new Date().toISOString();
 
@@ -254,8 +260,14 @@ export async function finalizeEvent(eventId: string) {
     .update({ status: 'completed', updated_at: new Date().toISOString() })
     .eq('id', eventId);
 
-  // Apply placement bonuses if enabled
-  if (event.placement_bonus_enabled) {
+  // Apply placement bonuses only if BOTH the global master switch and the
+  // per-event column allow it. The global check has to happen here rather than
+  // being left to applyPlacementBonuses' throw: by this point the event is
+  // already marked completed, and throwing would skip the audit log and the
+  // participant notifications below, leaving a finalise that looks broken.
+  // Disabled bonuses are a configuration, not an error.
+  const bonusSettings = await getTournamentBonusSettings(adminClient);
+  if (event.placement_bonus_enabled && bonusSettings.enabled) {
     await applyPlacementBonuses(eventId);
   }
 

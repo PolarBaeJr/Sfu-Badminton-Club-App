@@ -1,9 +1,14 @@
 // Runs hourly via cron
-// Auto-escalates walkover reports unreviewed past 48 hours to admin alert
+// Auto-escalates walkover reports unreviewed past the admin review window to an
+// admin alert. The window is platform_settings.walkover_rules
+// .admin_review_window_hours, which the admin panel edits; WALKOVER_REVIEW_HOURS
+// is only the fallback for an unreadable row. Previously the constant was used
+// unconditionally, so walkovers escalated at 48h no matter what the panel said.
 
 import { requireCronSecret } from '../_shared/auth.ts';
 import { createServiceClient, jsonResponse } from '../_shared/client.ts';
 import { WALKOVER_REVIEW_HOURS } from '../_shared/constants.ts';
+import { getPlatformSettingNumber } from '../_shared/settings.ts';
 
 Deno.serve(async (req) => {
   const denied = requireCronSecret(req);
@@ -11,7 +16,14 @@ Deno.serve(async (req) => {
 
   const supabase = createServiceClient();
 
-  const cutoff = new Date(Date.now() - WALKOVER_REVIEW_HOURS * 60 * 60 * 1000).toISOString();
+  const reviewHours = await getPlatformSettingNumber(
+    supabase,
+    'walkover_rules',
+    'admin_review_window_hours',
+    WALKOVER_REVIEW_HOURS,
+  );
+
+  const cutoff = new Date(Date.now() - reviewHours * 60 * 60 * 1000).toISOString();
 
   // Find pending walkovers older than the review window
   const { data: stale, error } = await supabase
@@ -38,7 +50,9 @@ Deno.serve(async (req) => {
           player_id: admin.id,
           type: 'admin_alert',
           title: 'Stale Walkover Report',
-          body: `Walkover report unreviewed for ${WALKOVER_REVIEW_HOURS}+ hours. Type: ${w.walkover_type}`,
+          // Must use the resolved window, not the constant — otherwise the
+          // alert claims 48h while the cutoff that selected these rows was 72h.
+          body: `Walkover report unreviewed for ${reviewHours}+ hours. Type: ${w.walkover_type}`,
           metadata: { walkover_id: w.id },
         }))
       );
