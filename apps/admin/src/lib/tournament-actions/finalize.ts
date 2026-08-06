@@ -1,21 +1,85 @@
 'use server';
 
-import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { isDoublesEvent, clampElo, placementBonusFor } from '@badminton/shared';
 import { getTournamentBonusSettings } from '../platform-settings';
 import {
   getExecOrAdmin,
+  getRatingSettings,
   revalidateEventPaths,
   notifyPlayers,
   computeRoundRobinStandings,
   assertTournamentNotSuspended,
+  settleWrites,
+  assertWritesSucceeded,
+  type LabelledWrite,
 } from './_internal';
 
 // ============================================================
 // Placement Bonuses & Finalize
 // ============================================================
+
+// The audit action that doubles as the placement-bonus ledger. Rows carry, in
+// `details`, exactly which ratings and which participant rows a run managed to
+// write — see readBonusLedger.
+const BONUS_APPLIED_ACTION = 'placement_bonuses_applied';
+
+interface BonusLedger {
+  /** player_ids whose rating has already had its bonus added. */
+  ratedPlayers: Set<string>;
+  /** tournament_participants ids whose elo_change has already been credited. */
+  creditedParticipants: Set<string>;
+}
+
+/**
+ * What a previous bonus run actually managed to write for this event.
+ *
+ * applyPlacementBonuses reads a rating and writes `current + bonus`, which is
+ * not idempotent: run it twice and everyone is awarded twice. That was
+ * unreachable only because finalizeEvent could never run a second time — and
+ * "unrepairable" is not the same as "safe". Now that a partial failure is
+ * raised rather than swallowed, a retry has to be able to finish the job
+ * without redoing the part that landed.
+ *
+ * The ledger is append-only and lives in `tournament_audit_log.details`, which
+ * is jsonb and already written on every successful run. That avoids inventing
+ * a compensating write path (which can fail on its own, and can clobber a
+ * concurrent rating change) and avoids a schema change.
+ *
+ * Singles has TWO non-idempotent writes per player — ratings.singles_elo and
+ * tournament_participants.elo_change — and they can fail independently, so the
+ * ledger tracks them separately.
+ */
+async function readBonusLedger(
+  adminClient: ReturnType<typeof createAdminClient>,
+  eventId: string,
+): Promise<BonusLedger> {
+  const { data, error } = await adminClient.from('tournament_audit_log')
+    .select('details')
+    .eq('event_id', eventId)
+    .eq('action', BONUS_APPLIED_ACTION);
+  // Without the ledger there is no way to tell a first run from a second, and
+  // guessing wrong doubles every bonus on the event. Refuse.
+  if (error) {
+    throw new Error(
+      `Could not read the placement-bonus history for this event (${error.message}). ` +
+      `Refusing to apply bonuses — a repeat application would double every rating.`
+    );
+  }
+
+  const ledger: BonusLedger = { ratedPlayers: new Set(), creditedParticipants: new Set() };
+  for (const row of data ?? []) {
+    const details = (row.details ?? {}) as { rated_players?: unknown; credited_participants?: unknown };
+    for (const id of Array.isArray(details.rated_players) ? details.rated_players : []) {
+      if (typeof id === 'string') ledger.ratedPlayers.add(id);
+    }
+    for (const id of Array.isArray(details.credited_participants) ? details.credited_participants : []) {
+      if (typeof id === 'string') ledger.creditedParticipants.add(id);
+    }
+  }
+  return ledger;
+}
 
 export async function applyPlacementBonuses(eventId: string) {
   const admin = await getExecOrAdmin();
@@ -47,6 +111,20 @@ export async function applyPlacementBonuses(eventId: string) {
 
   const nowIso = new Date().toISOString();
 
+  const ledger = await readBonusLedger(adminClient, eventId);
+  // The live ceiling is 3000+, not the 1500 that clampElo falls back to. Left
+  // to the fallback, a player above 1500 would be pushed DOWN by winning the
+  // event — a placement bonus that demotes the champion. rating_bounds() in SQL
+  // reads the same two settings, so both engines clamp to the same range.
+  const ratingSettings = await getRatingSettings(adminClient);
+  const bounds = { min: ratingSettings?.min_elo, max: ratingSettings?.max_elo };
+
+  // Filled by whichever branch runs, then recorded in the ledger before any
+  // failure is raised.
+  const ratedPlayers: string[] = [];
+  const creditedParticipants: string[] = [];
+  let writeFailures: Awaited<ReturnType<typeof settleWrites>>['failures'] = [];
+
   if (doubles) {
     const { data: pairs } = await adminClient.from('tournament_pairs')
       .select('id, player1_id, player2_id, final_position')
@@ -62,6 +140,9 @@ export async function applyPlacementBonuses(eventId: string) {
         playerBonus.set(pid, (playerBonus.get(pid) ?? 0) + bonus);
       }
     }
+    // Anyone a previous run already paid is skipped, so a retry finishes the
+    // job rather than paying them twice.
+    for (const pid of ledger.ratedPlayers) playerBonus.delete(pid);
 
     if (playerBonus.size > 0) {
       // Single batched fetch for all affected ratings.
@@ -73,16 +154,17 @@ export async function applyPlacementBonuses(eventId: string) {
       for (const r of ratings ?? []) ratingMap.set(r.player_id, r.doubles_elo ?? 400);
 
       // Parallel UPDATEs — one row per player, no contention.
-      const results = await Promise.allSettled(
-        [...playerBonus.entries()].map(([pid, bonus]) =>
+      const targets = [...playerBonus.entries()];
+      const { failures, landed } = await settleWrites(
+        targets.map(([pid, bonus]) => [
+          `ratings.doubles_elo for player ${pid}`,
           adminClient.from('ratings')
-            .update({ doubles_elo: clampElo((ratingMap.get(pid) ?? 400) + bonus), updated_at: nowIso })
-            .eq('player_id', pid)
-        )
+            .update({ doubles_elo: clampElo((ratingMap.get(pid) ?? 400) + bonus, bounds), updated_at: nowIso })
+            .eq('player_id', pid),
+        ] as const)
       );
-      for (const r of results) {
-        if (r.status === 'rejected') Sentry.captureException(r.reason);
-      }
+      writeFailures = failures;
+      targets.forEach(([pid], i) => { if (landed[i]) ratedPlayers.push(pid); });
     }
   } else {
     const { data: participants } = await adminClient.from('tournament_participants')
@@ -103,30 +185,74 @@ export async function applyPlacementBonuses(eventId: string) {
       for (const r of ratings ?? []) ratingMap.set(r.player_id, r.singles_elo ?? 400);
 
       // Parallel: rating UPDATE + participant elo_change UPDATE for each row.
-      // Wrap in Promise.resolve so the Supabase thenable plays nicely with allSettled typing.
-      const promises: PromiseLike<unknown>[] = [];
+      // The two are ledgered separately because they can fail independently —
+      // elo_change is read-modify-write just like the rating is, so a retry
+      // that redid the credited half would inflate the participant's recorded
+      // change while the rating stayed put.
+      const writes: LabelledWrite[] = [];
+      const ratingTargets: string[] = [];
+      const participantTargets: string[] = [];
       for (const p of eligible) {
-        promises.push(Promise.resolve(adminClient.from('ratings')
-          .update({ singles_elo: clampElo((ratingMap.get(p.player_id) ?? 400) + p.bonus), updated_at: nowIso })
-          .eq('player_id', p.player_id)));
-        const prevChange = (p.elo_change as number | null) ?? 0;
-        promises.push(Promise.resolve(adminClient.from('tournament_participants')
-          .update({ elo_change: prevChange + p.bonus })
-          .eq('id', p.id)));
+        if (!ledger.ratedPlayers.has(p.player_id)) {
+          ratingTargets.push(p.player_id);
+          writes.push([
+            `ratings.singles_elo for player ${p.player_id}`,
+            adminClient.from('ratings')
+              .update({ singles_elo: clampElo((ratingMap.get(p.player_id) ?? 400) + p.bonus, bounds), updated_at: nowIso })
+              .eq('player_id', p.player_id),
+          ]);
+        }
+        if (!ledger.creditedParticipants.has(p.id)) {
+          participantTargets.push(p.id);
+          const prevChange = (p.elo_change as number | null) ?? 0;
+          writes.push([
+            `tournament_participants.elo_change for ${p.id}`,
+            adminClient.from('tournament_participants')
+              .update({ elo_change: prevChange + p.bonus })
+              .eq('id', p.id),
+          ]);
+        }
       }
-      const results = await Promise.allSettled(promises);
-      for (const r of results) {
-        if (r.status === 'rejected') Sentry.captureException(r.reason);
-      }
+
+      const { failures, landed } = await settleWrites(writes);
+      writeFailures = failures;
+      // `writes` interleaves the two kinds, so walk it once and sort the
+      // landed ones back into the two ledgers by the order they were pushed.
+      let ratingIdx = 0;
+      let participantIdx = 0;
+      writes.forEach(([label], i) => {
+        const isRating = label.startsWith('ratings.');
+        const id = isRating ? ratingTargets[ratingIdx++] : participantTargets[participantIdx++];
+        if (!landed[i] || !id) return;
+        (isRating ? ratedPlayers : creditedParticipants).push(id);
+      });
     }
   }
 
-  await logAudit(adminClient, {
+  // The ledger row goes in BEFORE any failure is raised, and its write is
+  // checked rather than best-effort: it is the only record of which bonuses
+  // landed, so losing it is what makes a retry dangerous. logAudit swallows its
+  // own errors by design, which is right for an audit trail and wrong for this.
+  const { error: ledgerError } = await adminClient.from('tournament_audit_log').insert({
     tournament_id: event.tournament_id,
     event_id: eventId,
-    action: 'placement_bonuses_applied',
+    match_id: null,
+    action: BONUS_APPLIED_ACTION,
     performed_by: admin.id,
+    details: {
+      rated_players: ratedPlayers,
+      credited_participants: creditedParticipants,
+      failed_writes: writeFailures.length,
+    },
   });
+  if (ledgerError) {
+    throw new Error(
+      `Placement bonuses were applied to ${ratedPlayers.length} rating(s) but the record of it could not be saved ` +
+      `(${ledgerError.message}). Do NOT re-run placement bonuses for this event — they would be applied twice.`
+    );
+  }
+
+  assertWritesSucceeded('Applying placement bonuses', writeFailures);
 
   revalidateEventPaths(event.tournament_id, eventId);
 }
@@ -194,14 +320,19 @@ export async function finalizeEvent(eventId: string) {
   }
 
   if (positionMap.size > 0) {
-    const positionResults = await Promise.allSettled(
-      [...positionMap.entries()].map(([id, pos]) =>
-        Promise.resolve(adminClient.from(table).update({ final_position: pos }).eq('id', id))
-      )
+    const { failures } = await settleWrites(
+      [...positionMap.entries()].map(([id, pos]) => [
+        `${table}.final_position for ${id}`,
+        adminClient.from(table).update({ final_position: pos }).eq('id', id),
+      ] as const)
     );
-    for (const r of positionResults) {
-      if (r.status === 'rejected') Sentry.captureException(r.reason);
-    }
+    // Raised BEFORE the event is flipped to completed. final_position is an
+    // absolute write derived from the finished bracket, so re-running finalize
+    // recomputes the same map and overwrites the rows that did land — the
+    // retry is idempotent. Flipping the status first is what used to make a
+    // half-positioned event unfixable: finalizeEvent refuses anything that is
+    // not live, so there was no second attempt to be had.
+    assertWritesSucceeded('Assigning final positions', failures);
   }
 
   // Assign points based on format. Compute (id → points) in memory then issue
@@ -245,20 +376,24 @@ export async function finalizeEvent(eventId: string) {
   }
 
   if (pointsMap.size > 0) {
-    const pointsResults = await Promise.allSettled(
-      [...pointsMap.entries()].map(([id, pts]) =>
-        Promise.resolve(adminClient.from(table).update({ points: pts }).eq('id', id))
-      )
+    const { failures } = await settleWrites(
+      [...pointsMap.entries()].map(([id, pts]) => [
+        `${table}.points for ${id}`,
+        adminClient.from(table).update({ points: pts }).eq('id', id),
+      ] as const)
     );
-    for (const r of pointsResults) {
-      if (r.status === 'rejected') Sentry.captureException(r.reason);
-    }
+    // Also absolute, also before the status flip, for the same reason.
+    assertWritesSucceeded('Assigning tournament points', failures);
   }
 
-  // Set event to completed
-  await adminClient.from('tournament_events')
+  // Set event to completed. Checked: throwing on the two batches above buys
+  // nothing if the flip that ends the event can itself be lost silently.
+  const { error: completeError } = await adminClient.from('tournament_events')
     .update({ status: 'completed', updated_at: new Date().toISOString() })
     .eq('id', eventId);
+  if (completeError) {
+    throw new Error(`Positions and points were saved but the event could not be marked completed: ${completeError.message}`);
+  }
 
   // Apply placement bonuses only if BOTH the global master switch and the
   // per-event column allow it. The global check has to happen here rather than
@@ -266,9 +401,20 @@ export async function finalizeEvent(eventId: string) {
   // already marked completed, and throwing would skip the audit log and the
   // participant notifications below, leaving a finalise that looks broken.
   // Disabled bonuses are a configuration, not an error.
+  //
+  // A bonus FAILURE is a different matter from bonuses being switched off, and
+  // it is held rather than thrown immediately: the event is already completed,
+  // so the audit row and the "results are up" notification below are owed to
+  // everyone regardless. The error is re-raised at the end so the exec still
+  // sees that the ratings are short.
   const bonusSettings = await getTournamentBonusSettings(adminClient);
+  let bonusError: unknown = null;
   if (event.placement_bonus_enabled && bonusSettings.enabled) {
-    await applyPlacementBonuses(eventId);
+    try {
+      await applyPlacementBonuses(eventId);
+    } catch (err) {
+      bonusError = err;
+    }
   }
 
   await logAudit(adminClient, {
@@ -306,4 +452,6 @@ export async function finalizeEvent(eventId: string) {
   );
 
   revalidateEventPaths(event.tournament_id, eventId);
+
+  if (bonusError) throw bonusError;
 }

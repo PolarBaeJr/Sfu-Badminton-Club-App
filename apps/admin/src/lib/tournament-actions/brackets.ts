@@ -13,6 +13,8 @@ import {
   getStandardSeedPositions,
   assertTournamentNotSuspended,
   computeRoundRobinStandings,
+  settleWrites,
+  assertWritesSucceeded,
 } from './_internal';
 
 // Block (re)generating a draw once any match has a recorded result —
@@ -223,16 +225,20 @@ async function buildFieldFromPool(
 
   // Persist the pool order onto the entries that were already here — the ones
   // just created were inserted with their seed. Independent rows, no contention.
-  const seedResults = await Promise.allSettled(
-    entries.map(e => Promise.resolve(
+  //
+  // A seed that failed to persist is not cosmetic: the pool's finishing order
+  // IS the draw here, so half-written seeds produce a bracket that disagrees
+  // with the pool everyone just played. Fail the generation instead — no
+  // matches exist yet, so re-running it is the whole remedy.
+  const { failures } = await settleWrites(
+    entries.map(e => [
+      `${doubles ? 'tournament_pairs' : 'tournament_participants'}.seed_number for ${e.id}`,
       adminClient.from(doubles ? 'tournament_pairs' : 'tournament_participants')
         .update({ seed_number: e.seed })
-        .eq('id', e.id)
-    ))
+        .eq('id', e.id),
+    ] as const)
   );
-  for (const r of seedResults) {
-    if (r.status === 'rejected') Sentry.captureException(r.reason);
-  }
+  assertWritesSucceeded('Seeding the bracket from the pool standings', failures);
 
   return { entries, promoted, skipped };
 }
@@ -291,16 +297,19 @@ async function generateSingleEliminationBracketImpl(eventId: string) {
   if (needsSeeding) {
     entries.sort((a, b) => b.elo - a.elo);
     entries.forEach((e, i) => { e.seed = i + 1; });
-    // Persist seeds in parallel — independent rows, no contention.
+    // Persist seeds in parallel — independent rows, no contention. Same
+    // reasoning as the pool path: the in-memory `entries` order is what builds
+    // the bracket below, so a seed that never reached the table leaves the
+    // stored seeding disagreeing with the draw it produced. Nothing has been
+    // created yet, so throwing here costs only a re-run.
     const seedTable = doubles ? 'tournament_pairs' : 'tournament_participants';
-    const seedResults = await Promise.allSettled(
-      entries.map(e => Promise.resolve(
-        adminClient.from(seedTable).update({ seed_number: e.seed }).eq('id', e.id)
-      ))
+    const { failures } = await settleWrites(
+      entries.map(e => [
+        `${seedTable}.seed_number for ${e.id}`,
+        adminClient.from(seedTable).update({ seed_number: e.seed }).eq('id', e.id),
+      ] as const)
     );
-    for (const r of seedResults) {
-      if (r.status === 'rejected') Sentry.captureException(r.reason);
-    }
+    assertWritesSucceeded('Auto-seeding the draw by rating', failures);
   } else {
     entries.sort((a, b) => (a.seed ?? 999) - (b.seed ?? 999));
   }
@@ -448,14 +457,18 @@ async function generateSingleEliminationBracketImpl(eventId: string) {
     }
   }
   if (matchNumberAssignments.length > 0) {
-    const numberResults = await Promise.allSettled(
-      matchNumberAssignments.map(a => Promise.resolve(
-        adminClient.from('tournament_matches').update({ match_number: a.number }).eq('id', a.id)
-      ))
+    const { failures } = await settleWrites(
+      matchNumberAssignments.map(a => [
+        `tournament_matches.match_number for ${a.id}`,
+        adminClient.from('tournament_matches').update({ match_number: a.number }).eq('id', a.id),
+      ] as const)
     );
-    for (const r of numberResults) {
-      if (r.status === 'rejected') Sentry.captureException(r.reason);
-    }
+    // Thrown before the event flips to bracket_generated, which is what makes
+    // this recoverable: the event stays in check-in, no result can have been
+    // entered yet, and re-running generation deletes these matches and starts
+    // over. A bracket with holes in its numbering is not something the exec
+    // should have to notice on the day.
+    assertWritesSucceeded('Numbering the bracket matches', failures);
   }
 
   // Update event status

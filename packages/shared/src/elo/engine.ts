@@ -126,6 +126,13 @@ export interface RatingSettings {
   doubles_k_established?: number | null;
   min_elo?: number | null;
   max_elo?: number | null;
+  // Sweep bonus, read by getMarginMultiplier(). Present here because the SQL
+  // side reads it out of the SAME platform_settings row
+  // (get_margin_multiplier() selects value->>'sweep_margin_multiplier'), and a
+  // caller that fetches rating_defaults for the K-factors has already paid for
+  // it — leaving it off the type is how the TS engine ended up defaulting the
+  // multiplier to 1.0 while SQL applied 1.15 to the identical scoreline.
+  sweep_margin_multiplier?: number | null;
 }
 
 function num(value: unknown, fallback: number): number {
