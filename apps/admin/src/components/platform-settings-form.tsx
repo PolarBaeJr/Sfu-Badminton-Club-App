@@ -324,6 +324,16 @@ const FIELD_META: Record<string, Record<string, FieldMeta>> = {
       min: 1,
       step: 1,
     },
+    purge_after_days: {
+      label: 'Erase personal details after (days)',
+      hint: 'Days a membership stays inactive before its personal details (name, email, phone, photo, bio) are permanently erased. Match history and ratings are kept under an anonymous name. Signing in resets this. This number is also what the inactivity email promises, so changing it changes the notice members receive.',
+      type: 'number',
+      // 30 days is the floor on purpose: anything shorter would erase people
+      // faster than the 30-day grace window we give members who explicitly
+      // ASKED to be deleted, which would be incoherent.
+      min: 30,
+      step: 1,
+    },
   },
   session_attendance: {
     checkin_opens_minutes_before: {

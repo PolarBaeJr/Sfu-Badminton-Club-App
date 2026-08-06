@@ -285,9 +285,10 @@ export async function sendAccountInactiveEmail(
   to: string,
   name: string,
   thresholdDays: number,
+  purgeAfterDays: number,
 ): Promise<SendOutcome> {
   const loginUrl = `${process.env.NEXT_PUBLIC_PLAYER_URL || 'http://localhost:3000'}/login`;
-  const { subject, html } = accountInactiveEmail(name, thresholdDays, loginUrl);
+  const { subject, html } = accountInactiveEmail(name, thresholdDays, loginUrl, purgeAfterDays);
   // Transactional, on the same reasoning as the approved email: this IS the
   // event, not a subscription to a stream of them. Two things make it so.
   //

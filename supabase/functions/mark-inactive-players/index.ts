@@ -54,9 +54,20 @@ Deno.serve(async (req) => {
   // cleared active_flag; there is nothing here to do, and re-stamping the row
   // would only queue a "you have been marked inactive" notice (00059) at
   // somebody who asked to be deleted.
+  // inactive_since (00062) is stamped HERE and only here. It is the start of
+  // the retention clock that purge-inactive-accounts reads, so it must mean
+  // "the clock ran out on this member" and nothing else — not "an exec
+  // unticked a box", which is a human decision this job cannot see the reason
+  // for. Rows deactivated by any other route keep inactive_since NULL and are
+  // therefore never purgeable.
+  //
+  // Set in the same UPDATE as active_flag, so the flag and its timestamp can
+  // never disagree: there is no window in which somebody is inactive with no
+  // record of when that started, and no second write to fail on its own.
+  const now = new Date().toISOString();
   const { data: toMark, error } = await supabase
     .from('players')
-    .update({ active_flag: false, updated_at: new Date().toISOString() })
+    .update({ active_flag: false, inactive_since: now, updated_at: now })
     .in('status', ['competitive', 'recreational'])
     .eq('active_flag', true)
     .lt('last_active_at', cutoff)

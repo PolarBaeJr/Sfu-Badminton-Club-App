@@ -164,24 +164,35 @@ export function playerApprovedEmail(name: string, loginUrl: string): { subject: 
 // "Your membership went inactive" — sent once per lapse, by the console's
 // /api/cron/inactivity-notices sweep.
 //
-// THE WORDING IS THE CAREFUL PART. The club owner asked for this to say the
-// member's data would be deleted after a year. Nothing in this app deletes
-// inactive accounts on any timetable — purge-deleted-accounts handles the
-// 30-day window for people who ASKED to be deleted, and that is the whole of
-// the retention machinery. Promising a deletion that does not happen is the
-// worst property a data-retention notice can have: it is the one kind of
-// message a member may act on by doing nothing, and it would be false.
+// THE WORDING IS THE CAREFUL PART, and the reason it changed.
 //
-// So this states what is actually true today — off the active roster, nothing
-// removed, sign in and you are back, and here is how to request deletion if
-// that is what you want. If the club decides it does want a one-year purge,
-// that is a separate decision and a separate job, and this copy changes with
-// it rather than ahead of it.
+// This copy used to say "nothing has been deleted" full stop, because at the
+// time that was simply true: no job removed anything from an inactive account
+// on any timetable. The club owner has since approved a one-year retention
+// limit, and purge-inactive-accounts implements it — so the old wording is now
+// the one thing a retention notice must never be, which is false in the
+// direction that costs the reader something. A member who reads "nothing is
+// deleted" and does nothing would lose their details a year later having been
+// told the opposite.
+//
+// So the notice now states the real outcome, the real deadline, and the one
+// action that prevents it. purgeAfterDays is a PARAMETER rather than a
+// constant for the same reason the job reads it from platform_settings: an
+// exec who changes inactivity_rules.purge_after_days in the console changes
+// the promise and the behaviour together, and the two cannot drift apart.
+//
+// It also stays honest about what is NOT deleted. Anonymising keeps the match
+// history and ratings — pretending otherwise would overstate the erasure and
+// mislead somebody who wants their results gone.
 export function accountInactiveEmail(
   name: string,
   thresholdDays: number,
   loginUrl: string,
+  purgeAfterDays: number,
 ): { subject: string; html: string } {
+  // Months read as a deadline in a way "365 days" does not. Kept alongside the
+  // exact figure rather than replacing it, so nothing is rounded away.
+  const months = Math.round(purgeAfterDays / 30);
   return {
     subject: subj('Your SFU Badminton membership is now inactive'),
     html: wrap(`
@@ -189,18 +200,30 @@ export function accountInactiveEmail(
       <p>Hi ${escapeHtml(name)} — we haven't seen you at a club session in about
          ${escapeHtml(thresholdDays)} days, so we've moved your membership off the active roster.</p>
       ${DIVIDER}
-      <p><strong>Nothing has been deleted.</strong> Your match history, your rating and
+      <p><strong>Nothing has been deleted yet.</strong> Your match history, your rating and
          your record are all exactly where you left them.</p>
       <p>Being inactive just means club activity is paused: no challenges, RSVPs,
          check-ins or tournament entries until you're back.</p>
-      <p><strong>Signing in is all it takes.</strong> Your membership reactivates by itself
-         the moment you log in — there is nothing to ask anyone for.</p>
-      <a href="${escapeHtml(loginUrl)}" style="${BUTTON_STYLES}">Sign in and come back</a>
       ${DIVIDER}
-      <p style="${MUTED}">If you would rather we deleted your account and its personal
-         details, you can request that yourself under Settings once you're signed in.
-         We hold the account for 30 days after a deletion request, in case you change
-         your mind.</p>
+      <p><strong>What happens if you stay away.</strong> If your membership is still
+         inactive ${escapeHtml(purgeAfterDays)} days from now (about ${escapeHtml(months)} months),
+         we remove the personal details from it — your name, email address, phone number,
+         profile photo and bio are erased for good, and the account can no longer be
+         signed in to. This cannot be undone.</p>
+      <p>Your past match results and ratings are kept even then, under an anonymous
+         name. They are part of other members' records too, so removing them would
+         rewrite matches that were not only yours.</p>
+      ${DIVIDER}
+      <p><strong>Signing in stops this completely.</strong> One log-in reactivates your
+         membership and resets the clock to zero — there is nothing to ask anyone for,
+         and nothing further to do afterwards.</p>
+      <a href="${escapeHtml(loginUrl)}" style="${BUTTON_STYLES}">Sign in and keep my account</a>
+      ${DIVIDER}
+      <p style="${MUTED}">Would rather not wait? You can ask us to delete your account and
+         its personal details right away — sign in, open Settings, and choose to delete
+         your account. We hold it for 30 days after that request in case you change your
+         mind, then erase it the same way described above. If you can't sign in, reply to
+         this email and an exec will handle the request for you.</p>
     `),
   };
 }

@@ -291,6 +291,11 @@ export const GRACE_PERIOD_MINUTES = 15;
 export const LATE_WITHDRAWAL_HOURS = 24;
 export const WALKOVER_REVIEW_HOURS = 48;
 export const INACTIVITY_DAYS = 45;
+// Fallback only, like INACTIVITY_DAYS above: the live value is
+// platform_settings.inactivity_rules.purge_after_days (00063, 365 on prod).
+// Used when that read fails, so the retention notice still quotes a number
+// rather than "undefined days".
+export const INACTIVITY_PURGE_DAYS = 365;
 
 // Absolute ELO point awards for tournament placement. Doubled from the classic
 // 16/10/6/3 (singles) and 14/9/5/2 (doubles) to match the 2x-stretched scale.

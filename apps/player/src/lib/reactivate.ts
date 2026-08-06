@@ -65,6 +65,12 @@ export async function reactivateLapsedMember(
       // notice is spent. Clearing it re-arms the notice for a future lapse
       // (00059) — a member who lapses twice should be told twice.
       inactivity_notice_sent_at: null,
+      // Stops the retention clock dead (00062). Signing in is the documented
+      // way to keep an account, and the email now promises exactly that, so
+      // this line is what makes the promise true — a returning member left
+      // with a stale inactive_since would still be anonymised on schedule
+      // despite being back on the roster.
+      inactive_since: null,
       updated_at: now,
     })
     .eq('id', player.id)
