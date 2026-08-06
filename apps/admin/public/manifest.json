@@ -2,7 +2,6 @@
   "name": "SFU Badminton Admin",
   "short_name": "SFU Admin",
   "description": "Admin dashboard for SFU Badminton Club",
-  "id": "./",
   "start_url": "dashboard",
   "scope": "./",
   "display": "standalone",

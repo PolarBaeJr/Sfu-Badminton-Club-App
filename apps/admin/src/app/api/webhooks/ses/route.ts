@@ -103,12 +103,22 @@ async function verifySignature(msg: Record<string, unknown>): Promise<boolean> {
 // unset ARN is reported as the deploy fault it is. A mismatched ARN is not:
 // that is this check doing its job, and Sentry is for faults, not for
 // validation working.
+//
+// Once per process, not once per request: this runs before the signature check
+// on every POST, and SNS retries a rejected delivery, so a subscription created
+// before the ARN is set would otherwise file a burst of identical events for
+// one config mistake.
+let arnFaultReported = false;
+
 function topicAllowed(topicArn: unknown): boolean {
   const expected = process.env.SES_SNS_TOPIC_ARN;
   if (!expected) {
-    Sentry.captureException(
-      new Error('SES_SNS_TOPIC_ARN is not set — rejecting every SNS notification'),
-    );
+    if (!arnFaultReported) {
+      arnFaultReported = true;
+      Sentry.captureException(
+        new Error('SES_SNS_TOPIC_ARN is not set — rejecting every SNS notification'),
+      );
+    }
     return false;
   }
   return String(topicArn) === expected;
