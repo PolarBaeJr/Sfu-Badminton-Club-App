@@ -1,4 +1,5 @@
-import { createAdminClient } from '@/lib/supabase-server';
+import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
+import { accessLevelFor } from '@/lib/permissions';
 import { Badge, Card, AvatarChip, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS, getMissingLegalDocuments, getWinRate, unwrap } from '@badminton/shared';
 import Link from 'next/link';
@@ -29,6 +30,12 @@ export default async function PlayersPage({
 }) {
   const params = await searchParams;
   const tab = params.tab || 'competitive';
+  // Execs manage the roster; only admins grant privilege, remove, or merge.
+  // Hiding those controls is cosmetic — the server actions are the real gate —
+  // but showing a button that is guaranteed to fail is worse than not showing
+  // it at all.
+  const viewer = await getAuthenticatedExecOrAdmin();
+  const isAdmin = accessLevelFor(viewer) === 'admin';
   const supabase = createAdminClient();
 
   let query = supabase
@@ -99,17 +106,19 @@ export default async function PlayersPage({
           <div className="flex items-center gap-2">
             {/* Merge candidates come from the count query, which already loads
                 every player — no extra round-trip just to populate the picker. */}
-            <MergePlayersButton
-              players={(countRows ?? []).map((p) => ({
-                id: p.id,
-                full_name: p.full_name,
-                email: p.email,
-                avatar_url: p.avatar_url,
-                has_login: p.user_id !== null,
-                status: p.status,
-              }))}
-            />
-            <AddPlayerButton />
+            {isAdmin && (
+              <MergePlayersButton
+                players={(countRows ?? []).map((p) => ({
+                  id: p.id,
+                  full_name: p.full_name,
+                  email: p.email,
+                  avatar_url: p.avatar_url,
+                  has_login: p.user_id !== null,
+                  status: p.status,
+                }))}
+              />
+            )}
+            <AddPlayerButton isAdmin={isAdmin} />
           </div>
         }
       />
@@ -233,9 +242,11 @@ export default async function PlayersPage({
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex gap-1 justify-end">
-                        <PlayerActions mode="edit" playerId={player.id} playerData={player} />
-                        <PlayerActions mode="ban" playerId={player.id} playerName={player.full_name} playerData={player} />
-                        <PlayerActions mode="delete" playerId={player.id} playerName={player.full_name} />
+                        <PlayerActions mode="edit" playerId={player.id} playerData={player} isAdmin={isAdmin} />
+                        <PlayerActions mode="ban" playerId={player.id} playerName={player.full_name} playerData={player} isAdmin={isAdmin} />
+                        {isAdmin && (
+                          <PlayerActions mode="delete" playerId={player.id} playerName={player.full_name} isAdmin={isAdmin} />
+                        )}
                       </div>
                     </td>
                   </tr>

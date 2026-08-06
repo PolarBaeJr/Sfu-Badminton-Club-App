@@ -1,4 +1,5 @@
-import { createAdminClient } from '@/lib/supabase-server';
+import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
+import { accessLevelFor } from '@/lib/permissions';
 import { Card, Badge, StatCard, AvatarChip, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, TOURNAMENT_EVENT_TYPE_LABELS, getWinRate, getStreakDisplay, getPointDifferential } from '@badminton/shared';
 import { PlayerEditForm } from './edit-form';
@@ -20,6 +21,10 @@ export default async function PlayerDetailPage({
 }) {
   const { id } = await params;
   const { season: seasonParam } = await searchParams;
+  // Execs manage this page; privilege, account lifecycle, the legal
+  // re-signature gate and reliability counters stay with admins.
+  const viewer = await getAuthenticatedExecOrAdmin();
+  const isAdmin = accessLevelFor(viewer) === 'admin';
   const supabase = createAdminClient();
 
   // Which season this page is showing. Defaults to the active one; ?season=
@@ -148,7 +153,7 @@ export default async function PlayerDetailPage({
               {new Date(new Date(player.deletion_requested_at).getTime() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString()}.
             </p>
           </div>
-          <CancelDeletionButton playerId={player.id} />
+          {isAdmin && <CancelDeletionButton playerId={player.id} />}
         </div>
       )}
 
@@ -194,13 +199,15 @@ export default async function PlayerDetailPage({
         {/* Edit Form */}
         <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
           <h2 className="text-base font-semibold text-[var(--text-primary)] mb-4">Edit Player</h2>
-          <PlayerEditForm player={player} rating={r} />
-          <div className="mt-4 pt-4 border-t border-[var(--border)]">
-            <p className="text-xs text-[var(--text-muted)] mb-2">
-              Forces only this player to re-sign the liability waiver on their next visit.
-            </p>
-            <RequireWaiverResignatureButton playerId={player.id} />
-          </div>
+          <PlayerEditForm player={player} rating={r} isAdmin={isAdmin} />
+          {isAdmin && (
+            <div className="mt-4 pt-4 border-t border-[var(--border)]">
+              <p className="text-xs text-[var(--text-muted)] mb-2">
+                Forces only this player to re-sign the liability waiver on their next visit.
+              </p>
+              <RequireWaiverResignatureButton playerId={player.id} />
+            </div>
+          )}
         </div>
 
         {/* Reliability */}
@@ -208,13 +215,18 @@ export default async function PlayerDetailPage({
           <div className="flex items-center gap-2 mb-4">
             <Shield className="w-4 h-4 text-[var(--text-muted)]" />
             <h2 className="text-base font-semibold text-[var(--text-primary)] flex-1">Reliability</h2>
-            <ReliabilityEditor
-              playerId={id}
-              noShows={reliability?.no_shows ?? 0}
-              lateCancellations={reliability?.late_cancellations ?? 0}
-              earlyWithdrawals={reliability?.early_withdrawals ?? 0}
-              walkoverFlag={reliability?.walkover_flag ?? false}
-            />
+            {/* Read-only panel below stays visible to execs; only the editor
+                trigger is admin-only — adjustReliability rewrites the
+                no-show/penalty counters and was not part of the brief. */}
+            {isAdmin && (
+              <ReliabilityEditor
+                playerId={id}
+                noShows={reliability?.no_shows ?? 0}
+                lateCancellations={reliability?.late_cancellations ?? 0}
+                earlyWithdrawals={reliability?.early_withdrawals ?? 0}
+                walkoverFlag={reliability?.walkover_flag ?? false}
+              />
+            )}
           </div>
           {reliability ? (
             <div className="space-y-3">

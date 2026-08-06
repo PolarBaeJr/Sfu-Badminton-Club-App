@@ -11,6 +11,10 @@ interface Props {
   playerId: string;
   playerName?: string;
   playerData?: Record<string, unknown>;
+  // Execs get the roster controls; role, fee-exempt, removal and the
+  // reinstatement fee stay with admins. Server-side guards are the boundary —
+  // this only keeps execs from seeing a control that would reject them.
+  isAdmin: boolean;
 }
 
 const STATUS_OPTIONS = [
@@ -32,7 +36,7 @@ function toRoleValue(role: string, isExec: boolean) {
   return isExec ? 'exec' : 'player';
 }
 
-export function PlayerActions({ mode, playerId, playerName, playerData }: Props) {
+export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin }: Props) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState((playerData?.status as string) || 'pending_approval');
@@ -55,16 +59,25 @@ export function PlayerActions({ mode, playerId, playerName, playerData }: Props)
     startTransition(async () => {
       const role = roleValue === 'admin' || roleValue === 'admin_exec' ? 'admin' : 'player';
       const isExec = roleValue === 'exec' || roleValue === 'admin_exec';
+      const roleChanged = role !== ((playerData?.role as string) || 'player');
       try {
         const res = await updatePlayer(playerId, {
           status: status as 'competitive' | 'recreational' | 'suspended' | 'pending_approval',
-          role: role as 'player' | 'admin',
+          // Only sent when it actually changed. The server guard rejects a
+          // non-admin who supplies `role` AT ALL, so sending it unconditionally
+          // — as this dialog used to — would fail every exec's Save even when
+          // they only touched the status.
+          role: isAdmin && roleChanged ? (role as 'player' | 'admin') : undefined,
           singles_elo: singlesElo ? parseInt(singlesElo) : undefined,
           doubles_elo: doublesElo ? parseInt(doublesElo) : undefined,
           reason,
         });
         if (!res.ok) { toast(res.error, 'error'); return; }
-        if (isExec !== Boolean(playerData?.is_exec) || feeExempt !== Boolean(playerData?.fee_exempt)) {
+        // updatePlayerFlags is admin-only (is_exec + fee_exempt). For an exec
+        // the two controls are not rendered and the state still mirrors
+        // playerData, so this comparison is false and the call never fires —
+        // otherwise the save would half-succeed and then throw.
+        if (isAdmin && (isExec !== Boolean(playerData?.is_exec) || feeExempt !== Boolean(playerData?.fee_exempt))) {
           await updatePlayerFlags(playerId, { is_exec: isExec, fee_exempt: feeExempt });
         }
         toast('Player updated', 'success');
@@ -133,12 +146,20 @@ export function PlayerActions({ mode, playerId, playerName, playerData }: Props)
           <Dialog open={open} onClose={() => setOpen(false)} title="Reinstate Player">
             <div className="space-y-4">
               <p className="text-[var(--text-secondary)]">
-                Lift the ban on <strong className="text-[var(--text-primary)]">{playerName}</strong>. Recording an amount is optional (leave blank for a free reinstatement).
+                Lift the ban on <strong className="text-[var(--text-primary)]">{playerName}</strong>.
+                {isAdmin
+                  ? ' Recording an amount is optional (leave blank for a free reinstatement).'
+                  : ' Recording a reinstatement fee is admin-only — ask an admin if money changed hands.'}
               </p>
-              <div className="flex gap-2">
-                <Input label="Amount $ (optional)" type="number" step="0.01" min="0" value={reinstateAmount} onChange={(e) => setReinstateAmount(e.target.value)} placeholder="e.g. 20.00" />
-                <Input label="Method (optional)" value={reinstateMethod} onChange={(e) => setReinstateMethod(e.target.value)} placeholder="e.g. e-transfer, cash" />
-              </div>
+              {/* Money stays with admins even though the unban itself does not:
+                  this writes a reinstatement_fees row into the admin-only fees
+                  ledger. The server action rejects the fields too. */}
+              {isAdmin && (
+                <div className="flex gap-2">
+                  <Input label="Amount $ (optional)" type="number" step="0.01" min="0" value={reinstateAmount} onChange={(e) => setReinstateAmount(e.target.value)} placeholder="e.g. 20.00" />
+                  <Input label="Method (optional)" value={reinstateMethod} onChange={(e) => setReinstateMethod(e.target.value)} placeholder="e.g. e-transfer, cash" />
+                </div>
+              )}
               <div className="flex items-center justify-between">
                 <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
                 <Button onClick={handleReinstate} loading={isPending}>Reinstate</Button>
@@ -176,8 +197,12 @@ export function PlayerActions({ mode, playerId, playerName, playerData }: Props)
         <Dialog open={open} onClose={() => setOpen(false)} title="Edit Player">
           <div className="space-y-4">
             <Select label="Status" options={STATUS_OPTIONS} value={status} onChange={(e) => setStatus(e.target.value)} />
-            <Select label="Role" options={ROLE_OPTIONS} value={roleValue} onChange={(e) => setRoleValue(e.target.value)} />
-            <Switch label="Fee Exempt" description="Exempted from the club fee (no gameplay effect)" checked={feeExempt} onChange={setFeeExempt} />
+            {isAdmin && (
+              <>
+                <Select label="Role" options={ROLE_OPTIONS} value={roleValue} onChange={(e) => setRoleValue(e.target.value)} />
+                <Switch label="Fee Exempt" description="Exempted from the club fee (no gameplay effect)" checked={feeExempt} onChange={setFeeExempt} />
+              </>
+            )}
             <div className="flex gap-2">
               <Input label="Singles Elo (optional)" type="number" value={singlesElo} onChange={(e) => setSinglesElo(e.target.value)} placeholder="Leave blank to keep current" />
               <Input label="Doubles Elo (optional)" type="number" value={doublesElo} onChange={(e) => setDoublesElo(e.target.value)} placeholder="Leave blank to keep current" />

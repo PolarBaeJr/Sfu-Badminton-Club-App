@@ -17,7 +17,11 @@ const SECTION_ACCESS: { [pathPrefix: string]: AccessLevel } = {
   '/audit': 'admin',
   '/settings': 'exec', // execs need it to enroll/manage their own passkeys
   '/api/passkey': 'exec', // passkey enrollment/verification endpoints
-  '/players': 'admin',
+  // Execs run the roster: approve, edit, ban/unban, varsity notes. Granting
+  // exec/admin is NOT part of that — the per-field split lives in
+  // ./player-field-access.ts, and destructive actions (remove, merge) keep
+  // getAdminPlayer() in the server action.
+  '/players': 'exec',
   '/disputes': 'admin',
   '/walkovers': 'admin',
   '/challenges': 'admin',
@@ -42,6 +46,21 @@ function requiredLevel(pathname: string): AccessLevel {
     }
   }
   return best ? SECTION_ACCESS[best]! : 'admin';
+}
+
+// The one place a player row is turned into an access level. Server components
+// need this to decide what to render; the middleware and sidebar get the same
+// answer from the admin_access_level() SQL function (verified against the live
+// database: role = 'admin' → 'admin', else is_exec → 'exec', else NULL). Keep
+// the two in step — deriving the level inline in each page is how one rule ends
+// up with two implementations that disagree.
+export function accessLevelFor(
+  player: { role?: string | null; is_exec?: boolean | null } | null | undefined,
+): AccessLevel | null {
+  if (!player) return null;
+  if (player.role === 'admin') return 'admin';
+  if (player.is_exec === true) return 'exec';
+  return null;
 }
 
 export function canAccess(level: AccessLevel | null, pathname: string): boolean {

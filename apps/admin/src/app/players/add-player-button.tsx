@@ -20,7 +20,10 @@ const ROLE_OPTIONS = [
   { value: 'exec', label: 'Executive' },
 ];
 
-export function AddPlayerButton() {
+// isAdmin: execs may add members, but not add one who is already an exec —
+// that would be a second privileged identity. The Role select is admin-only and
+// createPlayer rejects is_exec from a non-admin caller regardless.
+export function AddPlayerButton({ isAdmin }: { isAdmin: boolean }) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [firstName, setFirstName] = useState('');
@@ -44,7 +47,7 @@ export function AddPlayerButton() {
           email: email.trim().toLowerCase(),
           status,
           role: 'player',
-          is_exec: role === 'exec',
+          is_exec: isAdmin && role === 'exec',
         });
         if (!res.ok) { toast(res.error, 'error'); return; }
         toast('Player created', 'success');
@@ -93,12 +96,14 @@ export function AddPlayerButton() {
             value={status}
             onChange={(e) => setStatus(e.target.value)}
           />
-          <Select
-            label="Role"
-            options={ROLE_OPTIONS}
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-          />
+          {isAdmin && (
+            <Select
+              label="Role"
+              options={ROLE_OPTIONS}
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+            />
+          )}
           <div className="flex items-center justify-between pt-2">
             <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
             <Button
