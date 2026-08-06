@@ -10,6 +10,7 @@ import {
   parseOrThrow,
   getMissingLegalDocuments,
   NOTIFICATION_CATEGORIES,
+  emailPreferenceKey,
   getReminderLeadMinutes,
   type LegalAcceptanceInput,
   type WaiverDocument,
@@ -29,9 +30,9 @@ export async function updateProfile(data: {
   return runAction(() => updateProfileImpl(data));
 }
 
-// Per-category push preferences (players.notification_preferences JSONB).
-// Only known category keys are persisted, coerced to booleans — an unknown
-// key from the client is ignored rather than stored.
+// Per-category push AND email preferences (players.notification_preferences
+// JSONB). Only known category keys are persisted, coerced to booleans — an
+// unknown key from the client is ignored rather than stored.
 export async function updateNotificationPreferences(
   prefs: Record<string, boolean | number>,
 ): Promise<ActionResult> {
@@ -39,12 +40,15 @@ export async function updateNotificationPreferences(
     const player = await requirePlayer();
     const supabase = await createServerSupabaseClient();
 
+    // `=== true`, not `!== false`: preferences are opt-in since 00058, so the
+    // stored value has to be an explicit true. Coercing anything truthy-ish to
+    // "on" would let a stray non-boolean subscribe someone.
     const clean: Record<string, boolean | number> = {};
     for (const c of NOTIFICATION_CATEGORIES) {
-      if (c.key in prefs) clean[c.key] = prefs[c.key] !== false;
+      if (c.key in prefs) clean[c.key] = prefs[c.key] === true;
       // Email toggles share this blob under an `email_` prefix.
-      const emailKey = `email_${c.key}`;
-      if (emailKey in prefs) clean[emailKey] = prefs[emailKey] !== false;
+      const emailKey = emailPreferenceKey(c.key);
+      if (emailKey in prefs) clean[emailKey] = prefs[emailKey] === true;
     }
     // How much notice this player wants before a session. Clamped to the
     // sendable range, so a crafted request can't schedule a reminder a year out.

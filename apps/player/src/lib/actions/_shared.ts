@@ -144,15 +144,24 @@ export async function notifyPlayers(
     let playerIds = notificationRows.map((r) => r.player_id);
     // In-app rows above always land; push honors per-category preferences.
     if (pushCategory) {
-      const { data } = await serviceClient
+      const { data, error } = await serviceClient
         .from('players')
         .select('id, notification_preferences')
         .in('id', playerIds);
-      if (data) {
-        playerIds = data
-          .filter((p) => isPushCategoryEnabled(p.notification_preferences, pushCategory))
-          .map((p) => p.id);
+      // Fail CLOSED on a lookup failure. Preferences are opt-in since 00058, so
+      // "we could not read what they chose" must not become "push anyway" —
+      // that buzzes people who never opted in. The in-app rows are already
+      // inserted above, so nothing is lost by withholding the push.
+      if (error || !data) {
+        Sentry.captureException(
+          new Error(`Push preference lookup failed, withholding push: ${error?.message ?? 'no data'}`),
+          { extra: { pushCategory, playerIds } },
+        );
+        return;
       }
+      playerIds = data
+        .filter((p) => isPushCategoryEnabled(p.notification_preferences, pushCategory))
+        .map((p) => p.id);
     }
     if (playerIds.length === 0) return;
     sendPushToPlayers(serviceClient, playerIds, pushPayload).catch((err) => {

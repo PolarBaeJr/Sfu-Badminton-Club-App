@@ -15,15 +15,34 @@ function formatDate(value: string | null): string {
   });
 }
 
+// Where a credential was enrolled (00051). Both belong to the member and both
+// are listed; the label exists so this page and the admin console visibly agree
+// about the same row rather than each showing a different subset.
+const ORIGIN_LABEL: Record<string, string> = {
+  admin: 'Enrolled in the admin console',
+  player: 'Enrolled in this app',
+};
+
 export function PasskeyManager() {
   const [passkeys, setPasskeys] = useState<PasskeySummary[] | null>(null);
+  // "Could not load" is a THIRD state, distinct from "loading" and "none". It
+  // used to collapse into the empty list, so any failure — a suspended account,
+  // a query error — was reported to the member as the flat assertion "No
+  // passkeys yet", contradicting the admin console for the same credential.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [supported, setSupported] = useState(false);
   const { toast } = useToast();
 
   const refresh = useCallback(async () => {
     const res = await listPasskeys();
-    setPasskeys(res.ok ? res.data : []);
+    if (res.ok) {
+      setPasskeys(res.data);
+      setLoadError(null);
+    } else {
+      setPasskeys(null);
+      setLoadError(res.error);
+    }
   }, []);
 
   useEffect(() => {
@@ -74,6 +93,7 @@ export function PasskeyManager() {
             {pk.nickname || pk.device_type || 'Passkey'}
             <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
               Added {formatDate(pk.created_at)} · last used {formatDate(pk.last_used_at)}
+              {ORIGIN_LABEL[pk.enrolled_via] ? ` · ${ORIGIN_LABEL[pk.enrolled_via]}` : ''}
             </div>
           </div>
           <div className="settings-row-control">
@@ -89,6 +109,14 @@ export function PasskeyManager() {
           </div>
         </div>
       ))}
+
+      {loadError && (
+        <div className="settings-row">
+          <div className="settings-row-label muted" style={{ fontSize: 12 }}>
+            Could not load your passkeys: {loadError}
+          </div>
+        </div>
+      )}
 
       {passkeys !== null && passkeys.length === 0 && (
         <div className="settings-row">

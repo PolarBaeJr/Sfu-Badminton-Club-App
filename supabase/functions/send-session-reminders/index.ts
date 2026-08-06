@@ -66,7 +66,8 @@ Deno.serve(async (req) => {
             title: 'Session Tomorrow',
             body: `${s.name || 'Session'} at ${s.location} is tomorrow (${s.date}).`,
             url: '/sessions',
-          }
+          },
+          'sessions'
         );
       }
     }

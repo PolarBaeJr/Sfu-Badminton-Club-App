@@ -22,7 +22,11 @@ export default async function SettingsPage() {
   const { data: passkeys } = player
     ? await supabase
         .from('passkey_credentials')
-        .select('id, nickname, created_at, last_used_at, transports')
+        // enrolled_via (00051) travels with the row so this list and the
+        // members'-app list show the SAME credentials described the same way,
+        // and so the grace-period hint below can tell the truth: only
+        // admin-enrolled credentials arm the console gate.
+        .select('id, nickname, created_at, last_used_at, transports, enrolled_via')
         .eq('player_id', player.id)
         .order('created_at')
     : { data: null };

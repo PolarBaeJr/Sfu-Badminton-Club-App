@@ -14,19 +14,28 @@
 //             can find a player, and writes varsity notes. Nothing else — see
 //             ./player-field-access.ts, where their writable field set is EMPTY.
 //
-// The string literals must stay byte-identical to what admin_access_level()
-// returns in the database (migration 00054); the middleware feeds that value
-// straight into canAccess(). A mismatch resolves to null, fails closed, and
-// locks the level out with no error surfaced anywhere.
-export type AccessLevel = 'admin' | 'exec' | 'trainer';
+// The LEVELS themselves — the ordering, and how a player row resolves to one —
+// now live in @badminton/shared so the members' app can ask the same question
+// without hand-rolling its own copy (which it did, twice, and they disagreed
+// about trainers). What stays here is the admin-only half: which PATH needs
+// which level.
+// Deep import, NOT the '@badminton/shared' barrel. This module is pulled into
+// the EDGE middleware through canAccess(), and the barrel re-exports the mail
+// sender, which drags `resend` and a Supabase client in with it: importing it
+// here took the built middleware from 321 KB to 843 KB, on every request, for
+// three pure functions. Same reason push/send is imported by path elsewhere.
+import { atLeast, type AccessLevel } from '@badminton/shared/src/utils/access-level';
 
-// Higher number = more access. Used for every comparison so a new level is one
-// entry here rather than a new branch in each caller.
-const LEVEL_RANK: Record<AccessLevel, number> = {
-  admin: 3,
-  exec: 2,
-  trainer: 1,
-};
+// Re-exported so every existing `from '@/lib/permissions'` import keeps working
+// and there is still ONE place in the admin app to look for these.
+export {
+  accessLevelFor,
+  atLeast,
+  consoleAccessLevelFor,
+  hasConsoleAccess,
+  isInGoodStanding,
+} from '@badminton/shared/src/utils/access-level';
+export type { AccessLevel } from '@badminton/shared/src/utils/access-level';
 
 const SECTION_ACCESS: { [pathPrefix: string]: AccessLevel } = {
   // Where sign-in lands. Trainers need to get through the front door; the
@@ -80,35 +89,6 @@ function requiredLevel(pathname: string): AccessLevel {
     }
   }
   return best ? SECTION_ACCESS[best]! : 'admin';
-}
-
-// Does `level` reach at least `required`? The one place the ordering is
-// expressed, so server actions and pages can ask "is this caller at least an
-// exec?" without re-listing which levels those are.
-export function atLeast(level: AccessLevel | null | undefined, required: AccessLevel): boolean {
-  if (!level) return false;
-  return LEVEL_RANK[level] >= LEVEL_RANK[required];
-}
-
-// The one place a player row is turned into an access level. Server components
-// need this to decide what to render; the middleware and sidebar get the same
-// answer from the admin_access_level() SQL function (verified against the live
-// database: role = 'admin' → 'admin', else is_exec → 'exec', else is_trainer →
-// 'trainer', else NULL). Keep the two in step — deriving the level inline in
-// each page is how one rule ends up with two implementations that disagree.
-//
-// Returns the HIGHEST level held, so the markers compose: someone who is both a
-// trainer and an exec is simply an exec, and a trainer who is also an admin is
-// an admin. The restriction always applies to the level a person resolves TO,
-// never to a flag in isolation.
-export function accessLevelFor(
-  player: { role?: string | null; is_exec?: boolean | null; is_trainer?: boolean | null } | null | undefined,
-): AccessLevel | null {
-  if (!player) return null;
-  if (player.role === 'admin') return 'admin';
-  if (player.is_exec === true) return 'exec';
-  if (player.is_trainer === true) return 'trainer';
-  return null;
 }
 
 export function canAccess(level: AccessLevel | null, pathname: string): boolean {
