@@ -446,8 +446,11 @@ export default function SettingsPage() {
                 </div>
                 <div className="sep" />
                 {/* Same list, same order, same labels as the email block below.
-                    Disabled rather than hidden while the device is unsubscribed:
-                    hiding them made the categories look like they did not exist. */}
+                    Always live, never disabled: the switch above is about THIS
+                    browser's subscription, while these five are stored on the
+                    account and apply to every device. Greying them out because
+                    the laptop you happen to be on is not subscribed would hide
+                    an account-wide setting behind a per-device one. */}
                 {NOTIFICATION_CATEGORIES.map((c, i) => (
                   <div key={c.key}>
                     {i > 0 && <div className="sep" />}
@@ -456,20 +459,19 @@ export default function SettingsPage() {
                       onChange={(v) => handleNotifPrefToggle(c.key, v)}
                       label={c.label}
                       description={c.description}
-                      disabled={!pushEnabled}
                     />
                   </div>
                 ))}
                 {!pushEnabled && (
                   <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-                    Allow push on this device to choose categories.
+                    These apply to every device you allow push on — this browser is not one of them yet.
                   </p>
                 )}
 
-                {pushEnabled && (
-                  <>
-                    <div className="sep" />
-                    <div style={{ marginTop: 4 }}>
+                {/* Also account-wide, so it is not hidden behind this device's
+                    subscription either. */}
+                <div className="sep" />
+                <div style={{ marginTop: 4 }}>
                       <label className="eyebrow block mb-2">Remind me before a session</label>
                       <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
                         <Input
@@ -502,9 +504,7 @@ export default function SettingsPage() {
                           ? 'Pick anything from 5 minutes to 7 days.'
                           : "Only for sessions you said you're going to, and only if they have a start time."}
                       </p>
-                    </div>
-                  </>
-                )}
+                </div>
               </>
             ) : (
               <div className="row" style={{ gap: 10, padding: 12, background: 'var(--surface-2)' }}>
