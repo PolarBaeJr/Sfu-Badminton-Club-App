@@ -54,7 +54,7 @@ export async function reinstatePlayer(input: ReinstatementInput) {
   // admin-only in the same access map — so an exec reinstates for free and an
   // admin records the money. Rejected rather than dropped: a silently ignored
   // amount would leave the ledger short with nothing to show for it.
-  if (!isAdminActor(actor) && (parsed.amount_cents !== undefined || parsed.method !== undefined)) {
+  if (!isAdminActor(actor) && (parsed.amount_cents !== undefined || parsed.method !== undefined || parsed.reference !== undefined)) {
     throw new ExpectedError('Admin access required to record a reinstatement fee');
   }
   const adminClient = createAdminClient();
@@ -74,6 +74,7 @@ export async function reinstatePlayer(input: ReinstatementInput) {
       paid_at: new Date().toISOString(),
       marked_by: actor.id,
       method: input.method ?? null,
+      reference: input.reference ?? null,
       ban_reason: player?.ban_reason ?? null,
     })
     .select('id')

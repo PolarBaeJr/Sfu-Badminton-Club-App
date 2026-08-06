@@ -167,11 +167,6 @@ export default async function SessionsPage() {
                   >
                     <div
                       className="session-grid"
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 16,
-                      }}
                     >
                       <div>
                         <div className="card-title card-title-lg">

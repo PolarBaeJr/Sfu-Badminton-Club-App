@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react';
 import { Button, Dialog, Input, Select, Switch, Textarea } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
+import { PAYMENT_METHODS, PAYMENT_METHOD_CUSTOM, resolvePaymentMethod } from '@badminton/shared';
 import { updatePlayer, updatePlayerFlags, approvePlayer, banPlayer, reinstatePlayer, requireWaiverResignature } from '@/lib/actions';
 
 interface Props {
@@ -104,6 +105,8 @@ export function PlayerActions({ mode, assignStatus, playerId, playerName, player
   const [requireResign, setRequireResign] = useState(false);
   const [reinstateAmount, setReinstateAmount] = useState('');
   const [reinstateMethod, setReinstateMethod] = useState('');
+  const [reinstateMethodCustom, setReinstateMethodCustom] = useState('');
+  const [reinstateReference, setReinstateReference] = useState('');
   const { toast } = useToast();
   const router = useRouter();
 
@@ -244,7 +247,8 @@ export function PlayerActions({ mode, assignStatus, playerId, playerName, player
         await reinstatePlayer({
           player_id: playerId,
           amount_cents: dollars != null && !Number.isNaN(dollars) ? Math.round(dollars * 100) : undefined,
-          method: reinstateMethod || undefined,
+          method: resolvePaymentMethod(reinstateMethod, reinstateMethodCustom) || undefined,
+          reference: reinstateReference.trim() || undefined,
         });
         // After the unban lands, not before: a failed re-signature must not
         // leave them banned, and a failed unban must not reset their waiver.
@@ -276,10 +280,29 @@ export function PlayerActions({ mode, assignStatus, playerId, playerName, player
                 this writes a reinstatement_fees row into the admin-only fees
                 ledger. The server action rejects the fields too. */}
             {isAdmin && (
-              <div className="flex gap-2">
-                <Input label="Amount $ (optional)" type="number" step="0.01" min="0" value={reinstateAmount} onChange={(e) => setReinstateAmount(e.target.value)} placeholder="e.g. 20.00" />
-                <Input label="Method (optional)" value={reinstateMethod} onChange={(e) => setReinstateMethod(e.target.value)} placeholder="e.g. e-transfer, cash" />
-              </div>
+              <>
+                <div className="flex gap-2">
+                  <Input label="Amount $ (optional)" type="number" step="0.01" min="0" value={reinstateAmount} onChange={(e) => setReinstateAmount(e.target.value)} placeholder="e.g. 20.00" />
+                  {/* The same list the club-fees ledger uses, not a second
+                      free-text box — "E-transfer" / "etransfer" / "e transfer"
+                      is why PAYMENT_METHODS exists. */}
+                  <Select
+                    label="Method (optional)"
+                    options={[{ value: '', label: '—' }, ...PAYMENT_METHODS.map((m) => ({ value: m.value, label: m.label }))]}
+                    value={reinstateMethod}
+                    onChange={(e) => setReinstateMethod(e.target.value)}
+                  />
+                </div>
+                {reinstateMethod === PAYMENT_METHOD_CUSTOM && (
+                  <Input label="Custom method" value={reinstateMethodCustom} onChange={(e) => setReinstateMethodCustom(e.target.value)} placeholder="How was it paid?" />
+                )}
+                <Input
+                  label="Transaction ID (optional)"
+                  value={reinstateReference}
+                  onChange={(e) => setReinstateReference(e.target.value)}
+                  placeholder="e.g. e-transfer confirmation number"
+                />
+              </>
             )}
             <Switch
               label="Require waiver re-signature"

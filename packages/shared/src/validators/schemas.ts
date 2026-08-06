@@ -348,6 +348,9 @@ export const reinstatementSchema = z.object({
   player_id: z.string().uuid(),
   amount_cents: z.number().int().nonnegative().optional(),
   method: z.string().max(40).optional(),
+  // Same field and cap as club_fees.reference (00039/00059): the transaction
+  // id that lets somebody reconcile this against a bank statement later.
+  reference: z.string().max(120).optional(),
 });
 
 export const banSchema = z.object({

@@ -760,6 +760,21 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
   color: var(--mute);
   font-family: var(--mono);
 }
+/* Info on the left, actions on the right, vertically centred.
+   This rule was MISSING: .session-grid existed only inside the ≤980px media
+   query below, which sets grid-template-columns — a property a flex container
+   ignores. The element carried an inline `display:flex; flex-direction:column`,
+   so the mobile override was inert AND the desktop layout never existed: every
+   card stacked its actions onto a second row at every width, leaving a tall
+   empty band above a lone right-aligned button. Most visible once a suspended
+   member's RSVP buttons are withheld and only "Add to calendar" is left. */
+.session-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  align-items: center;
+}
+
 @media (max-width: 980px) {
   .session-meta { gap: 12px; }
   .session-grid { grid-template-columns: 1fr !important; gap: 14px !important; }
