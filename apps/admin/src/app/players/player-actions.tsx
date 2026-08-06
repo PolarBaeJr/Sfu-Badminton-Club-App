@@ -5,13 +5,13 @@ import { Button, Dialog, Input, Select, Switch, Textarea } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { PAYMENT_METHODS, PAYMENT_METHOD_CUSTOM, resolvePaymentMethod } from '@badminton/shared';
-import { updatePlayer, updatePlayerFlags, approvePlayer, banPlayer, reinstatePlayer, requireWaiverResignature } from '@/lib/actions';
+import { removePlayer, updatePlayer, updatePlayerFlags, approvePlayer, banPlayer, reinstatePlayer, requireWaiverResignature } from '@/lib/actions';
 
 interface Props {
   // One button per mode; /players decides WHICH modes a row gets from the tab
   // it is on (see lib/roster-actions.ts). Every mode here is exec-allowed, so
   // nothing rendered by this component rejects on click.
-  mode: 'edit' | 'ban' | 'unban' | 'restore' | 'inactive' | 'assign';
+  mode: 'edit' | 'ban' | 'unban' | 'restore' | 'inactive' | 'assign' | 'remove';
   /** 'assign' only — the division the button puts them in. */
   assignStatus?: 'competitive' | 'recreational';
   playerId: string;
@@ -34,7 +34,6 @@ const RESTORE_STATUS_OPTIONS = [
 const STATUS_OPTIONS = [
   { value: 'competitive', label: 'Competitive' },
   { value: 'recreational', label: 'Recreational' },
-  { value: 'suspended', label: 'Suspended' },
   { value: 'pending_approval', label: 'Pending Approval' },
   // Not a status column value: selecting this clears active_flag. Presented
   // here because "inactive" is how the club thinks of it, and there was no
@@ -334,6 +333,36 @@ export function PlayerActions({ mode, assignStatus, playerId, playerName, player
               <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
               <Button variant="danger" onClick={handleBan} loading={isPending} disabled={banReason.trim().length < 2}>
                 Ban Player
+              </Button>
+            </div>
+          </div>
+        </Dialog>
+      </>
+    );
+  }
+
+  if (mode === 'remove') {
+    return (
+      <>
+        <Button variant="danger" size="sm" onClick={() => setOpen(true)}>Remove</Button>
+        <Dialog open={open} onClose={() => setOpen(false)} title="Remove Player">
+          <div className="space-y-4">
+            <p className="text-[var(--text-secondary)]">
+              Take <strong className="text-[var(--text-primary)]">{playerName}</strong> off the
+              roster. Their history and ratings are kept — this suspends the account and
+              deactivates it. Use <strong className="text-[var(--text-primary)]">Ban</strong>
+              {' '}instead if this is disciplinary.
+            </p>
+            <Textarea label="Reason (required)" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why is this player being removed?" />
+            <div className="flex items-center justify-end gap-2">
+              <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
+              <Button
+                variant="danger"
+                onClick={() => run(() => removePlayer(playerId, reason), 'Player removed', 'Failed to remove player')}
+                loading={isPending}
+                disabled={reason.trim().length < 2}
+              >
+                Remove Player
               </Button>
             </div>
           </div>

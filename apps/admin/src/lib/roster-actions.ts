@@ -37,12 +37,19 @@ export type RosterAction =
   /** updatePlayer { active_flag: false } — off the active roster, status untouched. */
   | { kind: 'inactive' }
   /** approvePlayer (pending) / updatePlayer (anything else) into a division. */
-  | { kind: 'assign'; status: 'recreational' | 'competitive' };
+  | { kind: 'assign'; status: 'recreational' | 'competitive' }
+  | { kind: 'remove' };
 
 /** Only what changes which action applies — everything else is display. */
 export interface RosterRowState {
   is_banned?: boolean | null;
   status?: string | null;
+}
+
+// removePlayer is getAdminPlayer() — an exec who saw the button would only get
+// "Admin access required" on click, which is the thing this file exists to stop.
+export interface RosterViewerState {
+  isAdmin?: boolean;
 }
 
 /**
@@ -55,7 +62,17 @@ export interface RosterRowState {
  *  - Competitive/Recreational list by status, so a banned member still appears
  *    there. Offering "Ban" to someone already banned is the bug in miniature.
  */
-export function rosterActionsFor(tab: string, player: RosterRowState): RosterAction[] {
+export function rosterActionsFor(
+  tab: string,
+  player: RosterRowState,
+  viewer: RosterViewerState = {},
+): RosterAction[] {
+  // Remove takes someone off the roster entirely; it is not the same act as a
+  // ban and the owner wants it back. Admin-only, and never offered on the tabs
+  // that list already-removed rows — there is nothing left to remove.
+  const remove: RosterAction[] =
+    viewer.isAdmin && tab !== 'inactive' && tab !== 'suspended' ? [{ kind: 'remove' }] : [];
+
   switch (tab) {
     case 'inactive':
       return [{ kind: 'edit' }, { kind: 'restore' }];
@@ -66,6 +83,7 @@ export function rosterActionsFor(tab: string, player: RosterRowState): RosterAct
         { kind: 'edit' },
         { kind: 'assign', status: 'recreational' },
         { kind: 'assign', status: 'competitive' },
+        ...remove,
       ];
     default: {
       // "when a user is suspended please make it so they cannot be marked as
@@ -80,6 +98,7 @@ export function rosterActionsFor(tab: string, player: RosterRowState): RosterAct
         { kind: 'edit' },
         player.is_banned ? { kind: 'unban' } : { kind: 'ban' },
         ...(moderated ? [] : [{ kind: 'inactive' } as RosterAction]),
+        ...remove,
       ];
     }
   }

@@ -204,7 +204,7 @@ export default async function PlayersPage({
                   narrow desktop instead of a ragged two-line row on every wide
                   one. Mobile gets the card layout, which stacks these anyway. */}
               <div className="inline-flex flex-nowrap gap-1 justify-end">
-                {rosterActionsFor(tab, player).map((action) => (
+                {rosterActionsFor(tab, player, { isAdmin }).map((action) => (
                   <PlayerActions
                     key={rosterActionKey(action)}
                     mode={action.kind}
