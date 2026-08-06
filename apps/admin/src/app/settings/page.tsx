@@ -1,9 +1,13 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
 import { PageHeader } from '@badminton/ui';
-import { SettingsForm } from './settings-form';
 import { PasskeySection } from './passkey-section';
 
+// Personal settings ONLY. Platform configuration used to be an admin-gated
+// block on this page; it now lives at /ratings and /accounts, which are
+// admin-only sections in their own right. This page stays trainer-level
+// (permissions.ts) purely so every console user can enrol their own passkeys —
+// which is the reason nothing club-wide belongs here.
 export default async function SettingsPage() {
   let player: Awaited<ReturnType<typeof getAuthenticatedConsoleUser>> | null = null;
   try {
@@ -12,12 +16,6 @@ export default async function SettingsPage() {
     // Not authenticated or not exec/admin — show limited settings
   }
   const supabase = createAdminClient();
-
-  const { data: settings } = await supabase
-    .from('platform_settings')
-    .select('*')
-    .order('key');
-
 
   const { data: passkeys } = player
     ? await supabase
@@ -35,7 +33,7 @@ export default async function SettingsPage() {
     <div>
       <PageHeader
         title="Settings"
-        sub="Manage your profile and platform configuration"
+        sub="Your console profile, passkeys and app version"
         watermark="S"
       />
 
@@ -44,7 +42,7 @@ export default async function SettingsPage() {
         <nav className="settings-rail hidden md:flex md:flex-col md:sticky md:top-6 md:self-start">
           <a href="#general" className="active">
             <span className="rail-label block">General</span>
-            <span className="rail-sub block">Profile &amp; platform</span>
+            <span className="rail-sub block">Your profile</span>
           </a>
           {player && (
             <a href="#security">
@@ -63,7 +61,7 @@ export default async function SettingsPage() {
           <section id="general" className="scroll-mt-32">
             <h2 className="settings-section-title">General</h2>
             <p className="settings-section-desc">
-              Your admin profile and platform-wide configuration.
+              Your console profile. Ask an admin to change your name or role.
             </p>
             <div className="settings-row">
               <div>
@@ -86,10 +84,6 @@ export default async function SettingsPage() {
               </div>
               <div className="settings-row-control text-sm text-[var(--text-primary)] capitalize">{player?.role}</div>
             </div>
-
-            {player?.role === 'admin' && settings && (
-              <SettingsForm settings={settings} />
-            )}
           </section>
 
           {/* Security */}

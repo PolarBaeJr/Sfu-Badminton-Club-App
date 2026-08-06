@@ -52,6 +52,13 @@ const SECTION_ACCESS: { [pathPrefix: string]: AccessLevel } = {
   // the text. That split is enforced in the page and in the server actions —
   // this line only decides who may open the section.
   '/legal': 'exec',
+  // Platform configuration, split out of /settings. Admin-only in BOTH halves,
+  // unlike Legal: the club owner wants execs kept off the rating and account
+  // rules entirely, not shown a read-only copy. Each page re-checks with
+  // getAuthenticatedAdmin() and updatePlatformSettings() gates again — this line
+  // only decides who may open the section.
+  '/ratings': 'admin',
+  '/accounts': 'admin',
   '/settings': 'trainer', // everyone with console access enrolls their own passkeys
   '/api/passkey': 'trainer', // passkey enrollment/verification endpoints
   // Execs run the roster: approve, edit, ban/unban, varsity notes. Granting

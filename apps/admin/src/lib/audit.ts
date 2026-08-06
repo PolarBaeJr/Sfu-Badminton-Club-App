@@ -34,7 +34,12 @@ export async function logAdminAudit(
     actor_id: string | null;
     action_type: string;
     target_type: string;
-    target_id: string;
+    // audit_logs.target_id is a `uuid` column. Null when the thing acted on has
+    // no uuid at all — platform_settings is keyed by `key`, legal_documents by
+    // `document`. Passing the text key here instead threw
+    // "invalid input syntax for type uuid" on every insert; name it in `reason`
+    // and leave this null.
+    target_id: string | null;
     old_value?: unknown;
     new_value?: unknown;
     reason?: string;

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Button, Textarea } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
-import { updatePlatformSettings } from './actions';
+import { updatePlatformSettings } from '@/lib/actions';
 
 interface PlatformSetting {
   key: string;
@@ -385,7 +385,11 @@ function SettingsToggle({
 
 type FieldValue = string | boolean;
 
-export function SettingsForm({ settings }: { settings: PlatformSetting[] }) {
+// Renders whichever platform_settings rows it is handed — the caller decides
+// which section owns which key (see lib/platform-setting-sections.ts). It knows
+// the labels and field metadata for all of them, so the same component serves
+// both Ratings and Accounts.
+export function PlatformSettingsForm({ settings }: { settings: PlatformSetting[] }) {
   const [fieldEdits, setFieldEdits] = useState<Record<string, Record<string, FieldValue>>>({});
   const [jsonEdits, setJsonEdits] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -479,14 +483,13 @@ export function SettingsForm({ settings }: { settings: PlatformSetting[] }) {
   const hasChanges = Object.keys(fieldEdits).length > 0 || Object.keys(jsonEdits).length > 0;
 
   return (
-    <div className="mt-10">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h3 className="text-lg font-bold text-[var(--text-primary)]">Platform settings</h3>
-          <p className="text-sm text-[var(--text-muted)]">
-            Changing platform settings affects all players immediately. Changes are logged in the audit trail.
-          </p>
-        </div>
+    <div>
+      {/* The page title now lives in its PageHeader; this row is just the
+          standing warning and the Save button, which needs the form's state. */}
+      <div className="flex min-h-[38px] items-center justify-between gap-4">
+        <p className="settings-section-desc !mb-0">
+          Changes apply to every player immediately and are recorded in the audit log.
+        </p>
         {hasChanges && (
           <Button onClick={handleSave} loading={loading}>
             Save Changes
