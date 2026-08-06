@@ -292,6 +292,16 @@ const FIELD_META: Record<string, Record<string, FieldMeta>> = {
     },
   },
   season_settings: {
+    // The tier band the soft reset refuses to drop anyone below, and the
+    // ladder floor everything compresses toward. Both were hardcoded in
+    // activate_season until 00055.
+    tier_size: {
+      label: 'Tier size (Elo points)',
+      hint: 'Soft reset never drops a player below the bottom of the tier they earned. The ladder floor itself is Rating Defaults → Starting Elo.',
+      type: 'number',
+      min: 1,
+      step: 25,
+    },
     soft_compression_enabled: {
       label: 'Soft compression',
       hint: 'Pull every rating toward the average at season end.',
