@@ -5,7 +5,7 @@
 import * as Sentry from '@sentry/nextjs';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { PostHog } from 'posthog-node';
-import { getMissingLegalDocuments, isPushCategoryEnabled, ExpectedError, isExpectedError, type NotificationCategory } from '@badminton/shared';
+import { getMissingLegalDocuments, isPushCategoryEnabled, ExpectedError, isExpectedFailure, type NotificationCategory } from '@badminton/shared';
 import { sendPushToPlayers, type PushPayload } from '@badminton/shared/src/push/send';
 import { getCurrentPlayer, createServiceRoleClient } from '../supabase-server';
 
@@ -30,7 +30,9 @@ export async function runAction<T>(fn: () => Promise<T>): Promise<ActionResult<T
     // it here so the error is still logged, then return the user-facing message.
     // ExpectedErrors are ordinary user-facing rejections (failed validation, an
     // unapproved account); they still reach the caller, they just aren't faults.
-    if (!isExpectedError(err)) Sentry.captureException(err);
+    // isExpectedFailure also matches an allowlisted guard message arriving as a
+    // plain Error, which is how score-format rejections were reaching Sentry.
+    if (!isExpectedFailure(err)) Sentry.captureException(err);
     return { ok: false, error: err instanceof Error ? err.message : 'Something went wrong' };
   }
 }
