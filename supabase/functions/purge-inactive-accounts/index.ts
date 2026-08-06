@@ -54,6 +54,19 @@ Deno.serve(async (req) => {
     .from('purgeable_inactive_players')
     .select('id, user_id, inactive_since, purge_after_days');
 
+  // Read separately rather than off the first candidate: the view returns no
+  // rows on almost every run, and "how long is the retention period?" is
+  // precisely the question the operator needs answered by a dry run that found
+  // nobody. Taking it from candidates[0] would report null exactly when it
+  // matters most.
+  const { data: setting } = await supabase
+    .from('platform_settings')
+    .select('value')
+    .eq('key', 'inactivity_rules')
+    .maybeSingle();
+  const purgeAfterDays =
+    (setting?.value as Record<string, number> | null)?.purge_after_days ?? 365;
+
   if (error) {
     console.error('purge-inactive-accounts error:', error);
     return jsonResponse({ error: error.message }, 500);
@@ -66,7 +79,8 @@ Deno.serve(async (req) => {
     // audit rows — an audit trail of things that did not happen would make the
     // real history unreadable.
     console.log(
-      `purge-inactive-accounts DRY RUN — ${eligible.length} account(s) WOULD be anonymised. ` +
+      `purge-inactive-accounts DRY RUN — ${eligible.length} account(s) WOULD be anonymised ` +
+        `at purge_after_days=${purgeAfterDays}. ` +
         `Set PURGE_INACTIVE_ENABLED=true to arm. Candidates: ` +
         (eligible.length
           ? eligible.map((p) => `${p.id} (inactive since ${p.inactive_since})`).join(', ')
@@ -75,7 +89,7 @@ Deno.serve(async (req) => {
     return jsonResponse({
       dry_run: true,
       would_purge: eligible.length,
-      purge_after_days: eligible[0]?.purge_after_days ?? null,
+      purge_after_days: purgeAfterDays,
       candidates: eligible.map((p) => ({ id: p.id, inactive_since: p.inactive_since })),
     });
   }

@@ -53,6 +53,16 @@
 --     in packages/shared, which is the same discrimination made for
 --     the members' app.
 --
+-- THE 30-DAY FLOOR. GREATEST(..., 30) is a guard against a typo, not a
+-- policy. The console field has min=30, but that is client-side only and an
+-- exec who saves '1' would otherwise arm same-week erasure of the whole lapsed
+-- roster — irreversible, and exactly the kind of mistake that is noticed
+-- afterwards. 30 is the floor because that is already the grace period given
+-- to members who explicitly ASKED to be deleted; erasing a lapsed member
+-- faster than a consenting one would be incoherent. Note the drift this can
+-- cause is in the safe direction: the email would quote the smaller number, so
+-- a member is warned of a deadline EARLIER than the one enforced.
+--
 --   email NOT LIKE 'deleted+%'   IDEMPOTENCY. Anonymising does not
 --     change active_flag or inactive_since, so without this the row
 --     matches again tomorrow and every night after — re-anonymising
@@ -71,7 +81,7 @@ SELECT
   p.user_id,
   p.inactive_since,
   -- Returned so the job can log WHY without recomputing the cutoff.
-  (SELECT COALESCE((value ->> 'purge_after_days')::INT, 365)
+  (SELECT GREATEST(COALESCE((value ->> 'purge_after_days')::INT, 365), 30)
      FROM platform_settings WHERE key = 'inactivity_rules') AS purge_after_days
 FROM players p
 WHERE p.active_flag = FALSE
