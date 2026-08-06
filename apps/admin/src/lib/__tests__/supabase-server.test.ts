@@ -25,17 +25,23 @@ vi.mock('@supabase/ssr', () => ({
   }),
 }));
 
-vi.mock('@supabase/supabase-js', () => ({
-  createClient: () => ({
-    from: (_table: string) => ({
-      select: (_cols: string) => ({
-        eq: (_col: string, _val: string) => ({
-          maybeSingle: async () => ({ data: state.player }),
-        }),
-      }),
+// PostgREST filters chain, so .eq() has to return something you can call .eq()
+// on again — assertPasskeyVerified narrows by player_id AND enrolled_via. A
+// single-level double made the second .eq() a TypeError, which surfaced as the
+// admin-path test failing rather than as anything to do with passkeys.
+// Awaiting the builder yields the builder itself, so `count` is undefined and
+// the passkey gate reads "no credentials enrolled" — what these cases want.
+vi.mock('@supabase/supabase-js', () => {
+  const builder: Record<string, unknown> = {
+    maybeSingle: async () => ({ data: state.player }),
+  };
+  builder.eq = () => builder;
+  return {
+    createClient: () => ({
+      from: (_table: string) => ({ select: (_cols: string) => builder }),
     }),
-  }),
-}));
+  };
+});
 
 vi.mock('@sentry/nextjs', () => ({
   setUser: sentrySetUser,

@@ -2,7 +2,7 @@
 
 How to run the club from the admin console. Non-technical — for execs and admins using the app, not developers.
 
-**Console:** [Admin.sfubadminton.com](https://admin.sfubadminton.com)
+**Console:** [sfubadminton.com/admin](https://sfubadminton.com/admin) — or just tap **Exec Panel** in the members' app, which now opens the console without kicking you out to a browser tab.
 
 ## Access levels
 

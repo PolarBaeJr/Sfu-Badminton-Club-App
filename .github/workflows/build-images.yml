@@ -24,50 +24,18 @@ jobs:
   build:
     runs-on: ubuntu-24.04-arm
     strategy:
-      # The three images are independent deploy targets — the Pi auto-updates
-      # each on its own. Letting one failure cancel its siblings (the default)
-      # would turn e.g. a missing secret on admin-path into a total deploy
-      # stall, blocking player fixes that have nothing to do with it.
-      fail-fast: false
       matrix:
-        # `admin` and `admin-path` are the SAME source and the same Dockerfile
-        # stage, built twice because Next bakes basePath in at build time: one
-        # image answers on admin.sfubadminton.com, the other under
-        # sfubadminton.com/admin so the player PWA can open the console without
-        # a cross-origin navigation. Both jobs check out the commit that
-        # triggered this run, so the two admin images are always built from
-        # identical source — see docker-compose.yml for what each is for.
+        app: [player, admin]
+        # Overlay, not a third image: adds base_path to the `admin` combination
+        # only. Next bakes basePath in at build time, so the console's mount
+        # point (/admin, same origin as the player app) has to be a build arg —
+        # see apps/admin/next.config.js. base_path is unset, hence empty, for
+        # the player.
         include:
-          - image: player
-            target: runner-player
-            base_path: ''
-          - image: admin
-            target: runner-admin
-            base_path: ''
-          - image: admin-path
-            target: runner-admin
+          - app: admin
             base_path: /admin
     steps:
       - uses: actions/checkout@v4
-
-      # The ADMIN_URL fallback below is a `&&`/`||` ternary, and an unset
-      # NEXT_PUBLIC_ADMIN_PATH_URL would quietly collapse it back to the
-      # subdomain URL — producing a path-mounted image whose redirects bounce
-      # execs to admin.sfubadminton.com and whose WebAuthn origin check is
-      # wrong. Fail the build instead of shipping that.
-      # The secret is read in the shell, not in an `if:` — the secrets context
-      # is not dependable in step conditions.
-      - name: Require the path-mounted console's own base URL
-        env:
-          BASE_PATH: ${{ matrix.base_path }}
-          ADMIN_PATH_URL: ${{ secrets.NEXT_PUBLIC_ADMIN_PATH_URL }}
-        run: |
-          if [ -n "$BASE_PATH" ] && [ -z "$ADMIN_PATH_URL" ]; then
-            echo "NEXT_PUBLIC_ADMIN_PATH_URL secret is not set." >&2
-            echo "Set it to this image's public base INCLUDING the prefix," >&2
-            echo "e.g. https://sfubadminton.com/admin" >&2
-            exit 1
-          fi
 
       - uses: docker/setup-buildx-action@v3
 
@@ -80,7 +48,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ghcr.io/${{ github.repository_owner }}/badminton-${{ matrix.image }}
+          images: ghcr.io/${{ github.repository_owner }}/badminton-${{ matrix.app }}
           # Every build is tagged twice:
           #   latest       — the moving tag the Pi/dashboard tracks
           #   sha-<commit> — immutable, for rollback / pinning a known-good build
@@ -91,20 +59,19 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          target: ${{ matrix.target }}
+          target: runner-${{ matrix.app }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,scope=${{ matrix.image }},mode=max
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,scope=${{ matrix.app }},mode=max
           build-args: |
             NEXT_PUBLIC_SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
             NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
             NEXT_PUBLIC_APP_URL=${{ secrets.NEXT_PUBLIC_APP_URL }}
             NEXT_PUBLIC_PLAYER_URL=${{ secrets.NEXT_PUBLIC_PLAYER_URL }}
+            NEXT_PUBLIC_ADMIN_URL=${{ secrets.NEXT_PUBLIC_ADMIN_URL }}
             NEXT_PUBLIC_BASE_PATH=${{ matrix.base_path }}
-            NEXT_PUBLIC_ADMIN_PATH=${{ secrets.NEXT_PUBLIC_ADMIN_PATH }}
-            NEXT_PUBLIC_ADMIN_URL=${{ matrix.base_path && secrets.NEXT_PUBLIC_ADMIN_PATH_URL || secrets.NEXT_PUBLIC_ADMIN_URL }}
             NEXT_PUBLIC_PASSKEY_RP_ID=${{ secrets.NEXT_PUBLIC_PASSKEY_RP_ID }}
             NEXT_PUBLIC_AUTH_COOKIE_DOMAIN=${{ secrets.NEXT_PUBLIC_AUTH_COOKIE_DOMAIN }}
             NEXT_PUBLIC_VAPID_PUBLIC_KEY=${{ secrets.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}

@@ -17,14 +17,14 @@ export const PASSKEY_LOGIN_CHALLENGE_COOKIE = 'admin_passkey_login_challenge';
 export const VERIFIED_TTL_SECONDS = 12 * 60 * 60; // 12h
 export const CHALLENGE_TTL_SECONDS = 5 * 60; // 5min
 
-// Scope the gate cookies to wherever the console is actually mounted: '/' on
-// the subdomain build (it owns that origin outright), '/admin' on the
-// path-mounted one. It was '/admin' once before, for the same reason.
+// Scope the gate cookies to wherever the console is mounted — '/admin' in
+// production, '/' only when it is root-mounted (localhost). It was '/admin'
+// once before, for the same reason, and briefly '/' while it had a subdomain.
 //
-// This is not cosmetic. The path-mounted console shares an origin with the
-// player app, so a '/' cookie here would be attached to every player-app
-// request made by every exec — an admin-gate token broadcast to an app that has
-// no business seeing it, on requests it has no business carrying.
+// This is not cosmetic. The console shares an origin with the player app now,
+// so a '/' cookie here would ride along on every player-app request every exec
+// makes — an admin-gate token handed to an app that has no business seeing it,
+// on requests that have no business carrying it.
 export const PASSKEY_COOKIE_PATH = BASE_PATH || '/';
 
 function adminUrl(): URL {
@@ -36,17 +36,22 @@ function adminUrl(): URL {
  *
  * A credential can be used from any origin that is a subdomain of its RP ID, so
  * pinning this to the PARENT domain (sfubadminton.com) means one passkey works
- * on both the apex and admin.sfubadminton.com, and survives moving the console
- * between them.
+ * on the apex and on any subdomain, and survives the console moving between
+ * them. That is exactly what carried enrolled credentials through the move off
+ * admin.sfubadminton.com and onto sfubadminton.com/admin: the RP ID did not
+ * change, and a WebAuthn origin drops the path, so getExpectedOrigin() below
+ * goes from "https://admin.sfubadminton.com" to "https://sfubadminton.com" —
+ * still within the RP ID's scope.
  *
- * Deriving it from the admin hostname instead — as this used to — silently
+ * Deriving it from the console's hostname instead — as this used to — silently
  * scopes credentials to whatever host the console currently sits on, so any
  * move invalidates every enrolled passkey. Admins then cannot pass the gate to
  * reach the page that enrolls a new one, which is an outright lockout.
  *
  * Set PASSKEY_RP_ID explicitly in production. The fallback strips a single
- * leading label ("admin.") to recover the registrable parent, which is correct
- * for this deployment; it is deliberately not a public-suffix parser.
+ * leading label to recover the registrable parent for a subdomain host, and
+ * returns a two-label host (sfubadminton.com) unchanged; it is deliberately not
+ * a public-suffix parser.
  */
 export function getRpId(): string {
   const explicit = process.env.NEXT_PUBLIC_PASSKEY_RP_ID;

@@ -24,15 +24,16 @@ const nextConfig = {
   outputFileTracingRoot: path.join(__dirname, '../..'),
   // Inlined at build time, so the standalone server needs nothing at runtime.
   env: { NEXT_PUBLIC_APP_VERSION: appVersion },
-  // Mount point, chosen at BUILD time — basePath cannot be decided at runtime,
-  // which is why the console ships as two images from this one source:
-  //   unset      → admin.sfubadminton.com, served from the root (today).
-  //   '/admin'   → sfubadminton.com/admin, same origin as the player app, so
-  //                the installed PWA keeps execs in the app instead of ejecting
-  //                them into a browser tab.
-  // Unset must stay byte-identical to the subdomain build, hence `undefined`
-  // rather than ''. Everything that has to follow this prefix by hand lives in
-  // src/lib/base-path.ts.
+  // The console is served at sfubadminton.com/admin — the player app's own
+  // origin. It used to have a subdomain, but the player app is an installed
+  // PWA, and a PWA cannot keep a cross-origin navigation in its window: every
+  // tap of "Exec Panel" ejected the exec into a browser tab.
+  //
+  // Env-driven rather than a literal because basePath is baked in at BUILD
+  // time and localhost still wants a root-mounted console. `undefined` rather
+  // than '' when unset, so an unset build resolves to exactly Next's default.
+  // Everything that has to follow this prefix by hand — fetch(), raw
+  // window.location, redirectTo — lives in src/lib/base-path.ts.
   basePath: process.env.NEXT_PUBLIC_BASE_PATH || undefined,
   // src/instrumentation.ts (Sentry server/edge init) needed an experimental
   // flag on 14; it is default-on from 15, and leaving the flag set now only

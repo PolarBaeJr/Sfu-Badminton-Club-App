@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@badminton/ui';
 import { ShuttleMark } from './shuttle-mark';
-import { ADMIN_PANEL_HREF, ADMIN_PANEL_IS_EXTERNAL } from '@/lib/admin-link';
 import {
   Home,
   Trophy,
@@ -109,14 +108,15 @@ export function TopBar({
         <div className="top-right">
           {isAuthenticated ? (
             <>
+              {/* Same-origin, and deliberately a plain anchor rather than a
+                  next/link: /admin is a different Next app behind the proxy, so
+                  client-side routing has nothing to route to. No target="_blank"
+                  either — the player app is an installed PWA, and opening the
+                  console in a new tab is exactly the ejection that moving it
+                  onto this origin was meant to stop. */}
               {isExecOrAdmin && (
                 <a
-                  href={ADMIN_PANEL_HREF}
-                  /* Only pop a new tab for a cross-origin console. Doing it for
-                     the same-origin /admin mount would eject the exec from the
-                     installed PWA, which is the whole point of that mount. */
-                  target={ADMIN_PANEL_IS_EXTERNAL ? '_blank' : undefined}
-                  rel={ADMIN_PANEL_IS_EXTERNAL ? 'noopener noreferrer' : undefined}
+                  href="/admin"
                   className="icon-btn"
                   aria-label="Exec panel"
                   title="Exec panel"

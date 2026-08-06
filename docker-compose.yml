@@ -1,5 +1,7 @@
 # Pi deploy: joins the external `edge` network; proxy-manager routes by the
-# proxy.* labels below. PROXY_DOMAIN in .env sets the served host (sfubadminton.com).
+# proxy.* labels below. PROXY_DOMAIN in .env sets the served host
+# (sfubadminton.com) — BOTH apps now live on it, the player at / and the admin
+# console at /admin. admin.sfubadminton.com no longer serves anything.
 networks:
   edge:
     external: true
@@ -20,11 +22,6 @@ services:
         - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
         - NEXT_PUBLIC_PLAYER_URL=${NEXT_PUBLIC_PLAYER_URL}
         - NEXT_PUBLIC_ADMIN_URL=${NEXT_PUBLIC_ADMIN_URL}
-        # Same-origin route to the console ("/admin"). Set once the admin-path
-        # service below is deployed: it keeps the "Exec Panel" links inside the
-        # installed PWA instead of ejecting execs into a browser tab. Unset =
-        # today's behaviour (link straight to NEXT_PUBLIC_ADMIN_URL).
-        - NEXT_PUBLIC_ADMIN_PATH=${NEXT_PUBLIC_ADMIN_PATH}
         # Passkey RP ID must be the registrable parent. CI already passes it
         # (build-images.yml); mirrored here so a fallback `--build` on the Pi
         # can't silently rescope credentials to a hostname and lock admins out.
@@ -73,13 +70,19 @@ services:
         - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
         - NEXT_PUBLIC_PLAYER_URL=${NEXT_PUBLIC_PLAYER_URL}
         - NEXT_PUBLIC_ADMIN_URL=${NEXT_PUBLIC_ADMIN_URL}
+        # Mount point, baked into the build — Next cannot decide basePath at
+        # runtime. Must agree with proxy.path below and with the "/admin" the
+        # player app links to; the three move together or the console 404s.
+        - NEXT_PUBLIC_BASE_PATH=${ADMIN_BASE_PATH:-/admin}
         # Passkey RP ID must be the registrable parent. CI already passes it
         # (build-images.yml); mirrored here so a fallback `--build` on the Pi
         # can't silently rescope credentials to a hostname and lock admins out.
         - NEXT_PUBLIC_PASSKEY_RP_ID=${NEXT_PUBLIC_PASSKEY_RP_ID}
         # Shared auth cookie scope. Must be IDENTICAL to the player app's value
         # — the two write the same cookie, and a mismatch produces two cookies
-        # of the same name on different scopes.
+        # of the same name on different scopes. EMPTY is correct now: the
+        # console shares the player app's origin, so a host-only cookie already
+        # covers both and no cross-subdomain scoping is needed.
         - NEXT_PUBLIC_AUTH_COOKIE_DOMAIN=${NEXT_PUBLIC_AUTH_COOKIE_DOMAIN}
         - NEXT_PUBLIC_VAPID_PUBLIC_KEY=${NEXT_PUBLIC_VAPID_PUBLIC_KEY}
         - NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN}
@@ -92,81 +95,24 @@ services:
     networks: [edge, default]
     labels:
       proxy.enable:     "true"
-      # Admin console on its own host, served from the root — no basePath.
-      proxy.host:       "${ADMIN_PROXY_DOMAIN:-admin.sfubadminton.com}"
-      proxy.path:       "/"
+      # Same host as the player app, under /admin. The console used to have its
+      # own subdomain; a cross-origin link cannot stay inside the installed
+      # player PWA, so tapping "Exec Panel" threw execs out into a browser tab —
+      # constantly, since they use it to check members in at the door.
+      # Longest-prefix matching puts this ahead of the player's "/"
+      # (cmd/proxy/router.go sorts route groups by descending prefix length).
+      proxy.host:       "${PROXY_DOMAIN:-sfubadminton.com}"
+      proxy.path:       "/admin"
+      # MUST stay false. The app is BUILT with basePath=/admin, so it expects to
+      # see the prefix on every request; stripping it 404s the whole console.
+      proxy.strip:      "false"
       proxy.port:       "3001"
       proxy.service:    "badminton-admin"
       proxy.unscalable: "true"
       proxy.autoupdate:  "true"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-
-  # The SAME admin console, second copy, built with a basePath so the proxy can
-  # serve it from sfubadminton.com/admin. Two containers because Next bakes
-  # basePath in at build time — one build cannot answer on both mount points.
-  #
-  # Why it exists: the player app is an installed PWA, and a PWA cannot keep a
-  # cross-origin navigation in its own window. Linking execs to
-  # admin.sfubadminton.com throws them into a browser tab every time they open
-  # the console — which they do constantly, checking members in at the door.
-  # Same origin, no ejection.
-  #
-  # The subdomain service above stays: it is the URL execs have bookmarked and
-  # the one their passkeys were enrolled on.
-  admin-path:
-    image: ghcr.io/polarbaejr/badminton-admin-path:${IMAGE_TAG:-latest}
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: runner-admin
-      args:
-        - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
-        - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
-        - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
-        - NEXT_PUBLIC_PLAYER_URL=${NEXT_PUBLIC_PLAYER_URL}
-        # The ONLY differences from the `admin` service. The base path is baked
-        # into the bundle; the URL must be this container's own public base,
-        # prefix included, because self-referential redirects are built from it.
-        # Its .origin (no path) is what WebAuthn checks, so this value also
-        # keeps the passkey origin check correct without touching the RP ID.
-        - NEXT_PUBLIC_BASE_PATH=${ADMIN_BASE_PATH:-/admin}
-        - NEXT_PUBLIC_ADMIN_URL=${ADMIN_PATH_URL:-https://sfubadminton.com/admin}
-        # Identical to the `admin` service from here down — one credential and
-        # one session have to cover both copies.
-        - NEXT_PUBLIC_PASSKEY_RP_ID=${NEXT_PUBLIC_PASSKEY_RP_ID}
-        - NEXT_PUBLIC_AUTH_COOKIE_DOMAIN=${NEXT_PUBLIC_AUTH_COOKIE_DOMAIN}
-        - NEXT_PUBLIC_VAPID_PUBLIC_KEY=${NEXT_PUBLIC_VAPID_PUBLIC_KEY}
-        - NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN}
-    env_file: .env
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    ports:
-      - "3012:3001"
-    restart: unless-stopped
-    networks: [edge, default]
-    labels:
-      proxy.enable:     "true"
-      # Same host as the player app; longest-prefix matching sends /admin here
-      # and everything else to the player (cmd/proxy/router.go sorts route
-      # groups by descending prefix length).
-      proxy.host:       "${PROXY_DOMAIN:-sfubadminton.com}"
-      proxy.path:       "/admin"
-      # MUST stay false. With a basePath the app expects to see "/admin" on
-      # every request it serves; stripping the prefix would 404 the entire
-      # console.
-      proxy.strip:      "false"
-      proxy.port:       "3001"
-      proxy.service:    "badminton-admin-path"
-      proxy.unscalable: "true"
-      proxy.autoupdate:  "true"
-    healthcheck:
-      # Probe /admin, not /: with a basePath the root is a 404, which this
-      # status<500 test would happily call healthy.
+      # Probe /admin, not /: with a basePath the root is a 404, and this
+      # status<500 test would cheerfully call that healthy.
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/admin').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
