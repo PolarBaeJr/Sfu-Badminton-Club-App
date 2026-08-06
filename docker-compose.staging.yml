@@ -12,6 +12,15 @@
 #
 #   docker compose -f docker-compose.staging.yml --env-file .env.staging up -d
 #
+# MUST stay set, and this stack MUST be run from its own directory — never from
+# production's. Compose identifies a service by project + service name, NOT by
+# container_name. Without this key the project name defaults to the working
+# directory, so running this file from /mnt/ssd/Deploy/badminton made `player`
+# and `admin` here collide with production's services of the same name and
+# destroyed the running production containers. container_name does not isolate
+# anything; only the project name does.
+name: badminton-staging
+
 networks:
   edge:
     external: true
