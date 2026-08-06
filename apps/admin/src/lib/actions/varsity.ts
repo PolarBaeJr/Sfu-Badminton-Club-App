@@ -4,11 +4,14 @@ import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import { parseOrThrow, varsityNoteSchema, type VarsityNoteInput } from '@badminton/shared';
-import { getAdminPlayer } from './_shared';
+// Varsity notes are coaching records on a player — squarely the roster
+// management the club owner handed to execs. author_id/actor_id record
+// whoever wrote it.
+import { getExecOrAdmin } from './_shared';
 
 export async function createVarsityNote(input: VarsityNoteInput) {
   const data = parseOrThrow(varsityNoteSchema, input);
-  const admin = await getAdminPlayer();
+  const actor = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: note, error } = await adminClient
@@ -16,7 +19,7 @@ export async function createVarsityNote(input: VarsityNoteInput) {
     .insert({
       player_id: data.player_id,
       note: data.note,
-      author_id: admin.id,
+      author_id: actor.id,
     })
     .select('id')
     .single();
@@ -24,7 +27,7 @@ export async function createVarsityNote(input: VarsityNoteInput) {
   if (error) throw new Error(error.message);
 
   await logAdminAudit(adminClient, {
-    actor_id: admin.id,
+    actor_id: actor.id,
     action_type: 'varsity_note_created',
     target_type: 'varsity_note',
     target_id: note.id,
@@ -35,7 +38,7 @@ export async function createVarsityNote(input: VarsityNoteInput) {
 }
 
 export async function deleteVarsityNote(noteId: string) {
-  const admin = await getAdminPlayer();
+  const actor = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: oldNote } = await adminClient
@@ -50,7 +53,7 @@ export async function deleteVarsityNote(noteId: string) {
   if (error) throw new Error(error.message);
 
   await logAdminAudit(adminClient, {
-    actor_id: admin.id,
+    actor_id: actor.id,
     action_type: 'varsity_note_deleted',
     target_type: 'varsity_note',
     target_id: noteId,

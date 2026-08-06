@@ -12,7 +12,8 @@ import {
   sendPlayerApprovedEmail,
   type AdminPlayerUpdateInput,
 } from '@badminton/shared';
-import { getAdminPlayer } from './_shared';
+import { getAdminPlayer, getExecOrAdmin } from './_shared';
+import { assertPlayerCreateFieldAccess, assertPlayerFieldAccess } from '../player-field-access';
 import { runAction, type ActionResult } from '../action-result';
 
 export async function approvePlayer(playerId: string, status: 'competitive' | 'recreational', reason: string): Promise<ActionResult<void>> {
@@ -20,7 +21,10 @@ export async function approvePlayer(playerId: string, status: 'competitive' | 'r
 }
 
 async function approvePlayerImpl(playerId: string, status: 'competitive' | 'recreational', reason: string) {
-  const admin = await getAdminPlayer();
+  // Roster management is exec work. The audit row records whoever actually
+  // clicked, exec or admin — actor_id is a plain FK to players with no
+  // admin-only constraint (checked against the live schema).
+  const actor = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const { data: oldPlayer } = await adminClient.from('players').select('*').eq('id', playerId).single();
@@ -36,7 +40,7 @@ async function approvePlayerImpl(playerId: string, status: 'competitive' | 'recr
   if (error) throw new Error(error.message);
 
   await logAdminAudit(adminClient, {
-    actor_id: admin.id,
+    actor_id: actor.id,
     action_type: 'player_approved',
     target_type: 'player',
     target_id: playerId,
@@ -85,8 +89,12 @@ async function createPlayerImpl(data: {
   // (and the passkey enrollment path). The schema also excludes 'admin';
   // this check just gives the friendly message before Zod's enum error.
   if (data.role === 'admin') throw new Error('Admins cannot be created directly — promote an existing member instead');
-  parseOrThrow(adminPlayerCreateSchema, data);
-  const admin = await getAdminPlayer();
+  const parsed = parseOrThrow(adminPlayerCreateSchema, data);
+  const actor = await getExecOrAdmin();
+  // Adding a member is exec work; adding one who is already an exec is not.
+  // Without this an exec could mint a second privileged identity and sidestep
+  // "you cannot promote yourself".
+  assertPlayerCreateFieldAccess(actor, parsed);
   const adminClient = createAdminClient();
 
   const { data: existing } = await adminClient.from('players').select('id').eq('email', data.email).maybeSingle();
@@ -116,7 +124,7 @@ async function createPlayerImpl(data: {
   }
 
   await logAdminAudit(adminClient, {
-    actor_id: admin.id,
+    actor_id: actor.id,
     action_type: 'player_created',
     target_type: 'player',
     target_id: playerId,
@@ -133,8 +141,13 @@ export async function updatePlayer(playerId: string, data: AdminPlayerUpdateInpu
 }
 
 async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) {
-  parseOrThrow(adminPlayerUpdateSchema, data);
-  const admin = await getAdminPlayer();
+  const parsed = parseOrThrow(adminPlayerUpdateSchema, data) as Record<string, unknown>;
+  const actor = await getExecOrAdmin();
+  // Both payloads, because the write below reads from raw `data` while
+  // exec_title / exec_photo_url normalize '' → undefined during parsing.
+  // Guarding only `parsed` would let a hand-rolled POST of { exec_title: '' }
+  // through the guard and into the update.
+  assertPlayerFieldAccess(actor, [data as Record<string, unknown>, parsed]);
   const adminClient = createAdminClient();
 
   const { data: oldPlayer } = await adminClient.from('players').select('*').eq('id', playerId).single();
@@ -163,7 +176,7 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
   }
 
   await logAdminAudit(adminClient, {
-    actor_id: admin.id,
+    actor_id: actor.id,
     action_type: 'player_updated',
     target_type: 'player',
     target_id: playerId,
@@ -176,6 +189,10 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
   revalidatePath(`/players/${playerId}`);
 }
 
+// Admin-only, alongside removePlayer/mergePlayers: account lifecycle and the
+// legal re-signature gate were not part of "let execs manage players", so they
+// keep getAdminPlayer() and their buttons are hidden for execs.
+//
 // Backup path for the player's own restore flow: clears a pending
 // self-service account deletion (players.deletion_requested_at) before the
 // purge-deleted-accounts edge function anonymizes the row.
@@ -243,6 +260,10 @@ async function requireWaiverResignatureImpl(playerId: string) {
   revalidatePath(`/players/${playerId}`);
 }
 
+// Stays admin-only while the rest of player management opened up to execs.
+// The owner asked for management, not destruction: removal deactivates an
+// account and merge_players() deletes a row outright — neither is undoable from
+// the console. The buttons are hidden for execs on /players.
 export async function removePlayer(playerId: string, reason: string): Promise<ActionResult<void>> {
   return runAction(() => removePlayerImpl(playerId, reason));
 }

@@ -19,7 +19,15 @@ function toRoleValue(role: string, isExec: boolean) {
   return isExec ? 'exec' : 'player';
 }
 
-export function PlayerEditForm({ player, rating }: { player: Player; rating: Rating | null }) {
+// isAdmin gates the privilege/money block: role, exec title, exec photo and
+// fee-exempt. Execs keep status, membership and the Elo fields. The server
+// action rejects the admin-only fields outright, so an exec must never be shown
+// a control that sends one.
+export function PlayerEditForm({
+  player,
+  rating,
+  isAdmin,
+}: { player: Player; rating: Rating | null; isAdmin: boolean }) {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState(player.status);
@@ -53,20 +61,22 @@ export function PlayerEditForm({ player, rating }: { player: Player; rating: Rat
       } else {
         const res = await updatePlayer(player.id, {
           status: status !== player.status ? status as Player['status'] : undefined,
-          role: role !== player.role ? role as Player['role'] : undefined,
+          // Guarded on presence server-side, so a non-admin must send nothing
+          // at all for these — not even an unchanged value.
+          role: isAdmin && role !== player.role ? role as Player['role'] : undefined,
           membership_type:
             membershipType !== ((player as { membership_type?: string }).membership_type ?? 'internal')
               ? (membershipType as 'internal' | 'alumni' | 'external')
               : undefined,
           singles_elo: singlesElo !== (rating?.singles_elo ?? 400) ? singlesElo : undefined,
           doubles_elo: doublesElo !== (rating?.doubles_elo ?? 400) ? doublesElo : undefined,
-          is_exec: isExec !== (player.is_exec ?? false) ? isExec : undefined,
-          exec_title: execTitle !== (player.exec_title ?? '') ? execTitle : undefined,
+          is_exec: isAdmin && isExec !== (player.is_exec ?? false) ? isExec : undefined,
+          exec_title: isAdmin && execTitle !== (player.exec_title ?? '') ? execTitle : undefined,
           exec_photo_url:
-            execPhotoUrl !== ((player as { exec_photo_url?: string | null }).exec_photo_url ?? '')
+            isAdmin && execPhotoUrl !== ((player as { exec_photo_url?: string | null }).exec_photo_url ?? '')
               ? execPhotoUrl
               : undefined,
-          fee_exempt: feeExempt !== (player.fee_exempt ?? false) ? feeExempt : undefined,
+          fee_exempt: isAdmin && feeExempt !== (player.fee_exempt ?? false) ? feeExempt : undefined,
           reason,
         });
         if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
@@ -90,12 +100,14 @@ export function PlayerEditForm({ player, rating }: { player: Player; rating: Rat
         value={status}
         onChange={(e) => setStatus(e.target.value as Player['status'])}
       />
-      <Select
-        label="Role"
-        options={ROLE_OPTIONS}
-        value={roleValue}
-        onChange={(e) => setRoleValue(e.target.value)}
-      />
+      {isAdmin && (
+        <Select
+          label="Role"
+          options={ROLE_OPTIONS}
+          value={roleValue}
+          onChange={(e) => setRoleValue(e.target.value)}
+        />
+      )}
       {/* Separate from Role on purpose: an exec is still an internal member,
           so promoting someone must not change which events they can enter. */}
       <Select
@@ -125,6 +137,7 @@ export function PlayerEditForm({ player, rating }: { player: Player; rating: Rat
           onChange={(e) => setDoublesElo(Number(e.target.value))}
         />
       </div>
+      {isAdmin && (
       <div className="rounded-lg border border-[var(--border)] p-3 space-y-1">
         {isExec && (
           <>
@@ -158,6 +171,7 @@ export function PlayerEditForm({ player, rating }: { player: Player; rating: Rat
           onChange={setFeeExempt}
         />
       </div>
+      )}
       <Textarea
         label="Reason (required for audit)"
         value={reason}
