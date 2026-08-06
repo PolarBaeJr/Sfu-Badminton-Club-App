@@ -68,8 +68,10 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin 
           // — as this dialog used to — would fail every exec's Save even when
           // they only touched the status.
           role: isAdmin && roleChanged ? (role as 'player' | 'admin') : undefined,
-          singles_elo: singlesElo ? parseInt(singlesElo) : undefined,
-          doubles_elo: doublesElo ? parseInt(doublesElo) : undefined,
+          // Admin-only: a hand-set rating bypasses the engine's K factors,
+          // bounds and margin rules.
+          singles_elo: isAdmin && singlesElo ? parseInt(singlesElo) : undefined,
+          doubles_elo: isAdmin && doublesElo ? parseInt(doublesElo) : undefined,
           reason,
         });
         if (!res.ok) { toast(res.error, 'error'); return; }
@@ -203,10 +205,12 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin 
                 <Switch label="Fee Exempt" description="Exempted from the club fee (no gameplay effect)" checked={feeExempt} onChange={setFeeExempt} />
               </>
             )}
-            <div className="flex gap-2">
-              <Input label="Singles Elo (optional)" type="number" value={singlesElo} onChange={(e) => setSinglesElo(e.target.value)} placeholder="Leave blank to keep current" />
-              <Input label="Doubles Elo (optional)" type="number" value={doublesElo} onChange={(e) => setDoublesElo(e.target.value)} placeholder="Leave blank to keep current" />
-            </div>
+            {isAdmin && (
+              <div className="flex gap-2">
+                <Input label="Singles Elo (optional)" type="number" value={singlesElo} onChange={(e) => setSinglesElo(e.target.value)} placeholder="Leave blank to keep current" />
+                <Input label="Doubles Elo (optional)" type="number" value={doublesElo} onChange={(e) => setDoublesElo(e.target.value)} placeholder="Leave blank to keep current" />
+              </div>
+            )}
             <Textarea label="Reason (required)" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why is this change being made?" />
             <div className="flex items-center justify-between">
               <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>

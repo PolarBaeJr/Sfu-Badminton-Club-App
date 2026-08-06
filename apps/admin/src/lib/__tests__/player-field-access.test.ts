@@ -72,8 +72,26 @@ describe('updatePlayer field-level access', () => {
     expect(state.updates).toContainEqual({ table: 'players', values: { status: 'suspended' } });
   });
 
-  it('lets an exec rewrite a rating', async () => {
+  // Reversed after the club owner's ruling: execs record results, the engine
+  // decides ratings. A hand-set number bypasses every K factor, bound and margin
+  // rule, on the one value the whole ladder exists for.
+  it('rejects an exec who supplies singles_elo', async () => {
     asExec();
+    const res = await updatePlayer('player-9', { singles_elo: 1200, reason: 'Seeding correction' });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain('singles_elo');
+    expect(state.updates).toEqual([]);
+  });
+
+  it('rejects an exec who supplies doubles_elo', async () => {
+    asExec();
+    const res = await updatePlayer('player-9', { doubles_elo: 1200, reason: 'Seeding correction' });
+    expect(res.ok).toBe(false);
+    expect(state.updates).toEqual([]);
+  });
+
+  it('still lets an admin set a rating', async () => {
+    asAdmin();
     const res = await updatePlayer('player-9', { singles_elo: 1200, reason: 'Seeding correction' });
     expect(res.ok).toBe(true);
     expect(state.updates).toContainEqual({ table: 'ratings', values: { singles_elo: 1200 } });

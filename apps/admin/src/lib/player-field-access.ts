@@ -29,12 +29,21 @@ import { ExpectedError } from '@badminton/shared';
 //                     publish to the club's public /exec page. Grouped with
 //                     is_exec as the conservative read (see the report — an
 //                     exec editing their OWN bio is a different flow).
+//  - singles_elo,
+//    doubles_elo    — the ladder itself. Not privilege escalation, which is why
+//                     it was initially exec-allowed, but the club owner ruled
+//                     otherwise: a rating rewritten by hand bypasses every K
+//                     factor, bound and margin rule the rating engine applies,
+//                     and it is the one number the whole ladder is FOR. Execs
+//                     record results; the engine decides ratings.
 export const ADMIN_ONLY_PLAYER_FIELDS = [
   'role',
   'is_exec',
   'exec_title',
   'exec_photo_url',
   'fee_exempt',
+  'singles_elo',
+  'doubles_elo',
 ] as const;
 
 export type AdminOnlyPlayerField = (typeof ADMIN_ONLY_PLAYER_FIELDS)[number];

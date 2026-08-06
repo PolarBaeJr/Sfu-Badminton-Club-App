@@ -68,8 +68,10 @@ export function PlayerEditForm({
             membershipType !== ((player as { membership_type?: string }).membership_type ?? 'internal')
               ? (membershipType as 'internal' | 'alumni' | 'external')
               : undefined,
-          singles_elo: singlesElo !== (rating?.singles_elo ?? 400) ? singlesElo : undefined,
-          doubles_elo: doublesElo !== (rating?.doubles_elo ?? 400) ? doublesElo : undefined,
+          // Ratings are admin-only: a hand-edited number bypasses every K
+          // factor, bound and margin rule the engine applies.
+          singles_elo: isAdmin && singlesElo !== (rating?.singles_elo ?? 400) ? singlesElo : undefined,
+          doubles_elo: isAdmin && doublesElo !== (rating?.doubles_elo ?? 400) ? doublesElo : undefined,
           is_exec: isAdmin && isExec !== (player.is_exec ?? false) ? isExec : undefined,
           exec_title: isAdmin && execTitle !== (player.exec_title ?? '') ? execTitle : undefined,
           exec_photo_url:
@@ -119,6 +121,7 @@ export function PlayerEditForm({
       <p className="text-xs text-[var(--text-muted)] -mt-2">
         {MEMBERSHIP_TYPES.find((m) => m.value === membershipType)?.description}
       </p>
+      {isAdmin && (
       <div className="grid grid-cols-2 gap-3">
         <Input
           label="Singles Elo"
@@ -137,6 +140,7 @@ export function PlayerEditForm({
           onChange={(e) => setDoublesElo(Number(e.target.value))}
         />
       </div>
+      )}
       {isAdmin && (
       <div className="rounded-lg border border-[var(--border)] p-3 space-y-1">
         {isExec && (
