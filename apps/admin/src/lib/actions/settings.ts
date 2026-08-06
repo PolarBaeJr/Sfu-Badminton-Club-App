@@ -43,7 +43,10 @@ export async function updatePlatformSettings(
       target_id: null,
       old_value: oldSetting?.value ?? null,
       new_value: update.value,
-      reason: `Platform setting "${update.key}" updated`,
+      // Key FIRST. With target_id null this is the only place it appears, and
+      // the /audit table truncates the reason cell at max-w-xs — "Platform
+      // setting "repeat_opponent_caps" updated" is cut before the key ends.
+      reason: `${update.key} — platform setting updated`,
     });
   }
 
@@ -97,9 +100,10 @@ export async function updateLegalDocument(input: LegalDocumentUpdateInput) {
     target_id: null,
     old_value: { version: old.version, content_length: old.content.length },
     new_value: { version: newVersion, content_length: input.content.length },
+    // Document first, same reason as above.
     reason: input.bump_version
-      ? `Legal document "${input.document}" updated with version bump (re-acceptance required)`
-      : `Legal document "${input.document}" content updated`,
+      ? `${input.document} — legal document updated, version bumped (re-acceptance required)`
+      : `${input.document} — legal document content updated`,
   });
 
   // Left over from when the documents were a block inside /settings.
@@ -139,7 +143,7 @@ export async function requireReacceptance(document: WaiverDocument) {
     target_id: null,
     old_value: { reacceptance_required_since: old.reacceptance_required_since },
     new_value: { reacceptance_required_since: now },
-    reason: `All members must re-sign "${document}" on their next visit`,
+    reason: `${document} — all members must re-sign on their next visit`,
   });
 
   revalidatePath('/legal');
