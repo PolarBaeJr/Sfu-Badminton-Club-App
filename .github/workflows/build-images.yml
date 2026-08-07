@@ -20,8 +20,24 @@ permissions:
   contents: read
   packages: write
 
+# Two quick pushes used to start two builds that raced to move `latest`, and
+# the slower one won. The Pi tracks `latest`, so losing that race deploys the
+# older commit. Cancel the superseded build instead.
+concurrency:
+  group: build-images-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # The Pi auto-updates from `latest`, so publishing an image IS deploying it.
+  # Run the full type-check/lint/test suite first and let `needs` refuse to
+  # build when it fails. Costs a few minutes of serial latency on every deploy;
+  # the alternative is what happened tonight, where a red suite shipped because
+  # nothing between the push and the Pi ever looked at it.
+  verify:
+    uses: ./.github/workflows/ci.yml
+
   build:
+    needs: verify
     runs-on: ubuntu-24.04-arm
     strategy:
       matrix:
