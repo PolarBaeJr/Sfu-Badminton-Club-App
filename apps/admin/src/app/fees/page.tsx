@@ -6,6 +6,7 @@ import type { Season } from '@badminton/shared';
 import { isWaivedFee } from '@/lib/fee-status';
 import { getSeasonIncome } from '@/lib/season-income';
 import { FeeActions, AddManualFee, RemoveManualFee } from './fee-actions';
+import { ReinstatementsCard } from './reinstatements-card';
 
 /** Card identity line: the same avatar + name + sub-line the Player cell shows. */
 function personTitle(name: string, sub: string, avatarUrl?: string | null, id?: string) {
@@ -46,6 +47,12 @@ export default async function FeesPage() {
             }
           />
         </Card>
+        {/* Rendered here too, deliberately. Club fees need a season and the
+            rest of this page cannot be drawn without one — but a lapsed member
+            coming back between terms is the ordinary reinstatement, and those
+            rows would otherwise be unreachable for exactly as long as the club
+            is between seasons. */}
+        <ReinstatementsCard seasonId={null} />
       </div>
     );
   }
@@ -265,6 +272,8 @@ export default async function FeesPage() {
           <p className="text-center text-[var(--text-muted)] py-8">No players owe fees for this season</p>
         )}
       </Card>
+
+      <ReinstatementsCard seasonId={season.id} />
     </div>
   );
 }

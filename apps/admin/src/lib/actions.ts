@@ -107,6 +107,7 @@ export {
 export {
   banPlayer,
   reinstatePlayer,
+  recordReinstatementPayment,
 } from './actions/reinstatement';
 
 export {
