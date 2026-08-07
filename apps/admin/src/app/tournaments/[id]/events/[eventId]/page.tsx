@@ -15,63 +15,78 @@ export default async function EventPage({
   const { id: tournamentId, eventId } = await params;
   const supabase = createAdminClient();
 
-  const { data: tournament } = await supabase.from('tournaments').select('*').eq('id', tournamentId).single();
+  // The tournament and the event first, and together: everything below needs
+  // the event's type to know whether to read pairs or participants, and there is
+  // nothing useful to render if either is missing.
+  const [{ data: tournament }, { data: event }] = await Promise.all([
+    supabase.from('tournaments').select('*').eq('id', tournamentId).single(),
+    supabase.from('tournament_events').select('*').eq('id', eventId).single(),
+  ]);
   if (!tournament) notFound();
-
-  const { data: event } = await supabase.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) notFound();
 
   const doubles = isDoublesEvent(event.event_type);
 
-  // Other events in the same tournament — the candidates this one can be
-  // seeded from. Excludes itself: the schema forbids a self-seed outright.
-  const { data: siblingEvents } = await supabase
-    .from('tournament_events')
-    .select('id, event_type, format')
-    .eq('tournament_id', tournamentId)
-    .neq('id', eventId)
-    .order('created_at');
-
-  // Fetch participants or pairs
-  let participants: ParticipantWithPlayer[] = [];
-  let pairs: PairWithPlayers[] = [];
-
-  if (doubles) {
-    const { data } = await supabase
-      .from('tournament_pairs')
-      .select('*, player1:players!tournament_pairs_player1_id_fkey(id, full_name, avatar_url), player2:players!tournament_pairs_player2_id_fkey(id, full_name, avatar_url)')
+  // The remaining five reads do not depend on each other, and were awaited one
+  // at a time. On a 100-player event that is five sequential round trips to the
+  // Pi before a single byte renders — and this page is re-rendered by EVERY
+  // mutation on it, because they all call revalidatePath. Checking in a full
+  // field paid for it in one go.
+  //
+  // siblingEvents: the events this one may be seeded from. Excludes itself —
+  // the schema forbids a self-seed outright.
+  const [
+    { data: siblingEvents },
+    { data: pairRows },
+    { data: participantRows },
+    { data: matches },
+    bonusSettings,
+    { data: allPlayers },
+  ] = await Promise.all([
+    supabase
+      .from('tournament_events')
+      .select('id, event_type, format')
+      .eq('tournament_id', tournamentId)
+      .neq('id', eventId)
+      .order('created_at'),
+    // Only the one that matches the discipline is actually queried; the other
+    // resolves immediately to an empty result rather than reading a table whose
+    // rows this event cannot have.
+    doubles
+      ? supabase
+          .from('tournament_pairs')
+          .select('*, player1:players!tournament_pairs_player1_id_fkey(id, full_name, avatar_url), player2:players!tournament_pairs_player2_id_fkey(id, full_name, avatar_url)')
+          .eq('event_id', eventId)
+          .order('seed_number', { ascending: true, nullsFirst: false })
+      : Promise.resolve({ data: [] as PairWithPlayers[] }),
+    doubles
+      ? Promise.resolve({ data: [] as ParticipantWithPlayer[] })
+      : supabase
+          .from('tournament_participants')
+          .select('*, player:players!player_id(id, full_name, avatar_url, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_matches_played, doubles_matches_played))')
+          .eq('event_id', eventId)
+          .order('seed_number', { ascending: true, nullsFirst: false }),
+    supabase
+      .from('tournament_matches')
+      .select('*')
       .eq('event_id', eventId)
-      .order('seed_number', { ascending: true, nullsFirst: false });
-    pairs = data ?? [];
-  } else {
-    const { data } = await supabase
-      .from('tournament_participants')
-      .select('*, player:players!player_id(id, full_name, avatar_url, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_matches_played, doubles_matches_played))')
-      .eq('event_id', eventId)
-      .order('seed_number', { ascending: true, nullsFirst: false });
-    participants = data ?? [];
-  }
+      .order('round_number')
+      .order('bracket_position'),
+    // Placement bonus amounts + master switch. The Results tab projects the
+    // bonus column from final_position rather than reading stored history, so it
+    // has to use the same numbers (and the same on/off decision) the finaliser
+    // would — otherwise the panel says "off" while the table advertises +32.
+    getTournamentBonusSettings(supabase),
+    // Everyone the participant picker may offer (includes admins).
+    supabase
+      .from('players')
+      .select('id, full_name, avatar_url')
+      .not('status', 'in', '("suspended","pending_approval")')
+      .order('full_name'),
+  ]);
 
-  // Fetch matches
-  const { data: matches } = await supabase
-    .from('tournament_matches')
-    .select('*')
-    .eq('event_id', eventId)
-    .order('round_number')
-    .order('bracket_position');
-
-  // Placement bonus amounts + master switch. The Results tab projects the
-  // bonus column from final_position rather than reading stored history, so it
-  // has to use the same numbers (and the same on/off decision) the finaliser
-  // would — otherwise the panel says "off" while the table advertises +32.
-  const bonusSettings = await getTournamentBonusSettings(supabase);
-
-  // Fetch all eligible players for participant add (includes admins)
-  const { data: allPlayers } = await supabase
-    .from('players')
-    .select('id, full_name, avatar_url')
-    .not('status', 'in', '("suspended","pending_approval")')
-    .order('full_name');
+  const pairs: PairWithPlayers[] = (pairRows ?? []) as PairWithPlayers[];
+  const participants: ParticipantWithPlayer[] = (participantRows ?? []) as ParticipantWithPlayer[];
 
   return (
     <div className="space-y-6">

@@ -10,7 +10,6 @@ import {
   bulkCheckIn,
 } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
-import { useRouter } from 'next/navigation';
 import { CheckCircle, XCircle, Clock, Users, UserCheck } from 'lucide-react';
 import { getName } from './entry-name';
 import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';
@@ -26,7 +25,6 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
   const [loading, setLoading] = useState<string | null>(null);
   const [bulkLoading, setBulkLoading] = useState(false);
   const { toast } = useToast();
-  const router = useRouter();
 
   const entries: Array<ParticipantWithPlayer | PairWithPlayers> = isDoubles ? pairs : participants;
   // Keyed on checked_in_at, not status. status is a single enum, so
@@ -47,7 +45,10 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
         await checkInParticipant(id);
       }
       toast('Checked in', 'success');
-      router.refresh();
+      // No router.refresh() here. Every one of these actions ends in
+      // revalidateEventPaths, and the App Router already ships the re-rendered
+      // tree back in the action's own response — a refresh on top rendered this
+      // page a SECOND time, and on a 100-player event that page is not cheap.
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
@@ -63,7 +64,6 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
         await markParticipantNoShow(id);
       }
       toast('Marked as no-show', 'success');
-      router.refresh();
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
@@ -75,7 +75,6 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
     try {
       await bulkCheckIn(event.id, isDoubles ? 'pairs' : 'participants');
       toast('All present participants checked in', 'success');
-      router.refresh();
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
