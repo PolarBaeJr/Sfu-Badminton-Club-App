@@ -677,6 +677,14 @@ export interface TournamentMatch {
   scores: Array<{ a: number; b: number }> | null;
   winner_to_match_id: string | null;
   winner_to_position: 'a' | 'b' | null;
+  // Where the LOSER goes — the mirror of winner_to_*, set on both semi-finals
+  // when the draw includes a third-place playoff (00080). NULL everywhere else,
+  // and both halves are NULL or neither (CHECK constraint).
+  loser_to_match_id: string | null;
+  loser_to_position: 'a' | 'b' | null;
+  // This match decides 3rd vs 4th. It feeds nothing, and finalizeEvent reads it
+  // to split the joint 3rd that both semi-final losers would otherwise get.
+  is_third_place: boolean;
   court: string | null;
   scheduled_time: string | null;
   status: TournamentMatchStatus;

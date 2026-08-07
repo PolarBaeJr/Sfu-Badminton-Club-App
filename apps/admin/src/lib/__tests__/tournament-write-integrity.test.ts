@@ -22,6 +22,10 @@ interface Fault {
 const store = vi.hoisted(() => ({
   db: {} as Record<string, Row[]>,
   faults: [] as Fault[],
+  // Stands in for `gen_random_uuid()`. Bracket generation inserts a match shell
+  // and immediately uses the id it gets back to wire up the next round, so an
+  // insert that returns no id cannot be exercised at all.
+  seq: 0,
 }));
 
 // Minimal PostgREST-shaped query builder: enough of select/eq/in/not/order/
@@ -94,8 +98,13 @@ const makeClient = vi.hoisted(() => () => {
       }
       if (op === 'insert') {
         const rows = Array.isArray(payload) ? (payload as Row[]) : [payload];
-        (store.db[table] ??= []).push(...rows.map((r) => ({ ...r })));
-        return { data: null, error: null };
+        // The id is spread FIRST so an explicit one in the payload wins, exactly
+        // as a DEFAULT does. Rows are returned rather than discarded because
+        // `.insert(...).select('id').single()` is how every match shell in the
+        // bracket generator is created.
+        const created = rows.map((r) => ({ id: `gen-${++store.seq}`, ...r }));
+        (store.db[table] ??= []).push(...created);
+        return { data: created, error: null };
       }
       if (op === 'delete') {
         store.db[table] = (store.db[table] ?? []).filter((r) => !matching().includes(r));
@@ -117,6 +126,16 @@ const makeClient = vi.hoisted(() => () => {
       async single() {
         const f = fault();
         if (f) return { data: null, error: { message: f.message } };
+        // `.insert(x).select('id').single()` is a WRITE that returns what it
+        // wrote. Reading the table instead — which is what this did — meant an
+        // insert issued that way never happened at all, and any code path built
+        // on the returned id was untestable.
+        if (op !== 'select') {
+          const res = run() as { data: Row[] | null; error: unknown };
+          if (res.error) return { data: null, error: res.error };
+          const created = res.data?.[0];
+          return { data: created ? embed(created) : null, error: null };
+        }
         const r = matching()[0];
         return { data: r ? embed(r) : null, error: null };
       },
@@ -343,8 +362,11 @@ vi.mock('@sentry/nextjs', () => ({ captureException: () => {} }));
 vi.mock('../supabase-server', () => ({ createAdminClient: makeClient }));
 vi.mock('../actions/_shared', () => ({ getExecOrAdmin: async () => ({ id: 'admin-1' }) }));
 
-import { enterMatchResult, editMatchResult, enterWalkover, voidMatch } from '../tournament-actions/results';
+import {
+  enterMatchResult, editMatchResult, enterWalkover, voidMatch, undoMatchResult,
+} from '../tournament-actions/results';
 import { finalizeEvent, applyPlacementBonuses } from '../tournament-actions/finalize';
+import { generateSingleEliminationBracket } from '../tournament-actions/brackets';
 import { withdrawParticipant } from '../tournament-actions/participants';
 import {
   settleWrites, assertWritesSucceeded, reverseEloSnapshot, undoDecidedResult,
@@ -687,15 +709,16 @@ describe('a decided match is never left unrated', () => {
     await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
 
     store.faults.push({ table: 'ratings', op: 'select', message: 'deadlock detected' });
-    await expect(editMatchResult(QF, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b'))
-      .rejects.toThrow(/WAS saved but is not yet rated/);
+    const failed = await editMatchResult(QF, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b', 'Scores read off the wrong sheet');
+    expect(failed.ok).toBe(false);
+    expect(failed.ok === false && failed.error).toMatch(/WAS saved but is not yet rated/);
 
     // The correction is on the row; the rating is not, and the snapshot is clear.
     expect(match(QF).winner_participant_id).toBe('p-bob');
     expect(match(QF).elo_snapshot).toBeNull();
 
     store.faults = [];
-    await editMatchResult(QF, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b');
+    expect((await editMatchResult(QF, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b', 'Retry')).ok).toBe(true);
 
     // Rated once, for the corrected result — not once per attempt.
     expect(ratingOf('pl-bob')).toBe(1026);
@@ -757,7 +780,7 @@ describe('reliability metrics count tournament matches', () => {
 
   it('does not double-count a corrected result', async () => {
     await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
-    await editMatchResult(QF, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b');
+    await editMatchResult(QF, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b', 'Winner recorded on the wrong side');
 
     expect(completed('pl-alice')).toBe(6);
     expect(completed('pl-bob')).toBe(6);
@@ -830,7 +853,7 @@ describe('winner must agree with the scores', () => {
     expect((await enterWalkover(QF, 'a', 'Opponent did not appear')).ok).toBe(true);
     expect(match(QF).winner_participant_id).toBe('p-alice');
 
-    await expect(editMatchResult(QF, [], 'b')).resolves.toBeUndefined();
+    expect((await editMatchResult(QF, [], 'b', 'Awarded to the wrong side')).ok).toBe(true);
 
     expect(match(QF).winner_participant_id).toBe('p-bob');
     expect(match(QF).loser_participant_id).toBe('p-alice');
@@ -840,10 +863,9 @@ describe('winner must agree with the scores', () => {
     await enterMatchResult(QF, [{ a: 21, b: 10 }, { a: 21, b: 12 }], 'a');
     const aliceAfterWin = ratingOf('pl-alice');
 
-    // editMatchResult is not wrapped in runAction, so it throws rather than
-    // returning { ok: false }.
-    await expect(editMatchResult(QF, [{ a: 21, b: 10 }, { a: 21, b: 12 }], 'b'))
-      .rejects.toThrow(/winner_side does not match game scores/);
+    const res = await editMatchResult(QF, [{ a: 21, b: 10 }, { a: 21, b: 12 }], 'b', 'Trying to flip the winner');
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/winner_side does not match game scores/);
 
     // Refused before the snapshot was reversed, so the applied result is intact.
     expect(match(QF).winner_participant_id).toBe('p-alice');
@@ -968,7 +990,7 @@ describe('tournament matches update the whole ratings row', () => {
     // the reversal learned to move the counts, every correction added a second
     // matches_played, a second win, and a second set of points.
     await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
-    await editMatchResult(QF, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b');
+    await editMatchResult(QF, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b', 'Scoresheet transcribed backwards');
 
     expect(rating('pl-alice').singles_matches_played).toBe(31);
     expect(rating('pl-bob').singles_matches_played).toBe(31);
@@ -1454,5 +1476,540 @@ describe('placement bonuses', () => {
     store.faults.push({ table: 'tournament_audit_log', op: 'insert', message: 'disk full' });
 
     await expect(applyPlacementBonuses('e1')).rejects.toThrow(/Do NOT re-run placement bonuses/);
+  });
+});
+
+// ============================================================
+// Third-place playoff (00080)
+// ============================================================
+//
+// A 4-entry singles draw: two semi-finals feed the final with their winners and
+// the playoff with their losers. Built by hand rather than by running the
+// generator so each test can start from a known bracket and break exactly one
+// thing about it.
+const SF1 = 'm-sf1';
+const SF2 = 'm-sf2';
+const FINAL = 'm-final';
+const THIRD = 'm-third';
+
+function seedFourDraw() {
+  const entry = (id: string, playerId: string) => ({
+    id, event_id: 'e1', player_id: playerId, elo_before: 1000, elo_after: null,
+    elo_change: null, final_position: null, points: null, status: 'checked_in',
+  });
+  const players = ['pl-alice', 'pl-bob', 'pl-cara', 'pl-dan'];
+  store.db.tournament_participants = [
+    entry('p-alice', 'pl-alice'), entry('p-bob', 'pl-bob'),
+    entry('p-cara', 'pl-cara'), entry('p-dan', 'pl-dan'),
+  ];
+  store.db.ratings = players.map((player_id) => ({
+    player_id, singles_elo: 1000, singles_provisional: false, singles_matches_played: 30,
+  }));
+  store.db.reliability_metrics = players.map((player_id) => ({ player_id, matches_completed: 5 }));
+
+  const shell = (id: string, round: number) => ({
+    id, event_id: 'e1', status: 'pending', is_bye: false, is_third_place: false,
+    participant_a_id: null, participant_b_id: null,
+    winner_participant_id: null, loser_participant_id: null,
+    winner_to_match_id: null, winner_to_position: null,
+    loser_to_match_id: null, loser_to_position: null,
+    round_number: round, scores: null, elo_snapshot: null, notes: null,
+  });
+
+  store.db.tournament_matches = [
+    {
+      ...shell(SF1, 1), status: 'ready',
+      participant_a_id: 'p-alice', participant_b_id: 'p-bob',
+      winner_to_match_id: FINAL, winner_to_position: 'a',
+      loser_to_match_id: THIRD, loser_to_position: 'a',
+    },
+    {
+      ...shell(SF2, 1), status: 'ready',
+      participant_a_id: 'p-cara', participant_b_id: 'p-dan',
+      winner_to_match_id: FINAL, winner_to_position: 'b',
+      loser_to_match_id: THIRD, loser_to_position: 'b',
+    },
+    shell(FINAL, 2),
+    // Same round_number as the final — scheduled alongside it — and it feeds
+    // nothing, so winner_to_match_id stays null.
+    { ...shell(THIRD, 2), is_third_place: true },
+  ];
+}
+
+// The tests below seed the finished draw by hand, which proves what the
+// CORRECTIVE actions do with it but says nothing about whether the generator
+// builds that shape. These two close that gap: everything after them is
+// checking a fixture that this describe block proves is real.
+describe('generating a draw with a third-place playoff', () => {
+  function seedField(n: number) {
+    store.db.tournament_matches = [];
+    store.db.tournament_participants = Array.from({ length: n }, (_, i) => ({
+      id: `p-${i}`, event_id: 'e1', player_id: `pl-${i}`, elo_before: 1500 - i * 10,
+      elo_after: null, elo_change: null, seed_number: i + 1,
+      final_position: null, points: null, status: 'checked_in',
+    }));
+    Object.assign(event(), { status: 'checkin', draw_locked: false });
+  }
+  const thirdPlaceMatches = () =>
+    store.db.tournament_matches!.filter((m) => m.is_third_place);
+  const roundOf = (n: number) =>
+    store.db.tournament_matches!
+      .filter((m) => m.round_number === n && !m.is_third_place)
+      .sort((a, b) => (a.bracket_position as number) - (b.bracket_position as number));
+
+  it('creates one playoff and points BOTH semi-finals at it, on distinct sides', async () => {
+    // The wiring the hand-seeded fixtures assume. If the generator read the
+    // wrong entry of matchesByRound, or gave both semi-finals the same
+    // loser_to_position, every other test here would still pass while the live
+    // draw sent one loser into a slot and then overwrote them with the other.
+    seedField(4);
+
+    expect((await generateSingleEliminationBracket('e1', true)).ok).toBe(true);
+
+    const playoffs = thirdPlaceMatches();
+    expect(playoffs).toHaveLength(1);
+    const playoff = playoffs[0]!;
+
+    const semis = roundOf(1);
+    expect(semis).toHaveLength(2);
+    expect(semis.map((m) => m.loser_to_match_id)).toEqual([playoff.id, playoff.id]);
+    expect(semis.map((m) => m.loser_to_position)).toEqual(['a', 'b']);
+    // Both semi-finals still feed the final with their winners.
+    const final = roundOf(2)[0]!;
+    expect(semis.map((m) => m.winner_to_match_id)).toEqual([final.id, final.id]);
+
+    // The playoff feeds NOTHING. A winner_to_match_id here is the bug the whole
+    // UI treatment exists to avoid claiming.
+    expect(playoff.winner_to_match_id).toBeNull();
+    expect(playoff.winner_to_position).toBeNull();
+    // Scheduled alongside the final — same round, its own bracket position.
+    expect(playoff.round_number).toBe(final.round_number);
+    expect(playoff.bracket_position).not.toBe(final.bracket_position);
+    expect(playoff.round_name).toBe('3rd Place Playoff');
+    // Numbered after the final, so the final keeps the number it would have had
+    // without this feature.
+    expect(playoff.match_number as number).toBeGreaterThan(final.match_number as number);
+  });
+
+  it('builds the ordinary draw untouched when the playoff is not asked for', async () => {
+    seedField(4);
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    expect(thirdPlaceMatches()).toHaveLength(0);
+    expect(roundOf(1).every((m) => m.loser_to_match_id === null || m.loser_to_match_id === undefined)).toBe(true);
+    expect(store.db.tournament_matches).toHaveLength(3);
+  });
+
+  it('skips the playoff on a 2-entry draw rather than failing the generation', async () => {
+    // A 2-entry draw is a final and nothing else: there is no semi-final round
+    // to lose. Refusing the whole generation over a ticked box would leave the
+    // exec with no draw at all, so the skip is recorded in the audit instead.
+    seedField(2);
+
+    expect((await generateSingleEliminationBracket('e1', true)).ok).toBe(true);
+
+    expect(thirdPlaceMatches()).toHaveLength(0);
+    expect(store.db.tournament_matches).toHaveLength(1);
+    const audit = store.db.tournament_audit_log!.find((r) => r.action === 'bracket_generated')!;
+    expect((audit.details as Row).third_place_match).toBe('skipped_no_semi_finals');
+  });
+});
+
+describe('third-place playoff', () => {
+  beforeEach(seedFourDraw);
+
+  it('routes each semi-final LOSER into the playoff and each winner into the final', async () => {
+    // Guards the whole feature: before loser_to_match_id existed, a match sent
+    // only its winner anywhere, so a third-place match could never be filled by
+    // playing the bracket — it would sit on TBD/TBD forever and block finalise.
+    expect((await enterMatchResult(SF1, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a')).ok).toBe(true);
+
+    expect(match(FINAL).participant_a_id).toBe('p-alice');
+    expect(match(THIRD).participant_a_id).toBe('p-bob');
+    // One side only, so neither downstream match is claimed READY yet.
+    expect(match(THIRD).status).toBe('pending');
+
+    expect((await enterMatchResult(SF2, [{ a: 21, b: 12 }, { a: 21, b: 14 }], 'a')).ok).toBe(true);
+
+    expect(match(FINAL).participant_b_id).toBe('p-cara');
+    expect(match(THIRD).participant_b_id).toBe('p-dan');
+    expect(match(THIRD).status).toBe('ready');
+    expect(match(FINAL).status).toBe('ready');
+  });
+
+  it('is rated exactly like any other match', async () => {
+    // The decision recorded in brackets.ts. Nothing in the rating path keys off
+    // the round, so this asserts no carve-out has crept in: a played playoff
+    // moves Elo, the counts and the reliability figure, and leaves a reversible
+    // snapshot behind.
+    await enterMatchResult(SF1, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    await enterMatchResult(SF2, [{ a: 21, b: 12 }, { a: 21, b: 14 }], 'a');
+    // Measured against where losing the semi-final left them, not against the
+    // 1000 they started on — both are already down a semi-final's delta.
+    const bobBefore = ratingOf('pl-bob');
+    const danBefore = ratingOf('pl-dan');
+    const played = (p: string) =>
+      store.db.ratings!.find((r) => r.player_id === p)!.singles_matches_played as number;
+    expect(played('pl-bob')).toBe(31);
+
+    expect((await enterMatchResult(THIRD, [{ a: 21, b: 19 }, { a: 21, b: 18 }], 'a')).ok).toBe(true);
+
+    expect(match(THIRD).elo_snapshot).not.toBeNull();
+    expect(snapshotPlayers(THIRD).sort()).toEqual(['pl-bob', 'pl-dan']);
+    expect(ratingOf('pl-bob')).toBeGreaterThan(bobBefore);
+    expect(ratingOf('pl-dan')).toBeLessThan(danBefore);
+    // The statistics and the reliability count move too — a playoff is a match.
+    expect(played('pl-bob')).toBe(32);
+    expect(store.db.reliability_metrics!.find((r) => r.player_id === 'pl-bob')!.matches_completed).toBe(7);
+  });
+
+  it('routes nobody from a BYE semi-final, rather than a phantom entry', async () => {
+    // The "an event with byes may not have two real semi-final losers" case. A
+    // bye is completed with a winner and NO loser, so advanceLoser has nothing
+    // to send. Writing the null through would have blanked the slot the other
+    // semi-final had already filled — silently un-filling a real player.
+    Object.assign(match(SF2), {
+      is_bye: true, status: 'completed', participant_b_id: null,
+      winner_participant_id: 'p-cara', loser_participant_id: null,
+    });
+    await enterMatchResult(SF1, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    expect(match(THIRD).participant_a_id).toBe('p-bob');
+    expect(match(THIRD).participant_b_id).toBeNull();
+    // Still 'pending', not 'ready' — 'ready' asserts both sides are known.
+    expect(match(THIRD).status).toBe('pending');
+  });
+
+  it('refuses to void a semi-final once the playoff has been played', async () => {
+    // assertDownstreamUndecided used to look at winner_to_match_id ALONE. With
+    // the final still unplayed it would have allowed this void, erasing the
+    // semi-final underneath a third-place match that carries a real result and a
+    // real Elo delta attributed to its loser.
+    await enterMatchResult(SF1, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    await enterMatchResult(SF2, [{ a: 21, b: 12 }, { a: 21, b: 14 }], 'a');
+    await enterMatchResult(THIRD, [{ a: 21, b: 19 }, { a: 21, b: 18 }], 'a');
+
+    const res = await voidMatch(SF1, 'Wrong court');
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/third-place match already has a result/);
+    // Refused before anything moved.
+    expect(match(SF1).status).toBe('completed');
+    expect(match(SF1).elo_snapshot).not.toBeNull();
+  });
+
+  it('clears the playoff slot when a semi-final is voided before it is played', async () => {
+    // The other half of the same rule. Voiding used to clear only the winner's
+    // slot, so the erased semi-final's loser stayed parked in the playoff — a
+    // bracket advertising a match for third between a real player and a result
+    // that no longer exists.
+    await enterMatchResult(SF1, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    await enterMatchResult(SF2, [{ a: 21, b: 12 }, { a: 21, b: 14 }], 'a');
+    expect(match(THIRD).status).toBe('ready');
+
+    expect((await voidMatch(SF1, 'Scores belonged to another match')).ok).toBe(true);
+
+    expect(match(THIRD).participant_a_id).toBeNull();
+    expect(match(THIRD).participant_b_id).toBe('p-dan');
+    expect(match(THIRD).status).toBe('pending');
+    expect(match(FINAL).participant_a_id).toBeNull();
+  });
+
+  it('does not evict an entry somebody placed into the playoff by hand', async () => {
+    // clearRoutedEntry decides whether to clear from a READ, then clears. The
+    // filter on the update is what makes the clear itself safe: between the two,
+    // a desk can void the OTHER semi-final and place its replacement by hand into
+    // the same slot. Without `.eq(field, entryId)` the void below would null out
+    // that placement and the audit row would still claim it cleared its own
+    // loser.
+    await enterMatchResult(SF1, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    expect(match(THIRD).participant_a_id).toBe('p-bob');
+    // Somebody else has since replaced the occupant of that slot.
+    match(THIRD).participant_a_id = 'p-cara';
+
+    expect((await voidMatch(SF1, 'Wrong court')).ok).toBe(true);
+
+    expect(match(THIRD).participant_a_id).toBe('p-cara');
+    const row = store.db.tournament_audit_log!.find((r) => r.action === 'match_voided')!;
+    expect((row.details as Row).cleared_third_place_slot).toBe(false);
+  });
+
+  it('clears the playoff slot when a semi-final result is undone', async () => {
+    // undoMatchResult shared clearAdvancedEntry with voidMatch, so it had the
+    // identical hole: the winner came back out of the final and the loser was
+    // left in the playoff.
+    await enterMatchResult(SF1, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    expect((await undoMatchResult(SF1)).ok).toBe(true);
+
+    expect(match(THIRD).participant_a_id).toBeNull();
+    expect(match(FINAL).participant_a_id).toBeNull();
+  });
+
+  it('re-routes the playoff slot when a semi-final winner is corrected', async () => {
+    // Flipping a semi-final's winner also flips who plays for third. Writing
+    // only the winner slot would have left the new FINALIST also sitting in the
+    // playoff, entered in two matches at once.
+    await enterMatchResult(SF1, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    expect(match(FINAL).participant_a_id).toBe('p-alice');
+    expect(match(THIRD).participant_a_id).toBe('p-bob');
+
+    const res = await editMatchResult(SF1, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b', 'Sides transposed on the sheet');
+
+    expect(res.ok).toBe(true);
+    expect(match(FINAL).participant_a_id).toBe('p-bob');
+    expect(match(THIRD).participant_a_id).toBe('p-alice');
+  });
+
+  it('awards 3rd and 4th from the playoff, and never 2nd to its loser', async () => {
+    // The highest-risk interaction. The playoff shares round_number with the
+    // final, so finalizeEvent's "roundsFromFinal === 0 means the loser is 2nd"
+    // rule would hand SECOND place to the player who came fourth, and its
+    // champion line — which uses set(), not first-write-wins — would overwrite
+    // the actual winner of the event with the winner of the playoff.
+    await enterMatchResult(SF1, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    await enterMatchResult(SF2, [{ a: 21, b: 12 }, { a: 21, b: 14 }], 'a');
+    await enterMatchResult(FINAL, [{ a: 21, b: 18 }, { a: 21, b: 19 }], 'a');
+    await enterMatchResult(THIRD, [{ a: 21, b: 19 }, { a: 21, b: 18 }], 'a');
+
+    await finalizeEvent('e1');
+
+    expect(participant('p-alice').final_position).toBe(1);
+    expect(participant('p-cara').final_position).toBe(2);
+    expect(participant('p-bob').final_position).toBe(3);
+    expect(participant('p-dan').final_position).toBe(4);
+    // Points follow the positions: 3rd and 4th both land in the "<= 4" band.
+    expect(participant('p-bob').points).toBe(50);
+    expect(participant('p-dan').points).toBe(50);
+  });
+
+  it('still gives both semi-final losers joint 3rd when there is no playoff', async () => {
+    // The behaviour every existing event depends on. It must not change just
+    // because the code now knows what a third-place match is.
+    store.db.tournament_matches = store.db.tournament_matches!.filter((m) => m.id !== THIRD);
+    for (const id of [SF1, SF2]) {
+      Object.assign(match(id), { loser_to_match_id: null, loser_to_position: null });
+    }
+    await enterMatchResult(SF1, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    await enterMatchResult(SF2, [{ a: 21, b: 12 }, { a: 21, b: 14 }], 'a');
+    await enterMatchResult(FINAL, [{ a: 21, b: 18 }, { a: 21, b: 19 }], 'a');
+
+    await finalizeEvent('e1');
+
+    expect(participant('p-bob').final_position).toBe(3);
+    expect(participant('p-dan').final_position).toBe(3);
+  });
+});
+
+// ============================================================
+// Admin override — changing an already-resolved result
+// ============================================================
+
+describe('changing a resolved result', () => {
+  beforeEach(seedFourDraw);
+
+  it('re-rates through the 00078 reversal RPC exactly once, never by hand', async () => {
+    // The defect this whole path is fenced against: a second reversal route is
+    // how the same delta came off the ladder twice. A correction must clear the
+    // snapshot via reverse_tournament_match_rating and then re-apply, so the
+    // rating reflects the corrected result ONLY — not the old one, not the sum,
+    // and not the old one reversed twice.
+    await enterMatchResult(SF1, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    const aliceAfterWin = ratingOf('pl-alice');
+    expect(aliceAfterWin).toBeGreaterThan(1000);
+
+    const res = await editMatchResult(SF1, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b', 'Winner recorded on the wrong side');
+    expect(res.ok).toBe(true);
+
+    // Both started level, so the corrected result is the mirror image: exactly
+    // one delta each, the other way round.
+    expect(ratingOf('pl-alice')).toBe(2000 - aliceAfterWin);
+    expect(ratingOf('pl-bob')).toBe(aliceAfterWin);
+    const alice = store.db.ratings!.find((r) => r.player_id === 'pl-alice')!;
+    expect(alice.singles_matches_played).toBe(31);
+    expect(alice.singles_wins).toBe(0);
+    expect(alice.singles_losses).toBe(1);
+    expect(store.db.reliability_metrics!.find((r) => r.player_id === 'pl-alice')!.matches_completed).toBe(6);
+    // Re-rated, not left bare.
+    expect(match(SF1).elo_snapshot).not.toBeNull();
+  });
+
+  it('records the old AND the new winner in the audit trail', async () => {
+    // Six months on, the audit row is the only thing that says the board ever
+    // read differently. Recording only the scores — which is all it used to do —
+    // leaves "who was credited with the win" unrecoverable for a walkover, where
+    // there is no scoreline at all.
+    await enterMatchResult(SF1, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    await editMatchResult(SF1, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b', 'Scoresheet transcribed backwards');
+
+    const row = store.db.tournament_audit_log!.find((r) => r.action === 'result_edited')!;
+    const details = row.details as Row;
+    expect(details.old_winner_entry_id).toBe('p-alice');
+    expect(details.new_winner_entry_id).toBe('p-bob');
+    expect(details.old_loser_entry_id).toBe('p-bob');
+    expect(details.new_loser_entry_id).toBe('p-alice');
+    expect(details.winner_changed).toBe(true);
+    expect(details.reason).toBe('Scoresheet transcribed backwards');
+    expect(details.old_scores).toEqual([{ a: 21, b: 15 }, { a: 21, b: 17 }]);
+    expect(details.new_scores).toEqual([{ a: 15, b: 21 }, { a: 17, b: 21 }]);
+    expect(details.reversed_elo).toBe(true);
+  });
+
+  it('refuses without a reason, before anything is reversed', async () => {
+    // The override is meant to be explicit. Checking the reason AFTER reversing
+    // the rating would leave the match unrated on a refusal — a refusal that
+    // changed something is worse than no guard at all.
+    await enterMatchResult(SF1, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    const snapshotBefore = match(SF1).elo_snapshot;
+
+    const res = await editMatchResult(SF1, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b', '   ');
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/has to say why/);
+    expect(match(SF1).elo_snapshot).toBe(snapshotBefore);
+    expect(match(SF1).winner_participant_id).toBe('p-alice');
+  });
+
+  it('refuses on a match that has no result to change', async () => {
+    // Without this the correction path was a way to stamp a winner onto a
+    // PENDING match: winner/loser were written unconditionally and the re-rate
+    // was skipped, leaving a match that reads as decided to every downstream
+    // reader while enterMatchResult still considered it playable.
+    const res = await editMatchResult(FINAL, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a', 'Nudging it along');
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/no result yet/);
+    expect(match(FINAL).winner_participant_id).toBeNull();
+    expect(match(FINAL).status).toBe('pending');
+  });
+
+  it('refuses on a voided match, which is restored rather than edited', async () => {
+    await enterMatchResult(SF1, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    await voidMatch(SF1, 'Wrong court');
+
+    const res = await editMatchResult(SF1, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b', 'Fixing it');
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/voided/);
+  });
+
+  it('refuses when the next round has been decided by WALKOVER, not just completed', async () => {
+    // The hand-rolled downstream check this replaced tested
+    // `status === 'completed'` alone. A late withdrawal settles the next round
+    // as a WALKOVER — rated, with a real snapshot — and that shape walked
+    // straight through, letting the semi-final be rewritten underneath it.
+    await enterMatchResult(SF1, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    await enterMatchResult(SF2, [{ a: 21, b: 12 }, { a: 21, b: 14 }], 'a');
+    expect((await enterWalkover(FINAL, 'a', 'Opponent withdrew')).ok).toBe(true);
+    expect(match(FINAL).status).toBe('walkover');
+
+    const res = await editMatchResult(SF1, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b', 'Sides transposed');
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/next match already has a result/);
+    expect(match(SF1).winner_participant_id).toBe('p-alice');
+    expect(match(SF1).elo_snapshot).not.toBeNull();
+  });
+
+  it('returns the refusal as a value rather than throwing it', async () => {
+    // Next.js sanitises anything thrown out of a Server Action in a production
+    // build, so while editMatchResult threw, every guard above reached the
+    // browser as "An error occurred in the Server Components render" — a refusal
+    // indistinguishable from a crash, on the one path where the difference
+    // decides what the exec does next.
+    await expect(
+      editMatchResult('no-such-match', [{ a: 21, b: 15 }], 'a', 'Reason'),
+    ).resolves.toMatchObject({ ok: false });
+  });
+
+  it('refuses on a BYE, which is "completed" but was never played', async () => {
+    // A bye passes the has-a-result check — it is status 'completed' with a
+    // winner the generator placed there — so without an explicit refusal the
+    // override was a way to write a scoreline and a LOSER onto a match with one
+    // empty side, and then rate it. voidMatch and setMatchEntry both refuse a
+    // bye; this is the third door into the same room.
+    Object.assign(match(SF2), {
+      is_bye: true, status: 'completed', participant_b_id: null,
+      winner_participant_id: 'p-cara', loser_participant_id: null,
+    });
+
+    const res = await editMatchResult(SF2, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a', 'Filling it in');
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/A bye is not a played match/);
+    expect(match(SF2).scores).toBeNull();
+    expect(match(SF2).elo_snapshot).toBeNull();
+  });
+
+  it('refuses rather than proceeding when the downstream check cannot be read', async () => {
+    // The guard used to drop the read's { error }, which left `nextMatch` null
+    // and the check silently satisfied — so a transient read failure was a way
+    // PAST the one rule standing between a correction and an already-played
+    // final. A refusal is recoverable; a wrongly-permitted rewrite is not.
+    await enterMatchResult(SF1, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    store.faults.push({
+      table: 'tournament_matches', op: 'select', message: 'connection reset',
+      when: ({ filters }) => filters.some(([c, v]) => c === 'id' && v === FINAL),
+    });
+
+    const res = await editMatchResult(SF1, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b', 'Sides transposed');
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/not safe to change this result/);
+    // Nothing moved: the rating is still the one the original result applied.
+    expect(match(SF1).elo_snapshot).not.toBeNull();
+    expect(match(SF1).winner_participant_id).toBe('p-alice');
+  });
+
+  it('turns a corrected walkover into a played match instead of leaving it half-one', async () => {
+    // Correcting a walkover by typing the real scores used to leave status
+    // 'walkover' and walkover_winner 'a' on a row whose winner had just become
+    // B — three fields disagreeing about who won, with the bracket rendering
+    // "⚠ WALKOVER" over a scoreline.
+    await enterWalkover(SF1, 'a', 'Opponent did not appear');
+    expect(match(SF1).status).toBe('walkover');
+
+    const res = await editMatchResult(SF1, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b', 'They did turn up and lost');
+
+    expect(res.ok).toBe(true);
+    expect(match(SF1).status).toBe('completed');
+    expect(match(SF1).walkover_winner).toBeNull();
+    expect(match(SF1).walkover_reason).toBeNull();
+    expect(match(SF1).winner_participant_id).toBe('p-bob');
+  });
+
+  it('keeps a scoreless walkover a walkover, and moves the side it was awarded to', async () => {
+    // The other direction, and the one the UI could not reach at all while the
+    // Save button was gated on a winner derived from the scores: a walkover has
+    // no scoreline, so there was nothing to derive.
+    await enterWalkover(SF1, 'a', 'Opponent did not appear');
+
+    const res = await editMatchResult(SF1, [], 'b', 'Awarded to the wrong side');
+
+    expect(res.ok).toBe(true);
+    expect(match(SF1).status).toBe('walkover');
+    expect(match(SF1).walkover_winner).toBe('b');
+    expect(match(SF1).winner_participant_id).toBe('p-bob');
+    expect(match(SF1).loser_participant_id).toBe('p-alice');
+  });
+
+  it('lets a correction be made after the event is finalised', async () => {
+    // A wrong result is most often spotted on the results screen, which only
+    // exists once the event is completed. assertEventResultsMutable allows
+    // 'completed' for exactly this reason, and gating the correction on 'live'
+    // would have hidden it where it is most wanted.
+    await enterMatchResult(SF1, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    await enterMatchResult(SF2, [{ a: 21, b: 12 }, { a: 21, b: 14 }], 'a');
+    await enterMatchResult(FINAL, [{ a: 21, b: 18 }, { a: 21, b: 19 }], 'a');
+    await enterMatchResult(THIRD, [{ a: 21, b: 19 }, { a: 21, b: 18 }], 'a');
+    await finalizeEvent('e1');
+    expect(event().status).toBe('completed');
+
+    const res = await editMatchResult(THIRD, [{ a: 19, b: 21 }, { a: 18, b: 21 }], 'b', 'Third-place score reversed');
+
+    expect(res.ok).toBe(true);
+    expect(match(THIRD).winner_participant_id).toBe('p-dan');
   });
 });

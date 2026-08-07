@@ -151,6 +151,15 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles }
                 const isVoided = m.status === 'voided';
                 const canScore = isLive && aId && bId && !isCompleted && !isVoided;
                 const canRestore = isLive && isVoided;
+                // A decided pool match had no action at all, exactly as a decided
+                // bracket match did — so the only way to fix a wrong scoreline
+                // here was void, restore, retype. That route is worse in a pool
+                // than in a bracket: a voided match is excluded from the
+                // standings, so the table is wrong for as long as the round trip
+                // takes, and the pool's finishing order is what seeds the next
+                // event. Not gated on isLive, because a wrong result is usually
+                // spotted after the event is completed.
+                const canChangeResult = isCompleted && !m.is_bye;
 
                 return (
                   <div key={m.id} className="flex items-center justify-between p-3 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)]">
@@ -185,6 +194,15 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles }
                         className="text-xs text-[var(--color-warning)] font-medium ml-2 hover:underline focus-visible:ring-2 focus-visible:ring-[var(--color-warning)] focus-visible:outline-none rounded"
                       >
                         Restore
+                      </button>
+                    )}
+                    {canChangeResult && (
+                      <button
+                        onClick={() => setScoreMatch(m)}
+                        aria-label={`Change the recorded result for match ${m.match_number ?? ''}`}
+                        className="text-xs text-[var(--text-muted)] font-medium ml-2 hover:underline hover:text-[var(--color-warning)] focus-visible:ring-2 focus-visible:ring-[var(--color-warning)] focus-visible:outline-none rounded"
+                      >
+                        Change
                       </button>
                     )}
                   </div>
