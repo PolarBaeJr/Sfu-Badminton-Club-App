@@ -78,6 +78,15 @@ export function TournamentBracket({ tournamentId, bracketSize, matches, particip
 
   async function submitScore() {
     if (!selectedMatch) return;
+    // Reject anything that is not a plain non-negative integer BEFORE submitting.
+    // parseInt(x) || 0 below used to turn a typo into a real score of 0 — type
+    // "e" instead of "8" and the match was recorded as 0, silently, with no
+    // error anywhere. A wrong score entered confidently is worse than a
+    // rejected one.
+    const badScore = games.some(
+      (g) => !/^\d+$/.test(g.side_a_score.trim()) || !/^\d+$/.test(g.side_b_score.trim())
+    );
+    if (badScore) { toast('Scores must be whole numbers', 'error'); return; }
     if (!tally.winner) { toast('Games are level or incomplete — enter the scores that decide the match', 'error'); return; }
     setLoading(true);
     try {
