@@ -123,18 +123,35 @@ export async function LedgerCard({
   const nameOf = (id: string | null | undefined) => (id ? nameById.get(id) ?? 'someone' : null);
 
   // Who may be named as having fronted an expense: the people who can be in a
-  // shop buying shuttles for the club. Execs and admins only — the same set the
-  // console admits — because anyone else has no way to be reimbursed through
-  // this page. NOT fetched for the income ledger, which has no payer.
+  // shop buying shuttles for the club. Execs and admins first — the same set the
+  // console admits — because they are the ones with a way to be reimbursed
+  // through this page. NOT fetched for the income ledger, which has no payer.
+  //
+  // The fallback is not defensive padding. A brand-new club, or a season set up
+  // before anyone is flagged exec, has NO row matching the filter, and a "Paid
+  // by" list holding nothing but "Club funds" makes the out-of-pocket case
+  // unrecordable — the person who actually bought the shuttles cannot be named
+  // at all. When nobody matches, offer the members instead so the expense can
+  // still be entered truthfully; the flags can be fixed afterwards.
   const payerOptions = isIncome
     ? []
-    : (unwrap(
-        await supabase
-          .from('players')
-          .select('id, full_name')
-          .or('role.eq.admin,is_exec.eq.true')
-          .order('full_name'),
-      ) as unknown as { id: string; full_name: string }[]);
+    : await (async () => {
+        const execs = unwrap(
+          await supabase
+            .from('players')
+            .select('id, full_name')
+            .or('role.eq.admin,is_exec.eq.true')
+            .order('full_name'),
+        ) as unknown as { id: string; full_name: string }[];
+        if (execs.length > 0) return execs;
+        return unwrap(
+          await supabase
+            .from('players')
+            .select('id, full_name')
+            .eq('is_banned', false)
+            .order('full_name'),
+        ) as unknown as { id: string; full_name: string }[];
+      })();
 
   const formatCategory = isIncome ? formatOtherIncomeCategory : formatExpenseCategory;
   // EXP-0001 / INC-0001. Formatting lives in @badminton/shared so the table, a

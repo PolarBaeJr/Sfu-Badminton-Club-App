@@ -48,15 +48,17 @@ interface Props {
 export function BracketTab({ event, matches, participants, pairs, isDoubles }: Props) {
   const [scoreMatch, setScoreMatch] = useState<TournamentMatchRow | null>(null);
   // The third-place playoff shares round_number with the final so the two are
-  // scheduled together, but it is held OUT of the round columns on purpose.
+  // scheduled together, but it is held OUT of `columns` on purpose.
   //
-  // Rendered as a sibling of the final it would sit in the final's column, and
-  // the connector maths would then see a round with two cards feeding a round
-  // with one — the exact shape of "these two matches feed that one". `canLink`
-  // would refuse to draw the elbows (2 !== 1 * 2), so the semi-finals would
-  // silently lose their connectors as well, and the playoff would still LOOK
-  // like a second final. Below the bracket, labelled, with no line touching it,
-  // it can only read as what it is.
+  // Put in the final's column as a real sibling, the connector maths would see a
+  // round with two cards feeding a round with one — the exact shape of "these
+  // two matches feed that one". `canLink` would refuse to draw the elbows
+  // (2 !== 1 * 2), so the SEMI-FINALS would silently lose their connectors too,
+  // and the playoff would still look like a second final. So it stays out of the
+  // column data and is drawn by hand below the semi-finals instead (see
+  // `isSemiRound`), hanging off a dashed line: near enough to read as part of
+  // the bracket, drawn differently enough to read as a branch rather than the
+  // path to the title.
   const thirdPlace = matches.find((m) => m.is_third_place) ?? null;
   const allMatches = matches.filter((m) => !m.is_third_place);
   const isLive = event.status === 'live' || event.status === 'bracket_generated';
@@ -140,6 +142,17 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
             const gap = mult * PITCH - CARD_H;
 
             const next = columns[depth + 1];
+            // The playoff hangs under the round that FEEDS it — the semi-finals,
+            // i.e. the column immediately before the final. Guarded on there
+            // actually being one: a two-entry event has a final and nothing
+            // else, and there is nothing to hang it from.
+            const isSemiRound = !!thirdPlace && columns.length >= 2 && depth === columns.length - 2;
+            // The dashed drop starts at the bottom edge of the last semi-final
+            // card and ends where the playoff card begins, which is the foot of
+            // the column body. Derived, not tuned: change PITCH or CARD_H and
+            // the line still lands on both.
+            const lastCardBottom = cardCentre(depth, roundMatches.length - 1) + CARD_H / 2;
+            const riserH = Math.max(bracketH - lastCardBottom, CARD_GAP);
             // Elbows are only meaningful when the next round is exactly half the
             // size of this one; anything else means the bracket data is odd and
             // a guessed line would point at the wrong card.
@@ -175,6 +188,38 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                       />
                     ))}
                   </div>
+
+                  {isSemiRound && thirdPlace && (
+                    <div className="relative" style={{ width: COL_W }}>
+                      {/* Dashed, and dropping out of the semi-finals rather than
+                          running through the gutter: a solid elbow like the ones
+                          between rounds means "the winner advances to here", and
+                          this match is fed by the LOSERS and leads nowhere. */}
+                      <span
+                        aria-hidden="true"
+                        className="absolute border-l border-dashed border-[var(--border-hover)]"
+                        style={{ left: COL_W / 2, top: -riserH, height: riserH }}
+                      />
+                      <MatchCard
+                        m={thirdPlace}
+                        isDoubles={isDoubles}
+                        isLive={isLive}
+                        getEntryName={getEntryName}
+                        getSeed={getSeed}
+                        onEnterScore={() => setScoreMatch(thirdPlace)}
+                      />
+                      <h3 className="mt-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--text-secondary)]">
+                        3rd Place Playoff
+                      </h3>
+                      {/* Says what it is and, just as importantly, what it is
+                          not. Now that a line touches the card, a reader can no
+                          longer infer from the absence of one that the winner
+                          stops here — so the sentence has to say it. */}
+                      <p className="text-[11px] leading-snug text-[var(--text-muted)]">
+                        The two semi-final losers. Decides 3rd and 4th — the winner does not advance to the final.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 {next && (
@@ -206,15 +251,16 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
         </div>
       </div>
 
-      {thirdPlace && (
+      {/* Fallback only. With no semi-final column there is nothing to hang the
+          playoff from, so it keeps its own panel rather than vanishing — an
+          event whose bracket data is odd enough to reach here still has a real
+          match that needs a score entered. */}
+      {thirdPlace && columns.length < 2 && (
         <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
           <div className="flex items-baseline gap-3 mb-3">
             <h3 className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--text-secondary)]">
               3rd Place Playoff
             </h3>
-            {/* Says what it is and, just as importantly, what it is not. Without
-                this line a reader who knows brackets has to work out from the
-                absence of a connector that the winner does not go anywhere. */}
             <p className="text-[11px] text-[var(--text-muted)]">
               The two semi-final losers. Decides 3rd and 4th — the winner does not advance to the final.
             </p>
