@@ -96,14 +96,12 @@ export default async function DashboardPage() {
 
   // Finance snapshot: income collected for the active season so far, across all
   // three fee ledgers. Admin-only — /fees is, and this is the same money.
-  let activeSeason: { id: string; name: string; start_date: string; end_date: string | null } | null = null;
+  let activeSeason: { id: string; name: string } | null = null;
   let seasonIncomeCents = 0;
   if (showFees) {
     const { data } = await supabase
       .from('seasons')
-      // start_date/end_date are needed to bucket reinstatement fees, which have
-      // no season column of their own.
-      .select('id, name, start_date, end_date')
+      .select('id, name')
       .eq('active_flag', true)
       .maybeSingle();
     activeSeason = data;

@@ -14,8 +14,13 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  *
  *   club_fees          season_id directly
  *   tournament_fees    via tournaments.season_id
- *   reinstatement_fees no season column at all — bucketed by paid_at, because
- *                      a ban is not a season-scoped event
+ *   reinstatement_fees season_id directly, since 00069
+ *
+ * reinstatement_fees used to be bucketed by paid_at, because it had no season
+ * column. Money paid outside every season window then belonged to no season and
+ * showed in no total — a real $20 payment was invisible because it was taken
+ * three weeks before the season it was for began. It now carries the season it
+ * was recorded under, so the gap between terms cannot swallow a payment.
  *
  * Only rows with paid_at set count. An unpaid or waived row is a liability, not
  * income.
@@ -28,10 +33,9 @@ export interface SeasonIncome {
   reinstatementCents: number;
 }
 
+/** Only the id is needed now that all three ledgers carry a real season key. */
 export interface SeasonWindow {
   id: string;
-  start_date: string;
-  end_date?: string | null;
 }
 
 const sum = (rows: { amount_cents: number | null }[] | null): number =>
@@ -41,10 +45,6 @@ export async function getSeasonIncome(
   supabase: SupabaseClient,
   season: SeasonWindow,
 ): Promise<SeasonIncome> {
-  // An open-ended season runs to "now"; without this the reinstatement window
-  // would be empty and that ledger would silently drop out of the total again.
-  const windowEnd = season.end_date ?? new Date().toISOString();
-
   const [club, tournament, reinstatement] = await Promise.all([
     supabase
       .from('club_fees')
@@ -62,8 +62,7 @@ export async function getSeasonIncome(
     supabase
       .from('reinstatement_fees')
       .select('amount_cents')
-      .gte('paid_at', season.start_date)
-      .lte('paid_at', windowEnd)
+      .eq('season_id', season.id)
       .not('paid_at', 'is', null),
   ]);
 

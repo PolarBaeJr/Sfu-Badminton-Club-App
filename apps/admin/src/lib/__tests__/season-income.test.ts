@@ -25,7 +25,7 @@ function makeClient(rows: Record<string, { amount_cents: number | null }[]>) {
   };
 }
 
-const SEASON = { id: 'season-1', start_date: '2026-09-01', end_date: '2026-12-31' };
+const SEASON = { id: 'season-1' };
 
 describe('getSeasonIncome', () => {
   // The bug this file exists for: the figure summed club_fees only, so a
@@ -77,10 +77,10 @@ describe('getSeasonIncome', () => {
     // tournament_fees reaches it through its tournament (an inner join in the
     // select), so the filter is on the joined column.
     expect(byTable['tournament_fees']).toContain('eq:tournaments.season_id=season-1');
-    // reinstatement_fees has no season column at all — a ban is not a
-    // season-scoped event — so it is bucketed by when it was paid.
-    expect(byTable['reinstatement_fees']).toContain('gte:paid_at=2026-09-01');
-    expect(byTable['reinstatement_fees']).toContain('lte:paid_at=2026-12-31');
+    // reinstatement_fees carries season_id directly since 00069. It used to be
+    // bucketed by paid_at, and money paid outside every season window then
+    // belonged to no season and showed in no total.
+    expect(byTable['reinstatement_fees']).toContain('eq:season_id=season-1');
 
     // Unpaid rows are a liability, not income — every ledger must exclude them.
     for (const t of ['club_fees', 'tournament_fees', 'reinstatement_fees']) {
@@ -88,14 +88,16 @@ describe('getSeasonIncome', () => {
     }
   });
 
-  // An open-ended season runs to "now". Without the fallback the reinstatement
-  // window would be empty and that ledger would silently drop out again.
-  it('runs an open-ended season up to now', async () => {
+  // Regression guard for the gap that motivated 00069: a reinstatement paid
+  // between terms used to fall outside every date window and vanish from every
+  // total. Scoping by season_id means the date it was paid cannot exclude it.
+  it('does not filter reinstatements by date at all', async () => {
     const client = makeClient({ reinstatement_fees: [{ amount_cents: 700 }] });
-    const income = await getSeasonIncome(client as never, { ...SEASON, end_date: null });
+    const income = await getSeasonIncome(client as never, SEASON);
     expect(income.totalCents).toBe(700);
 
     const reinstatement = client.calls.find((c) => c.table === 'reinstatement_fees')!;
-    expect(reinstatement.filters.some((f) => f.startsWith('lte:paid_at='))).toBe(true);
+    expect(reinstatement.filters.some((f) => f.includes('paid_at=')))
+      .toBe(false);
   });
 });

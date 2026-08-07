@@ -26,7 +26,7 @@ export default async function FeesPage() {
   const season = unwrapMaybe<Season>(
     await supabase
       .from('seasons')
-      .select('id, name, competitive_fee_cents, recreational_fee_cents, start_date, end_date')
+      .select('id, name, competitive_fee_cents, recreational_fee_cents')
       .eq('active_flag', true)
       .maybeSingle()
   );
