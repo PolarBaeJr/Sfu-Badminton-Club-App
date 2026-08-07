@@ -211,7 +211,7 @@
 /* Motion + radius tokens (theme-independent) */
 :root {
   /* How wide the app is allowed to get. See .page. */
-  --page-max: 2100px;
+  --page-max: none;
   --display: var(--font-display), ui-sans-serif, system-ui, sans-serif;
   --body:    var(--font-sans), ui-sans-serif, system-ui, sans-serif;
   --mono:    var(--font-mono), ui-monospace, monospace;
@@ -800,8 +800,12 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
    --page-max is the single source of truth for how wide the app gets. It was
    three separate 1360px literals (.page, .topbar-inner, and an inline style in
    the standing banner), which is how a header ends up not lining up with the
-   content under it. 2100px uses a 1440/1600/2560 display properly while still
-   leaving gutters; drop it back here if lines start reading too long. */
+   content under it. It went 1360px -> 2100px -> none: the admin console dropped
+   its own cap so tables and brackets can use the display they are actually on,
+   and the two halves of the product should not disagree about how wide a page
+   is. The 28px padding is what keeps content off the bezel. If one page of
+   prose ever reads too long, give THAT page a measure — putting the cap back
+   here decides it for the fixtures table and the leaderboard as well. */
 .page {
   max-width: var(--page-max);
   margin: 0 auto;

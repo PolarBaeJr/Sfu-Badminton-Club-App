@@ -14,21 +14,23 @@ export function MainContent({ children }: { children: React.ReactNode }) {
     return <>{children}</>;
   }
 
-  // The event page carries a bracket, which is the one thing in this console
-  // whose natural width is set by the DATA rather than by readability — a
-  // 128-slot draw is seven columns wide no matter how the page is styled.
-  // Holding it inside a 1280px reading column on a wide monitor means scrolling
-  // sideways through a diagram the screen could have shown at once.
-  const isWideRoute = /^\/tournaments\/[^/]+\/events\/[^/]+$/.test(pathname);
-
+  // Full width, deliberately.
+  //
+  // This was a centred max-w-7xl (1280px) column. Two things were wrong with it.
+  // The nav bar above has never had a cap — it runs edge to edge — so on any
+  // display wider than 1280 the console's own header did not line up with the
+  // content beneath it. And almost every page here is a TABLE or a bracket,
+  // whose useful width is set by how many columns the data has, not by how long
+  // a line of prose should be; a roster of 100 players was being scrolled inside
+  // a 1280px box on a 2560px monitor with a third of the screen left blank.
+  //
+  // The player app makes the same choice through its own --page-max token, so
+  // the two halves of the product read the same way. If a page of long-form
+  // prose ever needs a reading measure, cap it in THAT page rather than
+  // reinstating a cap here — the shell should not decide it for everyone.
   return (
     <main className="min-h-screen p-6 lg:p-8">
-      {/* Deliberately the real available width rather than a 100vw break-out:
-          vw includes the scrollbar, so a full-bleed child overflows the page by
-          its width and adds a horizontal scrollbar to every route it touches. */}
-      <div className={isWideRoute ? 'w-full' : 'max-w-7xl mx-auto'}>
-        {children}
-      </div>
+      {children}
     </main>
   );
 }
