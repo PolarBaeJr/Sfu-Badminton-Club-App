@@ -57,7 +57,70 @@ const makeClient = vi.hoisted(() => () => {
     };
     return api;
   }
-  return { from: (table: string) => query(table) };
+
+  // Stand-in for apply_tournament_match_rating
+  // (supabase/migrations/00070_tournament_rating_atomic.sql) — the single
+  // transaction that now performs every write a rated tournament match causes.
+  // This harness has no fault injection, so the only behaviour it needs is the
+  // happy path plus the "already rated" refusal that makes replay safe.
+  function rpc(name: string, args: Record<string, unknown>) {
+    if (name !== 'apply_tournament_match_rating') {
+      return Promise.resolve({ data: null, error: { message: `unknown rpc ${name}` } });
+    }
+
+    const matchId = args.p_match_id as string;
+    const discipline = args.p_discipline as 'singles' | 'doubles';
+    const entries = args.p_entries as Array<Record<string, unknown>>;
+
+    const m = (store.db.tournament_matches ?? []).find((r) => r.id === matchId);
+    if (!m) return Promise.resolve({ data: null, error: { message: `Tournament match not found: ${matchId}` } });
+    if (m.elo_snapshot) {
+      return Promise.resolve({ data: null, error: { message: `Tournament match ${matchId} is already rated` } });
+    }
+
+    const settings = (store.db.platform_settings ?? []).find((r) => r.key === 'rating_defaults')?.value as Row | undefined;
+    const threshold = (settings?.provisional_threshold as number) ?? 8;
+
+    for (const e of entries) {
+      const row = (store.db.ratings ?? []).find((r) => r.player_id === e.player_id);
+      if (!row) {
+        return Promise.resolve({ data: null, error: { message: `No ratings row for player ${String(e.player_id)}` } });
+      }
+      // COALESCE(%I, 0): the seeded rows omit the statistics columns.
+      const n = (k: string) => (row[k] as number | undefined) ?? 0;
+      const won = e.won === true;
+      const played = n(`${discipline}_matches_played`) + 1;
+      const streakField = `current_${discipline}_streak`;
+
+      row[`${discipline}_elo`] = e.after;
+      row[`${discipline}_matches_played`] = played;
+      row[`${discipline}_wins`] = n(`${discipline}_wins`) + (won ? 1 : 0);
+      row[`${discipline}_losses`] = n(`${discipline}_losses`) + (won ? 0 : 1);
+      row[`${discipline}_points_scored`] = n(`${discipline}_points_scored`) + ((e.points_scored as number) ?? 0);
+      row[`${discipline}_points_allowed`] = n(`${discipline}_points_allowed`) + ((e.points_allowed as number) ?? 0);
+      row[`${discipline}_games_won`] = n(`${discipline}_games_won`) + ((e.games_won as number) ?? 0);
+      row[`${discipline}_games_lost`] = n(`${discipline}_games_lost`) + ((e.games_lost as number) ?? 0);
+      row[streakField] = won ? Math.max(n(streakField) + 1, 1) : Math.min(n(streakField) - 1, -1);
+      if (played >= threshold) row[`${discipline}_provisional`] = false;
+
+      if (e.participant_id) {
+        const p = (store.db.tournament_participants ?? []).find((r) => r.id === e.participant_id);
+        if (p) Object.assign(p, { elo_after: e.after, elo_change: e.delta });
+      }
+    }
+
+    m.elo_snapshot = {
+      discipline,
+      entries: entries.map((e) => ({
+        player_id: e.player_id, before: e.before, after: e.after, delta: e.delta,
+        won: e.won, points_scored: e.points_scored ?? 0, points_allowed: e.points_allowed ?? 0,
+        games_won: e.games_won ?? 0, games_lost: e.games_lost ?? 0,
+      })),
+    };
+    return Promise.resolve({ data: null, error: null });
+  }
+
+  return { from: (table: string) => query(table), rpc };
 });
 
 vi.mock('next/cache', () => ({ revalidatePath: () => {} }));
@@ -143,6 +206,15 @@ describe('void / restore / replay', () => {
 
     expect((await enterMatchResult(QF, [{ a: 21, b: 15 }], 'a')).ok).toBe(true);
     expect(ratingOf('pl-alice')).toBe(afterFirstPlay);
+    // "Exactly once" has to mean the STATISTICS too, not just the Elo. The
+    // tournament path now increments matches_played/wins/points, so a reversal
+    // that moved only the rating would leave this cycle counting the match
+    // twice — visible nowhere in the Elo assertion above.
+    const alice = store.db.ratings!.find((r) => r.player_id === 'pl-alice')!;
+    expect(alice.singles_matches_played).toBe(31);
+    expect(alice.singles_wins).toBe(1);
+    expect(alice.singles_points_scored).toBe(21);
+    expect(alice.current_singles_streak).toBe(1);
   });
 
   it('pulls the voided winner back out of the next round', async () => {

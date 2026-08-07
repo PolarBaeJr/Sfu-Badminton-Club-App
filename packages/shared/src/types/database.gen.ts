@@ -2061,6 +2061,27 @@ export type Database = {
         Args: { p_confirmed_by: string; p_match_id: string }
         Returns: undefined
       }
+      // Hand-added, NOT regenerated: this file is already stale against the live
+      // schema (it is missing seasons.term/year, among others), so regenerating
+      // it is a separate job. Both entries below match
+      // supabase/migrations/00070_tournament_rating_atomic.sql exactly.
+      apply_rating_stats: {
+        Args: {
+          p_discipline: string
+          p_games_lost: number
+          p_games_won: number
+          p_new_elo: number
+          p_player_id: string
+          p_points_allowed: number
+          p_points_scored: number
+          p_won: boolean
+        }
+        Returns: undefined
+      }
+      apply_tournament_match_rating: {
+        Args: { p_discipline: string; p_entries: Json; p_match_id: string }
+        Returns: undefined
+      }
       apply_walkover_result:
         | { Args: { p_walkover_id: string }; Returns: undefined }
         | {
