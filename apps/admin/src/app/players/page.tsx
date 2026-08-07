@@ -57,7 +57,13 @@ export default async function PlayersPage({
   } else if (tab === 'recreational') {
     query = query.eq('status', 'recreational');
   } else if (tab === 'attention') {
-    query = query.in('status', ['suspended', 'pending_approval']);
+    // Pending approval ONLY. Suspended members used to match here too, so they
+    // appeared on this tab AND on Suspended — and this tab offers Recreational /
+    // Competitive, which writes status directly and so lifted the suspension
+    // without going through Restore. A suspension is undone on the Suspended
+    // tab, deliberately, because that is where the ban/suspension distinction
+    // is made.
+    query = query.eq('status', 'pending_approval');
   } else if (tab === 'suspended') {
     query = query.or('status.eq.suspended,is_banned.eq.true');
   } else if (tab === 'inactive') {
@@ -91,7 +97,9 @@ export default async function PlayersPage({
   const isCompetitive = (s: string) => !['recreational', 'suspended', 'pending_approval'].includes(s);
   const compCount = forCount.filter((p) => isCompetitive(p.status)).length;
   const recCount = forCount.filter((p) => p.status === 'recreational').length;
-  const attCount = forCount.filter((p) => p.status === 'suspended' || p.status === 'pending_approval').length;
+  // Must use the same predicate as the tab's list filter above, or the badge
+  // counts rows the tab will not show.
+  const attCount = forCount.filter((p) => p.status === 'pending_approval').length;
   const susCount = forCount.filter((p) => p.status === 'suspended' || p.is_banned).length;
   const inactCount = forCount.filter((p) => p.active_flag === false).length;
 

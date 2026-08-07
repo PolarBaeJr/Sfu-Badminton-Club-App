@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 
 interface DialogProps {
   open: boolean;
@@ -9,14 +9,63 @@ interface DialogProps {
   children: React.ReactNode;
 }
 
+// Anything the browser will stop on with Tab. :not([disabled]) matters because a
+// disabled submit button is common in these dialogs while a form is saving.
+const FOCUSABLE =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 export function Dialog({ open, onClose, title, children }: DialogProps) {
+  const panelRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (!open) return;
+
+    // Send focus back where it came from on close. Without this, dismissing a
+    // dialog opened from a roster row drops focus to the top of the document and
+    // a keyboard user has to tab back through the whole table.
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+
+    // Move focus into the panel so the trap below has something to cycle, and so
+    // a screen reader announces the dialog rather than continuing to read the
+    // page behind it.
+    const focusables = () =>
+      Array.from(panelRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []);
+    (focusables()[0] ?? panelRef.current)?.focus();
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        onClose();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+
+      // Without this, Tab walks straight out of the panel and into the page
+      // behind it — the dialog is only visually modal, so a keyboard or screen
+      // reader user ends up operating controls they cannot see.
+      const items = focusables();
+      if (items.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = items[0]!;
+      const last = items[items.length - 1]!;
+      const active = document.activeElement;
+      // Focus may sit on the panel itself (no focusable children yet) or have
+      // escaped already; either way, put it back on the appropriate end.
+      if (e.shiftKey && (active === first || !panelRef.current?.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !panelRef.current?.contains(active))) {
+        e.preventDefault();
+        first.focus();
+      }
     };
+
     document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      previouslyFocused?.focus?.();
+    };
   }, [open, onClose]);
 
   if (!open) return null;
@@ -25,6 +74,10 @@ export function Dialog({ open, onClose, title, children }: DialogProps) {
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="fixed inset-0 bg-black/60" onClick={onClose} />
       <div
+        ref={panelRef}
+        // Focusable so the panel can hold focus when it has no focusable
+        // children yet; -1 keeps it out of the normal Tab order.
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="dialog-title"

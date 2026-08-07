@@ -4,6 +4,7 @@ import { Badge, Card, AvatarChip, EmptyState, PageHeader, ResponsiveTable, Table
 import { unwrap, unwrapMaybe, formatPaymentMethod } from '@badminton/shared';
 import type { Season } from '@badminton/shared';
 import { isWaivedFee } from '@/lib/fee-status';
+import { getSeasonIncome } from '@/lib/season-income';
 import { FeeActions, AddManualFee, RemoveManualFee } from './fee-actions';
 
 /** Card identity line: the same avatar + name + sub-line the Player cell shows. */
@@ -25,7 +26,7 @@ export default async function FeesPage() {
   const season = unwrapMaybe<Season>(
     await supabase
       .from('seasons')
-      .select('id, name, competitive_fee_cents, recreational_fee_cents')
+      .select('id, name, competitive_fee_cents, recreational_fee_cents, start_date, end_date')
       .eq('active_flag', true)
       .maybeSingle()
   );
@@ -88,10 +89,11 @@ export default async function FeesPage() {
   const paidCount = paidPlayers + manualFees.length;
   const outstandingCount = players.length - paidPlayers - waivedPlayers;
 
-  // Total club-fee income collected this season (paid rows, incl. manual).
-  const collectedCents = fees
-    .filter((f) => f.paid_at != null)
-    .reduce((sum, f) => sum + (f.amount_cents ?? 0), 0);
+  // Income collected this season across ALL three fee ledgers. This used to sum
+  // club_fees only, so a recorded reinstatement or tournament payment left the
+  // headline reading $0.00 while the money sat in the database.
+  const income = await getSeasonIncome(supabase, season);
+  const collectedCents = income.totalCents;
 
   return (
     <div className="space-y-6">
