@@ -8,7 +8,11 @@ import { useRouter } from 'next/navigation';
 
 export function CreateSeasonForm() {
   const [open, setOpen] = useState(false);
-  const [name, setName] = useState('');
+  // term + year, not a name: seasons.name is derived from this pair by a trigger
+  // (00043) so the two can never drift. Sending a name instead left term/year
+  // null, and both are NOT NULL — every attempt to create a season failed.
+  const [term, setTerm] = useState('fall');
+  const [year, setYear] = useState(String(new Date().getFullYear()));
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [loading, setLoading] = useState(false);
@@ -18,10 +22,16 @@ export function CreateSeasonForm() {
     e.preventDefault();
     setLoading(true);
     try {
-      await createSeason({ name, start_date: startDate, end_date: endDate || undefined });
+      await createSeason({
+        term: term as 'fall' | 'spring' | 'summer',
+        year: Number(year),
+        start_date: startDate,
+        end_date: endDate || undefined,
+      });
       toast('Season created', 'success');
       setOpen(false);
-      setName(''); setStartDate(''); setEndDate('');
+      setTerm('fall'); setYear(String(new Date().getFullYear()));
+      setStartDate(''); setEndDate('');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
@@ -33,7 +43,26 @@ export function CreateSeasonForm() {
       <Button onClick={() => setOpen(true)}>New Season</Button>
       <Dialog open={open} onClose={() => setOpen(false)} title="Create Season">
         <form onSubmit={handleCreate} className="space-y-4">
-          <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required placeholder="e.g. Fall 2026" />
+          {/* The name shown everywhere else is built from these two. */}
+          <Select
+            label="Term"
+            value={term}
+            onChange={(e) => setTerm(e.target.value)}
+            options={[
+              { value: 'fall', label: 'Fall' },
+              { value: 'spring', label: 'Spring' },
+              { value: 'summer', label: 'Summer' },
+            ]}
+          />
+          {/* The calendar year the term BEGINS in: Fall 2026 and Spring 2027
+              are consecutive seasons of one academic year. */}
+          <Input
+            label="Year"
+            type="number"
+            value={year}
+            onChange={(e) => setYear(e.target.value)}
+            required
+          />
           <DatePicker label="Start Date" value={startDate} onChange={setStartDate} required />
           <DatePicker label="End Date (optional)" value={endDate} onChange={setEndDate} />
           <div className="flex gap-2">

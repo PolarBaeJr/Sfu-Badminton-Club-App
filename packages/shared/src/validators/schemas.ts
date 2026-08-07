@@ -318,6 +318,25 @@ export const seasonFeeSchema = z.object({
   recreational_fee_cents: z.number().int().min(0),
 });
 
+// Creating a season. term + year are the real inputs, NOT the name: seasons.name
+// is derived from them by trg_set_season_name (00043) precisely so it can never
+// drift. The console used to collect a free-text name and send only that, which
+// left term and year null — both are NOT NULL with no default, so every attempt
+// to create a season failed with a not-null violation.
+//
+// Enum order is fall -> spring -> summer, matching the academic year, so a
+// season starting in September 2026 is Fall 2026 and the one after it is Spring
+// 2027. `year` is the calendar year the TERM BEGINS IN, which is why Spring 2027
+// carries 2027 and not 2026.
+export const seasonCreateSchema = z.object({
+  term: z.enum(['fall', 'spring', 'summer']),
+  // Bounded so a typo cannot create "Fall 20226" and sort ahead of everything
+  // forever. The lower bound predates the club's first digital season.
+  year: z.number().int().min(2000).max(2100),
+  start_date: z.string().min(1),
+  end_date: z.string().min(1).optional(),
+});
+
 // A manual fee entry: someone who paid the club fee without an account. The
 // admin records just a name against the active season.
 export const manualFeeSchema = z.object({
@@ -444,6 +463,7 @@ export type AnnouncementInput = z.infer<typeof announcementSchema>;
 export type FeeMarkInput = z.infer<typeof feeMarkSchema>;
 export type FeeWaiveInput = z.infer<typeof feeWaiveSchema>;
 export type SeasonFeeInput = z.infer<typeof seasonFeeSchema>;
+export type SeasonCreateInput = z.infer<typeof seasonCreateSchema>;
 export type SessionGroupInput = z.infer<typeof sessionGroupSchema>;
 export type ManualFeeInput = z.infer<typeof manualFeeSchema>;
 export type FeeTierInput = z.infer<typeof feeTierSchema>;
