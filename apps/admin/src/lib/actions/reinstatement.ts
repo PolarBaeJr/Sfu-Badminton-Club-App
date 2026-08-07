@@ -98,6 +98,20 @@ export async function reinstatePlayer(input: ReinstatementInput) {
   // banPlayer never does; the column is NOT NULL.
   const banStartedAt = player.banned_at ?? new Date().toISOString();
 
+  // Which season this money counts toward. Stamped from the active season
+  // rather than inferred from paid_at later: a reinstatement taken in the gap
+  // before a term opens is for that term, and date-bucketing put it in no
+  // season at all — a real $20 payment sat invisible in every income figure
+  // because it was paid three weeks before the season it belonged to started.
+  //
+  // Null when nothing is active. Between terms is exactly when a lapsed member
+  // comes back, and recording the payment unattached beats refusing it.
+  const { data: activeSeason } = await adminClient
+    .from('seasons')
+    .select('id')
+    .eq('active_flag', true)
+    .maybeSingle();
+
   const { data: fee, error: feeError } = await adminClient
     .from('reinstatement_fees')
     .insert({
@@ -109,6 +123,7 @@ export async function reinstatePlayer(input: ReinstatementInput) {
       reference: input.reference ?? null,
       ban_reason: player.ban_reason ?? null,
       ban_started_at: banStartedAt,
+      season_id: activeSeason?.id ?? null,
     })
     .select('id')
     .single();

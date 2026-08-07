@@ -12,6 +12,7 @@ import {
   Trophy,
 } from 'lucide-react';
 import { ApproveButtons } from './approve-buttons';
+import { getSeasonIncome } from '@/lib/season-income';
 
 // Only needed to give the "trainer sees no matches" branch of the fetch below a
 // type to agree with — the admin client carries no generated Database type, so
@@ -93,8 +94,8 @@ export default async function DashboardPage() {
   ].filter(Boolean);
   const hasAlerts = alertTerms.length > 0;
 
-  // Finance snapshot: club-fee income collected for the active season so far.
-  // Admin-only — /fees is, and this is the same ledger.
+  // Finance snapshot: income collected for the active season so far, across all
+  // three fee ledgers. Admin-only — /fees is, and this is the same money.
   let activeSeason: { id: string; name: string } | null = null;
   let seasonIncomeCents = 0;
   if (showFees) {
@@ -105,12 +106,9 @@ export default async function DashboardPage() {
       .maybeSingle();
     activeSeason = data;
     if (activeSeason) {
-      const { data: paidFees } = await supabase
-        .from('club_fees')
-        .select('amount_cents')
-        .eq('season_id', activeSeason.id)
-        .not('paid_at', 'is', null);
-      seasonIncomeCents = (paidFees ?? []).reduce((s, f) => s + (f.amount_cents ?? 0), 0);
+      // All three ledgers, via the shared helper — this used to sum club_fees
+      // only, so recorded reinstatement and tournament money read as $0.00.
+      seasonIncomeCents = (await getSeasonIncome(supabase, activeSeason)).totalCents;
     }
   }
 
