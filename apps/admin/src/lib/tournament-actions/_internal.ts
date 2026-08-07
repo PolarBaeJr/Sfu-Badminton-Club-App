@@ -40,11 +40,21 @@ import type {
 export async function getRatingSettings(
   adminClient: ReturnType<typeof createAdminClient>,
 ): Promise<RatingSettings | null> {
-  const { data } = await adminClient
+  const { data, error } = await adminClient
     .from('platform_settings')
     .select('value')
     .eq('key', 'rating_defaults')
     .maybeSingle();
+  // A MISSING row legitimately means "no overrides configured" and falls back to
+  // the shared constants. A FAILED READ does not: it is indistinguishable from
+  // that at the call site, so the K-factors, bounds and sweep multiplier the
+  // whole rating is computed from would quietly become the code defaults — and
+  // the wrong delta would then be written as a real, reversible result. Live
+  // settings already differ from the constants (singles_k_established is 36, not
+  // 48), so this is a visible corruption, not a theoretical one.
+  if (error) {
+    throw new Error(`Could not read rating settings: ${error.message}`);
+  }
   return (data?.value as RatingSettings | null) ?? null;
 }
 
@@ -739,7 +749,13 @@ export async function recordWalkover(
   // Checked, not fired and forgotten: supabase-js resolves with { error } rather
   // than rejecting, so an unchecked write here reported a walkover that the
   // bracket never actually recorded — and then rated and advanced off it.
-  const { error: writeError } = await adminClient.from('tournament_matches').update({
+  //
+  // Conditional on the status the caller read, for the same reason
+  // enterMatchResult's write is: it makes recording a result a compare-and-swap,
+  // so a walkover cannot be stamped over a result another desk entered between
+  // that read and this write. The count is the only way to tell, since PostgREST
+  // reports "matched no rows" as success.
+  const { error: writeError, count } = await adminClient.from('tournament_matches').update({
     status: 'walkover',
     walkover_winner: winnerPosition,
     walkover_reason: reason,
@@ -748,10 +764,18 @@ export async function recordWalkover(
     result_entered_by: enteredBy,
     result_entered_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-  }).eq('id', matchId);
+  }, { count: 'exact' })
+    .eq('id', matchId)
+    .eq('status', match.status as string);
 
   if (writeError) {
     throw new Error(`Could not record the walkover on match ${matchId}: ${writeError.message}`);
+  }
+
+  if (count === 0) {
+    throw new Error(
+      `Match ${matchId} changed while the walkover was being recorded — it is no longer ${String(match.status)}. Nothing was written.`,
+    );
   }
 
   // Rate BEFORE advancing. Advancing can cascade into another forfeit further

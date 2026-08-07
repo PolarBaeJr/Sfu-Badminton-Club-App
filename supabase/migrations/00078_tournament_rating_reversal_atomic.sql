@@ -337,11 +337,23 @@ BEGIN
   v_snapshot := v_match.elo_snapshot;
 
   -- Nothing to reverse. Not an error: an unopposed walkover is never rated, and a
-  -- retry of a reversal that already committed lands here.
-  IF v_snapshot IS NULL
-     OR jsonb_typeof(v_snapshot->'entries') <> 'array'
-     OR jsonb_array_length(v_snapshot->'entries') = 0 THEN
+  -- retry of a reversal that already committed lands here. This RETURN is the
+  -- ONLY quiet exit — a snapshot that exists but cannot be read is a refusal.
+  IF v_snapshot IS NULL THEN
     RETURN;
+  END IF;
+
+  -- Positive test, and not merely for tidiness. Written as
+  -- `jsonb_typeof(v_snapshot->'entries') <> 'array'` inside an OR chain, an
+  -- ABSENT 'entries' key makes the operand SQL NULL rather than TRUE, the whole
+  -- condition evaluates to NULL, the IF does not fire — and then
+  -- jsonb_array_elements(NULL) yields zero rows, so the loop below reverses
+  -- NOTHING and the function goes on to clear the snapshot anyway. That is the
+  -- same trap 00070's header records, and it turns a malformed row into a
+  -- silently discarded rating.
+  IF COALESCE(jsonb_typeof(v_snapshot->'entries') = 'array', false) IS NOT TRUE
+     OR jsonb_array_length(v_snapshot->'entries') = 0 THEN
+    RAISE EXCEPTION 'elo_snapshot on match % has no usable entries array — refusing to clear it', p_match_id;
   END IF;
 
   v_discipline := v_snapshot->>'discipline';

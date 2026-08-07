@@ -252,7 +252,15 @@ async function enterMatchResultImpl(
   // Update match
   // time_exceeded rides along with the scores it explains (00047) — without it
   // on the row, a later reader cannot tell a called-for-time 15-2 from a typo.
-  const { error } = await adminClient.from('tournament_matches').update({
+  //
+  // Conditional on the status this request READ, which makes the write a
+  // compare-and-swap rather than a blind overwrite. Two desks entering the same
+  // match at once both passed the playable-status check above against the same
+  // row; without this, both write a result and both go on to rate it, and the
+  // loser of that race only finds out inside the rating RPC — with a result
+  // already stamped over the winner's. The count is how the loser finds out
+  // here instead, because PostgREST reports "matched no rows" as success.
+  const { error, count } = await adminClient.from('tournament_matches').update({
     scores,
     time_exceeded: timeExceeded,
     [winnerIdField]: winnerId,
@@ -261,11 +269,19 @@ async function enterMatchResultImpl(
     result_entered_by: admin.id,
     result_entered_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-  }).eq('id', matchId);
+  }, { count: 'exact' })
+    .eq('id', matchId)
+    .eq('status', match.status);
 
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
+  }
+
+  if (count === 0) {
+    throw new ExpectedError(
+      'This match changed while you were entering the result — most likely another desk got there first. Reload and check before entering it again.',
+    );
   }
 
   // Apply Elo before advancing — advancing can settle the next match too (if

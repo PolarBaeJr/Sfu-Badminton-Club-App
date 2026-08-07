@@ -610,6 +610,34 @@ describe('a decided match is never left unrated', () => {
     expect(match(SF).participant_a_id).toBeNull();
   });
 
+  it('refuses a result written over a match that changed underneath it', async () => {
+    // The race closed at its source. Two desks both read a playable match and
+    // both pass the status check; without a compare-and-swap both then WRITE a
+    // result and both go on to rate it, and the loser only finds out inside the
+    // rating RPC — by which point it has already stamped its own scores over the
+    // winner's. Conditioning the write on the status this request read means the
+    // loser writes nothing at all.
+    //
+    // Modelled by moving the match on between the read and the write, which is
+    // what the other desk's commit does. The hook hangs off the suspension check
+    // because that read sits between the two, and it declines to fault (returns
+    // false) — it is here for its side effect only.
+    store.faults.push({
+      table: 'tournaments', op: 'select', message: 'unused',
+      when: () => { match(QF).status = 'completed'; return false; },
+    });
+
+    const res = await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/changed while you were entering the result/);
+    // Nothing of this attempt survives: no scores, no winner, no rating.
+    expect(match(QF).scores).toBeNull();
+    expect(match(QF).winner_participant_id).toBeNull();
+    expect(match(QF).elo_snapshot).toBeNull();
+    expect(ratingOf('pl-alice')).toBe(1000);
+  });
+
   it('refuses to un-decide a match that turned out to be rated after all', async () => {
     // The losing side of a two-desk race. Both read a playable match, both write
     // a result, both compute against a null snapshot; the first RPC commits and
