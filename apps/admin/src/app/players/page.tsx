@@ -31,7 +31,7 @@ export default async function PlayersPage({
   searchParams: Promise<{ tab?: string; search?: string }>;
 }) {
   const params = await searchParams;
-  const tab = params.tab || 'competitive';
+  const requestedTab = params.tab || 'competitive';
   // Execs manage the roster; only admins grant privilege, remove, or merge.
   // Hiding those controls is cosmetic — the server actions are the real gate —
   // but showing a button that is guaranteed to fail is worse than not showing
@@ -43,6 +43,12 @@ export default async function PlayersPage({
   // the player they are writing a note about. Every mutating action under
   // /players gates on getExecOrAdmin(), so for them the roster is a directory.
   const canManage = atLeast(level, 'exec');
+  // Hiding the tab is not the same as closing it: /players?tab=suspended is a
+  // URL anyone can type, and the moderation queues are exec business. Fall back
+  // rather than error — a trainer following a stale link should land on the
+  // roster, not a wall.
+  const MODERATION_TABS = ['attention', 'suspended', 'inactive'];
+  const tab = !canManage && MODERATION_TABS.includes(requestedTab) ? 'competitive' : requestedTab;
   const supabase = createAdminClient();
 
   let query = supabase
@@ -103,12 +109,19 @@ export default async function PlayersPage({
   const susCount = forCount.filter((p) => p.status === 'suspended' || p.is_banned).length;
   const inactCount = forCount.filter((p) => p.active_flag === false).length;
 
+  // Needs Attention, Suspended and Inactive are moderation states: every action
+  // they offer (approve, assign a division, ban, restore, mark inactive) gates
+  // on getExecOrAdmin(). A trainer reads the roster to find the player they are
+  // writing a varsity note about, so they get the two tabs that list people who
+  // actually play, and are not shown queues they cannot act on.
   const tabs = [
     { id: 'competitive', label: 'Competitive', count: compCount },
     { id: 'recreational', label: 'Recreational', count: recCount },
-    { id: 'attention', label: 'Needs Attention', count: attCount },
-    { id: 'suspended', label: 'Suspended', count: susCount },
-    { id: 'inactive', label: 'Inactive', count: inactCount },
+    ...(canManage ? [
+      { id: 'attention', label: 'Needs Attention', count: attCount },
+      { id: 'suspended', label: 'Suspended', count: susCount },
+      { id: 'inactive', label: 'Inactive', count: inactCount },
+    ] : []),
   ];
 
   // Rows are built here, on the server, and handed to the client table as

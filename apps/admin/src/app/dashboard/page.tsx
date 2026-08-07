@@ -73,7 +73,7 @@ export default async function DashboardPage() {
     { data: pendingPlayersList },
   ] = await Promise.all([
     showPlayers ? supabase.from('players').select('id', { count: 'exact', head: true }).neq('status', 'pending_approval') : noCount,
-    showPlayers ? supabase.from('players').select('id', { count: 'exact', head: true }).eq('status', 'pending_approval') : noCount,
+    canApprove ? supabase.from('players').select('id', { count: 'exact', head: true }).eq('status', 'pending_approval') : noCount,
     showDisputes ? supabase.from('disputes').select('id', { count: 'exact', head: true }).eq('status', 'open') : noCount,
     showWalkovers ? supabase.from('walkovers').select('id', { count: 'exact', head: true }).eq('status', 'pending') : noCount,
     showMatches
@@ -188,16 +188,21 @@ export default async function DashboardPage() {
       {(showPlayers || showDisputes || showWalkovers) && (
       <div className="stat-strip">
         {showPlayers && (
-          <>
-            <Link href="/players" className="hover:bg-[var(--bg-card)] transition-colors">
-              <p className="stat-label">Active Players</p>
-              <p className="stat-value">{totalPlayers ?? 0}</p>
-            </Link>
-            <Link href="/players?tab=attention" className="hover:bg-[var(--bg-card)] transition-colors">
-              <p className="stat-label">Pending Approvals</p>
-              <p className={`stat-value ${(pendingPlayers ?? 0) > 0 ? 'text-[var(--color-warning)]' : ''}`}>{pendingPlayers ?? 0}</p>
-            </Link>
-          </>
+          <Link href="/players" className="hover:bg-[var(--bg-card)] transition-colors">
+            <p className="stat-label">Active Players</p>
+            <p className="stat-value">{totalPlayers ?? 0}</p>
+          </Link>
+        )}
+        {/* Approving is exec work, so the COUNT is exec work too. This rode on
+            showPlayers, which is trainer-level, so a trainer saw how many people
+            were waiting on a decision they cannot make — and the panel and its
+            buttons below were already exec-only, so the number was the one part
+            that leaked. */}
+        {canApprove && (
+          <Link href="/players?tab=attention" className="hover:bg-[var(--bg-card)] transition-colors">
+            <p className="stat-label">Pending Approvals</p>
+            <p className={`stat-value ${(pendingPlayers ?? 0) > 0 ? 'text-[var(--color-warning)]' : ''}`}>{pendingPlayers ?? 0}</p>
+          </Link>
         )}
         {/* Hidden outright rather than zeroed: a hollow "0 open disputes" tile
             that bounces to /unauthorized is worse than no tile. .stat-strip is
