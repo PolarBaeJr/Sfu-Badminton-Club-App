@@ -30,6 +30,33 @@ import { getSeasonIncome, type SeasonIncome, type SeasonWindow } from './season-
  * bank yet, so it is not spent money. It is shown in the expense list marked
  * "not recorded" — deliberately visible rather than silently dropped, because
  * the failure mode of a filtered total is a row nobody knows is missing.
+ *
+ * REIMBURSEMENT (00077) CHANGES NOTHING HERE, ON PURPOSE.
+ * An expense counts against the season in full whether or not the exec who
+ * fronted it has been paid back. The query below does not read reimbursed_at
+ * and must not start: net is an ACCRUAL figure — what the season cost the club
+ * — and reimbursing someone is the club settling a debt it already owed, not a
+ * new event and not the undoing of an old one. Six tubes of shuttles cost the
+ * club $84 the moment they were bought; who was holding the receipt in the
+ * meantime is a question about people, not about money.
+ *
+ * Two concrete things go wrong the other way. The alternative — count only
+ * SETTLED expenses, making net a cash-out figure that tracks the bank balance —
+ * is genuinely defensible for a treasurer reconciling a statement, and it is
+ * what a strict cash basis would do. But:
+ *
+ *   1. Net would RISE at the moment cash actually left the club. Mark the $84
+ *      reimbursed, the club is $84 poorer in the world and $84 richer on the
+ *      page. That is the opposite of what the number is for.
+ *   2. An unsettled expense would be invisible. The club would read "in the
+ *      positives" while owing three execs for shuttles — and "are we in the
+ *      positives" is the exact question the club owner asked this page to
+ *      answer. A commitment already made has to be in it.
+ *
+ * So: accrual, and reimbursement is a settlement flag on the row. The cost of
+ * choosing this way is that net does not tell you the bank balance; the row
+ * list shows which expenses are still owed, which is where that question
+ * belongs.
  */
 export interface SeasonFinances {
   /** Every income ledger, itemised. `income.totalCents` is money in. */

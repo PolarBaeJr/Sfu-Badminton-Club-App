@@ -98,12 +98,15 @@ export {
   removeManualFee,
 } from './actions/fees';
 
-// Non-fee money ledgers (00073): donations/grants in, shuttles/courts out.
+// Non-fee money ledgers (00073): donations/grants in, shuttles/courts out,
+// plus reimbursement of whoever fronted an expense (00077).
 export {
   addOtherIncome,
   removeOtherIncome,
   addExpense,
+  updateExpense,
   removeExpense,
+  markExpenseReimbursed,
 } from './actions/finance';
 
 export {

@@ -37,7 +37,13 @@ export default async function DashboardPage() {
   const showDisputes = canAccess(level, '/disputes');
   const showWalkovers = canAccess(level, '/walkovers');
   const showChallenges = canAccess(level, '/challenges');
-  const showFees = canAccess(level, '/fees');
+  // NOT canAccess(level, '/fees'). /fees is exec-level now so an exec can reach
+  // the Expenses tab, but the finance snapshot below is income, expenses AND
+  // the net position — the club money an exec is deliberately kept away from.
+  // Asking the route map here would have leaked all three into an exec's
+  // dashboard the moment that map changed, from the one file that is supposed
+  // to be the example of gating the fetch. Ask for the level the DATA needs.
+  const showFinances = atLeast(level, 'admin');
   // Sections that used to be unconditional. A varsity trainer reaches the
   // dashboard (it is where sign-in lands) but has no business in matches or
   // tournaments, and both links bounce them to /unauthorized.
@@ -95,13 +101,13 @@ export default async function DashboardPage() {
   const hasAlerts = alertTerms.length > 0;
 
   // Finance snapshot for the active season: money in, money out, and whether
-  // the club is in the positives. Admin-only — /fees is, and this is the same
-  // money.
+  // the club is in the positives. Admin-only, and gated on showFinances rather
+  // than on reaching /fees — see the note beside that flag.
   let activeSeason: { id: string; name: string } | null = null;
   let seasonIncomeCents = 0;
   let seasonExpenseCents = 0;
   let seasonNetCents = 0;
-  if (showFees) {
+  if (showFinances) {
     const { data } = await supabase
       .from('seasons')
       .select('id, name')
@@ -214,7 +220,7 @@ export default async function DashboardPage() {
       {/* Finance snapshot — in, out, and the net. The net is the headline
           because it is the question the club owner actually asks; income alone
           reads like good news no matter what has been spent. */}
-      {showFees && activeSeason && (
+      {showFinances && activeSeason && (
         <Link href="/fees" className="group block">
           <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-5 hover:border-[var(--border-hover)] transition-all hover:shadow-lg hover:shadow-black/5 flex items-center justify-between gap-4 flex-wrap">
             <div>

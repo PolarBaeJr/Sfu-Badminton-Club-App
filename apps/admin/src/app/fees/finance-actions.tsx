@@ -5,13 +5,22 @@ import { useRouter } from 'next/navigation';
 import { Button, Dialog, Input, Select, DatePicker, useConfirm } from '@badminton/ui';
 import {
   resolvePaymentMethod,
+  PAYMENT_METHODS,
+  PAYMENT_METHOD_CUSTOM,
   EXPENSE_CATEGORIES,
   OTHER_INCOME_CATEGORIES,
   type ExpenseCategory,
   type OtherIncomeCategory,
 } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
-import { addOtherIncome, removeOtherIncome, addExpense, removeExpense } from '@/lib/actions';
+import {
+  addOtherIncome,
+  removeOtherIncome,
+  addExpense,
+  updateExpense,
+  removeExpense,
+  markExpenseReimbursed,
+} from '@/lib/actions';
 import {
   PaymentMethodFields,
   paymentMethodInvalid,
@@ -55,13 +64,64 @@ function dateToIso(day: string): string | undefined {
   return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
 }
 
+/**
+ * The inverse, for prefilling the edit dialog: a stored timestamp -> the
+ * "YYYY-MM-DD" the date picker wants.
+ *
+ * Built from the LOCAL date parts, not from `toISOString().slice(0, 10)`. The
+ * stored value is noon local (see above), so slicing the UTC string gives the
+ * previous day anywhere east of UTC — an admin opening a September 1st expense
+ * to fix a typo would find it dated August 31st and save that back.
+ */
+function isoToDay(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * A stored method string -> the two form fields it came from.
+ *
+ * Anything outside the fixed vocabulary was typed into the Custom box, so it
+ * goes back there rather than being dropped: an edit dialog that silently
+ * cleared "cheque" would make every save of an unrelated field erase how the
+ * money moved.
+ */
+function paymentFromStored(method: string | null, reference: string | null): PaymentMethodState {
+  const known = PAYMENT_METHODS.some((m) => m.value === method);
+  return {
+    method: method ? (known ? method : PAYMENT_METHOD_CUSTOM) : '',
+    customMethod: method && !known ? method : '',
+    reference: reference ?? '',
+  };
+}
+
 interface EntryFormState {
   description: string;
   amount: string;
   category: string;
   day: string;
   quantity: string;
+  /**
+   * Who fronted the money (00077). Three distinct values, and the distinction
+   * matters:
+   *   ''          nothing chosen yet — submit stays disabled
+   *   CLUB_FUNDS  the club account paid; nobody is owed
+   *   <uuid>      that person is out of pocket until an admin reimburses them
+   *
+   * There is no default on purpose. Defaulting to the club would silently drop
+   * an exec's reimbursement; defaulting to the person typing would invent a
+   * debt to whichever admin wrote up someone else's receipt. And neither could
+   * be corrected afterwards — there is no edit action, and delete is
+   * admin-only, so an exec cannot fix their own row.
+   */
+  paidBy: string;
 }
+
+/** Sentinel for "the club account paid" — distinct from "not chosen yet" (''). */
+const CLUB_FUNDS = 'club';
 
 const emptyForm = (category: string): EntryFormState => ({
   description: '',
@@ -69,6 +129,7 @@ const emptyForm = (category: string): EntryFormState => ({
   category,
   day: '',
   quantity: '',
+  paidBy: '',
 });
 
 /** Shared dialog body. `quantityLabel` present = show the unit-count field. */
@@ -83,6 +144,8 @@ function EntryDialog({
   payment,
   setPayment,
   quantityLabel,
+  payerOptions,
+  settledNote,
   onSubmit,
   isPending,
   submitLabel,
@@ -97,6 +160,16 @@ function EntryDialog({
   payment: PaymentMethodState;
   setPayment: (next: PaymentMethodState) => void;
   quantityLabel?: string;
+  /** Present = this ledger has a payer to ask about (expenses do, income does not). */
+  payerOptions?: { id: string; full_name: string }[];
+  /**
+   * Set when editing an expense the club has already reimbursed. The amount and
+   * the payer are what the reimbursement was settled against, so they are shown
+   * and greyed rather than hidden — an admin looking for the amount needs to
+   * see it, and needs to see that it is not theirs to change. updateExpense()
+   * refuses them regardless; this is the explanation, not the boundary.
+   */
+  settledNote?: string;
   onSubmit: () => void;
   isPending: boolean;
   submitLabel: string;
@@ -104,13 +177,25 @@ function EntryDialog({
   const cents = toCents(form.amount);
   // Amount is required and must parse. An entry with no figure is not a ledger
   // line, and a blank one submitted as 0 would look like a recorded $0.00.
+  //
+  // paidBy is required too, on the ledger that has one — see EntryFormState for
+  // why there is no default to fall back on.
   const invalid =
-    !form.description.trim() || form.amount.trim() === '' || cents === null || paymentMethodInvalid(payment);
+    !form.description.trim() ||
+    form.amount.trim() === '' ||
+    cents === null ||
+    (payerOptions !== undefined && form.paidBy === '') ||
+    paymentMethodInvalid(payment);
 
   return (
     <Dialog open={open} onClose={onClose} title={title}>
       <div className="space-y-4">
         <p className="text-sm text-[var(--text-secondary)]">{intro}</p>
+        {settledNote && (
+          <p className="text-sm rounded-md border border-[var(--color-warning)] px-3 py-2 text-[var(--text-secondary)]">
+            {settledNote}
+          </p>
+        )}
         <Input
           label="Description"
           value={form.description}
@@ -132,6 +217,7 @@ function EntryDialog({
           value={form.amount}
           onChange={(e) => setForm({ ...form, amount: e.target.value })}
           placeholder="e.g. 84.00"
+          disabled={isPending || Boolean(settledNote)}
         />
         {quantityLabel && (
           <Input
@@ -143,6 +229,28 @@ function EntryDialog({
             onChange={(e) => setForm({ ...form, quantity: e.target.value })}
             placeholder="e.g. 6"
           />
+        )}
+        {payerOptions && (
+          <>
+            <Select
+              label="Paid by"
+              options={[
+                // The empty option is what makes "not chosen" a state rather
+                // than an accident of ordering. It stays in the list after a
+                // choice is made so the field can be put back to unanswered.
+                { value: '', label: 'Select who paid…' },
+                { value: CLUB_FUNDS, label: 'Club funds — nobody to reimburse' },
+                ...payerOptions.map((p) => ({ value: p.id, label: `${p.full_name} (out of pocket)` })),
+              ]}
+              value={form.paidBy}
+              onChange={(e) => setForm({ ...form, paidBy: e.target.value })}
+              disabled={isPending || Boolean(settledNote)}
+            />
+            <p className="text-xs text-[var(--text-muted)] -mt-2">
+              Pick the person who actually paid, not whoever is typing this in. An admin can mark it
+              reimbursed once the club has paid them back.
+            </p>
+          </>
         )}
         <DatePicker
           label="Date (optional — defaults to today)"
@@ -226,7 +334,21 @@ export function AddOtherIncome({ seasonId, seasonName }: { seasonId: string; sea
   );
 }
 
-export function AddExpense({ seasonId, seasonName }: { seasonId: string; seasonName: string }) {
+/**
+ * Record money out. The one dialog on this page an EXEC can open — the club
+ * owner asked for "execs can add expenses too", so an exec who buys shuttles
+ * out of their own pocket can say so and be reimbursed.
+ */
+export function AddExpense({
+  seasonId,
+  seasonName,
+  payerOptions,
+}: {
+  seasonId: string;
+  seasonName: string;
+  /** Execs and admins — the people who can be out of pocket for the club. */
+  payerOptions: { id: string; full_name: string }[];
+}) {
   const DEFAULT_CATEGORY: ExpenseCategory = 'shuttles';
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<EntryFormState>(emptyForm(DEFAULT_CATEGORY));
@@ -247,6 +369,9 @@ export function AddExpense({ seasonId, seasonName }: { seasonId: string; seasonN
           description: form.description.trim(),
           amount_cents: cents,
           quantity: Number.isFinite(qty) ? qty : undefined,
+          // CLUB_FUNDS becomes undefined, which the action stores as NULL —
+          // "the club paid, nobody is owed". Any other value is a player id.
+          paid_by: form.paidBy === CLUB_FUNDS ? undefined : form.paidBy,
           paid_at: dateToIso(form.day),
           method: resolvePaymentMethod(payment.method, payment.customMethod),
           reference: payment.reference.trim() || undefined,
@@ -281,11 +406,185 @@ export function AddExpense({ seasonId, seasonName }: { seasonId: string; seasonN
         payment={payment}
         setPayment={setPayment}
         quantityLabel="Quantity (optional — e.g. tubes)"
+        payerOptions={payerOptions}
         onSubmit={handleAdd}
         isPending={isPending}
         submitLabel="Add expense"
       />
     </>
+  );
+}
+
+/** The stored row, as much of it as the edit dialog needs to prefill itself. */
+export interface EditableExpense {
+  id: string;
+  ref: string;
+  category: string;
+  description: string;
+  amount_cents: number;
+  quantity: number | null;
+  paid_at: string | null;
+  paid_by: string | null;
+  reimbursed_at: string | null;
+  method: string | null;
+  reference: string | null;
+}
+
+/**
+ * Correct an expense that is already recorded. ADMIN ONLY — rendered only for
+ * an admin, and updateExpense() re-checks, which is the actual boundary.
+ *
+ * The form is remounted from the stored row every time the dialog opens
+ * (`key={...}` at the call site is not enough on its own, so the state is seeded
+ * on open). Otherwise an admin who opened a row, changed a figure, cancelled,
+ * and opened a different row would be shown the first row's numbers over the
+ * second row's data — and would be one click from saving them.
+ */
+export function EditExpense({
+  expense,
+  payerOptions,
+}: {
+  expense: EditableExpense;
+  payerOptions: { id: string; full_name: string }[];
+}) {
+  const seed = (): EntryFormState => ({
+    description: expense.description,
+    amount: (expense.amount_cents / 100).toFixed(2),
+    category: expense.category,
+    day: isoToDay(expense.paid_at),
+    quantity: expense.quantity == null ? '' : String(expense.quantity),
+    paidBy: expense.paid_by ?? CLUB_FUNDS,
+  });
+
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState<EntryFormState>(seed);
+  const [payment, setPayment] = useState<PaymentMethodState>(() =>
+    paymentFromStored(expense.method, expense.reference),
+  );
+  const [isPending, startTransition] = useTransition();
+  const { toast } = useToast();
+  const router = useRouter();
+
+  const settled = Boolean(expense.reimbursed_at);
+
+  function handleOpen() {
+    setForm(seed());
+    setPayment(paymentFromStored(expense.method, expense.reference));
+    setOpen(true);
+  }
+
+  function handleSave() {
+    const cents = toCents(form.amount);
+    if (cents === null) return;
+    const qty = form.quantity.trim() === '' ? undefined : Number.parseInt(form.quantity, 10);
+    startTransition(async () => {
+      try {
+        await updateExpense({
+          id: expense.id,
+          category: form.category as ExpenseCategory,
+          description: form.description.trim(),
+          // Sent from the (disabled) field on a settled row, so it is always
+          // the stored value and the action's equality check passes. If it ever
+          // is not, the action refuses — which is the point of checking there.
+          amount_cents: cents,
+          quantity: Number.isFinite(qty) ? qty : undefined,
+          paid_by: form.paidBy === CLUB_FUNDS ? undefined : form.paidBy,
+          paid_at: dateToIso(form.day),
+          method: resolvePaymentMethod(payment.method, payment.customMethod),
+          reference: payment.reference.trim() || undefined,
+        });
+        toast(`${expense.ref} updated`, 'success');
+        setOpen(false);
+        router.refresh();
+      } catch (err) {
+        toast(err instanceof Error ? err.message : 'Failed to update expense', 'error');
+      }
+    });
+  }
+
+  return (
+    <>
+      <Button variant="ghost" size="sm" onClick={handleOpen}>Edit</Button>
+      <EntryDialog
+        open={open}
+        onClose={() => setOpen(false)}
+        title={`Edit ${expense.ref}`}
+        intro="Correct what was recorded. The season this counts toward cannot be changed here — file it against a different season by deleting this entry and re-recording it."
+        categories={EXPENSE_CATEGORIES}
+        form={form}
+        setForm={setForm}
+        payment={payment}
+        setPayment={setPayment}
+        quantityLabel="Quantity (optional — e.g. tubes)"
+        payerOptions={payerOptions}
+        settledNote={
+          settled
+            ? 'The club has already reimbursed this expense, so the amount and the payer are what was settled and cannot be changed. If the reimbursement itself was wrong, delete this entry and re-record it.'
+            : undefined
+        }
+        onSubmit={handleSave}
+        isPending={isPending}
+        submitLabel="Save changes"
+      />
+    </>
+  );
+}
+
+/**
+ * Confirm the club has paid back whoever fronted an expense. ADMIN ONLY —
+ * rendered only for an admin, and markExpenseReimbursed() re-checks, which is
+ * the actual boundary.
+ *
+ * Confirmed rather than one-click, and the confirm names the person and the
+ * amount: there is no undo. Marking the wrong row settled tells an exec who is
+ * still owed $84 that they have been paid, and the only way back is an admin
+ * deleting the row and re-entering it.
+ *
+ * No "un-reimburse" button, deliberately. An undo would be a second way to
+ * change money state and the first thing a mis-click would reach for; a wrong
+ * settlement is rare, visible in the audit log, and fixable by an admin.
+ */
+export function MarkReimbursed({
+  id,
+  payerName,
+  amountCents,
+}: {
+  id: string;
+  payerName: string;
+  amountCents: number;
+}) {
+  const [isPending, startTransition] = useTransition();
+  const { toast } = useToast();
+  const router = useRouter();
+  const confirm = useConfirm();
+
+  async function handleMark() {
+    const money = `$${(amountCents / 100).toFixed(2)}`;
+    const ok = await confirm({
+      title: 'Mark as reimbursed?',
+      message: `Confirm the club has paid ${payerName} back the ${money} they spent. This cannot be undone.`,
+      confirmLabel: 'Mark reimbursed',
+    });
+    if (!ok) return;
+    startTransition(async () => {
+      try {
+        await markExpenseReimbursed(id);
+        toast(`Marked as reimbursed to ${payerName}`, 'success');
+        router.refresh();
+      } catch (err) {
+        // The action throws rather than returning silently when its update
+        // matched no rows — PostgREST calls that success, so the message here
+        // is the only thing standing between an admin and a "done" toast for a
+        // reimbursement that never happened.
+        toast(err instanceof Error ? err.message : 'Failed to mark reimbursed', 'error');
+      }
+    });
+  }
+
+  return (
+    <Button variant="ghost" size="sm" onClick={handleMark} loading={isPending}>
+      Mark reimbursed
+    </Button>
   );
 }
 

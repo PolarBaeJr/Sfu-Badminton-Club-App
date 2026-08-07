@@ -1,5 +1,6 @@
 import Link from 'next/link';
-import { createAdminClient } from '@/lib/supabase-server';
+import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
+import { accessLevelFor } from '@/lib/permissions';
 import { Badge, Card, AvatarChip, EmptyState, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { unwrap, unwrapMaybe, formatPaymentMethod } from '@badminton/shared';
 import type { Season } from '@badminton/shared';
@@ -15,10 +16,17 @@ import { NetPositionStrip } from './net-position-strip';
 // tab called expenses"). URL-driven rather than client state so each is a
 // server render with its own query — the tab you are not looking at costs
 // nothing, and a link to a tab is shareable.
+//
+// `adminOnly` is the exec split. /fees is exec-level in permissions.ts so an
+// exec can record an expense they paid for, but the club owner has kept execs
+// away from club money everywhere else (Ratings, Accounts) and asked for
+// expenses specifically, not for the finance page. An exec gets the Expenses
+// tab and nothing else — no fee roster, no other income, no net position, and
+// no tab strip advertising that they exist.
 const TABS = [
-  { id: 'fees', label: 'Club fees' },
-  { id: 'income', label: 'Other income' },
-  { id: 'expenses', label: 'Expenses' },
+  { id: 'fees', label: 'Club fees', adminOnly: true },
+  { id: 'income', label: 'Other income', adminOnly: true },
+  { id: 'expenses', label: 'Expenses', adminOnly: false },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -42,13 +50,31 @@ export default async function FeesPage({
   searchParams: Promise<{ tab?: string }>;
 }) {
   const params = await searchParams;
-  const tab: TabId = TABS.some((t) => t.id === params.tab) ? (params.tab as TabId) : 'fees';
+
+  // Who is looking. getAuthenticatedExecOrAdmin() is the gate — middleware
+  // already ran, but a page that renders money must not depend on middleware
+  // having been reached, and this is the same shape /legal uses.
+  const viewer = await getAuthenticatedExecOrAdmin();
+  const isAdmin = accessLevelFor(viewer) === 'admin';
+
+  const visibleTabs = TABS.filter((t) => isAdmin || !t.adminOnly);
+  // An exec asking for ?tab=income lands on Expenses rather than /unauthorized:
+  // the query string is not a route, so middleware cannot see it, and every
+  // admin-only fetch below is gated on isAdmin regardless of what `tab` says.
+  // Forcing the tab is presentation; the gating underneath is the boundary.
+  const requested = visibleTabs.find((t) => t.id === params.tab)?.id;
+  const tab: TabId = requested ?? (isAdmin ? 'fees' : 'expenses');
+
   const supabase = createAdminClient();
 
+  // The fee amounts are only ever rendered in the admin header line, so an exec
+  // does not fetch them. Trimming the column list rather than the JSX is the
+  // rule this whole page follows: a value that reaches the server component
+  // reaches the RSC payload whether or not it is drawn.
   const season = unwrapMaybe<Season>(
     await supabase
       .from('seasons')
-      .select('id, name, competitive_fee_cents, recreational_fee_cents')
+      .select(isAdmin ? 'id, name, competitive_fee_cents, recreational_fee_cents' : 'id, name')
       .eq('active_flag', true)
       .maybeSingle()
   );
@@ -56,7 +82,7 @@ export default async function FeesPage({
   if (!season) {
     return (
       <div className="space-y-6">
-        <PageHeader title="Fees" watermark="F" />
+        <PageHeader title={isAdmin ? 'Fees' : 'Expenses'} watermark={isAdmin ? 'F' : 'E'} />
         <Card>
           {/* No season means no net position either: other_income and
               club_expenses are season_id NOT NULL (00073), so there is nothing
@@ -64,11 +90,17 @@ export default async function FeesPage({
               rather than leaving an admin to wonder where the tabs went. */}
           <EmptyState
             title="No active season"
-            description="Fees, other income and expenses all follow the active season. Create and activate a season to start tracking money in and out."
+            description={
+              isAdmin
+                ? 'Fees, other income and expenses all follow the active season. Create and activate a season to start tracking money in and out.'
+                : 'Expenses follow the active season. An admin needs to activate one before spending can be recorded.'
+            }
             action={
-              <Link href="/seasons" className="text-[var(--color-accent)] font-medium">
-                Go to Seasons
-              </Link>
+              isAdmin ? (
+                <Link href="/seasons" className="text-[var(--color-accent)] font-medium">
+                  Go to Seasons
+                </Link>
+              ) : undefined
             }
           />
         </Card>
@@ -76,8 +108,13 @@ export default async function FeesPage({
             rest of this page cannot be drawn without one — but a lapsed member
             coming back between terms is the ordinary reinstatement, and those
             rows would otherwise be unreachable for exactly as long as the club
-            is between seasons. */}
-        <ReinstatementsCard seasonId={null} />
+            is between seasons.
+            Admin-only like every other money view here, and gated on isAdmin
+            rather than left to the tab logic: this branch returns BEFORE the
+            tabs exist, and the card runs its own fetch — an exec opening /fees
+            between seasons would otherwise have been handed the reinstatement
+            ledger with no tab involved. */}
+        {isAdmin && <ReinstatementsCard seasonId={null} />}
       </div>
     );
   }
@@ -88,7 +125,12 @@ export default async function FeesPage({
   // Only the Club fees tab renders the roster table, so only it pays for the
   // two queries behind it. The derived counts below all collapse to 0 on an
   // empty list and none of them are rendered off that tab.
-  const showFeeTable = tab === 'fees';
+  //
+  // `isAdmin &&` is belt as well as braces: `tab` can never be 'fees' for an
+  // exec (the tab list they are given does not contain it), but this flag gates
+  // the FETCHES, and a fetch guarded only by a value derived from a query
+  // string is one refactor away from being guarded by nothing.
+  const showFeeTable = isAdmin && tab === 'fees';
 
   // Fee-collection list: active players (competitive/recreational) who are
   // neither exec nor fee-exempt.
@@ -136,27 +178,44 @@ export default async function FeesPage({
   // the money sat in the database — and it was wrong on two pages at once
   // because each page did its own arithmetic. There is one implementation now
   // and both pages call it.
-  const finances = await getSeasonFinances(supabase, season);
+  //
+  // Not fetched at all for an exec. This one call reads every income ledger the
+  // club has; rendering it conditionally while still awaiting it would put
+  // fees, tournament money, reinstatements, donations and the net position into
+  // the RSC payload of someone shown none of them.
+  const finances = isAdmin ? await getSeasonFinances(supabase, season) : null;
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Finances"
-        watermark="F"
-        sub={`${season.name} · Competitive $${(season.competitive_fee_cents / 100).toFixed(2)} · Recreational $${(season.recreational_fee_cents / 100).toFixed(2)}`}
+        title={isAdmin ? 'Finances' : 'Expenses'}
+        watermark={isAdmin ? 'F' : 'E'}
+        // The fee amounts are club pricing, and the exec header carries only
+        // the season name — the columns behind the rest were never selected.
+        sub={
+          isAdmin
+            ? `${season.name} · Competitive $${(season.competitive_fee_cents / 100).toFixed(2)} · Recreational $${(season.recreational_fee_cents / 100).toFixed(2)}`
+            : `${season.name} · Money the club has spent`
+        }
         actions={showFeeTable ? <AddManualFee seasonId={season.id} seasonName={season.name} /> : undefined}
       />
 
       {/* The answer to "are we in the positives", above the tabs so it is on
-          screen no matter which ledger is open. */}
-      <NetPositionStrip finances={finances} seasonName={season.name} />
+          screen no matter which ledger is open. Admin-only, and `finances` is
+          null rather than unrendered for an exec — there is nothing to leak
+          because nothing was fetched. */}
+      {finances && <NetPositionStrip finances={finances} seasonName={season.name} />}
 
       {/* Tabs. Plain links, matching /players?tab= — the page is an async
           server component, so a client tab control would mean shipping every
-          ledger's rows to the browser to show one of them. */}
+          ledger's rows to the browser to show one of them.
+          Hidden entirely when there is only one tab to show: a lone "Expenses"
+          pill an exec cannot navigate away from is noise, and a full strip
+          would advertise two sections that would bounce them. */}
+      {visibleTabs.length > 1 && (
       <Card padding={false}>
         <div className="flex gap-1 p-1 overflow-x-auto">
-          {TABS.map((t) => (
+          {visibleTabs.map((t) => (
             <Link
               key={t.id}
               href={`/fees?tab=${t.id}`}
@@ -171,13 +230,14 @@ export default async function FeesPage({
           ))}
         </div>
       </Card>
+      )}
 
-      {tab === 'income' && (
-        <LedgerCard kind="income" seasonId={season.id} seasonName={season.name} />
+      {isAdmin && tab === 'income' && (
+        <LedgerCard kind="income" seasonId={season.id} seasonName={season.name} isAdmin />
       )}
 
       {tab === 'expenses' && (
-        <LedgerCard kind="expense" seasonId={season.id} seasonName={season.name} />
+        <LedgerCard kind="expense" seasonId={season.id} seasonName={season.name} isAdmin={isAdmin} />
       )}
 
       {showFeeTable && (

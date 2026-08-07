@@ -178,4 +178,50 @@ describe('getSeasonFinances', () => {
 
     await expect(getSeasonFinances(client as never, SEASON)).rejects.toThrow(/club_expenses/);
   });
+
+  // THE NET-POSITION DECISION FOR REIMBURSEMENT (00077), pinned.
+  //
+  // An expense counts in full whether or not the exec who fronted it has been
+  // paid back. Net is what the season COST the club; reimbursing someone is the
+  // club settling a debt it already owed, not a second spend and not the
+  // undoing of the first.
+  //
+  // The rejected alternative — count only settled expenses, making net track
+  // the bank balance — fails twice, and both failures are visible right here:
+  // netCents would RISE at the moment cash actually left the club, and an
+  // unsettled shuttle bill would be invisible while the club still owed for it.
+  // "Are we in the positives" has to include a commitment already made.
+  it('counts a reimbursed expense exactly the same as an unreimbursed one', async () => {
+    const rows = (reimbursed: boolean) => ({
+      club_fees: [{ amount_cents: 20000 }],
+      club_expenses: [
+        {
+          amount_cents: 8400,
+          category: 'shuttles',
+          paid_by: 'exec-1',
+          reimbursed_at: reimbursed ? '2026-09-10T12:00:00.000Z' : null,
+        },
+      ],
+    });
+
+    const owed = await getSeasonFinances(makeClient(rows(false)) as never, SEASON);
+    const settled = await getSeasonFinances(makeClient(rows(true)) as never, SEASON);
+
+    expect(owed.expenseCents).toBe(8400);
+    expect(settled.expenseCents).toBe(8400);
+    expect(settled.netCents).toBe(owed.netCents);
+    expect(settled.netCents).toBe(11600);
+  });
+
+  // And the query must not learn about the columns at all. A `.not(...)` or
+  // `.is(...)` on reimbursed_at appearing here would be the cash-basis change
+  // arriving by accident, quietly moving every net figure on two pages.
+  it('does not filter the expense query on reimbursement state', async () => {
+    const client = makeClient({ club_expenses: [{ amount_cents: 8400, category: 'shuttles' }] });
+
+    await getSeasonFinances(client as never, SEASON);
+
+    const expenseQuery = client.calls.find((c) => c.table === 'club_expenses')!;
+    expect(expenseQuery.filters.some((f) => f.includes('reimbursed'))).toBe(false);
+  });
 });

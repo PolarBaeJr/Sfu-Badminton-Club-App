@@ -5,34 +5,51 @@ import {
   parseOrThrow,
   otherIncomeSchema,
   clubExpenseSchema,
+  clubExpenseUpdateSchema,
   type OtherIncomeInput,
   type ClubExpenseInput,
+  type ClubExpenseUpdateInput,
 } from '@badminton/shared';
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
-import { getAdminPlayer } from './_shared';
+import { getAdminPlayer, getExecOrAdmin } from './_shared';
 
 /**
  * The two non-fee money ledgers: other income (donations, grants, socials) and
- * club expenses (shuttles, court rental, ...). Tables land in 00073.
+ * club expenses (shuttles, court rental, ...). Tables land in 00073;
+ * reimbursement state lands in 00077.
  *
- * ADMIN-ONLY, ENFORCED HERE. /fees is admin-level in permissions.ts and these
- * live under it, but the route check is middleware and the real boundary is the
- * action: every function below calls getAdminPlayer() (= getAuthenticatedAdmin)
- * before it touches the database. createAdminClient() is service-role and
- * bypasses RLS entirely, so an ungated action would be an open write endpoint
- * no matter what the route map says.
+ * WHO MAY DO WHAT, AND WHY IT IS ENFORCED HERE. createAdminClient() is
+ * service-role and bypasses RLS entirely, so the gate at the top of each
+ * function IS the boundary — the route map in permissions.ts is middleware and
+ * decides only who may open the page. An ungated action would be an open write
+ * endpoint no matter what that map says.
+ *
+ *   addExpense               exec or admin
+ *   everything else here     admin only  (including updateExpense)
+ *
+ * addExpense is the one exception, and it is the club owner's: "allow execs to
+ * add expenses too". An exec who buys shuttles out of their own pocket has to
+ * be able to say so, or the club never learns the money went out and the exec
+ * never gets paid back. That is bookkeeping. DELETING an expense is not — it
+ * erases a spend from the season total with no second copy of the number
+ * anywhere — so removeExpense keeps getAdminPlayer(), as do both halves of the
+ * income ledger, which is club money an exec has no stake in.
+ *
+ * markExpenseReimbursed is admin-only for the plainest reason: it asserts the
+ * club has paid someone. An exec confirming their own reimbursement is the
+ * whole point of not letting them.
  *
  * EVERY MUTATION IS AUDITED, matching how the club_fees actions do it: the
  * inserted/deleted row is recorded in audit_logs with the acting admin. Money
  * moving with nobody's name on it is the thing an audit trail exists for.
  *
- * ROW COUNTS ARE CHECKED ON DELETE. PostgREST reports "matched no rows" as
- * success — `error` is null and `data` is an empty array — so a delete against
- * an id that no longer exists returns exactly what a successful delete returns.
- * Several bugs shipped by trusting an error that never arrives. Each delete
- * below asks for the deleted rows back and refuses to report success unless
- * exactly one came out.
+ * ROW COUNTS ARE CHECKED ON EVERY DELETE AND EVERY UPDATE. PostgREST reports
+ * "matched no rows" as success — `error` is null and `data` is an empty array —
+ * so a delete or update against an id that no longer exists returns exactly
+ * what a successful one returns. Several bugs shipped by trusting an error that
+ * never arrives. Every mutation below asks for the affected rows back with
+ * .select() and refuses to report success unless exactly one came out.
  */
 
 /** paid_at defaults to now: recording an entry means the money already moved. */
@@ -110,9 +127,19 @@ export async function removeOtherIncome(id: string) {
   revalidatePath('/fees');
 }
 
+/**
+ * Record money out. The ONE action in this file an exec may call — see the
+ * module header.
+ *
+ * paid_by is taken from the input, never from the actor. The two are different
+ * people whenever an admin writes up an exec's receipt, and defaulting it to
+ * the actor would file the admin as the one owed the money. Absent means the
+ * club account paid directly and nobody is owed; the dialog makes the caller
+ * choose rather than letting either case be the silent default.
+ */
 export async function addExpense(input: ClubExpenseInput) {
   const parsed = parseOrThrow(clubExpenseSchema, input);
-  const admin = await getAdminPlayer();
+  const actor = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
   const row = {
@@ -122,7 +149,8 @@ export async function addExpense(input: ClubExpenseInput) {
     amount_cents: parsed.amount_cents,
     quantity: parsed.quantity ?? null,
     paid_at: paidAtOrNow(parsed.paid_at),
-    marked_by: admin.id,
+    marked_by: actor.id,
+    paid_by: parsed.paid_by ?? null,
     method: parsed.method ?? null,
     reference: parsed.reference ?? null,
   };
@@ -135,7 +163,7 @@ export async function addExpense(input: ClubExpenseInput) {
   if (error) throw new Error(error.message);
 
   await logAdminAudit(adminClient, {
-    actor_id: admin.id,
+    actor_id: actor.id,
     action_type: 'expense_added',
     target_type: 'club_expense',
     target_id: created.id,
@@ -145,13 +173,206 @@ export async function addExpense(input: ClubExpenseInput) {
   revalidatePath('/fees');
 }
 
+/**
+ * Correct an expense that has already been recorded. ADMIN ONLY.
+ *
+ * The club owner asked for this so a typo in a description or a fat-fingered
+ * amount does not need a delete and a re-entry. Admin-only for the same reason
+ * removeExpense is: an exec recording their own spend is bookkeeping, an exec
+ * silently raising the figure afterwards is not.
+ *
+ * ONCE REIMBURSED, THE AMOUNT AND THE PAYER ARE FROZEN.
+ * This is the one real decision in this function. A reimbursement was settled
+ * against a specific figure paid to a specific person, and both of those are
+ * now facts about money that has already changed hands twice — the exec paid
+ * the shop, the club paid the exec. Editing either turns the row into a claim
+ * that the club reimbursed an amount it did not reimburse, or reimbursed
+ * somebody it did not pay. The badge on the row would assert it, and nobody
+ * reads the audit log to check a badge. Everything that does NOT change what
+ * was settled — description, category, quantity, date, method, reference —
+ * stays editable, which covers the typo case the owner actually described.
+ *
+ * The two alternatives, and what each would have meant:
+ *
+ *   - CLEAR THE REIMBURSEMENT when the amount changes. Rejected: the club
+ *     really did pay that money out, on a date, confirmed by a named admin, and
+ *     an edit to a description-adjacent field would destroy all three. It also
+ *     hides the interesting case — if the reimbursed amount was wrong, someone
+ *     was underpaid or overpaid, and quietly resetting the row to "owed"
+ *     obscures which.
+ *   - ALLOW IT AND RECORD BOTH VALUES IN THE AUDIT ROW. Rejected as the only
+ *     protection: the audit trail is reconstructible but the visible row is
+ *     wrong, and the person harmed (the exec who was paid the old figure) reads
+ *     the row, not audit_logs. Both values ARE recorded here regardless — that
+ *     part of the option is kept for every edit, not used as a substitute for
+ *     refusing this one.
+ *
+ * A settled expense whose amount is genuinely wrong therefore needs an admin to
+ * delete it and re-record it. That is deliberate friction: it is a statement
+ * that a reimbursement was paid incorrectly, which is a conversation with a
+ * person, not a form field.
+ */
+export async function updateExpense(input: ClubExpenseUpdateInput) {
+  const parsed = parseOrThrow(clubExpenseUpdateSchema, input);
+  const admin = await getAdminPlayer();
+  const adminClient = createAdminClient();
+
+  const { data: existing } = await adminClient
+    .from('club_expenses')
+    .select('id, season_id, category, description, amount_cents, quantity, paid_at, paid_by, reimbursed_at, reimbursed_by, method, reference')
+    .eq('id', parsed.id)
+    .maybeSingle();
+  if (!existing) throw new Error('Expense not found');
+
+  // A FULL REPLACEMENT, exactly like addExpense: an omitted payer means "the
+  // club paid, nobody is owed", not "leave it alone". The dialog always resends
+  // the stored value, and on a settled row the equality check below refuses an
+  // omission outright rather than quietly un-assigning the person the club has
+  // already paid.
+  const nextPaidBy = parsed.paid_by ?? null;
+  const settled = Boolean(existing.reimbursed_at);
+  if (settled && parsed.amount_cents !== existing.amount_cents) {
+    throw new Error(
+      'This expense has already been reimbursed — its amount can no longer be changed. Delete it and re-record it if the reimbursement was wrong.',
+    );
+  }
+  if (settled && nextPaidBy !== (existing.paid_by ?? null)) {
+    throw new Error(
+      'This expense has already been reimbursed — who paid it can no longer be changed.',
+    );
+  }
+
+  const patch = {
+    category: parsed.category,
+    description: parsed.description,
+    amount_cents: parsed.amount_cents,
+    quantity: parsed.quantity ?? null,
+    // Keeps the stored date when the caller sends none, rather than stamping
+    // today the way an INSERT does. An edit that silently re-dated a spend to
+    // whenever the typo was noticed would move it in every date-ordered view
+    // for no reason the admin asked for.
+    paid_at: parsed.paid_at ?? existing.paid_at ?? new Date().toISOString(),
+    paid_by: nextPaidBy,
+    method: parsed.method ?? null,
+    reference: parsed.reference ?? null,
+  };
+
+  // The reimbursement state is re-checked BY THE DATABASE, not just by the read
+  // above. Between that read and this write another admin can mark the row
+  // reimbursed; without this filter the amount change would land on a settled
+  // row anyway and the guard would have been decoration. When the row was
+  // already settled the filter matches on its stored timestamp instead, so the
+  // still-permitted edits (description, category, ...) go through.
+  const query = adminClient.from('club_expenses').update(patch).eq('id', parsed.id);
+  const scoped = settled
+    ? query.eq('reimbursed_at', existing.reimbursed_at)
+    : query.is('reimbursed_at', null);
+
+  const { data: updated, error } = await scoped.select('id');
+  if (error) throw new Error(error.message);
+  // PostgREST calls "matched no rows" a success. Without this an admin is
+  // toasted "Saved" for an edit that never landed — on a money figure.
+  if (!updated || updated.length !== 1) {
+    throw new Error('Expense was not updated — someone else may have just changed it');
+  }
+
+  await logAdminAudit(adminClient, {
+    actor_id: admin.id,
+    action_type: 'expense_updated',
+    target_type: 'club_expense',
+    target_id: parsed.id,
+    // Both sides in full, so a changed amount is reconstructible from the log
+    // alone without a second query against a row that may later be deleted.
+    old_value: existing,
+    new_value: patch,
+  }, { seasonId: existing.season_id });
+
+  revalidatePath('/fees');
+}
+
+/**
+ * Confirm the club has paid back whoever fronted an expense. ADMIN ONLY.
+ *
+ * Changes NO money figure. The expense already counted against the season net
+ * the moment it was recorded and it still does — see season-finance.ts for why.
+ * This records that a debt to a person is settled, nothing more.
+ *
+ * Three guards, because three different wrong things can be reported as
+ * success:
+ *
+ *  1. The row is read first. Without it, "already reimbursed", "row was
+ *     deleted" and "the club paid for this, there is nobody to reimburse" all
+ *     produce the same zero-row update and would all be reported identically.
+ *     Each gets its own message here, so an admin who is told nothing happened
+ *     knows which nothing it was.
+ *
+ *  2. The update filters on `reimbursed_at IS NULL`. That makes a double
+ *     submit a no-op rather than silently rewriting the original settlement
+ *     date to today — a month-old reimbursement quietly re-dated is a figure
+ *     nobody would ever notice was wrong.
+ *
+ *  3. The affected rows are counted. PostgREST returns `error: null` and an
+ *     empty array for an update that matched nothing, which is byte for byte
+ *     what a successful update returns. Between the read and the write another
+ *     admin can settle or delete the same row; without this check the second
+ *     admin is toasted "Marked reimbursed" for a write that never happened, and
+ *     an audit row is filed swearing it did.
+ */
+export async function markExpenseReimbursed(id: string) {
+  const admin = await getAdminPlayer();
+  const adminClient = createAdminClient();
+
+  const { data: existing } = await adminClient
+    .from('club_expenses')
+    .select('id, season_id, description, amount_cents, paid_by, reimbursed_at, reimbursed_by')
+    .eq('id', id)
+    .maybeSingle();
+  if (!existing) throw new Error('Expense not found');
+  if (!existing.paid_by) {
+    throw new Error('This expense was paid from club funds — there is nobody to reimburse');
+  }
+  if (existing.reimbursed_at) throw new Error('This expense is already marked reimbursed');
+
+  const reimbursed_at = new Date().toISOString();
+
+  const { data: updated, error } = await adminClient
+    .from('club_expenses')
+    .update({ reimbursed_at, reimbursed_by: admin.id })
+    .eq('id', id)
+    .is('reimbursed_at', null)
+    .select('id');
+  if (error) throw new Error(error.message);
+  if (!updated || updated.length !== 1) {
+    throw new Error('Expense was not marked reimbursed — someone else may have just changed it');
+  }
+
+  await logAdminAudit(adminClient, {
+    actor_id: admin.id,
+    action_type: 'expense_reimbursed',
+    target_type: 'club_expense',
+    target_id: id,
+    // Both sides, so the log answers "who was paid back, how much, and when"
+    // without a join against a row that may later be deleted.
+    old_value: existing,
+    new_value: { reimbursed_at, reimbursed_by: admin.id, paid_by: existing.paid_by },
+  }, { seasonId: existing.season_id });
+
+  revalidatePath('/fees');
+}
+
+/**
+ * ADMIN ONLY, deliberately not exec, even though an exec may add one. Recording
+ * a spend adds a fact; deleting one erases money from the season total and
+ * there is no second copy of the figure anywhere. It would also let an exec
+ * remove an expense an admin had already reimbursed them for.
+ */
 export async function removeExpense(id: string) {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
   const { data: existing } = await adminClient
     .from('club_expenses')
-    .select('id, season_id, category, description, amount_cents, quantity, paid_at, method, reference')
+    .select('id, season_id, category, description, amount_cents, quantity, paid_at, paid_by, reimbursed_at, reimbursed_by, method, reference')
     .eq('id', id)
     .maybeSingle();
   if (!existing) throw new Error('Expense not found');

@@ -453,7 +453,35 @@ export const clubExpenseSchema = z.object({
   // Tubes of shuttles, hours of court. Optional; positive when given, because
   // "0 tubes" for a non-zero spend is a typo, not a fact.
   quantity: z.number().int().positive().optional(),
+  // Who fronted the money (00077). Absent means the club account paid directly
+  // and nobody is owed a reimbursement — a real case, not a missing value, so
+  // it stays optional here. The console never defaults it: the dialog forces
+  // the choice, because there is no edit action and delete is admin-only, so a
+  // wrong value cannot be corrected by the exec who is out of pocket.
+  //
+  // Deliberately NOT derived from the acting user. The payer and the person
+  // typing the row are different whenever an admin writes up an exec's receipt,
+  // and reimbursing the typist is the bug this field exists to prevent.
+  paid_by: z.string().uuid().optional(),
 });
+
+/**
+ * Editing an expense an admin already recorded (00077).
+ *
+ * season_id is NOT here. Moving a spend between seasons changes two seasons'
+ * net position in one write and there is no console flow that wants it — an
+ * expense filed against the wrong term is a delete-and-re-record, done
+ * deliberately, not a field to nudge. ref_no is not here either: the whole
+ * value of a reference number is that it never moves.
+ *
+ * amount_cents and paid_by ARE here, and the action refuses them on a row that
+ * has already been reimbursed. See updateExpense() for why that boundary is in
+ * the action rather than in this schema — it depends on the stored row, which a
+ * validator cannot see.
+ */
+export const clubExpenseUpdateSchema = clubExpenseSchema
+  .omit({ season_id: true })
+  .extend({ id: z.string().uuid() });
 
 export const banSchema = z.object({
   player_id: z.string().uuid(),
@@ -566,6 +594,7 @@ export type ReinstatementInput = z.infer<typeof reinstatementSchema>;
 export type ReinstatementPaymentInput = z.infer<typeof reinstatementPaymentSchema>;
 export type OtherIncomeInput = z.infer<typeof otherIncomeSchema>;
 export type ClubExpenseInput = z.infer<typeof clubExpenseSchema>;
+export type ClubExpenseUpdateInput = z.infer<typeof clubExpenseUpdateSchema>;
 export type BanInput = z.infer<typeof banSchema>;
 export type PlayerFlagsInput = z.infer<typeof playerFlagsSchema>;
 export type VarsityNoteInput = z.infer<typeof varsityNoteSchema>;
