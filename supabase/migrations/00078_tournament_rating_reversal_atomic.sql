@@ -59,6 +59,14 @@
 -- Re-runnable: CREATE OR REPLACE plus idempotent GRANT/REVOKE and COMMENT.
 -- apply_tournament_match_rating keeps its 00070 signature exactly, so the replace
 -- needs no DROP and no grant churn.
+--
+-- DEPLOY ORDERING — APPLY THIS BEFORE THE APP CODE, AND KEEP THE GAP SHORT.
+-- reverseEloSnapshot calls reverse_tournament_match_rating unconditionally, so
+-- app-code-first means every void, undo, edit, restore and double-no-show fails
+-- on an unknown function. Migration-first is the safe order but is not free
+-- either: the new apply increments reliability_metrics.matches_completed while
+-- the old TypeScript reversal does not decrement it, so a void through the old
+-- code in that window leaves the counter one too high for those players.
 -- ============================================================
 
 

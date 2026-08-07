@@ -1094,6 +1094,30 @@ describe('current streak survives an undo', () => {
     expect(streak('pl-alice')).toBe(1);
   });
 
+  it('KNOWN BOUND: restores anyway when later matches happen to land on the same streak', async () => {
+    // Pinning a limitation, not asserting a desirable outcome. The "is this
+    // still their most recent rated match" test is streak equality, and streak
+    // values repeat: a win to +1, a loss to -1, a win back to +1 puts the row
+    // back on the stored streak_after, and the restore then rewinds over both
+    // later matches. Telling that apart needs a per-match streak ledger, which
+    // is a bigger change than 00078; the pre-00078 step-toward-zero was wrong
+    // here too, just differently. Only current_*_streak is affected — the Elo,
+    // the counts and the reliability figure all reverse from the entry's own
+    // numbers and are unaffected.
+    Object.assign(store.db.ratings!.find((r) => r.player_id === 'pl-alice')!, { current_singles_streak: -3 });
+
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    expect(streak('pl-alice')).toBe(1);
+
+    // Two later matches elsewhere: a loss, then a win — back on 1.
+    Object.assign(store.db.ratings!.find((r) => r.player_id === 'pl-alice')!, { current_singles_streak: 1 });
+
+    await voidMatch(QF, 'Scoresheet lost');
+
+    // Ideally 1 (the two later matches from a base of -3). Documented as -3.
+    expect(streak('pl-alice')).toBe(-3);
+  });
+
   it('leaves a pre-00070 snapshot\'s streak alone entirely', async () => {
     // No `won` key means the match never moved the statistics at all, streak
     // included. Three such rows are live in production.
