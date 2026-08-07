@@ -881,6 +881,17 @@ async function undoMatchResultImpl(matchId: string) {
   // rated, and rewinding its winner to elo_before — a value frozen at
   // registration — would wipe every rating change they earned earlier in the
   // event.
+  //
+  // It is gated a second time, per side, on elo_after still being STAMPED. "No
+  // snapshot" is not on its own evidence that a rating is outstanding: a
+  // reversal clears the snapshot and the stamp together, in one transaction, but
+  // resetting the match row below is a separate write. If that reset fails — or
+  // its response is lost — the match is left decided with no snapshot, and the
+  // retry would land here and overwrite both players' CURRENT rating with a
+  // registration-time figure, erasing every match they have played since.
+  // elo_after is what the pre-snapshot rating path wrote and what every reversal
+  // clears, so its presence is the honest test for "this match's delta is still
+  // on the ladder".
   if (match.elo_snapshot) {
     await reverseEloSnapshot(adminClient, matchId);
   } else if (!doubles && match.winner_participant_id && match.loser_participant_id) {
@@ -889,9 +900,9 @@ async function undoMatchResultImpl(matchId: string) {
 
     if (winnerId) {
       const { data: winnerP } = await adminClient.from('tournament_participants')
-        .select('player_id, elo_before')
+        .select('player_id, elo_before, elo_after')
         .eq('id', winnerId).single();
-      if (winnerP?.elo_before != null) {
+      if (winnerP?.elo_before != null && winnerP.elo_after != null) {
         await adminClient.from('ratings')
           .update({ singles_elo: winnerP.elo_before, updated_at: new Date().toISOString() })
           .eq('player_id', winnerP.player_id);
@@ -903,9 +914,9 @@ async function undoMatchResultImpl(matchId: string) {
 
     if (loserId) {
       const { data: loserP } = await adminClient.from('tournament_participants')
-        .select('player_id, elo_before')
+        .select('player_id, elo_before, elo_after')
         .eq('id', loserId).single();
-      if (loserP?.elo_before != null) {
+      if (loserP?.elo_before != null && loserP.elo_after != null) {
         await adminClient.from('ratings')
           .update({ singles_elo: loserP.elo_before, updated_at: new Date().toISOString() })
           .eq('player_id', loserP.player_id);

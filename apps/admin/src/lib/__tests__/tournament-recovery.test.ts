@@ -16,6 +16,9 @@ const makeClient = vi.hoisted(() => () => {
   function query(table: string) {
     const filters: Array<[string, unknown]> = [];
     const inFilters: Array<[string, unknown[]]> = [];
+    // `.is(col, null)` — a seeded row may omit the column, which stands for SQL
+    // NULL here.
+    const isFilters: Array<[string, unknown]> = [];
     let cols = '*';
     let op: 'select' | 'update' | 'insert' = 'select';
     let payload: Row = {};
@@ -24,7 +27,8 @@ const makeClient = vi.hoisted(() => () => {
       (store.db[table] ?? []).filter(
         (r) =>
           filters.every(([c, v]) => r[c] === v) &&
-          inFilters.every(([c, vs]) => vs.includes(r[c])),
+          inFilters.every(([c, vs]) => vs.includes(r[c])) &&
+          isFilters.every(([c, v]) => (v === null ? r[c] === null || r[c] === undefined : r[c] === v)),
       );
 
     // `select('*, event:tournament_events(*)')` — the only embed these actions
@@ -38,8 +42,11 @@ const makeClient = vi.hoisted(() => () => {
 
     const run = () => {
       if (op === 'update') {
-        for (const r of matching()) Object.assign(r, payload);
-        return { data: null, error: null };
+        const hit = matching();
+        for (const r of hit) Object.assign(r, payload);
+        // PostgREST reports "matched no rows" as success, so a guarded write can
+        // only be told apart from a no-op by its count.
+        return { data: null, error: null, count: hit.length };
       }
       if (op === 'insert') {
         (store.db[table] ??= []).push({ ...payload });
@@ -54,6 +61,7 @@ const makeClient = vi.hoisted(() => () => {
       insert(p: Row) { op = 'insert'; payload = p; return api; },
       eq(c: string, v: unknown) { filters.push([c, v]); return api; },
       in(c: string, vs: unknown[]) { inFilters.push([c, vs]); return api; },
+      is(c: string, v: unknown) { isFilters.push([c, v]); return api; },
       async single() { const r = matching()[0]; return { data: r ? embed(r) : null, error: null }; },
       async maybeSingle() { const r = matching()[0]; return { data: r ? embed(r) : null, error: null }; },
       then(resolve: (v: unknown) => unknown) { return Promise.resolve(run()).then(resolve); },
@@ -206,7 +214,9 @@ vi.mock('@sentry/nextjs', () => ({ captureException: () => {} }));
 vi.mock('../supabase-server', () => ({ createAdminClient: makeClient }));
 vi.mock('../actions/_shared', () => ({ getExecOrAdmin: async () => ({ id: 'admin-1' }) }));
 
-import { enterMatchResult, enterWalkover, voidMatch, unvoidMatch, setMatchEntry } from '../tournament-actions/results';
+import { enterMatchResult, enterWalkover, voidMatch, unvoidMatch, setMatchEntry, undoMatchResult } from '../tournament-actions/results';
+import { reverseEloSnapshot } from '../tournament-actions/_internal';
+import { createAdminClient } from '../supabase-server';
 
 const QF = 'match-qf';
 const SF = 'match-sf';
@@ -349,6 +359,50 @@ describe('void / restore / replay', () => {
 
     await enterMatchResult(QF, [{ a: 21, b: 15 }], 'a');
     expect(ratingOf('pl-alice')).toBe(applied);
+  });
+
+  // The reversal RPC clears the ratings AND the snapshot in one transaction, but
+  // resetting the match row is a later, separate write. If that reset fails — or
+  // its response is lost — the match is left decided with no snapshot, which is
+  // indistinguishable by shape from a genuinely pre-snapshot match.
+  it('does not rewind an already-reversed match to its registration rating', async () => {
+    await enterMatchResult(QF, [{ a: 21, b: 15 }], 'a');
+    // Alice plays on elsewhere and climbs.
+    store.db.ratings!.find((r) => r.player_id === 'pl-alice')!.singles_elo = 1400;
+
+    // Reverse succeeds; the match reset that would follow it does not happen.
+    await reverseEloSnapshot(createAdminClient(), QF);
+    expect(match(QF).elo_snapshot).toBeNull();
+    expect(match(QF).status).toBe('completed');
+    const afterReversal = ratingOf('pl-alice');
+
+    const res = await undoMatchResult(QF);
+
+    expect(res.ok).toBe(true);
+    // The legacy branch would have written elo_before (1000) over her CURRENT
+    // rating, erasing every match she played after this one. elo_after is null
+    // because the reversal cleared it, and that is the evidence the branch now
+    // requires before rewinding anything.
+    expect(ratingOf('pl-alice')).toBe(afterReversal);
+    expect(ratingOf('pl-alice')).not.toBe(1000);
+    expect(match(QF).status).toBe('ready');
+  });
+
+  it('still rewinds a genuinely pre-snapshot match, where elo_after is stamped', async () => {
+    // The other half of that guard: a match rated before the snapshot column
+    // existed has no snapshot but DOES carry elo_after, and must still reverse.
+    Object.assign(match(QF), {
+      status: 'completed', winner_participant_id: 'p-alice', loser_participant_id: 'p-bob',
+      scores: [{ a: 21, b: 15 }], elo_snapshot: null,
+    });
+    store.db.tournament_participants!.find((p) => p.id === 'p-alice')!.elo_after = 1030;
+    store.db.tournament_participants!.find((p) => p.id === 'p-bob')!.elo_after = 970;
+    store.db.ratings!.find((r) => r.player_id === 'pl-alice')!.singles_elo = 1030;
+
+    expect((await undoMatchResult(QF)).ok).toBe(true);
+
+    expect(ratingOf('pl-alice')).toBe(1000); // back to elo_before
+    expect(store.db.tournament_participants!.find((p) => p.id === 'p-alice')!.elo_after).toBeNull();
   });
 
   it('only restores a voided match', async () => {

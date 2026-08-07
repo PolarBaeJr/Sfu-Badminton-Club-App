@@ -33,6 +33,9 @@ const makeClient = vi.hoisted(() => () => {
     const filters: Array<[string, unknown]> = [];
     const inFilters: Array<[string, unknown[]]> = [];
     const notFilters: Array<[string, string, unknown]> = [];
+    // `.is(col, null)` — a seeded row may omit the column entirely, which stands
+    // for SQL NULL here just as COALESCE tolerates it elsewhere in this harness.
+    const isFilters: Array<[string, unknown]> = [];
     let orderBy: [string, boolean] | null = null;
     let cols = '*';
     let op: Op = 'select';
@@ -55,6 +58,7 @@ const makeClient = vi.hoisted(() => () => {
         (r) =>
           filters.every(([c, v]) => r[c] === v) &&
           inFilters.every(([c, vs]) => vs.includes(r[c])) &&
+          isFilters.every(([c, v]) => (v === null ? r[c] === null || r[c] === undefined : r[c] === v)) &&
           passesNot(r),
       );
       if (!orderBy) return rows;
@@ -80,8 +84,13 @@ const makeClient = vi.hoisted(() => () => {
       // The whole point: a Postgres error is a RESOLVED value, not a rejection.
       if (f) return { data: null, error: { message: f.message } };
       if (op === 'update') {
-        for (const r of matching()) Object.assign(r, payload);
-        return { data: null, error: null };
+        const hit = matching();
+        for (const r of hit) Object.assign(r, payload);
+        // PostgREST reports "matched no rows" as SUCCESS, so the count is the
+        // only way a caller can tell a guarded write fired from one that did
+        // not. Always returned; supabase-js only populates it when asked, and a
+        // caller that does not ask simply ignores it.
+        return { data: null, error: null, count: hit.length };
       }
       if (op === 'insert') {
         const rows = Array.isArray(payload) ? (payload as Row[]) : [payload];
@@ -102,6 +111,7 @@ const makeClient = vi.hoisted(() => () => {
       delete() { op = 'delete'; return api; },
       eq(c: string, v: unknown) { filters.push([c, v]); return api; },
       in(c: string, vs: unknown[]) { inFilters.push([c, vs]); return api; },
+      is(c: string, v: unknown) { isFilters.push([c, v]); return api; },
       not(c: string, o: string, v: unknown) { notFilters.push([c, o, v]); return api; },
       order(c: string, opts?: { ascending?: boolean }) { orderBy = [c, opts?.ascending !== false]; return api; },
       async single() {
@@ -336,7 +346,9 @@ vi.mock('../actions/_shared', () => ({ getExecOrAdmin: async () => ({ id: 'admin
 import { enterMatchResult, editMatchResult, enterWalkover, voidMatch } from '../tournament-actions/results';
 import { finalizeEvent, applyPlacementBonuses } from '../tournament-actions/finalize';
 import { withdrawParticipant } from '../tournament-actions/participants';
-import { settleWrites, assertWritesSucceeded, reverseEloSnapshot } from '../tournament-actions/_internal';
+import {
+  settleWrites, assertWritesSucceeded, reverseEloSnapshot, undoDecidedResult,
+} from '../tournament-actions/_internal';
 import { createAdminClient } from '../supabase-server';
 
 const QF = 'match-qf';
@@ -595,6 +607,46 @@ describe('a decided match is never left unrated', () => {
     expect(match(QF).status).toBe('ready');
     expect(match(QF).walkover_winner ?? null).toBeNull();
     expect(match(QF).winner_participant_id).toBeNull();
+    expect(match(SF).participant_a_id).toBeNull();
+  });
+
+  it('refuses to un-decide a match that turned out to be rated after all', async () => {
+    // The losing side of a two-desk race. Both read a playable match, both write
+    // a result, both compute against a null snapshot; the first RPC commits and
+    // the second is refused with "already rated". Rolling the result back on
+    // that refusal would leave a RATED match open for entry — every rating,
+    // statistic and reliability count applied, and the idempotency guard then
+    // refusing every attempt to enter it again. Strictly worse than the gap the
+    // compensation closes, so the write is conditional on the snapshot still
+    // being null and the count is what reports that it did not fire.
+    //
+    // The same guard covers a response lost after Postgres committed.
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    const rated = { ...match(QF) };
+
+    await expect(
+      undoDecidedResult(createAdminClient(), QF, { ...rated, status: 'ready' }, new Error('is already rated')),
+    ).rejects.toThrow(/already rated, so the result was left in place/);
+
+    expect(match(QF).status).toBe('completed');
+    expect(match(QF).winner_participant_id).toBe('p-alice');
+    expect(match(QF).elo_snapshot).toEqual(rated.elo_snapshot);
+    expect(ratingOf('pl-alice')).toBe(1026);
+  });
+
+  it('compensates when a prerequisite READ fails, not only the rating write', async () => {
+    // applyTournamentMatchElo used to return quietly when one of its own reads
+    // came back with an error — reporting the match as rated when nothing was.
+    // Nothing threw, so the compensation never fired and the caller went on to
+    // advance the winner: a decided, unrated match with a bracket built on it.
+    store.faults.push({ table: 'ratings', op: 'select', message: 'permission denied for table ratings' });
+
+    const res = await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/Could not read current ratings/);
+    expect(match(QF).status).toBe('ready');
+    expect(match(QF).elo_snapshot).toBeNull();
     expect(match(SF).participant_a_id).toBeNull();
   });
 

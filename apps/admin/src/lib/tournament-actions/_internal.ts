@@ -239,11 +239,20 @@ export function getStandardSeedPositions(bracketSize: number): number[] {
 export async function applyTournamentMatchElo(matchId: string) {
   const adminClient = createAdminClient();
 
-  const { data: match } = await adminClient.from('tournament_matches')
+  // Every read below is error-checked, and that is load-bearing rather than
+  // tidiness. This function runs AFTER the result row has been written, so
+  // returning quietly on a failed read reports the match as rated when nothing
+  // was — and the caller's compensation never fires, because nothing threw. A
+  // transient read failure would leave exactly the decided-but-unrated match
+  // undoDecidedResult exists to prevent.
+  const { data: match, error: matchErr } = await adminClient.from('tournament_matches')
     .select('*, event:tournament_events(*)')
     .eq('id', matchId)
     .single();
 
+  if (matchErr) {
+    throw new Error(`Could not read match ${matchId} to rate it — ${matchErr.message}`);
+  }
   if (!match || match.status === 'voided' || match.is_bye) return;
 
   // Idempotency backstop: a populated elo_snapshot means this match's delta was
@@ -337,7 +346,10 @@ export async function applyTournamentMatchElo(matchId: string) {
     if (!winnerId || !loserId) return;
 
     // Fetch both pairs in parallel.
-    const [{ data: winnerPair }, { data: loserPair }] = await Promise.all([
+    const [
+      { data: winnerPair, error: winnerPairErr },
+      { data: loserPair, error: loserPairErr },
+    ] = await Promise.all([
       adminClient.from('tournament_pairs')
         .select('player1_id, player2_id, combined_elo')
         .eq('id', winnerId).single(),
@@ -346,16 +358,31 @@ export async function applyTournamentMatchElo(matchId: string) {
         .eq('id', loserId).single(),
     ]);
 
-    if (!winnerPair || !loserPair) return;
+    // Both ids came off the match row above, so a pair that cannot be read is a
+    // failure, not the unopposed case — that one is caught by the null check on
+    // the ids themselves. Returning here would report the match as rated.
+    if (winnerPairErr || loserPairErr || !winnerPair || !loserPair) {
+      throw new Error(
+        `Could not read the pairs in match ${matchId} to rate it — ` +
+        `${winnerPairErr?.message ?? loserPairErr?.message ?? 'a pair row is missing'}`,
+      );
+    }
 
     const winnerElo = winnerPair.combined_elo ?? 400;
     const loserElo = loserPair.combined_elo ?? 400;
 
     // Single batched ratings fetch for all 4 players
     const allPlayerIds = [winnerPair.player1_id, winnerPair.player2_id, loserPair.player1_id, loserPair.player2_id];
-    const { data: ratings } = await adminClient.from('ratings')
+    const { data: ratings, error: ratingsErr } = await adminClient.from('ratings')
       .select('player_id, doubles_elo, doubles_provisional, doubles_matches_played')
       .in('player_id', allPlayerIds);
+
+    // A failed ratings read used to fall through to the `?? 400` defaults below,
+    // which would rate four established players as if they were all on the floor
+    // rating — and write that as a real, reversible delta.
+    if (ratingsErr) {
+      throw new Error(`Could not read current ratings to rate match ${matchId} — ${ratingsErr.message}`);
+    }
 
     const computeFor = (playerId: string, opponentElo: number, won: boolean) => {
       const rating = ratings?.find(r => r.player_id === playerId);
@@ -403,7 +430,10 @@ export async function applyTournamentMatchElo(matchId: string) {
     if (!winnerId || !loserId) return;
 
     // Fetch both participants in parallel
-    const [{ data: winnerP }, { data: loserP }] = await Promise.all([
+    const [
+      { data: winnerP, error: winnerPErr },
+      { data: loserP, error: loserPErr },
+    ] = await Promise.all([
       adminClient.from('tournament_participants')
         .select('player_id, elo_before')
         .eq('id', winnerId).single(),
@@ -412,12 +442,25 @@ export async function applyTournamentMatchElo(matchId: string) {
         .eq('id', loserId).single(),
     ]);
 
-    if (!winnerP || !loserP) return;
+    // As for pairs above: both ids came off the match row, so this is a failure
+    // and not the unopposed case.
+    if (winnerPErr || loserPErr || !winnerP || !loserP) {
+      throw new Error(
+        `Could not read the participants in match ${matchId} to rate it — ` +
+        `${winnerPErr?.message ?? loserPErr?.message ?? 'a participant row is missing'}`,
+      );
+    }
 
     // Single batched ratings fetch
-    const { data: ratings } = await adminClient.from('ratings')
+    const { data: ratings, error: ratingsErr } = await adminClient.from('ratings')
       .select('player_id, singles_elo, singles_provisional, singles_matches_played')
       .in('player_id', [winnerP.player_id, loserP.player_id]);
+
+    // Without this, a failed read falls through to elo_before / 400 below and
+    // rates the match off registration-time or floor ratings.
+    if (ratingsErr) {
+      throw new Error(`Could not read current ratings to rate match ${matchId} — ${ratingsErr.message}`);
+    }
 
     const winnerRating = ratings?.find(r => r.player_id === winnerP.player_id);
     const loserRating = ratings?.find(r => r.player_id === loserP.player_id);
@@ -599,19 +642,42 @@ export async function undoDecidedResult(
     updated_at: new Date().toISOString(),
   };
 
-  const { error } = await adminClient.from('tournament_matches')
-    .update(restore)
-    .eq('id', matchId);
+  const detail = cause instanceof Error ? cause.message : String(cause);
+
+  // `elo_snapshot IS NULL` is the whole safety of this write, and it is a
+  // condition on the row rather than on anything this request remembers.
+  //
+  // The rating did not necessarily fail to happen just because THIS request saw
+  // it fail. Two desks can both read a playable match, both write a result and
+  // both compute against a null snapshot; the first RPC commits and the second
+  // is refused with "already rated". A response can also be lost after Postgres
+  // committed. In both cases the match IS rated, and restoring it to playable
+  // would leave a rated match open for entry — Elo, statistics and the
+  // reliability count all applied, with the idempotency guard then refusing
+  // every attempt to re-enter it. Strictly worse than the gap this closes.
+  //
+  // count: 'exact' because PostgREST reports "matched no rows" as success. The
+  // filter is the guard; the count is how we find out the guard fired.
+  const { error, count } = await adminClient.from('tournament_matches')
+    .update(restore, { count: 'exact' })
+    .eq('id', matchId)
+    .is('elo_snapshot', null);
 
   // The compensating write is itself a PostgREST write and can fail too. That
   // lands back in exactly the state this function exists to prevent, so say so
   // instead of reporting the rating error alone — an exec reading "rating
   // failed, try again" would try again and be refused.
   if (error) {
-    const detail = cause instanceof Error ? cause.message : String(cause);
     throw new Error(
       `${detail} — and match ${matchId} could not be put back into a retryable state (${error.message}). ` +
       `It is now recorded as decided but UNRATED and must be corrected by hand.`,
+    );
+  }
+
+  if (count === 0) {
+    throw new Error(
+      `${detail} — but match ${matchId} is already rated, so the result was left in place. ` +
+      `Another desk most likely entered it at the same moment; reload before entering it again.`,
     );
   }
 

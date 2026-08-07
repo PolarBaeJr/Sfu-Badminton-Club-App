@@ -278,6 +278,17 @@ COMMENT ON FUNCTION public.apply_tournament_match_rating(uuid, text, jsonb) IS
 --     matching what is actually in the row. If a later match has moved it since,
 --     rewinding to streak_before would erase that later match's effect, so the
 --     old step-toward-zero applies instead.
+--
+--     That detection is a heuristic, and the bound is worth stating: streak
+--     values repeat, so later matches CAN return the row to the stored
+--     streak_after (win → +1, then a loss to -1, then a win back to +1), and the
+--     restore then rewinds over them. Distinguishing that case needs a per-match
+--     streak ledger, which is a bigger change than this migration; the
+--     pre-00078 behaviour was wrong in that case too, just differently. What is
+--     bounded here is the damage: the collision requires the streak to land back
+--     on exactly the stored value, and only current_*_streak is affected —
+--     ratings, counts and the reliability figure are all reversed from the
+--     entry's own numbers and are unaffected by it.
 CREATE OR REPLACE FUNCTION public.reverse_tournament_match_rating(
   p_match_id uuid
 )
@@ -348,9 +359,21 @@ BEGIN
     -- jsonb_typeof, `NULL = 'boolean'` is NULL, and COALESCE(NULL, false) routes
     -- the entry to the older branch, which is the conservative direction.
     v_has_stats  := COALESCE(jsonb_typeof(v_entry->'won') = 'boolean', false);
-    v_has_streak := v_has_stats
-                    AND COALESCE(jsonb_typeof(v_entry->'streak_before') = 'number', false)
+    v_has_streak := COALESCE(jsonb_typeof(v_entry->'streak_before') = 'number', false)
                     AND COALESCE(jsonb_typeof(v_entry->'streak_after') = 'number', false);
+
+    -- The tiers are meant to be whole. A HALF-present entry — one streak field
+    -- but not the other, or streak fields with no `won` — is not an older
+    -- snapshot, it is a damaged one, and silently reversing it at a lower tier
+    -- would leave the statistics or the reliability count permanently wrong with
+    -- nothing to say so. Neither function in this file can produce that shape,
+    -- so refuse it rather than guess.
+    IF COALESCE(jsonb_typeof(v_entry->'streak_before') = 'number', false)
+       <> COALESCE(jsonb_typeof(v_entry->'streak_after') = 'number', false)
+       OR (v_has_streak AND NOT v_has_stats) THEN
+      RAISE EXCEPTION 'elo_snapshot entry for player % on match % is malformed: streak_before/streak_after/won must be present together',
+        v_player_id, p_match_id;
+    END IF;
 
     -- An entry whose ratings row is missing cannot be reversed at all. The
     -- TypeScript version counted that as a per-write failure and pressed on with
