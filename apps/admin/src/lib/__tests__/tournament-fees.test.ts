@@ -71,8 +71,11 @@ const makeClient = vi.hoisted(() => () => {
         return { data: [row], error: null };
       }
       if (op === 'update') {
-        for (const r of matching()) Object.assign(r, payload);
-        return { data: null, error: null };
+        // `.select()` after an update returns the rows that matched — the count
+        // the action needs to notice that it changed nothing at all.
+        const hit = matching();
+        for (const r of hit) Object.assign(r, payload);
+        return { data: hit, error: null };
       }
       if (op === 'delete') {
         const doomed = matching();
@@ -211,6 +214,36 @@ describe('createFeeTier', () => {
     expect(tier(MEMBER_TIER).is_default).toBe(true);
   });
 
+  // Matching zero rows is not an error in PostgREST, so a tier deleted between
+  // the clear and the promotion produced a silent success with the tournament
+  // left holding no default at all — the outcome the whole reorder exists to
+  // prevent, arrived at by a different road.
+  it('restores the previous default when the tier to promote has vanished', async () => {
+    await expect(
+      (async () => {
+        // Simulate the concurrent delete: the tier is gone by the time the
+        // promotion update runs, so that update matches nothing.
+        store.faults.push({
+          table: 'tournament_fee_tiers',
+          op: 'update',
+          when: ({ filters, payload }) => {
+            if (payload.is_default !== true) return false;
+            const target = filters.find(([c]) => c === 'id')?.[1];
+            if (target !== MEMBER_TIER) {
+              store.db.tournament_fee_tiers = tiers().filter((t) => t.id !== target);
+            }
+            return false;
+          },
+          message: 'never fires — this fault only observes',
+        });
+        await createFeeTier({ tournament_id: TOURNAMENT_A, name: 'Alumni', amount_cents: 800, is_default: true });
+      })(),
+    ).rejects.toThrow(/no longer exists/i);
+
+    expect(defaultsOf(TOURNAMENT_A)).toHaveLength(1);
+    expect(tier(MEMBER_TIER).is_default).toBe(true);
+  });
+
   // Last resort. If the restore fails too the tournament really does have no
   // default, and the only useful thing left is to say so out loud rather than
   // let it be discovered as a $0 entry fee weeks later.
@@ -256,6 +289,17 @@ describe('updateFeeTier', () => {
 
     expect(tier(GUEST_TIER).name).toBe('Visitor');
     expect(tier(MEMBER_TIER).is_default).toBe(true);
+  });
+
+  // feeTierSchema.partial() accepts tournament_id, and this action used to pass
+  // the whole payload straight through — so a tier could be moved to another
+  // tournament, turning every tournament_fees row already pointing at it into
+  // the cross-tournament reference markTournamentFeePaid now refuses to create.
+  it('will not move a tier to a different tournament', async () => {
+    await updateFeeTier(GUEST_TIER, { tournament_id: TOURNAMENT_B, name: 'Visitor' });
+
+    expect(tier(GUEST_TIER).tournament_id).toBe(TOURNAMENT_A);
+    expect(tier(GUEST_TIER).name).toBe('Visitor');
   });
 });
 

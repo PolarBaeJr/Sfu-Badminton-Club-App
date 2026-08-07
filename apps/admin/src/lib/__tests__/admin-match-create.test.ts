@@ -27,6 +27,9 @@ const store = vi.hoisted(() => ({
   db: {} as Record<string, Row[]>,
   faults: [] as Fault[],
   seq: 0,
+  /** Fires when the participant batch is attempted — stands in for another
+   *  admin touching the committed match shell while this action is mid-flight. */
+  onParticipantInsert: null as null | (() => void),
 }));
 
 // Minimal PostgREST-shaped builder: thenable, resolves with { data, error }
@@ -49,6 +52,7 @@ const makeClient = vi.hoisted(() => () => {
     const fault = () => store.faults.find((f) => f.table === table && f.op === op);
 
     const run = (): { data: Row[] | null; error: { message: string; code?: string } | null } => {
+      if (table === 'match_participants' && op === 'insert') store.onParticipantInsert?.();
       const f = fault();
       if (f) return { data: null, error: { message: f.message, code: f.code } };
       if (op === 'insert') {
@@ -73,7 +77,9 @@ const makeClient = vi.hoisted(() => () => {
             store.db[child] = (store.db[child] ?? []).filter((r) => !ids.includes(r.match_id));
           }
         }
-        return { data: null, error: null };
+        // `.select()` after a delete returns the rows that were removed — which
+        // is how the action tells "deleted nothing" from "deleted the shell".
+        return { data: doomed, error: null };
       }
       return { data: matching(), error: null };
     };
@@ -130,6 +136,7 @@ const games = () => store.db.match_games ?? [];
 beforeEach(() => {
   store.faults = [];
   store.seq = 0;
+  store.onParticipantInsert = null;
   store.db = {
     seasons: [{ id: 'season-1', active_flag: true }],
     ratings: [
@@ -212,5 +219,28 @@ describe('adminCreateMatch', () => {
     if (res.ok) throw new Error('unreachable');
     expect(res.error).toContain(matches()[0]!.id as string);
     expect(res.error).toMatch(/void/i);
+  });
+
+  // The shell is committed and visible on /matches while this action is still
+  // running, so another admin can void it in that window. Cleaning up by id
+  // alone would then delete somebody else's decision — and cascade away any
+  // dispute filed against it — while reporting only the original failure. The
+  // delete is scoped to the status we wrote, so a row that has moved on stays.
+  it('does not delete a match that somebody else has already voided', async () => {
+    store.faults.push({
+      table: 'match_participants',
+      op: 'insert',
+      message: 'participants exploded',
+    });
+    // Stand in for the concurrent void: the row is no longer as we left it.
+    store.onParticipantInsert = () => { matches()[0]!.result_status = 'voided'; };
+
+    const res = await adminCreateMatch(validMatch);
+
+    expect(res.ok).toBe(false);
+    expect(matches()).toHaveLength(1);
+    expect(matches()[0]!.result_status).toBe('voided');
+    if (res.ok) throw new Error('unreachable');
+    expect(res.error).toMatch(/void it from the matches list/i);
   });
 });

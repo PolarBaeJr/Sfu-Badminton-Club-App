@@ -22,6 +22,8 @@ interface Fault {
   op: Op;
   message: string;
   code?: string;
+  /** Narrow the fault to one write, or observe it — see the concurrency test. */
+  when?: (ctx: { filters: Array<[string, unknown]>; payload: Row }) => boolean;
 }
 
 const store = vi.hoisted(() => ({
@@ -47,7 +49,10 @@ const makeClient = vi.hoisted(() => () => {
           isFilters.every(([c, v]) => (v === null ? r[c] == null : r[c] === v)),
       );
 
-    const fault = () => store.faults.find((f) => f.table === table && f.op === op);
+    const fault = () =>
+      store.faults.find(
+        (f) => f.table === table && f.op === op && (!f.when || f.when({ filters, payload })),
+      );
 
     const run = (): { data: Row[] | null; error: { message: string; code?: string } | null } => {
       const f = fault();
@@ -59,8 +64,11 @@ const makeClient = vi.hoisted(() => () => {
         return { data: [row], error: null };
       }
       if (op === 'update') {
-        for (const r of matching()) Object.assign(r, payload);
-        return { data: null, error: null };
+        // `.select()` after an update returns the rows that matched, which is
+        // how the action tells "recorded it" from "matched nothing".
+        const hit = matching();
+        for (const r of hit) Object.assign(r, payload);
+        return { data: hit, error: null };
       }
       return { data: matching(), error: null };
     };
@@ -254,6 +262,35 @@ describe('recordReinstatementPayment', () => {
       recordReinstatementPayment({ fee_id: feeId, amount_cents: 2000 }),
     ).rejects.toThrow(/admin/i);
     expect(fees()[0]!.amount_cents).toBeNull();
+  });
+
+  // Two admins with the payment dialog open. Both read a null amount, so the
+  // read-time check clears both; the `.is('amount_cents', null)` filter is what
+  // separates them. Matching zero rows is not an error in PostgREST, so without
+  // a row-count check the loser was told the payment was recorded and the audit
+  // log gained an entry for an amount the ledger does not hold.
+  it('tells the loser of a concurrent recording that it did not take', async () => {
+    const feeId = await execUnban();
+    const before = fees().length;
+
+    // Stand in for the other admin committing first, between this call's read
+    // and its guarded update.
+    store.faults.push({
+      table: 'reinstatement_fees',
+      op: 'update',
+      when: () => {
+        fees()[0]!.amount_cents = 2000;
+        return false;
+      },
+      message: 'never fires — this fault only observes',
+    });
+
+    await expect(
+      recordReinstatementPayment({ fee_id: feeId, amount_cents: 5000 }),
+    ).rejects.toThrow(/somebody else recorded/i);
+
+    expect(fees()[0]!.amount_cents).toBe(2000);
+    expect(fees()).toHaveLength(before);
   });
 
   it('rejects a reinstatement that no longer exists', async () => {

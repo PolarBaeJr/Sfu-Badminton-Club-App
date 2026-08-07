@@ -157,12 +157,26 @@ export async function adminCreateMatch(data: {
 async function discardIncompleteMatch(
   adminClient: ReturnType<typeof createAdminClient>,
   matchId: string,
+  expectedStatus: string,
   cause: string,
 ): Promise<never> {
-  const { error: deleteError } = await adminClient.from('matches').delete().eq('id', matchId);
-  if (deleteError) {
+  // Scoped to the row as we wrote it, not to the id alone. The shell is
+  // committed and visible on /matches for as long as this takes, so another
+  // admin can void it in the meantime — and a blind delete would then destroy
+  // somebody else's decision (and cascade away any dispute raised against it)
+  // while reporting the original failure. If the status has moved, the row is
+  // no longer ours to remove.
+  const { data: deleted, error: deleteError } = await adminClient
+    .from('matches')
+    .delete()
+    .eq('id', matchId)
+    .eq('result_status', expectedStatus)
+    .select('id');
+
+  if (deleteError || !deleted?.length) {
+    const detail = deleteError ? deleteError.message : 'the match was changed by someone else';
     Sentry.captureException(
-      new Error(`Orphaned admin match left behind: ${cause} (cleanup: ${deleteError.message})`),
+      new Error(`Orphaned admin match left behind: ${cause} (cleanup: ${detail})`),
       { extra: { matchId, action: 'admin_create_match' } },
     );
     throw new Error(
@@ -204,6 +218,10 @@ async function adminCreateMatchImpl(data: {
 
   const scoreSummary = data.games.map(g => `${g.side_a_score}-${g.side_b_score}`).join(', ');
 
+  // Rated matches must start as pending_confirmation: apply_match_result
+  // rejects anything else, then flips the status to confirmed itself.
+  const initialStatus = data.rated_flag ? 'pending_confirmation' : 'confirmed';
+
   const { data: match, error: matchError } = await adminClient.from('matches').insert({
     match_type: data.match_type,
     event_type: 'admin_entered',
@@ -219,9 +237,7 @@ async function adminCreateMatchImpl(data: {
     played_at: new Date().toISOString(),
     submitted_by: admin.id,
     confirmed_by: admin.id,
-    // Rated matches must start as pending_confirmation: apply_match_result
-    // rejects anything else, then flips the status to confirmed itself.
-    result_status: data.rated_flag ? 'pending_confirmation' : 'confirmed',
+    result_status: initialStatus,
     season_id: activeSeason.data?.id || null,
     admin_note: data.admin_note || null,
   }).select().single();
@@ -274,7 +290,7 @@ async function adminCreateMatchImpl(data: {
   // is a normal-looking result on /matches, it belongs to no player's history,
   // and there is no admin control that can repair it.
   const { error: participantError } = await adminClient.from('match_participants').insert(participants);
-  if (participantError) await discardIncompleteMatch(adminClient, match.id, participantError.message);
+  if (participantError) await discardIncompleteMatch(adminClient, match.id, initialStatus, participantError.message);
 
   const gameRows = data.games.map(g => ({
     match_id: match.id,
@@ -283,7 +299,7 @@ async function adminCreateMatchImpl(data: {
     side_b_score: g.side_b_score,
   }));
   const { error: gameError } = await adminClient.from('match_games').insert(gameRows);
-  if (gameError) await discardIncompleteMatch(adminClient, match.id, gameError.message);
+  if (gameError) await discardIncompleteMatch(adminClient, match.id, initialStatus, gameError.message);
 
   // Apply Elo if rated.
   //

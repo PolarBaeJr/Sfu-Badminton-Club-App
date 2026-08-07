@@ -49,11 +49,18 @@ async function promoteDefaultTier(
     if (clearError) throw new Error(clearError.message);
   }
 
-  const { error: setError } = await adminClient
+  const { data: promoted, error: setError } = await adminClient
     .from('tournament_fee_tiers')
     .update({ is_default: true })
-    .eq('id', tierId);
-  if (!setError) return;
+    .eq('id', tierId)
+    // Matching no row is not an error in PostgREST, and "no row" is reachable:
+    // the tier can be deleted between the clear above and this update. Without
+    // the count check that path returns success having left the tournament with
+    // no default at all — the exact outcome this function exists to prevent.
+    .select('id');
+  if (!setError && promoted?.length) return;
+
+  const reason = setError ? setError.message : 'the fee tier no longer exists';
 
   if (previous) {
     const { error: restoreError } = await adminClient
@@ -62,7 +69,7 @@ async function promoteDefaultTier(
       .eq('id', previous.id);
     if (restoreError) {
       Sentry.captureException(
-        new Error(`Tournament left with no default fee tier: ${setError.message} (restore: ${restoreError.message})`),
+        new Error(`Tournament left with no default fee tier: ${reason} (restore: ${restoreError.message})`),
         { extra: { tournamentId, tierId, previousDefaultId: previous.id } },
       );
       throw new Error(
@@ -71,7 +78,7 @@ async function promoteDefaultTier(
       );
     }
   }
-  throw new Error(setError.message);
+  throw new Error(reason);
 }
 
 export async function createFeeTier(input: FeeTierInput) {
@@ -136,7 +143,14 @@ export async function updateFeeTier(id: string, input: Partial<FeeTierInput>) {
   // and a rejected rename leaves the tournament's existing default alone.
   // Clearing it up front meant a rename to an already-used name reported
   // failure AND silently removed the default.
-  const { is_default: wantsDefault, ...fields } = input;
+  //
+  // tournament_id is dropped rather than applied. feeTierSchema.partial()
+  // accepts it, so this action would happily move a tier to another
+  // tournament — and every tournament_fees row already pointing at that tier
+  // would silently become a cross-tournament reference, which is the same
+  // corruption markTournamentFeePaid now refuses to create. A tier belongs to
+  // the tournament it was made for; renaming and repricing are the edits.
+  const { is_default: wantsDefault, tournament_id: _ignored, ...fields } = input;
   const changes = wantsDefault === false ? { ...fields, is_default: false } : fields;
   if (Object.keys(changes).length > 0) {
     const { error } = await adminClient.from('tournament_fee_tiers').update(changes).eq('id', id);

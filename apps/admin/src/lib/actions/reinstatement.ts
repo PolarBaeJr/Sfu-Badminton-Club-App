@@ -242,7 +242,7 @@ export async function recordReinstatementPayment(input: ReinstatementPaymentInpu
     seasonId = activeSeason?.id ?? null;
   }
 
-  const { error } = await adminClient
+  const { data: updated, error } = await adminClient
     .from('reinstatement_fees')
     .update({
       amount_cents: parsed.amount_cents,
@@ -257,8 +257,16 @@ export async function recordReinstatementPayment(input: ReinstatementPaymentInpu
     // recording the same payment from two open tabs would both pass the check
     // and the second would overwrite the first. This way the second update
     // matches no row.
-    .is('amount_cents', null);
+    .is('amount_cents', null)
+    // And the row count is checked, because matching no row is not an error in
+    // PostgREST. Without this the loser of that race is told the payment was
+    // recorded and the audit log gets an entry for an amount the ledger does
+    // not hold — a worse lie than the one this action was written to fix.
+    .select('id');
   if (error) throw new Error(error.message);
+  if (!updated?.length) {
+    throw new ExpectedError('Somebody else recorded a payment for that reinstatement first.');
+  }
 
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
