@@ -29,6 +29,28 @@ export function sortLegalDocuments<T extends { document: string }>(docs: T[]): T
   );
 }
 
+// Which season's event-waiver template an event should start from (00074).
+//
+// An existing tournament uses ITS OWN season, not the active one: editing a
+// tournament left over from last term must not silently offer this term's
+// venue and insurer wording. A tournament being created has no season row yet
+// — createTournament stamps the active season — so the active season is the
+// answer there, and also the fallback for a tournament whose season_id is NULL
+// (seasons.id is ON DELETE SET NULL, and createTournament writes NULL when no
+// season is active).
+//
+// Returns null when there is nothing to offer, which the caller shows as a
+// disabled button rather than pasting an empty waiver into the box.
+export function resolveEventWaiverTemplate(
+  templates: { season_id: string; content: string }[],
+  tournamentSeasonId: string | null | undefined,
+  activeSeasonId: string | null | undefined
+): string | null {
+  const seasonId = tournamentSeasonId ?? activeSeasonId;
+  if (!seasonId) return null;
+  return templates.find((t) => t.season_id === seasonId)?.content ?? null;
+}
+
 // The single source of truth for acceptance validity, shared by the player
 // gate (assertCurrentWaiver, the layout's needsWaiver) and the admin players
 // table's Waiver column so the three call sites can't drift:

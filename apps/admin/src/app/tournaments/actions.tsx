@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Dialog, Input, Select, Switch, Dropdown, Textarea, DatePicker } from '@badminton/ui';
-import { MEMBERSHIP_TYPES, ALL_MEMBERSHIP_TYPES } from '@badminton/shared';
+import { MEMBERSHIP_TYPES, ALL_MEMBERSHIP_TYPES, resolveEventWaiverTemplate } from '@badminton/shared';
 import { createTournament, updateTournament, archiveTournament, deleteTournament } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { MoreVertical } from 'lucide-react';
@@ -20,17 +20,29 @@ interface TournamentData {
   event_multiplier: number;
   placement_bonus_enabled: boolean;
   waiver_text: string | null;
+  // Which season's waiver template this tournament's editor offers. Present on
+  // the page's `select('*')`; declared here so the template lookup is typed.
+  season_id?: string | null;
   status: string;
+}
+
+// The per-season event-waiver templates from Legal (00074), passed down from
+// the page so the dialog can pre-fill the waiver box without a round trip.
+export interface WaiverTemplateContext {
+  templates: { season_id: string; content: string }[];
+  activeSeasonId: string | null;
 }
 
 function TournamentFormDialog({
   open,
   onClose,
   tournament,
+  waiverTemplates,
 }: {
   open: boolean;
   onClose: () => void;
   tournament?: TournamentData;
+  waiverTemplates: WaiverTemplateContext;
 }) {
   const isEdit = !!tournament;
   const [loading, setLoading] = useState(false);
@@ -50,6 +62,14 @@ function TournamentFormDialog({
   );
   const { toast } = useToast();
   const router = useRouter();
+
+  // An existing tournament offers its own season's wording; a new one offers
+  // the active season's, which is the season createTournament will stamp on it.
+  const seasonTemplate = resolveEventWaiverTemplate(
+    waiverTemplates.templates,
+    tournament?.season_id,
+    waiverTemplates.activeSeasonId
+  );
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -188,9 +208,35 @@ function TournamentFormDialog({
             onChange={(e) => setWaiverText(e.target.value)}
             rows={5}
           />
-          <p className="text-xs text-[var(--text-muted)] mt-1">
-            Participants must accept this before registering. Leave blank for none.
-          </p>
+          <div className="flex items-start justify-between gap-3 mt-1">
+            <p className="text-xs text-[var(--text-muted)]">
+              Participants must accept this before registering. Leave blank for none.
+            </p>
+            {/* Copies the season's template text in — it is not linked. Editing
+                the template in Legal afterwards must not change a waiver
+                participants have already accepted (event_waiver_acceptances
+                pins a hash of the accepted text).
+                The label changes when the box is non-empty rather than opening
+                a confirm dialog: this is already inside a Dialog, and the
+                wording is enough to say the click overwrites. */}
+            <Button
+              type="button"
+              variant="ghost"
+              className="text-xs flex-shrink-0"
+              disabled={!seasonTemplate || waiverText === seasonTemplate}
+              title={
+                seasonTemplate
+                  ? "Fill the box with this season's event waiver template from Legal"
+                  : 'No event waiver template for this season — add one in Legal'
+              }
+              onClick={() => {
+                if (!seasonTemplate) return;
+                setWaiverText(seasonTemplate);
+              }}
+            >
+              {waiverText.trim() ? 'Replace with template' : 'Use season template'}
+            </Button>
+          </div>
         </div>
         <div className="flex items-center justify-between">
           <Button variant="ghost" onClick={onClose} type="button" className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">Cancel</Button>
@@ -201,18 +247,24 @@ function TournamentFormDialog({
   );
 }
 
-export function CreateTournamentForm() {
+export function CreateTournamentForm({ waiverTemplates }: { waiverTemplates: WaiverTemplateContext }) {
   const [open, setOpen] = useState(false);
 
   return (
     <>
       <Button onClick={() => setOpen(true)} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">New Tournament</Button>
-      <TournamentFormDialog open={open} onClose={() => setOpen(false)} />
+      <TournamentFormDialog open={open} onClose={() => setOpen(false)} waiverTemplates={waiverTemplates} />
     </>
   );
 }
 
-export function TournamentMenu({ tournament }: { tournament: TournamentData }) {
+export function TournamentMenu({
+  tournament,
+  waiverTemplates,
+}: {
+  tournament: TournamentData;
+  waiverTemplates: WaiverTemplateContext;
+}) {
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -264,6 +316,7 @@ export function TournamentMenu({ tournament }: { tournament: TournamentData }) {
         open={editOpen}
         onClose={() => setEditOpen(false)}
         tournament={tournament}
+        waiverTemplates={waiverTemplates}
       />
 
       <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} title="Delete Tournament">

@@ -3,7 +3,7 @@
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
-import { parseOrThrow, legalDocumentUpdateSchema, waiverDocumentSchema, type LegalDocumentUpdateInput, type WaiverDocument } from '@badminton/shared';
+import { parseOrThrow, legalDocumentUpdateSchema, waiverDocumentSchema, eventWaiverTemplateUpdateSchema, type LegalDocumentUpdateInput, type EventWaiverTemplateUpdateInput, type WaiverDocument } from '@badminton/shared';
 import { getAdminPlayer, getExecOrAdmin } from './_shared';
 
 // Platform configuration. Admin-only, and this is the boundary that matters:
@@ -108,6 +108,69 @@ export async function updateLegalDocument(input: LegalDocumentUpdateInput) {
 
   // Left over from when the documents were a block inside /settings.
   revalidatePath('/legal');
+}
+
+// Save a season's event-waiver template (00074) — the text an exec pulls into
+// a new tournament's "Event waiver" box instead of retyping it.
+//
+// getAdminPlayer(), NOT getExecOrAdmin(): this is legal text, and it is the
+// same boundary updateLegalDocument() draws. Execs read it on /legal and copy
+// it into an event; only an admin changes the wording. There is deliberately
+// no requireReacceptance() counterpart — nobody accepts a template. Editing it
+// cannot reach anyone who has already signed, because a tournament holds its
+// own copy of the text (see the migration header).
+export async function updateEventWaiverTemplate(input: EventWaiverTemplateUpdateInput) {
+  parseOrThrow(eventWaiverTemplateUpdateSchema, input);
+  const admin = await getAdminPlayer();
+  const adminClient = createAdminClient();
+
+  // maybeSingle, not single: a season with no template yet is the normal first
+  // save, not an error. Only the active season is seeded.
+  const { data: old, error: readError } = await adminClient
+    .from('event_waiver_templates')
+    .select('content')
+    .eq('season_id', input.season_id)
+    .maybeSingle();
+  if (readError) throw new Error(readError.message);
+
+  const { data: saved, error } = await adminClient
+    .from('event_waiver_templates')
+    .upsert(
+      {
+        season_id: input.season_id,
+        content: input.content,
+        updated_at: new Date().toISOString(),
+        updated_by: admin.id,
+      },
+      { onConflict: 'season_id' }
+    )
+    .select('season_id');
+  if (error) throw new Error(error.message);
+  // PostgREST reports "matched no rows" as a success with an empty body, so a
+  // missing error proves nothing was rejected — not that anything was written.
+  // Without this, a season_id that no longer exists (or an upsert silently
+  // filtered away) would toast "Saved" over an unchanged template.
+  if (!saved || saved.length !== 1) {
+    throw new Error('Template was not saved — the season may no longer exist');
+  }
+
+  await logAdminAudit(adminClient, {
+    actor_id: admin.id,
+    action_type: 'event_waiver_template_updated',
+    target_type: 'event_waiver_template',
+    // A real uuid here, unlike the legal_documents entries above: this table is
+    // keyed by season_id, which is the seasons.id uuid.
+    target_id: input.season_id,
+    old_value: { content_length: old?.content.length ?? null },
+    new_value: { content_length: input.content.length },
+    reason: old
+      ? 'event waiver template updated for a season'
+      : 'event waiver template created for a season',
+  });
+
+  revalidatePath('/legal');
+  // The create/edit tournament dialog is pre-filled from these rows.
+  revalidatePath('/tournaments');
 }
 
 // Force every member to re-sign a specific document on their next visit,

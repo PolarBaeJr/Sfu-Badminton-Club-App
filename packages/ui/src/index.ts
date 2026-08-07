@@ -3,4 +3,12 @@ export * from './components';
 // keeps working: the matching moved out of PlayerPicker.tsx into its own
 // React-free module, and no caller should have to care.
 export { filterPlayerOptions, filterRowsByPlayers } from './player-search';
+export {
+  toSelectedIds,
+  toSingleValue,
+  addSelectedId,
+  removeSelectedId,
+  selectableOptions,
+  selectedOptions,
+} from './player-selection';
 export { cn } from './utils';

@@ -4,6 +4,7 @@ import { PageHeader } from '@badminton/ui';
 import { sortLegalDocuments } from '@badminton/shared';
 import { accessLevelFor } from '@/lib/permissions';
 import { LegalDocumentsForm } from './legal-documents-form';
+import { EventWaiverTemplateForm } from './event-waiver-template-form';
 
 // Its own section rather than a block inside Settings, because two different
 // audiences need it: an admin editing the text, and an exec who needs to read
@@ -17,10 +18,24 @@ export default async function LegalPage() {
   const viewer = await getAuthenticatedExecOrAdmin();
   const canEdit = accessLevelFor(viewer) === 'admin';
 
-  const { data: legalDocuments } = await createAdminClient()
+  const adminClient = createAdminClient();
+  const { data: legalDocuments } = await adminClient
     .from('legal_documents')
     .select('document, version, content, updated_at');
   const documents = sortLegalDocuments(legalDocuments ?? []);
+
+  // Event-waiver templates are per season (00074) and are NOT legal_documents
+  // rows — that table is the list of things every member must accept, and a
+  // fifth row in it would block the whole club out of the player app.
+  // Newest season first: the one being drafted for is almost always the target.
+  const [{ data: seasons }, { data: waiverTemplates }] = await Promise.all([
+    adminClient
+      .from('seasons')
+      .select('id, name, active_flag')
+      .order('year', { ascending: false })
+      .order('term', { ascending: false }),
+    adminClient.from('event_waiver_templates').select('season_id, content, updated_at'),
+  ]);
 
   return (
     <div>
@@ -49,6 +64,24 @@ export default async function LegalPage() {
           )}
         </p>
         <LegalDocumentsForm documents={documents} canEdit={canEdit} />
+      </div>
+
+      {/* Its own card, below the four documents, because it is a different kind
+          of thing: nobody accepts this text as-is. It is the wording a
+          tournament's own event waiver starts from. */}
+      <div className="card-base mt-6">
+        <p className="settings-section-desc">
+          The event waiver a tournament starts from, kept per season so each term&rsquo;s
+          venue and club terms can differ.{' '}
+          {canEdit
+            ? 'Execs pull it into an event when they create a tournament.'
+            : 'Only an admin can change this text. You can use it when you create a tournament.'}
+        </p>
+        <EventWaiverTemplateForm
+          seasons={seasons ?? []}
+          templates={waiverTemplates ?? []}
+          canEdit={canEdit}
+        />
       </div>
     </div>
   );

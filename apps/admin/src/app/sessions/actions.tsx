@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Badge, Button, Dialog, Input, PlayerPicker, Select, useConfirm, DatePicker } from '@badminton/ui';
 import { createSession, updateSession, archiveSession, deleteSession, markAttendance, clearAttendanceMark, sendSessionReminders, getOrCreateSessionCheckinToken, rotateSessionCheckinToken } from '@/lib/actions';
+import { runBulk, summarizeBulk } from '@/lib/bulk-add';
 import { useToast } from '@/components/toast-provider';
 import { LocationField } from './location-field';
 import { MoreVertical, Users, QrCode } from 'lucide-react';
@@ -54,7 +55,10 @@ function relativeTime(iso: string): string {
 
 export function AttendanceDialog({ sessionId, attendees, players }: AttendanceDialogProps) {
   const [open, setOpen] = useState(false);
-  const [addPlayerId, setAddPlayerId] = useState('');
+  const [addPlayerIds, setAddPlayerIds] = useState<string[]>([]);
+  // Separate from busyPlayerId: that one names the single row whose buttons are
+  // spinning, and a walk-in batch is not any one row.
+  const [addingWalkIns, setAddingWalkIns] = useState(false);
   const [busyPlayerId, setBusyPlayerId] = useState<string | null>(null);
   const { toast } = useToast();
   const confirm = useConfirm();
@@ -88,9 +92,23 @@ export function AttendanceDialog({ sessionId, attendees, players }: AttendanceDi
   }
 
   async function handleAdd() {
-    if (!addPlayerId) return;
-    await handleMark(addPlayerId, 'present');
-    setAddPlayerId('');
+    if (addPlayerIds.length === 0) return;
+    setAddingWalkIns(true);
+    const outcome = await runBulk(addPlayerIds, async (playerId) => {
+      const res = await markAttendance({ session_id: sessionId, player_id: playerId, status: 'present' });
+      // markAttendance reports failure by RETURNING { ok: false } rather than
+      // throwing. Without this, a rejected mark would be counted as a success
+      // and the batch would claim it added people it did not.
+      if (!res.ok) throw new Error(res.error);
+    });
+    const { message, tone } = summarizeBulk(outcome, {
+      done: 'Marked', failed: 'Could not mark', noun: 'player present', nounPlural: 'players present',
+    });
+    toast(message, tone);
+    // Keep the ones that failed selected so a partial run is visible, not just
+    // stated in a toast that will disappear.
+    setAddPlayerIds(outcome.failures.map((f) => f.id));
+    setAddingWalkIns(false);
   }
 
   return (
@@ -145,14 +163,19 @@ export function AttendanceDialog({ sessionId, attendees, players }: AttendanceDi
           <div className="flex items-end gap-2 pt-4 mt-2 border-t border-[var(--border)]">
             <div className="flex-1">
               <PlayerPicker
-                label="Add player"
+                multiple
+                label="Add players"
                 players={addablePlayers.map((p) => ({ id: p.id, name: p.full_name, avatarUrl: p.avatar_url }))}
-                value={addPlayerId}
-                onChange={setAddPlayerId}
+                value={addPlayerIds}
+                onChange={setAddPlayerIds}
               />
             </div>
-            <Button disabled={!addPlayerId || busyPlayerId !== null} onClick={handleAdd}>
-              Mark present
+            <Button
+              loading={addingWalkIns}
+              disabled={addPlayerIds.length === 0 || busyPlayerId !== null || addingWalkIns}
+              onClick={handleAdd}
+            >
+              {addPlayerIds.length > 1 ? `Mark ${addPlayerIds.length} present` : 'Mark present'}
             </Button>
           </div>
         )}
