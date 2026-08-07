@@ -138,6 +138,41 @@ export async function adminCreateMatch(data: {
   return runAction(() => adminCreateMatchImpl(data));
 }
 
+/**
+ * Undo a half-built admin match and re-raise. Always throws.
+ *
+ * PostgREST gives the action no transaction, so the `matches` row is already
+ * committed by the time the participant or game insert can fail. Of the two
+ * possible half-states, "no match at all" is the one somebody can act on — the
+ * admin sees the failure and enters the match again — and "a completed match
+ * with a winner and no participants" is the one nobody can even see. So we
+ * delete the shell we just created. match_participants and match_games are
+ * both ON DELETE CASCADE on match_id (00001_schema.sql), so a partial batch of
+ * children goes with it and no orphan is left behind.
+ *
+ * If the delete ALSO fails the orphan is real, and the only useful thing left
+ * is to name it: the message and the Sentry event carry the match id so it can
+ * be voided by hand instead of sitting in the results list looking legitimate.
+ */
+async function discardIncompleteMatch(
+  adminClient: ReturnType<typeof createAdminClient>,
+  matchId: string,
+  cause: string,
+): Promise<never> {
+  const { error: deleteError } = await adminClient.from('matches').delete().eq('id', matchId);
+  if (deleteError) {
+    Sentry.captureException(
+      new Error(`Orphaned admin match left behind: ${cause} (cleanup: ${deleteError.message})`),
+      { extra: { matchId, action: 'admin_create_match' } },
+    );
+    throw new Error(
+      `The match could not be saved (${cause}), and the incomplete match ${matchId} could not be removed. ` +
+      'Void it from the Matches list before entering it again.',
+    );
+  }
+  throw new Error(`The match could not be saved and was discarded: ${cause}`);
+}
+
 async function adminCreateMatchImpl(data: {
   match_type: string;
   format: string;
@@ -229,7 +264,17 @@ async function adminCreateMatchImpl(data: {
     };
   });
 
-  await adminClient.from('match_participants').insert(participants);
+  // Both of these results used to be thrown away. supabase-js RESOLVES on a
+  // Postgres error rather than rejecting, so a duplicate player (UNIQUE
+  // (match_id, player_id), 00001) or any other constraint failure looked
+  // exactly like success — and for an unrated match nothing downstream reads
+  // the participants, so the action audited the match and returned its id
+  // while the database held a completed, confirmed match with a winner, a
+  // score summary and nobody in it. That row is the invisible half-state: it
+  // is a normal-looking result on /matches, it belongs to no player's history,
+  // and there is no admin control that can repair it.
+  const { error: participantError } = await adminClient.from('match_participants').insert(participants);
+  if (participantError) await discardIncompleteMatch(adminClient, match.id, participantError.message);
 
   const gameRows = data.games.map(g => ({
     match_id: match.id,
@@ -237,9 +282,17 @@ async function adminCreateMatchImpl(data: {
     side_a_score: g.side_a_score,
     side_b_score: g.side_b_score,
   }));
-  await adminClient.from('match_games').insert(gameRows);
+  const { error: gameError } = await adminClient.from('match_games').insert(gameRows);
+  if (gameError) await discardIncompleteMatch(adminClient, match.id, gameError.message);
 
-  // Apply Elo if rated
+  // Apply Elo if rated.
+  //
+  // Deliberately NOT discarded the way the two inserts above are: by this point
+  // the match has its participants and games, so a failure here leaves a
+  // complete, pending_confirmation match that shows up on /matches and that
+  // voidMatch can already deal with. That is the visible, recoverable
+  // half-state, and deleting a fully-formed match under the admin's feet would
+  // be the more destructive choice.
   if (data.rated_flag) {
     const { error: eloError } = await adminClient.rpc('apply_match_result', {
       p_match_id: match.id,

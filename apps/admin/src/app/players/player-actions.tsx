@@ -273,7 +273,7 @@ export function PlayerActions({ mode, assignStatus, playerId, playerName, player
               Lift the ban on <strong className="text-[var(--text-primary)]">{playerName}</strong>.
               {isAdmin
                 ? ' Recording an amount is optional (leave blank for a free reinstatement).'
-                : ' Recording a reinstatement fee is admin-only — ask an admin if money changed hands.'}
+                : ' Recording a reinstatement fee is admin-only. Go ahead and unban — if money changed hands, an admin records it afterwards from the Fees page.'}
             </p>
             {/* Money stays with admins even though the unban itself does not:
                 this writes a reinstatement_fees row into the admin-only fees

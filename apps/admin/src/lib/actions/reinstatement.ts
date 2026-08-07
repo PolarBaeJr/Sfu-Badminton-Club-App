@@ -7,10 +7,12 @@ import {
   parseOrThrow,
   banSchema,
   reinstatementSchema,
+  reinstatementPaymentSchema,
   type BanInput,
   type ReinstatementInput,
+  type ReinstatementPaymentInput,
 } from '@badminton/shared';
-import { getExecOrAdmin } from './_shared';
+import { getExecOrAdmin, getAdminPlayer } from './_shared';
 import { ExpectedError } from '@badminton/shared';
 import { isAdminActor } from '../player-field-access';
 
@@ -112,12 +114,32 @@ export async function reinstatePlayer(input: ReinstatementInput) {
     .eq('active_flag', true)
     .maybeSingle();
 
+  // Was the money settled, or is it simply unknown?
+  //
+  // The row used to be written with paid_at = now() no matter who filed it, so
+  // an exec unban — the dialog hides the payment fields from execs entirely —
+  // produced a row that claimed a payment had been taken and recorded its
+  // amount as nothing. It counted as $0 in the season income and could never
+  // be corrected: reinstatePlayer refuses a second call because the member is
+  // no longer banned, and reinstatement_fees_player_ban_key (00065) refuses a
+  // second row for the same ban. Real money, permanently booked as zero.
+  //
+  // An admin SAW the amount box and left it blank, which the dialog spells out
+  // as "leave blank for a free reinstatement" — that is a decision, so record
+  // it as one: $0, paid. An exec was never shown the box, so nothing is known
+  // — leave amount_cents and paid_at null. A null paid_at is what every other
+  // ledger in this app already means by "not settled" (markTournamentFeeUnpaid
+  // clears exactly those fields), so it is excluded from season income rather
+  // than counted as zero, and recordReinstatementPayment below fills it in.
+  const paymentRecorded = isAdminActor(actor);
+  const amountCents = paymentRecorded ? (input.amount_cents ?? 0) : null;
+
   const { data: fee, error: feeError } = await adminClient
     .from('reinstatement_fees')
     .insert({
       player_id: input.player_id,
-      amount_cents: input.amount_cents ?? null,
-      paid_at: new Date().toISOString(),
+      amount_cents: amountCents,
+      paid_at: paymentRecorded ? new Date().toISOString() : null,
       marked_by: actor.id,
       method: input.method ?? null,
       reference: input.reference ?? null,
@@ -139,8 +161,9 @@ export async function reinstatePlayer(input: ReinstatementInput) {
     new_value: {
       reinstatement_fee_id: fee?.id ?? null,
       fee_recorded: !feeError,
+      payment_recorded: paymentRecorded,
       ban_started_at: banStartedAt,
-      amount_cents: input.amount_cents ?? null,
+      amount_cents: amountCents,
       method: input.method ?? null,
     },
   }, { playerId: input.player_id });
@@ -161,4 +184,96 @@ export async function reinstatePlayer(input: ReinstatementInput) {
     }
     throw new Error(feeError.message);
   }
+}
+
+/**
+ * Record the money for a reinstatement that has already happened.
+ *
+ * This is the missing half of the exec/admin split above. An exec lifts the
+ * ban, the member hands over $20, and until now there was no way for anyone to
+ * ever attach that $20 to the club's books: reinstatePlayer refuses to run
+ * again because the member is no longer banned, and 00065's
+ * (player_id, ban_started_at) index refuses a second row for the same ban.
+ *
+ * Which is also why the fix is an update and not "skip the placeholder row".
+ * The row IS the ban episode: reinstatePlayer clears players.banned_at, and
+ * reinstatement_fees.ban_started_at is NOT NULL with no default precisely so
+ * that nothing can invent one later (00065). Once the row is gone the ban
+ * identity is gone with it, and a later insert becomes impossible to key. So
+ * the row is written unconditionally and the payment fields are filled in here.
+ *
+ * Admin-only, matching /fees in the access map and the payment fields in the
+ * unban dialog — an exec who could fill this in would be recording money.
+ */
+export async function recordReinstatementPayment(input: ReinstatementPaymentInput) {
+  const parsed = parseOrThrow(reinstatementPaymentSchema, input);
+  const admin = await getAdminPlayer();
+  const adminClient = createAdminClient();
+
+  const { data: fee } = await adminClient
+    .from('reinstatement_fees')
+    .select('id, player_id, amount_cents, paid_at, method, reference, season_id')
+    .eq('id', parsed.fee_id)
+    .maybeSingle();
+  if (!fee) throw new ExpectedError('That reinstatement no longer exists.');
+
+  // Deliberately not an editor for money that is already on the books. This
+  // action exists to close a gap, not to make the ledger rewritable: a figure
+  // that has been recorded is corrected by an admin who can see the audit
+  // trail, not silently overwritten from a list. amount_cents IS NULL is
+  // exactly "nobody has said what was collected" — including the rows written
+  // before this split existed.
+  if (fee.amount_cents != null) {
+    throw new ExpectedError('That reinstatement already has a recorded amount.');
+  }
+
+  // Only fill a blank. A row written between terms has no season and its money
+  // would otherwise stay out of every income figure — the gap 00069 exists to
+  // close — but a row that already names a season keeps it: the payment counts
+  // toward the season the reinstatement was granted in, not whichever season
+  // happens to be active when the paperwork catches up.
+  let seasonId = fee.season_id;
+  if (seasonId == null) {
+    const { data: activeSeason } = await adminClient
+      .from('seasons')
+      .select('id')
+      .eq('active_flag', true)
+      .maybeSingle();
+    seasonId = activeSeason?.id ?? null;
+  }
+
+  const { error } = await adminClient
+    .from('reinstatement_fees')
+    .update({
+      amount_cents: parsed.amount_cents,
+      paid_at: new Date().toISOString(),
+      marked_by: admin.id,
+      method: parsed.method ?? null,
+      reference: parsed.reference ?? null,
+      season_id: seasonId,
+    })
+    .eq('id', parsed.fee_id)
+    // Re-checked in the WHERE clause, not just in the read above: two admins
+    // recording the same payment from two open tabs would both pass the check
+    // and the second would overwrite the first. This way the second update
+    // matches no row.
+    .is('amount_cents', null);
+  if (error) throw new Error(error.message);
+
+  await logAdminAudit(adminClient, {
+    actor_id: admin.id,
+    action_type: 'reinstatement_payment_recorded',
+    target_type: 'player',
+    target_id: fee.player_id,
+    old_value: { amount_cents: null, paid_at: fee.paid_at, method: fee.method, reference: fee.reference },
+    new_value: {
+      reinstatement_fee_id: fee.id,
+      amount_cents: parsed.amount_cents,
+      method: parsed.method ?? null,
+      reference: parsed.reference ?? null,
+      season_id: seasonId,
+    },
+  }, { playerId: fee.player_id });
+
+  revalidatePath('/fees');
 }

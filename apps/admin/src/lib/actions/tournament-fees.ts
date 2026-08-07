@@ -1,5 +1,6 @@
 'use server';
 
+import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
@@ -9,33 +10,103 @@ import {
   tournamentFeeMarkSchema,
   type FeeTierInput,
   type TournamentFeeMarkInput,
+  ExpectedError,
 } from '@badminton/shared';
 import { getAdminPlayer } from './_shared';
+
+/**
+ * Move the "default" flag onto one tier, restoring the old one if it fails.
+ *
+ * uq_tournament_fee_tiers_default (00002) is a partial unique index, so this is
+ * necessarily two statements with no transaction around them. Between them the
+ * tournament has no default tier, and a failure on the second one used to leave
+ * it that way permanently. The compensating update puts the previous default
+ * back, so the visible outcome of a failure is "the change did not take" rather
+ * than the silent "this tournament now prices unlisted players at nothing".
+ *
+ * If the restore itself fails there is nothing left to try; Sentry and an
+ * explicit message are the only honest options, because the state that survives
+ * is the one nobody would think to look for.
+ */
+async function promoteDefaultTier(
+  adminClient: ReturnType<typeof createAdminClient>,
+  tournamentId: string,
+  tierId: string,
+) {
+  const { data: previous } = await adminClient
+    .from('tournament_fee_tiers')
+    .select('id')
+    .eq('tournament_id', tournamentId)
+    .eq('is_default', true)
+    .neq('id', tierId)
+    .maybeSingle();
+
+  if (previous) {
+    const { error: clearError } = await adminClient
+      .from('tournament_fee_tiers')
+      .update({ is_default: false })
+      .eq('id', previous.id);
+    if (clearError) throw new Error(clearError.message);
+  }
+
+  const { error: setError } = await adminClient
+    .from('tournament_fee_tiers')
+    .update({ is_default: true })
+    .eq('id', tierId);
+  if (!setError) return;
+
+  if (previous) {
+    const { error: restoreError } = await adminClient
+      .from('tournament_fee_tiers')
+      .update({ is_default: true })
+      .eq('id', previous.id);
+    if (restoreError) {
+      Sentry.captureException(
+        new Error(`Tournament left with no default fee tier: ${setError.message} (restore: ${restoreError.message})`),
+        { extra: { tournamentId, tierId, previousDefaultId: previous.id } },
+      );
+      throw new Error(
+        'The default fee tier could not be changed, and the previous default could not be restored — ' +
+        'this tournament now has no default tier. Set one from the fees page.',
+      );
+    }
+  }
+  throw new Error(setError.message);
+}
 
 export async function createFeeTier(input: FeeTierInput) {
   parseOrThrow(feeTierSchema, input);
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
-  // Only one default tier per tournament (uq_tournament_fee_tiers_default).
-  if (input.is_default) {
-    await adminClient
-      .from('tournament_fee_tiers')
-      .update({ is_default: false })
-      .eq('tournament_id', input.tournament_id);
-  }
-
+  // Create the tier as a NON-default first, then move the default onto it.
+  //
+  // The old order cleared the tournament's existing default and only then
+  // inserted — so an insert that failed UNIQUE(tournament_id, name) reported
+  // failure and left the tournament with no default tier at all. Nothing in the
+  // console says "this tournament lost its default"; it just starts pricing
+  // unlisted players at nothing, and markTournamentFeePaid snapshots a null
+  // amount. Doing the write that can fail on its own data FIRST means a
+  // rejected name changes nothing.
+  //
+  // uq_tournament_fee_tiers_default (00002) is a partial unique index on
+  // tournament_id WHERE is_default, so the flip genuinely has to be
+  // clear-then-set; it cannot be one statement through PostgREST.
   const { data: tier, error } = await adminClient
     .from('tournament_fee_tiers')
     .insert({
       tournament_id: input.tournament_id,
       name: input.name,
       amount_cents: input.amount_cents,
-      is_default: input.is_default,
+      is_default: false,
     })
     .select('id')
     .single();
   if (error) throw new Error(error.message);
+
+  if (input.is_default) {
+    await promoteDefaultTier(adminClient, input.tournament_id, tier.id);
+  }
 
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
@@ -60,17 +131,21 @@ export async function updateFeeTier(id: string, input: Partial<FeeTierInput>) {
     .single();
   if (!old) throw new Error('Fee tier not found');
 
-  // Only one default tier per tournament (uq_tournament_fee_tiers_default).
-  if (input.is_default) {
-    await adminClient
-      .from('tournament_fee_tiers')
-      .update({ is_default: false })
-      .eq('tournament_id', old.tournament_id)
-      .neq('id', id);
+  // Same ordering as createFeeTier, and for the same reason: the field update
+  // is the one that can fail on UNIQUE(tournament_id, name), so it goes first
+  // and a rejected rename leaves the tournament's existing default alone.
+  // Clearing it up front meant a rename to an already-used name reported
+  // failure AND silently removed the default.
+  const { is_default: wantsDefault, ...fields } = input;
+  const changes = wantsDefault === false ? { ...fields, is_default: false } : fields;
+  if (Object.keys(changes).length > 0) {
+    const { error } = await adminClient.from('tournament_fee_tiers').update(changes).eq('id', id);
+    if (error) throw new Error(error.message);
   }
 
-  const { error } = await adminClient.from('tournament_fee_tiers').update(input).eq('id', id);
-  if (error) throw new Error(error.message);
+  if (wantsDefault === true) {
+    await promoteDefaultTier(adminClient, old.tournament_id, id);
+  }
 
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
@@ -118,24 +193,38 @@ export async function markTournamentFeePaid(input: TournamentFeeMarkInput) {
   // tournament's default tier's amount. Records the tier that determined it.
   let tierId = input.tier_id ?? null;
   let amountCents = input.amount_cents ?? null;
-  if (amountCents == null) {
-    if (tierId) {
-      const { data: tier } = await adminClient
-        .from('tournament_fee_tiers')
-        .select('amount_cents')
-        .eq('id', tierId)
-        .single();
-      amountCents = tier?.amount_cents ?? null;
-    } else {
-      const { data: tier } = await adminClient
-        .from('tournament_fee_tiers')
-        .select('id, amount_cents')
-        .eq('tournament_id', input.tournament_id)
-        .eq('is_default', true)
-        .single();
-      tierId = tier?.id ?? null;
-      amountCents = tier?.amount_cents ?? null;
-    }
+
+  if (tierId) {
+    // tournament_fees.tier_id is a plain FK to tournament_fee_tiers(id)
+    // (00001), which constrains the tier to exist and nothing more — a tier
+    // belonging to a DIFFERENT tournament is a perfectly valid row as far as
+    // Postgres is concerned. The lookup used to be keyed on the id alone, so
+    // passing tournament B's tier id while marking a fee for tournament A
+    // copied B's price onto A's fee and stored B's tier against it. This
+    // filters on the pair, so a tier from another tournament simply is not
+    // found.
+    //
+    // Checked whenever a tier is named, not only when the amount has to be
+    // derived from it. The old code skipped the lookup entirely when an
+    // explicit amount was supplied, which meant the one input path that never
+    // validated the tier was also the one that stored it verbatim.
+    const { data: tier } = await adminClient
+      .from('tournament_fee_tiers')
+      .select('id, amount_cents')
+      .eq('id', tierId)
+      .eq('tournament_id', input.tournament_id)
+      .maybeSingle();
+    if (!tier) throw new ExpectedError('That fee tier does not belong to this tournament.');
+    if (amountCents == null) amountCents = tier.amount_cents;
+  } else if (amountCents == null) {
+    const { data: tier } = await adminClient
+      .from('tournament_fee_tiers')
+      .select('id, amount_cents')
+      .eq('tournament_id', input.tournament_id)
+      .eq('is_default', true)
+      .maybeSingle();
+    tierId = tier?.id ?? null;
+    amountCents = tier?.amount_cents ?? null;
   }
 
   const { data: fee, error } = await adminClient

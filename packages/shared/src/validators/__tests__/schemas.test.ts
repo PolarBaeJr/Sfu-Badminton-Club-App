@@ -18,6 +18,8 @@ import {
   feeTierSchema,
   tournamentFeeMarkSchema,
   reinstatementSchema,
+  reinstatementPaymentSchema,
+  adminMatchCreateSchema,
   banSchema,
   playerFlagsSchema,
   reliabilityAdjustSchema,
@@ -550,6 +552,63 @@ describe('reinstatementSchema', () => {
   });
   it('rejects a non-UUID player_id', () => {
     expect(reinstatementSchema.safeParse({ player_id: 'x' }).success).toBe(false);
+  });
+});
+
+describe('reinstatementPaymentSchema', () => {
+  it('accepts $0 — a free reinstatement is a recorded decision, not a blank', () => {
+    expect(
+      reinstatementPaymentSchema.safeParse({ fee_id: UUID_A, amount_cents: 0 }).success,
+    ).toBe(true);
+  });
+  // The row already exists by the time this is called, so a missing amount
+  // would be indistinguishable from never having recorded one — which is the
+  // exact state the action exists to clear.
+  it('requires an amount', () => {
+    expect(reinstatementPaymentSchema.safeParse({ fee_id: UUID_A }).success).toBe(false);
+  });
+  it('rejects a negative amount', () => {
+    expect(
+      reinstatementPaymentSchema.safeParse({ fee_id: UUID_A, amount_cents: -1 }).success,
+    ).toBe(false);
+  });
+});
+
+describe('adminMatchCreateSchema', () => {
+  const base = {
+    match_type: 'singles' as const,
+    format: 'single_21' as const,
+    rated_flag: false,
+    side_a_players: [UUID_A],
+    side_b_players: [UUID_B],
+    winner_side: 'a' as const,
+    games: [{ game_number: 1, side_a_score: 21, side_b_score: 15 }],
+  };
+
+  it('accepts two different players', () => {
+    expect(adminMatchCreateSchema.safeParse(base).success).toBe(true);
+  });
+
+  // The bug this guards: the schema checked only that each side had 1-2 UUIDs,
+  // so the same player on both sides passed validation, the match row was
+  // committed, and the participant batch then died on
+  // UNIQUE(match_id, player_id) — leaving a completed match with a winner and
+  // no participants while the action reported success.
+  it('rejects the same player on both sides', () => {
+    expect(
+      adminMatchCreateSchema.safeParse({
+        ...base, side_a_players: [UUID_A], side_b_players: [UUID_A],
+      }).success,
+    ).toBe(false);
+  });
+
+  // Same constraint, same orphan: two of the same partner on one doubles side.
+  it('rejects the same player twice on one side', () => {
+    expect(
+      adminMatchCreateSchema.safeParse({
+        ...base, match_type: 'doubles', side_a_players: [UUID_A, UUID_A], side_b_players: [UUID_B],
+      }).success,
+    ).toBe(false);
   });
 });
 

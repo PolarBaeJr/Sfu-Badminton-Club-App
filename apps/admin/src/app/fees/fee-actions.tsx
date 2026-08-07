@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Button, Dialog, Input, useConfirm } from '@badminton/ui';
 import { resolvePaymentMethod } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
-import { markFeePaid, waiveFee, markFeeUnpaid, addManualFee, removeManualFee } from '@/lib/actions';
+import { markFeePaid, waiveFee, markFeeUnpaid, addManualFee, removeManualFee, recordReinstatementPayment } from '@/lib/actions';
 import {
   PaymentMethodFields,
   paymentMethodInvalid,
@@ -163,6 +163,73 @@ export function AddManualFee({ seasonId, seasonName }: { seasonId: string; seaso
             <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
             <Button onClick={handleAdd} loading={isPending} className="flex-1" disabled={!name.trim() || paymentMethodInvalid(payment)}>
               Add
+            </Button>
+          </div>
+        </div>
+      </Dialog>
+    </>
+  );
+}
+
+/**
+ * Fill in the money for a reinstatement that has already been granted.
+ *
+ * An exec can lift a ban but cannot record a payment, so their unban leaves a
+ * reinstatement with no amount. Before this existed there was no route back to
+ * that row at all — the member was no longer banned, so the Unban dialog was
+ * gone, and the ban could not be reinstated a second time. Whatever was handed
+ * over stayed off the books for good.
+ *
+ * Amount is required here, unlike the other fee dialogs: the row already
+ * exists, so a blank submission would be indistinguishable from not having
+ * bothered. $0.00 is a legitimate entry meaning the reinstatement was free.
+ */
+export function RecordReinstatementPayment({ feeId, playerName }: { feeId: string; playerName: string }) {
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState('');
+  const [payment, setPayment] = useState<PaymentMethodState>(EMPTY_PAYMENT_METHOD);
+  const [isPending, startTransition] = useTransition();
+  const { toast } = useToast();
+  const router = useRouter();
+
+  const dollars = parseFloat(amount);
+  const amountInvalid = amount.trim() === '' || Number.isNaN(dollars) || dollars < 0;
+
+  function handleRecord() {
+    startTransition(async () => {
+      try {
+        await recordReinstatementPayment({
+          fee_id: feeId,
+          amount_cents: Math.round(dollars * 100),
+          method: resolvePaymentMethod(payment.method, payment.customMethod),
+          reference: payment.reference.trim() || undefined,
+        });
+        toast('Reinstatement payment recorded', 'success');
+        setOpen(false);
+        setAmount('');
+        setPayment(EMPTY_PAYMENT_METHOD);
+        router.refresh();
+      } catch (err) {
+        toast(err instanceof Error ? err.message : 'Failed to record payment', 'error');
+      }
+    });
+  }
+
+  return (
+    <>
+      <Button variant="ghost" size="sm" onClick={() => setOpen(true)}>Record payment</Button>
+      <Dialog open={open} onClose={() => setOpen(false)} title="Record reinstatement payment">
+        <div className="space-y-4">
+          <p className="text-sm text-[var(--text-secondary)]">
+            What did <strong className="text-[var(--text-primary)]">{playerName}</strong> pay to be reinstated?
+            Enter $0.00 if the reinstatement was free.
+          </p>
+          <Input label="Amount $" type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 20.00" />
+          <PaymentMethodFields value={payment} onChange={setPayment} disabled={isPending} />
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button onClick={handleRecord} loading={isPending} disabled={amountInvalid || paymentMethodInvalid(payment)} className="flex-1">
+              Record
             </Button>
           </div>
         </div>

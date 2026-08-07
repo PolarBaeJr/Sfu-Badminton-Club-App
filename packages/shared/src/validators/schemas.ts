@@ -296,6 +296,22 @@ export const adminMatchCreateSchema = z.object({
   // custom shape longer than the presets.
   games: z.array(adminMatchGameSchema).min(1).max(CUSTOM_FORMAT_BOUNDS.maxGames),
   admin_note: z.string().max(500).optional(),
+}).superRefine((v, ctx) => {
+  // Nobody plays themselves. The two sides were validated only for length, so
+  // the same UUID could appear on both sides (or twice on one side) and the
+  // action would happily build two participant rows for one player — which
+  // match_participants' UNIQUE(match_id, player_id) then refuses, AFTER the
+  // match row has already been committed. Rejecting it here is the cheap half
+  // of that fix; matches.ts still has to survive the write failing, because a
+  // concurrent delete can produce one that no schema can see coming.
+  const all = [...v.side_a_players, ...v.side_b_players];
+  if (new Set(all).size !== all.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['side_b_players'],
+      message: 'A player can only appear once in a match — check both sides.',
+    });
+  }
 });
 
 export const feeMarkSchema = z.object({
@@ -350,6 +366,19 @@ export const reinstatementSchema = z.object({
   method: z.string().max(40).optional(),
   // Same field and cap as club_fees.reference (00039/00059): the transaction
   // id that lets somebody reconcile this against a bank statement later.
+  reference: z.string().max(120).optional(),
+});
+
+// Filling in the money on a reinstatement that has already happened. An exec
+// may lift a ban but may not touch the ledger, so their unban leaves a row with
+// no amount and no paid_at; this is how an admin records what was actually
+// collected afterwards. amount_cents is required — the whole point of the call
+// is to state a figure — and 0 is a legal figure, meaning the reinstatement
+// really was free.
+export const reinstatementPaymentSchema = z.object({
+  fee_id: z.string().uuid(),
+  amount_cents: z.number().int().nonnegative(),
+  method: z.string().max(40).optional(),
   reference: z.string().max(120).optional(),
 });
 
@@ -449,6 +478,7 @@ export type ManualFeeInput = z.infer<typeof manualFeeSchema>;
 export type FeeTierInput = z.infer<typeof feeTierSchema>;
 export type TournamentFeeMarkInput = z.infer<typeof tournamentFeeMarkSchema>;
 export type ReinstatementInput = z.infer<typeof reinstatementSchema>;
+export type ReinstatementPaymentInput = z.infer<typeof reinstatementPaymentSchema>;
 export type BanInput = z.infer<typeof banSchema>;
 export type PlayerFlagsInput = z.infer<typeof playerFlagsSchema>;
 export type VarsityNoteInput = z.infer<typeof varsityNoteSchema>;
