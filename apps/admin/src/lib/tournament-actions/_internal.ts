@@ -17,7 +17,6 @@ import {
   isOpenMatch,
   forfeitOutcome,
   OPEN_MATCH_STATUSES,
-  PROVISIONAL_THRESHOLD,
   sortStandings,
 } from '@badminton/shared';
 import type {
@@ -500,175 +499,123 @@ export async function applyTournamentMatchElo(matchId: string) {
   }
 }
 
-/** One player's line in a match's elo_snapshot. */
-interface SnapshotEntry {
-  player_id: string;
-  before: number;
-  after: number;
-  delta: number;
-  /**
-   * Present only on snapshots written since 00070. Its presence IS the version
-   * marker: an older snapshot's match never moved the statistics, so reversing
-   * them would take counts off that this match never put on.
-   */
-  won?: boolean;
-  points_scored?: number;
-  points_allowed?: number;
-  games_won?: number;
-  games_lost?: number;
-}
-
-// Reverse a previously applied Elo snapshot for a match. Resets ratings to their
-// pre-match values, takes the match's statistics back off, and clears
-// participant elo_after/elo_change for singles.
-//
-// The statistics half is not optional. editMatchResult reverses the snapshot and
-// then RE-rates the match, so a reversal that left matches_played/wins/points
-// behind would add a second set of counts on every correction; undo and void
-// would leave a result in the statistics that no longer exists.
-//
-// Two figures cannot be reversed exactly and are handled as follows:
-//   - best_*_streak is a high-water mark. It is never written here, exactly as
-//     it is never written on the way in.
-//   - current_*_streak is only exactly invertible when the match being undone
-//     was the player's most recent one, which is the case the desk actually
-//     hits. Otherwise it steps one toward zero and stops there rather than
-//     inventing a sign.
+/**
+ * Undo everything a rated tournament match did: each player's Elo delta and
+ * match statistics, the reliability counter, the singles participants'
+ * elo_after/elo_change, and the snapshot itself.
+ *
+ * The whole reversal is ONE transaction inside
+ * reverse_tournament_match_rating (00078). It used to be a batch of PostgREST
+ * read-modify-writes here, and that shape carried a defect no amount of care in
+ * TypeScript could close: the ratings came off the ladder in one round trip and
+ * the REDUCED snapshot went back in another. When the second one failed, the
+ * ORIGINAL snapshot survived on a match whose deltas were already gone — so the
+ * next void/undo/edit reversed the same entries a second time. Since 00070 the
+ * statistics travel with the Elo, so a double reverse also strips a
+ * matches_played, a win, and a set of points and games the match never added.
+ * The floors at 0 made that quieter, not rarer.
+ *
+ * That is also why the old partial-reversal machinery is gone rather than
+ * ported. Keeping the un-reversed entries on the snapshot and retrying the
+ * remainder was the mitigation for a batch that could half-land; nothing can
+ * half-land now, so there is never a remainder.
+ *
+ * Reversing is therefore idempotent: the snapshot is cleared in the same
+ * transaction as the deltas, and a match with no snapshot has nothing to undo,
+ * so the RPC returns quietly. A retry after an unclear outcome is safe.
+ *
+ * The statistics half is not optional. editMatchResult reverses the snapshot and
+ * then RE-rates the match, so a reversal that left matches_played/wins/points
+ * behind would add a second set of counts on every correction; undo and void
+ * would leave a result in the statistics that no longer exists.
+ *
+ * Two figures still cannot be reversed unconditionally, and the SQL handles both:
+ *   - best_*_streak is a high-water mark. It is never written on the way back
+ *     out, exactly as it is never written on the way in.
+ *   - current_*_streak is restored EXACTLY when the match being undone is still
+ *     the player's most recent rated one — 00078 stores the streak before and
+ *     after, and compares the stored "after" with what is in the row. Before
+ *     that, undoing a win by a player who had been on -3 left them on 0 rather
+ *     than -3. If a later match has moved the streak since, the old
+ *     step-toward-zero applies instead, because rewinding to the stored value
+ *     would erase that later match.
+ */
 export async function reverseEloSnapshot(
   adminClient: ReturnType<typeof createAdminClient>,
-  match: Record<string, unknown>
+  matchId: string,
 ) {
-  const snapshot = match.elo_snapshot as {
-    discipline: 'singles' | 'doubles';
-    entries: SnapshotEntry[];
-  } | null;
-  if (!snapshot || !snapshot.entries?.length) return;
+  const { error } = await adminClient.rpc('reverse_tournament_match_rating', {
+    p_match_id: matchId,
+  });
 
-  const d = snapshot.discipline;
-  const ratingColumn = d === 'doubles' ? 'doubles_elo' : 'singles_elo';
-  const playerIds = snapshot.entries.map(e => e.player_id);
-
-  // Every column a reversal can touch, so the read-modify-write below has the
-  // current value of each. One UPDATE per player carries all of them, so a
-  // player's Elo and their counts can never come apart.
-  const statColumns = [
-    `${d}_matches_played`, `${d}_wins`, `${d}_losses`,
-    `${d}_points_scored`, `${d}_points_allowed`,
-    `${d}_games_won`, `${d}_games_lost`,
-    `current_${d}_streak`, `${d}_provisional`,
-  ];
-
-  const ratingSettings = await getRatingSettings(adminClient);
-  const threshold = ratingSettings?.provisional_threshold ?? PROVISIONAL_THRESHOLD;
-
-  // Single batched fetch for all current ratings.
-  const { data: currentRows, error: fetchErr } = await adminClient.from('ratings')
-    .select(`player_id, ${ratingColumn}, ${statColumns.join(', ')}`)
-    .in('player_id', playerIds);
-  // Returning here used to mean voidMatch reported success having reversed
-  // nothing — the delta stayed on the ladder and the snapshot stayed on the
-  // row. There is no safe way to continue without the current ratings, so the
-  // caller has to hear about it.
-  if (fetchErr) {
-    throw new Error(`Could not read current ratings to reverse match ${String(match.id)}: ${fetchErr.message}`);
+  // Nothing landed — the whole call rolled back — so the snapshot is still on
+  // the match and a retry reverses it once. Callers turn this into a refusal:
+  // a void or an undo that could not hand the rating back has not happened.
+  if (error) {
+    throw new Error(
+      `Elo reversal for match ${matchId} failed and NOTHING was reversed — ${error.message}`,
+    );
   }
+}
 
-  // The column list is built at runtime, so supabase-js's select-string type
-  // parser cannot infer a row shape for it and hands back a ParserError type.
-  // The shape is known here — it is `statColumns` — so read it as plain rows.
-  const currentMap = new Map<string, Record<string, unknown>>();
-  for (const row of (currentRows ?? []) as unknown as Record<string, unknown>[]) {
-    if (row[ratingColumn] !== undefined) currentMap.set(row.player_id as string, row);
-  }
-
-  const nowIso = new Date().toISOString();
-
-  // Apply inverse delta regardless of drift so net effect is zero even if
-  // intermediate matches moved the rating. Counts are floored at 0 — a negative
-  // matches_played is a worse lie than a slightly high one.
-  const reversalPayload = (e: SnapshotEntry, row: Record<string, unknown>) => {
-    const n = (k: string) => (row[k] as number | undefined) ?? 0;
-    const payload: Record<string, unknown> = {
-      [ratingColumn]: (row[ratingColumn] as number) - e.delta,
-      updated_at: nowIso,
-    };
-
-    // Pre-00070 snapshot: its match never moved the statistics.
-    if (typeof e.won !== 'boolean') return payload;
-
-    const played = Math.max(0, n(`${d}_matches_played`) - 1);
-    const streak = n(`current_${d}_streak`);
-
-    payload[`${d}_matches_played`] = played;
-    payload[e.won ? `${d}_wins` : `${d}_losses`] = Math.max(0, n(e.won ? `${d}_wins` : `${d}_losses`) - 1);
-    payload[`${d}_points_scored`] = Math.max(0, n(`${d}_points_scored`) - (e.points_scored ?? 0));
-    payload[`${d}_points_allowed`] = Math.max(0, n(`${d}_points_allowed`) - (e.points_allowed ?? 0));
-    payload[`${d}_games_won`] = Math.max(0, n(`${d}_games_won`) - (e.games_won ?? 0));
-    payload[`${d}_games_lost`] = Math.max(0, n(`${d}_games_lost`) - (e.games_lost ?? 0));
-    payload[`current_${d}_streak`] = e.won ? Math.max(0, streak - 1) : Math.min(0, streak + 1);
-    // Dropping back under the threshold makes the player provisional again —
-    // the same rule that cleared the flag, read the other way round. Never
-    // cleared here: crossing the threshold is the job of applying a match.
-    if (played < threshold) payload[`${d}_provisional`] = true;
-
-    return payload;
+/**
+ * Put a match back the way it was found, then rethrow, after its rating failed.
+ *
+ * Both entry points write the result row BEFORE rating it — they have to, since
+ * applyTournamentMatchElo reads the winner and loser off the row. So an RPC
+ * failure used to leave a match decided but UNRATED, and nothing could retry it:
+ * enterMatchResult refuses anything that is not pending/ready/live, and the
+ * withdrawal cascade skips matches that are no longer open. The ratings were
+ * never applied — 00070 made that atomic — but the result was, and the pair
+ * could not be completed by any action in the console.
+ *
+ * Undoing the result write restores the only state a retry can start from.
+ * Advancement has deliberately not happened yet at either call site (rating runs
+ * first, precisely so a later match is rated against the rating an earlier one
+ * left behind), so there is nothing downstream to unwind here.
+ *
+ * Every field either writer touches is restored from the row as it was read,
+ * rather than nulled: `status` in particular can legitimately be pending, ready
+ * or live, and guessing would decide the bracket's state on the caller's behalf.
+ */
+export async function undoDecidedResult(
+  adminClient: ReturnType<typeof createAdminClient>,
+  matchId: string,
+  prior: Record<string, unknown>,
+  cause: unknown,
+): Promise<never> {
+  const restore = {
+    status: prior.status ?? 'ready',
+    scores: prior.scores ?? null,
+    time_exceeded: prior.time_exceeded ?? false,
+    winner_participant_id: prior.winner_participant_id ?? null,
+    loser_participant_id: prior.loser_participant_id ?? null,
+    winner_pair_id: prior.winner_pair_id ?? null,
+    loser_pair_id: prior.loser_pair_id ?? null,
+    walkover_winner: prior.walkover_winner ?? null,
+    walkover_reason: prior.walkover_reason ?? null,
+    result_entered_by: prior.result_entered_by ?? null,
+    result_entered_at: prior.result_entered_at ?? null,
+    updated_at: new Date().toISOString(),
   };
 
-  // Issue all reversal UPDATEs in parallel — independent rows, no contention.
-  //
-  // An entry whose ratings row came back missing cannot be reversed at all, and
-  // is counted as a failure rather than quietly dropped: skipping it is exactly
-  // how a delta outlives the match that produced it.
-  const reversible = snapshot.entries.filter(e => currentMap.has(e.player_id));
-  const unreadable: WriteFailure[] = snapshot.entries
-    .filter(e => !currentMap.has(e.player_id))
-    .map(e => ({ label: `ratings.${ratingColumn} for player ${e.player_id}`, message: 'no ratings row found' }));
+  const { error } = await adminClient.from('tournament_matches')
+    .update(restore)
+    .eq('id', matchId);
 
-  const { failures: ratingFailures, landed } = await settleWrites(
-    reversible.map(e => [
-      `ratings.${ratingColumn} for player ${e.player_id}`,
-      adminClient.from('ratings')
-        .update(reversalPayload(e, currentMap.get(e.player_id)!))
-        .eq('player_id', e.player_id),
-    ] as const)
-  );
-
-  // Whatever did NOT come back off the ladder stays on the snapshot, so a
-  // second attempt reverses the remainder and only the remainder. Clearing the
-  // snapshot wholesale after a partial reversal would strand the surviving
-  // deltas with nothing left pointing at them.
-  const reversed = new Set(reversible.filter((_, i) => landed[i]).map(e => e.player_id));
-  const remaining = snapshot.entries.filter(e => !reversed.has(e.player_id));
-
-  const trailingWrites: LabelledWrite[] = [];
-
-  // Clear singles participant snapshots.
-  if (snapshot.discipline === 'singles') {
-    const participantIds = [match.winner_participant_id, match.loser_participant_id]
-      .filter((x): x is string => typeof x === 'string' && x.length > 0);
-    if (participantIds.length > 0) {
-      trailingWrites.push([
-        `tournament_participants.elo_after for ${participantIds.join(', ')}`,
-        adminClient.from('tournament_participants')
-          .update({ elo_after: null, elo_change: null })
-          .in('id', participantIds),
-      ]);
-    }
+  // The compensating write is itself a PostgREST write and can fail too. That
+  // lands back in exactly the state this function exists to prevent, so say so
+  // instead of reporting the rating error alone — an exec reading "rating
+  // failed, try again" would try again and be refused.
+  if (error) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(
+      `${detail} — and match ${matchId} could not be put back into a retryable state (${error.message}). ` +
+      `It is now recorded as decided but UNRATED and must be corrected by hand.`,
+    );
   }
 
-  trailingWrites.push([
-    `tournament_matches.elo_snapshot for match ${String(match.id)}`,
-    adminClient.from('tournament_matches')
-      .update({ elo_snapshot: remaining.length > 0 ? { discipline: snapshot.discipline, entries: remaining } : null })
-      .eq('id', match.id as string),
-  ]);
-
-  const { failures: trailingFailures } = await settleWrites(trailingWrites);
-
-  assertWritesSucceeded(
-    `Elo reversal for match ${String(match.id)}`,
-    [...ratingFailures, ...unreadable, ...trailingFailures],
-  );
+  throw cause;
 }
 
 // ============================================================
@@ -723,7 +670,10 @@ export async function recordWalkover(
   const winnerField = doubles ? 'winner_pair_id' : 'winner_participant_id';
   const loserField = doubles ? 'loser_pair_id' : 'loser_participant_id';
 
-  await adminClient.from('tournament_matches').update({
+  // Checked, not fired and forgotten: supabase-js resolves with { error } rather
+  // than rejecting, so an unchecked write here reported a walkover that the
+  // bracket never actually recorded — and then rated and advanced off it.
+  const { error: writeError } = await adminClient.from('tournament_matches').update({
     status: 'walkover',
     walkover_winner: winnerPosition,
     walkover_reason: reason,
@@ -734,10 +684,23 @@ export async function recordWalkover(
     updated_at: new Date().toISOString(),
   }).eq('id', matchId);
 
+  if (writeError) {
+    throw new Error(`Could not record the walkover on match ${matchId}: ${writeError.message}`);
+  }
+
   // Rate BEFORE advancing. Advancing can cascade into another forfeit further
   // up the bracket, and a player's later matches must be rated against the
   // rating their earlier ones left them on, not the other way round.
-  await applyTournamentMatchElo(matchId);
+  //
+  // A failure here would otherwise leave a forfeited-but-unrated match that no
+  // action can retry: the cascade skips anything that is no longer open, and
+  // manual walkover entry refuses anything already decided. Take the walkover
+  // back off so the retry has something to act on.
+  try {
+    await applyTournamentMatchElo(matchId);
+  } catch (err) {
+    await undoDecidedResult(adminClient, matchId, match, err);
+  }
 
   if (winnerId) await advanceWinner(adminClient, match, doubles, winnerId, enteredBy);
 }

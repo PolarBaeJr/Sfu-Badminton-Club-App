@@ -2082,6 +2082,12 @@ export type Database = {
         Args: { p_discipline: string; p_entries: Json; p_match_id: string }
         Returns: undefined
       }
+      // Also hand-added, matching
+      // supabase/migrations/00078_tournament_rating_reversal_atomic.sql.
+      reverse_tournament_match_rating: {
+        Args: { p_match_id: string }
+        Returns: undefined
+      }
       apply_walkover_result:
         | { Args: { p_walkover_id: string }; Returns: undefined }
         | {

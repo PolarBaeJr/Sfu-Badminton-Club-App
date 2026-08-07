@@ -15,6 +15,7 @@ import {
   assertTournamentNotSuspended,
   advanceWinner,
   recordWalkover,
+  undoDecidedResult,
 } from './_internal';
 
 // ============================================================
@@ -270,7 +271,19 @@ async function enterMatchResultImpl(
   // Apply Elo before advancing — advancing can settle the next match too (if
   // the opponent waiting there has since withdrawn), and those ratings must
   // build on this one.
-  await applyTournamentMatchElo(matchId);
+  //
+  // The result row above is already written, because rating reads the winner and
+  // loser off it. If rating then fails — a missing ratings row is the case that
+  // actually happens — the match would be left completed and unrated, and the
+  // guard at the top of this function refuses anything that is not
+  // pending/ready/live, so no retry could reach it. undoDecidedResult takes the
+  // result back off and rethrows, leaving a match the desk can simply re-enter.
+  // Nothing has advanced yet, so there is nothing downstream to unwind.
+  try {
+    await applyTournamentMatchElo(matchId);
+  } catch (err) {
+    await undoDecidedResult(adminClient, matchId, match, err);
+  }
 
   // Advance winner to next match (single elimination only). Advancing can also
   // settle that match outright — the opponent waiting there may have withdrawn
@@ -426,7 +439,7 @@ async function voidMatchImpl(matchId: string, reason: string) {
   // snapshot is present, so a replayed match applies exactly one delta.
   const reversedElo = Boolean(match.elo_snapshot);
   if (reversedElo) {
-    await reverseEloSnapshot(adminClient, match);
+    await reverseEloSnapshot(adminClient, matchId);
   }
 
   // Take the voided match's winner back out of the next round. Leaving them
@@ -514,7 +527,7 @@ async function recordDoubleNoShowImpl(matchId: string, reason: string) {
   // voiding does, or the match keeps moving Elo after being erased.
   const reversedElo = Boolean(match.elo_snapshot);
   if (reversedElo) {
-    await reverseEloSnapshot(adminClient, match);
+    await reverseEloSnapshot(adminClient, matchId);
   }
 
   // Nobody advances. Anyone previously parked in the next round on the strength
@@ -598,7 +611,7 @@ async function unvoidMatchImpl(matchId: string, reason: string) {
   // at all (snapshot present), silently leaving the stale delta in place.
   const reversedElo = Boolean(match.elo_snapshot);
   if (reversedElo) {
-    await reverseEloSnapshot(adminClient, match);
+    await reverseEloSnapshot(adminClient, matchId);
   }
 
   // Restore to a clean playable state rather than to the old result: an admin
@@ -792,7 +805,7 @@ export async function editMatchResult(
 
   // Reverse any prior Elo changes so we can recompute with the corrected winner.
   if (match.elo_snapshot) {
-    await reverseEloSnapshot(adminClient, match);
+    await reverseEloSnapshot(adminClient, matchId);
   }
 
   await adminClient.from('tournament_matches').update({
@@ -869,7 +882,7 @@ async function undoMatchResultImpl(matchId: string) {
   // registration — would wipe every rating change they earned earlier in the
   // event.
   if (match.elo_snapshot) {
-    await reverseEloSnapshot(adminClient, match);
+    await reverseEloSnapshot(adminClient, matchId);
   } else if (!doubles && match.winner_participant_id && match.loser_participant_id) {
     const winnerId = match.winner_participant_id;
     const loserId = match.loser_participant_id;
