@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { getRoundName } from '@badminton/shared';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
 import { Trophy } from 'lucide-react';
@@ -29,6 +29,11 @@ const LINK_W = 40;                // width of the connector gutter between round
 const HEAD_H = 34;                // round heading block; keeps gutters in step
 const META_H = 20;                // card meta strip (match number / court)
 const FOOT_H = 26;                // card footer strip (status / score button)
+const PLAYOFF_CAPTION_H = 46;     // heading + explanatory line under the playoff card
+
+/** Zoom stops, smallest first. 1 is always in the list so "actual size" exists. */
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 1;
 
 /** Vertical centre of match `idx` in the round at 0-based depth `depth`. */
 function cardCentre(depth: number, idx: number) {
@@ -45,8 +50,61 @@ interface Props {
   isDoubles: boolean;
 }
 
+/**
+ * Zoom controls. Its own component so the bracket body below stays readable,
+ * and so the buttons keep working while the diagram is transformed — a scaled
+ * button is a smaller hit target, and these must not shrink with the bracket.
+ */
+function ZoomBar({
+  zoom, onZoom, fitZoom,
+}: { zoom: number; onZoom: (z: number) => void; fitZoom: number }) {
+  const step = (delta: number) =>
+    onZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round((zoom + delta) * 20) / 20)));
+
+  // Nothing to zoom: the diagram already fits. Showing a disabled control on
+  // every eight-player event is noise.
+  if (fitZoom >= 1) return null;
+
+  const btn =
+    'px-2 py-1 rounded-md border border-[var(--border)] text-[11px] uppercase tracking-[0.08em] ' +
+    'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:border-[var(--border-hover)] ' +
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ' +
+    'disabled:opacity-40 disabled:hover:text-[var(--text-muted)]';
+
+  return (
+    <div className="flex items-center justify-end gap-2 mb-3">
+      <button type="button" className={btn} onClick={() => step(-0.1)} disabled={zoom <= ZOOM_MIN} aria-label="Zoom out">−</button>
+      <span className="text-[11px] font-mono text-[var(--text-muted)] w-10 text-center" aria-live="polite">
+        {Math.round(zoom * 100)}%
+      </span>
+      <button type="button" className={btn} onClick={() => step(0.1)} disabled={zoom >= ZOOM_MAX} aria-label="Zoom in">+</button>
+      <button type="button" className={btn} onClick={() => onZoom(fitZoom)}>Fit width</button>
+      <button type="button" className={btn} onClick={() => onZoom(1)}>100%</button>
+    </div>
+  );
+}
+
 export function BracketTab({ event, matches, participants, pairs, isDoubles }: Props) {
   const [scoreMatch, setScoreMatch] = useState<TournamentMatchRow | null>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [viewportW, setViewportW] = useState(0);
+  // null means "the user has not touched the controls", which is what lets the
+  // default track the window while a deliberate 100% survives a resize.
+  const [userZoom, setUserZoom] = useState<number | null>(null);
+
+  // Measured rather than assumed: the page is full-width on this route, so the
+  // available space depends on the window, the sidebar and the scrollbar, and
+  // any figure hard-coded here would be wrong on somebody's screen.
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const measure = () => setViewportW(el.clientWidth);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   // The third-place playoff shares round_number with the final so the two are
   // scheduled together, but it is held OUT of `columns` on purpose.
   //
@@ -128,10 +186,43 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
     return seedMap[id] ?? null;
   }
 
+  // Natural size of the diagram, from the same constants the connectors use.
+  // The playoff block hangs off the bottom of the semi-final column, so it adds
+  // to the height without adding a column.
+  const naturalW = columns.length * COL_W + Math.max(columns.length - 1, 0) * LINK_W;
+  const naturalH = HEAD_H + bracketH + (thirdPlace && columns.length >= 2 ? CARD_H + PLAYOFF_CAPTION_H : 0);
+
+  // Never magnify: a four-player draw blown up to fill a monitor looks broken,
+  // and the point of this control is only to bring a big draw back into view.
+  const fitZoom = viewportW > 0 ? Math.min(1, Math.max(ZOOM_MIN, viewportW / naturalW)) : 1;
+  const zoom = userZoom ?? fitZoom;
+
   return (
     <>
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4 overflow-x-auto" role="region" aria-label="Tournament bracket">
-        <div className="flex items-start min-w-fit" role="table" aria-label="Bracket rounds">
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4" role="region" aria-label="Tournament bracket">
+        <ZoomBar zoom={zoom} onZoom={setUserZoom} fitZoom={fitZoom} />
+        {/* Two nested boxes because a CSS transform does not change layout size:
+            the scaled diagram would still reserve its FULL width and height, so
+            a zoomed-out bracket left a screen of blank card behind it and the
+            scrollbars never shrank. The outer box scrolls, the middle box is
+            sized to the SCALED dimensions, and only the inner one is
+            transformed. */}
+        {/* The height cap is only for draws that needed zooming out in the first
+            place. Applying it unconditionally would put an inner scrollbar on an
+            eight-player bracket that used to flow with the page, and cost the
+            reader the event header while they scrolled. */}
+        <div
+          ref={viewportRef}
+          className="overflow-auto"
+          style={fitZoom < 1 ? { maxHeight: '78vh' } : undefined}
+        >
+          <div style={{ width: naturalW * zoom, height: naturalH * zoom }}>
+            <div
+              className="flex items-start"
+              role="table"
+              aria-label="Bracket rounds"
+              style={{ width: naturalW, transform: `scale(${zoom})`, transformOrigin: 'top left' }}
+            >
           {columns.map((col, depth) => {
             const roundMatches = col.matches;
             const roundName = roundMatches[0]?.round_name ?? getRoundName(col.roundNum, totalRounds);
@@ -248,6 +339,8 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
               </Fragment>
             );
           })}
+            </div>
+          </div>
         </div>
       </div>
 

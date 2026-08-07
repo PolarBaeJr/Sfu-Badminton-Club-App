@@ -89,6 +89,163 @@ export async function addParticipantToEvent(eventId: string, playerId: string) {
   return data;
 }
 
+/** What the batch add reports back, per player, for the ones it could not take. */
+export interface BatchAddFailure {
+  id: string;
+  message: string;
+}
+
+/**
+ * Add a whole selection of players in ONE request.
+ *
+ * Why this exists rather than looping addParticipantToEvent: the loop was
+ * sequential, and each pass paid for a full server action — authenticate, read
+ * the event, check the tournament, read a rating, insert, write an audit row —
+ * and then called revalidatePath, which makes the App Router re-render the event
+ * page and ship the new RSC tree back in the response. Sixty players meant sixty
+ * round trips to the Pi and sixty renders of a page that queries every
+ * participant, pair and match in the event. Seeding a 128-slot draw took long
+ * enough to look broken.
+ *
+ * Everything that does not depend on WHICH player is now done once, the inserts
+ * go in a single statement, and the page is revalidated once at the end.
+ *
+ * The per-player action stays: it is still the honest shape for adding one
+ * person, and other callers use it.
+ */
+export async function addParticipantsToEvent(eventId: string, playerIds: string[]) {
+  const admin = await getExecOrAdmin();
+  const adminClient = createAdminClient();
+
+  // Deduplicate but KEEP the caller's order. Order is not cosmetic here: when
+  // the event fills mid-batch, the people who get in are the first ones the exec
+  // picked, which is the same answer the sequential loop gave.
+  const ids = [...new Set(playerIds)];
+  if (ids.length === 0) return { added: [] as string[], failures: [] as BatchAddFailure[] };
+
+  const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
+  if (!event) throw new Error('Event not found');
+  if (event.status !== 'registration' && event.status !== 'checkin') {
+    throw new Error('Cannot add participants in current status');
+  }
+  if (event.draw_locked) throw new Error('Draw is locked. Unlock it before making changes.');
+  await assertTournamentNotSuspended(adminClient, event.tournament_id);
+
+  if (isDoublesEvent(event.event_type)) {
+    throw new Error('Use addPairToEvent for doubles events');
+  }
+
+  const failures: BatchAddFailure[] = [];
+
+  // Already registered, in one read. The per-player path leaned on the unique
+  // violation (23505) coming back from its own insert, which cannot work for a
+  // batch: one duplicate would fail the whole statement and take 59 innocent
+  // rows with it. The unique index still guards the race — see below — this
+  // read is what turns the common case into a per-player message.
+  const { data: existing } = await adminClient
+    .from('tournament_participants')
+    .select('player_id')
+    .eq('event_id', eventId)
+    .in('player_id', ids);
+  const alreadyIn = new Set((existing ?? []).map((r) => r.player_id as string));
+
+  let candidates = ids.filter((id) => {
+    if (alreadyIn.has(id)) {
+      failures.push({ id, message: 'Player already registered for this event' });
+      return false;
+    }
+    return true;
+  });
+
+  // Capacity, counted once against the WHOLE batch rather than re-read per
+  // player. Everyone past the line is refused with the same sentence the
+  // sequential path used, so a partial add still reads the same way.
+  if (event.max_participants) {
+    const { count } = await adminClient.from('tournament_participants')
+      .select('*', { count: 'exact', head: true })
+      .eq('event_id', eventId)
+      .not('status', 'eq', 'withdrawn');
+    const room = Math.max(event.max_participants - (count ?? 0), 0);
+    if (candidates.length > room) {
+      for (const id of candidates.slice(room)) failures.push({ id, message: 'Event is full' });
+      candidates = candidates.slice(0, room);
+    }
+  }
+
+  if (candidates.length === 0) return { added: [], failures };
+
+  // elo_before is stamped at registration, so every candidate needs a rating.
+  const { data: ratingRows } = await adminClient
+    .from('ratings')
+    .select('player_id, singles_elo')
+    .in('player_id', candidates);
+  const eloByPlayer = new Map<string, number>(
+    (ratingRows ?? []).map((r) => [r.player_id as string, r.singles_elo as number]),
+  );
+
+  // Same defaults as the single-player path, deliberately including the k_factor
+  // values that differ from the column defaults — this is a copy of existing
+  // behaviour, not a place to correct it.
+  const missing = candidates.filter((id) => !eloByPlayer.has(id));
+  if (missing.length > 0) {
+    const { data: created } = await adminClient.from('ratings').insert(
+      missing.map((id) => ({
+        player_id: id,
+        singles_elo: 400,
+        doubles_elo: 400,
+        singles_provisional: true,
+        doubles_provisional: true,
+        singles_k_factor: 40,
+        doubles_k_factor: 40,
+      })),
+    ).select('player_id, singles_elo');
+    for (const r of created ?? []) eloByPlayer.set(r.player_id as string, r.singles_elo as number);
+  }
+
+  const { data: inserted, error } = await adminClient.from('tournament_participants').insert(
+    candidates.map((id) => ({
+      event_id: eventId,
+      player_id: id,
+      elo_before: eloByPlayer.get(id) ?? 400,
+      added_by: admin.id,
+    })),
+  ).select();
+
+  if (error) {
+    // A duplicate here means somebody else registered one of these players
+    // between the read above and this insert. Nothing landed, so say so plainly
+    // rather than reporting a partial success that did not happen.
+    if (error.code === '23505') {
+      throw new ExpectedError(
+        'Someone was registered while this was being submitted, so nothing was added. Try again.',
+      );
+    }
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+
+  const added = (inserted ?? []).map((r) => r.player_id as string);
+
+  // One row per player, same shape as the single-player path writes, in one
+  // statement. Collapsing the batch into a single row with a list would change
+  // what `details.player_id` means for everything that reads this table.
+  if (added.length > 0) {
+    await adminClient.from('tournament_audit_log').insert(
+      added.map((id) => ({
+        tournament_id: event.tournament_id,
+        event_id: eventId,
+        match_id: null,
+        action: 'participant_added',
+        performed_by: admin.id,
+        details: { player_id: id },
+      })),
+    );
+  }
+
+  revalidateEventPaths(event.tournament_id, eventId);
+  return { added, failures };
+}
+
 export async function removeParticipantFromEvent(participantId: string) {
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();

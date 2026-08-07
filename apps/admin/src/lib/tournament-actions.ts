@@ -20,6 +20,7 @@ export {
 
 export {
   addParticipantToEvent,
+  addParticipantsToEvent,
   removeParticipantFromEvent,
   checkInParticipant,
   markParticipantNoShow,

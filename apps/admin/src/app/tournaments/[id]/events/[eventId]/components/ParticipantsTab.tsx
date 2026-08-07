@@ -3,7 +3,7 @@
 import { useState, useRef } from 'react';
 import { Button, Dialog, PlayerPicker, AvatarChip, useConfirm } from '@badminton/ui';
 import {
-  addParticipantToEvent,
+  addParticipantsToEvent,
   removeParticipantFromEvent,
   addPairToEvent,
   removePairFromEvent,
@@ -14,7 +14,7 @@ import {
   withdrawParticipant,
   withdrawPair,
 } from '@/lib/tournament-actions';
-import { runBulk, summarizeBulk } from '@/lib/bulk-add';
+import { summarizeBulk } from '@/lib/bulk-add';
 import { nextPowerOf2, pickOne, eventHasDraw, isOutOfEvent } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
@@ -199,7 +199,20 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     e.preventDefault();
     if (playerIds.length === 0) return;
     setLoading(true);
-    const outcome = await runBulk(playerIds, (id) => addParticipantToEvent(event.id, id));
+    // ONE request for the whole selection. This used to be a runBulk loop, which
+    // meant one server action per player and a page re-render on each — adding
+    // a 60-player field took long enough that it read as a hang.
+    let outcome: { succeeded: string[]; failures: { id: string; message: string }[] };
+    try {
+      const result = await addParticipantsToEvent(event.id, playerIds);
+      outcome = { succeeded: result.added, failures: result.failures };
+    } catch (err) {
+      // A throw here is a whole-batch refusal (locked draw, wrong status, a race
+      // on the unique index) — nobody went in, so every id is a failure and the
+      // dialog keeps the full selection.
+      const message = err instanceof Error ? err.message : 'Failed';
+      outcome = { succeeded: [], failures: playerIds.map((id) => ({ id, message })) };
+    }
     const { message, tone } = summarizeBulk(outcome, {
       done: 'Added', failed: 'Could not add', noun: 'player',
     });

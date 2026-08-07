@@ -1,13 +1,20 @@
 /**
  * Doing one server action N times, and telling the truth about it afterwards.
  *
- * The three "add these people" dialogs became multi-select, but every server
- * action behind them still takes exactly ONE id (addTournamentParticipant,
- * addParticipantToEvent, markAttendance). Rather than widen three actions — and
+ * The three "add these people" dialogs became multi-select, but the server
+ * actions behind them took exactly ONE id. Rather than widen three actions — and
  * with them three sets of validation, audit rows and revalidatePath calls — the
  * client loops. That choice is only defensible if the loop reports honestly,
  * which is what summarizeBulk is for: twelve people chosen and nine added is
  * "Added 9 of 12", never a green "Added".
+ *
+ * It stops being defensible at scale. Seeding a 128-slot draw meant sixty round
+ * trips, each re-rendering the event page through revalidatePath, and it read as
+ * a hang. The EVENT participant dialog now calls addParticipantsToEvent, which
+ * takes the whole array and returns the same succeeded/failures shape, so it
+ * still summarises through here. The remaining callers (tournament-level
+ * participants, session walk-ins) add a handful of people at a time and still
+ * loop; widen them the same way if that ever changes.
  *
  * No React and no server imports, so the summary wording is unit-testable.
  */
@@ -27,10 +34,12 @@ export interface BulkOutcome {
  * Run `run` over the ids ONE AT A TIME, collecting rather than propagating
  * failures.
  *
- * Sequential on purpose. addParticipantToEvent counts the current field against
- * `max_participants` before inserting; twelve of those in flight at once would
- * all read the same pre-insert count and every one would sail past a full
- * event. Sequential also keeps the audit log in the order the exec picked.
+ * Sequential on purpose, for the callers that still use it. The add actions
+ * count the current field against `max_participants` before inserting; twelve of
+ * those in flight at once would all read the same pre-insert count and every one
+ * would sail past a full event. Sequential also keeps the audit log in the order
+ * the exec picked. (The batched addParticipantsToEvent keeps both properties a
+ * different way: it counts once and trims the overflow itself.)
  *
  * `run` must THROW to signal failure. Actions that report through an
  * ActionResult instead (markAttendance) have to be adapted by the caller —
