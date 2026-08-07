@@ -112,7 +112,19 @@ export async function createFeeTier(input: FeeTierInput) {
   if (error) throw new Error(error.message);
 
   if (input.is_default) {
-    await promoteDefaultTier(adminClient, input.tournament_id, tier.id);
+    try {
+      await promoteDefaultTier(adminClient, input.tournament_id, tier.id);
+    } catch (err) {
+      // The tier itself was created; only the default flag failed to move.
+      // Push the fresh list before rethrowing and say so plainly — otherwise
+      // the admin reads "failed" on a stale page, retries the same name, and
+      // gets a duplicate-key error for a tier they believe was never made.
+      revalidatePath(`/tournaments/${input.tournament_id}/fees`);
+      throw new Error(
+        `"${input.name}" was created, but could not be made the default tier: ` +
+        (err instanceof Error ? err.message : 'unknown error'),
+      );
+    }
   }
 
   await logAdminAudit(adminClient, {
@@ -167,7 +179,10 @@ export async function updateFeeTier(id: string, input: Partial<FeeTierInput>) {
     target_type: 'tournament_fee_tier',
     target_id: id,
     old_value: old,
-    new_value: input,
+    // What was actually written, not what was asked for. Logging `input` would
+    // record the tournament_id move that this action deliberately refuses —
+    // an audit trail claiming a change that never happened.
+    new_value: { ...changes, ...(wantsDefault === true ? { is_default: true } : {}) },
   }, { tournamentId: old.tournament_id });
 
   revalidatePath(`/tournaments/${old.tournament_id}/fees`);

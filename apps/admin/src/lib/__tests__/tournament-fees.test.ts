@@ -259,6 +259,26 @@ describe('createFeeTier', () => {
       createFeeTier({ tournament_id: TOURNAMENT_A, name: 'Alumni', amount_cents: 800, is_default: true }),
     ).rejects.toThrow(/no default tier/i);
   });
+
+  // The tier survives a failed promotion by design — it is the visible,
+  // retryable half-state. But the admin has to be told, or they retry the same
+  // name against a stale list and get a bare duplicate-key error for a tier
+  // they are certain was never created.
+  it('says the tier was created when only the promotion failed', async () => {
+    store.faults.push({
+      table: 'tournament_fee_tiers',
+      op: 'update',
+      when: ({ filters, payload }) =>
+        payload.is_default === true && !filters.some(([, v]) => v === MEMBER_TIER),
+      message: 'connection reset',
+    });
+
+    await expect(
+      createFeeTier({ tournament_id: TOURNAMENT_A, name: 'Alumni', amount_cents: 800, is_default: true }),
+    ).rejects.toThrow(/"Alumni" was created/);
+
+    expect(tiers().some((t) => t.name === 'Alumni')).toBe(true);
+  });
 });
 
 describe('updateFeeTier', () => {

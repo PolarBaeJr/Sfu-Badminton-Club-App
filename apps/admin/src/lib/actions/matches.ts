@@ -146,9 +146,15 @@ export async function adminCreateMatch(data: {
  * possible half-states, "no match at all" is the one somebody can act on — the
  * admin sees the failure and enters the match again — and "a completed match
  * with a winner and no participants" is the one nobody can even see. So we
- * delete the shell we just created. match_participants and match_games are
- * both ON DELETE CASCADE on match_id (00001_schema.sql), so a partial batch of
- * children goes with it and no orphan is left behind.
+ * delete the shell we just created.
+ *
+ * Checked against the live schema on 2026-08-06 rather than read off 00001,
+ * because the delete is only safe if nothing REFERENCES matches with NO ACTION
+ * (Postgres's silent default), which would make this branch fail every single
+ * time. Every child is CASCADE — match_participants, match_games, disputes —
+ * except walkovers, which is SET NULL; a walkover cannot exist for a match this
+ * action created a moment ago. The only triggers on the table fire BEFORE
+ * INSERT and AFTER UPDATE OF result_status, so nothing runs on the delete.
  *
  * If the delete ALSO fails the orphan is real, and the only useful thing left
  * is to name it: the message and the Sentry event carry the match id so it can
