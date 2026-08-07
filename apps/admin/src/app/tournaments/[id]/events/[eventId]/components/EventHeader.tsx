@@ -215,15 +215,18 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
                 onClick={handleAction}
                 loading={loading}
                 disabled={actionDisabled}
-                // title carries the reason on hover; the line below carries it
-                // for anyone not using a mouse.
-                title={actionHint}
+                // describedby, NOT title: a title attribute won the accessible
+                // name computation, so the button announced as "11 matches still
+                // to be decided" and lost "Finalize Tournament" — the action it
+                // performs. The reason is already on screen below, so point at
+                // that instead and it is announced as a description.
+                aria-describedby={actionHint ? 'event-action-hint' : undefined}
                 className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
               >
                 {actionLabel[status] ?? 'Next Step'}
               </Button>
               {actionHint && (
-                <p className="text-xs text-[var(--text-muted)] max-w-[15rem] text-right">{actionHint}</p>
+                <p id="event-action-hint" className="text-xs text-[var(--text-muted)] max-w-[15rem] text-right">{actionHint}</p>
               )}
             </div>
           )}
