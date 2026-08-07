@@ -14,6 +14,7 @@ import {
   withdrawParticipant,
   withdrawPair,
 } from '@/lib/tournament-actions';
+import { runBulk, summarizeBulk } from '@/lib/bulk-add';
 import { nextPowerOf2, pickOne, eventHasDraw, isOutOfEvent } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
@@ -151,8 +152,11 @@ function SeedCell({
 
 export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoubles }: Props) {
   const [addOpen, setAddOpen] = useState(false);
+  // Doubles adds a PAIR — two named people, one entry — so it keeps two
+  // single-select fields. Singles adds any number of individuals at once.
   const [playerId, setPlayerId] = useState('');
   const [player2Id, setPlayer2Id] = useState('');
+  const [playerIds, setPlayerIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const { toast } = useToast();
@@ -173,17 +177,13 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   const canWithdraw = eventHasDraw(event.status) && event.status !== 'completed';
   const showActions = (canModify && !drawLocked) || canWithdraw;
 
-  async function handleAdd(e: React.FormEvent) {
+  async function handleAddPair(e: React.FormEvent) {
     e.preventDefault();
     if (!playerId) return;
     setLoading(true);
     try {
-      if (isDoubles) {
-        if (!player2Id) { toast('Select both players', 'error'); setLoading(false); return; }
-        await addPairToEvent(event.id, playerId, player2Id);
-      } else {
-        await addParticipantToEvent(event.id, playerId);
-      }
+      if (!player2Id) { toast('Select both players', 'error'); setLoading(false); return; }
+      await addPairToEvent(event.id, playerId, player2Id);
       toast('Added successfully', 'success');
       setAddOpen(false);
       setPlayerId('');
@@ -192,6 +192,24 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
+    setLoading(false);
+  }
+
+  async function handleAddMany(e: React.FormEvent) {
+    e.preventDefault();
+    if (playerIds.length === 0) return;
+    setLoading(true);
+    const outcome = await runBulk(playerIds, (id) => addParticipantToEvent(event.id, id));
+    const { message, tone } = summarizeBulk(outcome, {
+      done: 'Added', failed: 'Could not add', noun: 'player',
+    });
+    toast(message, tone);
+    // Anyone the event refused (already registered, event full) stays in the
+    // picker so the exec can see exactly who did not make it in.
+    setPlayerIds(outcome.failures.map((f) => f.id));
+    if (outcome.failures.length === 0) setAddOpen(false);
+    // Refresh even on a partial run — the ones that DID go in belong in the table.
+    router.refresh();
     setLoading(false);
   }
 
@@ -475,23 +493,35 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
 
       {/* Add Dialog */}
       <Dialog open={addOpen} onClose={() => setAddOpen(false)} title={isDoubles ? 'Add Pair' : 'Add Participant'}>
-        <form onSubmit={handleAdd} className="space-y-4">
-          <PlayerPicker
-            label={isDoubles ? 'Player 1' : 'Player'}
-            value={playerId}
-            onChange={setPlayerId}
-            players={playerOptions}
-          />
-          {isDoubles && (
+        <form onSubmit={isDoubles ? handleAddPair : handleAddMany} className="space-y-4">
+          {isDoubles ? (
+            <>
+              <PlayerPicker
+                label="Player 1"
+                value={playerId}
+                onChange={setPlayerId}
+                players={playerOptions}
+              />
+              <PlayerPicker
+                label="Player 2"
+                value={player2Id}
+                onChange={setPlayer2Id}
+                players={playerOptions.filter(p => p.id !== playerId)}
+              />
+            </>
+          ) : (
             <PlayerPicker
-              label="Player 2"
-              value={player2Id}
-              onChange={setPlayer2Id}
-              players={playerOptions.filter(p => p.id !== playerId)}
+              multiple
+              label="Players"
+              value={playerIds}
+              onChange={setPlayerIds}
+              players={playerOptions}
             />
           )}
           <div className="flex gap-2 pt-2">
-            <Button type="submit" loading={loading} className="flex-1">Add</Button>
+            <Button type="submit" loading={loading} className="flex-1">
+              {!isDoubles && playerIds.length > 1 ? `Add ${playerIds.length}` : 'Add'}
+            </Button>
             <Button variant="ghost" onClick={() => setAddOpen(false)} type="button">Cancel</Button>
           </div>
         </form>
