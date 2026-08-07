@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Input, Select, Switch } from '@badminton/ui';
-import { getEventRules, previewEloChange, tallyGames } from '@badminton/shared';
+import { getEventRules, previewEloChange, tallyGames, isLegalGameScore } from '@badminton/shared';
 import type { TournamentMatchFormat, MatchFormat } from '@badminton/shared';
 import {
   enterMatchResult, enterWalkover, voidMatch, unvoidMatch, setMatchEntry, recordDoubleNoShow,
@@ -61,9 +61,34 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
 
   // Shared with the challenge result form so the two cannot disagree about who
   // won the same scoreline.
-  const { winner: autoWinner } = tallyGames(
+  const { winner: tallyWinner } = tallyGames(
     games.map((g) => ({ side_a_score: g.a, side_b_score: g.b })),
   );
+
+  // Every filled row must be a plain non-negative integer. <input type="number">
+  // accepts "e", "E" and "+" as scientific notation, and parseInt(x) || 0 below
+  // would turn that into a recorded score of ZERO — type "e" instead of "8" and
+  // the match is saved wrong, silently, with no error anywhere.
+  const filled = games.filter((g) => g.a !== '' || g.b !== '');
+  const scoresAreIntegers = filled.every(
+    (g) => /^\d+$/.test(g.a.trim()) && /^\d+$/.test(g.b.trim()),
+  );
+
+  // tallyGames only asks who scored more, so 21-15 counts as a won game even in
+  // an event played to 30. The dialog then showed "Winner: X" in green for a
+  // scoreline the server correctly refuses, and the rejection toast was the only
+  // hint. Judge each game against THIS event's target before claiming a winner.
+  const gamesAreLegal = scoresAreIntegers && filled.every((g) =>
+    isLegalGameScore(
+      parseInt(g.a, 10), parseInt(g.b, 10),
+      matchFormat as unknown as MatchFormat,
+      event.games_per_match, event.points_per_game, timeExceeded,
+    ),
+  );
+
+  // Only a legal, fully-numeric scoreline names a winner. Everything downstream
+  // — the green highlight, the Elo preview, submit — keys off this.
+  const autoWinner = scoresAreIntegers && gamesAreLegal ? tallyWinner : null;
 
   // The dialog holds a snapshot of the match row, so any mutation invalidates
   // what it is displaying — close and let the refreshed bracket re-open it.
@@ -80,7 +105,14 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
   }
 
   async function handleSubmit() {
-    if (!autoWinner) { toast('Cannot determine winner from scores', 'error'); return; }
+    // Say WHICH problem it is. "Cannot determine winner" for a 21-15 game in an
+    // event to 30 sends an exec looking for the wrong mistake.
+    if (!scoresAreIntegers) { toast('Scores must be whole numbers', 'error'); return; }
+    if (!gamesAreLegal) {
+      toast(`That scoreline cannot end a game to ${getEventRules(event).target}`, 'error');
+      return;
+    }
+    if (!autoWinner) { toast('Games are level — enter the scores that decide the match', 'error'); return; }
     setLoading(true);
     try {
       const scores = games
