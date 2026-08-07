@@ -453,6 +453,20 @@ describe('winner must agree with the scores', () => {
     expect(match(SF).participant_a_id).toBe('p-alice');
   });
 
+  it('still lets a scoreless walkover be corrected', async () => {
+    // A walkover's winner comes from the forfeit, not a scoreline, and
+    // editMatchResult explicitly re-rates one. Rejecting an empty score list as
+    // a 0-0 tie would take away the only way to fix a walkover awarded to the
+    // wrong side, so the check has to skip a match with no games.
+    expect((await enterWalkover(QF, 'a', 'Opponent did not appear')).ok).toBe(true);
+    expect(match(QF).winner_participant_id).toBe('p-alice');
+
+    await expect(editMatchResult(QF, [], 'b')).resolves.toBeUndefined();
+
+    expect(match(QF).winner_participant_id).toBe('p-bob');
+    expect(match(QF).loser_participant_id).toBe('p-alice');
+  });
+
   it('refuses through editMatchResult too — the same hole on the correction path', async () => {
     await enterMatchResult(QF, [{ a: 21, b: 10 }, { a: 21, b: 12 }], 'a');
     const aliceAfterWin = ratingOf('pl-alice');

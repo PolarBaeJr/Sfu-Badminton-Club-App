@@ -188,6 +188,21 @@ BEGIN
   FOR v_entry IN SELECT * FROM jsonb_array_elements(p_entries) LOOP
     v_player_id := (v_entry->>'player_id')::uuid;
 
+    -- `won` is the snapshot's version marker as well as a statistic: reversal
+    -- reads an entry WITHOUT it as pre-00070 and leaves the counts alone. A
+    -- caller that omitted it would therefore write a new-format snapshot that
+    -- reversal misclassifies as legacy, and the counts would never come off.
+    -- The typed builder always sends it; enforce it here anyway, because this
+    -- function is the boundary the invariant belongs to.
+    -- COALESCE, not a bare comparison: an ABSENT key makes `v_entry->'won'`
+    -- SQL NULL, jsonb_typeof(NULL) is NULL, and `NULL <> 'boolean'` is NULL —
+    -- which is not TRUE, so the plain form waves the missing key straight
+    -- through. A JSON `null` gives the string 'null' and is caught either way.
+    IF COALESCE(jsonb_typeof(v_entry->'won'), 'missing') <> 'boolean' THEN
+      RAISE EXCEPTION 'rating entry for player % has no boolean "won" — cannot rate tournament match %',
+        v_player_id, p_match_id;
+    END IF;
+
     -- A missing ratings row would make the UPDATE below a silent no-op, and the
     -- snapshot would then claim a delta that never landed — the exact class of
     -- lie the snapshot exists to prevent. Refuse the whole match instead.
