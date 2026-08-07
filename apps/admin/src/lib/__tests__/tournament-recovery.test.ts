@@ -113,6 +113,8 @@ const makeClient = vi.hoisted(() => () => {
       discipline,
       entries: entries.map((e) => ({
         player_id: e.player_id, before: e.before, after: e.after, delta: e.delta,
+        won: e.won, points_scored: e.points_scored ?? 0, points_allowed: e.points_allowed ?? 0,
+        games_won: e.games_won ?? 0, games_lost: e.games_lost ?? 0,
       })),
     };
     return Promise.resolve({ data: null, error: null });
@@ -204,6 +206,15 @@ describe('void / restore / replay', () => {
 
     expect((await enterMatchResult(QF, [{ a: 21, b: 15 }], 'a')).ok).toBe(true);
     expect(ratingOf('pl-alice')).toBe(afterFirstPlay);
+    // "Exactly once" has to mean the STATISTICS too, not just the Elo. The
+    // tournament path now increments matches_played/wins/points, so a reversal
+    // that moved only the rating would leave this cycle counting the match
+    // twice — visible nowhere in the Elo assertion above.
+    const alice = store.db.ratings!.find((r) => r.player_id === 'pl-alice')!;
+    expect(alice.singles_matches_played).toBe(31);
+    expect(alice.singles_wins).toBe(1);
+    expect(alice.singles_points_scored).toBe(21);
+    expect(alice.current_singles_streak).toBe(1);
   });
 
   it('pulls the voided winner back out of the next round', async () => {

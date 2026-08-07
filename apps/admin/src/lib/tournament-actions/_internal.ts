@@ -17,6 +17,7 @@ import {
   isOpenMatch,
   forfeitOutcome,
   OPEN_MATCH_STATUSES,
+  PROVISIONAL_THRESHOLD,
   sortStandings,
 } from '@badminton/shared';
 import type {
@@ -499,33 +500,70 @@ export async function applyTournamentMatchElo(matchId: string) {
   }
 }
 
+/** One player's line in a match's elo_snapshot. */
+interface SnapshotEntry {
+  player_id: string;
+  before: number;
+  after: number;
+  delta: number;
+  /**
+   * Present only on snapshots written since 00070. Its presence IS the version
+   * marker: an older snapshot's match never moved the statistics, so reversing
+   * them would take counts off that this match never put on.
+   */
+  won?: boolean;
+  points_scored?: number;
+  points_allowed?: number;
+  games_won?: number;
+  games_lost?: number;
+}
+
 // Reverse a previously applied Elo snapshot for a match. Resets ratings to their
-// pre-match values and clears participant elo_after/elo_change for singles.
+// pre-match values, takes the match's statistics back off, and clears
+// participant elo_after/elo_change for singles.
 //
-// ELO ONLY — matches_played, wins/losses, points, games and streaks stay where
-// they are. That is deliberate: reverse_match_result (00003) reverses exactly
-// the same amount for a regular match, and making tournaments reverse their
-// statistics while challenges do not would replace one path-dependent
-// divergence with another. The consequence to know about is that a
-// void -> restore -> replay cycle counts the match twice in matches_played
-// (though only once in Elo, which is what the recovery tests assert). Fixing
-// that belongs with reverse_match_result, in one change, for both engines.
+// The statistics half is not optional. editMatchResult reverses the snapshot and
+// then RE-rates the match, so a reversal that left matches_played/wins/points
+// behind would add a second set of counts on every correction; undo and void
+// would leave a result in the statistics that no longer exists.
+//
+// Two figures cannot be reversed exactly and are handled as follows:
+//   - best_*_streak is a high-water mark. It is never written here, exactly as
+//     it is never written on the way in.
+//   - current_*_streak is only exactly invertible when the match being undone
+//     was the player's most recent one, which is the case the desk actually
+//     hits. Otherwise it steps one toward zero and stops there rather than
+//     inventing a sign.
 export async function reverseEloSnapshot(
   adminClient: ReturnType<typeof createAdminClient>,
   match: Record<string, unknown>
 ) {
   const snapshot = match.elo_snapshot as {
     discipline: 'singles' | 'doubles';
-    entries: Array<{ player_id: string; before: number; after: number; delta: number }>;
+    entries: SnapshotEntry[];
   } | null;
   if (!snapshot || !snapshot.entries?.length) return;
 
-  const ratingColumn = snapshot.discipline === 'doubles' ? 'doubles_elo' : 'singles_elo';
+  const d = snapshot.discipline;
+  const ratingColumn = d === 'doubles' ? 'doubles_elo' : 'singles_elo';
   const playerIds = snapshot.entries.map(e => e.player_id);
+
+  // Every column a reversal can touch, so the read-modify-write below has the
+  // current value of each. One UPDATE per player carries all of them, so a
+  // player's Elo and their counts can never come apart.
+  const statColumns = [
+    `${d}_matches_played`, `${d}_wins`, `${d}_losses`,
+    `${d}_points_scored`, `${d}_points_allowed`,
+    `${d}_games_won`, `${d}_games_lost`,
+    `current_${d}_streak`, `${d}_provisional`,
+  ];
+
+  const ratingSettings = await getRatingSettings(adminClient);
+  const threshold = ratingSettings?.provisional_threshold ?? PROVISIONAL_THRESHOLD;
 
   // Single batched fetch for all current ratings.
   const { data: currentRows, error: fetchErr } = await adminClient.from('ratings')
-    .select(`player_id, ${ratingColumn}`)
+    .select(`player_id, ${ratingColumn}, ${statColumns.join(', ')}`)
     .in('player_id', playerIds);
   // Returning here used to mean voidMatch reported success having reversed
   // nothing — the delta stayed on the ladder and the snapshot stayed on the
@@ -535,18 +573,48 @@ export async function reverseEloSnapshot(
     throw new Error(`Could not read current ratings to reverse match ${String(match.id)}: ${fetchErr.message}`);
   }
 
-  const currentMap = new Map<string, number>();
-  for (const row of currentRows ?? []) {
-    const r = row as Record<string, unknown>;
-    const elo = r[ratingColumn] as number | undefined;
-    if (elo !== undefined) currentMap.set(r.player_id as string, elo);
+  // The column list is built at runtime, so supabase-js's select-string type
+  // parser cannot infer a row shape for it and hands back a ParserError type.
+  // The shape is known here — it is `statColumns` — so read it as plain rows.
+  const currentMap = new Map<string, Record<string, unknown>>();
+  for (const row of (currentRows ?? []) as unknown as Record<string, unknown>[]) {
+    if (row[ratingColumn] !== undefined) currentMap.set(row.player_id as string, row);
   }
 
   const nowIso = new Date().toISOString();
 
-  // Issue all reversal UPDATEs in parallel — independent rows, no contention.
   // Apply inverse delta regardless of drift so net effect is zero even if
-  // intermediate matches moved the rating.
+  // intermediate matches moved the rating. Counts are floored at 0 — a negative
+  // matches_played is a worse lie than a slightly high one.
+  const reversalPayload = (e: SnapshotEntry, row: Record<string, unknown>) => {
+    const n = (k: string) => (row[k] as number | undefined) ?? 0;
+    const payload: Record<string, unknown> = {
+      [ratingColumn]: (row[ratingColumn] as number) - e.delta,
+      updated_at: nowIso,
+    };
+
+    // Pre-00070 snapshot: its match never moved the statistics.
+    if (typeof e.won !== 'boolean') return payload;
+
+    const played = Math.max(0, n(`${d}_matches_played`) - 1);
+    const streak = n(`current_${d}_streak`);
+
+    payload[`${d}_matches_played`] = played;
+    payload[e.won ? `${d}_wins` : `${d}_losses`] = Math.max(0, n(e.won ? `${d}_wins` : `${d}_losses`) - 1);
+    payload[`${d}_points_scored`] = Math.max(0, n(`${d}_points_scored`) - (e.points_scored ?? 0));
+    payload[`${d}_points_allowed`] = Math.max(0, n(`${d}_points_allowed`) - (e.points_allowed ?? 0));
+    payload[`${d}_games_won`] = Math.max(0, n(`${d}_games_won`) - (e.games_won ?? 0));
+    payload[`${d}_games_lost`] = Math.max(0, n(`${d}_games_lost`) - (e.games_lost ?? 0));
+    payload[`current_${d}_streak`] = e.won ? Math.max(0, streak - 1) : Math.min(0, streak + 1);
+    // Dropping back under the threshold makes the player provisional again —
+    // the same rule that cleared the flag, read the other way round. Never
+    // cleared here: crossing the threshold is the job of applying a match.
+    if (played < threshold) payload[`${d}_provisional`] = true;
+
+    return payload;
+  };
+
+  // Issue all reversal UPDATEs in parallel — independent rows, no contention.
   //
   // An entry whose ratings row came back missing cannot be reversed at all, and
   // is counted as a failure rather than quietly dropped: skipping it is exactly
@@ -560,7 +628,7 @@ export async function reverseEloSnapshot(
     reversible.map(e => [
       `ratings.${ratingColumn} for player ${e.player_id}`,
       adminClient.from('ratings')
-        .update({ [ratingColumn]: (currentMap.get(e.player_id) as number) - e.delta, updated_at: nowIso })
+        .update(reversalPayload(e, currentMap.get(e.player_id)!))
         .eq('player_id', e.player_id),
     ] as const)
   );

@@ -134,15 +134,17 @@ COMMENT ON FUNCTION public.apply_rating_stats(uuid, text, integer, boolean, inte
 -- participant_id is present for singles only; doubles has no per-player
 -- tournament_participants row to stamp.
 --
--- Only the four rating fields (player_id/before/after/delta) are persisted into
--- elo_snapshot. The snapshot shape is unchanged on purpose: reverseEloSnapshot,
--- undoMatchResult, voidMatch and editMatchResult all read it, and the three
--- snapshots already in production would not carry any new field.
+-- The snapshot is a SUPERSET of the old shape: player_id/before/after/delta are
+-- untouched, so the snapshots already in production stay readable, and the
+-- statistics are added alongside them.
 --
--- NOTE ON REVERSAL: undo/void reverse Elo but NOT the statistics, which matches
--- what reverse_match_result already does for regular matches. Making both
--- reverse counts is a separate change; doing it here for tournaments alone would
--- replace one divergence with another.
+-- Storing the statistics is what makes reversal correct. undoMatchResult,
+-- voidMatch and editMatchResult all reverse from this snapshot, and
+-- editMatchResult then RE-rates the match — so a snapshot that recorded only the
+-- Elo would leave the counts behind on an undo and add a second set on every
+-- edit. The presence of the `won` key is also the version marker: an entry
+-- without it predates this migration, its statistics were never applied, and
+-- reversal must not try to take them off.
 CREATE OR REPLACE FUNCTION public.apply_tournament_match_rating(
   p_match_id uuid,
   p_discipline text,
@@ -212,6 +214,14 @@ BEGIN
         elo_after = (v_entry->>'after')::integer,
         elo_change = (v_entry->>'delta')::integer
       WHERE id = v_participant_id;
+      -- An id that matches nothing would leave the participant row unstamped
+      -- while the ratings and the snapshot committed. Refuse the match instead;
+      -- a silently skipped write is the failure mode this whole function exists
+      -- to remove.
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'No tournament_participants row % — cannot rate tournament match %',
+          v_participant_id, p_match_id;
+      END IF;
     END IF;
   END LOOP;
 
@@ -220,10 +230,17 @@ BEGIN
       'discipline', p_discipline,
       'entries', (
         SELECT jsonb_agg(jsonb_build_object(
-          'player_id', e->>'player_id',
-          'before',    (e->>'before')::integer,
-          'after',     (e->>'after')::integer,
-          'delta',     (e->>'delta')::integer
+          'player_id',      e->>'player_id',
+          'before',         (e->>'before')::integer,
+          'after',          (e->>'after')::integer,
+          'delta',          (e->>'delta')::integer,
+          -- The statistics reversal needs these, and `won` doubles as the
+          -- "this snapshot's statistics were applied" marker.
+          'won',            (e->>'won')::boolean,
+          'points_scored',  COALESCE((e->>'points_scored')::integer, 0),
+          'points_allowed', COALESCE((e->>'points_allowed')::integer, 0),
+          'games_won',      COALESCE((e->>'games_won')::integer, 0),
+          'games_lost',     COALESCE((e->>'games_lost')::integer, 0)
         ))
         FROM jsonb_array_elements(p_entries) e
       )

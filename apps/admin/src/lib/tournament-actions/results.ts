@@ -108,6 +108,13 @@ function assertWinnerMatchesScores(
   scores: Array<{ a: number; b: number }>,
   winnerSide: 'a' | 'b',
 ): void {
+  // No games at all is a walkover, whose winner is decided by the forfeit and
+  // not by a scoreline. editMatchResult can legitimately re-rate one, so
+  // rejecting an empty score list here as a 0-0 tie would take away the only
+  // way to correct it. enterMatchResult never reaches this case: isLegalGameCount
+  // rejects 0-0 before the call, because the winner must reach the clinch.
+  if (scores.length === 0) return;
+
   const aGames = scores.filter((g) => g.a > g.b).length;
   const bGames = scores.filter((g) => g.b > g.a).length;
 

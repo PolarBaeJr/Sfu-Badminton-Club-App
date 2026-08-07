@@ -193,12 +193,14 @@ const makeClient = vi.hoisted(() => () => {
       }
     }
 
-    // Only the four rating fields are persisted — the snapshot shape is what
-    // undo/void/edit read, and it did not change.
+    // A superset of the pre-00070 shape: the four rating fields are unchanged,
+    // and the statistics ride along so reverseEloSnapshot can take them off.
     const snapshot = {
       discipline,
       entries: entries.map((e) => ({
         player_id: e.player_id, before: e.before, after: e.after, delta: e.delta,
+        won: e.won, points_scored: e.points_scored ?? 0, points_allowed: e.points_allowed ?? 0,
+        games_won: e.games_won ?? 0, games_lost: e.games_lost ?? 0,
       })),
     };
     const snapFault = faultFor('tournament_matches', 'update', {
@@ -405,17 +407,19 @@ describe('post-match Elo writes', () => {
     expect(ratingOf('pl-alice')).toBe(1000);
   });
 
-  it('writes the snapshot in the same shape undo/void/edit already read', async () => {
-    // The snapshot deliberately carries only player_id/before/after/delta. The
-    // statistics ride into the RPC but are NOT persisted, because the three
-    // snapshots already in production do not have them and reverseEloSnapshot
-    // is unchanged.
+  it('writes a snapshot that is a superset of the shape undo/void/edit read', async () => {
+    // player_id/before/after/delta are unchanged, so the snapshots already in
+    // production stay readable. The statistics are added alongside them because
+    // reversal now has to take those back off too.
     await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
 
     const snap = match(QF).elo_snapshot as { discipline: string; entries: Row[] };
     expect(snap.discipline).toBe('singles');
     expect(snap.entries).toHaveLength(2);
-    expect(Object.keys(snap.entries[0]!).sort()).toEqual(['after', 'before', 'delta', 'player_id']);
+    expect(Object.keys(snap.entries[0]!).sort()).toEqual([
+      'after', 'before', 'delta', 'games_lost', 'games_won',
+      'player_id', 'points_allowed', 'points_scored', 'won',
+    ]);
   });
 });
 
@@ -541,6 +545,78 @@ describe('tournament matches update the whole ratings row', () => {
 
     expect(rating('pl-alice').singles_matches_played).toBe(4);
     expect(rating('pl-alice').singles_provisional).toBe(true);
+  });
+
+  it('takes the statistics back off when the match is voided', async () => {
+    // Counterpart to the increments above. Once a tournament match moves the
+    // counts, a reversal that only moved the Elo would leave a result in the
+    // statistics that no longer exists anywhere else.
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    expect((await voidMatch(QF, 'Court collapsed')).ok).toBe(true);
+
+    expect(rating('pl-alice').singles_matches_played).toBe(30);
+    expect(rating('pl-alice').singles_wins).toBe(0);
+    expect(rating('pl-alice').singles_points_scored).toBe(0);
+    expect(rating('pl-alice').singles_games_won).toBe(0);
+    expect(rating('pl-alice').current_singles_streak).toBe(0);
+    expect(ratingOf('pl-alice')).toBe(1000);
+    expect(rating('pl-bob').singles_matches_played).toBe(30);
+    expect(rating('pl-bob').singles_losses).toBe(0);
+  });
+
+  it('makes a player provisional again when the undo drops them below the threshold', async () => {
+    // The mirror of clearing the flag. Without this, one entered-then-voided
+    // match would permanently establish a player who has played 7.
+    for (const p of ['pl-alice', 'pl-bob']) {
+      Object.assign(rating(p), { singles_matches_played: 7, singles_provisional: true });
+    }
+
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    expect(rating('pl-alice').singles_provisional).toBe(false);
+
+    await voidMatch(QF, 'Wrong court');
+
+    expect(rating('pl-alice').singles_matches_played).toBe(7);
+    expect(rating('pl-alice').singles_provisional).toBe(true);
+  });
+
+  it('does not double-count the statistics when a result is corrected', async () => {
+    // editMatchResult reverses the snapshot and then RE-rates the match. Before
+    // the reversal learned to move the counts, every correction added a second
+    // matches_played, a second win, and a second set of points.
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    await editMatchResult(QF, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b');
+
+    expect(rating('pl-alice').singles_matches_played).toBe(31);
+    expect(rating('pl-bob').singles_matches_played).toBe(31);
+    // The corrected result, not the sum of both.
+    expect(rating('pl-alice').singles_wins).toBe(0);
+    expect(rating('pl-alice').singles_losses).toBe(1);
+    expect(rating('pl-bob').singles_wins).toBe(1);
+    expect(rating('pl-bob').singles_losses).toBe(0);
+    expect(rating('pl-bob').singles_points_scored).toBe(42);
+    expect(rating('pl-alice').singles_points_scored).toBe(32);
+  });
+
+  it('leaves a pre-00070 snapshot\'s statistics alone when reversing it', async () => {
+    // The three snapshots already in production have no `won` key, and their
+    // matches never touched the counts. Reversing one must not deduct
+    // statistics this match never added.
+    Object.assign(rating('pl-alice'), { singles_matches_played: 30, singles_wins: 12 });
+    match(QF).status = 'completed';
+    match(QF).winner_participant_id = 'p-alice';
+    match(QF).loser_participant_id = 'p-bob';
+    match(QF).elo_snapshot = {
+      discipline: 'singles',
+      entries: [{ player_id: 'pl-alice', before: 1000, after: 1026, delta: 26 }],
+    };
+    store.db.ratings!.find((r) => r.player_id === 'pl-alice')!.singles_elo = 1026;
+
+    expect((await voidMatch(QF, 'Legacy row')).ok).toBe(true);
+
+    expect(ratingOf('pl-alice')).toBe(1000);          // Elo still reverses
+    expect(rating('pl-alice').singles_matches_played).toBe(30); // counts untouched
+    expect(rating('pl-alice').singles_wins).toBe(12);
   });
 
   it('records a walkover as a played match with no points or games', async () => {
