@@ -25,6 +25,7 @@ import {
   reliabilityAdjustSchema,
   legalAcceptanceSchema,
   legalDocumentUpdateSchema,
+  eventWaiverTemplateUpdateSchema,
   sessionIntentSchema,
 } from '../schemas';
 
@@ -704,6 +705,38 @@ describe('legalDocumentUpdateSchema', () => {
   it('rejects content longer than 50000 chars', () => {
     expect(
       legalDocumentUpdateSchema.safeParse({ ...base, content: 'x'.repeat(50001) }).success,
+    ).toBe(false);
+  });
+});
+
+// The per-season event waiver template (00074). Keyed by season uuid, not a
+// document name — a template is NOT a legal_documents row, and there is no
+// bump_version because nobody accepts a template directly.
+describe('eventWaiverTemplateUpdateSchema', () => {
+  const base = {
+    season_id: '3f2504e0-4f89-11d3-9a0c-0305e82c3301',
+    content: 'x'.repeat(100),
+  };
+  it('accepts a valid update', () => {
+    expect(eventWaiverTemplateUpdateSchema.safeParse(base).success).toBe(true);
+  });
+  it('rejects a season_id that is not a uuid', () => {
+    // The action passes this straight to a uuid column; a document-style key
+    // like 'waiver' would blow up at the database instead of here.
+    expect(
+      eventWaiverTemplateUpdateSchema.safeParse({ ...base, season_id: 'fall-2026' }).success,
+    ).toBe(false);
+  });
+  it('rejects content shorter than 50 chars', () => {
+    // Stops a stray keystroke becoming the wording every event that term
+    // starts from.
+    expect(
+      eventWaiverTemplateUpdateSchema.safeParse({ ...base, content: 'too short' }).success,
+    ).toBe(false);
+  });
+  it('rejects content longer than 50000 chars', () => {
+    expect(
+      eventWaiverTemplateUpdateSchema.safeParse({ ...base, content: 'x'.repeat(50001) }).success,
     ).toBe(false);
   });
 });

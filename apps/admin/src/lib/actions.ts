@@ -18,6 +18,7 @@
 //   - varsity.ts       — varsity notes
 //   - reliability.ts   — adjustReliability (manual reliability-counter edits)
 //   - settings.ts      — updateLegalDocument (waiver / code of conduct),
+//                        updateEventWaiverTemplate (per-season event waiver),
 //                        updatePlatformSettings (/ratings + /accounts)
 //   - _shared.ts       — getAdminPlayer (NOT 'use server' — internal helper)
 export {
@@ -122,5 +123,6 @@ export {
 export {
   updateLegalDocument,
   requireReacceptance,
+  updateEventWaiverTemplate,
   updatePlatformSettings,
 } from './actions/settings';

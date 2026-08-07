@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { getMissingLegalDocuments, sortLegalDocuments, LEGAL_DOCUMENT_ORDER } from '../legal';
+import {
+  getMissingLegalDocuments,
+  sortLegalDocuments,
+  resolveEventWaiverTemplate,
+  LEGAL_DOCUMENT_ORDER,
+} from '../legal';
 
 const DOCS = [
   { document: 'waiver', version: '2026-07-19', reacceptance_required_since: null },
@@ -173,5 +178,50 @@ describe('getMissingLegalDocuments', () => {
 describe('sortLegalDocuments', () => {
   it('orders rows terms, privacy, waiver, code of conduct', () => {
     expect(sortLegalDocuments(DOCS).map((d) => d.document)).toEqual(LEGAL_DOCUMENT_ORDER);
+  });
+});
+
+// Guards which season's event-waiver wording the tournament dialog offers
+// (00074). Getting this wrong is not a visual bug: it would put the wrong
+// term's venue/insurer terms in front of participants to accept.
+describe('resolveEventWaiverTemplate', () => {
+  const FALL = 'season-fall';
+  const SUMMER = 'season-summer';
+  const TEMPLATES = [
+    { season_id: FALL, content: 'fall wording' },
+    { season_id: SUMMER, content: 'summer wording' },
+  ];
+
+  it('uses the active season for a tournament that does not exist yet', () => {
+    // The create dialog has no tournament; createTournament will stamp the
+    // active season on it, so that is the season it must draw from.
+    expect(resolveEventWaiverTemplate(TEMPLATES, undefined, SUMMER)).toBe('summer wording');
+  });
+
+  it("prefers the tournament's own season over the active one", () => {
+    // Editing a Fall event while Summer is active must not silently swap in
+    // this term's wording.
+    expect(resolveEventWaiverTemplate(TEMPLATES, FALL, SUMMER)).toBe('fall wording');
+  });
+
+  it('falls back to the active season when the tournament has no season', () => {
+    // tournaments.season_id is ON DELETE SET NULL, and createTournament writes
+    // NULL when no season was active at the time.
+    expect(resolveEventWaiverTemplate(TEMPLATES, null, SUMMER)).toBe('summer wording');
+  });
+
+  it('returns null when neither the tournament nor the club has a season', () => {
+    // Caller shows a disabled button, rather than pasting an empty waiver.
+    expect(resolveEventWaiverTemplate(TEMPLATES, null, null)).toBeNull();
+  });
+
+  it('returns null when the resolved season has no template', () => {
+    // Only the active season at migration time was seeded; later seasons start
+    // with no row at all.
+    expect(resolveEventWaiverTemplate(TEMPLATES, 'season-spring', SUMMER)).toBeNull();
+  });
+
+  it('returns null when no templates exist at all', () => {
+    expect(resolveEventWaiverTemplate([], FALL, SUMMER)).toBeNull();
   });
 });

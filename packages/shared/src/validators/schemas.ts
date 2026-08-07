@@ -472,6 +472,17 @@ export const waiverDocumentSchema = z.enum([
   'waiver', 'code_of_conduct', 'terms_of_use', 'privacy_policy',
 ]);
 
+// The per-season starting text for a tournament's event waiver (00074). Same
+// length bounds as legalDocumentUpdateSchema — it is the same kind of text,
+// and the 50-character floor is what stops a stray keystroke being saved as
+// the wording every event that term starts from. No bump_version counterpart:
+// a template is accepted by nobody, so there is no version to re-require
+// (acceptance happens per tournament against the copied text).
+export const eventWaiverTemplateUpdateSchema = z.object({
+  season_id: z.string().uuid(),
+  content: z.string().min(50, 'Content must be at least 50 characters').max(50000),
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type ProfileInput = z.infer<typeof profileSchema>;
 export type ChallengeCreateInput = z.infer<typeof challengeCreateSchema>;
@@ -507,3 +518,4 @@ export type LegalAcceptanceInput = z.infer<typeof legalAcceptanceSchema>;
 export type AccountDeletionInput = z.infer<typeof accountDeletionSchema>;
 export type LegalDocumentUpdateInput = z.infer<typeof legalDocumentUpdateSchema>;
 export type WaiverDocumentInput = z.infer<typeof waiverDocumentSchema>;
+export type EventWaiverTemplateUpdateInput = z.infer<typeof eventWaiverTemplateUpdateSchema>;
