@@ -1460,6 +1460,9 @@ export type Database = {
           event_id: string
           id: string
           is_bye: boolean | null
+          is_third_place: boolean
+          loser_to_match_id: string | null
+          loser_to_position: string | null
           loser_pair_id: string | null
           loser_participant_id: string | null
           match_number: number | null
@@ -1492,6 +1495,9 @@ export type Database = {
           event_id: string
           id?: string
           is_bye?: boolean | null
+          is_third_place?: boolean
+          loser_to_match_id?: string | null
+          loser_to_position?: string | null
           loser_pair_id?: string | null
           loser_participant_id?: string | null
           match_number?: number | null
@@ -1524,6 +1530,9 @@ export type Database = {
           event_id?: string
           id?: string
           is_bye?: boolean | null
+          is_third_place?: boolean
+          loser_to_match_id?: string | null
+          loser_to_position?: string | null
           loser_pair_id?: string | null
           loser_participant_id?: string | null
           match_number?: number | null

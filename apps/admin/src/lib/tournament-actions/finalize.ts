@@ -293,15 +293,50 @@ export async function finalizeEvent(eventId: string) {
 
   if (event.format === 'single_elimination') {
     const { data: matches } = await adminClient.from('tournament_matches')
-      .select('round_number, winner_pair_id, loser_pair_id, winner_participant_id, loser_participant_id')
+      .select('round_number, is_third_place, winner_pair_id, loser_pair_id, winner_participant_id, loser_participant_id')
       .eq('event_id', eventId)
       .in('status', ['completed', 'walkover'])
       .order('round_number', { ascending: false });
 
-    if (matches && matches.length > 0) {
-      const totalRounds = Math.max(...matches.map(m => m.round_number));
+    // The third-place playoff shares round_number with the final so the two are
+    // scheduled together (00080), and it MUST be held out of the loop below —
+    // both of that loop's rules would misread it:
+    //
+    //   * its loser has roundsFromFinal 0, so the "loser of the final is 2nd"
+    //     rule would award 2nd place to the player who came FOURTH;
+    //   * its winner is in the final's round, and the champion line uses `set`
+    //     rather than first-write-wins, so it would overwrite the actual
+    //     champion with the winner of the third-place match.
+    //
+    // Neither is a hypothetical: they are the direct consequence of the
+    // scheduling decision, which is why the split is here and not left implicit.
+    const allMatches = matches ?? [];
+    const bracketMatches = allMatches.filter(m => !m.is_third_place);
+    const thirdPlace = allMatches.find(m => m.is_third_place);
 
-      for (const m of matches) {
+    // Written BEFORE the loop so the first-write-wins rule for losers protects
+    // them: without a playoff, both semi-final losers get joint 3rd, and that
+    // rule is exactly what must not run for the two entries this match sorted.
+    //
+    // Each side is written only if it exists. An unopposed playoff — one
+    // semi-final was a bye, so only one loser was ever routed in — has a winner
+    // and no loser, and inventing a 4th place for nobody would be worse than
+    // leaving the position unset.
+    if (thirdPlace) {
+      const w = (doubles ? thirdPlace.winner_pair_id : thirdPlace.winner_participant_id) as string | null;
+      const l = (doubles ? thirdPlace.loser_pair_id : thirdPlace.loser_participant_id) as string | null;
+      if (w) positionMap.set(w, 3);
+      if (l) positionMap.set(l, 4);
+    }
+
+    // Guarded on the FILTERED list, not on `matches`. An event whose only
+    // completed match is the playoff — the final voided, say — would otherwise
+    // reach Math.max() of an empty array, which is -Infinity, and every
+    // loserPosition computed from it would be garbage rather than absent.
+    if (bracketMatches.length > 0) {
+      const totalRounds = Math.max(...bracketMatches.map(m => m.round_number));
+
+      for (const m of bracketMatches) {
         const roundsFromFinal = totalRounds - m.round_number;
         const loserPosition = roundsFromFinal === 0 ? 2 : Math.pow(2, roundsFromFinal) + 1;
 

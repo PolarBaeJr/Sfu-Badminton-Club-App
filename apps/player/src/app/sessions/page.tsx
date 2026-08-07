@@ -25,18 +25,34 @@ export default async function SessionsPage() {
   // with session_checkin_open() instead of a hardcoded snapshot of prod.
   const checkinSettings = await getCheckinSettings();
 
+  // Members see the season they are actually playing in. Last term's sessions
+  // hanging around under this term's is confusing here in a way it is not in the
+  // console: a member reads this page to decide whether to turn up tonight.
+  //
+  // Sessions with NO season are kept — unassigned is not "another season", and
+  // dropping them would leave them on no page at all. If nothing is active the
+  // filter is skipped, because an empty schedule caused by an unactivated season
+  // looks exactly like a cancelled club.
+  const { data: activeSeason } = await supabase
+    .from('seasons').select('id').eq('active_flag', true).maybeSingle();
+  const inActiveSeason = <T extends { or: (f: string) => T }>(q: T): T =>
+    activeSeason ? q.or(`season_id.eq.${activeSeason.id},season_id.is.null`) : q;
+
   const [{ data: openSessions }, { data: closedSessions }, { data: myAttendance }, { data: attendanceCounts }, { data: myRsvp }, { data: goingCounts }] = await Promise.all([
-    supabase
-      .from('sessions')
-      .select('*')
-      .eq('status', 'open')
-      .in('track', [player.status, 'all'])
-      .order('date', { ascending: true }),
-    supabase
-      .from('sessions')
-      .select('*')
-      .eq('status', 'closed')
-      .in('track', [player.status, 'all'])
+    inActiveSeason(
+      supabase
+        .from('sessions')
+        .select('*')
+        .eq('status', 'open')
+        .in('track', [player.status, 'all'])
+    ).order('date', { ascending: true }),
+    inActiveSeason(
+      supabase
+        .from('sessions')
+        .select('*')
+        .eq('status', 'closed')
+        .in('track', [player.status, 'all'])
+    )
       .order('date', { ascending: false })
       .limit(10),
     supabase

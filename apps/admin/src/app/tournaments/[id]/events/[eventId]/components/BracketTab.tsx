@@ -47,7 +47,18 @@ interface Props {
 
 export function BracketTab({ event, matches, participants, pairs, isDoubles }: Props) {
   const [scoreMatch, setScoreMatch] = useState<TournamentMatchRow | null>(null);
-  const allMatches = matches;
+  // The third-place playoff shares round_number with the final so the two are
+  // scheduled together, but it is held OUT of the round columns on purpose.
+  //
+  // Rendered as a sibling of the final it would sit in the final's column, and
+  // the connector maths would then see a round with two cards feeding a round
+  // with one — the exact shape of "these two matches feed that one". `canLink`
+  // would refuse to draw the elbows (2 !== 1 * 2), so the semi-finals would
+  // silently lose their connectors as well, and the playoff would still LOOK
+  // like a second final. Below the bracket, labelled, with no line touching it,
+  // it can only read as what it is.
+  const thirdPlace = matches.find((m) => m.is_third_place) ?? null;
+  const allMatches = matches.filter((m) => !m.is_third_place);
   const isLive = event.status === 'live' || event.status === 'bracket_generated';
 
   if (allMatches.length === 0) {
@@ -195,6 +206,32 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
         </div>
       </div>
 
+      {thirdPlace && (
+        <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
+          <div className="flex items-baseline gap-3 mb-3">
+            <h3 className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--text-secondary)]">
+              3rd Place Playoff
+            </h3>
+            {/* Says what it is and, just as importantly, what it is not. Without
+                this line a reader who knows brackets has to work out from the
+                absence of a connector that the winner does not go anywhere. */}
+            <p className="text-[11px] text-[var(--text-muted)]">
+              The two semi-final losers. Decides 3rd and 4th — the winner does not advance to the final.
+            </p>
+          </div>
+          <div style={{ width: COL_W }}>
+            <MatchCard
+              m={thirdPlace}
+              isDoubles={isDoubles}
+              isLive={isLive}
+              getEntryName={getEntryName}
+              getSeed={getSeed}
+              onEnterScore={() => setScoreMatch(thirdPlace)}
+            />
+          </div>
+        </div>
+      )}
+
       {scoreMatch && (
         <ScoreEntryDialog
           match={scoreMatch}
@@ -233,6 +270,20 @@ function MatchCard({ m, isDoubles, isLive, getEntryName, getSeed, onEnterScore }
   // dialog, on its restore or slot-editing panel.
   const isVoided = m.status === 'voided';
   const canRecover = isLive && !isCompleted && !isSkip && !canEnterScore;
+  // ...and a match that already HAS a result used to render with no action
+  // either, which is what made editMatchResult unreachable: the only way to fix
+  // a wrong scoreline was to void it, restore it and type it again. A decided
+  // match now opens the dialog on its correction panel.
+  //
+  // A skip is excluded. It is "completed" with a winner the generator placed
+  // there, and it has no scoreline to correct — the slot editor on the next
+  // round is the tool for a wrong bye.
+  //
+  // Not gated on isLive: an event flips to 'completed' the moment it is
+  // finalised, and finalising is when a wrong result gets noticed. The server
+  // allows a correction on a live OR completed event, so gating the button on
+  // isLive would hide the affordance exactly where it is wanted.
+  const canChangeResult = isCompleted && !isSkip;
 
   const scores = m.scores as GameScore[] | null;
   // Either side can be the empty one — the generator gives the skip to whichever
@@ -299,6 +350,18 @@ function MatchCard({ m, isDoubles, isLive, getEntryName, getSeed, onEnterScore }
             className="w-full h-full text-xs font-medium text-[var(--color-warning)] bg-[var(--bg-elevated)] hover:bg-[color-mix(in_srgb,var(--color-warning)_10%,transparent)] transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-warning)] focus-visible:outline-none"
           >
             {isVoided ? 'Restore Match' : 'Fix Slots'}
+          </button>
+        ) : canChangeResult ? (
+          <button
+            onClick={onEnterScore}
+            aria-label={`Change the recorded result for match ${m.match_number ?? ''}`}
+            className="w-full h-full flex items-center justify-center gap-2 text-xs font-medium bg-[var(--bg-elevated)] hover:bg-[color-mix(in_srgb,var(--color-warning)_10%,transparent)] transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-warning)] focus-visible:outline-none"
+          >
+            {/* The status stays visible. This is a settled match, and the button
+                must not read as though the result is still being entered — the
+                label is the secondary thing on the row, not the headline. */}
+            <StatusLabel status={m.status} isSkip={false} />
+            <span className="text-[var(--text-muted)]">· Change</span>
           </button>
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-[var(--bg-elevated)]">

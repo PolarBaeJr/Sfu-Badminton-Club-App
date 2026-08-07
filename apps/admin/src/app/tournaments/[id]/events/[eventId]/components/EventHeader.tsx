@@ -42,6 +42,12 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
   const [loading, setLoading] = useState(false);
   const [lockLoading, setLockLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // The third-place playoff is a generation-time choice, so it lives next to the
+  // button that generates. It is NOT persisted on the event — the generated
+  // match is the record — so this is deliberately plain local state that resets
+  // with the page, which is also what makes it honest: it can only ever describe
+  // the draw that is about to be built, never one that already exists.
+  const [thirdPlace, setThirdPlace] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
   const drawLocked = event.draw_locked as boolean;
@@ -52,6 +58,10 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
   const currentStepIdx = STATUS_STEPS.indexOf(status);
   const bracketSize = nextPowerOf2(totalEntries);
   const byes = bracketSize - totalEntries;
+  // Offered only where it means something: a knockout draw, at the moment the
+  // draw is generated. A round robin already produces a full ordering, and a
+  // 2-entry draw is a final with no semi-finals to lose.
+  const offerThirdPlace = status === 'checkin' && format !== 'round_robin' && bracketSize >= 4;
   // Same rule the server applies: the format is editable until a draw exists.
   const settingsEditable = totalMatches === 0 && (status === 'registration' || status === 'checkin');
   const seededFromPool = Boolean(event.seeded_from_event_id);
@@ -65,7 +75,12 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
       } else if (status === 'checkin') {
         const res = format === 'round_robin'
           ? await generateRoundRobinMatches(event.id as string)
-          : await generateSingleEliminationBracket(event.id as string);
+          // A pool-seeded draw's size is only known server-side, so the flag is
+          // passed as ticked and the server skips it if the resulting draw turns
+          // out to have no semi-final round. offerThirdPlace gates the CHECKBOX,
+          // not the request, so a stale `true` from a size that has since
+          // changed cannot smuggle a playoff into a two-entry draw.
+          : await generateSingleEliminationBracket(event.id as string, offerThirdPlace && thirdPlace);
         // Generation refuses for ordinary reasons — an unfinished pool, a locked
         // draw — and the exec needs to read which one, so the message is shown
         // rather than swallowed by a generic failure toast.
@@ -190,6 +205,31 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
           )}
         </div>
       </div>
+
+      {/* Third-place playoff — a generation-time choice, so it sits with the
+          button that acts on it rather than in Event Settings, which is about
+          the event's format and stays editable for a different window. */}
+      {offerThirdPlace && (
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2.5">
+          <label className="flex items-start gap-2.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={thirdPlace}
+              onChange={(e) => setThirdPlace(e.target.checked)}
+              className="mt-0.5 accent-[var(--color-accent)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+            />
+            <span>
+              <span className="text-sm font-medium text-[var(--text-primary)] block">
+                Include a 3rd place playoff
+              </span>
+              <span className="text-xs text-[var(--text-muted)]">
+                The two semi-final losers play for 3rd, scheduled alongside the final. It is a rated match
+                like any other, and it needs a court. Without it both semi-finalists finish joint 3rd.
+              </span>
+            </span>
+          </label>
+        </div>
+      )}
 
       {/* Status Stepper */}
       <div className="flex items-center gap-1" role="progressbar" aria-label={`Event progress: ${TOURNAMENT_EVENT_STATUS_LABELS[status]}`} aria-valuenow={currentStepIdx + 1} aria-valuemin={1} aria-valuemax={STATUS_STEPS.length}>

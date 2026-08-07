@@ -19,6 +19,15 @@ export function Dialog({ open, onClose, title, children }: DialogProps) {
   // The children container, so initial focus can skip the header's close button.
   const bodyRef = useRef<HTMLDivElement>(null);
 
+  // onClose is almost always an inline arrow at the call site, so it is a NEW
+  // function on every render. Held in a ref instead of listed as a dependency:
+  // with it in the array, the effect below re-ran on every keystroke — because
+  // typing sets state, which re-renders, which makes a new onClose — and each
+  // re-run moved focus back to the first field. Typing a year yanked the caret
+  // to the Term dropdown once per character.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
     if (!open) return;
 
@@ -45,7 +54,7 @@ export function Dialog({ open, onClose, title, children }: DialogProps) {
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== 'Tab') return;
@@ -77,7 +86,8 @@ export function Dialog({ open, onClose, title, children }: DialogProps) {
       document.removeEventListener('keydown', handleKeyDown);
       previouslyFocused?.focus?.();
     };
-  }, [open, onClose]);
+    // `open` alone: this is open/close behaviour, not per-render behaviour.
+  }, [open]);
 
   if (!open) return null;
 

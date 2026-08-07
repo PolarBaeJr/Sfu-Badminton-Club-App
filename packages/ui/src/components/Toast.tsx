@@ -95,10 +95,19 @@ export function Toast({ message, type = 'info', onClose }: ToastProps) {
     info: 'bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border)]',
   };
 
+  // Held in a ref rather than listed as a dependency. The provider renders
+  // onClose={() => remove(t.id)} — a new arrow every render — so with [onClose]
+  // in the array this effect re-ran whenever ANY toast was added or removed,
+  // clearing the pending timer and starting a fresh 4 seconds. A run of toasts
+  // kept resetting each other's clocks, so they lingered instead of dismissing.
+  const onCloseRef = React.useRef(onClose);
+  onCloseRef.current = onClose;
+
   React.useEffect(() => {
-    const timer = setTimeout(onClose, 4000);
+    const timer = setTimeout(() => onCloseRef.current(), 4000);
     return () => clearTimeout(timer);
-  }, [onClose]);
+    // Empty: one 4-second life per mounted toast, started once.
+  }, []);
 
   return (
     // Positioning belongs to ToastViewport — a toast that positions itself is
