@@ -678,6 +678,35 @@ describe('a decided match is never left unrated', () => {
     expect(match(SF).participant_a_id).toBeNull();
   });
 
+  it('tells the exec a failed CORRECTION is safe to repeat, and proves it is', async () => {
+    // editMatchResult cannot be compensated the way entry is: by the time it
+    // rates, the old rating has been reversed and the scoreline it came from
+    // overwritten, so there is nothing to put back. Going forward is the only
+    // route and it is safe — but only if the exec knows that pressing Save again
+    // will not double the delta.
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    store.faults.push({ table: 'ratings', op: 'select', message: 'deadlock detected' });
+    await expect(editMatchResult(QF, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b'))
+      .rejects.toThrow(/WAS saved but is not yet rated/);
+
+    // The correction is on the row; the rating is not, and the snapshot is clear.
+    expect(match(QF).winner_participant_id).toBe('p-bob');
+    expect(match(QF).elo_snapshot).toBeNull();
+
+    store.faults = [];
+    await editMatchResult(QF, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b');
+
+    // Rated once, for the corrected result — not once per attempt.
+    expect(ratingOf('pl-bob')).toBe(1026);
+    expect(ratingOf('pl-alice')).toBe(974);
+    const alice = store.db.ratings!.find((r) => r.player_id === 'pl-alice')!;
+    expect(alice.singles_matches_played).toBe(31);
+    expect(alice.singles_losses).toBe(1);
+    expect(alice.singles_wins).toBe(0);
+    expect(store.db.reliability_metrics!.find((r) => r.player_id === 'pl-alice')!.matches_completed).toBe(6);
+  });
+
   it('says so plainly when the result cannot be taken back off either', async () => {
     // The compensating write is a PostgREST write like any other. If it fails
     // too, the match really is decided and unrated, and the message has to say

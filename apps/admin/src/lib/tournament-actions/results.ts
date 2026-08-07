@@ -848,8 +848,27 @@ export async function editMatchResult(
   // applies Elo, so omitting them here reversed the delta above and never
   // restored it, permanently zeroing both sides' rating change. Voided matches
   // stay unrated.
+  //
+  // A failure here cannot be compensated the way enterMatchResult's is. By this
+  // point the OLD rating has already been reversed and the old scoreline it was
+  // computed from has been overwritten, so there is nothing to put back — the
+  // only route forward is forward. That is safe, and this is the one place worth
+  // saying so out loud: the snapshot is null, so simply running the correction
+  // again re-rates the match and cannot count it twice, and editMatchResult has
+  // no status guard to refuse the retry. Without this message the exec is told
+  // "the rating failed" and left to guess whether pressing Save again would
+  // double the delta.
   if (match.status === 'completed' || match.status === 'walkover') {
-    await applyTournamentMatchElo(matchId);
+    try {
+      await applyTournamentMatchElo(matchId);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `${detail} — the corrected result for match ${matchId} WAS saved but is not yet rated. ` +
+        `Save the same correction again to rate it; the previous rating is already reversed, ` +
+        `so it cannot be counted twice.`,
+      );
+    }
   }
 
   await logAudit(adminClient, {
