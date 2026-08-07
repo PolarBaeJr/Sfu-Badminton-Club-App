@@ -48,7 +48,11 @@ const navSections = [
     title: 'Admin only',
     items: [
       { href: '/players', label: 'Players', icon: Users },
-      { href: '/fees', label: 'Fees', icon: DollarSign },
+      // Route stays /fees — it is the section's access key in permissions.ts
+      // and every existing link and revalidatePath points at it. The label is
+      // "Finances" because the section is no longer only fees: other income and
+      // expenses are tabs on the same page.
+      { href: '/fees', label: 'Finances', icon: DollarSign },
       // Platform configuration, split out of /settings — which stays trainer-level
       // for passkey enrolment and no longer carries any of it.
       { href: '/ratings', label: 'Ratings', icon: Gauge },

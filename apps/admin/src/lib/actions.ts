@@ -13,6 +13,7 @@
 //   - sessions.ts      — session CRUD + QR check-in tokens
 //   - announcements.ts — announcement CRUD
 //   - fees.ts          — exec/exempt player flags + club-fee tracking
+//   - finance.ts       — other income (donations/grants) + club expenses
 //   - tournament-fees.ts — tournament fee tiers + per-player entry-fee tracking
 //   - reinstatement.ts — player ban / reinstatement (with reinstatement fee)
 //   - varsity.ts       — varsity notes
@@ -95,6 +96,14 @@ export {
   addManualFee,
   removeManualFee,
 } from './actions/fees';
+
+// Non-fee money ledgers (00073): donations/grants in, shuttles/courts out.
+export {
+  addOtherIncome,
+  removeOtherIncome,
+  addExpense,
+  removeExpense,
+} from './actions/finance';
 
 export {
   createFeeTier,

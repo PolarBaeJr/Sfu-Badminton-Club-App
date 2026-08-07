@@ -12,7 +12,7 @@ import {
   Trophy,
 } from 'lucide-react';
 import { ApproveButtons } from './approve-buttons';
-import { getSeasonIncome } from '@/lib/season-income';
+import { getSeasonFinances } from '@/lib/season-finance';
 
 // Only needed to give the "trainer sees no matches" branch of the fetch below a
 // type to agree with — the admin client carries no generated Database type, so
@@ -94,10 +94,13 @@ export default async function DashboardPage() {
   ].filter(Boolean);
   const hasAlerts = alertTerms.length > 0;
 
-  // Finance snapshot: income collected for the active season so far, across all
-  // three fee ledgers. Admin-only — /fees is, and this is the same money.
+  // Finance snapshot for the active season: money in, money out, and whether
+  // the club is in the positives. Admin-only — /fees is, and this is the same
+  // money.
   let activeSeason: { id: string; name: string } | null = null;
   let seasonIncomeCents = 0;
+  let seasonExpenseCents = 0;
+  let seasonNetCents = 0;
   if (showFees) {
     const { data } = await supabase
       .from('seasons')
@@ -106,9 +109,15 @@ export default async function DashboardPage() {
       .maybeSingle();
     activeSeason = data;
     if (activeSeason) {
-      // All three ledgers, via the shared helper — this used to sum club_fees
-      // only, so recorded reinstatement and tournament money read as $0.00.
-      seasonIncomeCents = (await getSeasonIncome(supabase, activeSeason)).totalCents;
+      // Every ledger, via the shared helper. Income used to be summed inline
+      // from club_fees only, so recorded reinstatement and tournament money
+      // read as $0.00 — and it was wrong here AND on /fees because each page
+      // did its own arithmetic. Net is computed in exactly one place for the
+      // same reason.
+      const finances = await getSeasonFinances(supabase, activeSeason);
+      seasonIncomeCents = finances.income.totalCents;
+      seasonExpenseCents = finances.expenseCents;
+      seasonNetCents = finances.netCents;
     }
   }
 
@@ -202,16 +211,29 @@ export default async function DashboardPage() {
       </div>
       )}
 
-      {/* Finance snapshot — active-season income (expenses tracking to follow) */}
+      {/* Finance snapshot — in, out, and the net. The net is the headline
+          because it is the question the club owner actually asks; income alone
+          reads like good news no matter what has been spent. */}
       {showFees && activeSeason && (
         <Link href="/fees" className="group block">
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-5 hover:border-[var(--border-hover)] transition-all hover:shadow-lg hover:shadow-black/5 flex items-center justify-between">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-5 hover:border-[var(--border-hover)] transition-all hover:shadow-lg hover:shadow-black/5 flex items-center justify-between gap-4 flex-wrap">
             <div>
-              <p className="text-xs text-[var(--text-muted)] uppercase">{activeSeason.name} · Income collected</p>
-              <p className="text-3xl font-bold font-mono text-[var(--text-primary)] mt-1">${(seasonIncomeCents / 100).toFixed(2)}</p>
+              <p className="text-xs text-[var(--text-muted)] uppercase">{activeSeason.name} · Net position</p>
+              <p
+                className={`text-3xl font-bold font-mono mt-1 ${
+                  seasonNetCents < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--color-success)]'
+                }`}
+              >
+                {seasonNetCents < 0 ? '-' : ''}${(Math.abs(seasonNetCents) / 100).toFixed(2)}
+              </p>
+              <p className="text-xs text-[var(--text-muted)] mt-1">
+                <span className="text-[var(--color-success)] font-mono">${(seasonIncomeCents / 100).toFixed(2)}</span> in
+                {' · '}
+                <span className="text-[var(--color-danger)] font-mono">${(seasonExpenseCents / 100).toFixed(2)}</span> out
+              </p>
             </div>
             <div className="flex items-center gap-2 text-sm text-[var(--text-muted)]">
-              Manage fees <ArrowUpRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+              Manage finances <ArrowUpRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
             </div>
           </div>
         </Link>

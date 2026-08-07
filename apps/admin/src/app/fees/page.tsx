@@ -4,9 +4,24 @@ import { Badge, Card, AvatarChip, EmptyState, PageHeader, ResponsiveTable, Table
 import { unwrap, unwrapMaybe, formatPaymentMethod } from '@badminton/shared';
 import type { Season } from '@badminton/shared';
 import { isWaivedFee } from '@/lib/fee-status';
-import { getSeasonIncome } from '@/lib/season-income';
+import { getSeasonFinances } from '@/lib/season-finance';
 import { FeeActions, AddManualFee, RemoveManualFee } from './fee-actions';
 import { ReinstatementsCard } from './reinstatements-card';
+import { LedgerCard } from './ledger-card';
+import { NetPositionStrip } from './net-position-strip';
+
+// The three sections of the money page. 'fees' is the original table; the other
+// two are the ledgers the club owner asked for ("add other fees", "add another
+// tab called expenses"). URL-driven rather than client state so each is a
+// server render with its own query — the tab you are not looking at costs
+// nothing, and a link to a tab is shareable.
+const TABS = [
+  { id: 'fees', label: 'Club fees' },
+  { id: 'income', label: 'Other income' },
+  { id: 'expenses', label: 'Expenses' },
+] as const;
+
+type TabId = (typeof TABS)[number]['id'];
 
 /** Card identity line: the same avatar + name + sub-line the Player cell shows. */
 function personTitle(name: string, sub: string, avatarUrl?: string | null, id?: string) {
@@ -21,7 +36,13 @@ function personTitle(name: string, sub: string, avatarUrl?: string | null, id?: 
   );
 }
 
-export default async function FeesPage() {
+export default async function FeesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }>;
+}) {
+  const params = await searchParams;
+  const tab: TabId = TABS.some((t) => t.id === params.tab) ? (params.tab as TabId) : 'fees';
   const supabase = createAdminClient();
 
   const season = unwrapMaybe<Season>(
@@ -37,9 +58,13 @@ export default async function FeesPage() {
       <div className="space-y-6">
         <PageHeader title="Fees" watermark="F" />
         <Card>
+          {/* No season means no net position either: other_income and
+              club_expenses are season_id NOT NULL (00073), so there is nothing
+              to add up and no season to add it up for. Said out loud here
+              rather than leaving an admin to wonder where the tabs went. */}
           <EmptyState
             title="No active season"
-            description="Club fees follow the active season. Create and activate a season to start tracking fees."
+            description="Fees, other income and expenses all follow the active season. Create and activate a season to start tracking money in and out."
             action={
               <Link href="/seasons" className="text-[var(--color-accent)] font-medium">
                 Go to Seasons
@@ -60,24 +85,33 @@ export default async function FeesPage() {
   const feeForStatus = (status: string) =>
     status === 'competitive' ? season.competitive_fee_cents : season.recreational_fee_cents;
 
+  // Only the Club fees tab renders the roster table, so only it pays for the
+  // two queries behind it. The derived counts below all collapse to 0 on an
+  // empty list and none of them are rendered off that tab.
+  const showFeeTable = tab === 'fees';
+
   // Fee-collection list: active players (competitive/recreational) who are
   // neither exec nor fee-exempt.
-  const players = unwrap(
-    await supabase
-      .from('players')
-      .select('id, full_name, email, avatar_url, status')
-      .in('status', ['competitive', 'recreational'])
-      .eq('is_exec', false)
-      .eq('fee_exempt', false)
-      .order('full_name')
-  );
+  const players = showFeeTable
+    ? unwrap(
+        await supabase
+          .from('players')
+          .select('id, full_name, email, avatar_url, status')
+          .in('status', ['competitive', 'recreational'])
+          .eq('is_exec', false)
+          .eq('fee_exempt', false)
+          .order('full_name')
+      )
+    : [];
 
-  const fees = unwrap(
-    await supabase
-      .from('club_fees')
-      .select('id, player_id, manual_name, amount_cents, paid_at, method, reference')
-      .eq('season_id', season.id)
-  );
+  const fees = showFeeTable
+    ? unwrap(
+        await supabase
+          .from('club_fees')
+          .select('id, player_id, manual_name, amount_cents, paid_at, method, reference')
+          .eq('season_id', season.id)
+      )
+    : [];
   const feeByPlayer = new Map(
     fees.filter((f) => f.player_id != null).map((f) => [f.player_id, f])
   );
@@ -96,28 +130,60 @@ export default async function FeesPage() {
   const paidCount = paidPlayers + manualFees.length;
   const outstandingCount = players.length - paidPlayers - waivedPlayers;
 
-  // Income collected this season across ALL three fee ledgers. This used to sum
-  // club_fees only, so a recorded reinstatement or tournament payment left the
-  // headline reading $0.00 while the money sat in the database.
-  const income = await getSeasonIncome(supabase, season);
-  const collectedCents = income.totalCents;
+  // Everything in and everything out for this season, through the single
+  // helper. Income used to be summed from club_fees only, so a recorded
+  // reinstatement or tournament payment left the headline reading $0.00 while
+  // the money sat in the database — and it was wrong on two pages at once
+  // because each page did its own arithmetic. There is one implementation now
+  // and both pages call it.
+  const finances = await getSeasonFinances(supabase, season);
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Fees"
+        title="Finances"
         watermark="F"
         sub={`${season.name} · Competitive $${(season.competitive_fee_cents / 100).toFixed(2)} · Recreational $${(season.recreational_fee_cents / 100).toFixed(2)}`}
-        actions={<AddManualFee seasonId={season.id} seasonName={season.name} />}
+        actions={showFeeTable ? <AddManualFee seasonId={season.id} seasonName={season.name} /> : undefined}
       />
 
+      {/* The answer to "are we in the positives", above the tabs so it is on
+          screen no matter which ledger is open. */}
+      <NetPositionStrip finances={finances} seasonName={season.name} />
+
+      {/* Tabs. Plain links, matching /players?tab= — the page is an async
+          server component, so a client tab control would mean shipping every
+          ledger's rows to the browser to show one of them. */}
+      <Card padding={false}>
+        <div className="flex gap-1 p-1 overflow-x-auto">
+          {TABS.map((t) => (
+            <Link
+              key={t.id}
+              href={`/fees?tab=${t.id}`}
+              className={`px-4 min-h-[44px] text-sm rounded-md transition-colors flex items-center ${
+                tab === t.id
+                  ? 'bg-[var(--color-accent)] text-white'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-hover)]'
+              }`}
+            >
+              {t.label}
+            </Link>
+          ))}
+        </div>
+      </Card>
+
+      {tab === 'income' && (
+        <LedgerCard kind="income" seasonId={season.id} seasonName={season.name} />
+      )}
+
+      {tab === 'expenses' && (
+        <LedgerCard kind="expense" seasonId={season.id} seasonName={season.name} />
+      )}
+
+      {showFeeTable && (
+      <>
       {/* Summary */}
-      <div className="grid grid-cols-3 gap-4">
-        <Card>
-          <p className="text-xs text-[var(--text-muted)] uppercase">Collected</p>
-          <p className="text-2xl font-bold font-mono text-[var(--text-primary)]">${(collectedCents / 100).toFixed(2)}</p>
-          <p className="text-xs text-[var(--text-muted)] mt-1">Season income</p>
-        </Card>
+      <div className="grid grid-cols-2 gap-4">
         <Card>
           <p className="text-xs text-[var(--text-muted)] uppercase">Paid</p>
           <p className="text-2xl font-bold font-mono text-[var(--color-success)]">{paidCount}</p>
@@ -273,7 +339,12 @@ export default async function FeesPage() {
         )}
       </Card>
 
+      {/* Stays on the Club fees tab: a reinstatement IS a fee, and the rows
+          with no amount recorded are the ones an admin is meant to trip over
+          while working through the fee list. */}
       <ReinstatementsCard seasonId={season.id} />
+      </>
+      )}
     </div>
   );
 }

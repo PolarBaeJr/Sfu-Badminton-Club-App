@@ -26,6 +26,8 @@ import {
   legalAcceptanceSchema,
   legalDocumentUpdateSchema,
   sessionIntentSchema,
+  otherIncomeSchema,
+  clubExpenseSchema,
 } from '../schemas';
 
 const UUID_A = '11111111-1111-4111-8111-111111111111';
@@ -772,5 +774,83 @@ describe('sessionIntentSchema', () => {
     expect(sessionIntentSchema.safeParse('maybe').success).toBe(false);
     expect(sessionIntentSchema.safeParse('').success).toBe(false);
     expect(sessionIntentSchema.safeParse(undefined).success).toBe(false);
+  });
+});
+
+// The two non-fee ledgers (00073). Both are money, so both are validated at the
+// trust boundary before the service-role client — which bypasses RLS — writes
+// anything.
+describe('otherIncomeSchema / clubExpenseSchema', () => {
+  const income = { season_id: UUID_A, category: 'donation', description: 'Alumni gift', amount_cents: 15000 };
+  const expense = { season_id: UUID_A, category: 'shuttles', description: '6 tubes', amount_cents: 8400 };
+
+  it('accepts a minimal valid entry on each', () => {
+    expect(otherIncomeSchema.safeParse(income).success).toBe(true);
+    expect(clubExpenseSchema.safeParse(expense).success).toBe(true);
+  });
+
+  // season_id is the ONLY thing that decides which season a row counts toward.
+  // reinstatement_fees had no season column, had to be bucketed by paid_at, and
+  // a payment taken between terms then belonged to no season and showed in no
+  // total (00069). An optional season here would recreate that hole.
+  it('requires a season on both ledgers', () => {
+    expect(otherIncomeSchema.safeParse({ ...income, season_id: undefined }).success).toBe(false);
+    expect(clubExpenseSchema.safeParse({ ...expense, season_id: undefined }).success).toBe(false);
+    expect(clubExpenseSchema.safeParse({ ...expense, season_id: 'not-a-uuid' }).success).toBe(false);
+  });
+
+  // A category outside the list would be rejected by the database CHECK in
+  // 00073 anyway; catching it here turns a 500 into a field error, and keeps
+  // the console's vocabulary and the database's from drifting apart.
+  it('rejects a category the database would refuse', () => {
+    expect(clubExpenseSchema.safeParse({ ...expense, category: 'shuttlecocks' }).success).toBe(false);
+    expect(otherIncomeSchema.safeParse({ ...income, category: 'shuttles' }).success).toBe(false);
+  });
+
+  // Cents are integers. A fractional cent is not money, and a negative amount
+  // on an expense would ADD to the net position instead of subtracting from it,
+  // turning a typo into a club that looks solvent.
+  it('rejects fractional and negative amounts', () => {
+    expect(clubExpenseSchema.safeParse({ ...expense, amount_cents: 84.5 }).success).toBe(false);
+    expect(clubExpenseSchema.safeParse({ ...expense, amount_cents: -8400 }).success).toBe(false);
+    expect(otherIncomeSchema.safeParse({ ...income, amount_cents: -1 }).success).toBe(false);
+  });
+
+  // $0.00 is a legitimate entry: a promised donation that came to nothing, or
+  // shuttles somebody donated. Refusing it would push the admin to delete the
+  // trail instead of recording the outcome.
+  it('accepts a zero amount', () => {
+    expect(clubExpenseSchema.safeParse({ ...expense, amount_cents: 0 }).success).toBe(true);
+    expect(otherIncomeSchema.safeParse({ ...income, amount_cents: 0 }).success).toBe(true);
+  });
+
+  // A blank description makes a ledger line nobody can identify later. Trimmed,
+  // so spaces do not sneak past the minimum.
+  it('rejects a blank or whitespace-only description', () => {
+    expect(clubExpenseSchema.safeParse({ ...expense, description: '' }).success).toBe(false);
+    expect(clubExpenseSchema.safeParse({ ...expense, description: '   ' }).success).toBe(false);
+  });
+
+  // Quantity is a unit count for the spend ("6 tubes"), not an amount. Zero or
+  // fractional tubes is a typo.
+  it('accepts a positive quantity and rejects zero or fractional', () => {
+    expect(clubExpenseSchema.safeParse({ ...expense, quantity: 6 }).success).toBe(true);
+    expect(clubExpenseSchema.safeParse({ ...expense, quantity: 0 }).success).toBe(false);
+    expect(clubExpenseSchema.safeParse({ ...expense, quantity: 1.5 }).success).toBe(false);
+  });
+
+  // Quantity belongs to expenses only — "3 donations" is not a thing this
+  // ledger records, and an unknown key must not silently become a column.
+  it('does not carry quantity through on other income', () => {
+    const parsed = otherIncomeSchema.parse({ ...income, quantity: 3 } as never);
+    expect('quantity' in parsed).toBe(false);
+  });
+
+  // The date the money moved, which is not the date the entry was typed: an
+  // exec writing up September's receipts in October has to be able to say
+  // September. It never changes which season the row counts toward.
+  it('accepts an explicit ISO paid_at and rejects a bare date', () => {
+    expect(clubExpenseSchema.safeParse({ ...expense, paid_at: '2026-09-15T12:00:00.000Z' }).success).toBe(true);
+    expect(clubExpenseSchema.safeParse({ ...expense, paid_at: '2026-09-15' }).success).toBe(false);
   });
 });
