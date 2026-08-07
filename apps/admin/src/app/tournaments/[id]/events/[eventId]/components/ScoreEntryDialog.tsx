@@ -120,17 +120,32 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
   // The reason is mandatory here as well as on the server. The server refusal is
   // the boundary; requiring it in the form is what stops the exec discovering it
   // after they have already retyped three games.
-  async function handleCorrect() {
-    if (!autoWinner) { toast('Cannot determine winner from scores', 'error'); return; }
+  // Change a result that is already recorded, without voiding it first.
+  //
+  // `winner` is passed explicitly rather than taken from autoWinner, because a
+  // WALKOVER has no scoreline to derive one from. Gating the button on
+  // autoWinner made the server's scoreless-walkover correction — which exists,
+  // and is tested — unreachable from the console: the only way to fix a walkover
+  // awarded to the wrong side was to void it, losing the record that it was a
+  // walkover at all.
+  //
+  // The reason is mandatory here as well as on the server. The server refusal is
+  // the boundary; requiring it in the form is what stops the exec discovering it
+  // after they have already retyped three games.
+  async function handleCorrect(winner: 'a' | 'b') {
     if (!walkoverReason.trim()) { toast('Enter a reason for changing the result', 'error'); return; }
     setLoading(true);
     try {
       const scores = games
         .filter(g => g.a || g.b)
         .map(g => ({ a: parseInt(g.a) || 0, b: parseInt(g.b) || 0 }));
-      const res = await editMatchResult(match.id, scores, autoWinner, walkoverReason);
+      const res = await editMatchResult(match.id, scores, winner, walkoverReason);
       if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
-      done('Result changed — ratings have been re-applied');
+      done(
+        scores.length > 0
+          ? 'Result changed — ratings have been re-applied'
+          : 'Walkover re-awarded — ratings have been re-applied',
+      );
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
@@ -266,6 +281,9 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
   // What the row says today, so the exec can see what they are replacing rather
   // than trusting the prefilled boxes to be the same thing.
   const recordedWinnerId = isDoubles ? match.winner_pair_id : match.winner_participant_id;
+  // Whether the exec has typed anything at all, which is what distinguishes
+  // "rescore this match" from "re-award this walkover".
+  const anyScoreTyped = games.some((g) => g.a !== '' || g.b !== '');
   const recordedSummary = recorded.length > 0
     ? recorded.map((g) => `${g.a}-${g.b}`).join(', ')
     : match.status === 'walkover'
@@ -364,6 +382,18 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
               </p>
             </div>
 
+            {/* Said out loud rather than left to be discovered. Ratings ARE
+                corrected; final placings are not, because finalizeEvent only
+                runs on a live event and the placement bonuses are not
+                idempotent — re-running them would pay every bonus twice. */}
+            {event.status === 'completed' && (
+              <p className="text-xs text-[var(--color-warning)]">
+                This event is already finalised. The correction fixes the ratings and the match record, but
+                the final placings, points and any placement bonus were worked out at finalisation and are
+                not recalculated. Adjust those by hand if this changes who finished where.
+              </p>
+            )}
+
             {games.map((g, i) => (
               <div key={i} className="flex items-center gap-3">
                 <span className="text-xs text-[var(--text-muted)] w-16">Game {i + 1}</span>
@@ -414,14 +444,34 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
               placeholder="Why is the recorded result wrong?"
             />
 
-            <Button
-              onClick={handleCorrect}
-              loading={loading}
-              disabled={!autoWinner || !walkoverReason.trim()}
-              className="w-full focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none"
-            >
-              Save Corrected Result
-            </Button>
+            {/* No scores typed at all — a walkover being re-awarded, not a match
+                being rescored. There is no scoreline to derive a winner from, so
+                the side is named outright. */}
+            {!anyScoreTyped ? (
+              <>
+                <p className="text-xs text-[var(--text-muted)]">
+                  No scores entered, so this stays a walkover. Choose who it should be awarded to, or type
+                  the real scores above to turn it into a played match.
+                </p>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={() => handleCorrect('a')} loading={loading} disabled={!aId || !walkoverReason.trim()} className="flex-1 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
+                    Award to {nameA}
+                  </Button>
+                  <Button size="sm" onClick={() => handleCorrect('b')} loading={loading} disabled={!bId || !walkoverReason.trim()} className="flex-1 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
+                    Award to {nameB}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <Button
+                onClick={() => autoWinner && handleCorrect(autoWinner)}
+                loading={loading}
+                disabled={!autoWinner || !walkoverReason.trim()}
+                className="w-full focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+              >
+                Save Corrected Result
+              </Button>
+            )}
             {/* Voiding stays reachable from here: a result that should never have
                 existed is erased, not corrected, and the two are different
                 things to the standings. */}

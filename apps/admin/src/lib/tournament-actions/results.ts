@@ -57,15 +57,26 @@ async function clearRoutedEntry(
   const nextRow = next as Record<string, unknown>;
   if (nextRow[field] !== entryId) return false;
 
-  await adminClient.from('tournament_matches')
+  // The `.eq(field, entryId)` is the condition, not the read above it. The read
+  // decides whether to attempt the clear; this filter is what makes the clear
+  // itself safe, because another desk can fill that slot between the two. Without
+  // it a void racing a manual setMatchEntry would null out the entry somebody had
+  // just placed by hand, and the count would still report success.
+  const { count } = await adminClient.from('tournament_matches')
     .update({
       [field]: null,
       status: nextRow.status === 'ready' || nextRow.status === 'live' ? 'pending' : (nextRow.status as string),
       updated_at: new Date().toISOString(),
-    })
-    .eq('id', target.nextId);
+    }, { count: 'exact' })
+    .eq('id', target.nextId)
+    .eq(field, entryId);
 
-  return true;
+  // PostgREST reports "matched no rows" as success, so the count is the only way
+  // to tell a clear that fired from one that was overtaken. Reported rather than
+  // thrown: the caller's own action (the void, the undo) has already happened and
+  // is correct; what is not true any more is that a slot was cleared, and the
+  // audit row should not claim it was.
+  return (count ?? 0) > 0;
 }
 
 // Take this match's winner out of the next round AND its loser out of the
@@ -106,10 +117,21 @@ async function assertDownstreamUndecided(
     const target = routeOf(match, route);
     if (!target) continue;
 
-    const { data: nextMatch } = await adminClient.from('tournament_matches')
+    const { data: nextMatch, error } = await adminClient.from('tournament_matches')
       .select('status, is_third_place')
       .eq('id', target.nextId)
       .single();
+
+    // A FAILED READ is not "no downstream result". The error was being dropped,
+    // which left `nextMatch` null and the guard silently satisfied — so a
+    // transient read failure was a way past the one check standing between a
+    // correction and a played final. Refuse instead; the caller can retry.
+    if (error) {
+      throw new Error(
+        `Could not check whether the next match already has a result (${error.message}), ` +
+        `so it is not safe to ${what}. Try again.`,
+      );
+    }
 
     if (nextMatch && (nextMatch.status === 'completed' || nextMatch.status === 'walkover')) {
       throw new ExpectedError(
@@ -895,6 +917,15 @@ async function editMatchResultImpl(
     );
   }
 
+  // A BYE is status 'completed' with a winner the generator placed there and an
+  // empty opposite side, so the status check above lets it straight through —
+  // and "correcting" it would write a scoreline and a loser for a match nobody
+  // played, then rate it. voidMatch and setMatchEntry both refuse a bye for the
+  // same reason and point at the same remedy.
+  if (match.is_bye) {
+    throw new ExpectedError('A bye is not a played match. Edit the next round\'s slots instead.');
+  }
+
   // The override is explicit by construction: it cannot be performed without
   // saying why, and the reason lands in the audit row below.
   if (!reason.trim()) {
@@ -948,10 +979,24 @@ async function editMatchResultImpl(
   // write that silently matched nothing would leave the match carrying its
   // ORIGINAL scoreline with that scoreline's rating stripped off the ladder —
   // and the caller would be told the correction saved.
+  // Correcting a WALKOVER with a real scoreline makes it a played match, and the
+  // walkover fields have to go with it. Left alone, the row said status
+  // 'walkover' with walkover_winner 'a' while winner_participant_id had just
+  // become B — three fields disagreeing about who won, and the bracket renders
+  // "⚠ WALKOVER" over a scoreline. Going the other way (clearing the scores to
+  // hand the walkover to the other side) keeps the status and moves the
+  // walkover_winner, which is the same correction expressed the other way round.
+  const becomesPlayed = match.status === 'walkover' && newScores.length > 0;
+  const staysWalkover = match.status === 'walkover' && newScores.length === 0;
+
   const { error, count } = await adminClient.from('tournament_matches').update({
-    scores: newScores,
+    scores: newScores.length > 0 ? newScores : null,
     [winnerField]: winnerId,
     [loserField]: loserId,
+    ...(becomesPlayed
+      ? { status: 'completed', walkover_winner: null, walkover_reason: null }
+      : {}),
+    ...(staysWalkover ? { walkover_winner: newWinnerSide } : {}),
     result_entered_by: admin.id,
     result_entered_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -1033,8 +1078,18 @@ async function editMatchResultImpl(
       new_loser_entry_id: loserId,
       new_winner_side: newWinnerSide,
       winner_changed: priorWinnerId !== winnerId,
-      match_status: match.status,
+      old_match_status: match.status,
+      new_match_status: becomesPlayed ? 'completed' : match.status,
       reversed_elo: reversedElo,
+      // Ratings, statistics and the reliability count ARE corrected above.
+      // final_position, points and any placement bonus are NOT: finalizeEvent
+      // refuses anything that is not live, so there is no second run to be had,
+      // and applyPlacementBonuses is read-modify-write — re-running it would
+      // award every bonus on the event a second time (see readBonusLedger).
+      // Recorded rather than silently accepted, because on a completed event
+      // this is the one thing the correction does not fix.
+      standings_recomputed: false,
+      event_was_finalised: event.status === 'completed',
     },
   });
 
