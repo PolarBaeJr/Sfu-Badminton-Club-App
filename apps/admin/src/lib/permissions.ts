@@ -38,6 +38,14 @@ export {
 export type { AccessLevel } from '@badminton/shared/src/utils/access-level';
 
 const SECTION_ACCESS: { [pathPrefix: string]: AccessLevel } = {
+  // The console root, which only redirects to /dashboard (app/page.tsx). It has
+  // to be listed: unmatched paths default to admin, and middleware runs BEFORE
+  // the redirect, so without this line every non-admin opening /admin — which is
+  // where the player app's "Exec Panel" link points — was bounced to
+  // /unauthorized. Matches the root and nothing else: the prefix test is
+  // `pathname === prefix || pathname.startsWith(prefix + '/')`, and no real path
+  // begins with '//'.
+  '/': 'trainer',
   // Where sign-in lands. Trainers need to get through the front door; the
   // dashboard gates each tile with canAccess() so they only see their own.
   '/dashboard': 'trainer',

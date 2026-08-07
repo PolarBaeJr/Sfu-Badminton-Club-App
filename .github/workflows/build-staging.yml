@@ -1,0 +1,115 @@
+name: Build & push staging images
+
+# Staging counterpart to build-images.yml. Pushes the `staging` tag, which the
+# staging containers on the Pi track — proxy-manager's auto-updater watches each
+# container's own image reference (cmd/dashboard/autoupdate.go), so a new digest
+# on :staging replaces the staging containers and nothing else.
+#
+# Why a separate build rather than reusing the production image: every
+# NEXT_PUBLIC_* value is a build arg, inlined into the client bundle. The
+# production image has production's Supabase URL compiled into it, so pointing
+# it at a staging .env would move only the server and leave every browser-side
+# query aimed at the production database.
+#
+# Deliberately NOT gated on the test suite. Staging is where you go to find out
+# whether something works; refusing to deploy a red commit there would remove
+# the one place it is safe to look at one. Production is the branch that gets
+# the gate.
+
+on:
+  push:
+    branches:
+      # The staging branch is the normal way in.
+      - deploy/docker-staging
+      # Production too: staging should never be behind what is live, or it stops
+      # being a rehearsal of it.
+      - deploy/docker-prod
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-staging
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      matrix:
+        app: [player, admin]
+        include:
+          - app: admin
+            base_path: /admin
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fail loudly and early. A missing anon key would otherwise produce a
+      # perfectly successful build whose client bundle cannot reach any
+      # database, and the failure would only surface in a browser.
+      - name: Check staging anon key is configured
+        env:
+          KEY: ${{ secrets.STAGING_SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::error::STAGING_SUPABASE_ANON_KEY is not set. It is the anon key from" \
+                 "/mnt/ssd/Deploy/supabase-staging/.env on the Pi. Set it with:" \
+                 "gh secret set STAGING_SUPABASE_ANON_KEY"
+            exit 1
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          # A separate package rather than a second tag on the production one:
+          # nothing can then confuse a staging image for a production image, and
+          # the auto-updater watching :latest here cannot see production's.
+          images: ghcr.io/${{ github.repository_owner }}/badminton-${{ matrix.app }}-staging
+          # latest      — the moving tag the Pi's staging containers track
+          # sha-<sha>   — immutable, for pinning or rolling back
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runner-${{ matrix.app }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Separate cache scope from production: sharing one would let a
+          # production layer carrying production's Supabase URL be reused here.
+          cache-from: type=gha,scope=staging-${{ matrix.app }}
+          cache-to: type=gha,scope=staging-${{ matrix.app }},mode=max
+          build-args: |
+            NEXT_PUBLIC_SUPABASE_URL=https://badminton.polardev.org/supabase
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.STAGING_SUPABASE_ANON_KEY }}
+            NEXT_PUBLIC_APP_URL=https://badminton.polardev.org
+            NEXT_PUBLIC_PLAYER_URL=https://badminton.polardev.org
+            NEXT_PUBLIC_ADMIN_URL=https://badminton.polardev.org/admin
+            NEXT_PUBLIC_BASE_PATH=${{ matrix.base_path }}
+            # Must be a registrable suffix of the staging origin. Scoping it to
+            # the staging host also means a staging passkey cannot be asserted
+            # against production, or the reverse.
+            NEXT_PUBLIC_PASSKEY_RP_ID=badminton.polardev.org
+            # Host-only cookie: both apps share this origin, so no cross-domain
+            # scoping is needed — and an empty value here must match the player
+            # build, or the two write same-named cookies on different scopes.
+            NEXT_PUBLIC_AUTH_COOKIE_DOMAIN=
+            # Sentry and PostHog intentionally unset — staging must not report
+            # into production's telemetry. Leaving SENTRY_AUTH_TOKEN out also
+            # means no source maps are uploaded for a throwaway build.
+            NEXT_PUBLIC_SENTRY_DSN=
+            NEXT_PUBLIC_POSTHOG_KEY=
+            NEXT_PUBLIC_POSTHOG_HOST=

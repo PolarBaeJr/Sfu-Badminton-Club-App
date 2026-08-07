@@ -77,4 +77,25 @@ describe('rosterActionsFor', () => {
       expect(rosterActionsFor(tab, { is_banned: true })[0]?.kind).toBe('edit');
     }
   });
+
+  // Remove wrote { status: 'suspended', active_flag: false } — "Inactive" plus a
+  // silent suspension, which then parked the member on the Suspended tab
+  // offering to lift a ban that never happened. Every case here previously ran
+  // with viewer = {}, so the admin branch that actually rendered the button was
+  // untested and it went on appearing on "needs attention", where the owner
+  // asked for Edit / Recreational / Competitive only.
+  it('never offers Remove, including to an admin', () => {
+    for (const tab of ['competitive', 'recreational', 'attention', 'suspended', 'inactive']) {
+      for (const player of [{}, { is_banned: true }, { status: 'suspended' }]) {
+        const kinds = rosterActionsFor(tab, player, { isAdmin: true }).map((a) => a.kind);
+        expect(kinds).not.toContain('remove');
+      }
+    }
+  });
+
+  // The owner specified this tab exactly: Edit / Recreational / Competitive.
+  it('offers exactly the three specified actions on "needs attention"', () => {
+    expect(rosterActionsFor('attention', {}, { isAdmin: true }).map((a) => a.kind))
+      .toEqual(['edit', 'assign', 'assign']);
+  });
 });

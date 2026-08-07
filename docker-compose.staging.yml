@@ -1,0 +1,90 @@
+# Staging stack: the same two apps as production, on badminton.polardev.org,
+# talking to a completely separate Supabase (supabase-staging, kong on 64321).
+#
+# Why a second stack at all: every NEXT_PUBLIC_* value is a Docker build arg,
+# inlined into the client bundle at build time. The production image therefore
+# has production's Supabase URL compiled into it — pointing it at a staging
+# .env would move the server but leave every browser-side query aimed at the
+# production database. Staging needs its own build, not just its own config.
+#
+# Images are built elsewhere (CI, or the Mac while CI is unavailable) and loaded
+# onto the Pi. There is deliberately no `build:` block: the Pi does not build.
+#
+#   docker compose -f docker-compose.staging.yml --env-file .env.staging up -d
+#
+# MUST stay set, and this stack MUST be run from its own directory — never from
+# production's. Compose identifies a service by project + service name, NOT by
+# container_name. Without this key the project name defaults to the working
+# directory, so running this file from /mnt/ssd/Deploy/badminton made `player`
+# and `admin` here collide with production's services of the same name and
+# destroyed the running production containers. container_name does not isolate
+# anything; only the project name does.
+name: badminton-staging
+
+networks:
+  edge:
+    external: true
+
+services:
+  player:
+    image: ghcr.io/polarbaejr/badminton-player-staging:${STAGING_IMAGE_TAG:-latest}
+    container_name: badminton-staging-player
+    env_file: .env.staging
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3013:3000"
+    restart: unless-stopped
+    networks: [edge, default]
+    labels:
+      proxy.enable:     "true"
+      proxy.host:       "${PROXY_DOMAIN:-badminton.polardev.org}"
+      # Explicit "/" so the player is a real path-prefix group rather than a host
+      # catch-all; /admin and /supabase are longer and win longest-prefix.
+      proxy.path:       "/"
+      proxy.port:       "3000"
+      proxy.service:    "badminton-staging-player"
+      proxy.unscalable: "true"
+      # Safe because the image above is a *separate GHCR package*, not a second
+      # tag on production's. The auto-updater watches each container's own image
+      # reference (proxy-manager cmd/dashboard/autoupdate.go) and replaces it
+      # with the same reference, so this can only ever pull a staging build.
+      # It would NOT be safe if staging shared production's package.
+      proxy.autoupdate: "true"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  admin:
+    image: ghcr.io/polarbaejr/badminton-admin-staging:${STAGING_IMAGE_TAG:-latest}
+    container_name: badminton-staging-admin
+    env_file: .env.staging
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3014:3001"
+    restart: unless-stopped
+    networks: [edge, default]
+    labels:
+      proxy.enable:     "true"
+      proxy.host:       "${PROXY_DOMAIN:-badminton.polardev.org}"
+      proxy.path:       "/admin"
+      # MUST stay false — the image is built with basePath=/admin and expects to
+      # see the prefix on every request. Stripping it 404s the whole console.
+      proxy.strip:      "false"
+      proxy.port:       "3001"
+      proxy.service:    "badminton-staging-admin"
+      proxy.unscalable: "true"
+      # See the player service above — safe only because this is its own package.
+      proxy.autoupdate: "true"
+    healthcheck:
+      # Probe /admin, not /: with a basePath the root is a 404, and a status<500
+      # test would cheerfully call that healthy.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/admin').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

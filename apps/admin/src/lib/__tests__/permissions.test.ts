@@ -118,10 +118,32 @@ describe('canAccess — three-level matrix', () => {
   // The default is the whole safety net: a section added to the app without a
   // SECTION_ACCESS entry must be admin-only, not open to the newest level.
   it('defaults unlisted paths to admin-only', () => {
-    for (const path of ['/', '/some-new-section', '/players-lookalike', '/api/internal', '/settingsx']) {
+    for (const path of ['/some-new-section', '/players-lookalike', '/api/internal', '/settingsx']) {
       expect(canAccess('admin', path)).toBe(true);
       expect(canAccess('exec', path)).toBe(false);
       expect(canAccess('trainer', path)).toBe(false);
+    }
+  });
+
+  // The console root only redirects to /dashboard, but middleware runs before
+  // that redirect. It used to fall through to the admin-only default, so every
+  // non-admin who opened /admin — where the player app's "Exec Panel" link
+  // points — was bounced to /unauthorized. This case previously asserted the
+  // opposite and so encoded the bug.
+  it('lets every console level in the front door at /', () => {
+    for (const level of ['admin', 'exec', 'trainer'] as AccessLevel[]) {
+      expect(canAccess(level, '/')).toBe(true);
+    }
+    // Signed out is still signed out — the root is a front door, not an opening.
+    expect(canAccess(null, '/')).toBe(false);
+  });
+
+  // '/' is listed, but it must match the root and NOTHING else — otherwise it
+  // becomes a trainer-level catch-all that swallows the admin-only default.
+  it('does not let the root entry widen any other path', () => {
+    for (const path of ['/some-new-section', '/api/internal', '/players-lookalike']) {
+      expect(canAccess('trainer', path)).toBe(false);
+      expect(canAccess('exec', path)).toBe(false);
     }
   });
 
