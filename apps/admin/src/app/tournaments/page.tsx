@@ -1,4 +1,5 @@
 export const dynamic = 'force-dynamic';
+import { scopeToActiveSeason } from '@badminton/shared';
 import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge } from '@badminton/ui';
 import { formatDate, pickOne } from '@badminton/shared';
@@ -10,19 +11,24 @@ import { Trophy, Users, Calendar, Zap, Archive } from 'lucide-react';
 export default async function TournamentsPage() {
   const supabase = createAdminClient();
 
+  // This season's tournaments only — see scopeToActiveSeason for why an
+  // unassigned tournament is kept and why no active season means no filter.
+  const { data: activeSeason } = await supabase
+    .from('seasons').select('id').eq('active_flag', true).maybeSingle();
+
   let tournaments: TournamentWithEventCount[] | null = null;
-  const { data: tournamentsWithEvents } = await supabase
-    .from('tournaments')
-    .select('*, tournament_events(count)')
-    .order('start_date', { ascending: false });
+  const { data: tournamentsWithEvents } = await scopeToActiveSeason(
+    supabase.from('tournaments').select('*, tournament_events(count)'),
+    activeSeason?.id,
+  ).order('start_date', { ascending: false });
 
   if (tournamentsWithEvents) {
     tournaments = tournamentsWithEvents;
   } else {
-    const { data: fallback } = await supabase
-      .from('tournaments')
-      .select('*')
-      .order('start_date', { ascending: false });
+    const { data: fallback } = await scopeToActiveSeason(
+      supabase.from('tournaments').select('*'),
+      activeSeason?.id,
+    ).order('start_date', { ascending: false });
     tournaments = fallback;
   }
 
@@ -33,10 +39,10 @@ export default async function TournamentsPage() {
   // create/edit dialog can fill the waiver box without a round trip. The active
   // season is what createTournament stamps on a new tournament, so it is the
   // season a not-yet-created tournament draws from.
-  const [{ data: waiverTemplates }, { data: activeSeason }] = await Promise.all([
-    supabase.from('event_waiver_templates').select('season_id, content'),
-    supabase.from('seasons').select('id').eq('active_flag', true).maybeSingle(),
-  ]);
+  // activeSeason is already fetched above to scope the list; reuse it rather
+  // than asking twice.
+  const { data: waiverTemplates } = await supabase
+    .from('event_waiver_templates').select('season_id, content');
   const waiverTemplateContext: WaiverTemplateContext = {
     templates: waiverTemplates ?? [],
     activeSeasonId: activeSeason?.id ?? null,

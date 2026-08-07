@@ -1,5 +1,5 @@
 import { createServerSupabaseClient } from '@/lib/supabase-server';
-import { formatDate, TOURNAMENT_STATUS_TAG } from '@badminton/shared';
+import { formatDate, TOURNAMENT_STATUS_TAG, scopeToActiveSeason } from '@badminton/shared';
 import Link from 'next/link';
 import { Award, Users, ChevronRight } from 'lucide-react';
 import { PageHeader } from '@badminton/ui';
@@ -7,10 +7,14 @@ import { PageHeader } from '@badminton/ui';
 export default async function TournamentsPage() {
   const supabase = await createServerSupabaseClient();
 
-  const { data: tournaments } = await supabase
-    .from('tournaments')
-    .select('*, tournament_events(count)')
-    .order('start_date', { ascending: false });
+  // Members see the season they are playing in. Same rule as the sessions list.
+  const { data: activeSeason } = await supabase
+    .from('seasons').select('id').eq('active_flag', true).maybeSingle();
+
+  const { data: tournaments } = await scopeToActiveSeason(
+    supabase.from('tournaments').select('*, tournament_events(count)'),
+    activeSeason?.id,
+  ).order('start_date', { ascending: false });
 
   const now = Date.now();
   const active = (tournaments ?? []).filter((t) => ['active', 'registration', 'live'].includes(t.status));

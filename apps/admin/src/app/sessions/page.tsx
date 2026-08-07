@@ -1,4 +1,5 @@
 export const dynamic = 'force-dynamic';
+import { scopeToActiveSeason } from '@badminton/shared';
 import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge, PageHeader } from '@badminton/ui';
 import { formatDate, formatTime, type AttendanceStatus } from '@badminton/shared';
@@ -9,10 +10,22 @@ import QRCode from 'qrcode';
 export default async function SessionsPage() {
   const supabase = createAdminClient();
 
-  const { data: sessions } = await supabase
-    .from('sessions')
-    .select('*')
-    .order('date', { ascending: false });
+  // The schedule belongs to the season it is part of. Without this, activating a
+  // new term left last term's sessions on the page alongside this term's, with
+  // nothing to tell them apart but the date.
+  //
+  // Sessions with NO season are included deliberately: they are unassigned, not
+  // "in another season", and filtering them out would strand them somewhere with
+  // no page that lists them. When no season is active at all, the filter is
+  // skipped entirely — hiding the whole schedule because nobody pressed
+  // "activate" is worse than showing too much.
+  const { data: activeSeason } = await supabase
+    .from('seasons').select('id').eq('active_flag', true).maybeSingle();
+
+  const { data: sessions } = await scopeToActiveSeason(
+    supabase.from('sessions').select('*'),
+    activeSeason?.id,
+  ).order('date', { ascending: false });
 
   const { data: attendanceRows } = await supabase
     .from('session_attendance')
