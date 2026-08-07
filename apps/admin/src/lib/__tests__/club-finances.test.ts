@@ -581,6 +581,36 @@ describe('updateExpense', () => {
     expect(expenses()[0]!.reimbursed_by).toBe(ADMIN.id);
   });
 
+  // An UNSETTLED row's payer is correctable — picking the wrong person is one
+  // of the mistakes this feature exists to fix, and there is no other way to
+  // repair it once delete is admin-only.
+  it('lets an unsettled expense be repointed at the right payer', async () => {
+    const id = await recordExpense({ paid_by: OTHER_EXEC });
+
+    await updateExpense({ id, category: 'shuttles', description: '6 tubes', amount_cents: 8400, paid_by: EXEC.id });
+
+    expect(expenses()[0]!.paid_by).toBe(EXEC.id);
+  });
+
+  // AND OMITTING THE PAYER CLEARS IT. Pinned because it is a deliberate choice
+  // that looks like a bug: the update is a full replacement, exactly like
+  // addExpense, so an absent paid_by means "the club paid" and not "leave it
+  // alone". There is no way to distinguish the two in a full-replacement
+  // payload, and the alternative — treating absent as unchanged — would leave
+  // no way to correct a row wrongly attributed to a person at all.
+  //
+  // The exposure is one caller: EditExpense always resends the stored value. On
+  // a settled row the equality check above refuses the omission outright, so
+  // the case where money is actually owed cannot be cleared by accident. If a
+  // second caller is ever added, it MUST send paid_by.
+  it('treats an omitted payer as "the club paid" — full replacement, deliberately', async () => {
+    const id = await recordExpense({ paid_by: OTHER_EXEC });
+
+    await updateExpense({ id, category: 'shuttles', description: '6 tubes', amount_cents: 8400 });
+
+    expect(expenses()[0]!.paid_by).toBeNull();
+  });
+
   // The date is not a field an edit should invent. addExpense stamps paid_at
   // when none is given; doing the same on an edit would silently re-date a
   // September spend to whenever the typo was noticed.
