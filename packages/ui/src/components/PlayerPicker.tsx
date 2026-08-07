@@ -148,6 +148,20 @@ export function PlayerPicker(props: PlayerPickerProps) {
     [players, query, multiple, selectionKey],
   );
 
+  // With everything picked and no search typed, the list is a single dead line
+  // reading "Everyone is already selected" — and because it is fixed-positioned
+  // below the field, it sits directly on top of whatever follows. In the Add
+  // Participant dialog that is the Add button, so selecting the last player left
+  // the user unable to click Submit without dismissing a panel offering nothing.
+  //
+  // Only when there is no query: a search that matches nothing must still show
+  // "No players match ..." or typing a typo looks like the picker died.
+  const nothingLeftToPick = multiple && filtered.length === 0 && !query;
+
+  useEffect(() => {
+    if (nothingLeftToPick) setOpen(false);
+  }, [nothingLeftToPick]);
+
   // Opening should land on the current selection, not the top of the roster.
   // In multi mode the selection is not IN the list, so the top is right.
   useEffect(() => {
@@ -416,8 +430,8 @@ export function PlayerPicker(props: PlayerPickerProps) {
               : open ? selected?.name ?? placeholder : placeholder
           }
           onChange={(e) => { setQuery(e.target.value); if (!open) setOpen(true); }}
-          onFocus={() => !disabled && setOpen(true)}
-          onClick={() => !disabled && setOpen(true)}
+          onFocus={() => !disabled && !nothingLeftToPick && setOpen(true)}
+          onClick={() => !disabled && !nothingLeftToPick && setOpen(true)}
           onKeyDown={handleKeyDown}
           className="flex-1 min-w-[6rem] bg-transparent py-2 text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none disabled:cursor-not-allowed"
         />

@@ -110,7 +110,23 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
   // A pool-seeded event usually has NOBODY entered yet — its field arrives at
   // generation, promoted from the pool. Gating on checked-in entries would make
   // the one button that can fill it permanently unpressable.
-  const actionDisabled = status === 'checkin' && checkedIn < 2 && !seededFromPool;
+  const actionDisabled =
+    (status === 'checkin' && checkedIn < 2 && !seededFromPool)
+    // Finalizing refuses unless every match is decided (finalize.ts), and it
+    // refused AFTER the click — an exec pressed the one obvious button at the
+    // end of an event and got an error for a state the page already knew about.
+    // totalMatches/completedMatches are already props, so the button can say so
+    // before it is pressed rather than after.
+    || (status === 'live' && completedMatches < totalMatches);
+
+  // Why it is disabled, not just that it is. "Finalize" greyed with no reason
+  // sends someone hunting through the bracket for what is missing.
+  const actionHint =
+    status === 'checkin' && checkedIn < 2 && !seededFromPool
+      ? 'At least two players must be checked in'
+      : status === 'live' && completedMatches < totalMatches
+        ? `${totalMatches - completedMatches} match${totalMatches - completedMatches === 1 ? '' : 'es'} still to be decided`
+        : undefined;
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6 space-y-5">
@@ -194,14 +210,22 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
             </Button>
           )}
           {status !== 'completed' && (
-            <Button
-              onClick={handleAction}
-              loading={loading}
-              disabled={actionDisabled}
-              className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
-            >
-              {actionLabel[status] ?? 'Next Step'}
-            </Button>
+            <div className="flex flex-col items-end gap-1">
+              <Button
+                onClick={handleAction}
+                loading={loading}
+                disabled={actionDisabled}
+                // title carries the reason on hover; the line below carries it
+                // for anyone not using a mouse.
+                title={actionHint}
+                className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+              >
+                {actionLabel[status] ?? 'Next Step'}
+              </Button>
+              {actionHint && (
+                <p className="text-xs text-[var(--text-muted)] max-w-[15rem] text-right">{actionHint}</p>
+              )}
+            </div>
           )}
         </div>
       </div>

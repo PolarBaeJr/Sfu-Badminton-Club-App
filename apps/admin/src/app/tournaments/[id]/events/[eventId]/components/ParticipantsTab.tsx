@@ -518,7 +518,9 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               players={playerOptions}
             />
           )}
-          <div className="flex gap-2 pt-2">
+          {/* Extra clearance: the picker's list is fixed-positioned below the
+              field, so a short one can still sit over these buttons. */}
+          <div className="flex gap-2 pt-6">
             <Button type="submit" loading={loading} className="flex-1">
               {!isDoubles && playerIds.length > 1 ? `Add ${playerIds.length}` : 'Add'}
             </Button>
