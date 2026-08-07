@@ -87,6 +87,46 @@ async function assertDownstreamUndecided(
   }
 }
 
+// Refuse a result whose declared winner is not the side that actually won more
+// games.
+//
+// The dialog derives winnerSide from the scores it collected, so the UI could
+// never produce a disagreement — but the server action is the integrity
+// boundary, and it is directly invocable. Without this, scores of
+// [21-10, 21-12] with winnerSide 'b' stored side B as the winner, handed B the
+// WINNER's Elo delta, and advanced B in the bracket having lost 2-0.
+//
+// The tie case lives here rather than in the caller so both entry points get it:
+// enterMatchResult also rejects ties via isLegalGameCount, but editMatchResult
+// runs no score legality checks at all.
+//
+// Same refusal apply_match_result raises for challenges ('winner_side does not
+// match game scores'), so the two rating engines report it identically.
+// Not exported: this is a 'use server' module, where every export must be an
+// async server action. Both call sites are in this file.
+function assertWinnerMatchesScores(
+  scores: Array<{ a: number; b: number }>,
+  winnerSide: 'a' | 'b',
+): void {
+  const aGames = scores.filter((g) => g.a > g.b).length;
+  const bGames = scores.filter((g) => g.b > g.a).length;
+
+  if (aGames === bGames) {
+    throw new ExpectedError(
+      `Games won are tied at ${aGames}-${bGames} — there is no winner to record.`,
+    );
+  }
+
+  const derived: 'a' | 'b' = aGames > bGames ? 'a' : 'b';
+  if (derived !== winnerSide) {
+    throw new ExpectedError(
+      `Side ${derived.toUpperCase()} won ${Math.max(aGames, bGames)}-${Math.min(aGames, bGames)}, ` +
+      `so the result cannot be recorded for side ${winnerSide.toUpperCase()} — ` +
+      `winner_side does not match game scores.`,
+    );
+  }
+}
+
 // Gate shared by the corrective actions (void / restore / slot editing). Results
 // can only be changed once the event is genuinely under way; 'completed' is
 // allowed too so a finished event can still be fixed.
@@ -175,6 +215,11 @@ async function enterMatchResultImpl(
       `${aGames}-${bGames} is not a possible result for ${shapeLabel} — the match ends once a side clinches.`
     );
   }
+
+  // ...and the declared winner has to be the side that won those games. The
+  // count check above passes for a legal 2-0 no matter WHO the caller then names
+  // as the winner.
+  assertWinnerMatchesScores(scores, winnerSide);
 
   const doubles = isDoublesEvent(event.event_type as TournamentEventType);
 
@@ -717,6 +762,13 @@ export async function editMatchResult(
       throw new Error('Cannot edit result — downstream match already completed');
     }
   }
+
+  // Same integrity boundary as entering a result: correcting a match must not
+  // be a way to award it to the side that lost every game. Only the winner /
+  // score agreement is enforced here — the full legality checks stay off the
+  // correction path on purpose, because this is the action an admin uses to
+  // repair data that is already odd.
+  assertWinnerMatchesScores(newScores, newWinnerSide);
 
   const event = match.event as Record<string, unknown>;
   const doubles = isDoublesEvent(event.event_type as TournamentEventType);

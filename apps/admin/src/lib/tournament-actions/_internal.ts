@@ -266,18 +266,30 @@ export async function applyTournamentMatchElo(matchId: string) {
     ? derivedFormatWeight(rules.bestOf, rules.target)
     : getFormatWeight(toEloFormat(event.match_format as TournamentMatchFormat));
 
-  // Per-player snapshot of this match's Elo change, persisted on the match row.
-  // Enables perfect reversal in undoMatchResult / editMatchResult for both singles
-  // and doubles regardless of how much state has drifted since.
-  const snapshotEntries: Array<{
+  // What this match does to one player's ratings row. Everything except
+  // participant_id is required by apply_tournament_match_rating; only the four
+  // rating fields end up in the persisted snapshot.
+  //
+  // The statistics travel with the delta because the tournament path used to
+  // move singles_elo/doubles_elo and NOTHING else — no matches_played, no
+  // wins/losses, no points, no games, no streak, and the provisional flag never
+  // cleared. Since the placement K-factor is chosen FROM matches_played, a
+  // tournament regular stayed on the provisional K forever and their stats
+  // disagreed with their own rating. Live aggregates already show the gap.
+  const ratingEntries: Array<{
     player_id: string;
     before: number;
     after: number;
     delta: number;
+    won: boolean;
+    points_scored: number;
+    points_allowed: number;
+    games_won: number;
+    games_lost: number;
+    /** Singles only — doubles has no per-player participant row to stamp. */
+    participant_id?: string;
   }> = [];
   const snapshotDiscipline: 'singles' | 'doubles' = doubles ? 'doubles' : 'singles';
-
-  const nowIso = new Date().toISOString();
 
   const ratingSettings = await getRatingSettings(adminClient);
 
@@ -303,9 +315,20 @@ export async function applyTournamentMatchElo(matchId: string) {
     ratingSettings?.sweep_margin_multiplier ?? undefined,
   );
 
-  // Filled by whichever branch runs; asserted once, after the snapshot is
-  // persisted, so a partial failure is still reversible.
-  let writeFailures: WriteFailure[] = [];
+  // The same per-side figures apply_match_result reads off match_participants
+  // for a challenge. Doubles gives both players of a pair the pair's totals,
+  // which is what match_participants holds for a doubles team.
+  //
+  // A walkover carries no scores at all, so every figure here is 0 — again
+  // matching the challenge path, where a walkover has no match_games rows.
+  const pointsA = matchScores.reduce((n, g) => n + g.a, 0);
+  const pointsB = matchScores.reduce((n, g) => n + g.b, 0);
+  const statsForSide = (isSideA: boolean) => ({
+    points_scored: isSideA ? pointsA : pointsB,
+    points_allowed: isSideA ? pointsB : pointsA,
+    games_won: isSideA ? gamesA : gamesB,
+    games_lost: isSideA ? gamesB : gamesA,
+  });
 
   if (doubles) {
     // For doubles, update both players in winning and losing pairs
@@ -351,32 +374,28 @@ export async function applyTournamentMatchElo(matchId: string) {
       return { playerId, before, newRating: result.newRating, delta: result.delta };
     };
 
-    const computed = [
-      computeFor(winnerPair.player1_id, loserElo, true),
-      computeFor(winnerPair.player2_id, loserElo, true),
-      computeFor(loserPair.player1_id, winnerElo, false),
-      computeFor(loserPair.player2_id, winnerElo, false),
-    ];
+    // Which physical side of the match the winning pair occupies, so the points
+    // and games attach to the right players.
+    const winnerIsA = winnerId === match.pair_a_id;
+    const winnerStats = statsForSide(winnerIsA);
+    const loserStats = statsForSide(!winnerIsA);
 
-    // Issue all 4 rating UPDATEs in parallel
-    const { failures, landed } = await settleWrites(
-      computed.map(c => [
-        `ratings.doubles_elo for player ${c.playerId}`,
-        adminClient.from('ratings')
-          .update({ doubles_elo: c.newRating, updated_at: nowIso })
-          .eq('player_id', c.playerId),
-      ] as const)
+    ratingEntries.push(
+      ...[
+        computeFor(winnerPair.player1_id, loserElo, true),
+        computeFor(winnerPair.player2_id, loserElo, true),
+      ].map(c => ({
+        player_id: c.playerId, before: c.before, after: c.newRating, delta: c.delta,
+        won: true, ...winnerStats,
+      })),
+      ...[
+        computeFor(loserPair.player1_id, winnerElo, false),
+        computeFor(loserPair.player2_id, winnerElo, false),
+      ].map(c => ({
+        player_id: c.playerId, before: c.before, after: c.newRating, delta: c.delta,
+        won: false, ...loserStats,
+      })),
     );
-    writeFailures = failures;
-
-    // Snapshot only what actually landed. The snapshot is what undo/void/edit
-    // reverse, so recording a delta that was never applied would hand the
-    // player rating they never earned the next time the match is unwound.
-    computed.forEach((c, i) => {
-      if (landed[i]) {
-        snapshotEntries.push({ player_id: c.playerId, before: c.before, after: c.newRating, delta: c.delta });
-      }
-    });
   } else {
     // Singles
     const winnerId = match.winner_participant_id;
@@ -431,62 +450,66 @@ export async function applyTournamentMatchElo(matchId: string) {
       won: false,
     });
 
-    // Issue all 4 UPDATEs in parallel (2 ratings + 2 participants). The two
-    // rating writes come first so their landed flags line up with the two
-    // snapshot entries below; the participant writes carry no Elo of their own.
-    const { failures, landed } = await settleWrites([
-      [`ratings.singles_elo for player ${winnerP.player_id}`, adminClient.from('ratings')
-        .update({ singles_elo: winResult.newRating, updated_at: nowIso })
-        .eq('player_id', winnerP.player_id)],
-      [`ratings.singles_elo for player ${loserP.player_id}`, adminClient.from('ratings')
-        .update({ singles_elo: loseResult.newRating, updated_at: nowIso })
-        .eq('player_id', loserP.player_id)],
-      [`tournament_participants.elo_after for winner ${winnerId}`, adminClient.from('tournament_participants')
-        .update({ elo_after: winResult.newRating, elo_change: winResult.delta })
-        .eq('id', winnerId)],
-      [`tournament_participants.elo_after for loser ${loserId}`, adminClient.from('tournament_participants')
-        .update({ elo_after: loseResult.newRating, elo_change: loseResult.delta })
-        .eq('id', loserId)],
-    ]);
-    writeFailures = failures;
+    const winnerIsA = winnerId === match.participant_a_id;
+    const winnerStats = statsForSide(winnerIsA);
+    const loserStats = statsForSide(!winnerIsA);
 
-    // Same rule as the doubles branch: the snapshot records what the ratings
-    // table actually took, nothing more.
-    if (landed[0]) {
-      snapshotEntries.push({ player_id: winnerP.player_id, before: winnerElo, after: winResult.newRating, delta: winResult.delta });
-    }
-    if (landed[1]) {
-      snapshotEntries.push({ player_id: loserP.player_id, before: loserElo, after: loseResult.newRating, delta: loseResult.delta });
-    }
+    ratingEntries.push(
+      {
+        player_id: winnerP.player_id, before: winnerElo,
+        after: winResult.newRating, delta: winResult.delta,
+        won: true, ...winnerStats, participant_id: winnerId,
+      },
+      {
+        player_id: loserP.player_id, before: loserElo,
+        after: loseResult.newRating, delta: loseResult.delta,
+        won: false, ...loserStats, participant_id: loserId,
+      },
+    );
   }
 
-  // Persist snapshot on the match row so undo/edit can reverse it perfectly.
+  if (ratingEntries.length === 0) return;
+
+  // ONE transaction for every write this match causes: each player's Elo AND
+  // match statistics, the singles participants' elo_after/elo_change, and the
+  // reversal snapshot.
   //
-  // Written BEFORE the failure is raised, and only when something landed. An
-  // empty snapshot is still a truthy JSON value, and the idempotency guard at
-  // the top of this function reads any snapshot as "already rated" — so writing
-  // `{ entries: [] }` after a total failure would wedge the match as unratable
-  // forever. Leaving the column null lets edit/replay have another go.
-  if (snapshotEntries.length > 0) {
-    const { error: snapshotError } = await adminClient.from('tournament_matches')
-      .update({ elo_snapshot: { discipline: snapshotDiscipline, entries: snapshotEntries } })
-      .eq('id', matchId);
-    if (snapshotError) {
-      // The worst of the failure modes: rating moved with no record of by how
-      // much. Say so plainly — there is no automatic reversal from here, and a
-      // second attempt would apply the delta twice.
-      throw new Error(
-        `Ratings for match ${matchId} were updated but the reversal snapshot could not be saved (${snapshotError.message}). ` +
-        `Do not re-enter this result — the applied deltas must be corrected by hand.`
-      );
-    }
-  }
+  // These used to be four-plus separate PostgREST round trips with the snapshot
+  // written last. A failure on that final write left the ladder moved with
+  // nothing recording by how much — and undoMatchResult, voidMatch and
+  // editMatchResult all reverse from the snapshot, so the half-state could not
+  // be repaired from the club app at all. The old code's own error message said
+  // "the applied deltas must be corrected by hand". Postgres now guarantees the
+  // pairing instead of the error message apologising for it.
+  //
+  // The RPC also re-checks elo_snapshot IS NULL under a row lock, so two desks
+  // entering the same result at once cannot both apply a delta.
+  const { error: rpcError } = await adminClient.rpc('apply_tournament_match_rating', {
+    p_match_id: matchId,
+    p_discipline: snapshotDiscipline,
+    p_entries: ratingEntries,
+  });
 
-  assertWritesSucceeded(`Elo update for match ${matchId}`, writeFailures);
+  if (rpcError) {
+    // Nothing landed — the whole call rolled back — so this is safe to retry
+    // and safe to leave alone. That is the entire point of the change.
+    throw new Error(
+      `Elo update for match ${matchId} failed and NOTHING was applied — ${rpcError.message}`,
+    );
+  }
 }
 
 // Reverse a previously applied Elo snapshot for a match. Resets ratings to their
 // pre-match values and clears participant elo_after/elo_change for singles.
+//
+// ELO ONLY — matches_played, wins/losses, points, games and streaks stay where
+// they are. That is deliberate: reverse_match_result (00003) reverses exactly
+// the same amount for a regular match, and making tournaments reverse their
+// statistics while challenges do not would replace one path-dependent
+// divergence with another. The consequence to know about is that a
+// void -> restore -> replay cycle counts the match twice in matches_played
+// (though only once in Elo, which is what the recovery tests assert). Fixing
+// that belongs with reverse_match_result, in one change, for both engines.
 export async function reverseEloSnapshot(
   adminClient: ReturnType<typeof createAdminClient>,
   match: Record<string, unknown>

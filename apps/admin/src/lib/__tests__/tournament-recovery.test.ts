@@ -57,7 +57,68 @@ const makeClient = vi.hoisted(() => () => {
     };
     return api;
   }
-  return { from: (table: string) => query(table) };
+
+  // Stand-in for apply_tournament_match_rating
+  // (supabase/migrations/00070_tournament_rating_atomic.sql) — the single
+  // transaction that now performs every write a rated tournament match causes.
+  // This harness has no fault injection, so the only behaviour it needs is the
+  // happy path plus the "already rated" refusal that makes replay safe.
+  function rpc(name: string, args: Record<string, unknown>) {
+    if (name !== 'apply_tournament_match_rating') {
+      return Promise.resolve({ data: null, error: { message: `unknown rpc ${name}` } });
+    }
+
+    const matchId = args.p_match_id as string;
+    const discipline = args.p_discipline as 'singles' | 'doubles';
+    const entries = args.p_entries as Array<Record<string, unknown>>;
+
+    const m = (store.db.tournament_matches ?? []).find((r) => r.id === matchId);
+    if (!m) return Promise.resolve({ data: null, error: { message: `Tournament match not found: ${matchId}` } });
+    if (m.elo_snapshot) {
+      return Promise.resolve({ data: null, error: { message: `Tournament match ${matchId} is already rated` } });
+    }
+
+    const settings = (store.db.platform_settings ?? []).find((r) => r.key === 'rating_defaults')?.value as Row | undefined;
+    const threshold = (settings?.provisional_threshold as number) ?? 8;
+
+    for (const e of entries) {
+      const row = (store.db.ratings ?? []).find((r) => r.player_id === e.player_id);
+      if (!row) {
+        return Promise.resolve({ data: null, error: { message: `No ratings row for player ${String(e.player_id)}` } });
+      }
+      // COALESCE(%I, 0): the seeded rows omit the statistics columns.
+      const n = (k: string) => (row[k] as number | undefined) ?? 0;
+      const won = e.won === true;
+      const played = n(`${discipline}_matches_played`) + 1;
+      const streakField = `current_${discipline}_streak`;
+
+      row[`${discipline}_elo`] = e.after;
+      row[`${discipline}_matches_played`] = played;
+      row[`${discipline}_wins`] = n(`${discipline}_wins`) + (won ? 1 : 0);
+      row[`${discipline}_losses`] = n(`${discipline}_losses`) + (won ? 0 : 1);
+      row[`${discipline}_points_scored`] = n(`${discipline}_points_scored`) + ((e.points_scored as number) ?? 0);
+      row[`${discipline}_points_allowed`] = n(`${discipline}_points_allowed`) + ((e.points_allowed as number) ?? 0);
+      row[`${discipline}_games_won`] = n(`${discipline}_games_won`) + ((e.games_won as number) ?? 0);
+      row[`${discipline}_games_lost`] = n(`${discipline}_games_lost`) + ((e.games_lost as number) ?? 0);
+      row[streakField] = won ? Math.max(n(streakField) + 1, 1) : Math.min(n(streakField) - 1, -1);
+      if (played >= threshold) row[`${discipline}_provisional`] = false;
+
+      if (e.participant_id) {
+        const p = (store.db.tournament_participants ?? []).find((r) => r.id === e.participant_id);
+        if (p) Object.assign(p, { elo_after: e.after, elo_change: e.delta });
+      }
+    }
+
+    m.elo_snapshot = {
+      discipline,
+      entries: entries.map((e) => ({
+        player_id: e.player_id, before: e.before, after: e.after, delta: e.delta,
+      })),
+    };
+    return Promise.resolve({ data: null, error: null });
+  }
+
+  return { from: (table: string) => query(table), rpc };
 });
 
 vi.mock('next/cache', () => ({ revalidatePath: () => {} }));

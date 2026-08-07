@@ -115,7 +115,103 @@ const makeClient = vi.hoisted(() => () => {
     };
     return api;
   }
-  return { from: (table: string) => query(table) };
+
+  // Stand-in for apply_tournament_match_rating
+  // (supabase/migrations/00070_tournament_rating_atomic.sql).
+  //
+  // ATOMIC ON PURPOSE. Every logical write still consults store.faults with the
+  // same { table, op, filters, payload } shape a direct PostgREST write would,
+  // so the existing fault fixtures keep working — but the FIRST failure restores
+  // the whole store and returns an error. A harness that let half the writes
+  // survive could not tell the fixed behaviour from the bug it replaces.
+  function rpc(name: string, args: Record<string, unknown>) {
+    if (name !== 'apply_tournament_match_rating') {
+      return Promise.resolve({ data: null, error: { message: `unknown rpc ${name}` } });
+    }
+
+    const rollback = structuredClone(store.db);
+    const abort = (message: string) => {
+      store.db = rollback;
+      return Promise.resolve({ data: null, error: { message } });
+    };
+    const faultFor = (table: string, op: Op, ctx: { filters: Array<[string, unknown]>; payload: Row }) =>
+      store.faults.find((f) => f.table === table && f.op === op && (!f.when || f.when(ctx)));
+
+    const matchId = args.p_match_id as string;
+    const discipline = args.p_discipline as 'singles' | 'doubles';
+    const entries = args.p_entries as Array<Record<string, unknown>>;
+
+    const m = (store.db.tournament_matches ?? []).find((r) => r.id === matchId);
+    if (!m) return abort(`Tournament match not found: ${matchId}`);
+    if (m.elo_snapshot) return abort(`Tournament match ${matchId} is already rated`);
+
+    // rating_setting_int('provisional_threshold', 8)
+    const settings = (store.db.platform_settings ?? []).find((r) => r.key === 'rating_defaults')?.value as Row | undefined;
+    const threshold = (settings?.provisional_threshold as number) ?? 8;
+
+    for (const e of entries) {
+      const pid = e.player_id as string;
+      const row = (store.db.ratings ?? []).find((r) => r.player_id === pid);
+      if (!row) return abort(`No ratings row for player ${pid} — cannot rate tournament match ${matchId}`);
+
+      const eloField = `${discipline}_elo`;
+      const ratingFault = faultFor('ratings', 'update', {
+        filters: [['player_id', pid]],
+        payload: { [eloField]: e.after },
+      });
+      if (ratingFault) return abort(ratingFault.message);
+
+      // apply_rating_stats. The seeded ratings rows omit the statistics columns
+      // entirely, exactly as COALESCE(%I, 0) in the real SQL tolerates a NULL —
+      // so a missing column has to read as 0 here or the assertions would come
+      // back NaN and pass for the wrong reason.
+      const n = (k: string) => (row[k] as number | undefined) ?? 0;
+      const won = e.won === true;
+      const played = n(`${discipline}_matches_played`) + 1;
+      const streakField = `current_${discipline}_streak`;
+
+      row[eloField] = e.after;
+      row[`${discipline}_matches_played`] = played;
+      row[`${discipline}_wins`] = n(`${discipline}_wins`) + (won ? 1 : 0);
+      row[`${discipline}_losses`] = n(`${discipline}_losses`) + (won ? 0 : 1);
+      row[`${discipline}_points_scored`] = n(`${discipline}_points_scored`) + ((e.points_scored as number) ?? 0);
+      row[`${discipline}_points_allowed`] = n(`${discipline}_points_allowed`) + ((e.points_allowed as number) ?? 0);
+      row[`${discipline}_games_won`] = n(`${discipline}_games_won`) + ((e.games_won as number) ?? 0);
+      row[`${discipline}_games_lost`] = n(`${discipline}_games_lost`) + ((e.games_lost as number) ?? 0);
+      row[streakField] = won ? Math.max(n(streakField) + 1, 1) : Math.min(n(streakField) - 1, -1);
+      if (played >= threshold) row[`${discipline}_provisional`] = false;
+
+      if (e.participant_id) {
+        const payload = { elo_after: e.after, elo_change: e.delta };
+        const pFault = faultFor('tournament_participants', 'update', {
+          filters: [['id', e.participant_id]],
+          payload,
+        });
+        if (pFault) return abort(pFault.message);
+        const p = (store.db.tournament_participants ?? []).find((r) => r.id === e.participant_id);
+        if (p) Object.assign(p, payload);
+      }
+    }
+
+    // Only the four rating fields are persisted — the snapshot shape is what
+    // undo/void/edit read, and it did not change.
+    const snapshot = {
+      discipline,
+      entries: entries.map((e) => ({
+        player_id: e.player_id, before: e.before, after: e.after, delta: e.delta,
+      })),
+    };
+    const snapFault = faultFor('tournament_matches', 'update', {
+      filters: [['id', matchId]],
+      payload: { elo_snapshot: snapshot },
+    });
+    if (snapFault) return abort(snapFault.message);
+    m.elo_snapshot = snapshot;
+
+    return Promise.resolve({ data: null, error: null });
+  }
+
+  return { from: (table: string) => query(table), rpc };
 });
 
 vi.mock('next/cache', () => ({ revalidatePath: () => {} }));
@@ -123,7 +219,7 @@ vi.mock('@sentry/nextjs', () => ({ captureException: () => {} }));
 vi.mock('../supabase-server', () => ({ createAdminClient: makeClient }));
 vi.mock('../actions/_shared', () => ({ getExecOrAdmin: async () => ({ id: 'admin-1' }) }));
 
-import { enterMatchResult, voidMatch } from '../tournament-actions/results';
+import { enterMatchResult, editMatchResult, enterWalkover, voidMatch } from '../tournament-actions/results';
 import { finalizeEvent, applyPlacementBonuses } from '../tournament-actions/finalize';
 import { withdrawParticipant } from '../tournament-actions/participants';
 import { settleWrites, assertWritesSucceeded } from '../tournament-actions/_internal';
@@ -235,7 +331,14 @@ describe('settleWrites', () => {
 });
 
 describe('post-match Elo writes', () => {
-  it('reports a rejected rating write instead of saying "result saved"', async () => {
+  // These four used to assert the MITIGATION for a half-applied rating: one
+  // player's Elo moved, the other's did not, and the snapshot recorded only the
+  // half that landed. All the writes now happen inside
+  // apply_tournament_match_rating, so a failure rolls the whole thing back and
+  // the half-state is no longer reachable. Each assertion below is the corrected
+  // behaviour, not the old one.
+
+  it('rolls the whole result back when one player\'s rating write fails', async () => {
     store.faults.push({
       table: 'ratings', op: 'update', message: 'permission denied for table ratings',
       when: ({ filters }) => filters.some(([c, v]) => c === 'player_id' && v === 'pl-bob'),
@@ -244,23 +347,30 @@ describe('post-match Elo writes', () => {
     const res = await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
 
     expect(res.ok).toBe(false);
-    expect(res.ok === false && res.error).toMatch(/pl-bob/);
     expect(res.ok === false && res.error).toMatch(/permission denied/);
-    // Alice's write landed and Bob's did not — which is the whole complaint:
-    // before this, that difference was invisible to everyone.
-    expect(ratingOf('pl-alice')).toBeGreaterThan(1000);
+    expect(res.ok === false && res.error).toMatch(/NOTHING was applied/);
+    // Previously Alice's rating moved and Bob's did not. Now neither does —
+    // there is no partial rating to reconcile by hand.
+    expect(ratingOf('pl-alice')).toBe(1000);
     expect(ratingOf('pl-bob')).toBe(1000);
   });
 
-  it('snapshots only the ratings that actually moved, so undo cannot over-refund', async () => {
+  it('never leaves ratings moved without a snapshot recording the deltas', async () => {
+    // Finding #3: the snapshot write used to be a separate round trip AFTER the
+    // rating writes committed. Fault the snapshot write specifically and prove
+    // the ratings did not survive it — undo/void/edit all reverse from that
+    // snapshot, so a moved rating with no snapshot was unrecoverable in-app.
     store.faults.push({
-      table: 'ratings', op: 'update', message: 'deadlock detected',
-      when: ({ filters }) => filters.some(([c, v]) => c === 'player_id' && v === 'pl-bob'),
+      table: 'tournament_matches', op: 'update', message: 'could not serialize access',
+      when: ({ payload }) => 'elo_snapshot' in payload,
     });
 
-    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    const res = await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
 
-    expect(snapshotPlayers(QF)).toEqual(['pl-alice']);
+    expect(res.ok).toBe(false);
+    expect(match(QF).elo_snapshot).toBeNull();
+    expect(ratingOf('pl-alice')).toBe(1000);
+    expect(ratingOf('pl-bob')).toBe(1000);
   });
 
   it('leaves elo_snapshot null when nothing landed, so the match can be rated again', async () => {
@@ -276,7 +386,7 @@ describe('post-match Elo writes', () => {
     expect(ratingOf('pl-bob')).toBe(1000);
   });
 
-  it('still records the participant-row failure even though the ratings landed', async () => {
+  it('rolls the ratings back when the participant row is what fails', async () => {
     store.faults.push({
       table: 'tournament_participants', op: 'update', message: 'null value violates not-null constraint',
       when: ({ payload }) => 'elo_after' in payload,
@@ -285,9 +395,164 @@ describe('post-match Elo writes', () => {
     const res = await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
 
     expect(res.ok).toBe(false);
-    expect(res.ok === false && res.error).toMatch(/elo_after/);
-    // Ratings are the source of truth and they did move, so both are snapshotted.
-    expect(snapshotPlayers(QF).sort()).toEqual(['pl-alice', 'pl-bob']);
+    // The RPC surfaces whatever Postgres said; the label naming the individual
+    // write is gone with the per-write batching, but the match id is not.
+    expect(res.ok === false && res.error).toMatch(/match-qf/);
+    expect(res.ok === false && res.error).toMatch(/not-null constraint/);
+    // This used to snapshot both players because "ratings are the source of
+    // truth and they did move". They no longer move at all.
+    expect(snapshotPlayers(QF)).toEqual([]);
+    expect(ratingOf('pl-alice')).toBe(1000);
+  });
+
+  it('writes the snapshot in the same shape undo/void/edit already read', async () => {
+    // The snapshot deliberately carries only player_id/before/after/delta. The
+    // statistics ride into the RPC but are NOT persisted, because the three
+    // snapshots already in production do not have them and reverseEloSnapshot
+    // is unchanged.
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    const snap = match(QF).elo_snapshot as { discipline: string; entries: Row[] };
+    expect(snap.discipline).toBe('singles');
+    expect(snap.entries).toHaveLength(2);
+    expect(Object.keys(snap.entries[0]!).sort()).toEqual(['after', 'before', 'delta', 'player_id']);
+  });
+});
+
+describe('winner must agree with the scores', () => {
+  // Finding #1: enterMatchResult validated that the GAME COUNT was legal but
+  // never compared the caller's winnerSide with it. The dialog derives the
+  // winner correctly, so this is only reachable by invoking the server action
+  // directly — which is exactly why the server action has to check.
+  it('refuses a 2-0 recorded for the side that lost both games', async () => {
+    const res = await enterMatchResult(QF, [{ a: 21, b: 10 }, { a: 21, b: 12 }], 'b');
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/winner_side does not match game scores/);
+    // Nothing about the match may have moved: no stored winner, no Elo, no
+    // advancement into the semi-final.
+    expect(match(QF).status).toBe('ready');
+    expect(match(QF).winner_participant_id).toBeNull();
+    expect(match(QF).elo_snapshot).toBeNull();
+    expect(ratingOf('pl-alice')).toBe(1000);
+    expect(ratingOf('pl-bob')).toBe(1000);
+    expect(match(SF).participant_a_id).toBeNull();
+  });
+
+  it('still accepts the result when the declared winner is the side that won', async () => {
+    // Guards the fix against over-rejection — the check must not break the
+    // normal path the dialog drives.
+    const res = await enterMatchResult(QF, [{ a: 21, b: 10 }, { a: 21, b: 12 }], 'a');
+
+    expect(res.ok).toBe(true);
+    expect(match(QF).winner_participant_id).toBe('p-alice');
+    expect(match(SF).participant_a_id).toBe('p-alice');
+  });
+
+  it('refuses through editMatchResult too — the same hole on the correction path', async () => {
+    await enterMatchResult(QF, [{ a: 21, b: 10 }, { a: 21, b: 12 }], 'a');
+    const aliceAfterWin = ratingOf('pl-alice');
+
+    // editMatchResult is not wrapped in runAction, so it throws rather than
+    // returning { ok: false }.
+    await expect(editMatchResult(QF, [{ a: 21, b: 10 }, { a: 21, b: 12 }], 'b'))
+      .rejects.toThrow(/winner_side does not match game scores/);
+
+    // Refused before the snapshot was reversed, so the applied result is intact.
+    expect(match(QF).winner_participant_id).toBe('p-alice');
+    expect(ratingOf('pl-alice')).toBe(aliceAfterWin);
+  });
+});
+
+describe('tournament matches update the whole ratings row', () => {
+  // Finding #2, the one with confirmed live divergence: the tournament path
+  // moved singles_elo and nothing else, so stored match counts were lower than
+  // the real regular-plus-tournament counts.
+  function rating(playerId: string) {
+    return store.db.ratings!.find((r) => r.player_id === playerId)!;
+  }
+
+  it('increments matches played, wins and losses', async () => {
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    expect(rating('pl-alice').singles_matches_played).toBe(31);
+    expect(rating('pl-bob').singles_matches_played).toBe(31);
+    expect(rating('pl-alice').singles_wins).toBe(1);
+    expect(rating('pl-alice').singles_losses).toBe(0);
+    expect(rating('pl-bob').singles_wins).toBe(0);
+    expect(rating('pl-bob').singles_losses).toBe(1);
+  });
+
+  it('sums points and games onto the right side of the match', async () => {
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    expect(rating('pl-alice').singles_points_scored).toBe(42);
+    expect(rating('pl-alice').singles_points_allowed).toBe(32);
+    expect(rating('pl-alice').singles_games_won).toBe(2);
+    expect(rating('pl-alice').singles_games_lost).toBe(0);
+    // The loser's figures are the exact mirror — a transposed side here would
+    // credit the loser with the winner's points.
+    expect(rating('pl-bob').singles_points_scored).toBe(32);
+    expect(rating('pl-bob').singles_points_allowed).toBe(42);
+    expect(rating('pl-bob').singles_games_won).toBe(0);
+    expect(rating('pl-bob').singles_games_lost).toBe(2);
+  });
+
+  it('attributes points correctly when side B is the winner', async () => {
+    // The mirror of the case above. statsForSide is keyed off which physical
+    // slot the winner occupies, and getting it backwards is invisible whenever
+    // side A happens to win.
+    await enterMatchResult(QF, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b');
+
+    expect(rating('pl-bob').singles_points_scored).toBe(42);
+    expect(rating('pl-bob').singles_games_won).toBe(2);
+    expect(rating('pl-alice').singles_points_scored).toBe(32);
+    expect(rating('pl-alice').singles_games_lost).toBe(2);
+  });
+
+  it('moves the current streak, up for the winner and down for the loser', async () => {
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    expect(rating('pl-alice').current_singles_streak).toBe(1);
+    expect(rating('pl-bob').current_singles_streak).toBe(-1);
+  });
+
+  it('clears the provisional flag on the match that reaches the threshold', async () => {
+    // The specific consequence the review names: a player with eight tournament
+    // singles matches stayed provisional forever AND kept drawing the placement
+    // K-factor, because that K is chosen from the same count that never moved.
+    for (const p of ['pl-alice', 'pl-bob']) {
+      Object.assign(rating(p), { singles_matches_played: 7, singles_provisional: true });
+    }
+
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    expect(rating('pl-alice').singles_matches_played).toBe(8);
+    expect(rating('pl-alice').singles_provisional).toBe(false);
+    expect(rating('pl-bob').singles_provisional).toBe(false);
+  });
+
+  it('leaves a player short of the threshold provisional', async () => {
+    for (const p of ['pl-alice', 'pl-bob']) {
+      Object.assign(rating(p), { singles_matches_played: 3, singles_provisional: true });
+    }
+
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    expect(rating('pl-alice').singles_matches_played).toBe(4);
+    expect(rating('pl-alice').singles_provisional).toBe(true);
+  });
+
+  it('records a walkover as a played match with no points or games', async () => {
+    // A walkover carries no scores, exactly like a challenge walkover carries no
+    // match_games rows. It still counts as a match played.
+    const res = await enterWalkover(QF, 'a', 'Opponent did not appear');
+
+    expect(res.ok).toBe(true);
+    expect(rating('pl-alice').singles_matches_played).toBe(31);
+    expect(rating('pl-alice').singles_wins).toBe(1);
+    expect(rating('pl-alice').singles_points_scored).toBe(0);
+    expect(rating('pl-alice').singles_games_won).toBe(0);
   });
 });
 
