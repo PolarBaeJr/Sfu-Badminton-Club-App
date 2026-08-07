@@ -670,6 +670,17 @@ describe('Elo reversal', () => {
     expect(ratingOf('pl-bob')).toBe(1000);
     expect(match(QF).elo_snapshot).toBeNull();
     expect(match(QF).status).toBe('voided');
+    // The statistics have to survive a retry the same way. Each player's Elo
+    // and counts move in ONE update, so a retained entry carries its own
+    // statistics forward and is reversed exactly once — the only place the new
+    // statistics reversal meets the pre-existing partial-failure machinery.
+    for (const p of ['pl-alice', 'pl-bob']) {
+      const row = store.db.ratings!.find((r) => r.player_id === p)!;
+      expect(row.singles_matches_played).toBe(30);
+      expect(row.singles_points_scored).toBe(0);
+    }
+    expect(store.db.ratings!.find((r) => r.player_id === 'pl-alice')!.singles_wins).toBe(0);
+    expect(store.db.ratings!.find((r) => r.player_id === 'pl-bob')!.singles_losses).toBe(0);
   });
 });
 
