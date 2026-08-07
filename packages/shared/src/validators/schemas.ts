@@ -1,5 +1,11 @@
 import { z } from 'zod';
 import { MIN_ELO, MAX_ELO, CUSTOM_FORMAT_BOUNDS, pointsCap } from '../utils/constants';
+import {
+  EXPENSE_CATEGORY_VALUES,
+  OTHER_INCOME_CATEGORY_VALUES,
+  type ExpenseCategory,
+  type OtherIncomeCategory,
+} from '../utils/finance-categories';
 
 // Empty optional strings come from form fields where the user left the input blank.
 // Coerce them to undefined so downstream code doesn't have to discriminate "" vs unset.
@@ -401,6 +407,54 @@ export const reinstatementPaymentSchema = z.object({
   reference: z.string().max(120).optional(),
 });
 
+// ------------------------------------------------------------
+// Non-fee ledgers (migration 00073): other income and expenses.
+//
+// season_id is REQUIRED on both, and is the only thing that decides which
+// season a row counts toward. reinstatement_fees had to be bucketed by paid_at
+// because it had no season column, and a payment taken between terms then fell
+// outside every window and vanished from every total (00069). An optional
+// season here would recreate that: a row with no season belongs to no total.
+//
+// paid_at is an optional ISO date string. It is the date the money moved, which
+// is NOT the date the entry was typed — an exec writing up September's shuttle
+// receipts in October needs to say September. Bucketing is still by season_id,
+// so the date can be anything without moving the row between totals; the two
+// jobs are deliberately separate.
+// ------------------------------------------------------------
+
+// Shared by both ledgers so they cannot drift on what a money entry looks like.
+const ledgerEntryFields = {
+  season_id: z.string().uuid(),
+  description: z.string().trim().min(1, 'Describe what this was for').max(120),
+  // Non-negative, not positive: $0.00 records that a promised donation came to
+  // nothing, or a donated set of shuttles cost the club nothing, without
+  // deleting the trail. Matches the CHECK in 00073.
+  amount_cents: z.number().int().nonnegative(),
+  paid_at: z.string().datetime().optional(),
+  method: z.string().max(40).optional(),
+  reference: z.string().max(120).optional(),
+};
+
+export const otherIncomeSchema = z.object({
+  ...ledgerEntryFields,
+  // z.enum needs a non-empty tuple; the const array from finance-categories is
+  // the same vocabulary the database CHECK enforces.
+  category: z.enum(
+    OTHER_INCOME_CATEGORY_VALUES as unknown as [OtherIncomeCategory, ...OtherIncomeCategory[]],
+  ),
+});
+
+export const clubExpenseSchema = z.object({
+  ...ledgerEntryFields,
+  category: z.enum(
+    EXPENSE_CATEGORY_VALUES as unknown as [ExpenseCategory, ...ExpenseCategory[]],
+  ),
+  // Tubes of shuttles, hours of court. Optional; positive when given, because
+  // "0 tubes" for a non-zero spend is a typo, not a fact.
+  quantity: z.number().int().positive().optional(),
+});
+
 export const banSchema = z.object({
   player_id: z.string().uuid(),
   reason: z.string().min(2),
@@ -510,6 +564,8 @@ export type FeeTierInput = z.infer<typeof feeTierSchema>;
 export type TournamentFeeMarkInput = z.infer<typeof tournamentFeeMarkSchema>;
 export type ReinstatementInput = z.infer<typeof reinstatementSchema>;
 export type ReinstatementPaymentInput = z.infer<typeof reinstatementPaymentSchema>;
+export type OtherIncomeInput = z.infer<typeof otherIncomeSchema>;
+export type ClubExpenseInput = z.infer<typeof clubExpenseSchema>;
 export type BanInput = z.infer<typeof banSchema>;
 export type PlayerFlagsInput = z.infer<typeof playerFlagsSchema>;
 export type VarsityNoteInput = z.infer<typeof varsityNoteSchema>;
