@@ -217,6 +217,51 @@ export function extractEventContext(row: { event_id?: unknown; event?: unknown }
   return { tid, eventId };
 }
 
+// Field on a match row holding one side's entry, for the discipline in play.
+//
+// Lives here rather than in results.ts because both the winner route and the
+// loser route (00080) have to resolve a side to the same column name. Two
+// copies of this two-line function is how a loser ends up written into
+// participant_a_id on a doubles event.
+export function entrySideField(side: 'a' | 'b', doubles: boolean): string {
+  if (doubles) return side === 'a' ? 'pair_a_id' : 'pair_b_id';
+  return side === 'a' ? 'participant_a_id' : 'participant_b_id';
+}
+
+/**
+ * The two ways a match can feed another one.
+ *
+ * `winner` has always existed. `loser` arrives with the third-place playoff
+ * (00080) and is deliberately the same shape, because every rule that protects
+ * the winner route has to protect this one too — a semi-final that has already
+ * put its loser into a played third-place match is exactly as un-voidable as one
+ * that has put its winner into a played final.
+ */
+export const MATCH_ROUTES = ['winner', 'loser'] as const;
+export type MatchRoute = (typeof MATCH_ROUTES)[number];
+
+/** Read one route off a match row: where it sends that side, and to which slot. */
+export function routeOf(
+  match: Record<string, unknown>,
+  route: MatchRoute,
+): { nextId: string; side: 'a' | 'b' } | null {
+  const nextId = match[`${route}_to_match_id`] as string | null;
+  if (!nextId) return null;
+  return { nextId, side: match[`${route}_to_position`] === 'a' ? 'a' : 'b' };
+}
+
+/** The entry a decided match sent along `route`, or null if it has none. */
+export function routedEntryId(
+  match: Record<string, unknown>,
+  route: MatchRoute,
+  doubles: boolean,
+): string | null {
+  const field = route === 'winner'
+    ? (doubles ? 'winner_pair_id' : 'winner_participant_id')
+    : (doubles ? 'loser_pair_id' : 'loser_participant_id');
+  return (match[field] as string | null) ?? null;
+}
+
 /**
  * Standard tournament seeding positions.
  * For a bracket of size B, returns an array of length B where
@@ -793,14 +838,38 @@ export async function recordWalkover(
   }
 
   if (winnerId) await advanceWinner(adminClient, match, doubles, winnerId, enteredBy);
+  // A forfeited semi-final still produces a loser, and they still belong in the
+  // third-place playoff — where settleAdvancedMatch will notice they have
+  // withdrawn (that is usually WHY this was a walkover) and forfeit that match
+  // to the other semi-finalist once both slots are filled. Skipping the route
+  // here instead would leave the playoff permanently half-empty.
+  await advanceLoser(adminClient, match, doubles, loserId, enteredBy);
 }
 
 /**
- * Move `winnerId` into the match this one feeds, then decide that match's
- * state. Callers used to inline this; the withdrawal cascade needs the exact
- * same rule, and a slot filled by a slightly different one is how a bracket
- * ends up disagreeing with itself.
+ * Move `entryId` into the match this one feeds along `route`, then decide that
+ * match's state. Callers used to inline this; the withdrawal cascade needs the
+ * exact same rule, and a slot filled by a slightly different one is how a
+ * bracket ends up disagreeing with itself.
  */
+async function routeEntry(
+  adminClient: ReturnType<typeof createAdminClient>,
+  match: Record<string, unknown>,
+  doubles: boolean,
+  entryId: string,
+  enteredBy: string,
+  route: MatchRoute,
+) {
+  const target = routeOf(match, route);
+  if (!target) return;
+
+  await adminClient.from('tournament_matches')
+    .update({ [entrySideField(target.side, doubles)]: entryId })
+    .eq('id', target.nextId);
+
+  await settleAdvancedMatch(adminClient, target.nextId, doubles, enteredBy);
+}
+
 export async function advanceWinner(
   adminClient: ReturnType<typeof createAdminClient>,
   match: Record<string, unknown>,
@@ -808,18 +877,34 @@ export async function advanceWinner(
   winnerId: string,
   enteredBy: string,
 ) {
-  const nextMatchId = match.winner_to_match_id as string | null;
-  if (!nextMatchId) return;
+  await routeEntry(adminClient, match, doubles, winnerId, enteredBy, 'winner');
+}
 
-  const advanceField = doubles
-    ? (match.winner_to_position === 'a' ? 'pair_a_id' : 'pair_b_id')
-    : (match.winner_to_position === 'a' ? 'participant_a_id' : 'participant_b_id');
-
-  await adminClient.from('tournament_matches')
-    .update({ [advanceField]: winnerId })
-    .eq('id', nextMatchId);
-
-  await settleAdvancedMatch(adminClient, nextMatchId, doubles, enteredBy);
+/**
+ * Send a semi-final's LOSER into the third-place playoff (00080).
+ *
+ * `loserId` is nullable and that is the whole point of the guard below: a BYE
+ * has no losing side, and a walkover awarded to the only entry present has no
+ * loser either. Routing "null" would write an empty slot over one the other
+ * semi-final had already filled, or — worse, before the null check — would look
+ * to a later reader like a phantom entry standing in a real playoff. A
+ * third-place match that keeps one side empty is the honest outcome: the
+ * bracket's existing recovery panel offers "advance unopposed", which is
+ * unrated, and nobody collects Elo for a playoff nobody contested.
+ *
+ * Called AFTER advanceWinner at every call site, for the same reason
+ * advanceWinner is called after rating: advancement can cascade into another
+ * forfeit, and the ordering keeps that cascade deterministic.
+ */
+export async function advanceLoser(
+  adminClient: ReturnType<typeof createAdminClient>,
+  match: Record<string, unknown>,
+  doubles: boolean,
+  loserId: string | null,
+  enteredBy: string,
+) {
+  if (!loserId) return;
+  await routeEntry(adminClient, match, doubles, loserId, enteredBy, 'loser');
 }
 
 /**

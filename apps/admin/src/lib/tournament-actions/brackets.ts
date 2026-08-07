@@ -247,7 +247,97 @@ async function buildFieldFromPool(
 // Bracket Generation — Single Elimination
 // ============================================================
 
-async function generateSingleEliminationBracketImpl(eventId: string) {
+// ============================================================
+// Third-place playoff
+// ============================================================
+//
+// OPT-IN, not automatic, and the choice is made at generation.
+//
+// Automatic was the tempting default — it is a bracket property, so why ask?
+// Because the thing being spent is court time, and the club does not always
+// have it. Three reasons it has to be the exec's call:
+//
+//   * A 4-entry draw's "semi-finals" are round one. The third-place match is
+//     then an immediate rematch between two people who have played exactly one
+//     match each, on the same evening, for a placing nobody asked about. Some
+//     events want that; a Tuesday social does not.
+//   * A draw with byes may not produce two real semi-final losers — a bye has
+//     no losing side. Generating the match regardless is right (see
+//     advanceLoser), but committing every event to it regardless is not.
+//   * Doing it automatically would change the shape of every event that already
+//     exists the next time its draw was regenerated, silently.
+//
+// The choice is NOT stored on tournament_events. The generated match IS the
+// record — is_third_place is what finalizeEvent and the bracket read — and a
+// second column claiming an event "has" a third-place match could disagree with
+// whether one exists. This module's whole defect history is a stored summary
+// disagreeing with the rows underneath it.
+//
+// RATED, like every other match, and that took no code at all: the rating path
+// keys off the result, not the round. That is the argument for it. Leaving it
+// rated means the players' Elo reflects a real match with a real result, and
+// exempting it would mean carving a round-shaped exception into
+// applyTournamentMatchElo — which is precisely how a match ends up silently not
+// counting.
+const THIRD_PLACE_ROUND_NAME = '3rd Place Playoff';
+
+/**
+ * Create the third-place match and point both semi-finals' losers at it.
+ *
+ * Returns the match id, or null when the draw has no semi-final round to feed
+ * it — a 2-entry draw is a final and nothing else. That case is skipped rather
+ * than refused: the exec ticked a box, and failing the whole generation over a
+ * playoff that cannot exist would be a worse answer than generating the draw
+ * they actually need. The audit row records the skip.
+ */
+async function createThirdPlaceMatch(
+  adminClient: ReturnType<typeof createAdminClient>,
+  eventId: string,
+  totalRounds: number,
+  semiFinalIds: string[],
+): Promise<string | null> {
+  if (totalRounds < 2 || semiFinalIds.length !== 2) return null;
+
+  // Same round_number as the final, so it is scheduled alongside it — which is
+  // what was asked for — and a second bracket_position so the two never collide.
+  // The bracket UI lifts it out of the round columns entirely rather than
+  // rendering it as a sibling of the final, because a card sitting in the final's
+  // column with a connector into it would say it feeds the final. It feeds
+  // nothing: winner_to_match_id stays null.
+  const { data: created, error } = await adminClient.from('tournament_matches').insert({
+    event_id: eventId,
+    round_number: totalRounds,
+    round_name: THIRD_PLACE_ROUND_NAME,
+    bracket_position: 1,
+    is_third_place: true,
+    winner_to_match_id: null,
+    winner_to_position: null,
+    status: 'pending',
+  }).select('id').single();
+
+  if (error || !created) {
+    Sentry.captureException(error);
+    throw new Error(`Failed to create the third-place match: ${error?.message ?? 'unknown error'}`);
+  }
+
+  // Both semi-finals, or neither. A half-routed playoff would take one loser and
+  // wait forever for a second that nothing sends — and would look, in the
+  // bracket, exactly like a playoff whose other semi-final has not finished.
+  // Nothing has been played at this point, so throwing costs only a re-run.
+  const { failures } = await settleWrites(
+    semiFinalIds.map((id, i) => [
+      `tournament_matches.loser_to_match_id for semi-final ${id}`,
+      adminClient.from('tournament_matches')
+        .update({ loser_to_match_id: created.id, loser_to_position: i === 0 ? 'a' : 'b' })
+        .eq('id', id),
+    ] as const)
+  );
+  assertWritesSucceeded('Routing the semi-final losers into the third-place match', failures);
+
+  return created.id;
+}
+
+async function generateSingleEliminationBracketImpl(eventId: string, includeThirdPlace: boolean) {
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
@@ -448,6 +538,13 @@ async function generateSingleEliminationBracketImpl(eventId: string) {
     }
   }
 
+  // Created after round 1 is populated, so a failure here leaves a draw that is
+  // already playable rather than one with a dangling playoff. matchesByRound
+  // holds only the main draw, so the semi-final round is unambiguous.
+  const thirdPlaceId = includeThirdPlace
+    ? await createThirdPlaceMatch(adminClient, eventId, totalRounds, matchesByRound[totalRounds - 1] ?? [])
+    : null;
+
   // Assign match numbers for remaining rounds — collect all (id, number) pairs
   // and issue UPDATEs in parallel.
   const matchNumberAssignments: Array<{ id: string; number: number }> = [];
@@ -456,6 +553,10 @@ async function generateSingleEliminationBracketImpl(eventId: string) {
       matchNumberAssignments.push({ id: mId, number: matchNumber++ });
     }
   }
+  // Numbered last, so the playoff carries the highest match number on the card
+  // and the final keeps the number it would have had without this feature.
+  // An exec reading a scoresheet expects M7 to be the final of an 8-draw.
+  if (thirdPlaceId) matchNumberAssignments.push({ id: thirdPlaceId, number: matchNumber++ });
   if (matchNumberAssignments.length > 0) {
     const { failures } = await settleWrites(
       matchNumberAssignments.map(a => [
@@ -485,6 +586,11 @@ async function generateSingleEliminationBracketImpl(eventId: string) {
       bracket_size: bracketSize,
       participants: N,
       byes: numByes,
+      // Recorded as three distinguishable states, not a boolean: "asked for and
+      // created", "asked for and impossible" (a 2-entry draw has no semi-finals)
+      // and "not asked for". The middle one is the only silent outcome in this
+      // function, so it is the one the audit trail owes an explanation for.
+      third_place_match: includeThirdPlace ? (thirdPlaceId ? 'created' : 'skipped_no_semi_finals') : 'not_requested',
       // Recorded because a pool-seeded draw is not reproducible from the event
       // row alone — the pool can be edited afterwards.
       ...(seededFromPool
@@ -646,8 +752,13 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
 // "3 pool matches have not been played" is the whole point of the guard — and
 // runAction keeps those refusals out of Sentry, which only wants real faults.
 
-export async function generateSingleEliminationBracket(eventId: string): Promise<ActionResult<void>> {
-  return runAction(async () => { await generateSingleEliminationBracketImpl(eventId); });
+// includeThirdPlace defaults to false so an existing caller — and a stale client
+// bundle mid-deploy — generates exactly the draw it generated before.
+export async function generateSingleEliminationBracket(
+  eventId: string,
+  includeThirdPlace = false,
+): Promise<ActionResult<void>> {
+  return runAction(async () => { await generateSingleEliminationBracketImpl(eventId, includeThirdPlace); });
 }
 
 export async function generateRoundRobinMatches(eventId: string): Promise<ActionResult<void>> {

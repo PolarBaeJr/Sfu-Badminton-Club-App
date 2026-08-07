@@ -14,42 +14,43 @@ import {
   reverseEloSnapshot,
   assertTournamentNotSuspended,
   advanceWinner,
+  advanceLoser,
   recordWalkover,
   undoDecidedResult,
+  entrySideField,
+  routeOf,
+  routedEntryId,
+  MATCH_ROUTES,
+  type MatchRoute,
 } from './_internal';
 
 // ============================================================
 // Score Entry & Advancement
 // ============================================================
 
-// Field on a match row holding one side's entry, for the discipline in play.
-function sideField(side: 'a' | 'b', doubles: boolean): string {
-  if (doubles) return side === 'a' ? 'pair_a_id' : 'pair_b_id';
-  return side === 'a' ? 'participant_a_id' : 'participant_b_id';
-}
-
-// Pull `entryId` back out of the slot this match feeds and demote the
+// Pull `entryId` back out of a slot this match feeds and demote the
 // downstream match back to 'pending' — 'ready' and 'live' both assert both
 // sides are known, and one of them just stopped being known.
 //
 // The write is conditional on the slot actually still holding this match's
-// winner. A slot can also be set by hand (setMatchEntry) or by a neighbouring
+// entry. A slot can also be set by hand (setMatchEntry) or by a neighbouring
 // match, and blindly nulling it would silently undo somebody else's correction.
 // Returns whether anything was cleared, for the audit trail.
-async function clearAdvancedEntry(
+async function clearRoutedEntry(
   adminClient: ReturnType<typeof createAdminClient>,
   match: Record<string, unknown>,
   entryId: string,
   doubles: boolean,
+  route: MatchRoute,
 ): Promise<boolean> {
-  const nextId = match.winner_to_match_id as string | null;
-  if (!nextId) return false;
+  const target = routeOf(match, route);
+  if (!target) return false;
 
-  const field = sideField(match.winner_to_position === 'a' ? 'a' : 'b', doubles);
+  const field = entrySideField(target.side, doubles);
 
   const { data: next } = await adminClient.from('tournament_matches')
     .select('*')
-    .eq('id', nextId)
+    .eq('id', target.nextId)
     .single();
   if (!next) return false;
 
@@ -62,29 +63,61 @@ async function clearAdvancedEntry(
       status: nextRow.status === 'ready' || nextRow.status === 'live' ? 'pending' : (nextRow.status as string),
       updated_at: new Date().toISOString(),
     })
-    .eq('id', nextId);
+    .eq('id', target.nextId);
 
   return true;
 }
 
-// Refuse when the match this one feeds has already been decided. Rewinding an
+// Take this match's winner out of the next round AND its loser out of the
+// third-place playoff (00080). Both, always: a semi-final that is being erased
+// has put two entries somewhere, and clearing only the winner is how the
+// playoff ends up advertising a semi-finalist whose semi-final no longer
+// happened.
+async function clearAdvancedEntries(
+  adminClient: ReturnType<typeof createAdminClient>,
+  match: Record<string, unknown>,
+  doubles: boolean,
+): Promise<{ winner: boolean; loser: boolean }> {
+  const cleared = { winner: false, loser: false };
+  for (const route of MATCH_ROUTES) {
+    const entryId = routedEntryId(match, route, doubles);
+    if (!entryId) continue;
+    cleared[route] = await clearRoutedEntry(adminClient, match, entryId, doubles, route);
+  }
+  return cleared;
+}
+
+// Refuse when a match this one feeds has already been decided. Rewinding an
 // earlier round underneath a played later round would leave a recorded result
 // for an entry that is no longer in that half of the draw.
+//
+// BOTH routes are checked. A semi-final feeds the final with its winner and —
+// once an event has a third-place playoff — feeds that playoff with its loser.
+// The playoff is not a lesser match: it has a real result and a real Elo delta,
+// and rewriting the semi-final underneath it would leave that result attributed
+// to somebody who is no longer a semi-final loser. Checking only
+// winner_to_match_id would have let exactly that through.
 async function assertDownstreamUndecided(
   adminClient: ReturnType<typeof createAdminClient>,
   match: Record<string, unknown>,
   what: string,
 ) {
-  const nextId = match.winner_to_match_id as string | null;
-  if (!nextId) return;
+  for (const route of MATCH_ROUTES) {
+    const target = routeOf(match, route);
+    if (!target) continue;
 
-  const { data: nextMatch } = await adminClient.from('tournament_matches')
-    .select('status')
-    .eq('id', nextId)
-    .single();
+    const { data: nextMatch } = await adminClient.from('tournament_matches')
+      .select('status, is_third_place')
+      .eq('id', target.nextId)
+      .single();
 
-  if (nextMatch && (nextMatch.status === 'completed' || nextMatch.status === 'walkover')) {
-    throw new ExpectedError(`Cannot ${what} — the next match already has a result. Undo that one first.`);
+    if (nextMatch && (nextMatch.status === 'completed' || nextMatch.status === 'walkover')) {
+      throw new ExpectedError(
+        nextMatch.is_third_place
+          ? `Cannot ${what} — the third-place match already has a result. Undo that one first.`
+          : `Cannot ${what} — the next match already has a result. Undo that one first.`,
+      );
+    }
   }
 }
 
@@ -306,6 +339,10 @@ async function enterMatchResultImpl(
   // since the draw was published.
   await advanceWinner(adminClient, match, doubles, winnerId, admin.id);
 
+  // ...and the loser into the third-place playoff, if this is a semi-final in an
+  // event that has one. A no-op everywhere else — loser_to_match_id is null.
+  await advanceLoser(adminClient, match, doubles, loserId, admin.id);
+
   await logAudit(adminClient, {
     tournament_id: event.tournament_id as string,
     event_id: match.event_id,
@@ -440,7 +477,6 @@ async function voidMatchImpl(matchId: string, reason: string) {
   }
 
   const doubles = isDoublesEvent(event.event_type as TournamentEventType);
-  const priorWinnerId = (doubles ? match.winner_pair_id : match.winner_participant_id) as string | null;
 
   await assertDownstreamUndecided(adminClient, match, 'void');
 
@@ -458,12 +494,11 @@ async function voidMatchImpl(matchId: string, reason: string) {
     await reverseEloSnapshot(adminClient, matchId);
   }
 
-  // Take the voided match's winner back out of the next round. Leaving them
-  // parked there is how a bracket ends up advertising a semi-final between a
-  // real player and a result that has been erased.
-  const clearedNextSlot = priorWinnerId
-    ? await clearAdvancedEntry(adminClient, match, priorWinnerId, doubles)
-    : false;
+  // Take the voided match's winner back out of the next round, and its loser
+  // back out of the third-place playoff. Leaving either parked is how a bracket
+  // ends up advertising a match between a real player and a result that has
+  // been erased.
+  const cleared = await clearAdvancedEntries(adminClient, match, doubles);
 
   // Scores and winner/loser are deliberately kept: a voided match is excluded
   // from standings, finalisation and Elo by status alone, and keeping the row
@@ -480,7 +515,12 @@ async function voidMatchImpl(matchId: string, reason: string) {
     match_id: matchId,
     action: 'match_voided',
     performed_by: admin.id,
-    details: { reason, reversed_elo: reversedElo, cleared_next_slot: clearedNextSlot },
+    details: {
+      reason,
+      reversed_elo: reversedElo,
+      cleared_next_slot: cleared.winner,
+      cleared_third_place_slot: cleared.loser,
+    },
   });
 
   revalidateEventPaths(event.tournament_id as string, match.event_id as string);
@@ -546,12 +586,9 @@ async function recordDoubleNoShowImpl(matchId: string, reason: string) {
     await reverseEloSnapshot(adminClient, matchId);
   }
 
-  // Nobody advances. Anyone previously parked in the next round on the strength
-  // of this match comes back out.
-  const priorWinnerId = (doubles ? match.winner_pair_id : match.winner_participant_id) as string | null;
-  const clearedNextSlot = priorWinnerId
-    ? await clearAdvancedEntry(adminClient, match, priorWinnerId, doubles)
-    : false;
+  // Nobody advances. Anyone previously parked in the next round — or in the
+  // third-place playoff — on the strength of this match comes back out.
+  const cleared = await clearAdvancedEntries(adminClient, match, doubles);
 
   // Mark both entries absent. This is the half that feeds reliability —
   // check_noshow_threshold auto-flags at 3 and auto-suspends at 5 — and it is
@@ -582,7 +619,13 @@ async function recordDoubleNoShowImpl(matchId: string, reason: string) {
     // thing that says the court was empty rather than the entry being wrong.
     action: 'match_double_no_show',
     performed_by: admin.id,
-    details: { reason, reversed_elo: reversedElo, cleared_next_slot: clearedNextSlot, entries: [aId, bId] },
+    details: {
+      reason,
+      reversed_elo: reversedElo,
+      cleared_next_slot: cleared.winner,
+      cleared_third_place_slot: cleared.loser,
+      entries: [aId, bId],
+    },
   });
 
   revalidateEventPaths(event.tournament_id as string, match.event_id as string);
@@ -714,8 +757,8 @@ async function setMatchEntryImpl(
   }
 
   const doubles = isDoublesEvent(event.event_type as TournamentEventType);
-  const field = sideField(side, doubles);
-  const otherField = sideField(side === 'a' ? 'b' : 'a', doubles);
+  const field = entrySideField(side, doubles);
+  const otherField = entrySideField(side === 'a' ? 'b' : 'a', doubles);
   const current = (match as Record<string, unknown>)[field] as string | null;
   const other = (match as Record<string, unknown>)[otherField] as string | null;
 
@@ -772,10 +815,57 @@ async function setMatchEntryImpl(
   revalidateEventPaths(event.tournament_id as string, match.event_id as string);
 }
 
-export async function editMatchResult(
+// ============================================================
+// Admin override — change a result that has already been resolved
+// ============================================================
+//
+// WHAT WAS ACTUALLY BLOCKING THIS: nothing on the server. This function has
+// existed since the schema did, it is exported from the tournament-actions
+// barrel, and it was called by ZERO client code. The bracket's MatchCard gates
+// both of its buttons on `!isCompleted`, so a completed or walkover match
+// rendered a "Final" / "WALKOVER" label and no control at all. The only route to
+// a correction was void → restore → re-enter, which throws the original result
+// away and re-rates from scratch.
+//
+// So the fix is an affordance, not a relaxed rule. NO EXISTING GUARD IS
+// WEAKENED. Two are TIGHTENED, because the new button makes reachable what was
+// previously only reachable from a test:
+//
+//   * The downstream check is now assertDownstreamUndecided, the same one void
+//     and undo use. The hand-rolled copy that lived here checked only
+//     `status === 'completed'`, so a downstream WALKOVER — the shape a late
+//     withdrawal produces — waved the edit straight through, and a semi-final
+//     could be rewritten underneath a final that had already been forfeited and
+//     rated. It also looked at winner_to_match_id alone, which since 00080
+//     misses the third-place playoff entirely.
+//
+//   * The match must actually HAVE a result. This wrote winner/loser onto the
+//     row unconditionally and then re-rated only if the status was already
+//     decided — so "editing" a pending match stamped a winner on it, skipped the
+//     rating, and left a match that reads as decided to every downstream reader
+//     while enterMatchResult still considered it playable and would rate it.
+//
+// RATING REVERSAL GOES THROUGH reverse_tournament_match_rating (00078) AND
+// NOWHERE ELSE. That is the one thing this function must never grow a shortcut
+// for: reverseEloSnapshot is a thin wrapper over that RPC, the RPC clears the
+// snapshot inside the same transaction as the deltas it subtracts, and a second
+// hand-rolled reversal path is exactly how the double-reverse defect 00078
+// documents came about. Reverse, then re-apply — never adjust in place.
+//
+// EXEC OR ADMIN, not admin-only, and that is a deliberate deviation worth
+// stating. Every other corrective action in this module — void, undo, restore,
+// slot editing, double no-show — gates on getExecOrAdmin, and the tournament
+// desk runs as exec, not admin. An admin-only override would mean the person
+// standing at the desk at 9pm with a wrong scoreline on the board cannot fix it,
+// which is the situation this was asked for. What makes the override safe is not
+// a narrower role but that it is EXPLICIT and AUDITED: it demands a typed
+// reason, and the audit row carries the old AND new winner, the old AND new
+// scores, and whether the rating was reversed and re-applied.
+async function editMatchResultImpl(
   matchId: string,
   newScores: Array<{ a: number; b: number }>,
-  newWinnerSide: 'a' | 'b'
+  newWinnerSide: 'a' | 'b',
+  reason: string,
 ) {
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
@@ -785,19 +875,38 @@ export async function editMatchResult(
     .eq('id', matchId)
     .single();
 
-  if (!match) throw new Error('Match not found');
+  if (!match) throw new ExpectedError('Match not found');
 
-  // Check no downstream matches have been completed
-  if (match.winner_to_match_id) {
-    const { data: nextMatch } = await adminClient.from('tournament_matches')
-      .select('status')
-      .eq('id', match.winner_to_match_id)
-      .single();
+  const event = match.event as Record<string, unknown>;
 
-    if (nextMatch && nextMatch.status === 'completed') {
-      throw new Error('Cannot edit result — downstream match already completed');
-    }
+  // Same gate the other corrective actions use. 'completed' is allowed, which is
+  // the point — a finished event is exactly where a wrong result gets noticed.
+  assertEventResultsMutable(event, 'changing a result');
+
+  // There has to BE a result to change. A voided match has deliberately had its
+  // result taken off and is restored, not edited; a pending one never had a
+  // result at all, and stamping one here would bypass every score-legality check
+  // enterMatchResult applies.
+  if (match.status !== 'completed' && match.status !== 'walkover') {
+    throw new ExpectedError(
+      match.status === 'voided'
+        ? 'This match is voided. Restore it and enter the result, rather than editing one that was erased.'
+        : 'This match has no result yet — enter it rather than changing it.',
+    );
   }
+
+  // The override is explicit by construction: it cannot be performed without
+  // saying why, and the reason lands in the audit row below.
+  if (!reason.trim()) {
+    throw new ExpectedError('Give a reason — changing a result that is already recorded has to say why.');
+  }
+
+  // The integrity guard that STAYS. Rewriting a match underneath a later round
+  // that has already been played would leave that later result recorded for an
+  // entry which is no longer in this half of the draw — and, since 00080, would
+  // do the same to a third-place playoff that has already been contested and
+  // rated. The remedy is the one the message gives: undo the later match first.
+  await assertDownstreamUndecided(adminClient, match, 'change this result');
 
   // Same integrity boundary as entering a result: correcting a match must not
   // be a way to award it to the side that lost every game. Only the winner /
@@ -806,7 +915,6 @@ export async function editMatchResult(
   // repair data that is already odd.
   assertWinnerMatchesScores(newScores, newWinnerSide);
 
-  const event = match.event as Record<string, unknown>;
   const doubles = isDoublesEvent(event.event_type as TournamentEventType);
 
   const winnerId = doubles
@@ -819,56 +927,89 @@ export async function editMatchResult(
   const winnerField = doubles ? 'winner_pair_id' : 'winner_participant_id';
   const loserField = doubles ? 'loser_pair_id' : 'loser_participant_id';
 
+  // Read before anything moves, so the audit row can say what was replaced. The
+  // match row is overwritten below, so this is the only moment the previous
+  // winner and loser exist to be recorded.
+  const priorWinnerId = routedEntryId(match, 'winner', doubles);
+  const priorLoserId = routedEntryId(match, 'loser', doubles);
+
   // Reverse any prior Elo changes so we can recompute with the corrected winner.
-  if (match.elo_snapshot) {
+  // reverseEloSnapshot is reverse_tournament_match_rating (00078) and nothing
+  // else — one transaction, snapshot cleared alongside the deltas it subtracts,
+  // idempotent on a retry. Never subtract by hand here.
+  const reversedElo = Boolean(match.elo_snapshot);
+  if (reversedElo) {
     await reverseEloSnapshot(adminClient, matchId);
   }
 
-  await adminClient.from('tournament_matches').update({
+  // count: 'exact' because PostgREST reports "matched no rows" as SUCCESS, and
+  // the filter on the status this request read makes the write a
+  // compare-and-swap. The rating has already been reversed by this point, so a
+  // write that silently matched nothing would leave the match carrying its
+  // ORIGINAL scoreline with that scoreline's rating stripped off the ladder —
+  // and the caller would be told the correction saved.
+  const { error, count } = await adminClient.from('tournament_matches').update({
     scores: newScores,
     [winnerField]: winnerId,
     [loserField]: loserId,
     result_entered_by: admin.id,
     result_entered_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-  }).eq('id', matchId);
+  }, { count: 'exact' })
+    .eq('id', matchId)
+    .eq('status', match.status);
 
-  // Re-advance winner if changed
-  if (match.winner_to_match_id) {
-    const advanceField = doubles
-      ? (match.winner_to_position === 'a' ? 'pair_a_id' : 'pair_b_id')
-      : (match.winner_to_position === 'a' ? 'participant_a_id' : 'participant_b_id');
+  if (error) {
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+  if (count === 0) {
+    throw new Error(
+      `Match ${matchId} changed while the correction was being saved, so nothing was written — but its ` +
+      `previous rating WAS already reversed. Reload the bracket and check the result before saving again.`,
+    );
+  }
 
+  // Re-route both sides. assertDownstreamUndecided has just guaranteed neither
+  // destination has a result, so overwriting the slots outright is safe and is
+  // what makes a flipped winner actually reach the next round. The loser half is
+  // new with 00080: flipping a semi-final's winner also flips which entry belongs
+  // in the third-place playoff, and leaving that slot alone would send the wrong
+  // player out to play for third.
+  for (const route of MATCH_ROUTES) {
+    const target = routeOf(match, route);
+    if (!target) continue;
+    const entryId = route === 'winner' ? winnerId : loserId;
+    if (!entryId) continue;
     await adminClient.from('tournament_matches')
-      .update({ [advanceField]: winnerId })
-      .eq('id', match.winner_to_match_id);
+      .update({ [entrySideField(target.side, doubles)]: entryId })
+      .eq('id', target.nextId);
   }
 
   // Reapply Elo with the corrected winner. Walkovers count too — enterWalkover
   // applies Elo, so omitting them here reversed the delta above and never
   // restored it, permanently zeroing both sides' rating change. Voided matches
-  // stay unrated.
+  // are refused outright by the status guard at the top, so the branch that used
+  // to guard this call is gone rather than removed.
   //
   // A failure here cannot be compensated the way enterMatchResult's is. By this
   // point the OLD rating has already been reversed and the old scoreline it was
   // computed from has been overwritten, so there is nothing to put back — the
   // only route forward is forward. That is safe, and this is the one place worth
   // saying so out loud: the snapshot is null, so simply running the correction
-  // again re-rates the match and cannot count it twice, and editMatchResult has
-  // no status guard to refuse the retry. Without this message the exec is told
-  // "the rating failed" and left to guess whether pressing Save again would
-  // double the delta.
-  if (match.status === 'completed' || match.status === 'walkover') {
-    try {
-      await applyTournamentMatchElo(matchId);
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      throw new Error(
-        `${detail} — the corrected result for match ${matchId} WAS saved but is not yet rated. ` +
-        `Save the same correction again to rate it; the previous rating is already reversed, ` +
-        `so it cannot be counted twice.`,
-      );
-    }
+  // again re-rates the match and cannot count it twice, and the status guard
+  // above still accepts the retry because the match is still completed. Without
+  // this message the exec is told "the rating failed" and left to guess whether
+  // pressing Save again would double the delta.
+  try {
+    await applyTournamentMatchElo(matchId);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `${detail} — the corrected result for match ${matchId} WAS saved but is not yet rated. ` +
+      `Save the same correction again to rate it; the previous rating is already reversed, ` +
+      `so it cannot be counted twice.`,
+    );
   }
 
   await logAudit(adminClient, {
@@ -877,7 +1018,24 @@ export async function editMatchResult(
     match_id: matchId,
     action: 'result_edited',
     performed_by: admin.id,
-    details: { old_scores: match.scores, new_scores: newScores, new_winner_side: newWinnerSide },
+    // Old AND new, for every field this action can move. A correction that
+    // changes who won is the most consequential thing in the console — it moves
+    // two players' Elo, their win/loss record, their streak and their place in
+    // the draw — and six months on this row is the only record that the board
+    // ever said anything else.
+    details: {
+      reason,
+      old_scores: match.scores,
+      new_scores: newScores,
+      old_winner_entry_id: priorWinnerId,
+      new_winner_entry_id: winnerId,
+      old_loser_entry_id: priorLoserId,
+      new_loser_entry_id: loserId,
+      new_winner_side: newWinnerSide,
+      winner_changed: priorWinnerId !== winnerId,
+      match_status: match.status,
+      reversed_elo: reversedElo,
+    },
   });
 
   revalidateEventPaths(event.tournament_id as string, match.event_id as string);
@@ -962,11 +1120,10 @@ async function undoMatchResultImpl(matchId: string) {
     }
   }
 
-  // Remove winner from next match if single elimination
-  const undoneWinnerId = (doubles ? match.winner_pair_id : match.winner_participant_id) as string | null;
-  if (undoneWinnerId) {
-    await clearAdvancedEntry(adminClient, match, undoneWinnerId, doubles);
-  }
+  // Remove the winner from the next match, and the loser from the third-place
+  // playoff. Both, for the same reason voiding clears both: this match no longer
+  // has a result, so neither entry has any claim on the slot it was routed into.
+  await clearAdvancedEntries(adminClient, match, doubles);
 
   // Reset match itself
   const aId = (doubles ? match.pair_a_id : match.participant_a_id) as string | null;
@@ -1052,6 +1209,24 @@ export async function voidMatch(matchId: string, reason: string): Promise<Action
 
 export async function undoMatchResult(matchId: string): Promise<ActionResult<void>> {
   return runAction(async () => { await undoMatchResultImpl(matchId); });
+}
+
+// Change a result that is already recorded, without voiding it first.
+//
+// Wrapped in runAction like everything else in this module, and that is not
+// cosmetic here: this action's guards are the ones an exec most needs to READ.
+// Next.js sanitises anything thrown out of a Server Action in a production
+// build, so while editMatchResult threw, "the third-place match already has a
+// result, undo that one first" reached the browser as "An error occurred in the
+// Server Components render" — a refusal indistinguishable from a crash, on the
+// one path where knowing which is which decides what the exec does next.
+export async function editMatchResult(
+  matchId: string,
+  newScores: Array<{ a: number; b: number }>,
+  newWinnerSide: 'a' | 'b',
+  reason: string,
+): Promise<ActionResult<void>> {
+  return runAction(async () => { await editMatchResultImpl(matchId, newScores, newWinnerSide, reason); });
 }
 
 // Put a voided match back into play. Pairs with voidMatch: both reverse any Elo

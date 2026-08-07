@@ -6,6 +6,7 @@ import { getEventRules, previewEloChange, tallyGames } from '@badminton/shared';
 import type { TournamentMatchFormat, MatchFormat } from '@badminton/shared';
 import {
   enterMatchResult, enterWalkover, voidMatch, unvoidMatch, setMatchEntry, recordDoubleNoShow,
+  editMatchResult,
 } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
@@ -25,7 +26,14 @@ interface Props {
 // Which panel the dialog opens on. A voided match can only be restored, and a
 // match missing a side cannot be scored — so the dialog leads with the action
 // that is actually available instead of an unusable score form.
-type View = 'score' | 'walkover' | 'slots' | 'restore';
+//
+// 'correct' is the panel for a match that ALREADY has a result. It is separate
+// from 'score' rather than a mode of it because the two do different things to
+// the ladder: 'score' rates a match for the first time and refuses anything
+// already decided, while 'correct' reverses the existing rating and re-applies
+// it. Sharing one Submit button between them is how somebody ends up pressing
+// "enter" on a settled match and being told, opaquely, that it is not playable.
+type View = 'score' | 'walkover' | 'slots' | 'restore' | 'correct';
 
 export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, entries, onClose }: Props) {
   const matchFormat = event.match_format as TournamentMatchFormat;
@@ -41,11 +49,23 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
   const seedB = seedMap[bId ?? ''];
 
   const isVoided = match.status === 'voided';
+  const isDecided = match.status === 'completed' || match.status === 'walkover';
   const hasBothSides = Boolean(aId && bId);
 
-  const [view, setView] = useState<View>(isVoided ? 'restore' : hasBothSides ? 'score' : 'slots');
+  const [view, setView] = useState<View>(
+    isVoided ? 'restore' : isDecided ? 'correct' : hasBothSides ? 'score' : 'slots',
+  );
+  // Prefilled from the recorded result when there is one, so a correction that
+  // only changes the third game does not make the exec retype the first two —
+  // and, more importantly, so the form starts from what is actually on the row
+  // rather than from blank, which would silently propose wiping the scoreline.
+  // A walkover has no scores, so it starts empty and the reason field carries
+  // the explanation.
+  const recorded = (match.scores as Array<{ a: number; b: number }> | null) ?? [];
   const [games, setGames] = useState<Array<{ a: string; b: string }>>(
-    Array.from({ length: maxGames === 1 ? 1 : 2 }, () => ({ a: '', b: '' }))
+    recorded.length > 0
+      ? recorded.map((g) => ({ a: String(g.a), b: String(g.b) }))
+      : Array.from({ length: maxGames === 1 ? 1 : 2 }, () => ({ a: '', b: '' }))
   );
   const [loading, setLoading] = useState(false);
   // The gym slot ends before the game does often enough that this needs to be
@@ -89,6 +109,28 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
       const res = await enterMatchResult(match.id, scores, autoWinner, timeExceeded);
       if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
       done('Score submitted');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed', 'error');
+    }
+    setLoading(false);
+  }
+
+  // Change a result that is already recorded, without voiding it first.
+  //
+  // The reason is mandatory here as well as on the server. The server refusal is
+  // the boundary; requiring it in the form is what stops the exec discovering it
+  // after they have already retyped three games.
+  async function handleCorrect() {
+    if (!autoWinner) { toast('Cannot determine winner from scores', 'error'); return; }
+    if (!walkoverReason.trim()) { toast('Enter a reason for changing the result', 'error'); return; }
+    setLoading(true);
+    try {
+      const scores = games
+        .filter(g => g.a || g.b)
+        .map(g => ({ a: parseInt(g.a) || 0, b: parseInt(g.b) || 0 }));
+      const res = await editMatchResult(match.id, scores, autoWinner, walkoverReason);
+      if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
+      done('Result changed — ratings have been re-applied');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
@@ -217,7 +259,18 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
     ? 'Restore Voided Match'
     : view === 'slots'
     ? 'Fix Match Slots'
+    : view === 'correct'
+    ? 'Change Recorded Result'
     : 'Enter Match Score';
+
+  // What the row says today, so the exec can see what they are replacing rather
+  // than trusting the prefilled boxes to be the same thing.
+  const recordedWinnerId = isDoubles ? match.winner_pair_id : match.winner_participant_id;
+  const recordedSummary = recorded.length > 0
+    ? recorded.map((g) => `${g.a}-${g.b}`).join(', ')
+    : match.status === 'walkover'
+    ? `walkover${match.walkover_reason ? ` — ${match.walkover_reason}` : ''}`
+    : 'no scores recorded';
 
   return (
     <Dialog open={true} onClose={onClose} title={title}>
@@ -294,6 +347,87 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
                 Back to Score Entry
               </Button>
             )}
+          </>
+        )}
+
+        {/* Correction — the override for a match that already has a result */}
+        {view === 'correct' && (
+          <>
+            <div className="rounded-lg border border-[var(--color-warning)] bg-[color-mix(in_srgb,var(--color-warning)_8%,transparent)] p-3 space-y-1">
+              <p className="text-sm font-medium text-[var(--text-primary)]">
+                Currently recorded: {recordedWinnerId ? (nameMap[recordedWinnerId] ?? 'Unknown') : 'no winner'} — {recordedSummary}
+              </p>
+              <p className="text-xs text-[var(--text-muted)]">
+                Saving reverses the Elo, statistics and streak this result applied, then re-applies them from
+                the corrected one. The match is never counted twice, and the change is recorded in the audit
+                log with both the old and the new result.
+              </p>
+            </div>
+
+            {games.map((g, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <span className="text-xs text-[var(--text-muted)] w-16">Game {i + 1}</span>
+                <Input
+                  type="number"
+                  aria-label={`Corrected game ${i + 1} score for ${nameA}`}
+                  value={g.a}
+                  onChange={(e) => {
+                    const updated = [...games];
+                    updated[i] = { ...g, a: e.target.value };
+                    setGames(updated);
+                  }}
+                  placeholder="0"
+                  className="text-center"
+                />
+                <span className="text-[var(--text-muted)]">-</span>
+                <Input
+                  type="number"
+                  aria-label={`Corrected game ${i + 1} score for ${nameB}`}
+                  value={g.b}
+                  onChange={(e) => {
+                    const updated = [...games];
+                    updated[i] = { ...g, b: e.target.value };
+                    setGames(updated);
+                  }}
+                  placeholder="0"
+                  className="text-center"
+                />
+              </div>
+            ))}
+
+            {games.length < maxGames && (
+              <Button variant="ghost" size="sm" onClick={addGame} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">+ Add Game</Button>
+            )}
+
+            {autoWinner && (
+              <div className="text-center text-sm" role="status" aria-live="polite">
+                <span className="text-[var(--color-success)] font-medium">
+                  New winner: {autoWinner === 'a' ? nameA : nameB}
+                </span>
+              </div>
+            )}
+
+            <Input
+              label="Reason (required)"
+              value={walkoverReason}
+              onChange={(e) => setWalkoverReason(e.target.value)}
+              placeholder="Why is the recorded result wrong?"
+            />
+
+            <Button
+              onClick={handleCorrect}
+              loading={loading}
+              disabled={!autoWinner || !walkoverReason.trim()}
+              className="w-full focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+            >
+              Save Corrected Result
+            </Button>
+            {/* Voiding stays reachable from here: a result that should never have
+                existed is erased, not corrected, and the two are different
+                things to the standings. */}
+            <Button variant="ghost" size="sm" onClick={() => setView('walkover')} className="w-full focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
+              Void this match instead
+            </Button>
           </>
         )}
 
@@ -375,32 +509,41 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
               onChange={(e) => setWalkoverReason(e.target.value)}
               placeholder="Reason for walkover or void..."
             />
-            <div className="flex gap-2">
-              <Button size="sm" onClick={() => handleWalkover('a')} loading={walkoverLoading} disabled={!aId} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
-                Walkover → {nameA}
-              </Button>
-              <Button size="sm" onClick={() => handleWalkover('b')} loading={walkoverLoading} disabled={!bId} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
-                Walkover → {nameB}
-              </Button>
-            </div>
-            {/* Neither side present. Distinct from a walkover, which needs
-                somebody to award it to, and from a plain void, which says
-                nothing about why. Disabled unless BOTH sides are known — one
-                empty side is an unopposed walkover, not a no-show. */}
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={handleDoubleNoShow}
-              loading={walkoverLoading}
-              disabled={!aId || !bId}
-              className="w-full text-[var(--color-warning)] focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none"
-            >
-              Neither side turned up
-            </Button>
-            <p className="text-xs text-[var(--text-muted)]">
-              &ldquo;Neither side turned up&rdquo; marks both entries as a no-show — which counts toward
-              their reliability record — and leaves the next round empty for you to fill.
-            </p>
+            {/* Every entry point here except Void needs a match that is still
+                playable — the server refuses a walkover or a no-show on a
+                decided match — so a settled match is offered Void alone rather
+                than three buttons that can only fail. Correcting it is the
+                other option, and it is the panel this one was reached from. */}
+            {!isDecided && (
+              <>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={() => handleWalkover('a')} loading={walkoverLoading} disabled={!aId} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
+                    Walkover → {nameA}
+                  </Button>
+                  <Button size="sm" onClick={() => handleWalkover('b')} loading={walkoverLoading} disabled={!bId} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
+                    Walkover → {nameB}
+                  </Button>
+                </div>
+                {/* Neither side present. Distinct from a walkover, which needs
+                    somebody to award it to, and from a plain void, which says
+                    nothing about why. Disabled unless BOTH sides are known — one
+                    empty side is an unopposed walkover, not a no-show. */}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={handleDoubleNoShow}
+                  loading={walkoverLoading}
+                  disabled={!aId || !bId}
+                  className="w-full text-[var(--color-warning)] focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+                >
+                  Neither side turned up
+                </Button>
+                <p className="text-xs text-[var(--text-muted)]">
+                  &ldquo;Neither side turned up&rdquo; marks both entries as a no-show — which counts toward
+                  their reliability record — and leaves the next round empty for you to fill.
+                </p>
+              </>
+            )}
             <p className="text-xs text-[var(--text-muted)]">
               Voiding erases the match: any Elo it applied is reversed and its winner is taken back out
               of the next round. It can be restored later.
@@ -408,7 +551,7 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
             <Button size="sm" variant="ghost" onClick={handleVoid} loading={walkoverLoading} className="w-full text-[var(--color-danger)] focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
               Void Match
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => setView(hasBothSides ? 'score' : 'slots')} className="w-full focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
+            <Button variant="ghost" size="sm" onClick={() => setView(isDecided ? 'correct' : hasBothSides ? 'score' : 'slots')} className="w-full focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
               Back
             </Button>
           </>

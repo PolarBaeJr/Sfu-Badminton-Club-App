@@ -173,9 +173,22 @@ export default async function EventDetailPage({
         };
       });
 
+  // The third-place playoff shares round_number with the final so the two are
+  // scheduled together (00080), and it has to come OUT of the round grouping
+  // before the columns are built. Left in, it renders as a second card in the
+  // final's column with a connector elbow drawn into it — which says the winner
+  // of that match goes on to play the final. They do not; the match feeds
+  // nothing. It gets its own labelled row underneath instead.
+  //
+  // "Your Matches" further down deliberately still reads it off allMatches: a
+  // player who is in it wants to see it, and it identifies itself there by
+  // round_name ("3rd Place Playoff") with nothing implied about the draw.
+  const thirdPlaceMatch = allMatches.find((m) => m.is_third_place) ?? null;
+  const bracketMatches = allMatches.filter((m) => !m.is_third_place);
+
   const roundsMap = new Map<number, Array<Record<string, unknown>>>();
   let maxRound = 0;
-  for (const m of allMatches) {
+  for (const m of bracketMatches) {
     const rn = m.round_number as number;
     if (rn > maxRound) maxRound = rn;
     if (!roundsMap.has(rn)) roundsMap.set(rn, []);
@@ -400,6 +413,37 @@ export default async function EventDetailPage({
                 })}
               </div>
             </div>
+
+            {/* 3rd Place Playoff — outside the scrolling grid, with no connector
+                touching it, so it cannot read as a second final. */}
+            {thirdPlaceMatch && (
+              <div className="px-4 pb-4">
+                <h3 className="eyebrow mb-2">3rd Place Playoff</h3>
+                <div className="border border-[var(--border)] rounded-xl overflow-hidden max-w-[280px]">
+                  {(['a', 'b'] as const).map((side) => {
+                    const won = isWinner(thirdPlaceMatch, side);
+                    return (
+                      <div
+                        key={side}
+                        className={`px-2.5 py-2 text-sm flex items-center gap-2 ${
+                          side === 'b' ? 'border-t border-[var(--border)]' : ''
+                        } ${won ? 'match-winner' : 'bg-white/[0.02] text-[var(--text-secondary)]'}`}
+                      >
+                        <span className="truncate flex-1">{getEntryName(thirdPlaceMatch, side)}</span>
+                        {won && <span className="sr-only">(Winner)</span>}
+                      </div>
+                    );
+                  })}
+                  <div className="nums flex items-center justify-center text-[11px] text-[var(--text-dim)] border-t border-[var(--border)] py-1.5">
+                    {formatScores(thirdPlaceMatch.scores as Array<{ a: number; b: number }> | null)
+                      || (thirdPlaceMatch.status === 'completed' ? 'W/O' : 'vs')}
+                  </div>
+                </div>
+                <p className="text-xs text-[var(--text-muted)] mt-2">
+                  The two semi-final losers, playing for 3rd. The winner does not advance to the final.
+                </p>
+              </div>
+            )}
           </div>
         </FadeIn>
       )}
