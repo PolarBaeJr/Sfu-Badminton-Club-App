@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 import { createAdminClient } from '@/lib/supabase-server';
 import { Card, Badge } from '@badminton/ui';
 import { formatDate, pickOne } from '@badminton/shared';
-import { CreateTournamentForm, TournamentMenu } from './actions';
+import { CreateTournamentForm, TournamentMenu, type WaiverTemplateContext } from './actions';
 import type { TournamentWithEventCount } from '@/lib/tournament-types';
 import Link from 'next/link';
 import { Trophy, Users, Calendar, Zap, Archive } from 'lucide-react';
@@ -29,6 +29,19 @@ export default async function TournamentsPage() {
   const activeTournaments = tournaments?.filter((t) => t.status !== 'archived') || [];
   const archivedTournaments = tournaments?.filter((t) => t.status === 'archived') || [];
 
+  // Per-season event-waiver templates (00074), so "Use season template" in the
+  // create/edit dialog can fill the waiver box without a round trip. The active
+  // season is what createTournament stamps on a new tournament, so it is the
+  // season a not-yet-created tournament draws from.
+  const [{ data: waiverTemplates }, { data: activeSeason }] = await Promise.all([
+    supabase.from('event_waiver_templates').select('season_id, content'),
+    supabase.from('seasons').select('id').eq('active_flag', true).maybeSingle(),
+  ]);
+  const waiverTemplateContext: WaiverTemplateContext = {
+    templates: waiverTemplates ?? [],
+    activeSeasonId: activeSeason?.id ?? null,
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
       {/* Page Header */}
@@ -50,13 +63,13 @@ export default async function TournamentsPage() {
             <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginTop: '0.125rem' }}>Manage brackets, participants, and results</p>
           </div>
         </div>
-        <CreateTournamentForm />
+        <CreateTournamentForm waiverTemplates={waiverTemplateContext} />
       </div>
 
       {/* Active Tournaments */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
         {activeTournaments.map((t) => (
-          <TournamentCard key={t.id} t={t} />
+          <TournamentCard key={t.id} t={t} waiverTemplates={waiverTemplateContext} />
         ))}
         {activeTournaments.length === 0 && (
           <Card>
@@ -78,7 +91,7 @@ export default async function TournamentsPage() {
             </h2>
           </div>
           {archivedTournaments.map((t) => (
-            <TournamentCard key={t.id} t={t} />
+            <TournamentCard key={t.id} t={t} waiverTemplates={waiverTemplateContext} />
           ))}
         </div>
       )}
@@ -86,7 +99,13 @@ export default async function TournamentsPage() {
   );
 }
 
-function TournamentCard({ t }: { t: TournamentWithEventCount }) {
+function TournamentCard({
+  t,
+  waiverTemplates,
+}: {
+  t: TournamentWithEventCount;
+  waiverTemplates: WaiverTemplateContext;
+}) {
   const eventCount = pickOne(t.tournament_events)?.count ?? 0;
 
   return (
@@ -126,7 +145,7 @@ function TournamentCard({ t }: { t: TournamentWithEventCount }) {
             </div>
           </div>
           <div style={{ flexShrink: 0 }}>
-            <TournamentMenu tournament={t} />
+            <TournamentMenu tournament={t} waiverTemplates={waiverTemplates} />
           </div>
         </div>
       </Card>

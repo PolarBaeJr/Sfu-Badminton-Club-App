@@ -33,6 +33,9 @@ const makeClient = vi.hoisted(() => () => {
     const filters: Array<[string, unknown]> = [];
     const inFilters: Array<[string, unknown[]]> = [];
     const notFilters: Array<[string, string, unknown]> = [];
+    // `.is(col, null)` — a seeded row may omit the column entirely, which stands
+    // for SQL NULL here just as COALESCE tolerates it elsewhere in this harness.
+    const isFilters: Array<[string, unknown]> = [];
     let orderBy: [string, boolean] | null = null;
     let cols = '*';
     let op: Op = 'select';
@@ -55,6 +58,7 @@ const makeClient = vi.hoisted(() => () => {
         (r) =>
           filters.every(([c, v]) => r[c] === v) &&
           inFilters.every(([c, vs]) => vs.includes(r[c])) &&
+          isFilters.every(([c, v]) => (v === null ? r[c] === null || r[c] === undefined : r[c] === v)) &&
           passesNot(r),
       );
       if (!orderBy) return rows;
@@ -62,10 +66,15 @@ const makeClient = vi.hoisted(() => () => {
       return [...rows].sort((a, b) => (((a[col] as number) ?? 0) - ((b[col] as number) ?? 0)) * (asc ? 1 : -1));
     };
 
+    // Always a COPY. The real client decodes a row out of an HTTP response, so a
+    // caller that read a row, wrote to it, and then consulted its own copy sees
+    // the values from BEFORE the write. Handing back the live object instead made
+    // that read follow the write, which is how a rollback-to-the-row-as-found
+    // could look like a no-op and pass for the wrong reason.
     const embed = (r: Row): Row =>
       cols.includes('tournament_events(')
         ? { ...r, event: (store.db.tournament_events ?? []).find((e) => e.id === r.event_id) ?? null }
-        : r;
+        : { ...r };
 
     const fault = () =>
       store.faults.find((f) => f.table === table && f.op === op && (!f.when || f.when({ filters, payload })));
@@ -75,8 +84,13 @@ const makeClient = vi.hoisted(() => () => {
       // The whole point: a Postgres error is a RESOLVED value, not a rejection.
       if (f) return { data: null, error: { message: f.message } };
       if (op === 'update') {
-        for (const r of matching()) Object.assign(r, payload);
-        return { data: null, error: null };
+        const hit = matching();
+        for (const r of hit) Object.assign(r, payload);
+        // PostgREST reports "matched no rows" as SUCCESS, so the count is the
+        // only way a caller can tell a guarded write fired from one that did
+        // not. Always returned; supabase-js only populates it when asked, and a
+        // caller that does not ask simply ignores it.
+        return { data: null, error: null, count: hit.length };
       }
       if (op === 'insert') {
         const rows = Array.isArray(payload) ? (payload as Row[]) : [payload];
@@ -97,6 +111,7 @@ const makeClient = vi.hoisted(() => () => {
       delete() { op = 'delete'; return api; },
       eq(c: string, v: unknown) { filters.push([c, v]); return api; },
       in(c: string, vs: unknown[]) { inFilters.push([c, vs]); return api; },
+      is(c: string, v: unknown) { isFilters.push([c, v]); return api; },
       not(c: string, o: string, v: unknown) { notFilters.push([c, o, v]); return api; },
       order(c: string, opts?: { ascending?: boolean }) { orderBy = [c, opts?.ascending !== false]; return api; },
       async single() {
@@ -116,26 +131,30 @@ const makeClient = vi.hoisted(() => () => {
     return api;
   }
 
-  // Stand-in for apply_tournament_match_rating
-  // (supabase/migrations/00070_tournament_rating_atomic.sql).
+  // Stand-ins for the two rating RPCs
+  // (supabase/migrations/00070_tournament_rating_atomic.sql and
+  //  supabase/migrations/00078_tournament_rating_reversal_atomic.sql).
   //
-  // ATOMIC ON PURPOSE. Every logical write still consults store.faults with the
-  // same { table, op, filters, payload } shape a direct PostgREST write would,
-  // so the existing fault fixtures keep working — but the FIRST failure restores
-  // the whole store and returns an error. A harness that let half the writes
-  // survive could not tell the fixed behaviour from the bug it replaces.
-  function rpc(name: string, args: Record<string, unknown>) {
-    if (name !== 'apply_tournament_match_rating') {
-      return Promise.resolve({ data: null, error: { message: `unknown rpc ${name}` } });
-    }
+  // BOTH ARE ATOMIC ON PURPOSE. Every logical write still consults store.faults
+  // with the same { table, op, filters, payload } shape a direct PostgREST write
+  // would, so the existing fault fixtures keep working — but the FIRST failure
+  // restores the whole store and returns an error. A harness that let half the
+  // writes survive could not tell the fixed behaviour from the bug it replaces.
+  const faultFor = (table: string, op: Op, ctx: { filters: Array<[string, unknown]>; payload: Row }) =>
+    store.faults.find((f) => f.table === table && f.op === op && (!f.when || f.when(ctx)));
 
+  // rating_setting_int('provisional_threshold', 8)
+  const threshold = () => {
+    const settings = (store.db.platform_settings ?? []).find((r) => r.key === 'rating_defaults')?.value as Row | undefined;
+    return (settings?.provisional_threshold as number) ?? 8;
+  };
+
+  function applyRpc(args: Record<string, unknown>) {
     const rollback = structuredClone(store.db);
     const abort = (message: string) => {
       store.db = rollback;
       return Promise.resolve({ data: null, error: { message } });
     };
-    const faultFor = (table: string, op: Op, ctx: { filters: Array<[string, unknown]>; payload: Row }) =>
-      store.faults.find((f) => f.table === table && f.op === op && (!f.when || f.when(ctx)));
 
     const matchId = args.p_match_id as string;
     const discipline = args.p_discipline as 'singles' | 'doubles';
@@ -145,9 +164,7 @@ const makeClient = vi.hoisted(() => () => {
     if (!m) return abort(`Tournament match not found: ${matchId}`);
     if (m.elo_snapshot) return abort(`Tournament match ${matchId} is already rated`);
 
-    // rating_setting_int('provisional_threshold', 8)
-    const settings = (store.db.platform_settings ?? []).find((r) => r.key === 'rating_defaults')?.value as Row | undefined;
-    const threshold = (settings?.provisional_threshold as number) ?? 8;
+    const snapshotEntries: Row[] = [];
 
     for (const e of entries) {
       const pid = e.player_id as string;
@@ -169,6 +186,10 @@ const makeClient = vi.hoisted(() => () => {
       const won = e.won === true;
       const played = n(`${discipline}_matches_played`) + 1;
       const streakField = `current_${discipline}_streak`;
+      // Read BEFORE apply_rating_stats moves it, and stored on the snapshot, so
+      // the reversal can put the streak back exactly rather than stepping it.
+      const streakBefore = n(streakField);
+      const streakAfter = won ? Math.max(streakBefore + 1, 1) : Math.min(streakBefore - 1, -1);
 
       row[eloField] = e.after;
       row[`${discipline}_matches_played`] = played;
@@ -178,8 +199,15 @@ const makeClient = vi.hoisted(() => () => {
       row[`${discipline}_points_allowed`] = n(`${discipline}_points_allowed`) + ((e.points_allowed as number) ?? 0);
       row[`${discipline}_games_won`] = n(`${discipline}_games_won`) + ((e.games_won as number) ?? 0);
       row[`${discipline}_games_lost`] = n(`${discipline}_games_lost`) + ((e.games_lost as number) ?? 0);
-      row[streakField] = won ? Math.max(n(streakField) + 1, 1) : Math.min(n(streakField) - 1, -1);
-      if (played >= threshold) row[`${discipline}_provisional`] = false;
+      row[streakField] = streakAfter;
+      if (played >= threshold()) row[`${discipline}_provisional`] = false;
+
+      // The half apply_match_result has always done for challenges and the
+      // tournament path never did. INSERT ... ON CONFLICT in the SQL, so a
+      // player with no row gets one.
+      const rel = (store.db.reliability_metrics ??= []).find((r) => r.player_id === pid);
+      if (rel) rel.matches_completed = ((rel.matches_completed as number | undefined) ?? 0) + 1;
+      else store.db.reliability_metrics.push({ player_id: pid, matches_completed: 1 });
 
       if (e.participant_id) {
         const payload = { elo_after: e.after, elo_change: e.delta };
@@ -191,18 +219,19 @@ const makeClient = vi.hoisted(() => () => {
         const p = (store.db.tournament_participants ?? []).find((r) => r.id === e.participant_id);
         if (p) Object.assign(p, payload);
       }
-    }
 
-    // A superset of the pre-00070 shape: the four rating fields are unchanged,
-    // and the statistics ride along so reverseEloSnapshot can take them off.
-    const snapshot = {
-      discipline,
-      entries: entries.map((e) => ({
+      snapshotEntries.push({
         player_id: e.player_id, before: e.before, after: e.after, delta: e.delta,
         won: e.won, points_scored: e.points_scored ?? 0, points_allowed: e.points_allowed ?? 0,
         games_won: e.games_won ?? 0, games_lost: e.games_lost ?? 0,
-      })),
-    };
+        streak_before: streakBefore, streak_after: streakAfter,
+      });
+    }
+
+    // A superset of the pre-00070 shape: the four rating fields are unchanged,
+    // and the statistics plus the streak ride along so the reversal can take
+    // them off exactly.
+    const snapshot = { discipline, entries: snapshotEntries };
     const snapFault = faultFor('tournament_matches', 'update', {
       filters: [['id', matchId]],
       payload: { elo_snapshot: snapshot },
@@ -211,6 +240,99 @@ const makeClient = vi.hoisted(() => () => {
     m.elo_snapshot = snapshot;
 
     return Promise.resolve({ data: null, error: null });
+  }
+
+  function reverseRpc(args: Record<string, unknown>) {
+    const rollback = structuredClone(store.db);
+    const abort = (message: string) => {
+      store.db = rollback;
+      return Promise.resolve({ data: null, error: { message } });
+    };
+    const ok = () => Promise.resolve({ data: null, error: null });
+
+    const matchId = args.p_match_id as string;
+    const m = (store.db.tournament_matches ?? []).find((r) => r.id === matchId);
+    if (!m) return abort(`Tournament match not found: ${matchId}`);
+
+    const snapshot = m.elo_snapshot as { discipline: 'singles' | 'doubles'; entries: Row[] } | null;
+    // Nothing to reverse is not an error — that is what makes a retry safe.
+    if (!snapshot || !snapshot.entries?.length) return ok();
+
+    const d = snapshot.discipline;
+    const eloField = `${d}_elo`;
+    const streakField = `current_${d}_streak`;
+
+    for (const e of snapshot.entries) {
+      const pid = e.player_id as string;
+      const row = (store.db.ratings ?? []).find((r) => r.player_id === pid);
+      if (!row) return abort(`No ratings row for player ${pid} — cannot reverse tournament match ${matchId}`);
+
+      const n = (k: string) => (row[k] as number | undefined) ?? 0;
+      const ratingFault = faultFor('ratings', 'update', {
+        filters: [['player_id', pid]],
+        payload: { [eloField]: n(eloField) - (e.delta as number) },
+      });
+      if (ratingFault) return abort(ratingFault.message);
+
+      // The three snapshot tiers, discriminated exactly as the SQL does it and
+      // by POSITIVE tests, so an absent key falls through to the older, more
+      // conservative branch.
+      const hasStats = typeof e.won === 'boolean';
+      const hasStreak = hasStats && typeof e.streak_before === 'number' && typeof e.streak_after === 'number';
+
+      row[eloField] = n(eloField) - (e.delta as number);
+      if (!hasStats) continue; // pre-00070: its match moved the Elo and nothing else
+
+      const won = e.won === true;
+      const played = Math.max(0, n(`${d}_matches_played`) - 1);
+      row[`${d}_matches_played`] = played;
+      row[won ? `${d}_wins` : `${d}_losses`] = Math.max(0, n(won ? `${d}_wins` : `${d}_losses`) - 1);
+      row[`${d}_points_scored`] = Math.max(0, n(`${d}_points_scored`) - ((e.points_scored as number) ?? 0));
+      row[`${d}_points_allowed`] = Math.max(0, n(`${d}_points_allowed`) - ((e.points_allowed as number) ?? 0));
+      row[`${d}_games_won`] = Math.max(0, n(`${d}_games_won`) - ((e.games_won as number) ?? 0));
+      row[`${d}_games_lost`] = Math.max(0, n(`${d}_games_lost`) - ((e.games_lost as number) ?? 0));
+      // Exact only while this is still the player's most recent rated match —
+      // otherwise rewinding would erase whatever moved the streak since.
+      row[streakField] = hasStreak && n(streakField) === e.streak_after
+        ? e.streak_before
+        : (won ? Math.max(0, n(streakField) - 1) : Math.min(0, n(streakField) + 1));
+      if (played < threshold()) row[`${d}_provisional`] = true;
+
+      // Only a 00078 snapshot counted the match on reliability_metrics, so only
+      // that tier may take it back off.
+      if (hasStreak) {
+        const rel = (store.db.reliability_metrics ?? []).find((r) => r.player_id === pid);
+        if (rel) rel.matches_completed = Math.max(0, ((rel.matches_completed as number | undefined) ?? 0) - 1);
+      }
+    }
+
+    if (d === 'singles') {
+      const participantIds = [m.winner_participant_id, m.loser_participant_id]
+        .filter((x): x is string => typeof x === 'string' && x.length > 0);
+      if (participantIds.length > 0) {
+        const payload = { elo_after: null, elo_change: null };
+        const pFault = faultFor('tournament_participants', 'update', { filters: [], payload });
+        if (pFault) return abort(pFault.message);
+        for (const p of (store.db.tournament_participants ?? []).filter((r) => participantIds.includes(r.id as string))) {
+          Object.assign(p, payload);
+        }
+      }
+    }
+
+    const snapFault = faultFor('tournament_matches', 'update', {
+      filters: [['id', matchId]],
+      payload: { elo_snapshot: null },
+    });
+    if (snapFault) return abort(snapFault.message);
+    m.elo_snapshot = null;
+
+    return ok();
+  }
+
+  function rpc(name: string, args: Record<string, unknown>) {
+    if (name === 'apply_tournament_match_rating') return applyRpc(args);
+    if (name === 'reverse_tournament_match_rating') return reverseRpc(args);
+    return Promise.resolve({ data: null, error: { message: `unknown rpc ${name}` } });
   }
 
   return { from: (table: string) => query(table), rpc };
@@ -224,7 +346,10 @@ vi.mock('../actions/_shared', () => ({ getExecOrAdmin: async () => ({ id: 'admin
 import { enterMatchResult, editMatchResult, enterWalkover, voidMatch } from '../tournament-actions/results';
 import { finalizeEvent, applyPlacementBonuses } from '../tournament-actions/finalize';
 import { withdrawParticipant } from '../tournament-actions/participants';
-import { settleWrites, assertWritesSucceeded } from '../tournament-actions/_internal';
+import {
+  settleWrites, assertWritesSucceeded, reverseEloSnapshot, undoDecidedResult,
+} from '../tournament-actions/_internal';
+import { createAdminClient } from '../supabase-server';
 
 const QF = 'match-qf';
 const SF = 'match-sf';
@@ -278,6 +403,12 @@ beforeEach(() => {
     ratings: [
       { player_id: 'pl-alice', singles_elo: 1000, singles_provisional: false, singles_matches_played: 30 },
       { player_id: 'pl-bob', singles_elo: 1000, singles_provisional: false, singles_matches_played: 30 },
+    ],
+    // Created for every player by the on-insert trigger (00004). Seeded non-zero
+    // so a decrement that ran when it should not have is visible.
+    reliability_metrics: [
+      { player_id: 'pl-alice', matches_completed: 5 },
+      { player_id: 'pl-bob', matches_completed: 5 },
     ],
     tournament_matches: [
       {
@@ -418,8 +549,246 @@ describe('post-match Elo writes', () => {
     expect(snap.entries).toHaveLength(2);
     expect(Object.keys(snap.entries[0]!).sort()).toEqual([
       'after', 'before', 'delta', 'games_lost', 'games_won',
-      'player_id', 'points_allowed', 'points_scored', 'won',
+      'player_id', 'points_allowed', 'points_scored',
+      // 00078 adds these two. streak_before is what makes the streak reversible
+      // exactly; streak_after is what says whether doing so is still safe. Their
+      // presence is also the marker that reliability_metrics was incremented.
+      'streak_after', 'streak_before', 'won',
     ]);
+  });
+});
+
+describe('a decided match is never left unrated', () => {
+  // The result row has to be written BEFORE the rating, because rating reads the
+  // winner and loser off it. So a failed rating used to leave the match
+  // completed-but-unrated — and nothing could retry it: enterMatchResult refuses
+  // anything that is not pending/ready/live, and the withdrawal cascade skips
+  // matches that are no longer open. A missing ratings row is the case that
+  // actually reaches this, and it is deterministic: every retry hits it again.
+  it('takes the result back off when the rating fails, so the desk can re-enter it', async () => {
+    store.db.ratings = store.db.ratings!.filter((r) => r.player_id !== 'pl-bob');
+
+    const res = await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/No ratings row for player pl-bob/);
+    // The match is back where it started, not stranded on 'completed'.
+    expect(match(QF).status).toBe('ready');
+    expect(match(QF).winner_participant_id).toBeNull();
+    expect(match(QF).loser_participant_id).toBeNull();
+    expect(match(QF).scores).toBeNull();
+    expect(match(QF).elo_snapshot).toBeNull();
+    // ...and nothing advanced, because rating runs before advancement.
+    expect(match(SF).participant_a_id).toBeNull();
+  });
+
+  it('lets the retry succeed once the cause is repaired', async () => {
+    store.db.ratings = store.db.ratings!.filter((r) => r.player_id !== 'pl-bob');
+    expect((await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a')).ok).toBe(false);
+
+    store.db.ratings!.push({
+      player_id: 'pl-bob', singles_elo: 1000, singles_provisional: false, singles_matches_played: 30,
+    });
+    const res = await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    expect(res.ok).toBe(true);
+    expect(match(QF).status).toBe('completed');
+    expect(ratingOf('pl-alice')).toBe(1026);
+    // Counted exactly once — the abandoned first attempt left nothing behind.
+    expect(store.db.ratings!.find((r) => r.player_id === 'pl-alice')!.singles_matches_played).toBe(31);
+  });
+
+  it('does the same for a walkover, which the withdrawal cascade cannot retry either', async () => {
+    store.db.ratings = store.db.ratings!.filter((r) => r.player_id !== 'pl-bob');
+
+    const res = await enterWalkover(QF, 'a', 'Opponent did not appear');
+
+    expect(res.ok).toBe(false);
+    expect(match(QF).status).toBe('ready');
+    expect(match(QF).walkover_winner ?? null).toBeNull();
+    expect(match(QF).winner_participant_id).toBeNull();
+    expect(match(SF).participant_a_id).toBeNull();
+  });
+
+  it('refuses a result written over a match that changed underneath it', async () => {
+    // The race closed at its source. Two desks both read a playable match and
+    // both pass the status check; without a compare-and-swap both then WRITE a
+    // result and both go on to rate it, and the loser only finds out inside the
+    // rating RPC — by which point it has already stamped its own scores over the
+    // winner's. Conditioning the write on the status this request read means the
+    // loser writes nothing at all.
+    //
+    // Modelled by moving the match on between the read and the write, which is
+    // what the other desk's commit does. The hook hangs off the suspension check
+    // because that read sits between the two, and it declines to fault (returns
+    // false) — it is here for its side effect only.
+    store.faults.push({
+      table: 'tournaments', op: 'select', message: 'unused',
+      when: () => { match(QF).status = 'completed'; return false; },
+    });
+
+    const res = await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/changed while you were entering the result/);
+    // Nothing of this attempt survives: no scores, no winner, no rating.
+    expect(match(QF).scores).toBeNull();
+    expect(match(QF).winner_participant_id).toBeNull();
+    expect(match(QF).elo_snapshot).toBeNull();
+    expect(ratingOf('pl-alice')).toBe(1000);
+  });
+
+  it('refuses to un-decide a match that turned out to be rated after all', async () => {
+    // The losing side of a two-desk race. Both read a playable match, both write
+    // a result, both compute against a null snapshot; the first RPC commits and
+    // the second is refused with "already rated". Rolling the result back on
+    // that refusal would leave a RATED match open for entry — every rating,
+    // statistic and reliability count applied, and the idempotency guard then
+    // refusing every attempt to enter it again. Strictly worse than the gap the
+    // compensation closes, so the write is conditional on the snapshot still
+    // being null and the count is what reports that it did not fire.
+    //
+    // The same guard covers a response lost after Postgres committed.
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    const rated = { ...match(QF) };
+
+    await expect(
+      undoDecidedResult(createAdminClient(), QF, { ...rated, status: 'ready' }, new Error('is already rated')),
+    ).rejects.toThrow(/already rated, so the result was left in place/);
+
+    expect(match(QF).status).toBe('completed');
+    expect(match(QF).winner_participant_id).toBe('p-alice');
+    expect(match(QF).elo_snapshot).toEqual(rated.elo_snapshot);
+    expect(ratingOf('pl-alice')).toBe(1026);
+  });
+
+  it('compensates when a prerequisite READ fails, not only the rating write', async () => {
+    // applyTournamentMatchElo used to return quietly when one of its own reads
+    // came back with an error — reporting the match as rated when nothing was.
+    // Nothing threw, so the compensation never fired and the caller went on to
+    // advance the winner: a decided, unrated match with a bracket built on it.
+    store.faults.push({ table: 'ratings', op: 'select', message: 'permission denied for table ratings' });
+
+    const res = await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/Could not read current ratings/);
+    expect(match(QF).status).toBe('ready');
+    expect(match(QF).elo_snapshot).toBeNull();
+    expect(match(SF).participant_a_id).toBeNull();
+  });
+
+  it('tells the exec a failed CORRECTION is safe to repeat, and proves it is', async () => {
+    // editMatchResult cannot be compensated the way entry is: by the time it
+    // rates, the old rating has been reversed and the scoreline it came from
+    // overwritten, so there is nothing to put back. Going forward is the only
+    // route and it is safe — but only if the exec knows that pressing Save again
+    // will not double the delta.
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    store.faults.push({ table: 'ratings', op: 'select', message: 'deadlock detected' });
+    await expect(editMatchResult(QF, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b'))
+      .rejects.toThrow(/WAS saved but is not yet rated/);
+
+    // The correction is on the row; the rating is not, and the snapshot is clear.
+    expect(match(QF).winner_participant_id).toBe('p-bob');
+    expect(match(QF).elo_snapshot).toBeNull();
+
+    store.faults = [];
+    await editMatchResult(QF, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b');
+
+    // Rated once, for the corrected result — not once per attempt.
+    expect(ratingOf('pl-bob')).toBe(1026);
+    expect(ratingOf('pl-alice')).toBe(974);
+    const alice = store.db.ratings!.find((r) => r.player_id === 'pl-alice')!;
+    expect(alice.singles_matches_played).toBe(31);
+    expect(alice.singles_losses).toBe(1);
+    expect(alice.singles_wins).toBe(0);
+    expect(store.db.reliability_metrics!.find((r) => r.player_id === 'pl-alice')!.matches_completed).toBe(6);
+  });
+
+  it('says so plainly when the result cannot be taken back off either', async () => {
+    // The compensating write is a PostgREST write like any other. If it fails
+    // too, the match really is decided and unrated, and the message has to say
+    // that rather than "rating failed, try again" — which the exec would.
+    store.db.ratings = store.db.ratings!.filter((r) => r.player_id !== 'pl-bob');
+    store.faults.push({
+      table: 'tournament_matches', op: 'update', message: 'deadlock detected',
+      when: ({ payload }) => payload.status === 'ready',
+    });
+
+    const res = await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/decided but UNRATED/);
+    expect(res.ok === false && res.error).toMatch(/No ratings row for player pl-bob/);
+  });
+});
+
+describe('reliability metrics count tournament matches', () => {
+  // apply_match_result has always incremented matches_completed for a confirmed
+  // challenge; the tournament path never did, so the console's "Matches
+  // Completed" figure and the player's own /my-stats page counted challenges
+  // only, however many tournament rounds they played.
+  function completed(playerId: string) {
+    return store.db.reliability_metrics!.find((r) => r.player_id === playerId)!.matches_completed;
+  }
+
+  it('counts a tournament result for both players', async () => {
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+
+    expect(completed('pl-alice')).toBe(6);
+    expect(completed('pl-bob')).toBe(6);
+  });
+
+  it('counts a walkover too — it is still a match that resolved', async () => {
+    await enterWalkover(QF, 'a', 'Opponent did not appear');
+
+    expect(completed('pl-alice')).toBe(6);
+  });
+
+  it('takes the count back off when the match is voided', async () => {
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    await voidMatch(QF, 'Court collapsed');
+
+    expect(completed('pl-alice')).toBe(5);
+    expect(completed('pl-bob')).toBe(5);
+  });
+
+  it('does not double-count a corrected result', async () => {
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    await editMatchResult(QF, [{ a: 15, b: 21 }, { a: 17, b: 21 }], 'b');
+
+    expect(completed('pl-alice')).toBe(6);
+    expect(completed('pl-bob')).toBe(6);
+  });
+
+  it('leaves the count alone for a 00070-era snapshot, which never incremented it', async () => {
+    // 00070 is already applied in production, so snapshots with statistics but no
+    // streak_before exist. Their matches never touched reliability_metrics, and
+    // decrementing on the way out would subtract a challenge somebody played.
+    match(QF).status = 'completed';
+    match(QF).winner_participant_id = 'p-alice';
+    match(QF).loser_participant_id = 'p-bob';
+    match(QF).elo_snapshot = {
+      discipline: 'singles',
+      entries: [{
+        player_id: 'pl-alice', before: 1000, after: 1026, delta: 26,
+        won: true, points_scored: 42, points_allowed: 32, games_won: 2, games_lost: 0,
+      }],
+    };
+    Object.assign(store.db.ratings!.find((r) => r.player_id === 'pl-alice')!, {
+      singles_elo: 1026, singles_matches_played: 31, singles_wins: 1,
+      singles_points_scored: 42, current_singles_streak: 1,
+    });
+
+    expect((await voidMatch(QF, '00070-era row')).ok).toBe(true);
+
+    // The statistics still reverse...
+    expect(ratingOf('pl-alice')).toBe(1000);
+    expect(store.db.ratings!.find((r) => r.player_id === 'pl-alice')!.singles_matches_played).toBe(30);
+    // ...but the counter this snapshot never touched is left where it was.
+    expect(completed('pl-alice')).toBe(5);
   });
 });
 
@@ -647,9 +1016,25 @@ describe('tournament matches update the whole ratings row', () => {
 });
 
 describe('Elo reversal', () => {
-  it('refuses to call a match voided when the rating did not come back', async () => {
+  // These two replace a pair that asserted the old PARTIAL-reversal machinery:
+  // the reversal ran as a batch of PostgREST writes, so one player's delta could
+  // come off while the other's did not, and the mitigation was to write the
+  // un-reversed entries back onto the snapshot and retry the remainder. That
+  // shape is what made a double-reverse possible in the first place — the
+  // reduced-snapshot write was a SEPARATE round trip, and when it failed the
+  // ORIGINAL snapshot survived with every delta already gone, so the next
+  // attempt subtracted them again. Since 00070 the statistics travel with the
+  // Elo, so the second subtraction also strips a matches_played, a win, and a
+  // set of points and games the match never added.
+  //
+  // reverse_tournament_match_rating (00078) does the whole reversal in one
+  // transaction, so a partial reversal is unreachable and the assertions below
+  // are the corrected invariant: all or nothing, and a retry reverses once.
+
+  it('leaves every rating and the snapshot untouched when the reversal fails', async () => {
     await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
-    const applied = ratingOf('pl-alice');
+    const aliceApplied = ratingOf('pl-alice');
+    const bobApplied = ratingOf('pl-bob');
 
     store.faults.push({
       table: 'ratings', op: 'update', message: 'permission denied for table ratings',
@@ -659,35 +1044,37 @@ describe('Elo reversal', () => {
     const res = await voidMatch(QF, 'Court collapsed');
 
     expect(res.ok).toBe(false);
-    expect(ratingOf('pl-alice')).toBe(applied);   // never came off the ladder
-    expect(ratingOf('pl-bob')).toBe(1000);        // this half did reverse
+    expect(res.ok === false && res.error).toMatch(/NOTHING was reversed/);
+    // Previously Bob's half DID reverse while Alice's did not, and the snapshot
+    // was rewritten to hold Alice alone. Now neither moves.
+    expect(ratingOf('pl-alice')).toBe(aliceApplied);
+    expect(ratingOf('pl-bob')).toBe(bobApplied);
     expect(match(QF).status).toBe('completed');   // so the void did not happen
-    // The un-reversed delta stays on the snapshot, or nothing would point at it.
-    expect(snapshotPlayers(QF)).toEqual(['pl-alice']);
+    // The snapshot is intact — not reduced — so a retry reverses the whole
+    // match and there is no entry that has already come off the ladder.
+    expect(snapshotPlayers(QF)).toEqual(['pl-alice', 'pl-bob']);
+    for (const p of ['pl-alice', 'pl-bob']) {
+      expect(store.db.ratings!.find((r) => r.player_id === p)!.singles_matches_played).toBe(31);
+    }
   });
 
-  it('reverses only the remainder when the void is retried', async () => {
+  it('reverses exactly once when the void is retried', async () => {
     await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
 
     store.faults.push({
       table: 'ratings', op: 'update', message: 'deadlock detected',
       when: ({ filters }) => filters.some(([c, v]) => c === 'player_id' && v === 'pl-alice'),
     });
-    await voidMatch(QF, 'first attempt');
+    expect((await voidMatch(QF, 'first attempt')).ok).toBe(false);
 
     store.faults = [];
     const res = await voidMatch(QF, 'second attempt');
 
     expect(res.ok).toBe(true);
-    // Bob was reversed on the first attempt and must NOT be reversed twice.
     expect(ratingOf('pl-alice')).toBe(1000);
     expect(ratingOf('pl-bob')).toBe(1000);
     expect(match(QF).elo_snapshot).toBeNull();
     expect(match(QF).status).toBe('voided');
-    // The statistics have to survive a retry the same way. Each player's Elo
-    // and counts move in ONE update, so a retained entry carries its own
-    // statistics forward and is reversed exactly once — the only place the new
-    // statistics reversal meets the pre-existing partial-failure machinery.
     for (const p of ['pl-alice', 'pl-bob']) {
       const row = store.db.ratings!.find((r) => r.player_id === p)!;
       expect(row.singles_matches_played).toBe(30);
@@ -695,6 +1082,141 @@ describe('Elo reversal', () => {
     }
     expect(store.db.ratings!.find((r) => r.player_id === 'pl-alice')!.singles_wins).toBe(0);
     expect(store.db.ratings!.find((r) => r.player_id === 'pl-bob')!.singles_losses).toBe(0);
+    expect(store.db.reliability_metrics!.find((r) => r.player_id === 'pl-alice')!.matches_completed).toBe(5);
+  });
+
+  it('is a no-op the second time, rather than subtracting the deltas twice', async () => {
+    // The failure this whole change exists to prevent, reduced to its core: the
+    // snapshot and the reversal commit together, so a match with nothing left to
+    // reverse reverses nothing. Before 00078 a surviving snapshot over
+    // already-reversed ratings sent the second attempt through the same
+    // subtraction again — Elo, match count, wins, points and games all.
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    await reverseEloSnapshot(createAdminClient(), QF);
+    await reverseEloSnapshot(createAdminClient(), QF);
+    await reverseEloSnapshot(createAdminClient(), QF);
+
+    const alice = store.db.ratings!.find((r) => r.player_id === 'pl-alice')!;
+    expect(alice.singles_elo).toBe(1000);
+    expect(alice.singles_matches_played).toBe(30);
+    expect(alice.singles_wins).toBe(0);
+    expect(alice.singles_points_scored).toBe(0);
+    expect(store.db.reliability_metrics!.find((r) => r.player_id === 'pl-alice')!.matches_completed).toBe(5);
+  });
+});
+
+describe('current streak survives an undo', () => {
+  // Reversal used to step the streak one toward zero and stop, because nothing
+  // recorded where it had been. A player on a three-match losing run who won and
+  // had that win undone came out on 0 — their losing run erased.
+  function streak(playerId: string) {
+    return store.db.ratings!.find((r) => r.player_id === playerId)!.current_singles_streak;
+  }
+
+  it('restores a losing run exactly, instead of leaving the player on zero', async () => {
+    Object.assign(store.db.ratings!.find((r) => r.player_id === 'pl-alice')!, { current_singles_streak: -3 });
+
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    expect(streak('pl-alice')).toBe(1); // a win resets the run and starts a new one
+
+    expect((await voidMatch(QF, 'Wrong court')).ok).toBe(true);
+
+    expect(streak('pl-alice')).toBe(-3); // was 0 before 00078
+  });
+
+  it('restores a winning run for the loser of the undone match', async () => {
+    Object.assign(store.db.ratings!.find((r) => r.player_id === 'pl-bob')!, { current_singles_streak: 6 });
+
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    expect(streak('pl-bob')).toBe(-1);
+
+    await voidMatch(QF, 'Wrong court');
+
+    expect(streak('pl-bob')).toBe(6); // was 0 before 00078
+  });
+
+  it('steps toward zero instead when a later match has moved the streak since', async () => {
+    // The exactness is only safe while the undone match is still the player's
+    // most recent rated one. Otherwise restoring the stored value would erase
+    // every result played in between, which is worse than the old imprecision —
+    // so the stored streak_after is compared with what is actually in the row.
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    expect(streak('pl-alice')).toBe(1);
+
+    // Alice wins again somewhere else.
+    Object.assign(store.db.ratings!.find((r) => r.player_id === 'pl-alice')!, { current_singles_streak: 2 });
+
+    await voidMatch(QF, 'Scoresheet lost');
+
+    expect(streak('pl-alice')).toBe(1);
+  });
+
+  it('KNOWN BOUND: restores anyway when later matches happen to land on the same streak', async () => {
+    // Pinning a limitation, not asserting a desirable outcome. The "is this
+    // still their most recent rated match" test is streak equality, and streak
+    // values repeat: a win to +1, a loss to -1, a win back to +1 puts the row
+    // back on the stored streak_after, and the restore then rewinds over both
+    // later matches. Telling that apart needs a per-match streak ledger, which
+    // is a bigger change than 00078; the pre-00078 step-toward-zero was wrong
+    // here too, just differently. Only current_*_streak is affected — the Elo,
+    // the counts and the reliability figure all reverse from the entry's own
+    // numbers and are unaffected.
+    Object.assign(store.db.ratings!.find((r) => r.player_id === 'pl-alice')!, { current_singles_streak: -3 });
+
+    await enterMatchResult(QF, [{ a: 21, b: 15 }, { a: 21, b: 17 }], 'a');
+    expect(streak('pl-alice')).toBe(1);
+
+    // Two later matches elsewhere: a loss, then a win — back on 1.
+    Object.assign(store.db.ratings!.find((r) => r.player_id === 'pl-alice')!, { current_singles_streak: 1 });
+
+    await voidMatch(QF, 'Scoresheet lost');
+
+    // Ideally 1 (the two later matches from a base of -3). Documented as -3.
+    expect(streak('pl-alice')).toBe(-3);
+  });
+
+  it('leaves a pre-00070 snapshot\'s streak alone entirely', async () => {
+    // No `won` key means the match never moved the statistics at all, streak
+    // included. Three such rows are live in production.
+    Object.assign(store.db.ratings!.find((r) => r.player_id === 'pl-alice')!, {
+      singles_elo: 1026, current_singles_streak: 4,
+    });
+    match(QF).status = 'completed';
+    match(QF).winner_participant_id = 'p-alice';
+    match(QF).loser_participant_id = 'p-bob';
+    match(QF).elo_snapshot = {
+      discipline: 'singles',
+      entries: [{ player_id: 'pl-alice', before: 1000, after: 1026, delta: 26 }],
+    };
+
+    expect((await voidMatch(QF, 'Legacy row')).ok).toBe(true);
+
+    expect(ratingOf('pl-alice')).toBe(1000);
+    expect(streak('pl-alice')).toBe(4);
+  });
+
+  it('steps toward zero for a 00070-era snapshot, which carries no prior streak', async () => {
+    // The middle tier: statistics were applied, so they must reverse, but the
+    // prior streak was never recorded and cannot be invented.
+    Object.assign(store.db.ratings!.find((r) => r.player_id === 'pl-alice')!, {
+      singles_elo: 1026, singles_matches_played: 31, singles_wins: 1, current_singles_streak: 1,
+    });
+    match(QF).status = 'completed';
+    match(QF).winner_participant_id = 'p-alice';
+    match(QF).loser_participant_id = 'p-bob';
+    match(QF).elo_snapshot = {
+      discipline: 'singles',
+      entries: [{
+        player_id: 'pl-alice', before: 1000, after: 1026, delta: 26,
+        won: true, points_scored: 42, points_allowed: 32, games_won: 2, games_lost: 0,
+      }],
+    };
+
+    expect((await voidMatch(QF, '00070-era row')).ok).toBe(true);
+
+    expect(ratingOf('pl-alice')).toBe(1000);
+    expect(store.db.ratings!.find((r) => r.player_id === 'pl-alice')!.singles_matches_played).toBe(30);
+    expect(streak('pl-alice')).toBe(0);
   });
 });
 
@@ -840,19 +1362,28 @@ describe('late withdrawal cascade', () => {
     const first = await withdrawParticipant('p-bob', 'Sprained ankle');
     expect(first.ok).toBe(false);
 
-    // Bob is out and his first match was forfeited, but the second never was.
+    // Bob is out, but NEITHER match was forfeited: the first one's rating failed,
+    // and recordWalkover now takes the walkover back off rather than leaving a
+    // forfeited-but-unrated match that no later action could reach — the cascade
+    // skips anything that is no longer open, so it would have been stranded.
     expect(participant('p-bob').status).toBe('withdrawn');
-    expect(match(RR1).status).toBe('walkover');
+    expect(match(RR1).status).toBe('ready');
+    expect(match(RR1).walkover_winner ?? null).toBeNull();
     expect(match(RR2).status).toBe('ready');
 
     store.faults = [];
     const second = await withdrawParticipant('p-bob', 'Sprained ankle');
 
     // The old guard refused this outright with "Already withdrawn", leaving the
-    // remaining match live against someone who had gone home.
+    // remaining matches live against someone who had gone home. Now the retry
+    // forfeits BOTH — including the one the failed attempt rolled back.
     expect(second.ok).toBe(true);
-    expect(second.ok === true && second.data.forfeited).toBe(1);
+    expect(second.ok === true && second.data.forfeited).toBe(2);
+    expect(match(RR1).status).toBe('walkover');
     expect(match(RR2).status).toBe('walkover');
+    // Rated exactly once each, not once per attempt.
+    expect(store.db.ratings!.find((r) => r.player_id === 'pl-alice')!.singles_matches_played).toBe(31);
+    expect(store.db.ratings!.find((r) => r.player_id === 'pl-bob')!.singles_matches_played).toBe(32);
   });
 
   it('still refuses a plain second press when there is nothing left to forfeit', async () => {

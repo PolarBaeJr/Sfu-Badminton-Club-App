@@ -16,6 +16,8 @@ const FOCUSABLE =
 
 export function Dialog({ open, onClose, title, children }: DialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
+  // The children container, so initial focus can skip the header's close button.
+  const bodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -30,7 +32,16 @@ export function Dialog({ open, onClose, title, children }: DialogProps) {
     // page behind it.
     const focusables = () =>
       Array.from(panelRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []);
-    (focusables()[0] ?? panelRef.current)?.focus();
+
+    // Skip the close button. It is first in the DOM, so focusing focusables()[0]
+    // put a visible focus ring on the × the instant any dialog opened — which
+    // looks like a rendering fault at the panel corner, and lands the user on
+    // "dismiss" when they opened a form to fill it in. Prefer the first control
+    // in the BODY; fall back to the close button, then the panel itself, so a
+    // dialog with no fields still traps focus.
+    const inBody = () =>
+      Array.from(bodyRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []);
+    (inBody()[0] ?? focusables()[0] ?? panelRef.current)?.focus();
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -95,12 +106,18 @@ export function Dialog({ open, onClose, title, children }: DialogProps) {
           <button
             onClick={onClose}
             aria-label="Close dialog"
-            className="text-[var(--text-muted)] hover:text-[var(--text-primary)] min-w-[44px] min-h-[44px] flex items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+            // ring-inset: the panel scrolls (overflow-y-auto), so an outset ring
+            // on a control flush against the corner is drawn outside the panel's
+            // rounded border and reads as a rendering fault. Inset keeps it on
+            // the button.
+            className="text-[var(--text-muted)] hover:text-[var(--text-primary)] min-w-[44px] min-h-[44px] flex items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-accent)]"
           >
             &times;
           </button>
         </div>
-        {children}
+        {/* Wrapper exists so initial focus can target the first control in the
+            BODY rather than the close button above it. */}
+        <div ref={bodyRef}>{children}</div>
       </div>
     </div>
   );

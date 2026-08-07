@@ -1,5 +1,11 @@
 import { z } from 'zod';
 import { MIN_ELO, MAX_ELO, CUSTOM_FORMAT_BOUNDS, pointsCap } from '../utils/constants';
+import {
+  EXPENSE_CATEGORY_VALUES,
+  OTHER_INCOME_CATEGORY_VALUES,
+  type ExpenseCategory,
+  type OtherIncomeCategory,
+} from '../utils/finance-categories';
 
 // Empty optional strings come from form fields where the user left the input blank.
 // Coerce them to undefined so downstream code doesn't have to discriminate "" vs unset.
@@ -401,6 +407,82 @@ export const reinstatementPaymentSchema = z.object({
   reference: z.string().max(120).optional(),
 });
 
+// ------------------------------------------------------------
+// Non-fee ledgers (migration 00073): other income and expenses.
+//
+// season_id is REQUIRED on both, and is the only thing that decides which
+// season a row counts toward. reinstatement_fees had to be bucketed by paid_at
+// because it had no season column, and a payment taken between terms then fell
+// outside every window and vanished from every total (00069). An optional
+// season here would recreate that: a row with no season belongs to no total.
+//
+// paid_at is an optional ISO date string. It is the date the money moved, which
+// is NOT the date the entry was typed — an exec writing up September's shuttle
+// receipts in October needs to say September. Bucketing is still by season_id,
+// so the date can be anything without moving the row between totals; the two
+// jobs are deliberately separate.
+// ------------------------------------------------------------
+
+// Shared by both ledgers so they cannot drift on what a money entry looks like.
+const ledgerEntryFields = {
+  season_id: z.string().uuid(),
+  description: z.string().trim().min(1, 'Describe what this was for').max(120),
+  // Non-negative, not positive: $0.00 records that a promised donation came to
+  // nothing, or a donated set of shuttles cost the club nothing, without
+  // deleting the trail. Matches the CHECK in 00073.
+  amount_cents: z.number().int().nonnegative(),
+  paid_at: z.string().datetime().optional(),
+  method: z.string().max(40).optional(),
+  reference: z.string().max(120).optional(),
+};
+
+export const otherIncomeSchema = z.object({
+  ...ledgerEntryFields,
+  // z.enum needs a non-empty tuple; the const array from finance-categories is
+  // the same vocabulary the database CHECK enforces.
+  category: z.enum(
+    OTHER_INCOME_CATEGORY_VALUES as unknown as [OtherIncomeCategory, ...OtherIncomeCategory[]],
+  ),
+});
+
+export const clubExpenseSchema = z.object({
+  ...ledgerEntryFields,
+  category: z.enum(
+    EXPENSE_CATEGORY_VALUES as unknown as [ExpenseCategory, ...ExpenseCategory[]],
+  ),
+  // Tubes of shuttles, hours of court. Optional; positive when given, because
+  // "0 tubes" for a non-zero spend is a typo, not a fact.
+  quantity: z.number().int().positive().optional(),
+  // Who fronted the money (00077). Absent means the club account paid directly
+  // and nobody is owed a reimbursement — a real case, not a missing value, so
+  // it stays optional here. The console never defaults it: the dialog forces
+  // the choice, because there is no edit action and delete is admin-only, so a
+  // wrong value cannot be corrected by the exec who is out of pocket.
+  //
+  // Deliberately NOT derived from the acting user. The payer and the person
+  // typing the row are different whenever an admin writes up an exec's receipt,
+  // and reimbursing the typist is the bug this field exists to prevent.
+  paid_by: z.string().uuid().optional(),
+});
+
+/**
+ * Editing an expense an admin already recorded (00077).
+ *
+ * season_id is NOT here. Moving a spend between seasons changes two seasons'
+ * net position in one write and there is no console flow that wants it — an
+ * expense filed against the wrong term is a delete-and-re-record, done
+ * deliberately, not a field to nudge. ref_no is not here either: the whole
+ * value of a reference number is that it never moves.
+ *
+ * amount_cents and paid_by ARE here, and the action refuses them on a row that
+ * has already been reimbursed. See updateExpense() for why that boundary is in
+ * the action rather than in this schema — it depends on the stored row, which a
+ * validator cannot see.
+ */
+export const clubExpenseUpdateSchema = clubExpenseSchema
+  .omit({ season_id: true })
+  .extend({ id: z.string().uuid() });
+
 export const banSchema = z.object({
   player_id: z.string().uuid(),
   reason: z.string().min(2),
@@ -472,6 +554,17 @@ export const waiverDocumentSchema = z.enum([
   'waiver', 'code_of_conduct', 'terms_of_use', 'privacy_policy',
 ]);
 
+// The per-season starting text for a tournament's event waiver (00074). Same
+// length bounds as legalDocumentUpdateSchema — it is the same kind of text,
+// and the 50-character floor is what stops a stray keystroke being saved as
+// the wording every event that term starts from. No bump_version counterpart:
+// a template is accepted by nobody, so there is no version to re-require
+// (acceptance happens per tournament against the copied text).
+export const eventWaiverTemplateUpdateSchema = z.object({
+  season_id: z.string().uuid(),
+  content: z.string().min(50, 'Content must be at least 50 characters').max(50000),
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type ProfileInput = z.infer<typeof profileSchema>;
 export type ChallengeCreateInput = z.infer<typeof challengeCreateSchema>;
@@ -499,6 +592,9 @@ export type FeeTierInput = z.infer<typeof feeTierSchema>;
 export type TournamentFeeMarkInput = z.infer<typeof tournamentFeeMarkSchema>;
 export type ReinstatementInput = z.infer<typeof reinstatementSchema>;
 export type ReinstatementPaymentInput = z.infer<typeof reinstatementPaymentSchema>;
+export type OtherIncomeInput = z.infer<typeof otherIncomeSchema>;
+export type ClubExpenseInput = z.infer<typeof clubExpenseSchema>;
+export type ClubExpenseUpdateInput = z.infer<typeof clubExpenseUpdateSchema>;
 export type BanInput = z.infer<typeof banSchema>;
 export type PlayerFlagsInput = z.infer<typeof playerFlagsSchema>;
 export type VarsityNoteInput = z.infer<typeof varsityNoteSchema>;
@@ -507,3 +603,4 @@ export type LegalAcceptanceInput = z.infer<typeof legalAcceptanceSchema>;
 export type AccountDeletionInput = z.infer<typeof accountDeletionSchema>;
 export type LegalDocumentUpdateInput = z.infer<typeof legalDocumentUpdateSchema>;
 export type WaiverDocumentInput = z.infer<typeof waiverDocumentSchema>;
+export type EventWaiverTemplateUpdateInput = z.infer<typeof eventWaiverTemplateUpdateSchema>;

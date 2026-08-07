@@ -16,6 +16,9 @@ const makeClient = vi.hoisted(() => () => {
   function query(table: string) {
     const filters: Array<[string, unknown]> = [];
     const inFilters: Array<[string, unknown[]]> = [];
+    // `.is(col, null)` — a seeded row may omit the column, which stands for SQL
+    // NULL here.
+    const isFilters: Array<[string, unknown]> = [];
     let cols = '*';
     let op: 'select' | 'update' | 'insert' = 'select';
     let payload: Row = {};
@@ -24,19 +27,26 @@ const makeClient = vi.hoisted(() => () => {
       (store.db[table] ?? []).filter(
         (r) =>
           filters.every(([c, v]) => r[c] === v) &&
-          inFilters.every(([c, vs]) => vs.includes(r[c])),
+          inFilters.every(([c, vs]) => vs.includes(r[c])) &&
+          isFilters.every(([c, v]) => (v === null ? r[c] === null || r[c] === undefined : r[c] === v)),
       );
 
-    // `select('*, event:tournament_events(*)')` — the only embed these actions use.
+    // `select('*, event:tournament_events(*)')` — the only embed these actions
+    // use. Always a COPY, because the real client decodes a row out of an HTTP
+    // response: a caller that reads a row and then writes to it must still see
+    // the pre-write values in its own copy.
     const embed = (r: Row): Row =>
       cols.includes('tournament_events(*)')
         ? { ...r, event: (store.db.tournament_events ?? []).find((e) => e.id === r.event_id) ?? null }
-        : r;
+        : { ...r };
 
     const run = () => {
       if (op === 'update') {
-        for (const r of matching()) Object.assign(r, payload);
-        return { data: null, error: null };
+        const hit = matching();
+        for (const r of hit) Object.assign(r, payload);
+        // PostgREST reports "matched no rows" as success, so a guarded write can
+        // only be told apart from a no-op by its count.
+        return { data: null, error: null, count: hit.length };
       }
       if (op === 'insert') {
         (store.db[table] ??= []).push({ ...payload });
@@ -51,6 +61,7 @@ const makeClient = vi.hoisted(() => () => {
       insert(p: Row) { op = 'insert'; payload = p; return api; },
       eq(c: string, v: unknown) { filters.push([c, v]); return api; },
       in(c: string, vs: unknown[]) { inFilters.push([c, vs]); return api; },
+      is(c: string, v: unknown) { isFilters.push([c, v]); return api; },
       async single() { const r = matching()[0]; return { data: r ? embed(r) : null, error: null }; },
       async maybeSingle() { const r = matching()[0]; return { data: r ? embed(r) : null, error: null }; },
       then(resolve: (v: unknown) => unknown) { return Promise.resolve(run()).then(resolve); },
@@ -58,16 +69,19 @@ const makeClient = vi.hoisted(() => () => {
     return api;
   }
 
-  // Stand-in for apply_tournament_match_rating
-  // (supabase/migrations/00070_tournament_rating_atomic.sql) — the single
-  // transaction that now performs every write a rated tournament match causes.
-  // This harness has no fault injection, so the only behaviour it needs is the
-  // happy path plus the "already rated" refusal that makes replay safe.
-  function rpc(name: string, args: Record<string, unknown>) {
-    if (name !== 'apply_tournament_match_rating') {
-      return Promise.resolve({ data: null, error: { message: `unknown rpc ${name}` } });
-    }
+  // Stand-ins for apply_tournament_match_rating and
+  // reverse_tournament_match_rating (migrations 00070 and 00078) — the two
+  // single transactions that now perform every write a rated tournament match
+  // causes, and every write undoing one causes. This harness has no fault
+  // injection, so the only behaviour it needs is the happy path plus the
+  // "already rated" refusal and the reversal no-op that together make replay
+  // safe.
+  const threshold = () => {
+    const settings = (store.db.platform_settings ?? []).find((r) => r.key === 'rating_defaults')?.value as Row | undefined;
+    return (settings?.provisional_threshold as number) ?? 8;
+  };
 
+  function applyRpc(args: Record<string, unknown>) {
     const matchId = args.p_match_id as string;
     const discipline = args.p_discipline as 'singles' | 'doubles';
     const entries = args.p_entries as Array<Record<string, unknown>>;
@@ -78,8 +92,7 @@ const makeClient = vi.hoisted(() => () => {
       return Promise.resolve({ data: null, error: { message: `Tournament match ${matchId} is already rated` } });
     }
 
-    const settings = (store.db.platform_settings ?? []).find((r) => r.key === 'rating_defaults')?.value as Row | undefined;
-    const threshold = (settings?.provisional_threshold as number) ?? 8;
+    const snapshotEntries: Row[] = [];
 
     for (const e of entries) {
       const row = (store.db.ratings ?? []).find((r) => r.player_id === e.player_id);
@@ -91,6 +104,8 @@ const makeClient = vi.hoisted(() => () => {
       const won = e.won === true;
       const played = n(`${discipline}_matches_played`) + 1;
       const streakField = `current_${discipline}_streak`;
+      const streakBefore = n(streakField);
+      const streakAfter = won ? Math.max(streakBefore + 1, 1) : Math.min(streakBefore - 1, -1);
 
       row[`${discipline}_elo`] = e.after;
       row[`${discipline}_matches_played`] = played;
@@ -100,24 +115,95 @@ const makeClient = vi.hoisted(() => () => {
       row[`${discipline}_points_allowed`] = n(`${discipline}_points_allowed`) + ((e.points_allowed as number) ?? 0);
       row[`${discipline}_games_won`] = n(`${discipline}_games_won`) + ((e.games_won as number) ?? 0);
       row[`${discipline}_games_lost`] = n(`${discipline}_games_lost`) + ((e.games_lost as number) ?? 0);
-      row[streakField] = won ? Math.max(n(streakField) + 1, 1) : Math.min(n(streakField) - 1, -1);
-      if (played >= threshold) row[`${discipline}_provisional`] = false;
+      row[streakField] = streakAfter;
+      if (played >= threshold()) row[`${discipline}_provisional`] = false;
+
+      const pid = e.player_id as string;
+      const rel = (store.db.reliability_metrics ??= []).find((r) => r.player_id === pid);
+      if (rel) rel.matches_completed = ((rel.matches_completed as number | undefined) ?? 0) + 1;
+      else store.db.reliability_metrics.push({ player_id: pid, matches_completed: 1 });
 
       if (e.participant_id) {
         const p = (store.db.tournament_participants ?? []).find((r) => r.id === e.participant_id);
         if (p) Object.assign(p, { elo_after: e.after, elo_change: e.delta });
       }
-    }
 
-    m.elo_snapshot = {
-      discipline,
-      entries: entries.map((e) => ({
+      snapshotEntries.push({
         player_id: e.player_id, before: e.before, after: e.after, delta: e.delta,
         won: e.won, points_scored: e.points_scored ?? 0, points_allowed: e.points_allowed ?? 0,
         games_won: e.games_won ?? 0, games_lost: e.games_lost ?? 0,
-      })),
-    };
+        streak_before: streakBefore, streak_after: streakAfter,
+      });
+    }
+
+    m.elo_snapshot = { discipline, entries: snapshotEntries };
     return Promise.resolve({ data: null, error: null });
+  }
+
+  function reverseRpc(args: Record<string, unknown>) {
+    const matchId = args.p_match_id as string;
+    const m = (store.db.tournament_matches ?? []).find((r) => r.id === matchId);
+    if (!m) return Promise.resolve({ data: null, error: { message: `Tournament match not found: ${matchId}` } });
+
+    const snapshot = m.elo_snapshot as { discipline: 'singles' | 'doubles'; entries: Row[] } | null;
+    // An unrated match has nothing to reverse. Not an error — that no-op is what
+    // makes a retry after an unclear outcome safe.
+    if (!snapshot || !snapshot.entries?.length) return Promise.resolve({ data: null, error: null });
+
+    const d = snapshot.discipline;
+    const streakField = `current_${d}_streak`;
+
+    for (const e of snapshot.entries) {
+      const pid = e.player_id as string;
+      const row = (store.db.ratings ?? []).find((r) => r.player_id === pid);
+      if (!row) {
+        return Promise.resolve({ data: null, error: { message: `No ratings row for player ${pid}` } });
+      }
+      const n = (k: string) => (row[k] as number | undefined) ?? 0;
+
+      // The three snapshot tiers, discriminated by POSITIVE tests exactly as the
+      // SQL does it, so an absent key falls through to the older branch.
+      const hasStats = typeof e.won === 'boolean';
+      const hasStreak = hasStats && typeof e.streak_before === 'number' && typeof e.streak_after === 'number';
+
+      row[`${d}_elo`] = n(`${d}_elo`) - (e.delta as number);
+      if (!hasStats) continue;
+
+      const won = e.won === true;
+      const played = Math.max(0, n(`${d}_matches_played`) - 1);
+      row[`${d}_matches_played`] = played;
+      row[won ? `${d}_wins` : `${d}_losses`] = Math.max(0, n(won ? `${d}_wins` : `${d}_losses`) - 1);
+      row[`${d}_points_scored`] = Math.max(0, n(`${d}_points_scored`) - ((e.points_scored as number) ?? 0));
+      row[`${d}_points_allowed`] = Math.max(0, n(`${d}_points_allowed`) - ((e.points_allowed as number) ?? 0));
+      row[`${d}_games_won`] = Math.max(0, n(`${d}_games_won`) - ((e.games_won as number) ?? 0));
+      row[`${d}_games_lost`] = Math.max(0, n(`${d}_games_lost`) - ((e.games_lost as number) ?? 0));
+      row[streakField] = hasStreak && n(streakField) === e.streak_after
+        ? e.streak_before
+        : (won ? Math.max(0, n(streakField) - 1) : Math.min(0, n(streakField) + 1));
+      if (played < threshold()) row[`${d}_provisional`] = true;
+
+      if (hasStreak) {
+        const rel = (store.db.reliability_metrics ?? []).find((r) => r.player_id === pid);
+        if (rel) rel.matches_completed = Math.max(0, ((rel.matches_completed as number | undefined) ?? 0) - 1);
+      }
+    }
+
+    if (d === 'singles') {
+      const participantIds = [m.winner_participant_id, m.loser_participant_id]
+        .filter((x): x is string => typeof x === 'string' && x.length > 0);
+      for (const p of (store.db.tournament_participants ?? []).filter((r) => participantIds.includes(r.id as string))) {
+        Object.assign(p, { elo_after: null, elo_change: null });
+      }
+    }
+
+    m.elo_snapshot = null;
+    return Promise.resolve({ data: null, error: null });
+  }
+
+  function rpc(name: string, args: Record<string, unknown>) {
+    if (name === 'apply_tournament_match_rating') return applyRpc(args);
+    if (name === 'reverse_tournament_match_rating') return reverseRpc(args);
+    return Promise.resolve({ data: null, error: { message: `unknown rpc ${name}` } });
   }
 
   return { from: (table: string) => query(table), rpc };
@@ -128,7 +214,9 @@ vi.mock('@sentry/nextjs', () => ({ captureException: () => {} }));
 vi.mock('../supabase-server', () => ({ createAdminClient: makeClient }));
 vi.mock('../actions/_shared', () => ({ getExecOrAdmin: async () => ({ id: 'admin-1' }) }));
 
-import { enterMatchResult, enterWalkover, voidMatch, unvoidMatch, setMatchEntry } from '../tournament-actions/results';
+import { enterMatchResult, enterWalkover, voidMatch, unvoidMatch, setMatchEntry, undoMatchResult } from '../tournament-actions/results';
+import { reverseEloSnapshot } from '../tournament-actions/_internal';
+import { createAdminClient } from '../supabase-server';
 
 const QF = 'match-qf';
 const SF = 'match-sf';
@@ -178,6 +266,12 @@ beforeEach(() => {
         scores: null, elo_snapshot: null, notes: null,
       },
     ],
+    reliability_metrics: [
+      { player_id: 'pl-alice', matches_completed: 0 },
+      { player_id: 'pl-bob', matches_completed: 0 },
+      { player_id: 'pl-carol', matches_completed: 0 },
+      { player_id: 'pl-dan', matches_completed: 0 },
+    ],
     platform_settings: [],
     notifications: [],
     tournament_audit_log: [],
@@ -215,6 +309,8 @@ describe('void / restore / replay', () => {
     expect(alice.singles_wins).toBe(1);
     expect(alice.singles_points_scored).toBe(21);
     expect(alice.current_singles_streak).toBe(1);
+    // ...and the reliability counter, which tournament matches now move too.
+    expect(store.db.reliability_metrics!.find((r) => r.player_id === 'pl-alice')!.matches_completed).toBe(1);
   });
 
   it('pulls the voided winner back out of the next round', async () => {
@@ -263,6 +359,50 @@ describe('void / restore / replay', () => {
 
     await enterMatchResult(QF, [{ a: 21, b: 15 }], 'a');
     expect(ratingOf('pl-alice')).toBe(applied);
+  });
+
+  // The reversal RPC clears the ratings AND the snapshot in one transaction, but
+  // resetting the match row is a later, separate write. If that reset fails — or
+  // its response is lost — the match is left decided with no snapshot, which is
+  // indistinguishable by shape from a genuinely pre-snapshot match.
+  it('does not rewind an already-reversed match to its registration rating', async () => {
+    await enterMatchResult(QF, [{ a: 21, b: 15 }], 'a');
+    // Alice plays on elsewhere and climbs.
+    store.db.ratings!.find((r) => r.player_id === 'pl-alice')!.singles_elo = 1400;
+
+    // Reverse succeeds; the match reset that would follow it does not happen.
+    await reverseEloSnapshot(createAdminClient(), QF);
+    expect(match(QF).elo_snapshot).toBeNull();
+    expect(match(QF).status).toBe('completed');
+    const afterReversal = ratingOf('pl-alice');
+
+    const res = await undoMatchResult(QF);
+
+    expect(res.ok).toBe(true);
+    // The legacy branch would have written elo_before (1000) over her CURRENT
+    // rating, erasing every match she played after this one. elo_after is null
+    // because the reversal cleared it, and that is the evidence the branch now
+    // requires before rewinding anything.
+    expect(ratingOf('pl-alice')).toBe(afterReversal);
+    expect(ratingOf('pl-alice')).not.toBe(1000);
+    expect(match(QF).status).toBe('ready');
+  });
+
+  it('still rewinds a genuinely pre-snapshot match, where elo_after is stamped', async () => {
+    // The other half of that guard: a match rated before the snapshot column
+    // existed has no snapshot but DOES carry elo_after, and must still reverse.
+    Object.assign(match(QF), {
+      status: 'completed', winner_participant_id: 'p-alice', loser_participant_id: 'p-bob',
+      scores: [{ a: 21, b: 15 }], elo_snapshot: null,
+    });
+    store.db.tournament_participants!.find((p) => p.id === 'p-alice')!.elo_after = 1030;
+    store.db.tournament_participants!.find((p) => p.id === 'p-bob')!.elo_after = 970;
+    store.db.ratings!.find((r) => r.player_id === 'pl-alice')!.singles_elo = 1030;
+
+    expect((await undoMatchResult(QF)).ok).toBe(true);
+
+    expect(ratingOf('pl-alice')).toBe(1000); // back to elo_before
+    expect(store.db.tournament_participants!.find((p) => p.id === 'p-alice')!.elo_after).toBeNull();
   });
 
   it('only restores a voided match', async () => {

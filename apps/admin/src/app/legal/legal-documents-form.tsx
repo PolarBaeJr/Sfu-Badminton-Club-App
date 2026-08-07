@@ -1,10 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Textarea, useConfirm } from '@badminton/ui';
+import { Button, useConfirm } from '@badminton/ui';
 import { LEGAL_DOCUMENT_LABELS, type WaiverDocument } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { updateLegalDocument, requireReacceptance } from '@/lib/actions';
+import { AutoGrowTextarea } from './auto-grow-textarea';
 
 interface LegalDocumentRow {
   document: string;
@@ -19,13 +20,6 @@ const DOC_DESCRIPTIONS: Record<string, string> = {
   waiver: 'Shown to every member during onboarding, after a version bump, and re-signed annually. Markdown: ## headings, - lists, **bold**.',
   code_of_conduct: 'Accepted alongside the waiver. Markdown: ## headings, - lists, **bold**.',
 };
-
-/** Auto-grow the textarea with its content, capped at ~60vh (page scrolls past that). */
-function autoGrow(e: React.FormEvent<HTMLTextAreaElement>) {
-  const el = e.currentTarget;
-  el.style.height = 'auto';
-  el.style.height = `${Math.min(el.scrollHeight, window.innerHeight * 0.6)}px`;
-}
 
 export function LegalDocumentsForm({
   documents,
@@ -102,18 +96,22 @@ export function LegalDocumentsForm({
             </div>
             <div className="settings-row-control wide">
               {canEdit ? (
-                <Textarea
+                /* rows={18} is only the floor — AutoGrowTextarea sizes the box
+                   to the whole document on mount and on every keystroke, so
+                   the page scrolls rather than the editor. */
+                <AutoGrowTextarea
                   value={currentValue}
                   onChange={(e) => setEdits((prev) => ({ ...prev, [doc.document]: e.target.value }))}
-                  onInput={autoGrow}
                   rows={18}
                   className="font-mono text-xs"
                 />
               ) : (
                 /* Read-only for execs. A disabled Textarea would look like an
                    editor that is merely switched off; a pre block reads as the
-                   document it is. Same monospace so the two views match. */
-                <pre className="font-mono text-xs whitespace-pre-wrap break-words max-h-[60vh] overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3 text-[var(--text-secondary)]">
+                   document it is. Same monospace so the two views match.
+                   No max-height: an exec reading what members agreed to should
+                   scroll the page, the same as the admin editing it. */
+                <pre className="font-mono text-xs whitespace-pre-wrap break-words rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3 text-[var(--text-secondary)]">
                   {doc.content}
                 </pre>
               )}

@@ -80,9 +80,19 @@ const MATRIX: { path: string; admin: boolean; exec: boolean; trainer: boolean }[
   { path: '/sessions', admin: true, exec: true, trainer: false },
   { path: '/seasons', admin: true, exec: true, trainer: false },
   { path: '/announcements', admin: true, exec: true, trainer: false },
+  // Exec-reachable ONLY so an exec can record an expense they paid for out of
+  // pocket ("allow execs to add expenses too"). This line is deliberately not
+  // the whole boundary for this section — /fees/page.tsx skips the fetches
+  // behind Club fees, Other income, reinstatements and the net-position strip
+  // for anyone who is not an admin. Guarding it here as well would bounce the
+  // exec off the Expenses tab too, which is the thing the club owner asked for.
+  //
+  // If this row is ever flipped back to exec:false, the sidebar entry must move
+  // back into the admin-only group with it — an exec with a link that bounces
+  // them is a bug that has shipped before.
+  { path: '/fees', admin: true, exec: true, trainer: false },
 
   // Admin territory.
-  { path: '/fees', admin: true, exec: false, trainer: false },
   { path: '/audit', admin: true, exec: false, trainer: false },
   { path: '/disputes', admin: true, exec: false, trainer: false },
   { path: '/walkovers', admin: true, exec: false, trainer: false },

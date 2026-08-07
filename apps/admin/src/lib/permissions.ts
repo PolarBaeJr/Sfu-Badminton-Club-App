@@ -54,7 +54,20 @@ const SECTION_ACCESS: { [pathPrefix: string]: AccessLevel } = {
   '/tournaments': 'exec',
   '/sessions': 'exec',
   '/seasons': 'exec',
-  '/fees': 'admin',
+  // Finances. Exec-level ONLY so an exec can reach the Expenses tab: the club
+  // owner asked for "execs can add expenses", not for the finance page. Club
+  // fees, other income, reinstatements and the net-position strip stay
+  // admin-only, and /fees/page.tsx enforces that by skipping their FETCHES for
+  // a non-admin rather than hiding the rendered output — a hidden card whose
+  // query still ran ships the figures into the RSC payload for anyone with
+  // devtools. Same reasoning, and the same shape, as dashboard/page.tsx.
+  //
+  // This line is therefore NOT the whole story for this section, unlike every
+  // other entry in this map. Anything that asks "may this person see club
+  // money?" must ask for 'admin' explicitly and must NOT reuse
+  // canAccess(level, '/fees') — the dashboard finance snapshot is the one place
+  // that did, and flipping this line is precisely what would have leaked it.
+  '/fees': 'exec',
   '/audit': 'admin',
   // Execs read the documents and may require a re-signature; only admins edit
   // the text. That split is enforced in the page and in the server actions —

@@ -13,11 +13,13 @@
 //   - sessions.ts      — session CRUD + QR check-in tokens
 //   - announcements.ts — announcement CRUD
 //   - fees.ts          — exec/exempt player flags + club-fee tracking
+//   - finance.ts       — other income (donations/grants) + club expenses
 //   - tournament-fees.ts — tournament fee tiers + per-player entry-fee tracking
 //   - reinstatement.ts — player ban / reinstatement (with reinstatement fee)
 //   - varsity.ts       — varsity notes
 //   - reliability.ts   — adjustReliability (manual reliability-counter edits)
 //   - settings.ts      — updateLegalDocument (waiver / code of conduct),
+//                        updateEventWaiverTemplate (per-season event waiver),
 //                        updatePlatformSettings (/ratings + /accounts)
 //   - _shared.ts       — getAdminPlayer (NOT 'use server' — internal helper)
 export {
@@ -96,6 +98,17 @@ export {
   removeManualFee,
 } from './actions/fees';
 
+// Non-fee money ledgers (00073): donations/grants in, shuttles/courts out,
+// plus reimbursement of whoever fronted an expense (00077).
+export {
+  addOtherIncome,
+  removeOtherIncome,
+  addExpense,
+  updateExpense,
+  removeExpense,
+  markExpenseReimbursed,
+} from './actions/finance';
+
 export {
   createFeeTier,
   updateFeeTier,
@@ -122,5 +135,6 @@ export {
 export {
   updateLegalDocument,
   requireReacceptance,
+  updateEventWaiverTemplate,
   updatePlatformSettings,
 } from './actions/settings';

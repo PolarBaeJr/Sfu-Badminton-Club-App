@@ -15,6 +15,7 @@ import {
   assertTournamentNotSuspended,
   advanceWinner,
   recordWalkover,
+  undoDecidedResult,
 } from './_internal';
 
 // ============================================================
@@ -251,7 +252,15 @@ async function enterMatchResultImpl(
   // Update match
   // time_exceeded rides along with the scores it explains (00047) — without it
   // on the row, a later reader cannot tell a called-for-time 15-2 from a typo.
-  const { error } = await adminClient.from('tournament_matches').update({
+  //
+  // Conditional on the status this request READ, which makes the write a
+  // compare-and-swap rather than a blind overwrite. Two desks entering the same
+  // match at once both passed the playable-status check above against the same
+  // row; without this, both write a result and both go on to rate it, and the
+  // loser of that race only finds out inside the rating RPC — with a result
+  // already stamped over the winner's. The count is how the loser finds out
+  // here instead, because PostgREST reports "matched no rows" as success.
+  const { error, count } = await adminClient.from('tournament_matches').update({
     scores,
     time_exceeded: timeExceeded,
     [winnerIdField]: winnerId,
@@ -260,17 +269,37 @@ async function enterMatchResultImpl(
     result_entered_by: admin.id,
     result_entered_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-  }).eq('id', matchId);
+  }, { count: 'exact' })
+    .eq('id', matchId)
+    .eq('status', match.status);
 
   if (error) {
     Sentry.captureException(error);
     throw new Error(error.message);
   }
 
+  if (count === 0) {
+    throw new ExpectedError(
+      'This match changed while you were entering the result — most likely another desk got there first. Reload and check before entering it again.',
+    );
+  }
+
   // Apply Elo before advancing — advancing can settle the next match too (if
   // the opponent waiting there has since withdrawn), and those ratings must
   // build on this one.
-  await applyTournamentMatchElo(matchId);
+  //
+  // The result row above is already written, because rating reads the winner and
+  // loser off it. If rating then fails — a missing ratings row is the case that
+  // actually happens — the match would be left completed and unrated, and the
+  // guard at the top of this function refuses anything that is not
+  // pending/ready/live, so no retry could reach it. undoDecidedResult takes the
+  // result back off and rethrows, leaving a match the desk can simply re-enter.
+  // Nothing has advanced yet, so there is nothing downstream to unwind.
+  try {
+    await applyTournamentMatchElo(matchId);
+  } catch (err) {
+    await undoDecidedResult(adminClient, matchId, match, err);
+  }
 
   // Advance winner to next match (single elimination only). Advancing can also
   // settle that match outright — the opponent waiting there may have withdrawn
@@ -426,7 +455,7 @@ async function voidMatchImpl(matchId: string, reason: string) {
   // snapshot is present, so a replayed match applies exactly one delta.
   const reversedElo = Boolean(match.elo_snapshot);
   if (reversedElo) {
-    await reverseEloSnapshot(adminClient, match);
+    await reverseEloSnapshot(adminClient, matchId);
   }
 
   // Take the voided match's winner back out of the next round. Leaving them
@@ -514,7 +543,7 @@ async function recordDoubleNoShowImpl(matchId: string, reason: string) {
   // voiding does, or the match keeps moving Elo after being erased.
   const reversedElo = Boolean(match.elo_snapshot);
   if (reversedElo) {
-    await reverseEloSnapshot(adminClient, match);
+    await reverseEloSnapshot(adminClient, matchId);
   }
 
   // Nobody advances. Anyone previously parked in the next round on the strength
@@ -598,7 +627,7 @@ async function unvoidMatchImpl(matchId: string, reason: string) {
   // at all (snapshot present), silently leaving the stale delta in place.
   const reversedElo = Boolean(match.elo_snapshot);
   if (reversedElo) {
-    await reverseEloSnapshot(adminClient, match);
+    await reverseEloSnapshot(adminClient, matchId);
   }
 
   // Restore to a clean playable state rather than to the old result: an admin
@@ -792,7 +821,7 @@ export async function editMatchResult(
 
   // Reverse any prior Elo changes so we can recompute with the corrected winner.
   if (match.elo_snapshot) {
-    await reverseEloSnapshot(adminClient, match);
+    await reverseEloSnapshot(adminClient, matchId);
   }
 
   await adminClient.from('tournament_matches').update({
@@ -819,8 +848,27 @@ export async function editMatchResult(
   // applies Elo, so omitting them here reversed the delta above and never
   // restored it, permanently zeroing both sides' rating change. Voided matches
   // stay unrated.
+  //
+  // A failure here cannot be compensated the way enterMatchResult's is. By this
+  // point the OLD rating has already been reversed and the old scoreline it was
+  // computed from has been overwritten, so there is nothing to put back — the
+  // only route forward is forward. That is safe, and this is the one place worth
+  // saying so out loud: the snapshot is null, so simply running the correction
+  // again re-rates the match and cannot count it twice, and editMatchResult has
+  // no status guard to refuse the retry. Without this message the exec is told
+  // "the rating failed" and left to guess whether pressing Save again would
+  // double the delta.
   if (match.status === 'completed' || match.status === 'walkover') {
-    await applyTournamentMatchElo(matchId);
+    try {
+      await applyTournamentMatchElo(matchId);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `${detail} — the corrected result for match ${matchId} WAS saved but is not yet rated. ` +
+        `Save the same correction again to rate it; the previous rating is already reversed, ` +
+        `so it cannot be counted twice.`,
+      );
+    }
   }
 
   await logAudit(adminClient, {
@@ -868,17 +916,28 @@ async function undoMatchResultImpl(matchId: string) {
   // rated, and rewinding its winner to elo_before — a value frozen at
   // registration — would wipe every rating change they earned earlier in the
   // event.
+  //
+  // It is gated a second time, per side, on elo_after still being STAMPED. "No
+  // snapshot" is not on its own evidence that a rating is outstanding: a
+  // reversal clears the snapshot and the stamp together, in one transaction, but
+  // resetting the match row below is a separate write. If that reset fails — or
+  // its response is lost — the match is left decided with no snapshot, and the
+  // retry would land here and overwrite both players' CURRENT rating with a
+  // registration-time figure, erasing every match they have played since.
+  // elo_after is what the pre-snapshot rating path wrote and what every reversal
+  // clears, so its presence is the honest test for "this match's delta is still
+  // on the ladder".
   if (match.elo_snapshot) {
-    await reverseEloSnapshot(adminClient, match);
+    await reverseEloSnapshot(adminClient, matchId);
   } else if (!doubles && match.winner_participant_id && match.loser_participant_id) {
     const winnerId = match.winner_participant_id;
     const loserId = match.loser_participant_id;
 
     if (winnerId) {
       const { data: winnerP } = await adminClient.from('tournament_participants')
-        .select('player_id, elo_before')
+        .select('player_id, elo_before, elo_after')
         .eq('id', winnerId).single();
-      if (winnerP?.elo_before != null) {
+      if (winnerP?.elo_before != null && winnerP.elo_after != null) {
         await adminClient.from('ratings')
           .update({ singles_elo: winnerP.elo_before, updated_at: new Date().toISOString() })
           .eq('player_id', winnerP.player_id);
@@ -890,9 +949,9 @@ async function undoMatchResultImpl(matchId: string) {
 
     if (loserId) {
       const { data: loserP } = await adminClient.from('tournament_participants')
-        .select('player_id, elo_before')
+        .select('player_id, elo_before, elo_after')
         .eq('id', loserId).single();
-      if (loserP?.elo_before != null) {
+      if (loserP?.elo_before != null && loserP.elo_after != null) {
         await adminClient.from('ratings')
           .update({ singles_elo: loserP.elo_before, updated_at: new Date().toISOString() })
           .eq('player_id', loserP.player_id);

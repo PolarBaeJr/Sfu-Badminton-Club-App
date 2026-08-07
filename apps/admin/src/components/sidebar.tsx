@@ -26,9 +26,16 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { canAccess, type AccessLevel } from '@/lib/permissions';
 
-// Grouped by access level (see permissions.ts SECTION_ACCESS): the top section
-// is everything execs can reach; the bottom section is admin-only and filters
-// away entirely for execs.
+// Two nav ROWS, not two access levels. Every item in both is filtered through
+// canAccess() against the same SECTION_ACCESS map the middleware uses, so this
+// list can never offer a door that will not open — grouping is layout only.
+//
+// The first row is the day-to-day club work an exec does; the second is the
+// back-office row, which happens to be mostly admin-only but is not uniformly
+// so (/players and /settings reach down to trainers, /legal to execs). Put a
+// section wherever it belongs on screen and let canAccess() do the deciding:
+// hand-keeping a second idea of who may see what is exactly how execs came to
+// be shown four links that bounced them to /unauthorized.
 // How quickly a promotion or demotion reaches an already-open console tab.
 const POLL_MS = 5000;
 
@@ -42,13 +49,23 @@ const navSections = [
       { href: '/sessions', label: 'Sessions', icon: Calendar },
       { href: '/announcements', label: 'Announcements', icon: Megaphone },
       { href: '/seasons', label: 'Seasons', icon: Medal },
+      // Route stays /fees — it is the section's access key in permissions.ts
+      // and every existing link and revalidatePath points at it. The label is
+      // "Finances" because the section is no longer only fees: other income and
+      // expenses are tabs on the same page.
+      //
+      // Sits in the first row now that /fees is exec-level: for an exec it is
+      // the only back-office link they have, and left in the second row it
+      // would have rendered as a one-item strip under a divider. An exec who
+      // follows it lands on the Expenses tab and sees nothing else — the page
+      // decides that, not this list.
+      { href: '/fees', label: 'Finances', icon: DollarSign },
     ],
   },
   {
     title: 'Admin only',
     items: [
       { href: '/players', label: 'Players', icon: Users },
-      { href: '/fees', label: 'Fees', icon: DollarSign },
       // Platform configuration, split out of /settings — which stays trainer-level
       // for passkey enrolment and no longer carries any of it.
       { href: '/ratings', label: 'Ratings', icon: Gauge },
