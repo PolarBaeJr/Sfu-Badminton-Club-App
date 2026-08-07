@@ -141,3 +141,23 @@ export function isCheckinOpen(
   if (opensAt && now < opensAt) return false;
   return now < closesAt;
 }
+
+/**
+ * Today's date in the club's timezone, as YYYY-MM-DD.
+ *
+ * `new Date().toISOString().split('T')[0]` gives the UTC date, and Vancouver is
+ * UTC-7/-8. Any club evening after 17:00 PDT (16:00 PST) is already tomorrow in
+ * UTC, so stamping a DATE column that way records the wrong day — an exec
+ * ending a season on Friday evening recorded it as ending Saturday.
+ *
+ * en-CA formats as YYYY-MM-DD, which is exactly the shape a Postgres DATE
+ * column and every YYYY-MM-DD string comparison in this codebase expect.
+ */
+export function clubToday(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: CLUB_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+}
