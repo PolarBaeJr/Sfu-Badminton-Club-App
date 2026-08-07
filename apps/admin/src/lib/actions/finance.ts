@@ -55,6 +55,35 @@ import { getAdminPlayer, getExecOrAdmin } from './_shared';
 /** paid_at defaults to now: recording an entry means the money already moved. */
 const paidAtOrNow = (given: string | undefined) => given ?? new Date().toISOString();
 
+/**
+ * A payer has to be someone who could plausibly have bought something for the
+ * club — an exec or an admin.
+ *
+ * The dialog only offers those people, but the dialog is not the boundary: a
+ * server action can be invoked directly with any payload, and `paid_by` is
+ * validated by the schema only as "a uuid". Without this an exec could name any
+ * member — including one who has no idea — as the person the club owes money
+ * to, and the reimbursement flow would then hand that debt to an admin to
+ * settle.
+ *
+ * Silent on a null payer, which is the "club funds" case and names nobody.
+ */
+async function assertEligiblePayer(
+  adminClient: ReturnType<typeof createAdminClient>,
+  paidBy: string | null,
+) {
+  if (!paidBy) return;
+  const { data: payer } = await adminClient
+    .from('players')
+    .select('id, role, is_exec')
+    .eq('id', paidBy)
+    .maybeSingle();
+  if (!payer) throw new Error('That payer is not a member of the club');
+  if (payer.role !== 'admin' && !payer.is_exec) {
+    throw new Error('Only an exec or an admin can be recorded as having paid for the club');
+  }
+}
+
 export async function addOtherIncome(input: OtherIncomeInput) {
   const parsed = parseOrThrow(otherIncomeSchema, input);
   const admin = await getAdminPlayer();
@@ -141,6 +170,7 @@ export async function addExpense(input: ClubExpenseInput) {
   const parsed = parseOrThrow(clubExpenseSchema, input);
   const actor = await getExecOrAdmin();
   const adminClient = createAdminClient();
+  await assertEligiblePayer(adminClient, parsed.paid_by ?? null);
 
   const row = {
     season_id: parsed.season_id,
@@ -241,6 +271,7 @@ export async function updateExpense(input: ClubExpenseUpdateInput) {
       'This expense has already been reimbursed — who paid it can no longer be changed.',
     );
   }
+  await assertEligiblePayer(adminClient, nextPaidBy);
 
   const patch = {
     category: parsed.category,
@@ -317,8 +348,20 @@ export async function updateExpense(input: ClubExpenseUpdateInput) {
  *     admin can settle or delete the same row; without this check the second
  *     admin is toasted "Marked reimbursed" for a write that never happened, and
  *     an audit row is filed swearing it did.
+ *
+ * AND IT SETTLES ONLY WHAT THE ADMIN ACTUALLY CONFIRMED. The caller passes the
+ * amount and the payer it displayed in the confirm dialog, and both are part of
+ * the WHERE clause. Taking only the id would mean the click approves whatever
+ * the row happens to say at the instant the write lands: another admin edits
+ * "$84, Alice" to "$840, Bob" in between, and the first admin's "yes, pay Alice
+ * back her $84" silently becomes "yes, pay Bob $840". Nothing on screen would
+ * ever have shown that figure to the person who approved it.
  */
-export async function markExpenseReimbursed(id: string) {
+export async function markExpenseReimbursed(
+  id: string,
+  /** What the confirm dialog showed. The settlement is refused if the row has moved. */
+  confirmed: { amountCents: number; paidBy: string },
+) {
   const admin = await getAdminPlayer();
   const adminClient = createAdminClient();
 
@@ -332,6 +375,11 @@ export async function markExpenseReimbursed(id: string) {
     throw new Error('This expense was paid from club funds — there is nobody to reimburse');
   }
   if (existing.reimbursed_at) throw new Error('This expense is already marked reimbursed');
+  // Checked here for the readable message, and again in the WHERE clause below
+  // for the race. This branch alone would be decoration.
+  if (existing.amount_cents !== confirmed.amountCents || existing.paid_by !== confirmed.paidBy) {
+    throw new Error('This expense changed while you were looking at it — reload and check it again');
+  }
 
   const reimbursed_at = new Date().toISOString();
 
@@ -340,6 +388,8 @@ export async function markExpenseReimbursed(id: string) {
     .update({ reimbursed_at, reimbursed_by: admin.id })
     .eq('id', id)
     .is('reimbursed_at', null)
+    .eq('amount_cents', confirmed.amountCents)
+    .eq('paid_by', confirmed.paidBy)
     .select('id');
   if (error) throw new Error(error.message);
   if (!updated || updated.length !== 1) {

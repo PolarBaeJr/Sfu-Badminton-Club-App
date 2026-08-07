@@ -144,6 +144,15 @@ const ADMIN = { id: 'admin-1', role: 'admin' };
 // assertions would pass for the wrong reason.
 const EXEC = { id: '44444444-4444-4444-8444-444444444444', role: 'player', is_exec: true };
 const OTHER_EXEC = '33333333-3333-4333-8333-333333333333';
+/** A member who is neither exec nor admin — nobody who can buy for the club. */
+const MEMBER = '55555555-5555-4555-8555-555555555555';
+
+/**
+ * What the confirm dialog showed, sent back with the click. markExpenseReimbursed
+ * settles only a row that still matches, so a click approves the figures it was
+ * rendered with — not whatever the row says by the time the write lands.
+ */
+const CONFIRM = { amountCents: 8400, paidBy: OTHER_EXEC };
 
 const income = () => store.db.other_income ?? [];
 const expenses = () => store.db.club_expenses ?? [];
@@ -166,7 +175,20 @@ beforeEach(() => {
   store.actor = { ...ADMIN };
   store.swallowDeletes = false;
   store.swallowUpdates = false;
-  store.db = { other_income: [], club_expenses: [], audit_logs: [], seasons: [{ id: SEASON, active_flag: true }] };
+  store.db = {
+    other_income: [],
+    club_expenses: [],
+    audit_logs: [],
+    seasons: [{ id: SEASON, active_flag: true }],
+    // The roster the payer check reads. Only an exec or an admin may be named
+    // as having bought something for the club.
+    players: [
+      { id: ADMIN.id, role: 'admin', is_exec: false },
+      { id: EXEC.id, role: 'player', is_exec: true },
+      { id: OTHER_EXEC, role: 'player', is_exec: true },
+      { id: MEMBER, role: 'player', is_exec: false },
+    ],
+  };
 });
 
 describe('addOtherIncome / addExpense', () => {
@@ -262,7 +284,7 @@ describe('addOtherIncome / addExpense', () => {
       .rejects.toThrow(/Admin access required/);
     // The one that would actually cost the club money: an exec marking their
     // own out-of-pocket expense as already paid back.
-    await expect(markExpenseReimbursed(id)).rejects.toThrow(/Admin access required/);
+    await expect(markExpenseReimbursed(id, CONFIRM)).rejects.toThrow(/Admin access required/);
 
     expect(income()).toHaveLength(0);
     expect(expenses()).toHaveLength(1);
@@ -297,6 +319,30 @@ describe('addOtherIncome / addExpense', () => {
   it('stores no payer at all when the club paid directly', async () => {
     await recordExpense();
     expect(expenses()[0]!.paid_by).toBeNull();
+  });
+
+  // The dialog only offers execs and admins, but the dialog is not the
+  // boundary: a server action takes whatever payload it is handed, and the
+  // schema checks paid_by only as "a uuid". Without a server-side check an exec
+  // could name any member as the person the club owes money to, and an admin
+  // would later be asked to settle that debt.
+  it('refuses to name an ordinary member as the payer', async () => {
+    await expect(recordExpense({ paid_by: MEMBER })).rejects.toThrow(/exec or an admin/i);
+    expect(expenses()).toHaveLength(0);
+  });
+
+  it('refuses a payer who is not on the roster at all', async () => {
+    await expect(recordExpense({ paid_by: '99999999-9999-4999-8999-999999999999' }))
+      .rejects.toThrow(/not a member/i);
+    expect(expenses()).toHaveLength(0);
+  });
+
+  it('refuses the same on an edit, not only on the insert', async () => {
+    const id = await recordExpense({ paid_by: OTHER_EXEC });
+
+    await expect(updateExpense({ id, category: 'shuttles', description: '6 tubes', amount_cents: 8400, paid_by: MEMBER }))
+      .rejects.toThrow(/exec or an admin/i);
+    expect(expenses()[0]!.paid_by).toBe(OTHER_EXEC);
   });
 
   // Validation runs before the write. A blank description makes a ledger line
@@ -359,7 +405,7 @@ describe('markExpenseReimbursed', () => {
   it('records when the club paid the exec back, and which admin confirmed it', async () => {
     const id = await recordExpense({ paid_by: OTHER_EXEC });
 
-    await markExpenseReimbursed(id);
+    await markExpenseReimbursed(id, CONFIRM);
 
     const row = expenses()[0]!;
     expect(row.reimbursed_at).toBeTruthy();
@@ -379,7 +425,7 @@ describe('markExpenseReimbursed', () => {
     const id = await recordExpense({ paid_by: OTHER_EXEC });
     store.swallowUpdates = true;
 
-    await expect(markExpenseReimbursed(id)).rejects.toThrow(/not marked reimbursed/i);
+    await expect(markExpenseReimbursed(id, CONFIRM)).rejects.toThrow(/not marked reimbursed/i);
     expect(audits().some((a) => a.action_type === 'expense_reimbursed')).toBe(false);
   });
 
@@ -390,7 +436,7 @@ describe('markExpenseReimbursed', () => {
   it('refuses a row the club paid for directly', async () => {
     const id = await recordExpense();
 
-    await expect(markExpenseReimbursed(id)).rejects.toThrow(/nobody to reimburse/i);
+    await expect(markExpenseReimbursed(id, CONFIRM)).rejects.toThrow(/nobody to reimburse/i);
     expect(expenses()[0]!.reimbursed_at).toBeUndefined();
   });
 
@@ -399,23 +445,45 @@ describe('markExpenseReimbursed', () => {
   // null)` filter refuses again if two admins race.
   it('refuses to re-date an expense that is already reimbursed', async () => {
     const id = await recordExpense({ paid_by: OTHER_EXEC });
-    await markExpenseReimbursed(id);
+    await markExpenseReimbursed(id, CONFIRM);
     const first = expenses()[0]!.reimbursed_at;
 
-    await expect(markExpenseReimbursed(id)).rejects.toThrow(/already marked reimbursed/i);
+    await expect(markExpenseReimbursed(id, CONFIRM)).rejects.toThrow(/already marked reimbursed/i);
     expect(expenses()[0]!.reimbursed_at).toBe(first);
   });
 
   it('rejects an unknown id instead of silently doing nothing', async () => {
-    await expect(markExpenseReimbursed('00000000-0000-4000-8000-000000009999'))
+    await expect(markExpenseReimbursed('00000000-0000-4000-8000-000000009999', CONFIRM))
       .rejects.toThrow(/not found/i);
+  });
+
+  // A CLICK APPROVES A FIGURE, NOT A ROW ID. The confirm dialog names an amount
+  // and a person; if another admin edits the row in between, settling on the id
+  // alone would apply that approval to numbers the approver never saw — "pay
+  // Alice back her $84" quietly becoming "pay Bob $840". The amount and the
+  // payer are part of the WHERE clause for exactly that reason.
+  it('refuses to settle an amount the admin never confirmed', async () => {
+    const id = await recordExpense({ paid_by: OTHER_EXEC });
+    // Somebody else corrects the figure between the render and the click.
+    await updateExpense({ id, category: 'shuttles', description: '6 tubes', amount_cents: 84000, paid_by: OTHER_EXEC });
+
+    await expect(markExpenseReimbursed(id, CONFIRM)).rejects.toThrow(/changed while you were looking/i);
+    expect(expenses()[0]!.reimbursed_at).toBeUndefined();
+  });
+
+  it('refuses to settle against a payer the admin never confirmed', async () => {
+    const id = await recordExpense({ paid_by: OTHER_EXEC });
+    await updateExpense({ id, category: 'shuttles', description: '6 tubes', amount_cents: 8400, paid_by: EXEC.id });
+
+    await expect(markExpenseReimbursed(id, CONFIRM)).rejects.toThrow(/changed while you were looking/i);
+    expect(expenses()[0]!.reimbursed_at).toBeUndefined();
   });
 
   // Money moving with nobody's name on it is what the audit trail exists for,
   // and a reimbursement moves real money out of the club account.
   it('audits the settlement with both sides', async () => {
     const id = await recordExpense({ paid_by: OTHER_EXEC });
-    await markExpenseReimbursed(id);
+    await markExpenseReimbursed(id, CONFIRM);
 
     const entry = audits().find((a) => a.action_type === 'expense_reimbursed')!;
     expect(entry.actor_id).toBe(ADMIN.id);
@@ -465,7 +533,7 @@ describe('updateExpense', () => {
   // settlement is a delete-and-re-record, deliberately.
   it('refuses to change the amount of an expense that is already reimbursed', async () => {
     const id = await recordExpense({ paid_by: OTHER_EXEC });
-    await markExpenseReimbursed(id);
+    await markExpenseReimbursed(id, CONFIRM);
 
     await expect(updateExpense({ id, category: 'shuttles', description: '6 tubes', amount_cents: 9900 }))
       .rejects.toThrow(/already been reimbursed/i);
@@ -476,7 +544,7 @@ describe('updateExpense', () => {
   // it would claim someone was reimbursed who never received anything.
   it('refuses to change the payer of an expense that is already reimbursed', async () => {
     const id = await recordExpense({ paid_by: OTHER_EXEC });
-    await markExpenseReimbursed(id);
+    await markExpenseReimbursed(id, CONFIRM);
 
     await expect(updateExpense({
       id, category: 'shuttles', description: '6 tubes', amount_cents: 8400, paid_by: EXEC.id,
@@ -489,7 +557,7 @@ describe('updateExpense', () => {
   // most common edit, and none of these fields change what was paid.
   it('still allows a settled expense to have its description fixed', async () => {
     const id = await recordExpense({ paid_by: OTHER_EXEC });
-    await markExpenseReimbursed(id);
+    await markExpenseReimbursed(id, CONFIRM);
     const settledAt = expenses()[0]!.reimbursed_at;
 
     // paid_by is resent unchanged. The update is a full replacement, exactly as

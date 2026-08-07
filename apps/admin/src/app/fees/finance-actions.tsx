@@ -45,7 +45,15 @@ import {
  * the database ever sees; the float exists for the length of this function.
  */
 function toCents(dollars: string): number | null {
-  const n = Number.parseFloat(dollars);
+  const trimmed = dollars.trim();
+  // At most two decimal places, REFUSED rather than rounded. "1.005" is not a
+  // sum of money, and rounding it silently picks $1.00 or $1.01 on the user's
+  // behalf — in binary floating point 1.005 * 100 is 100.49999999999999, so it
+  // picks the one nobody expects. The amount box is step="0.01", so anything
+  // finer arrived by paste or by a caller bypassing the widget; disabling
+  // submit and letting the person fix it is the only honest answer.
+  if (!/^\d*\.?\d{0,2}$/.test(trimmed) || trimmed === '' || trimmed === '.') return null;
+  const n = Number.parseFloat(trimmed);
   if (!Number.isFinite(n) || n < 0) return null;
   return Math.round(n * 100);
 }
@@ -90,7 +98,13 @@ function isoToDay(iso: string | null | undefined): string {
  * money moved.
  */
 function paymentFromStored(method: string | null, reference: string | null): PaymentMethodState {
-  const known = PAYMENT_METHODS.some((m) => m.value === method);
+  // PAYMENT_METHOD_CUSTOM is the UI's "reveal the text box" sentinel and is
+  // never stored (resolvePaymentMethod turns it into the typed text or into
+  // undefined). A row holding the literal string anyway — written by some other
+  // path — must not be treated as a known value: selecting Custom with an empty
+  // box round-trips to undefined and would erase how the money moved on the
+  // next save of an unrelated field.
+  const known = method !== PAYMENT_METHOD_CUSTOM && PAYMENT_METHODS.some((m) => m.value === method);
   return {
     method: method ? (known ? method : PAYMENT_METHOD_CUSTOM) : '',
     customMethod: method && !known ? method : '',
@@ -546,10 +560,18 @@ export function EditExpense({
  */
 export function MarkReimbursed({
   id,
+  payerId,
   payerName,
   amountCents,
 }: {
   id: string;
+  /**
+   * Sent back with the confirmation, together with the amount. The action
+   * settles ONLY a row that still matches both, so the click approves the
+   * figures this button was rendered with and not whatever the row says by the
+   * time the write lands.
+   */
+  payerId: string;
   payerName: string;
   amountCents: number;
 }) {
@@ -568,7 +590,7 @@ export function MarkReimbursed({
     if (!ok) return;
     startTransition(async () => {
       try {
-        await markExpenseReimbursed(id);
+        await markExpenseReimbursed(id, { amountCents, paidBy: payerId });
         toast(`Marked as reimbursed to ${payerName}`, 'success');
         router.refresh();
       } catch (err) {

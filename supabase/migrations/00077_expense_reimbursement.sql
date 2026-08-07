@@ -162,6 +162,37 @@ ALTER TABLE other_income  ADD COLUMN IF NOT EXISTS ref_no BIGINT GENERATED ALWAY
 CREATE UNIQUE INDEX IF NOT EXISTS idx_club_expenses_ref_no ON club_expenses (ref_no);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_other_income_ref_no  ON other_income  (ref_no);
 
+-- The identity sequences, granted to service_role explicitly.
+--
+-- For an IDENTITY column Postgres evaluates nextval() internally and does NOT
+-- require the inserting role to hold USAGE on the sequence — unlike a `serial`,
+-- which does. So this should be unnecessary. It is here anyway because the cost
+-- of being wrong is asymmetric: two harmless GRANTs against one failure mode
+-- where EVERY expense and income insert dies on a permission error, on a
+-- hand-applied migration, on a live console. 00076 changed default privileges
+-- schema-wide and is not in this repository, so "the defaults will cover it"
+-- cannot be checked from here.
+--
+-- Sequence USAGE only. This grants nothing 00076 revoked — that was TRUNCATE,
+-- REFERENCES and TRIGGER on TABLES — and nothing at all to anon or
+-- authenticated, who keep the REVOKE ALL that 00073 gave them.
+--
+-- pg_get_serial_sequence resolves the generated name rather than hard-coding
+-- club_expenses_ref_no_seq, which is only a convention.
+DO $$
+DECLARE
+  seq TEXT;
+BEGIN
+  FOREACH seq IN ARRAY ARRAY[
+    pg_get_serial_sequence('public.club_expenses', 'ref_no'),
+    pg_get_serial_sequence('public.other_income',  'ref_no')
+  ] LOOP
+    IF seq IS NOT NULL THEN
+      EXECUTE format('GRANT USAGE, SELECT ON SEQUENCE %s TO service_role', seq);
+    END IF;
+  END LOOP;
+END $$;
+
 COMMENT ON COLUMN club_expenses.ref_no IS
   'Human-readable reference, shown as EXP-0001 (see packages/shared/src/utils/finance-refs.ts — the padding lives in ONE place). Assigned by the database, never by the app, and never updated. Sequence-backed, so gaps are possible and it is NOT a count of anything.';
 COMMENT ON COLUMN other_income.ref_no IS

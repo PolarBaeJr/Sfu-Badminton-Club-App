@@ -252,6 +252,7 @@ export async function LedgerCard({
                   {isAdmin && !isIncome && row.paid_by && !row.reimbursed_at && (
                     <MarkReimbursed
                       id={row.id}
+                      payerId={row.paid_by}
                       payerName={nameOf(row.paid_by)!}
                       amountCents={row.amount_cents}
                     />
@@ -338,6 +339,7 @@ export async function LedgerCard({
                       {isAdmin && !isIncome && row.paid_by && !row.reimbursed_at && (
                         <MarkReimbursed
                           id={row.id}
+                          payerId={row.paid_by}
                           payerName={nameOf(row.paid_by)!}
                           amountCents={row.amount_cents}
                         />
