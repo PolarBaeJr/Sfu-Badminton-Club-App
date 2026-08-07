@@ -56,5 +56,27 @@ export function AutoGrowTextarea({
     if (ref.current) fitToContent(ref.current);
   }, [value]);
 
+  // Width changes re-wrap the text, which changes how tall it needs to be
+  // without changing `value` — so the effect above never fires. Rotating a
+  // phone, or crossing the 980px breakpoint where .settings-row stacks the
+  // label above a now full-width control, would otherwise leave the box at its
+  // old height and put the inner scrollbar back.
+  //
+  // Guarded on width because this observes the same element whose HEIGHT
+  // fitToContent writes: reacting to every resize would feed our own write
+  // back in as a fresh notification and loop.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    let lastWidth = el.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (el.clientWidth === lastWidth) return;
+      lastWidth = el.clientWidth;
+      fitToContent(el);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   return <Textarea ref={ref} value={value} {...props} />;
 }
