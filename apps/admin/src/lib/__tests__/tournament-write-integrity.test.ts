@@ -22,6 +22,10 @@ interface Fault {
 const store = vi.hoisted(() => ({
   db: {} as Record<string, Row[]>,
   faults: [] as Fault[],
+  // Stands in for `gen_random_uuid()`. Bracket generation inserts a match shell
+  // and immediately uses the id it gets back to wire up the next round, so an
+  // insert that returns no id cannot be exercised at all.
+  seq: 0,
 }));
 
 // Minimal PostgREST-shaped query builder: enough of select/eq/in/not/order/
@@ -94,8 +98,13 @@ const makeClient = vi.hoisted(() => () => {
       }
       if (op === 'insert') {
         const rows = Array.isArray(payload) ? (payload as Row[]) : [payload];
-        (store.db[table] ??= []).push(...rows.map((r) => ({ ...r })));
-        return { data: null, error: null };
+        // The id is spread FIRST so an explicit one in the payload wins, exactly
+        // as a DEFAULT does. Rows are returned rather than discarded because
+        // `.insert(...).select('id').single()` is how every match shell in the
+        // bracket generator is created.
+        const created = rows.map((r) => ({ id: `gen-${++store.seq}`, ...r }));
+        (store.db[table] ??= []).push(...created);
+        return { data: created, error: null };
       }
       if (op === 'delete') {
         store.db[table] = (store.db[table] ?? []).filter((r) => !matching().includes(r));
@@ -117,6 +126,16 @@ const makeClient = vi.hoisted(() => () => {
       async single() {
         const f = fault();
         if (f) return { data: null, error: { message: f.message } };
+        // `.insert(x).select('id').single()` is a WRITE that returns what it
+        // wrote. Reading the table instead — which is what this did — meant an
+        // insert issued that way never happened at all, and any code path built
+        // on the returned id was untestable.
+        if (op !== 'select') {
+          const res = run() as { data: Row[] | null; error: unknown };
+          if (res.error) return { data: null, error: res.error };
+          const created = res.data?.[0];
+          return { data: created ? embed(created) : null, error: null };
+        }
         const r = matching()[0];
         return { data: r ? embed(r) : null, error: null };
       },
@@ -347,6 +366,7 @@ import {
   enterMatchResult, editMatchResult, enterWalkover, voidMatch, undoMatchResult,
 } from '../tournament-actions/results';
 import { finalizeEvent, applyPlacementBonuses } from '../tournament-actions/finalize';
+import { generateSingleEliminationBracket } from '../tournament-actions/brackets';
 import { withdrawParticipant } from '../tournament-actions/participants';
 import {
   settleWrites, assertWritesSucceeded, reverseEloSnapshot, undoDecidedResult,
@@ -1515,6 +1535,86 @@ function seedFourDraw() {
     { ...shell(THIRD, 2), is_third_place: true },
   ];
 }
+
+// The tests below seed the finished draw by hand, which proves what the
+// CORRECTIVE actions do with it but says nothing about whether the generator
+// builds that shape. These two close that gap: everything after them is
+// checking a fixture that this describe block proves is real.
+describe('generating a draw with a third-place playoff', () => {
+  function seedField(n: number) {
+    store.db.tournament_matches = [];
+    store.db.tournament_participants = Array.from({ length: n }, (_, i) => ({
+      id: `p-${i}`, event_id: 'e1', player_id: `pl-${i}`, elo_before: 1500 - i * 10,
+      elo_after: null, elo_change: null, seed_number: i + 1,
+      final_position: null, points: null, status: 'checked_in',
+    }));
+    Object.assign(event(), { status: 'checkin', draw_locked: false });
+  }
+  const thirdPlaceMatches = () =>
+    store.db.tournament_matches!.filter((m) => m.is_third_place);
+  const roundOf = (n: number) =>
+    store.db.tournament_matches!
+      .filter((m) => m.round_number === n && !m.is_third_place)
+      .sort((a, b) => (a.bracket_position as number) - (b.bracket_position as number));
+
+  it('creates one playoff and points BOTH semi-finals at it, on distinct sides', async () => {
+    // The wiring the hand-seeded fixtures assume. If the generator read the
+    // wrong entry of matchesByRound, or gave both semi-finals the same
+    // loser_to_position, every other test here would still pass while the live
+    // draw sent one loser into a slot and then overwrote them with the other.
+    seedField(4);
+
+    expect((await generateSingleEliminationBracket('e1', true)).ok).toBe(true);
+
+    const playoffs = thirdPlaceMatches();
+    expect(playoffs).toHaveLength(1);
+    const playoff = playoffs[0]!;
+
+    const semis = roundOf(1);
+    expect(semis).toHaveLength(2);
+    expect(semis.map((m) => m.loser_to_match_id)).toEqual([playoff.id, playoff.id]);
+    expect(semis.map((m) => m.loser_to_position)).toEqual(['a', 'b']);
+    // Both semi-finals still feed the final with their winners.
+    const final = roundOf(2)[0]!;
+    expect(semis.map((m) => m.winner_to_match_id)).toEqual([final.id, final.id]);
+
+    // The playoff feeds NOTHING. A winner_to_match_id here is the bug the whole
+    // UI treatment exists to avoid claiming.
+    expect(playoff.winner_to_match_id).toBeNull();
+    expect(playoff.winner_to_position).toBeNull();
+    // Scheduled alongside the final — same round, its own bracket position.
+    expect(playoff.round_number).toBe(final.round_number);
+    expect(playoff.bracket_position).not.toBe(final.bracket_position);
+    expect(playoff.round_name).toBe('3rd Place Playoff');
+    // Numbered after the final, so the final keeps the number it would have had
+    // without this feature.
+    expect(playoff.match_number as number).toBeGreaterThan(final.match_number as number);
+  });
+
+  it('builds the ordinary draw untouched when the playoff is not asked for', async () => {
+    seedField(4);
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    expect(thirdPlaceMatches()).toHaveLength(0);
+    expect(roundOf(1).every((m) => m.loser_to_match_id === null || m.loser_to_match_id === undefined)).toBe(true);
+    expect(store.db.tournament_matches).toHaveLength(3);
+  });
+
+  it('skips the playoff on a 2-entry draw rather than failing the generation', async () => {
+    // A 2-entry draw is a final and nothing else: there is no semi-final round
+    // to lose. Refusing the whole generation over a ticked box would leave the
+    // exec with no draw at all, so the skip is recorded in the audit instead.
+    seedField(2);
+
+    expect((await generateSingleEliminationBracket('e1', true)).ok).toBe(true);
+
+    expect(thirdPlaceMatches()).toHaveLength(0);
+    expect(store.db.tournament_matches).toHaveLength(1);
+    const audit = store.db.tournament_audit_log!.find((r) => r.action === 'bracket_generated')!;
+    expect((audit.details as Row).third_place_match).toBe('skipped_no_semi_finals');
+  });
+});
 
 describe('third-place playoff', () => {
   beforeEach(seedFourDraw);
