@@ -160,12 +160,22 @@ export async function addParticipantsToEvent(eventId: string, playerIds: string[
   // Capacity, counted once against the WHOLE batch rather than re-read per
   // player. Everyone past the line is refused with the same sentence the
   // sequential path used, so a partial add still reads the same way.
+  // Every read below is checked. In a per-player loop a swallowed error costs one
+  // player; here the same swallow applies the wrong answer to the whole
+  // selection, so "the query failed" must not be allowed to read as "the number
+  // is zero" or "nobody has a rating".
   if (event.max_participants) {
-    const { count } = await adminClient.from('tournament_participants')
+    const { count, error: countError } = await adminClient.from('tournament_participants')
       .select('*', { count: 'exact', head: true })
       .eq('event_id', eventId)
       .not('status', 'eq', 'withdrawn');
-    const room = Math.max(event.max_participants - (count ?? 0), 0);
+    // A failed count reads as null, and `max - 0` is the FULL cap: the batch
+    // would then be waved past a nearly full event in one go.
+    if (countError || count === null) {
+      if (countError) Sentry.captureException(countError);
+      throw new Error('Could not check how full this event is. Nothing was added — try again.');
+    }
+    const room = Math.max(event.max_participants - count, 0);
     if (candidates.length > room) {
       for (const id of candidates.slice(room)) failures.push({ id, message: 'Event is full' });
       candidates = candidates.slice(0, room);
@@ -175,10 +185,14 @@ export async function addParticipantsToEvent(eventId: string, playerIds: string[
   if (candidates.length === 0) return { added: [], failures };
 
   // elo_before is stamped at registration, so every candidate needs a rating.
-  const { data: ratingRows } = await adminClient
+  const { data: ratingRows, error: ratingsReadError } = await adminClient
     .from('ratings')
     .select('player_id, singles_elo')
     .in('player_id', candidates);
+  if (ratingsReadError) {
+    Sentry.captureException(ratingsReadError);
+    throw new Error('Could not read player ratings. Nothing was added — try again.');
+  }
   const eloByPlayer = new Map<string, number>(
     (ratingRows ?? []).map((r) => [r.player_id as string, r.singles_elo as number]),
   );
@@ -188,7 +202,10 @@ export async function addParticipantsToEvent(eventId: string, playerIds: string[
   // behaviour, not a place to correct it.
   const missing = candidates.filter((id) => !eloByPlayer.has(id));
   if (missing.length > 0) {
-    const { data: created } = await adminClient.from('ratings').insert(
+    // upsert, not insert: ratings.player_id is unique, and somebody registering
+    // the same player elsewhere between the read above and this write would
+    // otherwise raise 23505 and reject the ratings for all sixty.
+    const { error: ratingsWriteError } = await adminClient.from('ratings').upsert(
       missing.map((id) => ({
         player_id: id,
         singles_elo: 400,
@@ -198,8 +215,36 @@ export async function addParticipantsToEvent(eventId: string, playerIds: string[
         singles_k_factor: 40,
         doubles_k_factor: 40,
       })),
-    ).select('player_id, singles_elo');
-    for (const r of created ?? []) eloByPlayer.set(r.player_id as string, r.singles_elo as number);
+      { onConflict: 'player_id', ignoreDuplicates: true },
+    );
+    if (ratingsWriteError) {
+      Sentry.captureException(ratingsWriteError);
+      throw new Error('Could not create ratings for these players. Nothing was added — try again.');
+    }
+
+    // Read back rather than trusting what was written: ignoreDuplicates returns
+    // nothing for a row that already existed, and that row's real Elo is the one
+    // that belongs in elo_before.
+    const { data: filled, error: refetchError } = await adminClient
+      .from('ratings')
+      .select('player_id, singles_elo')
+      .in('player_id', missing);
+    if (refetchError) {
+      Sentry.captureException(refetchError);
+      throw new Error('Could not read the ratings that were just created. Nothing was added — try again.');
+    }
+    for (const r of filled ?? []) eloByPlayer.set(r.player_id as string, r.singles_elo as number);
+  }
+
+  // Refuse rather than fall back to 400. A participant stamped with a made-up
+  // elo_before and no ratings row registers cleanly and then fails at the point
+  // somebody tries to score their match, which is the worst possible moment to
+  // find out.
+  const unrated = candidates.filter((id) => !eloByPlayer.has(id));
+  if (unrated.length > 0) {
+    throw new Error(
+      `${unrated.length} of these players still have no rating record. Nothing was added — try again.`,
+    );
   }
 
   const { data: inserted, error } = await adminClient.from('tournament_participants').insert(
@@ -229,8 +274,14 @@ export async function addParticipantsToEvent(eventId: string, playerIds: string[
   // One row per player, same shape as the single-player path writes, in one
   // statement. Collapsing the batch into a single row with a list would change
   // what `details.player_id` means for everything that reads this table.
+  //
+  // Reported but NOT thrown: the participants are already committed, so failing
+  // the action here would tell the exec nothing was added when sixty people
+  // were. A missing audit row is a real loss, which is why it goes to Sentry
+  // rather than nowhere — one bad statement now costs the whole batch's trail,
+  // not one row's.
   if (added.length > 0) {
-    await adminClient.from('tournament_audit_log').insert(
+    const { error: auditError } = await adminClient.from('tournament_audit_log').insert(
       added.map((id) => ({
         tournament_id: event.tournament_id,
         event_id: eventId,
@@ -240,6 +291,7 @@ export async function addParticipantsToEvent(eventId: string, playerIds: string[
         details: { player_id: id },
       })),
     );
+    if (auditError) Sentry.captureException(auditError);
   }
 
   revalidateEventPaths(event.tournament_id, eventId);
@@ -288,8 +340,14 @@ export async function checkInParticipant(participantId: string) {
     .eq('id', participantId)
     .single();
 
+  // Refuse BEFORE writing rather than pressing on without it. This context is
+  // what names the paths to revalidate, and the page no longer calls
+  // router.refresh() as a second chance — so a check-in that reached here
+  // without it would update the row and leave the desk staring at a screen that
+  // still says the player is waiting.
   const participantCtx = extractEventContext(participant);
-  if (participantCtx) await assertTournamentNotSuspended(adminClient, participantCtx.tid);
+  if (!participantCtx) throw new Error('Could not read this participant. Nothing was changed — try again.');
+  await assertTournamentNotSuspended(adminClient, participantCtx.tid);
 
   const { error } = await adminClient.from('tournament_participants')
     .update({
@@ -304,10 +362,7 @@ export async function checkInParticipant(participantId: string) {
     throw new Error(error.message);
   }
 
-  if (participant) {
-    const tournamentId = (participant.event as unknown as { tournament_id: string } | null)?.tournament_id;
-    if (tournamentId) revalidateEventPaths(tournamentId, participant.event_id as string);
-  }
+  revalidateEventPaths(participantCtx.tid, participantCtx.eventId);
 }
 
 export async function markParticipantNoShow(participantId: string) {
@@ -620,8 +675,13 @@ export async function bulkCheckIn(eventId: string, type: 'participants' | 'pairs
 
   const table = type === 'pairs' ? 'tournament_pairs' : 'tournament_participants';
 
+  // Read the event BEFORE the update and refuse without it — same reason as
+  // checkInParticipant. Checking in a whole field and leaving the board showing
+  // everyone as waiting is the failure this is guarding against, and there is no
+  // router.refresh() behind it any more.
   const { data: event } = await adminClient.from('tournament_events').select('tournament_id').eq('id', eventId).single();
-  if (event) await assertTournamentNotSuspended(adminClient, event.tournament_id);
+  if (!event) throw new Error('Could not read this event. Nobody was checked in — try again.');
+  await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
   const { error } = await adminClient.from(table)
     .update({
@@ -637,5 +697,5 @@ export async function bulkCheckIn(eventId: string, type: 'participants' | 'pairs
     throw new Error(error.message);
   }
 
-  if (event) revalidateEventPaths(event.tournament_id, eventId);
+  revalidateEventPaths(event.tournament_id, eventId);
 }

@@ -34,6 +34,8 @@ const PLAYOFF_CAPTION_H = 46;     // heading + explanatory line under the playof
 /** Zoom stops, smallest first. 1 is always in the list so "actual size" exists. */
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 1;
+/** Below this, a card's action strip is too small to press. Bounds the DEFAULT only. */
+const ZOOM_USABLE_FLOOR = 0.5;
 
 /** Vertical centre of match `idx` in the round at 0-based depth `depth`. */
 function cardCentre(depth: number, idx: number) {
@@ -195,7 +197,14 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
   // Never magnify: a four-player draw blown up to fill a monitor looks broken,
   // and the point of this control is only to bring a big draw back into view.
   const fitZoom = viewportW > 0 ? Math.min(1, Math.max(ZOOM_MIN, viewportW / naturalW)) : 1;
-  const zoom = userZoom ?? fitZoom;
+
+  // The DEFAULT will not go below half size, even though the control will. A
+  // 128-slot draw fitted to a phone lands at 25%, which turns the 26px "Enter
+  // Score" strip into a 6px target — the bracket is on screen and none of it can
+  // be used. Below the floor, open at the scale the cards were designed for and
+  // let the reader scroll, which is what the page did before this control
+  // existed. Fit width is still one press away.
+  const zoom = userZoom ?? (fitZoom < ZOOM_USABLE_FLOOR ? 1 : fitZoom);
 
   return (
     <>
@@ -243,7 +252,15 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
             // the column body. Derived, not tuned: change PITCH or CARD_H and
             // the line still lands on both.
             const lastCardBottom = cardCentre(depth, roundMatches.length - 1) + CARD_H / 2;
-            const riserH = Math.max(bracketH - lastCardBottom, CARD_GAP);
+            // How much empty column there already is under the last semi-final.
+            // In a FOUR-entry draw the semi-finals are the first round, so the
+            // last card ends exactly at the foot of the column and this is zero
+            // — a riser drawn upward from there would be painted straight
+            // through that card's footer. Whatever is missing is added as real
+            // space below instead, so the line always has somewhere to live.
+            const slack = Math.max(bracketH - lastCardBottom, 0);
+            const riserH = Math.max(slack, CARD_GAP);
+            const extraGap = riserH - slack;
             // Elbows are only meaningful when the next round is exactly half the
             // size of this one; anything else means the bracket data is odd and
             // a guessed line would point at the wrong card.
@@ -281,7 +298,7 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                   </div>
 
                   {isSemiRound && thirdPlace && (
-                    <div className="relative" style={{ width: COL_W }}>
+                    <div className="relative" style={{ width: COL_W, marginTop: extraGap }}>
                       {/* Dashed, and dropping out of the semi-finals rather than
                           running through the gutter: a solid elbow like the ones
                           between rounds means "the winner advances to here", and
