@@ -96,6 +96,15 @@ const makeClient = vi.hoisted(() => () => {
         if (res.error) return { data: null, error: res.error };
         return { data: res.data?.[0] ?? null, error: null };
       },
+      // Same shape as single() here: the distinction that matters to PostgREST
+      // — no row is an error vs no row is null — is not what these tests
+      // exercise, and a builder that simply lacks the method turns a production
+      // call into "undefined is not a function" three layers down.
+      async maybeSingle() {
+        const res = run();
+        if (res.error) return { data: null, error: res.error };
+        return { data: res.data?.[0] ?? null, error: null };
+      },
       then(resolve: (v: unknown) => unknown) { return Promise.resolve(run()).then(resolve); },
     };
     return api;
