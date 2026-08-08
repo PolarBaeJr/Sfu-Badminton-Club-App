@@ -29,7 +29,10 @@ const LINK_W = 40;                // width of the connector gutter between round
 const HEAD_H = 34;                // round heading block; keeps gutters in step
 const META_H = 20;                // card meta strip (match number / court)
 const FOOT_H = 26;                // card footer strip (status / score button)
-const PLAYOFF_CAPTION_H = 46;     // heading + explanatory line under the playoff card
+// Heading + the explanatory sentence under the playoff card. Measured for the
+// sentence WRAPPING to three lines at COL_W, not for one line: this number only
+// feeds the scroll box's height, and being short by a line clips the caption.
+const PLAYOFF_CAPTION_H = 72;
 
 /** Zoom stops, smallest first. 1 is always in the list so "actual size" exists. */
 const ZOOM_MIN = 0.25;
@@ -192,7 +195,24 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
   // The playoff block hangs off the bottom of the semi-final column, so it adds
   // to the height without adding a column.
   const naturalW = columns.length * COL_W + Math.max(columns.length - 1, 0) * LINK_W;
-  const naturalH = HEAD_H + bracketH + (thirdPlace && columns.length >= 2 ? CARD_H + PLAYOFF_CAPTION_H : 0);
+
+  // How much empty column there is under the LAST semi-final card. In a
+  // four-entry draw the semi-finals ARE the first round, so the last card ends
+  // exactly at the foot of the column and this is zero — a riser drawn upward
+  // from there would be painted through that card's footer. Whatever is missing
+  // is added as real space below instead (extraGap), and the box has to be tall
+  // enough to hold it or the caption is cut off.
+  const semiDepth = columns.length - 2;
+  const semiCol = semiDepth >= 0 ? columns[semiDepth] : undefined;
+  const semiSlack = semiCol
+    ? Math.max(bracketH - (cardCentre(semiDepth, semiCol.matches.length - 1) + CARD_H / 2), 0)
+    : 0;
+  const playoffRiserH = Math.max(semiSlack, CARD_GAP);
+  const playoffExtraGap = playoffRiserH - semiSlack;
+
+  const naturalH =
+    HEAD_H + bracketH +
+    (thirdPlace && columns.length >= 2 ? playoffExtraGap + CARD_H + PLAYOFF_CAPTION_H : 0);
 
   // Never magnify: a four-player draw blown up to fill a monitor looks broken,
   // and the point of this control is only to bring a big draw back into view.
@@ -251,16 +271,10 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
             // card and ends where the playoff card begins, which is the foot of
             // the column body. Derived, not tuned: change PITCH or CARD_H and
             // the line still lands on both.
-            const lastCardBottom = cardCentre(depth, roundMatches.length - 1) + CARD_H / 2;
-            // How much empty column there already is under the last semi-final.
-            // In a FOUR-entry draw the semi-finals are the first round, so the
-            // last card ends exactly at the foot of the column and this is zero
-            // — a riser drawn upward from there would be painted straight
-            // through that card's footer. Whatever is missing is added as real
-            // space below instead, so the line always has somewhere to live.
-            const slack = Math.max(bracketH - lastCardBottom, 0);
-            const riserH = Math.max(slack, CARD_GAP);
-            const extraGap = riserH - slack;
+            // Geometry for the playoff drop is computed once, above, because
+            // naturalH needs the same numbers to size the scroll box.
+            const riserH = playoffRiserH;
+            const extraGap = playoffExtraGap;
             // Elbows are only meaningful when the next round is exactly half the
             // size of this one; anything else means the bracket data is odd and
             // a guessed line would point at the wrong card.
