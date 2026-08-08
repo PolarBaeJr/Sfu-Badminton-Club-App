@@ -838,14 +838,29 @@ export async function recordWalkover(
     await undoDecidedResult(adminClient, matchId, match, err);
   }
 
-  if (winnerId) await advanceWinner(adminClient, match, doubles, winnerId, enteredBy);
+  // 'skip', not 'refuse': this is also the withdrawal cascade's path, and it is
+  // looping over one player's open matches. A throw here would leave the
+  // forfeits it already committed with the rest undone.
+  if (winnerId) await advanceWinner(adminClient, match, doubles, winnerId, enteredBy, 'skip');
   // A forfeited semi-final still produces a loser, and they still belong in the
   // third-place playoff — where settleAdvancedMatch will notice they have
   // withdrawn (that is usually WHY this was a walkover) and forfeit that match
   // to the other semi-finalist once both slots are filled. Skipping the route
   // here instead would leave the playoff permanently half-empty.
-  await advanceLoser(adminClient, match, doubles, loserId, enteredBy);
+  await advanceLoser(adminClient, match, doubles, loserId, enteredBy, 'skip');
 }
+
+/**
+ * What to do when the match we would advance INTO has already been decided.
+ *
+ * 'refuse' is for a human entering a result: they are about to be told their
+ * bracket cannot absorb this, and stopping is the only honest answer.
+ *
+ * 'skip' is for the withdrawal cascade, which loops over one player's open
+ * matches. Throwing there would leave the forfeits it had already committed
+ * with the rest undone, which is a worse draw than the one it was repairing.
+ */
+type DecidedTargetPolicy = 'refuse' | 'skip';
 
 /**
  * Move `entryId` into the match this one feeds along `route`, then decide that
@@ -860,9 +875,39 @@ async function routeEntry(
   entryId: string,
   enteredBy: string,
   route: MatchRoute,
+  onDecided: DecidedTargetPolicy,
 ) {
   const target = routeOf(match, route);
   if (!target) return;
+
+  // Read the target BEFORE touching it. A decided match must not have a slot
+  // rewritten underneath its result: that is the corruption at the end of
+  // void -> hand-place a substitute -> play the downstream -> restore and
+  // replay. The slot write used to happen first and settleAdvancedMatch then
+  // dragged a completed, rated match back to `ready`; re-entering it kept the
+  // old snapshot, so the new occupants were never rated while the old ones kept
+  // the delta.
+  const { data: targetRow } = await adminClient.from('tournament_matches')
+    .select('status')
+    .eq('id', target.nextId)
+    .single();
+
+  const targetStatus = targetRow?.status as string | undefined;
+  if (targetStatus && targetStatus !== 'pending' && targetStatus !== 'ready') {
+    if (onDecided === 'refuse') {
+      throw new ExpectedError(
+        'The next match has already been played, so this result cannot be advanced into it. ' +
+        'Void or undo that match first, then enter this one again.',
+      );
+    }
+    // The withdrawal cascade must not stop half way — it is looping over one
+    // player's open matches and the ones already forfeited are committed. Leave
+    // the decided match alone and record that the draw needs a human.
+    Sentry.captureException(new Error(
+      `Could not advance into match ${target.nextId}: it is already ${targetStatus}. The draw may need manual repair.`,
+    ));
+    return;
+  }
 
   await adminClient.from('tournament_matches')
     .update({ [entrySideField(target.side, doubles)]: entryId })
@@ -877,8 +922,9 @@ export async function advanceWinner(
   doubles: boolean,
   winnerId: string,
   enteredBy: string,
+  onDecided: DecidedTargetPolicy = 'refuse',
 ) {
-  await routeEntry(adminClient, match, doubles, winnerId, enteredBy, 'winner');
+  await routeEntry(adminClient, match, doubles, winnerId, enteredBy, 'winner', onDecided);
 }
 
 /**
@@ -903,9 +949,10 @@ export async function advanceLoser(
   doubles: boolean,
   loserId: string | null,
   enteredBy: string,
+  onDecided: DecidedTargetPolicy = 'refuse',
 ) {
   if (!loserId) return;
-  await routeEntry(adminClient, match, doubles, loserId, enteredBy, 'loser');
+  await routeEntry(adminClient, match, doubles, loserId, enteredBy, 'loser', onDecided);
 }
 
 /**
@@ -950,30 +997,17 @@ async function settleAdvancedMatch(
     return;
   }
 
-  // Only a match that has NOT been decided may be moved to ready.
-  //
-  // Without the condition this was the last step of a sequence that silently
-  // destroyed a result: void a quarter-final (allowed — the semi below it was
-  // undecided at the time), put a substitute into the semi by hand, play the
-  // semi, then restore the quarter-final and replay it. Routing overwrites the
-  // semi's slot, and this line then dragged a COMPLETED, rated semi-final back
-  // to `ready`. Re-entering it kept the old snapshot, so the new occupants were
-  // never rated while the old ones kept the delta.
-  //
-  // Refusing here rather than earlier is deliberate: this is the one place that
-  // every advancement path funnels through, so a guard here cannot be bypassed
-  // by a caller that forgot it.
-  const { count } = await adminClient.from('tournament_matches')
-    .update({ status: 'ready' }, { count: 'exact' })
+  // Belt and braces: never drag a DECIDED match back to ready. routeEntry
+  // refuses to write into a decided target before it gets here, so this should
+  // be unreachable — but this is the single line that every advancement path
+  // funnels through, and it was the last step of a sequence that silently
+  // destroyed a result (see routeEntry). Silent rather than throwing: the
+  // withdrawal cascade calls this in a loop, and one throw mid-loop would leave
+  // half the forfeits committed.
+  await adminClient.from('tournament_matches')
+    .update({ status: 'ready' })
     .eq('id', matchId)
     .in('status', ['pending', 'ready']);
-
-  if (count === 0) {
-    throw new ExpectedError(
-      'The next match has already been played, so this result cannot be advanced into it. ' +
-      'Void or undo that match first, then try again.',
-    );
-  }
 }
 
 /**
