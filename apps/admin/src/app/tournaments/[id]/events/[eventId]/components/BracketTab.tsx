@@ -123,10 +123,11 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
   // two matches feed that one". `canLink` would refuse to draw the elbows
   // (2 !== 1 * 2), so the SEMI-FINALS would silently lose their connectors too,
   // and the playoff would still look like a second final. So it stays out of the
-  // column data and is drawn by hand below the semi-finals instead (see
-  // `isSemiRound`), hanging off a dashed line: near enough to read as part of
-  // the bracket, drawn differently enough to read as a branch rather than the
-  // path to the title.
+  // column data and is drawn by hand under the FINAL instead (see
+  // `hangsPlayoff`) — it is played on finals day and it is the other match that
+  // ends someone's tournament — on a dashed elbow reaching back to the
+  // semi-finals that feed it: near enough to read as part of the bracket, drawn
+  // differently enough to read as a branch rather than the path to the title.
   const thirdPlace = matches.find((m) => m.is_third_place) ?? null;
   const allMatches = matches.filter((m) => !m.is_third_place);
   const isLive = event.status === 'live' || event.status === 'bracket_generated';
@@ -207,13 +208,23 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
   // from there would be painted through that card's footer. Whatever is missing
   // is added as real space below instead (extraGap), and the box has to be tall
   // enough to hold it or the caption is cut off.
+  // The playoff card sits under the FINAL — it is decided on finals day and it
+  // is the other match that ends someone's tournament, so it belongs in the
+  // last column rather than tucked under the round that feeds it. The dashed
+  // connector still comes from the SEMI-FINALS, because that is who plays in it,
+  // and it is drawn as an elbow reaching back across the gutter.
+  const finalDepth = columns.length - 1;
   const semiDepth = columns.length - 2;
   const semiCol = semiDepth >= 0 ? columns[semiDepth] : undefined;
+  // Empty column under the last semi-final card, which is where the elbow turns.
   const semiSlack = semiCol
     ? Math.max(bracketH - (cardCentre(semiDepth, semiCol.matches.length - 1) + CARD_H / 2), 0)
     : 0;
-  const playoffRiserH = Math.max(semiSlack, CARD_GAP);
-  const playoffExtraGap = playoffRiserH - semiSlack;
+  const playoffExtraGap = Math.max(CARD_GAP - semiSlack, 0);
+  // Vertical drop, measured from the playoff card's own top edge back up to the
+  // bottom of the last semi-final. Both columns share the same body height, so
+  // this is the same number in either.
+  const playoffRiserH = semiSlack + playoffExtraGap;
 
   const naturalH =
     HEAD_H + bracketH +
@@ -271,7 +282,7 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
             // i.e. the column immediately before the final. Guarded on there
             // actually being one: a two-entry event has a final and nothing
             // else, and there is nothing to hang it from.
-            const isSemiRound = !!thirdPlace && columns.length >= 2 && depth === columns.length - 2;
+            const hangsPlayoff = !!thirdPlace && columns.length >= 2 && depth === finalDepth;
             // The dashed drop starts at the bottom edge of the last semi-final
             // card and ends where the playoff card begins, which is the foot of
             // the column body. Derived, not tuned: change PITCH or CARD_H and
@@ -316,16 +327,33 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                     ))}
                   </div>
 
-                  {isSemiRound && thirdPlace && (
+                  {hangsPlayoff && thirdPlace && (
                     <div className="relative" style={{ width: COL_W, marginTop: extraGap }}>
-                      {/* Dashed, and dropping out of the semi-finals rather than
-                          running through the gutter: a solid elbow like the ones
-                          between rounds means "the winner advances to here", and
-                          this match is fed by the LOSERS and leads nowhere. */}
+                      {/* An elbow reaching BACK to the semi-finals, drawn dashed.
+                          The card sits under the final because that is when it is
+                          played, but the final does not feed it — the two beaten
+                          semi-finalists do, and a line down from the final would
+                          say the opposite. Dashed rather than solid for the same
+                          reason the round connectors are solid: those mean "the
+                          winner advances to here", and this match leads nowhere.
+
+                          Negative left reaches into the gutter and the semi-final
+                          column; nothing clips it, and every offset comes from the
+                          same constants the round elbows use. */}
+                      <span
+                        aria-hidden="true"
+                        className="absolute border-t border-dashed border-[var(--border-hover)]"
+                        style={{ left: -(LINK_W / 2), top: CARD_H / 2, width: LINK_W / 2 }}
+                      />
                       <span
                         aria-hidden="true"
                         className="absolute border-l border-dashed border-[var(--border-hover)]"
-                        style={{ left: COL_W / 2, top: -riserH, height: riserH }}
+                        style={{ left: -(LINK_W / 2), top: -riserH, height: riserH + CARD_H / 2 }}
+                      />
+                      <span
+                        aria-hidden="true"
+                        className="absolute border-t border-dashed border-[var(--border-hover)]"
+                        style={{ left: -(LINK_W / 2) - COL_W / 2, top: -riserH, width: COL_W / 2 }}
                       />
                       <MatchCard
                         m={thirdPlace}
