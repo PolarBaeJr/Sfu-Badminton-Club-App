@@ -257,38 +257,35 @@ export async function applyPlacementBonuses(eventId: string) {
   revalidateEventPaths(event.tournament_id, eventId);
 }
 
-export async function finalizeEvent(eventId: string) {
-  const admin = await getExecOrAdmin();
-  const adminClient = createAdminClient();
-
-  const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
-  if (!event) throw new Error('Event not found');
-  if (event.status !== 'live') throw new Error('Event must be live to finalize');
-  await assertTournamentNotSuspended(adminClient, event.tournament_id);
-
-  const doubles = isDoublesEvent(event.event_type);
-
-  // Check all matches are complete — single query selects all incomplete rows
-  // with the participant fields we need to filter unused bracket slots in memory.
-  const { data: incompleteMatches } = await adminClient.from('tournament_matches')
-    .select('id, participant_a_id, participant_b_id, pair_a_id, pair_b_id')
-    .eq('event_id', eventId)
-    .not('status', 'in', '("completed","walkover","voided","bye")')
-    .not('is_bye', 'eq', true);
-
-  const realIncomplete = (incompleteMatches ?? []).filter(m => {
-    return doubles
-      ? (m.pair_a_id || m.pair_b_id)
-      : (m.participant_a_id || m.participant_b_id);
-  });
-
-  if (realIncomplete.length > 0) {
-    throw new Error(`${realIncomplete.length} match(es) still incomplete`);
-  }
-
-  // Assign final positions based on tournament format. We compute the full
-  // (id → position) map in memory then issue one parallel batch of UPDATEs.
-  const table = doubles ? 'tournament_pairs' : 'tournament_participants';
+/**
+ * Work out final positions and tournament points from the draw as it stands,
+ * and write them.
+ *
+ * Extracted from finalizeEvent so a CORRECTION can redo it. Correcting a
+ * finalised event fixes the match and the ratings, and used to leave the
+ * standings frozen at whatever finalisation computed — the old champion kept
+ * first place, 100 points and the trophy while the bracket named someone else.
+ * The dialog's advice was to "adjust those by hand", which is not a thing the
+ * console can do: there is no editor for final_position or points.
+ *
+ * Both writes are absolute and derived entirely from the finished bracket, so
+ * running this again is idempotent — that is what makes it safe to re-run on a
+ * completed event.
+ *
+ * Placement BONUSES are deliberately not touched here. They were paid into the
+ * players' ratings and there is no reversal for them, so redoing placements
+ * cannot quietly redo the money; recomputeEventStandings reports when a
+ * placement moved under a paid bonus and leaves that for a human.
+ */
+async function assignPositionsAndPoints(
+  adminClient: ReturnType<typeof createAdminClient>,
+  event: Record<string, unknown>,
+  eventId: string,
+  doubles: boolean,
+  table: string,
+): Promise<Map<string, number>> {
+  // Positions first: the full (id → position) map is built in memory, then
+  // written as one parallel batch of UPDATEs.
   const positionMap = new Map<string, number>();
 
   if (event.format === 'single_elimination') {
@@ -453,6 +450,99 @@ export async function finalizeEvent(eventId: string) {
     // Also absolute, also before the status flip, for the same reason.
     assertWritesSucceeded('Assigning tournament points', failures);
   }
+  return positionMap;
+}
+
+/**
+ * Redo a finalised event's standings after its results were corrected.
+ *
+ * Called automatically by the corrective actions, so nobody has to remember.
+ * Positions and points are absolute writes derived from the finished bracket,
+ * so this is idempotent and safe to run whenever a completed event changes.
+ *
+ * Returns the placements that MOVED, and whether any of them had already been
+ * paid a placement bonus. Bonuses are not redone: they were added straight into
+ * the players' ratings and there is no reversal for them, so quietly paying a
+ * new champion (and not unpaying the old one) would be worse than saying so.
+ */
+export async function recomputeEventStandings(eventId: string): Promise<{
+  moved: Array<{ id: string; from: number | null; to: number }>;
+  bonusesAlreadyPaid: boolean;
+}> {
+  const adminClient = createAdminClient();
+
+  const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
+  if (!event) throw new Error('Event not found');
+  // Only a finished event has standings to redo. A live one gets them when it
+  // is finalised.
+  if (event.status !== 'completed') return { moved: [], bonusesAlreadyPaid: false };
+
+  const doubles = isDoublesEvent(event.event_type);
+  const table = doubles ? 'tournament_pairs' : 'tournament_participants';
+
+  const { data: before } = await adminClient.from(table)
+    .select('id, final_position')
+    .eq('event_id', eventId);
+  const previous = new Map<string, number | null>(
+    (before ?? []).map(r => [r.id as string, (r.final_position ?? null) as number | null]),
+  );
+
+  const positionMap = await assignPositionsAndPoints(adminClient, event, eventId, doubles, table);
+
+  const moved: Array<{ id: string; from: number | null; to: number }> = [];
+  for (const [id, to] of positionMap) {
+    const from = previous.get(id) ?? null;
+    if (from !== to) moved.push({ id, from, to });
+  }
+
+  const ledger = await readBonusLedger(adminClient, eventId);
+  const bonusesAlreadyPaid = ledger.ratedPlayers.size > 0 || ledger.creditedParticipants.size > 0;
+
+  if (moved.length > 0) {
+    await logAudit(adminClient, {
+      tournament_id: event.tournament_id,
+      event_id: eventId,
+      action: 'standings_recomputed',
+      performed_by: (await getExecOrAdmin()).id,
+      details: { moved, bonuses_already_paid: bonusesAlreadyPaid },
+    });
+  }
+
+  revalidateEventPaths(event.tournament_id, eventId);
+  return { moved, bonusesAlreadyPaid };
+}
+
+export async function finalizeEvent(eventId: string) {
+  const admin = await getExecOrAdmin();
+  const adminClient = createAdminClient();
+
+  const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
+  if (!event) throw new Error('Event not found');
+  if (event.status !== 'live') throw new Error('Event must be live to finalize');
+  await assertTournamentNotSuspended(adminClient, event.tournament_id);
+
+  const doubles = isDoublesEvent(event.event_type);
+
+  // Check all matches are complete — single query selects all incomplete rows
+  // with the participant fields we need to filter unused bracket slots in memory.
+  const { data: incompleteMatches } = await adminClient.from('tournament_matches')
+    .select('id, participant_a_id, participant_b_id, pair_a_id, pair_b_id')
+    .eq('event_id', eventId)
+    .not('status', 'in', '("completed","walkover","voided","bye")')
+    .not('is_bye', 'eq', true);
+
+  const realIncomplete = (incompleteMatches ?? []).filter(m => {
+    return doubles
+      ? (m.pair_a_id || m.pair_b_id)
+      : (m.participant_a_id || m.participant_b_id);
+  });
+
+  if (realIncomplete.length > 0) {
+    throw new Error(`${realIncomplete.length} match(es) still incomplete`);
+  }
+
+  const table = doubles ? 'tournament_pairs' : 'tournament_participants';
+  const positionMap = await assignPositionsAndPoints(adminClient, event, eventId, doubles, table);
 
   // Set event to completed. Checked: throwing on the two batches above buys
   // nothing if the flip that ends the event can itself be lost silently.

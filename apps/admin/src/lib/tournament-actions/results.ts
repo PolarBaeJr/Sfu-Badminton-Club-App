@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { runAction, type ActionResult } from '../action-result';
+import { recomputeEventStandings } from './finalize';
 import { isDoublesEvent, getEventRules, describeMatchShape, isLegalGameScore, isLegalGameCount, ExpectedError } from '@badminton/shared';
 import type { TournamentEventType, TournamentMatchFormat, EventMatchShape } from '@badminton/shared';
 import {
@@ -1129,17 +1130,33 @@ async function editMatchResultImpl(
       old_match_status: match.status,
       new_match_status: becomesPlayed ? 'completed' : match.status,
       reversed_elo: reversedElo,
-      // Ratings, statistics and the reliability count ARE corrected above.
-      // final_position, points and any placement bonus are NOT: finalizeEvent
-      // refuses anything that is not live, so there is no second run to be had,
-      // and applyPlacementBonuses is read-modify-write — re-running it would
-      // award every bonus on the event a second time (see readBonusLedger).
-      // Recorded rather than silently accepted, because on a completed event
-      // this is the one thing the correction does not fix.
-      standings_recomputed: false,
+      // Positions and points ARE redone now (see below); placement bonuses are
+      // not, because they were added straight into the players' ratings and
+      // there is no reversal for them.
+      standings_recomputed: event.status === 'completed',
       event_was_finalised: event.status === 'completed',
     },
   });
+
+  // Redo the standings the correction just invalidated.
+  //
+  // This used to be recorded as `standings_recomputed: false` and left there,
+  // with the dialog telling the exec to "adjust those by hand" — which the
+  // console cannot do: there is no editor for final_position or points. So a
+  // corrected final left the old champion holding first place, 100 points and
+  // the trophy while the bracket named somebody else.
+  //
+  // No-ops on an event that is not completed. Deliberately AFTER the audit row,
+  // so the correction is on record even if this throws.
+  const standings = await recomputeEventStandings(match.event_id as string);
+  if (standings.moved.length > 0 && standings.bonusesAlreadyPaid) {
+    // Positions and points are already fixed at this point — this is not a
+    // failure, it is the one part a human still has to settle.
+    throw new ExpectedError(
+      `The result was corrected and the final positions and points have been recalculated, but ${standings.moved.length} placing changed on an event whose placement bonuses were already paid. ` +
+      'Those bonuses went straight into the players\' ratings and nothing here can take them back — adjust them from Ratings if they matter.',
+    );
+  }
 
   revalidateEventPaths(event.tournament_id as string, match.event_id as string);
 }

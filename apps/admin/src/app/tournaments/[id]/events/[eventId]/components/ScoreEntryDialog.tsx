@@ -415,14 +415,19 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
             </div>
 
             {/* Said out loud rather than left to be discovered. Ratings ARE
-                corrected; final placings are not, because finalizeEvent only
-                runs on a live event and the placement bonuses are not
-                idempotent — re-running them would pay every bonus twice. */}
+                corrected, and so are the placings and points — those are
+                absolute writes derived from the finished bracket, so redoing
+                them is idempotent. Placement BONUSES are the exception: they
+                were added into the players' ratings and there is no reversal,
+                so a changed placing on an event that already paid them is
+                reported rather than quietly re-paid. The old copy here told the
+                exec to "adjust those by hand", which the console cannot do —
+                there is no editor for final_position or points. */}
             {event.status === 'completed' && (
               <p className="text-xs text-[var(--color-warning)]">
-                This event is already finalised. The correction fixes the ratings and the match record, but
-                the final placings, points and any placement bonus were worked out at finalisation and are
-                not recalculated. Adjust those by hand if this changes who finished where.
+                This event is already finalised. The correction fixes the ratings and the match record, and
+                the final placings and points are recalculated automatically. Placement bonuses are not —
+                if this changes who finished where and bonuses were already paid, you will be told so.
               </p>
             )}
 
