@@ -66,9 +66,14 @@ function ZoomBar({
   const step = (delta: number) =>
     onZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round((zoom + delta) * 20) / 20)));
 
-  // Nothing to zoom: the diagram already fits. Showing a disabled control on
-  // every eight-player event is noise.
-  if (fitZoom >= 1) return null;
+  // Nothing to zoom: the diagram already fits AND is being shown at full size.
+  // Showing a dead control on every eight-player event is noise.
+  //
+  // The second half of that condition is load-bearing. Gated on fitZoom alone,
+  // someone who zoomed out on a narrow window and then widened it past the point
+  // where the draw fits lost the controls while the bracket was still scaled —
+  // a shrunken diagram with no way back to 100%.
+  if (fitZoom >= 1 && zoom >= 1) return null;
 
   const btn =
     'px-2 py-1 rounded-md border border-[var(--border)] text-[11px] uppercase tracking-[0.08em] ' +
