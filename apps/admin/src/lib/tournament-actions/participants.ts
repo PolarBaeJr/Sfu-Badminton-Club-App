@@ -379,8 +379,17 @@ export async function markParticipantNoShow(participantId: string) {
     Sentry.captureException(error);
     throw new Error(error.message);
   }
+  // The row is already updated, so this cannot report a failure — but it must
+  // not report a plain success either. Without the context there is nothing to
+  // revalidate, and since these screens stopped calling router.refresh() a
+  // silent skip leaves the desk looking at a board that still says the player is
+  // waiting. Say what happened and tell them to reload.
   const ctx = extractEventContext(data);
-  if (ctx) revalidateEventPaths(ctx.tid, ctx.eventId);
+  if (!ctx) {
+    Sentry.captureException(new Error('Tournament entry updated but its event context was unreadable — page not revalidated'));
+    throw new Error('Saved, but the page could not be refreshed. Reload to see the change.');
+  }
+  revalidateEventPaths(ctx.tid, ctx.eventId);
 }
 
 // ============================================================
@@ -643,8 +652,17 @@ export async function checkInPair(pairId: string) {
     throw new Error(error.message);
   }
 
+  // The row is already updated, so this cannot report a failure — but it must
+  // not report a plain success either. Without the context there is nothing to
+  // revalidate, and since these screens stopped calling router.refresh() a
+  // silent skip leaves the desk looking at a board that still says the player is
+  // waiting. Say what happened and tell them to reload.
   const ctx = extractEventContext(data);
-  if (ctx) revalidateEventPaths(ctx.tid, ctx.eventId);
+  if (!ctx) {
+    Sentry.captureException(new Error('Tournament entry updated but its event context was unreadable — page not revalidated'));
+    throw new Error('Saved, but the page could not be refreshed. Reload to see the change.');
+  }
+  revalidateEventPaths(ctx.tid, ctx.eventId);
 }
 
 export async function markPairNoShow(pairId: string) {
@@ -661,8 +679,17 @@ export async function markPairNoShow(pairId: string) {
     Sentry.captureException(error);
     throw new Error(error.message);
   }
+  // The row is already updated, so this cannot report a failure — but it must
+  // not report a plain success either. Without the context there is nothing to
+  // revalidate, and since these screens stopped calling router.refresh() a
+  // silent skip leaves the desk looking at a board that still says the player is
+  // waiting. Say what happened and tell them to reload.
   const ctx = extractEventContext(data);
-  if (ctx) revalidateEventPaths(ctx.tid, ctx.eventId);
+  if (!ctx) {
+    Sentry.captureException(new Error('Tournament entry updated but its event context was unreadable — page not revalidated'));
+    throw new Error('Saved, but the page could not be refreshed. Reload to see the change.');
+  }
+  revalidateEventPaths(ctx.tid, ctx.eventId);
 }
 
 // ============================================================
