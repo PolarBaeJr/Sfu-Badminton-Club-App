@@ -139,19 +139,64 @@ export async function waiveFee(input: FeeWaiveInput) {
     );
   }
 
-  const { data: fee, error } = await adminClient
-    .from('club_fees')
-    .upsert({
-      player_id: input.player_id,
-      season_id: input.season_id,
-      paid_at: new Date().toISOString(),
-      marked_by: admin.id,
-      amount_cents: 0,
-      method: 'waived',
-    }, { onConflict: 'player_id,season_id' })
-    .select('id')
-    .single();
-  if (error) throw new Error(error.message);
+  // The check above ran against a row that was read a moment ago, and an upsert
+  // will happily overwrite whatever is there now. Two desks working the same
+  // roster — one recording a $100 payment, one waiving the fee — both saw an
+  // unpaid row, and the waiver landed second and replaced a real payment with
+  // $0/waived. The refusal above is the message; this is what makes it true.
+  //
+  // Written as an UPDATE of the unpaid row plus an INSERT for the no-row case,
+  // because an upsert cannot carry a condition on the row it is replacing.
+  let feeId: string | undefined;
+  if (existing) {
+    const { data: updated, error: updateError } = await adminClient
+      .from('club_fees')
+      .update({
+        paid_at: new Date().toISOString(),
+        marked_by: admin.id,
+        amount_cents: 0,
+        method: 'waived',
+      })
+      .eq('id', existing.id)
+      // Only while it is STILL unpaid, or still a waiver being re-waived.
+      .or('paid_at.is.null,method.eq.waived')
+      .select('id')
+      .maybeSingle();
+    if (updateError) throw new Error(updateError.message);
+    if (!updated) {
+      throw new ExpectedError(
+        'That fee was paid while you were waiving it — most likely another desk got there first. ' +
+        'Reload and check before waiving it again.',
+      );
+    }
+    feeId = updated.id;
+  } else {
+    const { data: inserted, error: insertError } = await adminClient
+      .from('club_fees')
+      .insert({
+        player_id: input.player_id,
+        season_id: input.season_id,
+        paid_at: new Date().toISOString(),
+        marked_by: admin.id,
+        amount_cents: 0,
+        method: 'waived',
+      })
+      .select('id')
+      .single();
+    // 23505 means somebody inserted a fee for this player and season in the
+    // window between the read and this insert — which is exactly the payment
+    // this must not overwrite.
+    if (insertError) {
+      if (insertError.code === '23505') {
+        throw new ExpectedError(
+          'A fee was recorded for this player while you were waiving it. Reload and check before waiving it again.',
+        );
+      }
+      throw new Error(insertError.message);
+    }
+    feeId = inserted.id;
+  }
+  const fee = { id: feeId as string };
 
   await logAdminAudit(adminClient, {
     actor_id: admin.id,

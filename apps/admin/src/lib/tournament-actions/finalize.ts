@@ -293,10 +293,43 @@ export async function finalizeEvent(eventId: string) {
 
   if (event.format === 'single_elimination') {
     const { data: matches } = await adminClient.from('tournament_matches')
-      .select('round_number, is_third_place, winner_pair_id, loser_pair_id, winner_participant_id, loser_participant_id')
+      // The SLOTS come back too, so the winner can be checked against them
+      // below rather than taken on trust.
+      .select('id, round_number, is_third_place, winner_pair_id, loser_pair_id, winner_participant_id, loser_participant_id, participant_a_id, participant_b_id, pair_a_id, pair_b_id')
       .eq('event_id', eventId)
       .in('status', ['completed', 'walkover'])
       .order('round_number', { ascending: false });
+
+    // Every position, point and placement bonus below is read off winner_* and
+    // loser_*, and nothing had ever checked that those two are the players who
+    // were actually IN the match. They can disagree: a stale result write can
+    // land after another desk swapped a slot, and the draw editor will place any
+    // entry from the event into any empty slot — including the third-place
+    // match, whose occupants are supposed to be the two beaten semi-finalists.
+    // Both produce a row that finalises cleanly and awards someone a placing
+    // they did not play for.
+    //
+    // Refusing is right rather than repairing: this is a bracket that needs a
+    // human to look at it, and quietly picking one of the two disagreeing
+    // answers is how the wrong name ends up on the trophy.
+    for (const m of matches ?? []) {
+      const slots = doubles
+        ? [m.pair_a_id, m.pair_b_id]
+        : [m.participant_a_id, m.participant_b_id];
+      const decided = doubles
+        ? [m.winner_pair_id, m.loser_pair_id]
+        : [m.winner_participant_id, m.loser_participant_id];
+      for (const id of decided) {
+        // A null side is normal — an unopposed walkover has no loser.
+        if (id && !slots.includes(id)) {
+          throw new ExpectedError(
+            `Match ${m.id} records a result for an entry that is not in either of its slots. ` +
+            'The draw disagrees with the result, so the final positions cannot be trusted. ' +
+            'Fix that match before finalising.',
+          );
+        }
+      }
+    }
 
     // The third-place playoff shares round_number with the final so the two are
     // scheduled together (00080), and it MUST be held out of the loop below —

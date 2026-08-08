@@ -1124,24 +1124,39 @@ export async function computeRoundRobinStandings(eventId: string, seedBy: SeedBy
     .eq('event_id', eventId)
     .in('status', ['completed', 'walkover']);
 
-  // Get all entries
-  let entries: Array<{ id: string; name: string }> = [];
+  // EVERY entry, including the ones that left. They are filtered out of the
+  // final ordering further down, not out of the tally.
+  //
+  // Excluding them here quietly deleted real results. The loop below skips any
+  // match whose two ids are not both in this map, so when somebody withdrew
+  // mid-event, the games they had already PLAYED vanished from the standings —
+  // their opponents' genuine wins and losses among them — while every one of
+  // those matches stayed in the global Elo and in the players' match records.
+  // Positions and round-robin points were then computed from a different set of
+  // results than the ratings were, and nothing said so.
+  let entries: Array<{ id: string; name: string; out: boolean }> = [];
   if (doubles) {
     const { data: pairs } = await adminClient.from('tournament_pairs')
-      .select('id, pair_name')
-      .eq('event_id', eventId)
-      .not('status', 'in', '("withdrawn","disqualified")');
-    entries = (pairs ?? []).map(p => ({ id: p.id, name: p.pair_name ?? 'Unnamed' }));
+      .select('id, pair_name, status')
+      .eq('event_id', eventId);
+    entries = (pairs ?? []).map(p => ({
+      id: p.id,
+      name: p.pair_name ?? 'Unnamed',
+      out: isOutOfEvent(p.status as string),
+    }));
   } else {
     const { data: participants } = await adminClient.from('tournament_participants')
-      .select('id, player:players(full_name)')
-      .eq('event_id', eventId)
-      .not('status', 'in', '("withdrawn","disqualified")');
+      .select('id, status, player:players(full_name)')
+      .eq('event_id', eventId);
     entries = (participants ?? []).map(p => ({
       id: p.id,
       name: ((p.player as unknown as Record<string, unknown>)?.full_name as string) ?? 'Unknown',
+      out: isOutOfEvent(p.status as string),
     }));
   }
+  // Who may be RANKED. A withdrawn entry's results still count towards everyone
+  // else's record; the entry itself does not take a placing.
+  const rankableIds = new Set(entries.filter(e => !e.out).map(e => e.id));
 
   // Build standings
   const stats: Record<string, {
@@ -1196,7 +1211,12 @@ export async function computeRoundRobinStandings(eventId: string, seedBy: SeedBy
     }
   }
 
+  // Ranked at the END, after every played match has been counted. A withdrawn
+  // entry's games still shaped everyone else's record — that is what makes the
+  // table agree with the ratings — but the entry itself does not take a placing.
+  const rankable = Object.values(stats).filter(e => rankableIds.has(e.id));
+
   // Ordering lives in @badminton/shared so it is testable without a database
   // and so seeding a bracket off this table cannot drift from the table itself.
-  return sortStandings(Object.values(stats), seedBy);
+  return sortStandings(rankable, seedBy);
 }
