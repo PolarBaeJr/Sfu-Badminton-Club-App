@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { KeyRound, Loader2, Trash2 } from 'lucide-react';
 import { useToast } from '@/components/toast-provider';
 import { enrollPasskey, supportsPasskeys } from '@/lib/passkey-client';
-import { listPasskeys, deletePasskey, type PasskeySummary } from '@/lib/actions/passkeys';
+import { listPasskeys, deletePasskey, passkeysConfigured, type PasskeySummary } from '@/lib/actions/passkeys';
 
 function formatDate(value: string | null): string {
   if (!value) return 'never';
@@ -32,6 +32,9 @@ export function PasskeyManager() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [supported, setSupported] = useState(false);
+  // null while unknown, so the Add row is not flashed and then withdrawn on a
+  // deployment where enrolment is switched off.
+  const [configured, setConfigured] = useState<boolean | null>(null);
   const { toast } = useToast();
 
   const refresh = useCallback(async () => {
@@ -48,6 +51,7 @@ export function PasskeyManager() {
   useEffect(() => {
     setSupported(supportsPasskeys());
     void refresh();
+    void passkeysConfigured().then(setConfigured);
   }, [refresh]);
 
   async function handleAdd() {
@@ -126,20 +130,33 @@ export function PasskeyManager() {
         </div>
       )}
 
-      <div className="settings-row">
-        <div className="settings-row-label">Add a passkey</div>
-        <div className="settings-row-control">
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            disabled={busy}
-            onClick={() => void handleAdd()}
-          >
-            {busy ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
-            <span style={{ marginLeft: 6 }}>Add</span>
-          </button>
+      {/* The button appears only where pressing it can work. Enrolment needs a
+          server secret this deployment may not have, and offering it anyway
+          turned a missing setting into "Passkeys are not configured" shouted at
+          a member who did nothing wrong. Existing credentials stay listed and
+          revocable either way — that is account security, not a feature flag. */}
+      {configured === false ? (
+        <div className="settings-row">
+          <div className="settings-row-label muted" style={{ fontSize: 12 }}>
+            Adding a passkey is unavailable on this server. Your existing passkeys still work.
+          </div>
         </div>
-      </div>
+      ) : configured === true ? (
+        <div className="settings-row">
+          <div className="settings-row-label">Add a passkey</div>
+          <div className="settings-row-control">
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              disabled={busy}
+              onClick={() => void handleAdd()}
+            >
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
+              <span style={{ marginLeft: 6 }}>Add</span>
+            </button>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }

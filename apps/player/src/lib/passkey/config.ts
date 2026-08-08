@@ -45,7 +45,14 @@ export function getExpectedOrigin(): string {
  * The admin equivalent throws in production, which is right for a gate that
  * must fail closed. Here a missing secret must NOT take down sign-in: passkeys
  * are one option beside Google and emailed codes, so the feature degrades to
- * "unavailable" (button hidden, routes 503) and everyone can still get in.
+ * "unavailable" — routes answer 503 and PasskeyManager hides the enrol button
+ * (via the passkeysConfigured server action) — and everyone can still get in.
+ *
+ * The button-hiding half of that was only ever a claim in this comment. Until it
+ * was implemented, a deployment missing PASSKEY_COOKIE_SECRET showed "Add a
+ * passkey", and pressing it answered "Passkeys are not configured" — which the
+ * member reads as a fault in their phone. The variable is documented in
+ * .env.example precisely so it does not get missed again.
  */
 export function getCookieSecret(): string | null {
   const secret = process.env.PASSKEY_COOKIE_SECRET;

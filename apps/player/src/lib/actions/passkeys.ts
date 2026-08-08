@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { ExpectedError } from '@badminton/shared';
 import { createServiceRoleClient, getCurrentPlayer } from '../supabase-server';
 import { runAction, type ActionResult } from './_shared';
+import { isPasskeyConfigured } from '../passkey/config';
 
 export type PasskeySummary = {
   id: string;
@@ -57,6 +58,24 @@ export async function listPasskeys(): Promise<ActionResult<PasskeySummary[]>> {
     if (error) throw new Error(error.message);
     return (data ?? []) as PasskeySummary[];
   });
+}
+
+/**
+ * Whether this deployment can enrol a passkey at all.
+ *
+ * PASSKEY_COOKIE_SECRET is a SERVER variable, so the client cannot see it and
+ * PasskeyManager was offering "Add a passkey" on a deployment where the route
+ * answers 503. Tapping it produced "Passkeys are not configured", which reads as
+ * a fault in the member's device rather than a setting nobody set — and the
+ * config file's own comment claimed the button was hidden in this case, which it
+ * was not. Ask the server.
+ *
+ * Deliberately not gated on being signed in: it reports a property of the
+ * deployment, not of the account, and it leaks nothing beyond "this feature is
+ * switched on", which the presence of the button already announced.
+ */
+export async function passkeysConfigured(): Promise<boolean> {
+  return isPasskeyConfigured();
 }
 
 export async function deletePasskey(id: string): Promise<ActionResult> {
