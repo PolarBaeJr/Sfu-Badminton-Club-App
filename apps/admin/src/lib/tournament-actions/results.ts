@@ -190,6 +190,38 @@ function assertWinnerMatchesScores(
   }
 }
 
+/**
+ * Pin an in-flight match update to the occupants this request READ.
+ *
+ * The status alone is not enough. Another desk can clear a slot (ready ->
+ * pending), put a different entry in it (pending -> ready), and the status is
+ * back to what we read — so a stale write lands and stamps a winner who is no
+ * longer in the match. The bracket then holds one pair of names while the result
+ * holds another, and finalizeEvent trusts the result fields without ever reading
+ * the slots.
+ *
+ * A NULL slot is SKIPPED rather than matched. PostgREST renders `.eq(col, null)`
+ * as `col=eq.null`, and in SQL `NULL = NULL` is unknown, so including it would
+ * match zero rows and report every edit of an unopposed walkover — which
+ * legitimately has one empty side — as "another desk got there first". Nothing
+ * is lost by skipping: filling an empty slot moves the status, which the status
+ * condition already catches.
+ */
+function matchSlotFilter<T extends { eq(column: string, value: string): T }>(
+  update: T,
+  match: Record<string, unknown>,
+  doubles: boolean,
+): T {
+  const sides = doubles
+    ? ([['pair_a_id', match.pair_a_id], ['pair_b_id', match.pair_b_id]] as const)
+    : ([['participant_a_id', match.participant_a_id], ['participant_b_id', match.participant_b_id]] as const);
+  let out = update;
+  for (const [column, value] of sides) {
+    if (typeof value === 'string') out = out.eq(column, value);
+  }
+  return out;
+}
+
 // Gate shared by the corrective actions (void / restore / slot editing). Results
 // can only be changed once the event is genuinely under way; 'completed' is
 // allowed too so a finished event can still be fixed.
@@ -315,7 +347,7 @@ async function enterMatchResultImpl(
   // loser of that race only finds out inside the rating RPC — with a result
   // already stamped over the winner's. The count is how the loser finds out
   // here instead, because PostgREST reports "matched no rows" as success.
-  const { error, count } = await adminClient.from('tournament_matches').update({
+  const update = adminClient.from('tournament_matches').update({
     scores,
     time_exceeded: timeExceeded,
     [winnerIdField]: winnerId,
@@ -326,7 +358,15 @@ async function enterMatchResultImpl(
     updated_at: new Date().toISOString(),
   }, { count: 'exact' })
     .eq('id', matchId)
-    .eq('status', match.status);
+    .eq('status', match.status)
+    // The OCCUPANTS as well as the status, because status alone admits an ABA.
+    // Another desk can clear a slot (ready -> pending), put a different entry in
+    // it (pending -> ready), and the status this request read is true again — so
+    // the stale write lands, stamping a winner who is no longer in the match.
+    // The bracket then holds one pair of names and the result holds another, and
+    // finalizeEvent trusts the result fields without ever reading the slots.
+    ;
+  const { error, count } = await matchSlotFilter(update, match, doubles);
 
   if (error) {
     Sentry.captureException(error);
@@ -989,7 +1029,7 @@ async function editMatchResultImpl(
   const becomesPlayed = match.status === 'walkover' && newScores.length > 0;
   const staysWalkover = match.status === 'walkover' && newScores.length === 0;
 
-  const { error, count } = await adminClient.from('tournament_matches').update({
+  const update = adminClient.from('tournament_matches').update({
     scores: newScores.length > 0 ? newScores : null,
     [winnerField]: winnerId,
     [loserField]: loserId,
@@ -1002,7 +1042,15 @@ async function editMatchResultImpl(
     updated_at: new Date().toISOString(),
   }, { count: 'exact' })
     .eq('id', matchId)
-    .eq('status', match.status);
+    .eq('status', match.status)
+    // The OCCUPANTS as well as the status, because status alone admits an ABA.
+    // Another desk can clear a slot (ready -> pending), put a different entry in
+    // it (pending -> ready), and the status this request read is true again — so
+    // the stale write lands, stamping a winner who is no longer in the match.
+    // The bracket then holds one pair of names and the result holds another, and
+    // finalizeEvent trusts the result fields without ever reading the slots.
+    ;
+  const { error, count } = await matchSlotFilter(update, match, doubles);
 
   if (error) {
     Sentry.captureException(error);

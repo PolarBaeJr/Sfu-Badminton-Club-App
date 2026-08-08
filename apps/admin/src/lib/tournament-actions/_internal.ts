@@ -18,6 +18,7 @@ import {
   forfeitOutcome,
   OPEN_MATCH_STATUSES,
   sortStandings,
+  ExpectedError,
 } from '@badminton/shared';
 import type {
   TournamentEventType,
@@ -949,9 +950,30 @@ async function settleAdvancedMatch(
     return;
   }
 
-  await adminClient.from('tournament_matches')
-    .update({ status: 'ready' })
-    .eq('id', matchId);
+  // Only a match that has NOT been decided may be moved to ready.
+  //
+  // Without the condition this was the last step of a sequence that silently
+  // destroyed a result: void a quarter-final (allowed — the semi below it was
+  // undecided at the time), put a substitute into the semi by hand, play the
+  // semi, then restore the quarter-final and replay it. Routing overwrites the
+  // semi's slot, and this line then dragged a COMPLETED, rated semi-final back
+  // to `ready`. Re-entering it kept the old snapshot, so the new occupants were
+  // never rated while the old ones kept the delta.
+  //
+  // Refusing here rather than earlier is deliberate: this is the one place that
+  // every advancement path funnels through, so a guard here cannot be bypassed
+  // by a caller that forgot it.
+  const { count } = await adminClient.from('tournament_matches')
+    .update({ status: 'ready' }, { count: 'exact' })
+    .eq('id', matchId)
+    .in('status', ['pending', 'ready']);
+
+  if (count === 0) {
+    throw new ExpectedError(
+      'The next match has already been played, so this result cannot be advanced into it. ' +
+      'Void or undo that match first, then try again.',
+    );
+  }
 }
 
 /**

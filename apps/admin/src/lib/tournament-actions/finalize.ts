@@ -2,7 +2,7 @@
 
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
-import { isDoublesEvent, clampElo, placementBonusFor } from '@badminton/shared';
+import { isDoublesEvent, clampElo, placementBonusFor, ExpectedError } from '@badminton/shared';
 import { getTournamentBonusSettings } from '../platform-settings';
 import {
   getExecOrAdmin,
@@ -423,11 +423,32 @@ export async function finalizeEvent(eventId: string) {
 
   // Set event to completed. Checked: throwing on the two batches above buys
   // nothing if the flip that ends the event can itself be lost silently.
-  const { error: completeError } = await adminClient.from('tournament_events')
-    .update({ status: 'completed', updated_at: new Date().toISOString() })
-    .eq('id', eventId);
+  //
+  // Conditional on the event still being LIVE, which turns this into the claim
+  // that decides who finalises. Both officials passed the `status !== 'live'`
+  // read at the top against the same row, and everything expensive — placement
+  // bonuses above all — happens BELOW this line. Without the condition both
+  // proceeded, and because applyPlacementBonuses reads its ledger before it
+  // writes it, both read an empty ledger and both awarded the bonus: the
+  // champion took +32 twice, and because those writes are absolute
+  // read-then-write they could also erase a rating change made in between.
+  //
+  // The count is how the loser finds out. PostgREST reports "matched no rows"
+  // as success, so without it the second official would sail on into the bonus
+  // code believing they had just completed the event.
+  const { error: completeError, count: completeCount } = await adminClient.from('tournament_events')
+    .update({ status: 'completed', updated_at: new Date().toISOString() }, { count: 'exact' })
+    .eq('id', eventId)
+    .eq('status', 'live');
   if (completeError) {
     throw new Error(`Positions and points were saved but the event could not be marked completed: ${completeError.message}`);
+  }
+  if (completeCount === 0) {
+    // Positions and points were rewritten with the same values the winner of the
+    // race wrote, so nothing is damaged — but the bonus must not be paid twice.
+    throw new ExpectedError(
+      'This event was finalised while you were finalising it — most likely another desk got there first. Reload to see the results.',
+    );
   }
 
   // Apply placement bonuses only if BOTH the global master switch and the

@@ -1,11 +1,21 @@
 export const dynamic = 'force-dynamic';
-import { createAdminClient } from '@/lib/supabase-server';
+import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
 import { Card, Badge, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { formatDate } from '@badminton/shared';
 import { CreateSeasonForm, SeasonActions, SeasonFeesEditor } from './actions';
 import { Medal, Calendar, CheckCircle2, XCircle, Clock } from 'lucide-react';
+import { accessLevelFor } from '@/lib/permissions';
 
 export default async function SeasonsPage() {
+  // Reachable at exec level (permissions.ts), but updateSeasonFees calls
+  // getAdminPlayer(). Without this the page opened a fee editor for every exec,
+  // accepted their typing, and rejected them at Save — the route and the nav
+  // agreed, and the rendered CONTROL was the layer that disagreed. Same shape
+  // the Legal page already uses: the flag decides what is offered, the server
+  // action is still the boundary.
+  const viewer = await getAuthenticatedExecOrAdmin();
+  const canEditFees = accessLevelFor(viewer) === 'admin';
+
   const supabase = createAdminClient();
 
   const { data: seasons } = await supabase
@@ -63,12 +73,17 @@ export default async function SeasonsPage() {
                   {
                     label: 'Fees',
                     wide: true,
-                    value: (
+                    value: canEditFees ? (
                       <SeasonFeesEditor
                         seasonId={s.id}
                         competitiveFeeCents={s.competitive_fee_cents ?? 0}
                         recreationalFeeCents={s.recreational_fee_cents ?? 0}
                       />
+                    ) : (
+                      <Atomic>
+                        {`Competitive $${((s.competitive_fee_cents ?? 0) / 100).toFixed(2)} · `}
+                        {`Recreational $${((s.recreational_fee_cents ?? 0) / 100).toFixed(2)}`}
+                      </Atomic>
                     ),
                   },
                 ]}
