@@ -11,6 +11,7 @@ import {
   isLegalCustomPoints,
   CUSTOM_FORMAT_BOUNDS,
   ExpectedError,
+  requireActiveSeasonId,
 } from '@badminton/shared';
 import { getExecOrAdmin, getAdminPlayer } from './_shared';
 import { runAction, type ActionResult } from '../action-result';
@@ -212,7 +213,12 @@ async function adminCreateMatchImpl(data: {
   const adminClient = createAdminClient();
   const { getFormatWeight, derivedFormatWeight } = await import('@badminton/shared');
 
-  const activeSeason = await adminClient.from('seasons').select('id').eq('active_flag', true).single();
+  const activeSeason = await adminClient.from('seasons').select('id').eq('active_flag', true).maybeSingle();
+  // Refuse rather than stamp NULL — see requireActiveSeasonId. A row with no
+  // season is invisible to every season total and there is no page that lists
+  // the orphans. maybeSingle() so TWO active seasons surface as an error here
+  // rather than as a silent "no active season".
+  const seasonId = requireActiveSeasonId(activeSeason.data?.id, 'match');
   // A custom shape has no hand-picked weight, so derive it exactly as
   // derived_format_weight (00031) does — otherwise the same "best of 5 to 15"
   // would be worth one thing entered by an admin and another played through a
@@ -244,7 +250,7 @@ async function adminCreateMatchImpl(data: {
     submitted_by: admin.id,
     confirmed_by: admin.id,
     result_status: initialStatus,
-    season_id: activeSeason.data?.id || null,
+    season_id: seasonId,
     admin_note: data.admin_note || null,
   }).select().single();
 

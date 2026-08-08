@@ -11,6 +11,7 @@ import {
   type BanInput,
   type ReinstatementInput,
   type ReinstatementPaymentInput,
+  requireActiveSeasonId,
 } from '@badminton/shared';
 import { getExecOrAdmin, getAdminPlayer } from './_shared';
 import { ExpectedError } from '@badminton/shared';
@@ -106,13 +107,20 @@ export async function reinstatePlayer(input: ReinstatementInput) {
   // season at all — a real $20 payment sat invisible in every income figure
   // because it was paid three weeks before the season it belonged to started.
   //
-  // Null when nothing is active. Between terms is exactly when a lapsed member
-  // comes back, and recording the payment unattached beats refusing it.
+  // "Between terms is exactly when a lapsed member comes back, so record the
+  // payment unattached rather than refusing it" was the old reasoning, and it
+  // was wrong about where the money ends up. Season income filters by an exact
+  // season id, so a paid fee with season_id NULL is visible on the member's row,
+  // individually correct, and absent from every season's income permanently —
+  // and recordReinstatementPayment then refuses to repair it, because the amount
+  // is already recorded. Refusing up front is recoverable; a stranded payment is
+  // not.
   const { data: activeSeason } = await adminClient
     .from('seasons')
     .select('id')
     .eq('active_flag', true)
     .maybeSingle();
+  const activeSeasonId = requireActiveSeasonId(activeSeason?.id, 'reinstatement fee');
 
   // Was the money settled, or is it simply unknown?
   //
@@ -145,7 +153,7 @@ export async function reinstatePlayer(input: ReinstatementInput) {
       reference: input.reference ?? null,
       ban_reason: player.ban_reason ?? null,
       ban_started_at: banStartedAt,
-      season_id: activeSeason?.id ?? null,
+      season_id: activeSeasonId,
     })
     .select('id')
     .single();
@@ -239,7 +247,10 @@ export async function recordReinstatementPayment(input: ReinstatementPaymentInpu
       .select('id')
       .eq('active_flag', true)
       .maybeSingle();
-    seasonId = activeSeason?.id ?? null;
+    // Same rule as creation: a payment that lands on no season disappears from
+    // every season's income and this is the action that was supposed to repair
+    // exactly that.
+    seasonId = requireActiveSeasonId(activeSeason?.id, 'reinstatement payment');
   }
 
   const { data: updated, error } = await adminClient

@@ -4,7 +4,7 @@ import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { notifyPlayers } from '../notify';
 import { revalidatePath } from 'next/cache';
-import { parseOrThrow, tournamentCreateSchema, tournamentSuspendSchema } from '@badminton/shared';
+import { parseOrThrow, tournamentCreateSchema, tournamentSuspendSchema, requireActiveSeasonId } from '@badminton/shared';
 import { getExecOrAdmin } from './_shared';
 
 export async function createTournament(data: {
@@ -24,7 +24,12 @@ export async function createTournament(data: {
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
-  const activeSeason = await adminClient.from('seasons').select('id').eq('active_flag', true).single();
+  const activeSeason = await adminClient.from('seasons').select('id').eq('active_flag', true).maybeSingle();
+  // Refuse rather than stamp NULL — see requireActiveSeasonId. A row with no
+  // season is invisible to every season total and there is no page that lists
+  // the orphans. maybeSingle() so TWO active seasons surface as an error here
+  // rather than as a silent "no active season".
+  const seasonId = requireActiveSeasonId(activeSeason.data?.id, 'tournament');
 
   const { data: tournament, error } = await adminClient.from('tournaments').insert({
     name: data.name,
@@ -41,7 +46,7 @@ export async function createTournament(data: {
     placement_bonus_enabled: data.placement_bonus_enabled,
     waiver_text: data.waiver_text?.trim() || null,
     status: 'draft',
-    season_id: activeSeason.data?.id || null,
+    season_id: seasonId,
     created_by: admin.id,
   }).select().single();
 

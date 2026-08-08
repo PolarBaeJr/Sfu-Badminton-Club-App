@@ -38,3 +38,33 @@ export function scopeToActiveSeason<T extends OrFilterable<T>>(
   const filter = activeSeasonOrFilter(activeSeasonId);
   return filter ? query.or(filter) : query;
 }
+
+/**
+ * The season a NEW row belongs to, or a refusal.
+ *
+ * Reading and writing want opposite things from "no active season". Reading
+ * degrades: activeSeasonOrFilter drops the filter, because an unfiltered list is
+ * a worse page but still a page. Writing must not degrade, and it used to —
+ * every creator did `activeSeason.data?.id || null` and stamped NULL.
+ *
+ * A NULL season is not a small problem. Season totals filter by an exact id, so
+ * a paid fee stamped NULL is visible, individually correct, and missing from
+ * every season's income forever; the repair action then refuses it because the
+ * amount is already recorded. Sessions and tournaments stamped NULL show up in
+ * every future season's list, because the read filter deliberately includes
+ * NULL. Nothing surfaces any of it — there is no "unassigned" page.
+ *
+ * So: refuse at the point of creation, where one person can still fix it by
+ * activating a season, instead of scattering orphans that nobody can find.
+ */
+export function requireActiveSeasonId(
+  activeSeasonId: string | null | undefined,
+  noun: string,
+): string {
+  if (!activeSeasonId) {
+    throw new Error(
+      `There is no active season, so this ${noun} would not belong to one — and a row with no season never appears in that season's totals. Activate a season first (Seasons → Activate).`,
+    );
+  }
+  return activeSeasonId;
+}

@@ -14,6 +14,7 @@ import {
   formatTime,
   type SessionGroupInput,
   type AttendanceMarkInput,
+  requireActiveSeasonId,
 } from '@badminton/shared';
 import { z } from 'zod';
 import { getExecOrAdmin } from './_shared';
@@ -85,7 +86,12 @@ async function createSessionImpl(data: {
     throw new Error('All dates in the series are excluded');
   }
 
-  const activeSeason = await adminClient.from('seasons').select('id').eq('active_flag', true).single();
+  const activeSeason = await adminClient.from('seasons').select('id').eq('active_flag', true).maybeSingle();
+  // Refuse rather than stamp NULL — see requireActiveSeasonId. A row with no
+  // season is invisible to every season total and there is no page that lists
+  // the orphans. maybeSingle() so TWO active seasons surface as an error here
+  // rather than as a silent "no active season".
+  const seasonId = requireActiveSeasonId(activeSeason.data?.id, 'session');
 
   const rows = dates.map((date) => ({
     name: data.name,
@@ -96,7 +102,7 @@ async function createSessionImpl(data: {
     notes: data.notes || null,
     status: 'open',
     track: data.track,
-    season_id: activeSeason.data?.id || null,
+    season_id: seasonId,
     host_player_id: admin.id,
   }));
 

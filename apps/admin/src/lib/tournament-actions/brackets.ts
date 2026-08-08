@@ -20,6 +20,28 @@ import {
 // Block (re)generating a draw once any match has a recorded result —
 // regeneration deletes all matches for the event and would erase entered
 // scores/Elo. Void those matches first to reset.
+/**
+ * A finished event's draw is not regenerable, full stop.
+ *
+ * assertNoResultsEntered only looks for live results, and `voided` is not in its
+ * list — so voiding every match of a COMPLETED event unlocked regeneration while
+ * the finalisation survived untouched: final_position, tournament points and the
+ * placement-bonus ledger all still sat on the old players. The new draw would
+ * then finalise on top of them, and the ledger would skip the people it had
+ * already paid even though they now finished somewhere else.
+ *
+ * Nothing in the console can unwind a finalisation, so there is no safe version
+ * of this. Refuse it.
+ */
+function assertNotFinalised(event: Record<string, unknown>, action: string) {
+  if (event.status === 'completed') {
+    throw new ExpectedError(
+      `This event has been finalised, so its draw cannot be ${action}. ` +
+      'Final positions, tournament points and any placement bonuses were awarded from the current draw and nothing here can take them back.',
+    );
+  }
+}
+
 async function assertNoResultsEntered(adminClient: ReturnType<typeof createAdminClient>, eventId: string) {
   const { count } = await adminClient
     .from('tournament_matches')
@@ -645,6 +667,7 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
   if (event.draw_locked) throw new Error('Draw is locked. Unlock it before generating matches.');
+  assertNotFinalised(event, 'regenerated');
   await assertNoResultsEntered(adminClient, eventId);
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
