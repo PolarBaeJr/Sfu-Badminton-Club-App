@@ -3,7 +3,7 @@ import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-s
 import { Card, Badge, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { formatDate } from '@badminton/shared';
 import { CreateSeasonForm, SeasonActions, SeasonFeesEditor } from './actions';
-import { Medal, Calendar, CalendarClock, CheckCircle2, XCircle, Clock } from 'lucide-react';
+import { Medal, Calendar, CalendarClock, CheckCircle2, XCircle, Clock, AlertTriangle } from 'lucide-react';
 import { accessLevelFor } from '@/lib/permissions';
 
 export default async function SeasonsPage() {
@@ -30,6 +30,10 @@ export default async function SeasonsPage() {
   // "started" the evening before it does.
   const today = new Date().toLocaleDateString('en-CA');
 
+  // The active season whose last day has already passed, if there is one.
+  const overdueSeason =
+    (seasons ?? []).find((s) => s.active_flag && s.end_date && s.end_date < today) ?? null;
+
   // Shared by the table cell and the card so the two can't drift apart.
   //
   // "Ended" used to mean nothing more than "has an end_date", which every
@@ -37,7 +41,26 @@ export default async function SeasonsPage() {
   // September to December therefore read as Ended all summer, before it had
   // begun. The dates decide it now.
   const statusBadge = (s: { active_flag: boolean; start_date: string | null; end_date: string | null }) =>
-    s.active_flag ? (
+    // The DATES come first, including ahead of active_flag.
+    //
+    // A season is a semester: it runs from its first day to its last and then it
+    // is over, whether or not anybody pressed a button. Letting the flag win
+    // meant a season that finished last week still read "Active" — which is
+    // exactly what production was showing, a term that ended yesterday
+    // presented as the one currently being played.
+    //
+    // Still flagged active AFTER its end date is a state worth shouting about
+    // rather than hiding: it means the rollover has not happened, and until it
+    // does every new session, tournament and fee is still being filed under the
+    // finished term. Warning colour, and the page says so above the table.
+    s.end_date && s.end_date < today ? (
+      <Badge variant={s.active_flag ? 'warning' : 'neutral'}>
+        <span className="flex items-center gap-1.5">
+          <XCircle className="w-3.5 h-3.5" />
+          Ended
+        </span>
+      </Badge>
+    ) : s.active_flag ? (
       <Badge variant="success">
         <span className="flex items-center gap-1.5">
           <CheckCircle2 className="w-3.5 h-3.5" />
@@ -49,13 +72,6 @@ export default async function SeasonsPage() {
         <span className="flex items-center gap-1.5">
           <CalendarClock className="w-3.5 h-3.5" />
           Upcoming
-        </span>
-      </Badge>
-    ) : s.end_date && s.end_date < today ? (
-      <Badge variant="neutral">
-        <span className="flex items-center gap-1.5">
-          <XCircle className="w-3.5 h-3.5" />
-          Ended
         </span>
       </Badge>
     ) : (
@@ -78,6 +94,28 @@ export default async function SeasonsPage() {
         watermark="S"
         actions={<CreateSeasonForm />}
       />
+
+      {/* The rollover is overdue.
+          Every season-scoped write — sessions, tournaments, matches, fees — is
+          still being filed under a term that is over, and nothing else in the
+          console says so. The badge alone is too quiet for that: it is one word
+          in a table somebody has to think to visit. */}
+      {overdueSeason && (
+        <Card>
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5 text-[var(--color-warning)]" />
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-[var(--text-primary)]">
+                {overdueSeason.name} ended on {formatDate(overdueSeason.end_date!)} and is still the active season.
+              </p>
+              <p className="text-sm text-[var(--text-secondary)]">
+                Until the next season is activated, every new session, tournament, match and fee is still recorded
+                against this one. Activate the season the club is actually playing to roll over.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {/* Seasons Table */}
       <Card padding={false}>
