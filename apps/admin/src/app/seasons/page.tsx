@@ -3,7 +3,7 @@ import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-s
 import { Card, Badge, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { formatDate } from '@badminton/shared';
 import { CreateSeasonForm, SeasonActions, SeasonFeesEditor } from './actions';
-import { Medal, Calendar, CheckCircle2, XCircle, Clock } from 'lucide-react';
+import { Medal, Calendar, CalendarClock, CheckCircle2, XCircle, Clock } from 'lucide-react';
 import { accessLevelFor } from '@/lib/permissions';
 
 export default async function SeasonsPage() {
@@ -23,8 +23,20 @@ export default async function SeasonsPage() {
     .select('*')
     .order('start_date', { ascending: false });
 
+  // Today as a plain calendar date, for comparing against DATE columns.
+  //
+  // en-CA rather than toISOString(): the latter converts to UTC first, so from
+  // 5pm Pacific onwards it reports tomorrow's date and a season would be called
+  // "started" the evening before it does.
+  const today = new Date().toLocaleDateString('en-CA');
+
   // Shared by the table cell and the card so the two can't drift apart.
-  const statusBadge = (s: { active_flag: boolean; end_date: string | null }) =>
+  //
+  // "Ended" used to mean nothing more than "has an end_date", which every
+  // properly filled-in season has from the day it is created. A season running
+  // September to December therefore read as Ended all summer, before it had
+  // begun. The dates decide it now.
+  const statusBadge = (s: { active_flag: boolean; start_date: string | null; end_date: string | null }) =>
     s.active_flag ? (
       <Badge variant="success">
         <span className="flex items-center gap-1.5">
@@ -32,7 +44,14 @@ export default async function SeasonsPage() {
           Active
         </span>
       </Badge>
-    ) : s.end_date ? (
+    ) : s.start_date && s.start_date > today ? (
+      <Badge variant="info">
+        <span className="flex items-center gap-1.5">
+          <CalendarClock className="w-3.5 h-3.5" />
+          Upcoming
+        </span>
+      </Badge>
+    ) : s.end_date && s.end_date < today ? (
       <Badge variant="neutral">
         <span className="flex items-center gap-1.5">
           <XCircle className="w-3.5 h-3.5" />
@@ -40,6 +59,8 @@ export default async function SeasonsPage() {
         </span>
       </Badge>
     ) : (
+      // Started, not finished, but not the active season either — someone has
+      // not pressed Activate.
       <Badge variant="warning">
         <span className="flex items-center gap-1.5">
           <Clock className="w-3.5 h-3.5" />

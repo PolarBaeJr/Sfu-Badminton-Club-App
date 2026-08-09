@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { createPortal } from 'react-dom';
+import { AlertTriangle, CheckCircle2, Info } from 'lucide-react';
 import { cn } from '../utils';
 
 /**
@@ -82,18 +83,39 @@ export function ToastViewport({ children }: { children: React.ReactNode }) {
 }
 
 export function Toast({ message, type = 'info', onClose }: ToastProps) {
-  // Per-variant text color: success/error sit on solid color (white text);
-  // info sits on the theme surface, which is light in light mode — white text
-  // was invisible there. The close button inherits currentColor via opacity.
-  // On the black/red editorial system a saturated green slab reads foreign,
-  // so success is a dark toast with a green hairline + a green left accent bar
-  // (keeps the "success" cue without the candy fill). Error stays solid red —
-  // red is the brand accent, so a red slab is on-brand.
-  const colors = {
-    success: 'bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border)] border-l-2 border-l-[var(--color-success)]',
-    error: 'bg-[var(--color-danger)] text-white',
-    info: 'bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border)]',
-  };
+  // All three variants are now the same shape: the theme surface, a hairline,
+  // and a 2px accent bar in the variant's colour.
+  //
+  // Error used to be a solid red slab with white text. That was defensible when
+  // every error was three words ("Failed", "Not authorized"), but the messages
+  // this app raises are sentences — "This match changed while you were entering
+  // the result — most likely another desk got there first. Reload and check
+  // before entering it again." A paragraph of white-on-saturated-red is hard to
+  // read, and at that length the slab stops looking like a notification and
+  // starts looking like a wall.
+  //
+  // The red is still there, in the bar, the icon and the hairline. Nothing is
+  // lost: the accent bar is what the eye catches, and success already proved
+  // the pattern reads correctly on this black/red system.
+  const variants = {
+    success: {
+      accent: 'var(--color-success)',
+      Icon: CheckCircle2,
+      label: 'Success',
+    },
+    error: {
+      accent: 'var(--color-danger)',
+      Icon: AlertTriangle,
+      label: 'Error',
+    },
+    info: {
+      accent: 'var(--border-hover)',
+      Icon: Info,
+      label: 'Note',
+    },
+  } as const;
+
+  const { accent, Icon, label } = variants[type];
 
   // Held in a ref rather than listed as a dependency. The provider renders
   // onClose={() => remove(t.id)} — a new arrow every render — so with [onClose]
@@ -114,11 +136,42 @@ export function Toast({ message, type = 'info', onClose }: ToastProps) {
     // how two of them ended up in the same corner. `.toast` stays as a styling
     // hook for app-level overrides.
     <div
-      className={cn('toast px-4 py-3 rounded-lg shadow-lg flex items-center gap-2', colors[type])}
-      style={{ pointerEvents: 'auto' }}
+      className={cn(
+        'toast flex items-start gap-3 rounded-lg py-3 pl-3 pr-2 shadow-lg',
+        'bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border)]',
+      )}
+      style={{
+        pointerEvents: 'auto',
+        borderLeft: `2px solid ${accent}`,
+        // A sentence needs a column, not a strip. Without a cap, a long message
+        // stretched the toast most of the way across a desktop window and set
+        // the text in one unreadable line; without the floor it collapsed to the
+        // width of the close button on a phone.
+        maxWidth: 'min(92vw, 26rem)',
+      }}
     >
-      <span>{message}</span>
-      <button onClick={onClose} className="ml-2 opacity-70 hover:opacity-100 min-w-[44px] min-h-[44px] flex items-center justify-center">&times;</button>
+      <Icon
+        className="w-4 h-4 shrink-0 mt-0.5"
+        style={{ color: accent }}
+        aria-hidden="true"
+      />
+      {/* The variant, for anyone who cannot see the colour. aria-live on the
+          viewport announces the message; without this the reading of an error
+          and a success are identical. */}
+      <span className="sr-only">{label}: </span>
+      {/* min-w-0 lets the text actually wrap inside the flex row instead of
+          forcing the container wider than its own max-width. */}
+      <span className="min-w-0 flex-1 text-sm leading-snug break-words">{message}</span>
+      <button
+        onClick={onClose}
+        aria-label="Dismiss"
+        // The 44px touch target is kept, but as a negative-margin hit area so it
+        // stops inflating the slab: at py-3 the old button made every toast
+        // ~68px tall regardless of how little it said.
+        className="shrink-0 -my-3 -mr-2 w-11 h-11 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-accent)]"
+      >
+        &times;
+      </button>
     </div>
   );
 }

@@ -255,9 +255,15 @@ interface AnnouncementCardMenuProps {
     status: AnnouncementStatus;
     expires_at: string | null;
   };
+  /**
+   * The card's own content. Rendered inside a button that opens the edit
+   * dialog, so the whole row is the control rather than a three-dot menu
+   * hidden at the far right of a full-width card.
+   */
+  children?: React.ReactNode;
 }
 
-export function AnnouncementCardMenu({ announcement }: AnnouncementCardMenuProps) {
+export function AnnouncementCardMenu({ announcement, children }: AnnouncementCardMenuProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -349,6 +355,23 @@ export function AnnouncementCardMenu({ announcement }: AnnouncementCardMenuProps
 
   return (
     <>
+      {/* The card's content is the primary control.
+          The three-dot menu was the only way to reach Edit, tucked at the far
+          right of a full-width row — so the obvious gesture, clicking the
+          announcement, did nothing at all. A real <button> rather than a click
+          handler on a div: it is reachable by keyboard and announces itself.
+          Nothing inside is interactive, so nesting is valid. */}
+      {children !== undefined && (
+        <button
+          type="button"
+          onClick={openEdit}
+          aria-label={`Edit ${announcement.title}`}
+          className="flex-1 min-w-0 text-left rounded-md -m-1 p-1 transition-colors hover:bg-[var(--bg-elevated)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+        >
+          {children}
+        </button>
+      )}
+
       {/* Three-dot menu */}
       <div className="relative" ref={menuRef}>
         <button

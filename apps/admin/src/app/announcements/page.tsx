@@ -97,7 +97,21 @@ export default async function AnnouncementsPage() {
           {items.map((announcement) => (
             <Card key={announcement.id} className="p-4">
               <div className="flex items-start justify-between gap-4">
-                {/* Left content */}
+                {/* Left content — passed to the menu component as children so it
+                    can make the whole row open the edit dialog. */}
+                <AnnouncementCardMenu
+                  announcement={{
+                    id: announcement.id,
+                    title: announcement.title,
+                    body: announcement.body,
+                    type: announcement.type,
+                    target_audience: announcement.target_audience,
+                    pinned: announcement.pinned,
+                    send_push: announcement.send_push,
+                    status: announcement.status,
+                    expires_at: announcement.expires_at,
+                  }}
+                >
                 <div className="flex flex-col gap-2 flex-1 min-w-0">
                   {/* Title row */}
                   <div className="flex items-center gap-2 flex-wrap">
@@ -146,23 +160,7 @@ export default async function AnnouncementsPage() {
                     </span>
                   </div>
                 </div>
-
-                {/* Right: menu */}
-                <div className="flex-shrink-0">
-                  <AnnouncementCardMenu
-                    announcement={{
-                      id: announcement.id,
-                      title: announcement.title,
-                      body: announcement.body,
-                      type: announcement.type,
-                      target_audience: announcement.target_audience,
-                      pinned: announcement.pinned,
-                      send_push: announcement.send_push,
-                      status: announcement.status,
-                      expires_at: announcement.expires_at,
-                    }}
-                  />
-                </div>
+                </AnnouncementCardMenu>
               </div>
             </Card>
           ))}
