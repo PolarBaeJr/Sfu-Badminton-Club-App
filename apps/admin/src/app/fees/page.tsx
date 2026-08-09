@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
 import { accessLevelFor } from '@/lib/permissions';
+import { SeasonScopeChips, PastSeasonNotice, resolveSeasonScope } from '@/components/season-scope';
 import { Badge, Card, AvatarChip, EmptyState, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { unwrap, unwrapMaybe, formatPaymentMethod } from '@badminton/shared';
 import type { Season } from '@badminton/shared';
@@ -47,7 +48,7 @@ function personTitle(name: string, sub: string, avatarUrl?: string | null, id?: 
 export default async function FeesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; season?: string }>;
 }) {
   const params = await searchParams;
 
@@ -71,13 +72,19 @@ export default async function FeesPage({
   // does not fetch them. Trimming the column list rather than the JSX is the
   // rule this whole page follows: a value that reaches the server component
   // reaches the RSC payload whether or not it is drawn.
-  const season = unwrapMaybe<Season>(
-    await supabase
-      .from('seasons')
-      .select(isAdmin ? 'id, name, competitive_fee_cents, recreational_fee_cents' : 'id, name')
-      .eq('active_flag', true)
-      .maybeSingle()
-  );
+  // Every season, so a finished term's books stay reachable. This page was
+  // pinned to active_flag with no override, which meant that the moment a
+  // season rolled over the club's own accounts for it — dues, other income,
+  // expenses, the net position — could not be opened from the console at all.
+  // The rows were always there and correctly stamped; nothing could name a
+  // different season.
+  const { data: allSeasons } = await supabase
+    .from('seasons')
+    .select('id, name, start_date, end_date, active_flag, competitive_fee_cents, recreational_fee_cents')
+    .order('start_date', { ascending: false });
+  const { seasons: seasonList, selected: scopedSeason, isPast } =
+    resolveSeasonScope(allSeasons, params.season);
+  const season = scopedSeason as Season | null;
 
   if (!season) {
     return (
@@ -197,8 +204,16 @@ export default async function FeesPage({
             ? `${season.name} · Competitive $${(season.competitive_fee_cents / 100).toFixed(2)} · Recreational $${(season.recreational_fee_cents / 100).toFixed(2)}`
             : `${season.name} · Money the club has spent`
         }
-        actions={showFeeTable ? <AddManualFee seasonId={season.id} seasonName={season.name} /> : undefined}
+        // Adding a fee by hand is offered only for the CURRENT season. Browsing a
+        // finished term is for reading its books, and a new fee filed into it
+        // would land outside the season the club is actually collecting for.
+        actions={showFeeTable && !isPast ? <AddManualFee seasonId={season.id} seasonName={season.name} /> : undefined}
       />
+
+      <div className="space-y-2">
+        <SeasonScopeChips seasons={seasonList} selected={scopedSeason} basePath="/fees" />
+        {isPast && scopedSeason && <PastSeasonNotice season={scopedSeason} />}
+      </div>
 
       {/* The answer to "are we in the positives", above the tabs so it is on
           screen no matter which ledger is open. Admin-only, and `finances` is

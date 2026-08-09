@@ -5,9 +5,15 @@ import { Card, Badge, PageHeader } from '@badminton/ui';
 import { formatDate, formatTime, type AttendanceStatus } from '@badminton/shared';
 import { CreateSessionForm, SessionCardMenu, AttendanceDialog, CheckinQrDialog } from './actions';
 import { Calendar, MapPin, FileText } from 'lucide-react';
+import { SeasonScopeChips, PastSeasonNotice, resolveSeasonScope } from '@/components/season-scope';
 import QRCode from 'qrcode';
 
-export default async function SessionsPage() {
+export default async function SessionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ season?: string }>;
+}) {
+  const { season: seasonParam } = await searchParams;
   const supabase = createAdminClient();
 
   // The schedule belongs to the season it is part of. Without this, activating a
@@ -19,12 +25,16 @@ export default async function SessionsPage() {
   // no page that lists them. When no season is active at all, the filter is
   // skipped entirely — hiding the whole schedule because nobody pressed
   // "activate" is worse than showing too much.
-  const { data: activeSeason } = await supabase
-    .from('seasons').select('id').eq('active_flag', true).maybeSingle();
+  const { data: allSeasons } = await supabase
+    .from('seasons')
+    .select('id, name, start_date, end_date, active_flag')
+    .order('start_date', { ascending: false });
+  const { seasons: seasonList, selected: scopedSeason, isPast } =
+    resolveSeasonScope(allSeasons, seasonParam);
 
   const { data: sessions } = await scopeToActiveSeason(
     supabase.from('sessions').select('*'),
-    activeSeason?.id,
+    scopedSeason?.id,
   ).order('date', { ascending: false });
 
   const { data: attendanceRows } = await supabase
@@ -113,6 +123,11 @@ export default async function SessionsPage() {
         watermark="S"
         actions={<CreateSessionForm />}
       />
+
+      <div className="space-y-2">
+        <SeasonScopeChips seasons={seasonList} selected={scopedSeason} basePath="/sessions" />
+        {isPast && scopedSeason && <PastSeasonNotice season={scopedSeason} />}
+      </div>
 
       {/* Sessions List */}
       {sessions && sessions.length > 0 ? (

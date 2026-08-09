@@ -7,19 +7,29 @@ import { CreateTournamentForm, TournamentMenu, type WaiverTemplateContext } from
 import type { TournamentWithEventCount } from '@/lib/tournament-types';
 import Link from 'next/link';
 import { Trophy, Users, Calendar, Zap, Archive } from 'lucide-react';
+import { SeasonScopeChips, PastSeasonNotice, resolveSeasonScope } from '@/components/season-scope';
 
-export default async function TournamentsPage() {
+export default async function TournamentsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ season?: string }>;
+}) {
+  const { season: seasonParam } = await searchParams;
   const supabase = createAdminClient();
 
   // This season's tournaments only — see scopeToActiveSeason for why an
   // unassigned tournament is kept and why no active season means no filter.
-  const { data: activeSeason } = await supabase
-    .from('seasons').select('id').eq('active_flag', true).maybeSingle();
+  const { data: allSeasons } = await supabase
+    .from('seasons')
+    .select('id, name, start_date, end_date, active_flag')
+    .order('start_date', { ascending: false });
+  const { seasons: seasonList, selected: scopedSeason, isPast } =
+    resolveSeasonScope(allSeasons, seasonParam);
 
   let tournaments: TournamentWithEventCount[] | null = null;
   const { data: tournamentsWithEvents } = await scopeToActiveSeason(
     supabase.from('tournaments').select('*, tournament_events(count)'),
-    activeSeason?.id,
+    scopedSeason?.id,
   ).order('start_date', { ascending: false });
 
   if (tournamentsWithEvents) {
@@ -27,7 +37,7 @@ export default async function TournamentsPage() {
   } else {
     const { data: fallback } = await scopeToActiveSeason(
       supabase.from('tournaments').select('*'),
-      activeSeason?.id,
+      scopedSeason?.id,
     ).order('start_date', { ascending: false });
     tournaments = fallback;
   }
@@ -39,13 +49,16 @@ export default async function TournamentsPage() {
   // create/edit dialog can fill the waiver box without a round trip. The active
   // season is what createTournament stamps on a new tournament, so it is the
   // season a not-yet-created tournament draws from.
-  // activeSeason is already fetched above to scope the list; reuse it rather
-  // than asking twice.
+  // The ACTIVE season, deliberately not the browsed one. Creating a tournament
+  // always files it under the season the club is currently playing
+  // (requireActiveSeasonId), so the waiver template offered in that dialog must
+  // be the active season's — browsing a past term must not change what a new
+  // tournament would get.
   const { data: waiverTemplates } = await supabase
     .from('event_waiver_templates').select('season_id, content');
   const waiverTemplateContext: WaiverTemplateContext = {
     templates: waiverTemplates ?? [],
-    activeSeasonId: activeSeason?.id ?? null,
+    activeSeasonId: seasonList.find((s) => s.active_flag)?.id ?? null,
   };
 
   return (
@@ -70,6 +83,11 @@ export default async function TournamentsPage() {
           </div>
         </div>
         <CreateTournamentForm waiverTemplates={waiverTemplateContext} />
+      </div>
+
+      <div className="space-y-2">
+        <SeasonScopeChips seasons={seasonList} selected={scopedSeason} basePath="/tournaments" />
+        {isPast && scopedSeason && <PastSeasonNotice season={scopedSeason} />}
       </div>
 
       {/* Active Tournaments */}
