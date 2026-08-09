@@ -4,7 +4,7 @@ import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { notifyPlayers } from '../notify';
 import { revalidatePath } from 'next/cache';
-import { parseOrThrow, announcementSchema, ExpectedError } from '@badminton/shared';
+import { parseOrThrow, announcementSchema, ExpectedError, requireActiveSeasonId } from '@badminton/shared';
 import { getExecOrAdmin } from './_shared';
 
 type Audience = 'all' | 'competitive' | 'recreational' | 'eligible_only';
@@ -62,12 +62,30 @@ export async function createAnnouncement(data: {
   send_push: boolean;
   status: 'draft' | 'published';
   expires_at?: string;
+  /** Evergreen — club rules, the door code — rather than tied to this term. */
+  all_seasons?: boolean;
 }) {
   parseOrThrow(announcementSchema, data);
   const admin = await getExecOrAdmin();
   const adminClient = createAdminClient();
 
+  // A term-specific announcement belongs to the season being played, and
+  // retires with it. Evergreen ones carry no season at all — the CHECK in 00085
+  // allows exactly those two shapes, so this cannot produce an ambiguous NULL.
+  //
+  // Refusing when nothing is active matches every other season-stamped write
+  // (requireActiveSeasonId): an announcement filed against no season would show
+  // in every future term forever, which is the behaviour being fixed.
+  let seasonId: string | null = null;
+  if (!data.all_seasons) {
+    const { data: activeSeason } = await adminClient
+      .from('seasons').select('id').eq('active_flag', true).maybeSingle();
+    seasonId = requireActiveSeasonId(activeSeason?.id, 'announcement');
+  }
+
   const { data: announcement, error } = await adminClient.from('announcements').insert({
+    season_id: seasonId,
+    all_seasons: data.all_seasons ?? false,
     title: data.title,
     body: data.body,
     type: data.type,

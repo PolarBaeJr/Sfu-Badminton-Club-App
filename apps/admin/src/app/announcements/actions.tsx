@@ -27,6 +27,8 @@ interface AnnouncementFormData {
   pinned: boolean;
   send_push: boolean;
   expires_at: string;
+  /** Evergreen rather than tied to the current term. */
+  all_seasons: boolean;
 }
 
 const TYPE_OPTIONS: { value: string; label: string }[] = [
@@ -57,6 +59,10 @@ const DEFAULT_FORM: AnnouncementFormData = {
   pinned: false,
   send_push: false,
   expires_at: '',
+  // Defaults to term-specific, which is what almost every announcement is —
+  // a court closure, a tournament call-out, a fee deadline. Evergreen is the
+  // deliberate exception and has to be ticked.
+  all_seasons: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -66,9 +72,16 @@ const DEFAULT_FORM: AnnouncementFormData = {
 function AnnouncementFields({
   form,
   setForm,
+  // Only offered when CREATING. An announcement is filed against the term it
+  // was written in, and updateAnnouncement deliberately does not move it —
+  // re-filing silently would resurrect a retired notice or retire a live one.
+  // Rendering the checkbox on the edit form would promise a change that never
+  // happens.
+  showSeasonChoice = true,
 }: {
   form: AnnouncementFormData;
   setForm: React.Dispatch<React.SetStateAction<AnnouncementFormData>>;
+  showSeasonChoice?: boolean;
 }) {
   /** Auto-grow the body with its content, capped at ~60vh (dialog scrolls past that). */
   function autoGrow(e: React.FormEvent<HTMLTextAreaElement>) {
@@ -168,6 +181,24 @@ function AnnouncementFields({
           />
           Send push notification
         </label>
+
+        {showSeasonChoice && (
+          <>
+            <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
+              <input
+                type="checkbox"
+                checked={form.all_seasons}
+                onChange={(e) => setForm((f) => ({ ...f, all_seasons: e.target.checked }))}
+                className="rounded border-[var(--border)]"
+              />
+              Show in every season
+            </label>
+            <p className="text-xs text-[var(--text-muted)] -mt-1 ml-6">
+              Leave unticked for anything about this term — it retires when the season does.
+              Tick it for standing information like club rules or the door code.
+            </p>
+          </>
+        )}
       </div>
     </div>
   );
@@ -197,6 +228,7 @@ export function CreateAnnouncementForm() {
         pinned: form.pinned,
         send_push: form.send_push,
         status: form.status,
+        all_seasons: form.all_seasons,
         ...(form.expires_at ? { expires_at: form.expires_at } : {}),
       });
       toast('Announcement created successfully', 'success');
@@ -254,6 +286,7 @@ interface AnnouncementCardMenuProps {
     send_push: boolean;
     status: AnnouncementStatus;
     expires_at: string | null;
+    all_seasons?: boolean;
   };
   /**
    * The card's own content. Rendered inside a button that opens the edit
@@ -280,6 +313,7 @@ export function AnnouncementCardMenu({ announcement, children }: AnnouncementCar
     pinned: announcement.pinned,
     send_push: announcement.send_push,
     expires_at: announcement.expires_at ?? '',
+    all_seasons: announcement.all_seasons ?? false,
   });
 
   // Close menu on outside click
@@ -343,6 +377,11 @@ export function AnnouncementCardMenu({ announcement, children }: AnnouncementCar
       pinned: announcement.pinned,
       send_push: announcement.send_push,
       expires_at: announcement.expires_at ?? '',
+      // Carried so the form type is satisfied and the checkbox shows the truth.
+      // Editing does NOT move an announcement between seasons: it was filed
+      // against the term it was written in, and re-filing it silently would
+      // resurrect a retired notice or retire a live one.
+      all_seasons: announcement.all_seasons ?? false,
     });
     setMenuOpen(false);
     setEditOpen(true);
@@ -435,7 +474,7 @@ export function AnnouncementCardMenu({ announcement, children }: AnnouncementCar
       {/* Edit Dialog */}
       <Dialog open={editOpen} onClose={() => setEditOpen(false)} title="Edit Announcement">
         <form onSubmit={handleEdit} className="flex flex-col gap-5">
-          <AnnouncementFields form={form} setForm={setForm} />
+          <AnnouncementFields form={form} setForm={setForm} showSeasonChoice={false} />
 
           <div className="flex items-center justify-between pt-2">
             <Button

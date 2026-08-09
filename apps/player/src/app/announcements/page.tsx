@@ -29,12 +29,33 @@ export default async function AnnouncementsPage() {
 
   const supabase = await createServerSupabaseClient();
 
+  // This term's announcements, plus the evergreen ones.
+  //
+  // Without the season filter the feed was cumulative forever: after a rollover
+  // last term's "courts closed for reading week" still sat pinned above this
+  // term's, and the only way to retire it was to delete it — which throws away
+  // the record of having said it. 00085 gives every row exactly one of two
+  // shapes, so this filter has no ambiguous NULL to worry about.
+  //
+  // No active season means no season filter, deliberately. Between terms, a
+  // feed that has gone blank reads to a member as a broken app; showing
+  // everything is the gentler failure, and it is the same rule the schedule and
+  // the tournament list already follow.
+  const { data: activeSeason } = await supabase
+    .from('seasons').select('id').eq('active_flag', true).maybeSingle();
+
   const nowIso = new Date().toISOString();
-  const { data: announcements } = await supabase
+  let query = supabase
     .from('announcements')
     .select('*')
     .eq('status', 'published')
-    .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
+    .or(`expires_at.is.null,expires_at.gt.${nowIso}`);
+
+  if (activeSeason?.id) {
+    query = query.or(`all_seasons.eq.true,season_id.eq.${activeSeason.id}`);
+  }
+
+  const { data: announcements } = await query
     .order('pinned', { ascending: false })
     .order('created_at', { ascending: false })
     .returns<Announcement[]>();
