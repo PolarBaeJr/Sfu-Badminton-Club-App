@@ -4,7 +4,7 @@ import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { notifyPlayers } from '../notify';
 import { revalidatePath } from 'next/cache';
-import { parseOrThrow, announcementSchema } from '@badminton/shared';
+import { parseOrThrow, announcementSchema, ExpectedError } from '@badminton/shared';
 import { getExecOrAdmin } from './_shared';
 
 type Audience = 'all' | 'competitive' | 'recreational' | 'eligible_only';
@@ -121,7 +121,7 @@ export async function updateAnnouncement(announcementId: string, data: {
 
   const { data: old } = await adminClient.from('announcements').select('*').eq('id', announcementId).single();
 
-  const { error } = await adminClient.from('announcements').update({
+  const { error, count } = await adminClient.from('announcements').update({
     title: data.title,
     body: data.body,
     type: data.type,
@@ -130,9 +130,18 @@ export async function updateAnnouncement(announcementId: string, data: {
     send_push: data.send_push,
     status: data.status,
     expires_at: data.expires_at || null,
-  }).eq('id', announcementId);
+  }, { count: 'exact' }).eq('id', announcementId);
 
   if (error) throw new Error(error.message);
+  // PostgREST reports "matched no rows" as success, so without the count an
+  // edit to an announcement somebody else had already deleted returned cleanly
+  // and the page said "Announcement updated" — for a row that does not exist.
+  // Found on staging by deleting the row while the edit dialog was open.
+  if (count === 0) {
+    throw new ExpectedError(
+      'That announcement no longer exists — it was deleted while you were editing it. Nothing was saved.',
+    );
+  }
 
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
@@ -166,8 +175,17 @@ export async function deleteAnnouncement(announcementId: string) {
 
   await adminClient.from('announcement_reads').delete().eq('announcement_id', announcementId);
 
-  const { error } = await adminClient.from('announcements').delete().eq('id', announcementId);
+  const { error, count } = await adminClient
+    .from('announcements')
+    .delete({ count: 'exact' })
+    .eq('id', announcementId);
   if (error) throw new Error(error.message);
+  // Same trap as the update above: a delete that matched nothing is reported as
+  // success, so deleting an announcement somebody else had already removed said
+  // "Announcement deleted" and wrote an audit row for it.
+  if (count === 0) {
+    throw new ExpectedError('That announcement no longer exists — somebody else has already deleted it.');
+  }
 
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
