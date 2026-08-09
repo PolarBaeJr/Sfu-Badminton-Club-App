@@ -39,10 +39,26 @@ export default async function AuditPage({
 
   const allSeasons = seasons ?? [];
   const activeSeason = allSeasons.find((s) => s.active_flag) ?? null;
-  // An explicit ?season= wins; otherwise the season the club is playing.
+
+  // Today as a local calendar date, to compare against DATE columns.
+  const today = new Date().toLocaleDateString('en-CA');
+
+  // A club activates the NEXT season before it starts — that is the normal way
+  // to line one up. Defaulting to it then shows an empty page: the window opens
+  // in the future, so nothing that has already happened is inside it. So the
+  // default only uses the active season once it has actually begun.
+  //
+  // An explicit ?season= is honoured either way. Picking a season that has not
+  // started and being shown nothing is a correct answer to a question somebody
+  // asked; being shown nothing on arrival is not.
+  const activeHasStarted = !!activeSeason?.start_date && activeSeason.start_date <= today;
   const selectedSeason = fullHistory
     ? null
-    : (season ? allSeasons.find((s) => s.id === season) ?? null : activeSeason);
+    : season
+      ? allSeasons.find((s) => s.id === season) ?? null
+      : activeHasStarted
+        ? activeSeason
+        : null;
 
   // Caps keep the payload bounded either way.
   let query = supabase
@@ -62,7 +78,7 @@ export default async function AuditPage({
     }
     eyebrow = selectedSeason.name.toUpperCase();
   } else {
-    // No season to scope by — a brand-new club, or nobody has pressed Activate.
+    // No season to scope by: none active, or the active one has not started.
     // Falling back to a window keeps the page useful instead of empty, and the
     // eyebrow says which one so it cannot be mistaken for a season.
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -96,7 +112,7 @@ export default async function AuditPage({
           return (
             <Link
               key={s.id}
-              href={s.active_flag ? '/audit' : `/audit?season=${s.id}`}
+              href={s.active_flag && activeHasStarted ? '/audit' : `/audit?season=${s.id}`}
               className={`${linkBase} ${isOn ? linkOn : linkOff}`}
             >
               {s.name}
