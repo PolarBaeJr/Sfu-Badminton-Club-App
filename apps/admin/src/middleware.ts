@@ -1,6 +1,12 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
-import { canAccess, UNRESTRICTED, type AccessLevel } from '@/lib/permissions';
+import {
+  canAccess,
+  permissionsOf,
+  UNRESTRICTED,
+  type AccessLevel,
+  type PermissionsInput,
+} from '@/lib/permissions';
 import { PASSKEY_VERIFIED_COOKIE } from '@/lib/passkey/config';
 import { verifyPayload } from '@/lib/passkey/cookie';
 import {
@@ -102,15 +108,61 @@ export async function middleware(request: NextRequest) {
     }
 
     if (user && !isPublicRoute) {
-      const { data: level } = await supabase.rpc('admin_access_level', { p_user_id: user.id });
-      const accessLevel = (level as AccessLevel | null) ?? null;
+      // ONE round trip for both halves of the decision: the level, and the raw
+      // permission triple. The database returns the triple and nothing else —
+      // resolving it is permissionsOf()'s job, in the same module the server
+      // actions use, so there is no SQL implementation of the rule to drift.
+      const { data: access, error: accessError } =
+        await supabase.rpc('admin_console_access', { p_user_id: user.id });
 
-      // UNRESTRICTED, not a second round trip: nothing narrows anybody yet.
-      // Per-person permissions are stored from the next migration onwards, and
-      // until then every row resolves to its level's baseline — which is a
-      // transcription of what that level could already do, so this is the same
-      // decision the console has always made.
-      if (!canAccess(accessLevel, UNRESTRICTED, request.nextUrl.pathname)) {
+      let accessLevel: AccessLevel | null = null;
+      let permissions = UNRESTRICTED;
+
+      if (accessError) {
+        // FAIL CLOSED FOR AN EXEC, and let admins and trainers through. This
+        // deliberately inverts what this file used to do, and the asymmetry is
+        // the point.
+        //
+        // Failing open was correct the day 00086 shipped, because every row was
+        // NULL and "nobody is narrowed" was simply true. That property is
+        // TIME-DEPENDENT: it stops holding the moment anything is assigned, and
+        // from then on an RPC failure would silently restore full access to
+        // every narrowed exec — invisibly, including access an admin had
+        // deliberately taken away. A silent grant leaves no trace; a lockout is
+        // loud within minutes.
+        //
+        // Trainers hold a baseline of two capabilities and no role can be set on
+        // them, so there is nothing for a failure to restore. Admins are
+        // superusers by level and hold no stored capabilities — and they are the
+        // people who can repair whatever broke, so they must never be the ones
+        // locked out.
+        const { data: level } = await supabase.rpc('admin_access_level', { p_user_id: user.id });
+        accessLevel = (level as AccessLevel | null) ?? null;
+        if (accessLevel === 'exec') {
+          const url = request.nextUrl.clone();
+          url.pathname = '/unavailable';
+          url.search = '';
+          // Not /unauthorized: this is not a decision about them, it is the
+          // console being unable to make one, and the two need different words
+          // or the exec goes hunting for a permission problem that does not
+          // exist. The commonest cause by far is 00087 not being applied.
+          url.searchParams.set('reason', 'permissions');
+          // Where they were going, so Try again resumes it rather than dumping
+          // them on the dashboard. Sanitised on the page — it is a URL anyone
+          // can type, and an unchecked one is an open redirect.
+          url.searchParams.set('next', request.nextUrl.pathname + request.nextUrl.search);
+          return finish(NextResponse.redirect(url));
+        }
+      } else {
+        // Null when there is no player row at all, which resolves to no level
+        // and therefore to no access — the same answer admin_access_level()
+        // gave on its own.
+        const row = access as (PermissionsInput & { level: string | null }) | null;
+        accessLevel = (row?.level as AccessLevel | null) ?? null;
+        permissions = permissionsOf(row);
+      }
+
+      if (!canAccess(accessLevel, permissions, request.nextUrl.pathname)) {
         const url = request.nextUrl.clone();
         url.pathname = '/unauthorized';
         return finish(NextResponse.redirect(url));

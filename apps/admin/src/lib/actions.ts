@@ -18,6 +18,7 @@
 //   - reinstatement.ts — player ban / reinstatement (with reinstatement fee)
 //   - varsity.ts       — varsity notes
 //   - reliability.ts   — adjustReliability (manual reliability-counter edits)
+//   - permissions.ts   — setPlayerPermissions (the /permissions editor)
 //   - settings.ts      — updateLegalDocument (waiver / code of conduct),
 //                        updateEventWaiverTemplate (per-season event waiver),
 //                        updatePlatformSettings (/ratings + /accounts)
@@ -45,6 +46,9 @@ export {
 export {
   resolveDispute,
 } from './actions/disputes';
+
+export { setPlayerPermissions } from './actions/permissions';
+export type { PermissionsPayload } from './actions/permissions';
 
 export {
   confirmWalkover,

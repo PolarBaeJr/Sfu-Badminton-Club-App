@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
-import { accessLevelFor, permits, UNRESTRICTED, type Capability } from '@/lib/permissions';
+import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/permissions';
 import { PastSeasonNotice, resolveSeasonScope } from '@/components/season-scope';
 import { SeasonSelect } from '@/components/season-select';
 import { Badge, Card, AvatarChip, EmptyState, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
@@ -60,7 +60,8 @@ export default async function FeesPage({
   // is asked for separately below.
   const viewer = await requireCapability('fees.expenses.read');
   const level = accessLevelFor(viewer);
-  const may = (capability: Capability) => permits(level, UNRESTRICTED, capability);
+  const permissions = permissionsOf(viewer);
+  const may = (capability: Capability) => permits(level, permissions, capability);
   // Presentation only — the page is called "Finances" when it shows more than
   // one ledger. Every FETCH below asks for the capability its own data needs.
   const isAdmin = level === 'admin';
@@ -68,6 +69,29 @@ export default async function FeesPage({
   const showOtherIncome = may('fees.otherincome.read');
   const showNetPosition = may('fees.netposition.read');
   const showReinstatements = may('fees.reinstatements.read');
+  // WHICH LEDGER CONTROLS ARE OFFERED, asked one capability at a time.
+  //
+  // These four used to be a single `isAdmin` handed to LedgerCard, which was
+  // true of the boundary as it stood — filing an expense was exec work and
+  // everything else on the row was admin work. It is not a boundary that can be
+  // written down as one flag any more: the point of this model is that a
+  // treasurer can be handed "edit and settle expenses" without being handed the
+  // console. Each control names the capability its own action re-checks, so the
+  // two agree by construction rather than by two people remembering one rule.
+  const expenseWrites = {
+    add: may('fees.expenses.add.write'),
+    update: may('fees.expenses.update.write'),
+    reimburse: may('fees.expenses.reimburse.write'),
+    remove: may('fees.expenses.remove.write'),
+  };
+  const incomeWrites = {
+    add: may('fees.otherincome.add.write'),
+    // The income ledger has no payer, so nothing to edit in place and nothing
+    // to settle — removeOtherIncome is the only write on a row.
+    update: false,
+    reimburse: false,
+    remove: may('fees.otherincome.remove.write'),
+  };
 
   const visibleTabs = TABS.filter((t) => may(t.read));
   // An exec asking for ?tab=income lands on Expenses rather than /unauthorized:
@@ -258,11 +282,21 @@ export default async function FeesPage({
       )}
 
       {showOtherIncome && tab === 'income' && (
-        <LedgerCard kind="income" seasonId={season.id} seasonName={season.name} isAdmin />
+        <LedgerCard
+          kind="income"
+          seasonId={season.id}
+          seasonName={season.name}
+          canWrite={incomeWrites}
+        />
       )}
 
       {tab === 'expenses' && (
-        <LedgerCard kind="expense" seasonId={season.id} seasonName={season.name} isAdmin={isAdmin} />
+        <LedgerCard
+          kind="expense"
+          seasonId={season.id}
+          seasonName={season.name}
+          canWrite={expenseWrites}
+        />
       )}
 
       {showFeeTable && (

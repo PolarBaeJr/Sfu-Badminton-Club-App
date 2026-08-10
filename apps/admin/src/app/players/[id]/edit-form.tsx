@@ -49,7 +49,19 @@ export function PlayerEditForm({
   player,
   rating,
   isAdmin,
-}: { player: Player; rating: Rating | null; isAdmin: boolean }) {
+  canApprove,
+}: {
+  player: Player;
+  rating: Rating | null;
+  isAdmin: boolean;
+  // APPROVING AND EDITING ARE ONE SAVE, and they are two capabilities. This
+  // form calls approvePlayer for a pending signup and updatePlayer for everyone
+  // else, so somebody holding players.update.write without
+  // players.approve.write would be shown a form whose only outcome is a
+  // refusal. It cannot be fully removed without splitting the form; disabling
+  // it and saying why is the honest version.
+  canApprove: boolean;
+}) {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState(player.status);
@@ -67,6 +79,7 @@ export function PlayerEditForm({
   const [reason, setReason] = useState('');
 
   const isPending = player.status === 'pending_approval';
+  const approvalBlocked = isPending && !canApprove;
   const { role: nextRole, is_exec: isExec, is_trainer: wantsTrainer } = fromRoleValue(roleValue);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -208,7 +221,13 @@ export function PlayerEditForm({
         onChange={(e) => setReason(e.target.value)}
         placeholder="Explain the change..."
       />
-      <Button type="submit" loading={loading} className="w-full">
+      {approvalBlocked && (
+        <p className="text-xs text-[var(--color-danger)]">
+          This member is waiting to be approved, and letting them in is a separate permission
+          you do not hold. Ask an admin.
+        </p>
+      )}
+      <Button type="submit" loading={loading} className="w-full" disabled={approvalBlocked}>
         {isPending ? 'Approve Player' : 'Save Changes'}
       </Button>
     </form>

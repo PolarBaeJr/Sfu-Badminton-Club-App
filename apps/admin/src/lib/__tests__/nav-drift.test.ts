@@ -1,0 +1,110 @@
+import { describe, it, expect } from 'vitest';
+import { NAV_SECTIONS } from '../../components/nav-sections';
+import {
+  canAccess,
+  AREAS,
+  CAPABILITIES,
+  UNRESTRICTED,
+  type AccessLevel,
+  type Area,
+  type Capability,
+} from '../permissions';
+
+// THE NAV WAS THE ONE HAND-WRITTEN LIST WITH NOTHING HOLDING IT TO THE
+// VOCABULARY.
+//
+// canAccess() sends a path nobody claimed to the admin-only default, which is
+// the right failure for a NEW section — but for a MISTYPED href it means the
+// link silently disappears for every exec and trainer, with nothing failing
+// anywhere. A section renamed on one side and not the other does the same
+// thing. There was no test that could catch either, because the sidebar cannot
+// be imported: it pulls in next/navigation and a browser Supabase client.
+//
+// So the list moved into a module with no framework import, each item carries
+// the area its href belongs to, and this suite checks that the key and
+// canAccess() agree. A nav item is either a BASELINE path — the two links every
+// console user keeps, which have no area — or a path under exactly one area.
+// There is deliberately no third case: an item that reached the admin-only
+// fallthrough would be a link only admins can see, and that is a decision to
+// make out loud in the section map, not a side effect of a typo.
+
+const ITEMS = NAV_SECTIONS.flatMap((section) => section.items);
+
+/** Somebody whose whole set is one capability. */
+const holding = (...capabilities: Capability[]) => ({
+  kind: 'restricted' as const,
+  capabilities: new Set(capabilities),
+});
+
+const EMPTY = holding();
+
+const readsIn = (area: Area): Capability[] =>
+  CAPABILITIES.filter((c) => c.split('.')[0] === area && c.endsWith('.read'));
+
+describe('the console nav', () => {
+  it('names a real area, or none at all', () => {
+    const areas = new Set<string>(AREAS);
+    for (const item of ITEMS) {
+      if (item.area === null) continue;
+      expect(areas.has(item.area), `${item.href} names ${item.area}`).toBe(true);
+    }
+  });
+
+  it('has no duplicate hrefs', () => {
+    const hrefs = ITEMS.map((i) => i.href);
+    expect(new Set(hrefs).size).toBe(hrefs.length);
+  });
+
+  // A BASELINE item is one every console level keeps regardless of what they
+  // hold. If one of these ever stopped matching, a narrowed exec would lose the
+  // front door — including the page where they enrol the passkey the console
+  // demands of them.
+  it('lets every level reach the two links that belong to no area', () => {
+    for (const item of ITEMS.filter((i) => i.area === null)) {
+      for (const level of ['admin', 'exec', 'trainer'] as AccessLevel[]) {
+        expect(canAccess(level, EMPTY, item.href), `${item.href} for ${level}`).toBe(true);
+      }
+    }
+  });
+
+  // THE DRIFT CHECK. Holding one read under the declared area must open the
+  // link, and holding nothing must close it. Together these pin the href to the
+  // area: a typo fails the first (the path falls through to admin-only), and an
+  // area key that names the wrong section fails it too.
+  it('opens each link to exactly the area its item declares', () => {
+    for (const item of ITEMS) {
+      if (item.area === null) continue;
+      const reads = readsIn(item.area);
+      expect(reads.length, `${item.area} has no read capability`).toBeGreaterThan(0);
+      for (const read of reads) {
+        expect(canAccess('exec', holding(read), item.href), `${item.href} via ${read}`).toBe(true);
+      }
+      expect(canAccess('exec', EMPTY, item.href), `${item.href} with nothing held`).toBe(false);
+    }
+  });
+
+  // What an UNRESTRICTED exec — which is everybody, on the day this ships —
+  // actually sees, written out rather than derived. This is the nav half of the
+  // deploy-day guarantee: an exec's console must look byte-identical, and a
+  // link appearing or disappearing here is the most visible way it would not.
+  it('shows an unrestricted exec exactly these links', () => {
+    const visible = ITEMS.filter((i) => canAccess('exec', UNRESTRICTED, i.href)).map((i) => i.href);
+    expect(visible).toEqual([
+      '/dashboard',
+      '/matches',
+      '/tournaments',
+      '/sessions',
+      '/announcements',
+      '/seasons',
+      '/fees',
+      '/players',
+      '/legal',
+      '/settings',
+    ]);
+  });
+
+  it('shows an unrestricted trainer only the roster and their own settings', () => {
+    const visible = ITEMS.filter((i) => canAccess('trainer', UNRESTRICTED, i.href)).map((i) => i.href);
+    expect(visible).toEqual(['/dashboard', '/players', '/settings']);
+  });
+});

@@ -24,12 +24,19 @@ const DOC_DESCRIPTIONS: Record<string, string> = {
 export function LegalDocumentsForm({
   documents,
   canEdit,
+  canRequireReacceptance,
 }: {
   documents: LegalDocumentRow[];
   // Execs see the documents and may require a re-signature; only admins edit
   // the text. The server actions enforce this independently — hiding the
   // editor is so nobody is offered a control that will reject them.
   canEdit: boolean;
+  // Its own flag rather than "anyone who got this far". Forcing the whole club
+  // to re-sign is a separate capability from editing the text and from reading
+  // it, and it was the one control on this page nobody asked a question about —
+  // correct while every viewer was an exec, wrong the moment somebody can hold
+  // legal.read alone.
+  canRequireReacceptance: boolean;
 }) {
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<string | null>(null);
@@ -137,6 +144,7 @@ export function LegalDocumentsForm({
                   Save &amp; require re-acceptance
                 </Button>
                 )}
+                {canRequireReacceptance && (
                 <Button
                   variant="ghost"
                   className="border-[var(--red-border)] text-[var(--color-accent)] hover:bg-[var(--red-wash)] hover:text-[var(--color-accent)]"
@@ -146,6 +154,7 @@ export function LegalDocumentsForm({
                 >
                   Require re-signature now
                 </Button>
+                )}
               </div>
             </div>
           </div>

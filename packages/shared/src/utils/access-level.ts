@@ -413,12 +413,25 @@ const BASELINES: Record<AccessLevel, ReadonlySet<Capability>> = {
 // not reach the books, and a purely additive role would need a dozen
 // hand-written revokes to achieve that.
 //
-// ROLE_DEFAULTS IS EMPTY UNTIL THE STORAGE MIGRATION (00087) LANDS, and that is
-// deliberate rather than unfinished. Nothing can assign a role yet —
-// permission_role does not exist as a column and every caller passes
-// UNRESTRICTED — so a populated table here would be unreviewable content that
-// nothing exercises. An empty base is also the fail-closed reading, which is
-// what an unrecognised role gets too.
+// ASSIGNING A ROLE IS NEVER ITSELF A WIDENING. Every role is a SUBSET of
+// EXEC_BASELINE, pinned by a test, and that is the whole property this table is
+// built to have — an admin who picks "Finance" from a dropdown has narrowed
+// somebody and cannot have done anything else. Anything beyond today's scope
+// for an area (the club's books, reinstatements, the net position) is handed
+// over per person by an explicit grant, which is a reviewed act with an audit
+// row rather than a side effect of choosing a word.
+//
+// The four lists are NOT a new design. They are the old SECTION_PORTFOLIO map —
+// the four VP jobs, each owning a set of sections — intersected with
+// EXEC_BASELINE, and they still partition it exactly: finance had /fees,
+// tournaments had /tournaments /matches /sessions, internal had /players
+// /seasons, external had /legal /announcements. Deriving them that way rather
+// than writing four fresh lists is what makes "assigning a role does the same
+// thing the portfolio did" a fact instead of a hope.
+//
+// EVERY ROLE CARRIES THE READ FOR EVERY AREA IT WRITES IN. Route access is
+// "holds at least one <area>.….read", so a role of writes with no read is a set
+// of controls on a page its holder cannot open. Pinned by a test.
 export type PermissionRole = 'finance' | 'tournaments' | 'internal' | 'external';
 
 export const PERMISSION_ROLES: readonly PermissionRole[] = [
@@ -428,12 +441,125 @@ export const PERMISSION_ROLES: readonly PermissionRole[] = [
   'external',
 ] as const;
 
-export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {
-  finance: [],
-  tournaments: [],
-  internal: [],
-  external: [],
+/** Shown wherever a role is chosen or reported. */
+export const PERMISSION_ROLE_LABELS: Record<PermissionRole, string> = {
+  finance: 'Finance',
+  tournaments: 'Tournaments',
+  internal: 'Internal',
+  external: 'External',
 };
+
+export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {
+  // The Expenses tab and nothing further — 00086's behaviour exactly. Club
+  // money, other income, the net position and reinstatements are NOT here even
+  // though a treasurer is the obvious person to hold them: the club owner's
+  // rule was "execs can add expenses", and a role that reached the books would
+  // be the first role that widens somebody.
+  finance: [
+    'fees.expenses.read',
+    'fees.expenses.add.write',
+  ],
+
+  // Running the club's competitive calendar: the draw, the ladder and the
+  // weekly sessions. Entry money (`tournaments.fees.*`) is deliberately absent
+  // — it was admin-only before and it stays admin-only, which is also why the
+  // old portfolio could not reach /tournaments/<id>/fees.
+  tournaments: [
+    'sessions.read',
+    'sessions.reminders.write',
+    'sessions.create.write',
+    'sessions.update.write',
+    'sessions.archive.write',
+    'sessions.checkin.token.write',
+    'sessions.attendance.write',
+    'sessions.delete.write',
+    'matches.read',
+    'matches.void.write',
+    'matches.convert.write',
+    'matches.create.write',
+    'tournaments.manage.read',
+    'tournaments.manage.create.write',
+    'tournaments.manage.update.write',
+    'tournaments.manage.status.write',
+    'tournaments.manage.suspend.write',
+    'tournaments.manage.resume.write',
+    'tournaments.manage.archive.write',
+    'tournaments.manage.delete.write',
+    'tournaments.manage.event.create.write',
+    'tournaments.manage.event.update.write',
+    'tournaments.manage.event.delete.write',
+    'tournaments.manage.event.status.write',
+    'tournaments.draw.participants.add.write',
+    'tournaments.draw.participants.remove.write',
+    'tournaments.draw.checkin.token.write',
+    'tournaments.draw.checkin.mark.write',
+    'tournaments.draw.noshow.write',
+    'tournaments.draw.exit.write',
+    'tournaments.draw.pairs.add.write',
+    'tournaments.draw.pairs.remove.write',
+    'tournaments.draw.seed.set.write',
+    'tournaments.draw.seed.auto.write',
+    'tournaments.draw.seed.clear.write',
+    'tournaments.draw.generate.write',
+    'tournaments.draw.lock.write',
+    'tournaments.draw.unlock.write',
+    'tournaments.results.enter.write',
+    'tournaments.results.walkover.write',
+    'tournaments.results.void.write',
+    'tournaments.results.unvoid.write',
+    'tournaments.results.undo.write',
+    'tournaments.results.edit.write',
+    'tournaments.results.entry.write',
+    'tournaments.results.doublenoshow.write',
+    'tournaments.results.bonuses.write',
+    'tournaments.results.standings.write',
+    'tournaments.results.finalize.write',
+  ],
+
+  // The membership: who is on the roster and which term they are playing in.
+  // `seasons.fees.write` is absent for the same reason `finance` stops at
+  // expenses — setting what a term costs is admin work and always was.
+  internal: [
+    'players.read',
+    'players.approve.write',
+    'players.create.write',
+    'players.update.write',
+    'players.waiver.resign.write',
+    'players.ban.write',
+    'players.reinstate.write',
+    'players.editor.varsitynotes.write',
+    'seasons.read',
+    'seasons.create.write',
+    'seasons.activate.write',
+    'seasons.end.write',
+  ],
+
+  // What the club says to its members and what they sign. Reading the legal
+  // documents and forcing a re-signature, but not editing the text — that split
+  // predates capabilities and is unchanged.
+  external: [
+    'announcements.read',
+    'announcements.create.write',
+    'announcements.update.write',
+    'announcements.delete.write',
+    'legal.read',
+    'legal.reacceptance.write',
+  ],
+};
+
+// WHAT THE EDITOR MAY HAND OUT — the exec baseline, and nothing above it.
+//
+// The one line that keeps this change provably inside the old envelope. Every
+// capability outside EXEC_BASELINE (the club's books, reinstatements, audit,
+// ratings, accounts, platform settings, permissions.write itself) is admin work
+// today, and offering it here would make this the change that widens somebody
+// — which is not what it is for. It ships with storage, grant closure and the
+// editor proven first, and exposing the rest is its own small reviewable diff.
+//
+// Grant closure would already stop a non-admin handing out anything they do not
+// hold; this bounds what an ADMIN can hand out too, which closure by definition
+// cannot.
+export const EDITOR_OFFERABLE: readonly Capability[] = EXEC_BASELINE;
 
 // ---------------------------------------------------------------------------
 // PERMISSIONS
@@ -535,6 +661,46 @@ export function permissionsOf(player: PermissionsInput | null | undefined): Perm
     );
   }
   return resolvePermissions(role, player.permission_grants ?? [], player.permission_revokes ?? []);
+}
+
+/**
+ * The stored triple as a plain object, or null for a row that predates the
+ * storage migration.
+ *
+ * Exists because a resolved `Permissions` cannot cross the server/client
+ * boundary: its payload is a Set, and the thing a server component hands a
+ * client component has to be plain data. So the SERVER sends the same three
+ * columns the database holds and the CLIENT calls permissionsOf() on them —
+ * one resolver, run twice, rather than a second wire format that could
+ * disagree with it.
+ *
+ * Returning null rather than an empty triple keeps the "columns absent means
+ * unrestricted" reading intact across that boundary: an empty triple would
+ * resolve identically today, but it says "this row is not narrowed" where null
+ * says "this build has not been told", and only the second one stays true if
+ * the meaning of an empty triple ever changes.
+ */
+export function permissionTripleOf(
+  player: PermissionsInput | null | undefined,
+): PermissionsInput | null {
+  if (!player) return null;
+  if (
+    !('permission_role' in player)
+    && !('permission_grants' in player)
+    && !('permission_revokes' in player)
+  ) {
+    return null;
+  }
+  // Validated by the resolver rather than by a `?? []` here. A role with a
+  // missing delta column throws, and it has to throw on this path too:
+  // serialising it as an empty array would discard a revoke on the way to the
+  // client, which is the one direction this model must never fail in.
+  permissionsOf(player);
+  return {
+    permission_role: player.permission_role ?? null,
+    permission_grants: player.permission_grants ?? [],
+    permission_revokes: player.permission_revokes ?? [],
+  };
 }
 
 const EMPTY_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>();

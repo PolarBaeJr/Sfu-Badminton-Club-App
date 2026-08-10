@@ -4,7 +4,7 @@ import { Card, Badge, PageHeader, ResponsiveTable, TableCard, Atomic } from '@ba
 import { formatDate } from '@badminton/shared';
 import { CreateSeasonForm, SeasonActions, SeasonFeesEditor } from './actions';
 import { Medal, Calendar, CalendarClock, CheckCircle2, XCircle, Clock, AlertTriangle } from 'lucide-react';
-import { accessLevelFor, permits, UNRESTRICTED } from '@/lib/permissions';
+import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 
 export default async function SeasonsPage() {
   // seasons.read opens the page, but updateSeasonFees asks for
@@ -14,7 +14,7 @@ export default async function SeasonsPage() {
   // CONTROL was the layer that disagreed. Same shape the Legal page uses: the
   // flag decides what is offered, the server action is still the boundary.
   const viewer = await requireCapability('seasons.read');
-  const canEditFees = permits(accessLevelFor(viewer), UNRESTRICTED, 'seasons.fees.write');
+  const canEditFees = permits(accessLevelFor(viewer), permissionsOf(viewer), 'seasons.fees.write');
 
   const supabase = createAdminClient();
 

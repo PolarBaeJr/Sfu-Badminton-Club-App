@@ -8,12 +8,14 @@ import { AUTH_COOKIE_OPTIONS, ExpectedError } from '@badminton/shared';
 import {
   accessLevelFor,
   atLeast,
+  permissionsOf,
   permits,
   EXEC_BASELINE,
   TRAINER_BASELINE,
   UNRESTRICTED,
   type AccessLevel,
   type Capability,
+  type Permissions,
 } from './permissions';
 
 // NOTE: generated `Database` type is available from '@badminton/shared' but not
@@ -91,15 +93,15 @@ async function assertPasskeyVerified(
 }
 
 // The one authenticated gate. `authorize` receives the level the caller's row
-// resolves to and returns a user-facing denial, or null to admit them — so
-// there is exactly one place that authenticates, checks standing and enforces
-// the passkey, and the two public gates below differ only in the question they
-// ask about the caller.
+// resolves to AND the permissions it stores, and returns a user-facing denial,
+// or null to admit them — so there is exactly one place that authenticates,
+// checks standing and enforces the passkey, and the two public gates below
+// differ only in the question they ask about the caller.
 //
 // The denial is spelled by the caller because the message is user-facing, and a
 // trainer told "admin or exec access required" has been told the truth.
 async function getAuthenticatedConsolePlayer(
-  authorize: (level: AccessLevel | null) => string | null,
+  authorize: (level: AccessLevel | null, permissions: Permissions) => string | null,
   options: { skipPasskey?: boolean } = {}
 ) {
   const supabase = await createServerSupabaseClient();
@@ -149,14 +151,17 @@ async function getAuthenticatedConsolePlayer(
     throw new ExpectedError('Account is inactive');
   }
 
-  // Same resolution the middleware gets from admin_access_level(), through the
-  // same helper — never a second inline copy of the rule.
+  // Same resolution the middleware gets from admin_console_access(), through
+  // the same two helpers — never a second inline copy of either rule. The row
+  // comes from select('*'), so permissionsOf() sees all three columns once
+  // 00087 is applied and none of them before, which is the state it reads as
+  // "not narrowed".
   //
   // BEFORE the passkey check, not after: an exec calling an admin-only action
   // has always been told "admin access required" rather than being sent to
   // enrol a passkey first, and swapping the order would change what every
   // refused caller sees.
-  const denial = authorize(accessLevelFor(player));
+  const denial = authorize(accessLevelFor(player), permissionsOf(player));
   if (denial !== null) {
     Sentry.setUser(null);
     throw new ExpectedError(denial);
@@ -187,10 +192,23 @@ export async function getAuthenticatedAdmin(options: { skipPasskey?: boolean } =
 // gates used to produce — which is what keeps this refactor invisible from the
 // outside as well as from the inside.
 //
-// It will need to name the capability once permissions vary per person: at that
-// point "admin or exec access required" stops being true for a narrowed exec
-// who simply was not given this one.
-function denialFor(capability: Capability): string {
+// THE NARROWED CASE IS ANSWERED FIRST, and it has to be: a restricted exec
+// refused players.approve.write holds the exec level, so "admin or exec access
+// required" is not merely unhelpful, it is false — they would read it as a bug
+// and ask an admin to check a flag that is already set. Their level is not the
+// problem; their permissions are, and only an admin can change them.
+//
+// Unreachable before anything is stored, because an unrestricted person's set
+// IS their level baseline, so the three level messages below still cover every
+// refusal the console can produce today.
+function denialFor(
+  level: AccessLevel | null,
+  permissions: Permissions,
+  capability: Capability,
+): string {
+  if (permissions.kind === 'restricted' && permits(level, UNRESTRICTED, capability)) {
+    return 'Your permissions do not include this. Ask an admin.';
+  }
   if (TRAINER_BASELINE.includes(capability)) return 'Admin console access required';
   if (EXEC_BASELINE.includes(capability)) return 'Admin or exec access required';
   return 'Admin access required';
@@ -208,15 +226,18 @@ function denialFor(capability: Capability): string {
 // same reason — an optional one defaults to full access at every call site that
 // forgets it — but it could only ever cut the console four ways.
 //
-// PERMISSIONS ARE HARD-CODED UNRESTRICTED here until the storage migration
-// lands. Every row is unrestricted today, so this resolves to the caller's
-// level baseline, which is a transcription of what that level could already do.
+// THE ROW IT RETURNS IS THE ROW IT AUTHENTICATED, and that matters beyond
+// convenience: setPlayerPermissions derives the actor's own capability set from
+// this return value and from nothing else. Grant closure is only worth anything
+// if the actor's set is resolved server-side through the same path the gates
+// use, and this is that path.
 export async function requireCapability(
   capability: Capability,
   options: { skipPasskey?: boolean } = {},
 ) {
   return getAuthenticatedConsolePlayer(
-    (level) => (permits(level, UNRESTRICTED, capability) ? null : denialFor(capability)),
+    (level, permissions) =>
+      permits(level, permissions, capability) ? null : denialFor(level, permissions, capability),
     options,
   );
 }

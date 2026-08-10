@@ -1,5 +1,5 @@
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
-import { accessLevelFor, permits, UNRESTRICTED } from '@/lib/permissions';
+import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { Card, Badge, StatCard, AvatarChip, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, TOURNAMENT_EVENT_TYPE_LABELS, getWinRate, getStreakDisplay, getPointDifferential } from '@badminton/shared';
 import { PlayerEditForm } from './edit-form';
@@ -28,11 +28,16 @@ export default async function PlayerDetailPage({
   // EXCEPT the varsity notes panel — which is the only reason they are here.
   const viewer = await getAuthenticatedConsoleUser();
   const level = accessLevelFor(viewer);
+  const permissions = permissionsOf(viewer);
   const isAdmin = level === 'admin';
   // Ask for the capability the edit form's Save invokes, not for a level —
   // anyone holding only players.read sees this page exactly as a trainer does,
   // read-only. Same reasoning as /players itself.
-  const canManage = permits(level, UNRESTRICTED, 'players.update.write');
+  const canManage = permits(level, permissions, 'players.update.write');
+  // Approving a pending signup is its own capability, and the edit form saves
+  // through approvePlayer for exactly those members — so a holder of the update
+  // write alone would meet a Save that can only refuse.
+  const canApprove = permits(level, permissions, 'players.approve.write');
   const supabase = createAdminClient();
 
   // Which season this page is showing. Defaults to the active one; ?season=
@@ -213,7 +218,7 @@ export default async function PlayerDetailPage({
         {canManage && (
         <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
           <h2 className="text-base font-semibold text-[var(--text-primary)] mb-4">Edit Player</h2>
-          <PlayerEditForm player={player} rating={r} isAdmin={isAdmin} />
+          <PlayerEditForm player={player} rating={r} isAdmin={isAdmin} canApprove={canApprove} />
           {isAdmin && (
             <div className="mt-4 pt-4 border-t border-[var(--border)]">
               <p className="text-xs text-[var(--text-muted)] mb-2">

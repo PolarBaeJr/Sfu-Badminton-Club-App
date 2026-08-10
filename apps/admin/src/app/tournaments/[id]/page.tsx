@@ -1,5 +1,5 @@
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
-import { accessLevelFor, permits, UNRESTRICTED } from '@/lib/permissions';
+import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { Card, Badge, PageHeader } from '@badminton/ui';
 import { TournamentCheckinQr } from './checkin-qr';
 import { formatDate, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS, describeMatchShape } from '@badminton/shared';
@@ -17,7 +17,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
   // capability in its own group — execs run tournaments but not entry money —
   // so ask for the read the linked PAGE requires rather than for a level.
   const viewer = await requireCapability('tournaments.manage.read');
-  const canSeeFees = permits(accessLevelFor(viewer), UNRESTRICTED, 'tournaments.fees.read');
+  const canSeeFees = permits(accessLevelFor(viewer), permissionsOf(viewer), 'tournaments.fees.read');
 
   const { data: tournament } = await supabase.from('tournaments').select('*').eq('id', id).single();
   if (!tournament) notFound();

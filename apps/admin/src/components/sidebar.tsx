@@ -6,83 +6,30 @@ import { cn } from '@badminton/ui';
 // Deep import, not the '@badminton/shared' barrel — see the player middleware.
 import { clearHostOnlyAuthCookies } from '@badminton/shared/src/utils/constants';
 import { withBase } from '@/lib/base-path';
-import {
-  LayoutDashboard,
-  Users,
-  Trophy,
-  Medal,
-  Scale,
-  ScrollText,
-  Settings,
-  Gauge,
-  UserCog,
-  Target,
-  Calendar,
-  DollarSign,
-  Megaphone,
-  ShieldCheck,
-  LogOut,
-} from 'lucide-react';
+import { LogOut } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
-import { canAccess, UNRESTRICTED, type AccessLevel } from '@/lib/permissions';
+import {
+  canAccess,
+  permissionsOf,
+  UNRESTRICTED,
+  type AccessLevel,
+  type PermissionsInput,
+} from '@/lib/permissions';
+import { NAV_SECTIONS, type NavItem } from './nav-sections';
 
-// Two nav ROWS, not two access levels. Every item in both is filtered through
-// canAccess() against the same section map the middleware uses, so this list
-// can never offer a door that will not open — grouping is layout only.
-//
-// The first row is the day-to-day club work an exec does; the second is the
-// back-office row, which happens to be mostly admin-only but is not uniformly
-// so (/players and /settings reach down to trainers, /legal to execs). Put a
-// section wherever it belongs on screen and let canAccess() do the deciding:
-// hand-keeping a second idea of who may see what is exactly how execs came to
-// be shown four links that bounced them to /unauthorized.
-// How quickly a promotion or demotion reaches an already-open console tab.
+// How quickly a promotion, demotion or narrowing reaches an already-open tab.
 const POLL_MS = 5000;
-
-const navSections = [
-  {
-    title: 'Manage',
-    items: [
-      { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      { href: '/matches', label: 'Matches', icon: Target },
-      { href: '/tournaments', label: 'Tournaments', icon: Trophy },
-      { href: '/sessions', label: 'Sessions', icon: Calendar },
-      { href: '/announcements', label: 'Announcements', icon: Megaphone },
-      { href: '/seasons', label: 'Seasons', icon: Medal },
-      // Route stays /fees — it is the section's access key in permissions.ts
-      // and every existing link and revalidatePath points at it. The label is
-      // "Finances" because the section is no longer only fees: other income and
-      // expenses are tabs on the same page.
-      //
-      // Sits in the first row now that /fees is exec-level: for an exec it is
-      // the only back-office link they have, and left in the second row it
-      // would have rendered as a one-item strip under a divider. An exec who
-      // follows it lands on the Expenses tab and sees nothing else — the page
-      // decides that, not this list.
-      { href: '/fees', label: 'Finances', icon: DollarSign },
-    ],
-  },
-  {
-    title: 'Admin only',
-    items: [
-      { href: '/players', label: 'Players', icon: Users },
-      { href: '/permissions', label: 'Permissions', icon: ShieldCheck },
-      // Platform configuration, split out of /settings — which stays trainer-level
-      // for passkey enrolment and no longer carries any of it.
-      { href: '/ratings', label: 'Ratings', icon: Gauge },
-      { href: '/accounts', label: 'Accounts', icon: UserCog },
-      { href: '/legal', label: 'Legal', icon: Scale },
-      { href: '/audit', label: 'Audit Log', icon: ScrollText },
-      { href: '/settings', label: 'Settings', icon: Settings },
-    ],
-  },
-];
 
 export function Sidebar({
   initialAccessLevel = null,
+  initialPermissions = null,
 }: {
   initialAccessLevel?: AccessLevel | null;
+  // The stored triple, not a resolved Permissions: a Set does not survive the
+  // boundary between a server component and this one. Resolved below with the
+  // same function the server used.
+  initialPermissions?: PermissionsInput | null;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -90,7 +37,15 @@ export function Sidebar({
   // Seeded from the server so the FIRST paint is already filtered. The effect
   // below still runs (it also fetches the email, and refreshes the level on a
   // client-side navigation), but it no longer decides what the user sees first.
-  const [accessLevel, setAccessLevel] = useState<AccessLevel | null>(initialAccessLevel);
+  //
+  // Level and triple move together, in ONE state, because they are one answer:
+  // holding them apart would let a render see the new level with the old
+  // permissions, which is the half-updated nav this whole component exists to
+  // avoid.
+  const [access, setAccess] = useState<{
+    level: AccessLevel | null;
+    permissions: PermissionsInput | null;
+  }>({ level: initialAccessLevel, permissions: initialPermissions });
   const [accessLoaded, setAccessLoaded] = useState(initialAccessLevel !== null);
 
   // Don't render header on public routes
@@ -121,21 +76,38 @@ export function Sidebar({
       if (!user) { setAccessLoaded(true); return; }
       setUserEmail(user.email ?? null);
 
-      const { data: level, error } = await supabase.rpc('admin_access_level', { p_user_id: user.id });
+      // The same RPC the middleware calls, so the nav and the boundary are
+      // answering from one source. A narrowing takes effect here within POLL_MS
+      // for exactly the same reason a demotion does.
+      const { data, error } = await supabase.rpc('admin_console_access', { p_user_id: user.id });
       if (cancelled) return;
       // Only trust a SUCCESSFUL read. supabase-js returns data: null on error,
       // so writing it unconditionally would turn a transient RPC failure into
       // "you have no access" — and since the nav now fails closed, that emptied
-      // the whole sidebar until a reload.
+      // the whole sidebar until a reload. Keeping the last good answer is not
+      // failing open: the middleware re-decides on every navigation and the
+      // server actions gate independently, so the worst case is a link that
+      // bounces, not a door that opens.
       if (error) { setAccessLoaded(true); return; }
 
-      const next = (level as AccessLevel | null) ?? null;
+      const row = data as (PermissionsInput & { level: string | null }) | null;
+      const next = {
+        level: (row?.level as AccessLevel | null) ?? null,
+        permissions: row
+          ? {
+              permission_role: row.permission_role ?? null,
+              permission_grants: row.permission_grants ?? [],
+              permission_revokes: row.permission_revokes ?? [],
+            }
+          : null,
+      };
 
-      setAccessLevel((prev) => {
-        // Server components hold the old level too, so re-render them rather
+      setAccess((prev) => {
+        // Server components hold the old answer too, so re-render them rather
         // than leaving a half-updated page — the nav would say one thing and
-        // the page body another.
-        if (prev !== next) router.refresh();
+        // the page body another. Compared by value: the triple is a fresh
+        // object on every poll, so an identity check would refresh forever.
+        if (JSON.stringify(prev) !== JSON.stringify(next)) router.refresh();
         return next;
       });
       setAccessLoaded(true);
@@ -183,13 +155,16 @@ export function Sidebar({
   //
   // Still cosmetic, not a boundary: the middleware and every server action gate
   // independently. This just stops the UI advertising doors that won't open.
-  const visibleItems = navSections.map((section) =>
-    section.items.filter((item) => accessLoaded && canAccess(accessLevel, UNRESTRICTED, item.href))
+  const permissions = access.permissions ? permissionsOf(access.permissions) : UNRESTRICTED;
+  const visibleItems = NAV_SECTIONS.map((section) =>
+    section.items.filter(
+      (item) => accessLoaded && canAccess(access.level, permissions, item.href),
+    )
   );
   const manageItems = visibleItems[0] ?? [];
   const adminItems = visibleItems[1] ?? [];
 
-  const navLink = (item: { href: string; label: string }) => {
+  const navLink = (item: NavItem) => {
     const isActive = pathname.startsWith(item.href);
     return (
       <Link

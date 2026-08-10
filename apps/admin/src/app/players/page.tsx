@@ -1,5 +1,5 @@
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
-import { accessLevelFor, permits, UNRESTRICTED } from '@/lib/permissions';
+import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { Badge, Card, AvatarChip, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS, getMissingLegalDocuments, getWinRate, unwrap } from '@badminton/shared';
 import Link from 'next/link';
@@ -38,6 +38,7 @@ export default async function PlayersPage({
   // it at all.
   const viewer = await getAuthenticatedConsoleUser();
   const level = accessLevelFor(viewer);
+  const permissions = permissionsOf(viewer);
   const isAdmin = level === 'admin';
   // A varsity trainer reads this page and nothing more: they are here to find
   // the player they are writing a note about, and players.read is the whole of
@@ -45,7 +46,12 @@ export default async function PlayersPage({
   // Editing is what every control here ends up invoking, so ask for that rather
   // than for a level: the controls and the actions behind them then agree by
   // construction, instead of by two people remembering the same rule.
-  const canManage = permits(level, UNRESTRICTED, 'players.update.write');
+  const canManage = permits(level, permissions, 'players.update.write');
+  // Its own question, not a second reading of canManage. The Edit dialog does
+  // approve AND update through one Save, and the two are separate capabilities
+  // — so somebody who may edit a member but not let a new one in must not be
+  // offered the control that only they can complete.
+  const canApprove = permits(level, permissions, 'players.approve.write');
   // Hiding the tab is not the same as closing it: /players?tab=suspended is a
   // URL anyone can type, and the moderation queues are exec business. Fall back
   // rather than error — a trainer following a stale link should land on the
@@ -236,6 +242,7 @@ export default async function PlayersPage({
                     playerName={player.full_name}
                     playerData={player}
                     isAdmin={isAdmin}
+                    canApprove={canApprove}
                   />
                 ))}
               </div>

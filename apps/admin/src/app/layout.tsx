@@ -4,7 +4,12 @@ import './globals.css';
 export const dynamic = 'force-dynamic';
 import { Sidebar } from '@/components/sidebar';
 import { getAuthenticatedConsoleUser } from '@/lib/supabase-server';
-import { accessLevelFor, type AccessLevel } from '@/lib/permissions';
+import {
+  accessLevelFor,
+  permissionTripleOf,
+  type AccessLevel,
+  type PermissionsInput,
+} from '@/lib/permissions';
 import { MainContent } from '@/components/main-content';
 import { ToastProvider } from '@/components/toast-provider';
 import { SentryUserInit } from '@/components/sentry-user-init';
@@ -62,12 +67,23 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // between a flash of too much and a flash of an empty nav was a false choice:
   // the layout is already an async server component and can just know.
   //
+  // The PERMISSIONS are seeded alongside the level, and for the same reason: a
+  // narrowed exec whose first paint used the level alone would watch the
+  // sections they no longer hold sit there until the first poll came back.
+  //
+  // Sent as the stored TRIPLE rather than as a resolved Permissions, because a
+  // resolved one carries a Set and a Set is not plain data — what crosses into
+  // a client component has to be. The sidebar resolves it with the same
+  // permissionsOf() the server used, so the two cannot answer differently.
+  //
   // Throws on public routes (/login, /unauthorized) where there is no session,
   // which is exactly when the sidebar renders nothing anyway.
   let initialAccessLevel: AccessLevel | null = null;
+  let initialPermissions: PermissionsInput | null = null;
   try {
     const viewer = await getAuthenticatedConsoleUser({ skipPasskey: true });
     initialAccessLevel = accessLevelFor(viewer);
+    initialPermissions = permissionTripleOf(viewer);
   } catch {
     initialAccessLevel = null;
   }
@@ -94,7 +110,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <ToastProvider>
           <ConfirmProvider>
             <SentryUserInit playerId={null} />
-            <Sidebar initialAccessLevel={initialAccessLevel} />
+            <Sidebar
+              initialAccessLevel={initialAccessLevel}
+              initialPermissions={initialPermissions}
+            />
             <MainContent>
               {children}
             </MainContent>

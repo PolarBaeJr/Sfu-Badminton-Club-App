@@ -34,11 +34,32 @@ import {
  * REIMBURSEMENT STATE (00077) IS SHOWN TO EVERYONE WHO CAN SEE THE ROW,
  * including execs — that is the whole point of the feature for them: an exec
  * who bought shuttles out of pocket comes here to find out whether the club has
- * paid them back. Only an admin gets the button that changes it, and only an
- * admin gets Delete.
+ * paid them back. Seeing the state and changing it are separate capabilities.
  */
 
 type LedgerKind = 'income' | 'expense';
+
+/**
+ * Which controls to offer, one flag per action, decided by the PAGE.
+ *
+ * This replaced a single `isAdmin`. That flag was an accurate description of
+ * the boundary while it was "execs file expenses, admins do everything else",
+ * and it stopped being one the moment the club could hand somebody
+ * fees.expenses.reimburse.write without making them an admin. Four booleans
+ * rather than a level, because there are four actions and they are separately
+ * grantable.
+ *
+ * Still only which controls are OFFERED. Every action re-gates itself, since
+ * the client that runs them is service-role and bypasses RLS.
+ */
+export type LedgerWrites = {
+  add: boolean;
+  /** Expenses only — an income row has no payer and nothing to edit in place. */
+  update: boolean;
+  /** Expenses only. */
+  reimburse: boolean;
+  remove: boolean;
+};
 
 interface LedgerRow {
   id: string;
@@ -70,18 +91,13 @@ export async function LedgerCard({
   kind,
   seasonId,
   seasonName,
-  isAdmin,
+  canWrite,
 }: {
   kind: LedgerKind;
   seasonId: string;
   seasonName: string;
-  /**
-   * Admins settle and delete; execs record and read. Passed in rather than
-   * re-derived here so the page is the single place that decides — and note it
-   * only picks which CONTROLS are offered. Every action re-gates itself, since
-   * the client that runs them is service-role and bypasses RLS.
-   */
-  isAdmin: boolean;
+  /** Passed in rather than re-derived, so the page is the one place deciding. */
+  canWrite: LedgerWrites;
 }) {
   const supabase = createAdminClient();
   const isIncome = kind === 'income';
@@ -212,11 +228,11 @@ export async function LedgerCard({
           <h2 className="text-sm font-medium text-[var(--text-primary)]">{heading}</h2>
           <p className="text-xs text-[var(--text-muted)]">{blurb}</p>
         </div>
-        {isIncome ? (
+        {canWrite.add && (isIncome ? (
           <AddOtherIncome seasonId={seasonId} seasonName={seasonName} />
         ) : (
           <AddExpense seasonId={seasonId} seasonName={seasonName} payerOptions={payerOptions} />
-        )}
+        ))}
       </div>
 
       {rows.length === 0 ? (
@@ -260,13 +276,13 @@ export async function LedgerCard({
               ]}
               actions={
                 <>
-                  {/* Settling and deleting are admin work. An exec sees the
-                      state — that is the point of the feature for them — and no
-                      control that would reject them. */}
-                  {isAdmin && !isIncome && (
+                  {/* Somebody who can only READ this ledger sees the state —
+                      that is the point of the feature for them — and no control
+                      that would reject them. */}
+                  {canWrite.update && !isIncome && (
                     <EditExpense expense={editable(row)} payerOptions={payerOptions} />
                   )}
-                  {isAdmin && !isIncome && row.paid_by && !row.reimbursed_at && (
+                  {canWrite.reimburse && !isIncome && row.paid_by && !row.reimbursed_at && (
                     <MarkReimbursed
                       id={row.id}
                       payerId={row.paid_by}
@@ -274,7 +290,7 @@ export async function LedgerCard({
                       amountCents={row.amount_cents}
                     />
                   )}
-                  {isAdmin && (
+                  {canWrite.remove && (
                     <RemoveLedgerEntry id={row.id} kind={kind} label={row.description} amountCents={row.amount_cents} />
                   )}
                 </>
@@ -350,10 +366,10 @@ export async function LedgerCard({
                   )}
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">
-                      {isAdmin && !isIncome && (
+                      {canWrite.update && !isIncome && (
                         <EditExpense expense={editable(row)} payerOptions={payerOptions} />
                       )}
-                      {isAdmin && !isIncome && row.paid_by && !row.reimbursed_at && (
+                      {canWrite.reimburse && !isIncome && row.paid_by && !row.reimbursed_at && (
                         <MarkReimbursed
                           id={row.id}
                           payerId={row.paid_by}
@@ -361,7 +377,7 @@ export async function LedgerCard({
                           amountCents={row.amount_cents}
                         />
                       )}
-                      {isAdmin && (
+                      {canWrite.remove && (
                         <RemoveLedgerEntry
                           id={row.id}
                           kind={kind}

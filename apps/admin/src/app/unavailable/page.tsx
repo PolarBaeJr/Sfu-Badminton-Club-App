@@ -25,6 +25,13 @@ function UnavailableContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [noCredentials, setNoCredentials] = useState(false);
+  // The middleware sends an exec here when it cannot read their permissions at
+  // all, because that is not a decision about them — it is the console being
+  // unable to make one — and /unauthorized would say the opposite. This page's
+  // default copy is about passkeys, so without a reason an exec would be told
+  // to confirm a passkey they have already confirmed and would go looking for a
+  // security problem instead of an outage.
+  const isPermissionsOutage = searchParams.get('reason') === 'permissions';
 
   useEffect(() => {
     const supabase = createClient();
@@ -71,6 +78,39 @@ function UnavailableContent() {
     // host-only cookie behind, which would still read as a live session.
     clearHostOnlyAuthCookies();
     window.location.href = withBase('/login');
+  }
+
+  if (isPermissionsOutage) {
+    return (
+      <div className="min-h-screen flex items-center bg-[var(--bg-primary)]">
+        <div className="max-w-xl w-full mx-auto px-6">
+          <div className="page-eyebrow">
+            <span className="bar" />
+            Console unavailable
+          </div>
+          <h1 className="page-title">We can&apos;t check your permissions</h1>
+          <p className="page-sub">
+            The console could not read what you have access to, so it is holding the door
+            rather than guessing. Nothing has changed about your account.
+          </p>
+          <div className="mt-8 space-y-6">
+            <p className="text-sm text-[var(--text-muted)] max-w-[52ch]">
+              Try again in a moment. If it keeps happening, tell an admin — they can still
+              get in, and this is the message they need to hear.
+            </p>
+            <div className="flex items-center gap-3">
+              <Button onClick={() => router.replace(sanitizeNext(searchParams.get('next')))}>
+                Try again
+              </Button>
+              <Button variant="ghost" onClick={handleSignOut}>
+                <LogOut className="w-4 h-4" />
+                Sign out
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (

@@ -20,6 +20,14 @@ interface Props {
   // stay with admins. Server-side guards are the boundary — this only keeps
   // execs from seeing a control that would reject them.
   isAdmin: boolean;
+  // APPROVING AND EDITING ARE ONE SAVE, and they are two capabilities. Picking
+  // a division for a pending signup goes through approvePlayer rather than
+  // updatePlayer (see lib/player-approval.ts), so somebody holding
+  // players.update.write without players.approve.write would be offered a
+  // Status select whose only outcome is a refusal. It cannot be removed
+  // entirely without splitting the dialog; locking that one control and saying
+  // why is the honest version.
+  canApprove: boolean;
 }
 
 // Where a Restore puts someone. Not the full status list: "suspended" and
@@ -73,7 +81,7 @@ function fromRoleValue(v: ExecRole): { role: 'player' | 'admin'; is_exec: boolea
   }
 }
 
-export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin }: Props) {
+export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin, canApprove }: Props) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   // active_flag=false presents as "Inactive" regardless of the stored status —
@@ -107,6 +115,8 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin 
   const [reinstateReference, setReinstateReference] = useState('');
   const { toast } = useToast();
   const router = useRouter();
+
+  const approvalBlocked = playerData?.status === 'pending_approval' && !canApprove;
 
   function handleEdit() {
     startTransition(async () => {
@@ -142,6 +152,13 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin 
         // this choice, approving somebody would quietly stop emailing them and
         // stop being recorded anywhere.
         const approving = isApprovalEdit(playerData?.status as string | undefined, status);
+        // Belt as well as braces: the Status select below is locked when this
+        // is true, but a client-side lock is a rendering decision and the
+        // refusal it prevents is worth spelling out here too.
+        if (approving && !canApprove) {
+          toast('Letting a pending signup in is a separate permission you do not hold.', 'error');
+          return;
+        }
         const res = approving
           ? await approvePlayer(playerId, status, reason)
           : await updatePlayer(playerId, {
@@ -437,7 +454,19 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin 
       <Button variant="ghost" size="sm" onClick={() => setOpen(true)}>Edit</Button>
       <Dialog open={open} onClose={() => setOpen(false)} title="Edit Player">
         <div className="space-y-4">
-          <Select label="Status" options={STATUS_OPTIONS} value={status} onChange={(e) => setStatus(e.target.value)} />
+          <Select
+            label="Status"
+            options={STATUS_OPTIONS}
+            value={status}
+            disabled={approvalBlocked}
+            onChange={(e) => setStatus(e.target.value)}
+          />
+          {approvalBlocked && (
+            <p className="text-xs text-[var(--color-danger)]">
+              This member is waiting to be approved, and letting them in is a separate permission
+              you do not hold. Ask an admin.
+            </p>
+          )}
           {isAdmin && (
             <>
               <Select label="Console access" options={EXEC_ROLE_OPTIONS} value={roleValue} onChange={(e) => setRoleValue(e.target.value as ExecRole)} />

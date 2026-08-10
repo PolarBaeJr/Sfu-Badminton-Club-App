@@ -4,7 +4,14 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // available before the mocked module factories run.
 const state = vi.hoisted(() => ({
   user: null as { id: string } | null,
-  player: null as { id: string; role: string; is_exec?: boolean } | null,
+  player: null as {
+    id: string;
+    role: string;
+    is_exec?: boolean;
+    permission_role?: string | null;
+    permission_grants?: string[];
+    permission_revokes?: string[];
+  } | null,
   // Admin-enrolled passkeys for this player. >0 arms the gate, so the caller
   // must present a verified cookie. Members'-app passkeys are excluded by the
   // query itself (enrolled_via = 'admin'), which is why this is a count of
@@ -153,5 +160,45 @@ describe('requireCapability', () => {
       .rejects.toThrow('Admin console access required');
     await expect(requireCapability('audit.read'))
       .rejects.toThrow('Admin access required');
+  });
+
+  // THE STORED TRIPLE IS READ HERE, not only in the editor. This is the whole
+  // of the gate's connection to per-person permissions: the row comes from
+  // select('*'), permissionsOf() turns its three columns into a set, and
+  // permits() asks that set rather than the level's baseline.
+  it('reads the caller’s stored permissions, not just their level', async () => {
+    state.user = { id: 'user-1' };
+    state.player = {
+      id: 'exec-1',
+      role: 'player',
+      is_exec: true,
+      permission_role: 'finance',
+      permission_grants: [],
+      permission_revokes: [],
+    };
+    // In the finance role's defaults.
+    await expect(requireCapability('fees.expenses.add.write')).resolves.toEqual(state.player);
+    // In the exec BASELINE, and deliberately not in the finance role.
+    await expect(requireCapability('players.approve.write')).rejects.toThrow(
+      'Your permissions do not include this. Ask an admin.',
+    );
+  });
+
+  // A NARROWED EXEC IS NOT TOLD THEIR LEVEL IS THE PROBLEM. "Admin or exec
+  // access required" is false for somebody who IS an exec — they would read it
+  // as a bug and ask an admin to check a flag that is already set. The three
+  // level messages above stay exactly as they were for everybody else, which is
+  // why this branch is behind the restricted check rather than replacing them.
+  it('keeps the level messages for a capability no level below admin holds', async () => {
+    state.user = { id: 'user-1' };
+    state.player = {
+      id: 'exec-1',
+      role: 'player',
+      is_exec: true,
+      permission_role: 'finance',
+      permission_grants: [],
+      permission_revokes: [],
+    };
+    await expect(requireCapability('audit.read')).rejects.toThrow('Admin access required');
   });
 });

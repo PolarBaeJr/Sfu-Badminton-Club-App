@@ -16,7 +16,13 @@
 // so it can be reasoned about (and tested) as a plain function. (./permissions
 // is a plain module too — no framework, no I/O.)
 import { ExpectedError } from '@badminton/shared';
-import { accessLevelFor, permits, UNRESTRICTED, type AccessLevel } from './permissions';
+import {
+  accessLevelFor,
+  permissionsOf,
+  permits,
+  type AccessLevel,
+  type PermissionsInput,
+} from './permissions';
 
 // THE HARD FLOOR. Refused to anyone who is not `role === 'admin'`, under all
 // circumstances, and NOT reachable by any capability — not even by granting
@@ -112,7 +118,20 @@ export function isAdminActor(actor: { role?: string | null } | null | undefined)
   return actor?.role === 'admin';
 }
 
-type Actor = { role?: string | null; is_exec?: boolean | null; is_trainer?: boolean | null };
+// The actor's LEVEL markers and their stored permissions. The permission
+// columns are optional because a caller may legitimately not have them — a row
+// selected before 00087 was applied has none, and permissionsOf() reads that
+// state as "not narrowed", which is what every row is on the day it lands.
+//
+// What a caller must NOT do is pass a row whose SELECT named permission_role
+// and dropped the delta columns: permissionsOf() throws on that rather than
+// treating a missing revoke as an empty one. Every caller here passes the row
+// requireCapability() returned, which is a select('*').
+type Actor = {
+  role?: string | null;
+  is_exec?: boolean | null;
+  is_trainer?: boolean | null;
+} & PermissionsInput;
 
 // Fails closed: an actor row that doesn't resolve to a level is treated as the
 // most restricted caller, not waved through.
@@ -184,7 +203,7 @@ export function assertPlayerFieldAccess(
   // list, so the floor is intersected with the supplied payload directly.
   const floorSupplied = suppliedFrom(payloads, PLAYER_FIELD_FLOOR);
   const grantable = fields.filter((f) => !FLOOR.has(f));
-  const grantableSupplied = permits(level, UNRESTRICTED, 'players.privilegedfields.write')
+  const grantableSupplied = permits(level, permissionsOf(actor), 'players.privilegedfields.write')
     ? []
     : suppliedFrom(payloads, grantable);
 

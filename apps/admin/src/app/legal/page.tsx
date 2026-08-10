@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { PageHeader } from '@badminton/ui';
 import { sortLegalDocuments } from '@badminton/shared';
-import { accessLevelFor, permits, UNRESTRICTED } from '@/lib/permissions';
+import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { LegalDocumentsForm } from './legal-documents-form';
 import { EventWaiverTemplateForm } from './event-waiver-template-form';
 
@@ -13,11 +13,25 @@ import { EventWaiverTemplateForm } from './event-waiver-template-form';
 // legal.read is what opens the section, and an exec holds it. Editing asks for
 // legal.documents.write and legal.waivertemplate.write, which no baseline below
 // admin holds; requiring a re-signature asks for legal.reacceptance.write, which
-// every exec holds. The canEdit flag below only decides which controls are
-// offered — the server actions are the boundary.
+// every exec holds. The flags below only decide which controls are offered —
+// the server actions are the boundary.
 export default async function LegalPage() {
   const viewer = await requireCapability('legal.read');
-  const canEdit = permits(accessLevelFor(viewer), UNRESTRICTED, 'legal.documents.write');
+  const level = accessLevelFor(viewer);
+  const permissions = permissionsOf(viewer);
+  const canEdit = permits(level, permissions, 'legal.documents.write');
+  // THE THIRD CONTROL ON THIS PAGE, and until now the only one nobody asked a
+  // question about. "Require re-signature now" was rendered for every viewer,
+  // which was right while every viewer was an exec or an admin and every exec
+  // held legal.reacceptance.write. It is not a control that can stay
+  // unconditional once somebody can hold legal.read alone — forcing the whole
+  // club to re-sign a document is the loudest thing this page does, and it
+  // would have been the one control a read-only holder was still offered.
+  const canRequireReacceptance = permits(level, permissions, 'legal.reacceptance.write');
+  // Editing the event-waiver template is its own capability, not a second
+  // reading of canEdit: they sit in the same baseline today, and nothing but
+  // this line would keep them apart the day one is handed out alone.
+  const canEditWaiverTemplate = permits(level, permissions, 'legal.waivertemplate.write');
 
   const adminClient = createAdminClient();
   const { data: legalDocuments } = await adminClient
@@ -45,7 +59,9 @@ export default async function LegalPage() {
         sub={
           canEdit
             ? 'Terms, privacy, waiver and code of conduct — shown to every member during onboarding'
-            : 'Terms, privacy, waiver and code of conduct — read-only. You can require members to re-sign.'
+            : canRequireReacceptance
+              ? 'Terms, privacy, waiver and code of conduct — read-only. You can require members to re-sign.'
+              : 'Terms, privacy, waiver and code of conduct — read-only.'
         }
         watermark="L"
       />
@@ -57,14 +73,20 @@ export default async function LegalPage() {
               Bumping a version forces every member to re-accept before playing.
               &ldquo;Require re-signature now&rdquo; does the same without changing the text.
             </>
-          ) : (
+          ) : canRequireReacceptance ? (
             <>
               Only an admin can change these documents. You can require every member to
               re-sign one on their next visit — useful before a tournament or a new term.
             </>
+          ) : (
+            <>Only an admin can change these documents. This is what members have agreed to.</>
           )}
         </p>
-        <LegalDocumentsForm documents={documents} canEdit={canEdit} />
+        <LegalDocumentsForm
+          documents={documents}
+          canEdit={canEdit}
+          canRequireReacceptance={canRequireReacceptance}
+        />
       </div>
 
       {/* Its own card, below the four documents, because it is a different kind
@@ -74,14 +96,14 @@ export default async function LegalPage() {
         <p className="settings-section-desc">
           The event waiver a tournament starts from, kept per season so each term&rsquo;s
           venue and club terms can differ.{' '}
-          {canEdit
+          {canEditWaiverTemplate
             ? 'Execs pull it into an event when they create a tournament.'
             : 'Only an admin can change this text. You can use it when you create a tournament.'}
         </p>
         <EventWaiverTemplateForm
           seasons={seasons ?? []}
           templates={waiverTemplates ?? []}
-          canEdit={canEdit}
+          canEdit={canEditWaiverTemplate}
         />
       </div>
     </div>

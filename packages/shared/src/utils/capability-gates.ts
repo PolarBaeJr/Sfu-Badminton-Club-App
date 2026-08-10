@@ -29,7 +29,9 @@ export type CapabilityGate = {
   /**
    * The enforcement point: `<file> <function>`, or `route <path>` where the
    * middleware's section check is the whole gate. `null` means NOT YET WIRED,
-   * which is a loud state — see the assertion in the drift test.
+   * which is a loud state — see the assertion in the drift test. Nothing is
+   * null any more: permissions.write was the last one, and it got its gate when
+   * setPlayerPermissions landed.
    */
   gate: string | null;
   /** Further call sites this one capability gates. Requires `merged`. */
@@ -540,13 +542,7 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   },
   'permissions.write': {
     label: 'Hand out permissions', area: 'permissions', group: null, mode: 'write',
-    gate: null,
-    unwired:
-      'The only capability in the vocabulary with nothing behind it, and it stays '
-      + 'that way until the storage migration lands. The editor and '
-      + 'setPlayerPermissions are the next change; naming the capability now is '
-      + 'what lets the baselines and the equivalence proof be written once. It is '
-      + 'in no baseline, so nothing is reachable through it in the meantime.',
+    gate: 'actions/permissions.ts setPlayerPermissions',
   },
 
   // ---- audit / ratings / accounts ----------------------------------------

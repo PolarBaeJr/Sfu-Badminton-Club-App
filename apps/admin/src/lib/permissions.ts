@@ -55,16 +55,30 @@ export {
   consoleAccessLevelFor,
   effectiveCapabilities,
   hasConsoleAccess,
+  isCapability,
   isInGoodStanding,
   permissionsOf,
+  permissionTripleOf,
   permits,
   resolvePermissions,
+  AREAS,
   CAPABILITIES,
+  EDITOR_OFFERABLE,
   EXEC_BASELINE,
+  PERMISSION_ROLES,
+  PERMISSION_ROLE_LABELS,
+  ROLE_DEFAULTS,
   TRAINER_BASELINE,
   UNRESTRICTED,
 } from '@badminton/shared/src/utils/access-level';
-export type { AccessLevel, Capability, Permissions } from '@badminton/shared/src/utils/access-level';
+export type {
+  AccessLevel,
+  Area,
+  Capability,
+  PermissionRole,
+  Permissions,
+  PermissionsInput,
+} from '@badminton/shared/src/utils/access-level';
 
 // WHICH SECTION ASKS FOR WHICH CAPABILITIES. The value is a dotted namespace,
 // and a person may open the section when they hold at least one read beneath it.
