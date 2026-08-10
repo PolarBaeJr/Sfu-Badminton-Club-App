@@ -378,9 +378,13 @@ export function PermissionEditor({
    * not have and put them inside the blast radius of any later change to what
    * that job means.
    */
+  function seedCustom(): { role: PermissionRole; grants: Capability[]; revokes: Capability[] } {
+    return { role: 'custom', grants: [...effective], revokes: [] };
+  }
+
   function asCustom(): { role: PermissionRole; grants: Capability[]; revokes: Capability[] } {
     if (role !== null) return { role, grants, revokes };
-    return { role: 'custom', grants: [...effective], revokes: [] };
+    return seedCustom();
   }
 
   // ONE CLICK WRITES EXACTLY ONE DELTA ELEMENT, and only the legal transition.
@@ -446,11 +450,13 @@ export function PermissionEditor({
       setRevokes([]);
       return;
     }
-    // Choosing Custom explicitly is the same act the first tick performs, so it
-    // starts from the same place: what they hold today. Anything else would make
-    // "convert this to a hand-picked set" a way of taking everything away.
-    if (value === 'custom' && role === null) {
-      const next = asCustom();
+    // Choosing Hand-picked explicitly is the same act the first tick performs,
+    // so it starts from the same place: what they hold today. From a NAMED role
+    // as much as from a level default — the base is about to become empty, so
+    // without the seed "convert this to a hand-picked set" would silently take
+    // away everything the role was giving them.
+    if (value === 'custom') {
+      const next = seedCustom();
       setRole(next.role);
       setGrants(next.grants);
       setRevokes(next.revokes);
@@ -906,9 +912,11 @@ export function PermissionEditor({
                     <p className="text-xs text-[var(--text-muted)]">
                       {role === null
                         ? `${LEVEL_ACCESS_LABELS[selectedLevel]} — ${BASELINE_PHRASE[selectedLevel]}. Nothing is stored; tick anything below and they become a hand-picked set starting from exactly this.`
-                        : grants.length === 0 && revokes.length === 0
-                          ? `${PERMISSION_ROLE_LABELS[role]}, unadjusted.`
-                          : `Custom — ${PERMISSION_ROLE_LABELS[role]} with ${grants.length} granted and ${revokes.length} revoked.`}
+                        : role === 'custom'
+                          ? `Hand-picked — ${grants.length} ${grants.length === 1 ? 'capability' : 'capabilities'} chosen one at a time, starting from no job at all.`
+                          : grants.length === 0 && revokes.length === 0
+                            ? `${PERMISSION_ROLE_LABELS[role]}, unadjusted.`
+                            : `Custom — ${PERMISSION_ROLE_LABELS[role]} with ${grants.length} granted and ${revokes.length} revoked.`}
                     </p>
                   </>
                 )}
@@ -1063,6 +1071,11 @@ function describe(person: PersonRow): string {
   }
   const level = LEVEL_LABELS[person.level];
   const label = PERMISSION_ROLE_LABELS[person.role];
+  // "Adjusted" means a delta on top of a named job. A hand-picked set is ALL
+  // deltas by construction — its base is empty — so the count that means
+  // "somebody changed this afterwards" for the other four roles means nothing
+  // here, and reporting it would call every hand-picked row adjusted.
+  if (person.role === 'custom') return `${level} — ${label}`;
   const adjusted = person.grants.length + person.revokes.length;
   return adjusted === 0 ? `${level} — ${label}` : `${level} — ${label}, adjusted`;
 }

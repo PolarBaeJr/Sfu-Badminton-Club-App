@@ -99,30 +99,38 @@ export default async function PermissionsPage() {
   // flipped: two filters that have to be exact opposites of each other are one
   // edit away from listing somebody twice, and a duplicated row on a permissions
   // page is a person an admin thinks they have two answers for.
+  //
+  // Excluded HERE rather than in the query, and that is the point of the extra
+  // few rows. A `.not('id', 'in', …)` that PostgREST refused would come back as
+  // `data: null` with the error unread, which renders as a search box that finds
+  // nobody — no error, no empty state, nothing to notice. A Set the code owns
+  // cannot fail that way.
   const viewerIsAdmin = isAdminActor(viewer);
-  const holderIds = holders.map((person) => person.id);
-  let rest = adminClient
-    .from('players')
-    .select('id, full_name, email, is_banned, status, active_flag')
-    .order('full_name');
-  if (holderIds.length > 0) rest = rest.not('id', 'in', `(${holderIds.join(',')})`);
-  const { data: members } = viewerIsAdmin ? await rest : { data: [] };
+  const holderIds = new Set(holders.map((person) => person.id));
+  const { data: members } = viewerIsAdmin
+    ? await adminClient
+        .from('players')
+        .select('id, full_name, email, is_banned, status, active_flag')
+        .order('full_name')
+    : { data: [] };
 
   // No level, so no permission columns and nothing to resolve. Written out as
   // the empty composition rather than left off the type: the editor asks one
   // question of every row it lists, and a second row shape would be a second
   // path through it for no gain.
-  const others: PersonRow[] = (members ?? []).map((person) => ({
-    id: person.id as string,
-    name: (person.full_name as string | null) ?? (person.email as string | null) ?? 'Unnamed',
-    email: (person.email as string | null) ?? null,
-    title: null,
-    level: null,
-    canSignIn: isInGoodStanding(person),
-    role: null,
-    grants: [],
-    revokes: [],
-  }));
+  const others: PersonRow[] = (members ?? [])
+    .filter((person) => !holderIds.has(person.id as string))
+    .map((person) => ({
+      id: person.id as string,
+      name: (person.full_name as string | null) ?? (person.email as string | null) ?? 'Unnamed',
+      email: (person.email as string | null) ?? null,
+      title: null,
+      level: null,
+      canSignIn: isInGoodStanding(person),
+      role: null,
+      grants: [],
+      revokes: [],
+    }));
 
   return (
     <div>

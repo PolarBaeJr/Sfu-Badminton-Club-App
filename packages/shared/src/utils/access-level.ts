@@ -556,13 +556,20 @@ export const PERMISSION_ROLES: readonly PermissionRole[] = [
   'custom',
 ] as const;
 
-/** Shown wherever a role is chosen or reported. */
+/**
+ * Shown wherever a role is chosen or reported.
+ *
+ * `custom` is 'Hand-picked' rather than 'Custom' because the editor already uses
+ * the word Custom for the STATE of a row that has been adjusted — "Custom —
+ * Finance with 3 granted" — so a role called Custom reads back as "Custom —
+ * Custom" in four places.
+ */
 export const PERMISSION_ROLE_LABELS: Record<PermissionRole, string> = {
   finance: 'Finance',
   tournaments: 'Tournaments',
   internal: 'Internal',
   external: 'External',
-  custom: 'Custom — hand-picked',
+  custom: 'Hand-picked',
 };
 
 export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {

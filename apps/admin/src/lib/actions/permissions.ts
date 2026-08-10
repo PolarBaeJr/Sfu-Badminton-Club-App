@@ -382,7 +382,7 @@ async function setConsoleAccessImpl(playerId: string, access: ExecRole, reason: 
     target.is_exec === true,
     target.is_trainer === true,
   );
-  if (was === access) return;
+  const levelChanged = was !== access;
 
   // A COMPOSITION IS ONLY CONSULTED AT TWO OF THE FOUR LEVELS. An admin is a
   // superuser by level and permits() short-circuits before any stored set is
@@ -416,22 +416,41 @@ async function setConsoleAccessImpl(playerId: string, access: ExecRole, reason: 
   const clearFirst = clears && hasComposition && !live(was);
   const clearAfter = clears && hasComposition && live(was);
 
-  async function clearComposition() {
+  // NOTHING TO DO ONLY WHEN THERE IS NOTHING LEFT TO DO. "Their level is already
+  // what you asked for" is NOT the same question as "does this action have
+  // anything to change", and answering the second with the first is how the
+  // clear-after path above becomes permanent damage: if the level write lands
+  // and the clear then fails, the admin retries, `was` now equals `access`, and
+  // an early return here would report success while the stale composition sits
+  // there forever with no way to reach it from the console. On that retry
+  // clearFirst is true — the level is 'none' now, so the composition is already
+  // inert — and the work finishes.
+  if (!levelChanged && !clearFirst && !clearAfter) return;
+
+  async function clearComposition(levelAlreadyChanged: boolean) {
     const cleared = await setPlayerPermissions(playerId, { role: null, grants: [], revokes: [] });
-    if (!cleared.ok) throw new ExpectedError(cleared.error);
+    if (!cleared.ok) {
+      throw new ExpectedError(
+        levelAlreadyChanged
+          ? `Console access changed, but their stored permissions could not be cleared: ${cleared.error}`
+          : `Their stored permissions could not be cleared, so console access was left alone: ${cleared.error}`,
+      );
+    }
   }
 
-  if (clearFirst) await clearComposition();
+  if (clearFirst) await clearComposition(false);
 
   // Through updatePlayer, which applies the field guard, refuses a non-admin,
   // writes the audit row and meets the database's last-admin trigger. All three
   // columns every time, never a subset: fromRoleValue answers the whole question,
   // so moving somebody from executive to trainer clears is_exec in the same write
   // that sets is_trainer, and no marker survives a move it was not part of.
-  const res = await updatePlayer(playerId, { ...fromRoleValue(access), reason });
-  if (!res.ok) throw new ExpectedError(res.error);
+  if (levelChanged) {
+    const res = await updatePlayer(playerId, { ...fromRoleValue(access), reason });
+    if (!res.ok) throw new ExpectedError(res.error);
+  }
 
-  if (clearAfter) await clearComposition();
+  if (clearAfter) await clearComposition(true);
 
   // updatePlayer revalidates /players and the member's own page; neither is this
   // one, and an executive moved to trainer never reaches setPlayerPermissions
