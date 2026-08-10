@@ -5,7 +5,7 @@ import { logAdminAudit } from '../audit';
 import { notifyPlayers } from '../notify';
 import { revalidatePath } from 'next/cache';
 import { parseOrThrow, announcementSchema, ExpectedError, requireActiveSeasonId } from '@badminton/shared';
-import { getExecOrAdmin } from './_shared';
+import { requireCapability } from './_shared';
 
 type Audience = 'all' | 'competitive' | 'recreational' | 'eligible_only';
 
@@ -66,7 +66,7 @@ export async function createAnnouncement(data: {
   all_seasons?: boolean;
 }) {
   parseOrThrow(announcementSchema, data);
-  const admin = await getExecOrAdmin('external');
+  const admin = await requireCapability('announcements.create.write');
   const adminClient = createAdminClient();
 
   // A term-specific announcement belongs to the season being played, and
@@ -134,7 +134,7 @@ export async function updateAnnouncement(announcementId: string, data: {
   expires_at?: string;
 }) {
   parseOrThrow(announcementSchema, data);
-  const admin = await getExecOrAdmin('external');
+  const admin = await requireCapability('announcements.update.write');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('announcements').select('*').eq('id', announcementId).single();
@@ -186,7 +186,7 @@ export async function updateAnnouncement(announcementId: string, data: {
 }
 
 export async function deleteAnnouncement(announcementId: string) {
-  const admin = await getExecOrAdmin('external');
+  const admin = await requireCapability('announcements.delete.write');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('announcements').select('*').eq('id', announcementId).single();

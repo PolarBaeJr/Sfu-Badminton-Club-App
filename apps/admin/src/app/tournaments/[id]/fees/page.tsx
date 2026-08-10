@@ -1,4 +1,4 @@
-import { createAdminClient, getAuthenticatedAdmin } from '@/lib/supabase-server';
+import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { Card, Badge, AvatarChip, PageHeader, ResponsiveTable, TableCard } from '@badminton/ui';
 import { unwrap } from '@badminton/shared';
 import type { TournamentFeeTier, TournamentFee, Player } from '@badminton/shared';
@@ -22,8 +22,9 @@ function personTitle(name: string, sub: string, avatarUrl?: string | null, id?: 
 
 export default async function TournamentFeesPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  // Money handling is admin-only — defense in depth beyond the middleware gate.
-  await getAuthenticatedAdmin();
+  // Entry money is its own capability, in nobody's baseline — defence in depth
+  // beyond the middleware gate, which asks the same question about the route.
+  await requireCapability('tournaments.fees.read');
   const supabase = createAdminClient();
 
   const { data: tournament } = await supabase.from('tournaments').select('id, name').eq('id', id).single();

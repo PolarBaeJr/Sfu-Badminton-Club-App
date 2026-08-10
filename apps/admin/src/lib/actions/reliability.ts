@@ -4,11 +4,11 @@ import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import { parseOrThrow, reliabilityAdjustSchema, type ReliabilityAdjustInput } from '@badminton/shared';
-import { getAdminPlayer } from './_shared';
+import { requireCapability } from './_shared';
 
 export async function adjustReliability(input: ReliabilityAdjustInput) {
   const data = parseOrThrow(reliabilityAdjustSchema, input);
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('players.reliability.write');
   const adminClient = createAdminClient();
 
   const { data: oldRow } = await adminClient

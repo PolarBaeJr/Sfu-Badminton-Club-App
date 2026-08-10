@@ -5,7 +5,7 @@ import { logAudit } from '../audit';
 import { isDoublesEvent, clampElo, placementBonusFor, ExpectedError } from '@badminton/shared';
 import { getTournamentBonusSettings } from '../platform-settings';
 import {
-  getExecOrAdmin,
+  requireCapability,
   getRatingSettings,
   revalidateEventPaths,
   notifyPlayers,
@@ -82,7 +82,7 @@ async function readBonusLedger(
 }
 
 export async function applyPlacementBonuses(eventId: string) {
-  const admin = await getExecOrAdmin('tournaments');
+  const admin = await requireCapability('tournaments.results.bonuses.write');
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
@@ -503,7 +503,7 @@ export async function recomputeEventStandings(eventId: string): Promise<{
       tournament_id: event.tournament_id,
       event_id: eventId,
       action: 'standings_recomputed',
-      performed_by: (await getExecOrAdmin('tournaments')).id,
+      performed_by: (await requireCapability('tournaments.results.standings.write')).id,
       details: { moved, bonuses_already_paid: bonusesAlreadyPaid },
     });
   }
@@ -513,7 +513,7 @@ export async function recomputeEventStandings(eventId: string): Promise<{
 }
 
 export async function finalizeEvent(eventId: string) {
-  const admin = await getExecOrAdmin('tournaments');
+  const admin = await requireCapability('tournaments.results.finalize.write');
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();

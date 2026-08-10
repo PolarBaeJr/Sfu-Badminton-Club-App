@@ -51,8 +51,9 @@ export interface RosterRowState {
   status?: string | null;
 }
 
-// removePlayer is getAdminPlayer() — an exec who saw the button would only get
-// "Admin access required" on click, which is the thing this file exists to stop.
+// removePlayer asks for players.remove.write, which no baseline below admin
+// holds — an exec who saw the button would only get "Admin access required" on
+// click, which is the thing this file exists to stop.
 export interface RosterViewerState {
   isAdmin?: boolean;
 }

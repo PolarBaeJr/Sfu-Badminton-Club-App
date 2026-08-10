@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { parseOrThrow } from '@badminton/shared';
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
-import { getExecOrAdmin } from './_shared';
+import { requireCapability } from './_shared';
 import { runAction, type ActionResult } from '../action-result';
 
 // tournament_checkin_tokens has RLS enabled with no policies (00045), so every
@@ -21,7 +21,7 @@ export async function getOrCreateTournamentCheckinToken(
 ): Promise<ActionResult<string>> {
   return runAction(async () => {
     parseOrThrow(z.string().uuid(), tournamentId);
-    await getExecOrAdmin('tournaments');
+    await requireCapability('tournaments.draw.checkin.token.write');
     const adminClient = createAdminClient();
 
     const { data: existing } = await adminClient
@@ -56,7 +56,7 @@ export async function rotateTournamentCheckinToken(
 ): Promise<ActionResult<string>> {
   return runAction(async () => {
     parseOrThrow(z.string().uuid(), tournamentId);
-    const admin = await getExecOrAdmin('tournaments');
+    const admin = await requireCapability('tournaments.draw.checkin.token.write');
     const adminClient = createAdminClient();
 
     const token = newCheckinToken();

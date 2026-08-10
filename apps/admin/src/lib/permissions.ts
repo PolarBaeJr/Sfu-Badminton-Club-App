@@ -1,48 +1,50 @@
 // Section-level access control for the admin app. The real security boundary is
 // the server action (service-role bypasses RLS); this map is the single source of
-// truth for which access level a section requires, shared by middleware and nav.
+// truth for which capability a section requires, shared by middleware and nav.
 //
-// THREE ORDERED LEVELS — admin > exec > trainer. Each one's powers are a strict
-// subset of the level above, so a section is described by the MINIMUM level that
-// may enter it and everything higher is admitted automatically. Anything not
-// listed defaults to admin-only.
+// WHAT A PERSON MAY DO IS A SET OF CAPABILITIES, not a rung on a ladder. The
+// three levels — admin > exec > trainer — still exist and still decide who
+// reaches the console at all, but they no longer answer "may this person do
+// X": that is permits(), and it is plain membership in the set the person
+// resolves to. See @badminton/shared's access-level.ts for the vocabulary and
+// the two baselines.
 //
-//  - admin    role = 'admin'. Everything.
-//  - exec     is_exec. Runs the club: roster, matches, sessions, tournaments,
-//             seasons, announcements.
-//  - trainer  is_trainer. Coaches the varsity squad. Reads the roster so they
-//             can find a player, and writes varsity notes. Nothing else — see
+//  - admin    role = 'admin'. Superuser BY LEVEL: permits() short-circuits
+//             before any set is consulted, so a capability added next year is
+//             automatically theirs.
+//  - exec     is_exec. EXEC_BASELINE — the roster, matches, sessions,
+//             tournaments, seasons, announcements, and filing an expense.
+//  - trainer  is_trainer. TRAINER_BASELINE — reading the roster and writing
+//             varsity notes, and that is the whole level. See
 //             ./player-field-access.ts, where their writable field set is EMPTY.
 //
-// SECOND AXIS — exec portfolios. The levels are a ladder; the club is not. An
-// exec may hold one of four VP portfolios (finance, tournaments, internal,
-// external), and a portfolio NARROWS that exec and never widens anyone:
-// players.portfolio IS NULL is exactly the access an exec has always had, which
-// is why assigning one is an explicit, reversible act by an admin and why
-// nothing changed for anyone when the column shipped. Admins are superusers and
-// are not narrowed; trainers hold no portfolio.
+// This file's job is the admin-only half: which PATH needs which capability.
+// It maps a path to a capability NAMESPACE, and admits anyone holding at least
+// one `<namespace>.….read`. Written that way rather than as "the section's
+// level" because the two answers have come apart: an exec granted `audit.read`
+// must reach /audit, and no minimum level expresses that.
 //
-// This map is still only middleware and nav. The REAL boundary for the same
-// split is getAuthenticatedExecOrAdmin(portfolio) in ./supabase-server.ts, which
-// every server action names its portfolio to — narrowing this file alone would
-// be theatre, because the actions run on a service-role client that bypasses
-// RLS and can be called directly.
+// THREE OUTCOMES, no `||` on a security check:
+//   1. A baseline path (`/`, `/dashboard`, `/settings`, `/api/passkey`) — the
+//      front door, the landing page and enrolling your own passkeys. Any
+//      console level at all.
+//   2. A path that resolves to a namespace — holds a read under it.
+//   3. An UNMATCHED path — admin by level. The safety net is kept: a section
+//      added to the app without an entry here is admin-only, not open to the
+//      newest level.
 //
-// The LEVELS themselves — the ordering, and how a player row resolves to one —
-// now live in @badminton/shared so the members' app can ask the same question
-// without hand-rolling its own copy (which it did, twice, and they disagreed
-// about trainers). What stays here is the admin-only half: which PATH needs
-// which level.
 // Deep import, NOT the '@badminton/shared' barrel. This module is pulled into
 // the EDGE middleware through canAccess(), and the barrel re-exports the mail
 // sender, which drags `resend` and a Supabase client in with it: importing it
 // here took the built middleware from 321 KB to 843 KB, on every request, for
-// three pure functions. Same reason push/send is imported by path elsewhere.
+// three pure functions. Same reason push/send is imported by path elsewhere,
+// and the same reason CAPABILITY_GATES lives in its own module — it is labels
+// and prose for the editor, and no request needs it.
 import {
   atLeast,
-  portfolioPermits,
+  effectiveCapabilities,
   type AccessLevel,
-  type Portfolio,
+  type Permissions,
 } from '@badminton/shared/src/utils/access-level';
 
 // Re-exported so every existing `from '@/lib/permissions'` import keeps working
@@ -51,127 +53,104 @@ export {
   accessLevelFor,
   atLeast,
   consoleAccessLevelFor,
+  effectiveCapabilities,
   hasConsoleAccess,
   isInGoodStanding,
-  portfolioOf,
-  portfolioPermits,
-  PORTFOLIOS,
-  PORTFOLIO_LABELS,
+  permissionsOf,
+  permits,
+  resolvePermissions,
+  CAPABILITIES,
+  EXEC_BASELINE,
+  TRAINER_BASELINE,
+  UNRESTRICTED,
 } from '@badminton/shared/src/utils/access-level';
-export type { AccessLevel, Portfolio } from '@badminton/shared/src/utils/access-level';
+export type { AccessLevel, Capability, Permissions } from '@badminton/shared/src/utils/access-level';
 
-const SECTION_ACCESS: { [pathPrefix: string]: AccessLevel } = {
-  // The console root, which only redirects to /dashboard (app/page.tsx). It has
-  // to be listed: unmatched paths default to admin, and middleware runs BEFORE
-  // the redirect, so without this line every non-admin opening /admin — which is
-  // where the player app's "Exec Panel" link points — was bounced to
-  // /unauthorized. Matches the root and nothing else: the prefix test is
-  // `pathname === prefix || pathname.startsWith(prefix + '/')`, and no real path
-  // begins with '//'.
-  '/': 'trainer',
-  // Where sign-in lands. Trainers need to get through the front door; the
-  // dashboard gates each tile with canAccess() so they only see their own.
-  '/dashboard': 'trainer',
-  '/announcements': 'exec',
-  '/matches': 'exec',
-  '/tournaments': 'exec',
-  '/sessions': 'exec',
-  '/seasons': 'exec',
-  // Finances. Exec-level ONLY so an exec can reach the Expenses tab: the club
-  // owner asked for "execs can add expenses", not for the finance page. Club
-  // fees, other income, reinstatements and the net-position strip stay
-  // admin-only, and /fees/page.tsx enforces that by skipping their FETCHES for
-  // a non-admin rather than hiding the rendered output — a hidden card whose
-  // query still ran ships the figures into the RSC payload for anyone with
-  // devtools. Same reasoning, and the same shape, as dashboard/page.tsx.
+// WHICH SECTION ASKS FOR WHICH CAPABILITIES. The value is a dotted namespace,
+// and a person may open the section when they hold at least one read beneath it.
+//
+// The level column that used to live here is gone. It said the same thing twice
+// for every row but one, and the row where it did not — /fees — is the reason
+// this shape changed.
+const SECTION_NAMESPACE: { [pathPrefix: string]: string } = {
+  '/announcements': 'announcements',
+  '/matches': 'matches',
+  '/tournaments': 'tournaments',
+  '/sessions': 'sessions',
+  '/seasons': 'seasons',
+  // Finances. `fees` covers five ledgers with five separate reads, and an exec
+  // holds exactly one of them — fees.expenses.read — because the club owner
+  // asked for "execs can add expenses", not for the finance page. Club fees,
+  // other income, reinstatements and the net position are separate capabilities
+  // in nobody's baseline, and /fees/page.tsx enforces that by skipping their
+  // FETCHES rather than hiding the rendered output: a hidden card whose query
+  // still ran ships the figures into the RSC payload for anyone with devtools.
+  // Same reasoning, and the same shape, as dashboard/page.tsx.
   //
   // This line is therefore NOT the whole story for this section, unlike every
   // other entry in this map. Anything that asks "may this person see club
-  // money?" must ask for 'admin' explicitly and must NOT reuse
-  // canAccess(level, '/fees') — the dashboard finance snapshot is the one place
-  // that did, and flipping this line is precisely what would have leaked it.
-  '/fees': 'exec',
-  '/audit': 'admin',
+  // money?" must ask for the capability the DATA needs — fees.clubfees.read,
+  // fees.netposition.read — and must NOT reuse canAccess(…, '/fees'), which is
+  // satisfied by the expenses read alone. The dashboard finance snapshot is the
+  // one place that nearly did, and reusing this line is precisely what would
+  // have leaked it.
+  '/fees': 'fees',
+  '/audit': 'audit',
   // Execs read the documents and may require a re-signature; only admins edit
-  // the text. That split is enforced in the page and in the server actions —
-  // this line only decides who may open the section.
-  '/legal': 'exec',
+  // the text. That split is three separate capabilities under `legal`, enforced
+  // in the page and in the server actions — this line only decides who may open
+  // the section.
+  '/legal': 'legal',
   // Platform configuration, split out of /settings. Admin-only in BOTH halves,
   // unlike Legal: the club owner wants execs kept off the rating and account
-  // rules entirely, not shown a read-only copy. Each page re-checks with
-  // getAuthenticatedAdmin() and updatePlatformSettings() gates again — this line
-  // only decides who may open the section.
-  '/ratings': 'admin',
-  '/accounts': 'admin',
-  '/settings': 'trainer', // everyone with console access enrolls their own passkeys
-  '/api/passkey': 'trainer', // passkey enrollment/verification endpoints
+  // rules entirely, not shown a read-only copy. Neither read is in any
+  // baseline, and each page re-checks — this line only decides who may open the
+  // section.
+  '/ratings': 'ratings',
+  '/accounts': 'accounts',
   // Execs run the roster: approve, edit, ban/unban, varsity notes. Granting
   // exec/admin is NOT part of that — the per-field split lives in
-  // ./player-field-access.ts, and destructive actions (remove, merge) keep
-  // getAdminPlayer() in the server action.
+  // ./player-field-access.ts, and destructive actions (remove, merge) ask for
+  // capabilities no baseline holds.
   //
-  // Trainers get in one rung lower, and ONLY to read: this is where the varsity
-  // notes live, and finding the player you are writing about means seeing the
-  // list. Every mutating action under /players gates on getExecOrAdmin() or
-  // getAdminPlayer(), neither of which admits a trainer, and the pages hide the
-  // controls so nothing on screen is guaranteed to reject them.
-  '/players': 'trainer',
-  '/disputes': 'admin',
-  '/walkovers': 'admin',
-  '/challenges': 'admin',
-  // The permission editor: who holds which exec portfolio. Admin-only, and it
-  // must STAY admin-only — an exec who could reach it could widen their own
-  // portfolio, which is the whole point of the column.
-  '/permissions': 'admin',
+  // Trainers get in here too, and ONLY to read: this is where the varsity notes
+  // live, and finding the player you are writing about means seeing the list.
+  // players.read is the whole of their claim on this section.
+  '/players': 'players',
+  '/disputes': 'disputes',
+  '/walkovers': 'walkovers',
+  '/challenges': 'challenges',
+  // The permission editor. permissions.read is in no baseline, so it is
+  // admin-only exactly as before, and it must STAY that way for anyone who is
+  // not deliberately given it — someone who could reach it and hold
+  // permissions.write could hand themselves anything they already have.
+  '/permissions': 'permissions',
 };
 
-// WHICH PORTFOLIO OWNS WHICH SECTION. The second axis, and it only ever
-// NARROWS: a section is reachable when the caller clears BOTH the level above
-// and the portfolio here.
+// Sub-routes whose namespace is NARROWER than the section they sit inside, and
+// which would otherwise inherit it by prefix match. Tournament entry fees live
+// at /tournaments/<id>/fees: execs run tournaments, but entry money is its own
+// group under `tournaments.fees` and no baseline holds its read. Checked before
+// the prefix map.
 //
-// Read with SECTION_ACCESS, never instead of it. Nothing in this map grants
-// anything — /fees is 'finance' here AND 'exec' above, so the finance VP
-// reaches the same Expenses tab any exec reaches and no more; the admin-only
-// halves of that page are still admin-only.
-//
-// That answers design open question 3 — "does the finance portfolio change the
-// exec/admin split inside /fees?" It does not, and it must not: the split
-// exists because club fees, other income, reinstatements and the net position
-// are the club's books, and "VP of Finance" is an elected student, not a second
-// admin. The portfolio decides WHICH execs reach the section; the page decides
-// what any non-admin sees inside it. Two independent questions, kept that way.
-//
-// The cost, stated plainly because somebody will meet it: an exec assigned
-// 'tournaments' can no longer file the expense for the shuttles they bought,
-// because filing an expense is /fees. Recording money is one job or it is
-// nobody's. An admin who wants the old behaviour for a particular person leaves
-// that person's portfolio at none — which is the whole point of NULL.
-const SECTION_PORTFOLIO: { [pathPrefix: string]: Portfolio } = {
-  '/fees': 'finance',
-  '/tournaments': 'tournaments',
-  '/matches': 'tournaments',
-  '/sessions': 'tournaments',
-  '/players': 'internal',
-  '/seasons': 'internal',
-  '/legal': 'external',
-  '/announcements': 'external',
-};
-
-// What every console user keeps regardless of portfolio. These are not powers:
-// the front door, the landing page, and enrolling your own passkeys. Without
-// them a portfolio would lock its holder out of the console entirely.
-//
-// Matched with the same segment-prefix rule as SECTION_ACCESS, so '/' is the
-// root and nothing else.
-const BASELINE_SECTIONS = ['/', '/dashboard', '/settings', '/api/passkey'];
-
-// Admin-only sub-routes that sit *under* an exec-allowed section and would
-// otherwise inherit its access via prefix match. Tournament entry fees live at
-// /tournaments/<id>/fees — execs run tournaments, but all money handling is
-// admin-only. Checked before prefix matching.
-const ADMIN_ONLY_PATTERNS: RegExp[] = [
-  /^\/tournaments\/[^/]+\/fees(\/|$)/,
+// This replaces the old ADMIN_ONLY_PATTERNS list, and the replacement is a
+// namespace rather than a hard "admin": the whole point of the reshape is that
+// an admin can hand this section to a treasurer without making them an admin.
+const SECTION_PATTERNS: { pattern: RegExp; namespace: string }[] = [
+  { pattern: /^\/tournaments\/[^/]+\/fees(\/|$)/, namespace: 'tournaments.fees' },
 ];
+
+// What every console user keeps regardless of what they hold. These are not
+// powers: the front door, the landing page, and enrolling your own passkeys.
+// Without them a narrowed person would be locked out of the console entirely —
+// including out of enrolling the passkey the console demands of them.
+//
+// Matched with the same segment-prefix rule as SECTION_NAMESPACE, so '/' is the
+// root and nothing else. The console root only redirects to /dashboard
+// (app/page.tsx), but middleware runs BEFORE the redirect, so without it every
+// non-admin opening /admin — which is where the player app's "Exec Panel" link
+// points — was bounced to /unauthorized.
+const BASELINE_SECTIONS = ['/', '/dashboard', '/settings', '/api/passkey'];
 
 // Does this path sit inside this section? Segment-aware, so '/players' never
 // matches '/playersecret'. The one matching rule, shared by both maps.
@@ -180,8 +159,7 @@ function isUnder(pathname: string, prefix: string): boolean {
 }
 
 // Longest-prefix lookup in a section map. Returns undefined when nothing
-// matches; each caller decides what an unmatched path means, and both of them
-// fail closed.
+// matches; the caller treats that as admin-only.
 function longestPrefixMatch<T>(map: { [prefix: string]: T }, pathname: string): T | undefined {
   let best = '';
   for (const prefix of Object.keys(map)) {
@@ -190,63 +168,50 @@ function longestPrefixMatch<T>(map: { [prefix: string]: T }, pathname: string): 
   return best ? map[best] : undefined;
 }
 
-// Resolve a pathname to the access level its section requires (longest-prefix
-// match). Unmatched paths default to admin-only.
-function requiredLevel(pathname: string): AccessLevel {
-  if (ADMIN_ONLY_PATTERNS.some((re) => re.test(pathname))) return 'admin';
-  return longestPrefixMatch(SECTION_ACCESS, pathname) ?? 'admin';
+// The capability namespace this path belongs to, or undefined for a path no
+// section claims.
+function sectionNamespace(pathname: string): string | undefined {
+  for (const { pattern, namespace } of SECTION_PATTERNS) {
+    if (pattern.test(pathname)) return namespace;
+  }
+  return longestPrefixMatch(SECTION_NAMESPACE, pathname);
 }
 
-// The portfolio half of the decision, for someone who has ALREADY cleared the
-// level. Written as an ALLOW-LIST — baseline, or a section this portfolio owns —
-// so a new section added to SECTION_ACCESS without a SECTION_PORTFOLIO entry is
-// refused to a portfolio'd exec, exactly as an unlisted path is refused to
-// everyone below admin. A deny-list would have failed open on every future
-// section, silently.
-//
-// ADMIN_ONLY_PATTERNS is not consulted here: /tournaments/<id>/fees is already
-// admin-only by level, and a portfolio never widens anyone, so the finance
-// portfolio does not reach it (open question 4). Tournament money stays with
-// admins, as it did before portfolios existed.
-function portfolioAdmits(
-  level: AccessLevel | null,
-  portfolio: Portfolio | null,
-  pathname: string,
-): boolean {
-  if (level !== 'exec' || portfolio === null) return true;
-  if (BASELINE_SECTIONS.some((prefix) => isUnder(pathname, prefix))) return true;
-  const owner = longestPrefixMatch(SECTION_PORTFOLIO, pathname);
-  return owner !== undefined && portfolioPermits(level, portfolio, owner);
+// Holds at least one READ beneath this namespace. Reads only: a section is a
+// place you look at, and a write without its read is pruned by the resolver
+// anyway, so "holds a write here but no read" is not a state that exists.
+function holdsReadIn(capabilities: ReadonlySet<string>, namespace: string): boolean {
+  const prefix = namespace + '.';
+  for (const capability of capabilities) {
+    if (capability.startsWith(prefix) && capability.endsWith('.read')) return true;
+  }
+  return false;
 }
 
 /**
  * May this person open this section?
  *
- * BOTH arguments are required, and `portfolio` deliberately so: an optional one
- * would default to "no portfolio" at every call site that forgot it — which is
- * full exec access, i.e. it would fail OPEN in the direction this whole feature
- * exists to close.
+ * BOTH the level and the permissions are required, and the permissions
+ * deliberately so: an optional argument would default to something at every
+ * call site that forgot it, and every possible default is wrong in one
+ * direction or the other.
  *
- * A portfolio narrows and never widens, so `portfolio === null` is byte-for-byte
- * the behaviour that shipped before portfolios existed.
- *
- * Two consequences of narrowing, both worth stating out loud because they only
- * bite AFTER an admin has explicitly assigned a portfolio (and are undone by
- * setting it back to none):
- *   1. A portfolio'd exec loses /players unless their portfolio is 'internal' —
- *      including the read a varsity trainer keeps. Reading the roster is PII,
- *      not a baseline convenience, so it is a power like any other.
- *   2. An exec who is ALSO a trainer resolves to 'exec' (accessLevelFor takes
- *      the highest level held), so a portfolio narrows them below what the
- *      trainer marker alone would have given. Same reasoning: the restriction
- *      follows the level someone resolves to, never a flag in isolation.
+ * `{ kind: 'unrestricted' }` is byte-for-byte the behaviour that shipped before
+ * any of this existed — it resolves to the level's baseline, and the baselines
+ * are a transcription of what the levels could do.
  */
 export function canAccess(
   level: AccessLevel | null,
-  portfolio: Portfolio | null,
+  permissions: Permissions,
   pathname: string,
 ): boolean {
   if (level === null) return false;
-  if (!atLeast(level, requiredLevel(pathname))) return false;
-  return portfolioAdmits(level, portfolio, pathname);
+  if (BASELINE_SECTIONS.some((prefix) => isUnder(pathname, prefix))) {
+    return atLeast(level, 'trainer');
+  }
+  const namespace = sectionNamespace(pathname);
+  // Fail closed on a path nobody claimed. An admin still gets in, so a new
+  // section is reachable by the person who can fix the omission.
+  if (namespace === undefined) return level === 'admin';
+  return holdsReadIn(effectiveCapabilities(level, permissions), namespace);
 }

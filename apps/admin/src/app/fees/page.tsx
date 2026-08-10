@@ -1,6 +1,6 @@
 import Link from 'next/link';
-import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
-import { accessLevelFor } from '@/lib/permissions';
+import { createAdminClient, requireCapability } from '@/lib/supabase-server';
+import { accessLevelFor, permits, UNRESTRICTED, type Capability } from '@/lib/permissions';
 import { PastSeasonNotice, resolveSeasonScope } from '@/components/season-scope';
 import { SeasonSelect } from '@/components/season-select';
 import { Badge, Card, AvatarChip, EmptyState, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
@@ -19,17 +19,17 @@ import { NetPositionStrip } from './net-position-strip';
 // server render with its own query — the tab you are not looking at costs
 // nothing, and a link to a tab is shareable.
 //
-// `adminOnly` is the exec split. /fees is exec-level in permissions.ts so an
-// exec can record an expense they paid for, but the club owner has kept execs
-// away from club money everywhere else (Ratings, Accounts) and asked for
-// expenses specifically, not for the finance page. An exec gets the Expenses
-// tab and nothing else — no fee roster, no other income, no net position, and
-// no tab strip advertising that they exist.
+// `read` is the exec split, and each tab names its OWN capability rather than
+// sharing one flag. /fees admits anyone holding a read under `fees`, and an
+// exec holds exactly one of them — fees.expenses.read — because the club owner
+// asked for "execs can add expenses", not for the finance page. An exec gets
+// the Expenses tab and nothing else: no fee roster, no other income, no net
+// position, and no tab strip advertising that they exist.
 const TABS = [
-  { id: 'fees', label: 'Club fees', adminOnly: true },
-  { id: 'income', label: 'Other income', adminOnly: true },
-  { id: 'expenses', label: 'Expenses', adminOnly: false },
-] as const;
+  { id: 'fees', label: 'Club fees', read: 'fees.clubfees.read' },
+  { id: 'income', label: 'Other income', read: 'fees.otherincome.read' },
+  { id: 'expenses', label: 'Expenses', read: 'fees.expenses.read' },
+] as const satisfies readonly { id: string; label: string; read: Capability }[];
 
 type TabId = (typeof TABS)[number]['id'];
 
@@ -53,19 +53,29 @@ export default async function FeesPage({
 }) {
   const params = await searchParams;
 
-  // Who is looking. getAuthenticatedExecOrAdmin() is the gate — middleware
-  // already ran, but a page that renders money must not depend on middleware
-  // having been reached, and this is the same shape /legal uses.
-  const viewer = await getAuthenticatedExecOrAdmin('finance');
-  const isAdmin = accessLevelFor(viewer) === 'admin';
+  // Who is looking. requireCapability() is the gate — middleware already ran,
+  // but a page that renders money must not depend on middleware having been
+  // reached, and this is the same shape /legal uses. fees.expenses.read is the
+  // one capability every viewer of this page must hold; everything else on it
+  // is asked for separately below.
+  const viewer = await requireCapability('fees.expenses.read');
+  const level = accessLevelFor(viewer);
+  const may = (capability: Capability) => permits(level, UNRESTRICTED, capability);
+  // Presentation only — the page is called "Finances" when it shows more than
+  // one ledger. Every FETCH below asks for the capability its own data needs.
+  const isAdmin = level === 'admin';
+  const showClubFees = may('fees.clubfees.read');
+  const showOtherIncome = may('fees.otherincome.read');
+  const showNetPosition = may('fees.netposition.read');
+  const showReinstatements = may('fees.reinstatements.read');
 
-  const visibleTabs = TABS.filter((t) => isAdmin || !t.adminOnly);
+  const visibleTabs = TABS.filter((t) => may(t.read));
   // An exec asking for ?tab=income lands on Expenses rather than /unauthorized:
   // the query string is not a route, so middleware cannot see it, and every
   // admin-only fetch below is gated on isAdmin regardless of what `tab` says.
   // Forcing the tab is presentation; the gating underneath is the boundary.
   const requested = visibleTabs.find((t) => t.id === params.tab)?.id;
-  const tab: TabId = requested ?? (isAdmin ? 'fees' : 'expenses');
+  const tab: TabId = requested ?? (showClubFees ? 'fees' : 'expenses');
 
   const supabase = createAdminClient();
 
@@ -117,12 +127,11 @@ export default async function FeesPage({
             coming back between terms is the ordinary reinstatement, and those
             rows would otherwise be unreachable for exactly as long as the club
             is between seasons.
-            Admin-only like every other money view here, and gated on isAdmin
-            rather than left to the tab logic: this branch returns BEFORE the
-            tabs exist, and the card runs its own fetch — an exec opening /fees
-            between seasons would otherwise have been handed the reinstatement
-            ledger with no tab involved. */}
-        {isAdmin && <ReinstatementsCard seasonId={null} />}
+            Gated on its own capability rather than left to the tab logic: this
+            branch returns BEFORE the tabs exist, and the card runs its own
+            fetch — an exec opening /fees between seasons would otherwise have
+            been handed the reinstatement ledger with no tab involved. */}
+        {showReinstatements && <ReinstatementsCard seasonId={null} />}
       </div>
     );
   }
@@ -134,11 +143,11 @@ export default async function FeesPage({
   // two queries behind it. The derived counts below all collapse to 0 on an
   // empty list and none of them are rendered off that tab.
   //
-  // `isAdmin &&` is belt as well as braces: `tab` can never be 'fees' for an
-  // exec (the tab list they are given does not contain it), but this flag gates
-  // the FETCHES, and a fetch guarded only by a value derived from a query
-  // string is one refactor away from being guarded by nothing.
-  const showFeeTable = isAdmin && tab === 'fees';
+  // `showClubFees &&` is belt as well as braces: `tab` can never be 'fees'
+  // without it (the tab list would not contain it), but this flag gates the
+  // FETCHES, and a fetch guarded only by a value derived from a query string is
+  // one refactor away from being guarded by nothing.
+  const showFeeTable = showClubFees && tab === 'fees';
 
   // Fee-collection list: active players (competitive/recreational) who are
   // neither exec nor fee-exempt.
@@ -191,7 +200,7 @@ export default async function FeesPage({
   // club has; rendering it conditionally while still awaiting it would put
   // fees, tournament money, reinstatements, donations and the net position into
   // the RSC payload of someone shown none of them.
-  const finances = isAdmin ? await getSeasonFinances(supabase, season) : null;
+  const finances = showNetPosition ? await getSeasonFinances(supabase, season) : null;
 
   return (
     <div className="space-y-6">
@@ -248,7 +257,7 @@ export default async function FeesPage({
       </Card>
       )}
 
-      {isAdmin && tab === 'income' && (
+      {showOtherIncome && tab === 'income' && (
         <LedgerCard kind="income" seasonId={season.id} seasonName={season.name} isAdmin />
       )}
 
@@ -418,7 +427,7 @@ export default async function FeesPage({
       {/* Stays on the Club fees tab: a reinstatement IS a fee, and the rows
           with no amount recorded are the ones an admin is meant to trip over
           while working through the fee list. */}
-      <ReinstatementsCard seasonId={season.id} />
+      {showReinstatements && <ReinstatementsCard seasonId={season.id} />}
       </>
       )}
     </div>

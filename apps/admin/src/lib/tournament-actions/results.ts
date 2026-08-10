@@ -8,7 +8,7 @@ import { recomputeEventStandings } from './finalize';
 import { isDoublesEvent, getEventRules, describeMatchShape, isLegalGameScore, isLegalGameCount, ExpectedError } from '@badminton/shared';
 import type { TournamentEventType, TournamentMatchFormat, EventMatchShape } from '@badminton/shared';
 import {
-  getExecOrAdmin,
+  requireCapability,
   revalidateEventPaths,
   notifyPlayers,
   applyTournamentMatchElo,
@@ -238,7 +238,7 @@ async function enterMatchResultImpl(
   winnerSide: 'a' | 'b',
   timeExceeded: boolean
 ) {
-  const admin = await getExecOrAdmin('tournaments');
+  const admin = await requireCapability('tournaments.results.enter.write');
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')
@@ -443,7 +443,7 @@ async function enterWalkoverImpl(
   winnerPosition: 'a' | 'b',
   reason: string
 ) {
-  const admin = await getExecOrAdmin('tournaments');
+  const admin = await requireCapability('tournaments.results.walkover.write');
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')
@@ -512,7 +512,7 @@ async function enterWalkoverImpl(
 }
 
 async function voidMatchImpl(matchId: string, reason: string) {
-  const admin = await getExecOrAdmin('tournaments');
+  const admin = await requireCapability('tournaments.results.void.write');
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')
@@ -603,7 +603,7 @@ async function voidMatchImpl(matchId: string, reason: string) {
 // A voided match records only "voided": nothing distinguishes "nobody came"
 // from "the score was entered against the wrong pair".
 async function recordDoubleNoShowImpl(matchId: string, reason: string) {
-  const admin = await getExecOrAdmin('tournaments');
+  const admin = await requireCapability('tournaments.results.doublenoshow.write');
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')
@@ -706,7 +706,7 @@ async function recordDoubleNoShowImpl(matchId: string, reason: string) {
 // the way out: put the match back, or fill the orphaned slot by hand.
 
 async function unvoidMatchImpl(matchId: string, reason: string) {
-  const admin = await getExecOrAdmin('tournaments');
+  const admin = await requireCapability('tournaments.results.unvoid.write');
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')
@@ -793,7 +793,7 @@ async function setMatchEntryImpl(
   entryId: string | null,
   reason: string,
 ) {
-  const admin = await getExecOrAdmin('tournaments');
+  const admin = await requireCapability('tournaments.results.entry.write');
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')
@@ -917,7 +917,7 @@ async function setMatchEntryImpl(
 //
 // EXEC OR ADMIN, not admin-only, and that is a deliberate deviation worth
 // stating. Every other corrective action in this module — void, undo, restore,
-// slot editing, double no-show — gates on getExecOrAdmin, and the tournament
+// slot editing, double no-show — sits in EXEC_BASELINE, and the tournament
 // desk runs as exec, not admin. An admin-only override would mean the person
 // standing at the desk at 9pm with a wrong scoreline on the board cannot fix it,
 // which is the situation this was asked for. What makes the override safe is not
@@ -930,7 +930,7 @@ async function editMatchResultImpl(
   newWinnerSide: 'a' | 'b',
   reason: string,
 ) {
-  const admin = await getExecOrAdmin('tournaments');
+  const admin = await requireCapability('tournaments.results.edit.write');
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')
@@ -1166,7 +1166,7 @@ async function editMatchResultImpl(
 // ============================================================
 
 async function undoMatchResultImpl(matchId: string) {
-  const admin = await getExecOrAdmin('tournaments');
+  const admin = await requireCapability('tournaments.results.undo.write');
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')

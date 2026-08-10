@@ -59,7 +59,7 @@ export async function getRatingSettings(
   return (data?.value as RatingSettings | null) ?? null;
 }
 
-export { getExecOrAdmin } from '../actions/_shared';
+export { requireCapability } from '../actions/_shared';
 
 // ============================================================
 // Batched writes

@@ -13,7 +13,7 @@ import {
   type ReinstatementPaymentInput,
   requireActiveSeasonId,
 } from '@badminton/shared';
-import { getExecOrAdmin, getAdminPlayer } from './_shared';
+import { requireCapability } from './_shared';
 import { ExpectedError } from '@badminton/shared';
 import { isAdminActor } from '../player-field-access';
 
@@ -23,7 +23,7 @@ import { isAdminActor } from '../player-field-access';
 // the service-role client, so it never fires here. The gate is this function.
 export async function banPlayer(input: BanInput) {
   parseOrThrow(banSchema, input);
-  const actor = await getExecOrAdmin('internal');
+  const actor = await requireCapability('players.ban.write');
   const adminClient = createAdminClient();
 
   const { error } = await adminClient
@@ -51,7 +51,7 @@ export async function banPlayer(input: BanInput) {
 
 export async function reinstatePlayer(input: ReinstatementInput) {
   const parsed = parseOrThrow(reinstatementSchema, input);
-  const actor = await getExecOrAdmin('internal');
+  const actor = await requireCapability('players.reinstate.write');
   // Lifting the ban is exec work; recording what was collected for it is not.
   // This inserts a reinstatement_fees row and revalidates /fees, which is
   // admin-only in the same access map — so an exec reinstates for free and an
@@ -215,7 +215,7 @@ export async function reinstatePlayer(input: ReinstatementInput) {
  */
 export async function recordReinstatementPayment(input: ReinstatementPaymentInput) {
   const parsed = parseOrThrow(reinstatementPaymentSchema, input);
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('fees.reinstatements.write');
   const adminClient = createAdminClient();
 
   const { data: fee } = await adminClient

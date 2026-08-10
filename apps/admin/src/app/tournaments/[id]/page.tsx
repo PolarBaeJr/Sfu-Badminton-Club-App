@@ -1,4 +1,5 @@
-import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
+import { createAdminClient, requireCapability } from '@/lib/supabase-server';
+import { accessLevelFor, permits, UNRESTRICTED } from '@/lib/permissions';
 import { Card, Badge, PageHeader } from '@badminton/ui';
 import { TournamentCheckinQr } from './checkin-qr';
 import { formatDate, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS, describeMatchShape } from '@badminton/shared';
@@ -12,11 +13,11 @@ export default async function TournamentDetailPage({ params }: { params: Promise
   const { id } = await params;
   const supabase = createAdminClient();
 
-  // Viewer role: tournament fees are admin-only, so only admins see the Fees
-  // link (execs run tournaments but not money handling). Middleware already
-  // guarantees an exec-or-admin reaches this page.
-  const viewer = await getAuthenticatedExecOrAdmin('tournaments');
-  const isAdmin = viewer.role === 'admin';
+  // tournaments.manage.read opens the page. The Fees link is a separate
+  // capability in its own group — execs run tournaments but not entry money —
+  // so ask for the read the linked PAGE requires rather than for a level.
+  const viewer = await requireCapability('tournaments.manage.read');
+  const canSeeFees = permits(accessLevelFor(viewer), UNRESTRICTED, 'tournaments.fees.read');
 
   const { data: tournament } = await supabase.from('tournaments').select('*').eq('id', id).single();
   if (!tournament) notFound();
@@ -101,7 +102,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
           )}
         </div>
         <div className="flex items-center gap-3">
-          {isAdmin && (
+          {canSeeFees && (
             <Link href={`/tournaments/${id}/fees`} className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--color-accent)] transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none rounded">
               <DollarSign className="w-4 h-4" />
               Fees

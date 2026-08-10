@@ -7,7 +7,7 @@ import { runAction, type ActionResult } from '../action-result';
 import { isDoublesEvent, nextPowerOf2, getRoundName, ExpectedError } from '@badminton/shared';
 import type { SeedBy } from '@badminton/shared';
 import {
-  getExecOrAdmin,
+  requireCapability,
   revalidateEventPaths,
   notifyPlayers,
   getStandardSeedPositions,
@@ -360,7 +360,7 @@ async function createThirdPlaceMatch(
 }
 
 async function generateSingleEliminationBracketImpl(eventId: string, includeThirdPlace: boolean) {
-  const admin = await getExecOrAdmin('tournaments');
+  const admin = await requireCapability('tournaments.draw.generate.write');
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
@@ -661,7 +661,7 @@ async function generateSingleEliminationBracketImpl(eventId: string, includeThir
 // ============================================================
 
 async function generateRoundRobinMatchesImpl(eventId: string) {
-  const admin = await getExecOrAdmin('tournaments');
+  const admin = await requireCapability('tournaments.draw.generate.write');
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
@@ -793,7 +793,7 @@ export async function generateRoundRobinMatches(eventId: string): Promise<Action
 // ============================================================
 
 export async function lockDraw(eventId: string) {
-  const admin = await getExecOrAdmin('tournaments');
+  const admin = await requireCapability('tournaments.draw.lock.write');
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
@@ -819,7 +819,7 @@ export async function lockDraw(eventId: string) {
 }
 
 export async function unlockDraw(eventId: string) {
-  const admin = await getExecOrAdmin('tournaments');
+  const admin = await requireCapability('tournaments.draw.unlock.write');
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();

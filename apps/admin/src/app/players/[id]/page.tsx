@@ -1,5 +1,5 @@
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
-import { accessLevelFor, atLeast, portfolioOf, portfolioPermits } from '@/lib/permissions';
+import { accessLevelFor, permits, UNRESTRICTED } from '@/lib/permissions';
 import { Card, Badge, StatCard, AvatarChip, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, TOURNAMENT_EVENT_TYPE_LABELS, getWinRate, getStreakDisplay, getPointDifferential } from '@badminton/shared';
 import { PlayerEditForm } from './edit-form';
@@ -29,10 +29,10 @@ export default async function PlayerDetailPage({
   const viewer = await getAuthenticatedConsoleUser();
   const level = accessLevelFor(viewer);
   const isAdmin = level === 'admin';
-  // Roster work belongs to the 'internal' portfolio, so an exec narrowed to
-  // another one sees this page exactly as a trainer does — read-only. Same
-  // reasoning as /players itself.
-  const canManage = atLeast(level, 'exec') && portfolioPermits(level, portfolioOf(viewer), 'internal');
+  // Ask for the capability the edit form's Save invokes, not for a level —
+  // anyone holding only players.read sees this page exactly as a trainer does,
+  // read-only. Same reasoning as /players itself.
+  const canManage = permits(level, UNRESTRICTED, 'players.update.write');
   const supabase = createAdminClient();
 
   // Which season this page is showing. Defaults to the active one; ?season=
@@ -207,9 +207,9 @@ export default async function PlayerDetailPage({
 
       {/* Two columns for a trainer (no edit form), three for everyone else. */}
       <div className={`grid grid-cols-1 gap-6 ${canManage ? 'lg:grid-cols-3' : 'lg:grid-cols-2'}`}>
-        {/* Edit Form. Dropped entirely for a trainer: updatePlayer gates on
-            getExecOrAdmin(), so every control in it — status, membership, the
-            reason box, Save — would reject them. */}
+        {/* Edit Form. Dropped entirely for a trainer: updatePlayer asks for
+            players.update.write, so every control in it — status, membership,
+            the reason box, Save — would reject them. */}
         {canManage && (
         <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
           <h2 className="text-base font-semibold text-[var(--text-primary)] mb-4">Edit Player</h2>

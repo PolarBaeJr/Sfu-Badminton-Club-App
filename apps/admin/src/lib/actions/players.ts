@@ -12,7 +12,7 @@ import {
   sendPlayerApprovedEmail,
   type AdminPlayerUpdateInput,
 } from '@badminton/shared';
-import { getAdminPlayer, getExecOrAdmin } from './_shared';
+import { requireCapability } from './_shared';
 import { assertPlayerCreateFieldAccess, assertPlayerFieldAccess } from '../player-field-access';
 import { runAction, type ActionResult } from '../action-result';
 
@@ -24,7 +24,7 @@ async function approvePlayerImpl(playerId: string, status: 'competitive' | 'recr
   // Roster management is exec work. The audit row records whoever actually
   // clicked, exec or admin — actor_id is a plain FK to players with no
   // admin-only constraint (checked against the live schema).
-  const actor = await getExecOrAdmin('internal');
+  const actor = await requireCapability('players.approve.write');
   const adminClient = createAdminClient();
 
   const { data: oldPlayer } = await adminClient.from('players').select('*').eq('id', playerId).single();
@@ -92,7 +92,7 @@ async function createPlayerImpl(data: {
   // this check just gives the friendly message before Zod's enum error.
   if (data.role === 'admin') throw new Error('Admins cannot be created directly — promote an existing member instead');
   const parsed = parseOrThrow(adminPlayerCreateSchema, data);
-  const actor = await getExecOrAdmin('internal');
+  const actor = await requireCapability('players.create.write');
   // Adding a member is exec work; adding one who is already an exec is not.
   // Without this an exec could mint a second privileged identity and sidestep
   // "you cannot promote yourself".
@@ -149,7 +149,7 @@ export async function updatePlayer(playerId: string, data: AdminPlayerUpdateInpu
 
 async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) {
   const parsed = parseOrThrow(adminPlayerUpdateSchema, data) as Record<string, unknown>;
-  const actor = await getExecOrAdmin('internal');
+  const actor = await requireCapability('players.update.write');
   // Both payloads, because the write below reads from raw `data` while
   // exec_title / exec_photo_url normalize '' → undefined during parsing.
   // Guarding only `parsed` would let a hand-rolled POST of { exec_title: '' }
@@ -248,7 +248,8 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
 
 // Admin-only, alongside removePlayer/mergePlayers: account lifecycle and the
 // legal re-signature gate were not part of "let execs manage players", so they
-// keep getAdminPlayer() and their buttons are hidden for execs.
+// keep capabilities no baseline below admin holds, and their buttons are
+// hidden for execs.
 //
 // Backup path for the player's own restore flow: clears a pending
 // self-service account deletion (players.deletion_requested_at) before the
@@ -258,7 +259,7 @@ export async function cancelAccountDeletion(playerId: string): Promise<ActionRes
 }
 
 async function cancelAccountDeletionImpl(playerId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('players.deletion.cancel.write');
   const adminClient = createAdminClient();
 
   const { data: oldPlayer } = await adminClient.from('players').select('*').eq('id', playerId).single();
@@ -296,7 +297,7 @@ async function requireWaiverResignatureImpl(playerId: string) {
   // someone to re-sign is operational — a returning member after months away —
   // and cannot alter what they are agreeing to. Editing the waiver TEXT is
   // still admin-only, which is where the legal exposure lives.
-  const admin = await getExecOrAdmin('internal');
+  const admin = await requireCapability('players.waiver.resign.write');
   const adminClient = createAdminClient();
 
   const { data: oldPlayer } = await adminClient.from('players').select('waiver_reset_at').eq('id', playerId).single();
@@ -337,7 +338,7 @@ export async function removePlayer(playerId: string, reason: string): Promise<Ac
 }
 
 async function removePlayerImpl(playerId: string, reason: string) {
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('players.remove.write');
   const adminClient = createAdminClient();
 
   const { data: oldPlayer } = await adminClient.from('players').select('*').eq('id', playerId).single();
@@ -384,7 +385,7 @@ export async function previewPlayerMerge(
   removeId: string,
 ): Promise<ActionResult<MergePreviewRow[]>> {
   return runAction(async () => {
-    await getAdminPlayer();
+    await requireCapability('players.merge.write');
     const adminClient = createAdminClient();
     const { data, error } = await adminClient.rpc('merge_players_preview', {
       p_keep: keepId,
@@ -401,7 +402,7 @@ export async function mergePlayers(
   removeId: string,
 ): Promise<ActionResult<{ login_moved: boolean }>> {
   return runAction(async () => {
-    const admin = await getAdminPlayer();
+    const admin = await requireCapability('players.merge.write');
     const adminClient = createAdminClient();
 
     const { data, error } = await adminClient.rpc('merge_players', {

@@ -1,5 +1,5 @@
 export const dynamic = 'force-dynamic';
-import { createAdminClient, getAuthenticatedAdmin } from '@/lib/supabase-server';
+import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { PageHeader } from '@badminton/ui';
 import { PlatformSettingsForm } from '@/components/platform-settings-form';
 import { settingsForSection } from '@/lib/platform-setting-sections';
@@ -9,7 +9,7 @@ import { settingsForSection } from '@/lib/platform-setting-sections';
 // a platform_settings key with no entry in the section map lands here rather
 // than disappearing from the console (see lib/platform-setting-sections.ts).
 export default async function AccountsPage() {
-  await getAuthenticatedAdmin();
+  await requireCapability('accounts.read');
 
   const { data: settings } = await createAdminClient()
     .from('platform_settings')

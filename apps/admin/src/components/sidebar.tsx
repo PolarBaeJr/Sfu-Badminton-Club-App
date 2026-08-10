@@ -25,11 +25,11 @@ import {
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
-import { canAccess, type AccessLevel, type Portfolio } from '@/lib/permissions';
+import { canAccess, UNRESTRICTED, type AccessLevel } from '@/lib/permissions';
 
 // Two nav ROWS, not two access levels. Every item in both is filtered through
-// canAccess() against the same SECTION_ACCESS map the middleware uses, so this
-// list can never offer a door that will not open — grouping is layout only.
+// canAccess() against the same section map the middleware uses, so this list
+// can never offer a door that will not open — grouping is layout only.
 //
 // The first row is the day-to-day club work an exec does; the second is the
 // back-office row, which happens to be mostly admin-only but is not uniformly
@@ -81,10 +81,8 @@ const navSections = [
 
 export function Sidebar({
   initialAccessLevel = null,
-  initialPortfolio = null,
 }: {
   initialAccessLevel?: AccessLevel | null;
-  initialPortfolio?: Portfolio | null;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -93,9 +91,6 @@ export function Sidebar({
   // below still runs (it also fetches the email, and refreshes the level on a
   // client-side navigation), but it no longer decides what the user sees first.
   const [accessLevel, setAccessLevel] = useState<AccessLevel | null>(initialAccessLevel);
-  // The exec portfolio, polled alongside the level so a re-assignment reaches an
-  // open tab the same way a promotion does.
-  const [portfolio, setPortfolio] = useState<Portfolio | null>(initialPortfolio);
   const [accessLoaded, setAccessLoaded] = useState(initialAccessLevel !== null);
 
   // Don't render header on public routes
@@ -135,24 +130,6 @@ export function Sidebar({
       if (error) { setAccessLoaded(true); return; }
 
       const next = (level as AccessLevel | null) ?? null;
-
-      // Only an exec can hold a portfolio, so nobody else pays for this call.
-      // Failing OPEN (null = no portfolio = today's exec access) on purpose:
-      // this code can run against a database where 00086 has not been applied
-      // and admin_portfolio() does not exist, and the middleware makes the same
-      // choice. The nav is cosmetic; the server actions are the boundary.
-      let nextPortfolio: Portfolio | null = null;
-      if (next === 'exec') {
-        const { data: p, error: portfolioError } = await supabase.rpc('admin_portfolio', { p_user_id: user.id });
-        if (cancelled) return;
-        if (!portfolioError) nextPortfolio = (p as Portfolio | null) ?? null;
-      }
-      // Same treatment as the level below: server components were rendered with
-      // the old portfolio, so a change has to re-render them too.
-      setPortfolio((prev) => {
-        if (prev !== nextPortfolio) router.refresh();
-        return nextPortfolio;
-      });
 
       setAccessLevel((prev) => {
         // Server components hold the old level too, so re-render them rather
@@ -207,7 +184,7 @@ export function Sidebar({
   // Still cosmetic, not a boundary: the middleware and every server action gate
   // independently. This just stops the UI advertising doors that won't open.
   const visibleItems = navSections.map((section) =>
-    section.items.filter((item) => accessLoaded && canAccess(accessLevel, portfolio, item.href))
+    section.items.filter((item) => accessLoaded && canAccess(accessLevel, UNRESTRICTED, item.href))
   );
   const manageItems = visibleItems[0] ?? [];
   const adminItems = visibleItems[1] ?? [];

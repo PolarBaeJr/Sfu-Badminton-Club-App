@@ -16,14 +16,14 @@ import {
   type PlayerFlagsInput,
 } from '@badminton/shared';
 import { isWaivedFee } from '../fee-status';
-import { getAdminPlayer } from './_shared';
+import { requireCapability } from './_shared';
 
 // Club-admin markers: is_exec (executive team) and fee_exempt (exempted from
 // the club fee). Neither affects gameplay, ratings, or leaderboards — they
 // only control the fee-collection list.
 export async function updatePlayerFlags(playerId: string, flags: PlayerFlagsInput) {
   parseOrThrow(playerFlagsSchema, flags);
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('fees.playerflags.write');
   const adminClient = createAdminClient();
 
   const { data: oldPlayer } = await adminClient
@@ -54,7 +54,7 @@ export async function updatePlayerFlags(playerId: string, flags: PlayerFlagsInpu
 
 export async function markFeePaid(input: FeeMarkInput) {
   parseOrThrow(feeMarkSchema, input);
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('fees.clubfees.markpaid.write');
   const adminClient = createAdminClient();
 
   // Snapshot the amount: use the explicit input if given, else fall back to the
@@ -113,7 +113,7 @@ export async function markFeePaid(input: FeeMarkInput) {
 // Un-waiving is just markFeeUnpaid.
 export async function waiveFee(input: FeeWaiveInput) {
   parseOrThrow(feeWaiveSchema, input);
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('fees.clubfees.waive.write');
   const adminClient = createAdminClient();
 
   // Read before writing. The upsert below sets amount_cents to 0, so running it
@@ -216,7 +216,7 @@ export async function waiveFee(input: FeeWaiveInput) {
 }
 
 export async function markFeeUnpaid(playerId: string, seasonId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('fees.clubfees.markunpaid.write');
   const adminClient = createAdminClient();
 
   const { data: oldFee } = await adminClient
@@ -250,7 +250,7 @@ export async function markFeeUnpaid(playerId: string, seasonId: string) {
 // account (a name, no player row). Inserted already-paid against the season.
 export async function addManualFee(input: ManualFeeInput) {
   parseOrThrow(manualFeeSchema, input);
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('fees.clubfees.addmanual.write');
   const adminClient = createAdminClient();
 
   const { data: fee, error } = await adminClient
@@ -297,7 +297,7 @@ export async function addManualFee(input: ManualFeeInput) {
 }
 
 export async function removeManualFee(id: string) {
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('fees.clubfees.removemanual.write');
   const adminClient = createAdminClient();
 
   const { data: oldFee } = await adminClient

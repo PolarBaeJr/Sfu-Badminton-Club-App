@@ -13,7 +13,7 @@ import {
   ExpectedError,
   requireActiveSeasonId,
 } from '@badminton/shared';
-import { getExecOrAdmin, getAdminPlayer } from './_shared';
+import { requireCapability } from './_shared';
 import { runAction, type ActionResult } from '../action-result';
 
 // ============================================================
@@ -25,7 +25,7 @@ export async function voidMatch(matchId: string, reason: string): Promise<Action
 }
 
 async function voidMatchImpl(matchId: string, reason: string) {
-  const admin = await getExecOrAdmin('tournaments');
+  const admin = await requireCapability('matches.void.write');
   const adminClient = createAdminClient();
 
   // Only a confirmed match has Elo applied, so reverse it only then. A disputed
@@ -65,7 +65,7 @@ export async function convertMatchToCasual(matchId: string, reason: string): Pro
 }
 
 async function convertMatchToCasualImpl(matchId: string, reason: string) {
-  const admin = await getExecOrAdmin('tournaments');
+  const admin = await requireCapability('matches.convert.write');
   const adminClient = createAdminClient();
 
   const { data: m } = await adminClient.from('matches').select('result_status').eq('id', matchId).single();
@@ -209,7 +209,7 @@ async function adminCreateMatchImpl(data: {
   admin_note?: string;
 }) {
   parseOrThrow(adminMatchCreateSchema, data);
-  const admin = await getExecOrAdmin('tournaments');
+  const admin = await requireCapability('matches.create.write');
   const adminClient = createAdminClient();
   const { getFormatWeight, derivedFormatWeight } = await import('@badminton/shared');
 
@@ -383,7 +383,7 @@ async function adminCreateChallengeImpl(data: {
   // Challenge management is an admin-only section (permissions.ts '/challenges'),
   // so gate at admin — not exec — even though this lives in the exec-allowed
   // matches module.
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('challenges.create.write');
   const adminClient = createAdminClient();
 
   // This action has no zod schema of its own, and the shape is now typed rather
@@ -461,7 +461,7 @@ export async function forceExpireChallenge(challengeId: string, reason: string):
 
 async function forceExpireChallengeImpl(challengeId: string, reason: string) {
   // Admin-only section — see adminCreateChallengeImpl.
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('challenges.expire.write');
   const adminClient = createAdminClient();
 
   const { error } = await adminClient

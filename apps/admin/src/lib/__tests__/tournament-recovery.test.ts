@@ -212,7 +212,7 @@ const makeClient = vi.hoisted(() => () => {
 vi.mock('next/cache', () => ({ revalidatePath: () => {} }));
 vi.mock('@sentry/nextjs', () => ({ captureException: () => {} }));
 vi.mock('../supabase-server', () => ({ createAdminClient: makeClient }));
-vi.mock('../actions/_shared', () => ({ getExecOrAdmin: async () => ({ id: 'admin-1' }) }));
+vi.mock('../actions/_shared', () => ({ requireCapability: async () => ({ id: 'admin-1' }) }));
 
 import { enterMatchResult, enterWalkover, voidMatch, unvoidMatch, setMatchEntry, undoMatchResult } from '../tournament-actions/results';
 import { reverseEloSnapshot } from '../tournament-actions/_internal';

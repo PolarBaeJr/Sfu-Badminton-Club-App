@@ -8,11 +8,12 @@ import { AUTH_COOKIE_OPTIONS, ExpectedError } from '@badminton/shared';
 import {
   accessLevelFor,
   atLeast,
-  portfolioOf,
-  portfolioPermits,
-  PORTFOLIO_LABELS,
+  permits,
+  EXEC_BASELINE,
+  TRAINER_BASELINE,
+  UNRESTRICTED,
   type AccessLevel,
-  type Portfolio,
+  type Capability,
 } from './permissions';
 
 // NOTE: generated `Database` type is available from '@badminton/shared' but not
@@ -89,17 +90,16 @@ async function assertPasskeyVerified(
   }
 }
 
-// The one authenticated gate. Callers name the MINIMUM level they need and the
-// ordering lives in permissions.ts, so adding a fourth level never means
-// widening a boolean condition here — which is how `role === 'admin' ||
-// is_exec` would have grown a third clause and quietly admitted trainers to
-// every exec action in the app.
+// The one authenticated gate. `authorize` receives the level the caller's row
+// resolves to and returns a user-facing denial, or null to admit them — so
+// there is exactly one place that authenticates, checks standing and enforces
+// the passkey, and the two public gates below differ only in the question they
+// ask about the caller.
 //
-// `denial` is spelled per level because the message is user-facing and a
+// The denial is spelled by the caller because the message is user-facing, and a
 // trainer told "admin or exec access required" has been told the truth.
-async function getAuthenticatedAtLeast(
-  required: AccessLevel,
-  denial: string,
+async function getAuthenticatedConsolePlayer(
+  authorize: (level: AccessLevel | null) => string | null,
   options: { skipPasskey?: boolean } = {}
 ) {
   const supabase = await createServerSupabaseClient();
@@ -151,7 +151,13 @@ async function getAuthenticatedAtLeast(
 
   // Same resolution the middleware gets from admin_access_level(), through the
   // same helper — never a second inline copy of the rule.
-  if (!atLeast(accessLevelFor(player), required)) {
+  //
+  // BEFORE the passkey check, not after: an exec calling an admin-only action
+  // has always been told "admin access required" rather than being sent to
+  // enrol a passkey first, and swapping the order would change what every
+  // refused caller sees.
+  const denial = authorize(accessLevelFor(player));
+  if (denial !== null) {
     Sentry.setUser(null);
     throw new ExpectedError(denial);
   }
@@ -164,52 +170,63 @@ async function getAuthenticatedAtLeast(
   return player;
 }
 
+// Kept for the places where "admin" is about the ACCOUNT rather than about an
+// area of the club — nothing in the capability vocabulary describes "is this
+// person an administrator of this installation".
 export async function getAuthenticatedAdmin(options: { skipPasskey?: boolean } = {}) {
-  return getAuthenticatedAtLeast('admin', 'Admin access required', options);
+  return getAuthenticatedConsolePlayer(
+    (level) => (atLeast(level, 'admin') ? null : 'Admin access required'),
+    options,
+  );
 }
 
-// Broader gate than getAuthenticatedAdmin: permits full admins OR execs.
-// Used by exec-allowed domain actions (matches, sessions, tournaments,
-// announcements, seasons, and every mutating action under /players). Admin-only
-// actions keep getAuthenticatedAdmin.
+// The refusal a caller SEES, which is a separate question from the decision.
+// The decision is plain set membership; this reads back the lowest level whose
+// baseline holds the capability, so somebody turned away is told what would
+// have been enough. It reproduces, byte for byte, the three messages the level
+// gates used to produce — which is what keeps this refactor invisible from the
+// outside as well as from the inside.
 //
-// Deliberately NOT widened to trainers. A trainer may read the roster and write
-// varsity notes; approving, editing, banning, creating and removing players are
-// all exec work, and they all gate here. Widening this one function would have
-// handed a trainer every exec power in the app in a single line.
+// It will need to name the capability once permissions vary per person: at that
+// point "admin or exec access required" stops being true for a narrowed exec
+// who simply was not given this one.
+function denialFor(capability: Capability): string {
+  if (TRAINER_BASELINE.includes(capability)) return 'Admin console access required';
+  if (EXEC_BASELINE.includes(capability)) return 'Admin or exec access required';
+  return 'Admin access required';
+}
+
+// THE GATE. Every server action and every gated page read names the one
+// capability its work requires, and holding it is the whole question — there is
+// no minimum level to also get right. A trainer calling
+// tournaments.manage.create.write is refused because that string is not in
+// TRAINER_BASELINE, not because a rung was compared, and an admin is admitted
+// because permits() short-circuits on the level before any set is consulted.
 //
-// `portfolio` names WHICH EXEC JOB the caller's work belongs to, and it is
-// REQUIRED. This is the real boundary for exec portfolios: canAccess() covers
-// middleware and nav, but every one of these actions runs on a service-role
-// client that bypasses RLS and can be POSTed at directly, so a portfolio that
-// narrowed only the UI would be theatre — the VP of Tournaments could still
-// call the finance actions by hand.
+// The argument is a Capability, so a typo is a compile error at the call site.
+// That is what replaced the old `portfolio` argument: it was required for the
+// same reason — an optional one defaults to full access at every call site that
+// forgets it — but it could only ever cut the console four ways.
 //
-// Required, never optional, and that is the entire point: an optional argument
-// defaults to "no portfolio" = full exec access at every call site that forgets
-// it, and there are more than sixty of them. TypeScript finds them instead.
-//
-// An exec with no portfolio passes every check here, so this changed nothing
-// for anyone on the day it shipped.
-export async function getAuthenticatedExecOrAdmin(
-  portfolio: Portfolio,
-  options: { skipPasskey?: boolean } = {}
+// PERMISSIONS ARE HARD-CODED UNRESTRICTED here until the storage migration
+// lands. Every row is unrestricted today, so this resolves to the caller's
+// level baseline, which is a transcription of what that level could already do.
+export async function requireCapability(
+  capability: Capability,
+  options: { skipPasskey?: boolean } = {},
 ) {
-  const player = await getAuthenticatedAtLeast('exec', 'Admin or exec access required', options);
-  const level = accessLevelFor(player);
-  if (!portfolioPermits(level, portfolioOf(player), portfolio)) {
-    Sentry.setUser(null);
-    throw new ExpectedError(
-      `That is ${PORTFOLIO_LABELS[portfolio]} work, and it is outside your exec portfolio`
-    );
-  }
-  return player;
+  return getAuthenticatedConsolePlayer(
+    (level) => (permits(level, UNRESTRICTED, capability) ? null : denialFor(capability)),
+    options,
+  );
 }
 
-// The bottom rung: anyone with any console access at all. Used by the read-only
-// surfaces a trainer legitimately needs (the roster pages, the dashboard shell,
-// their own passkey settings) and by the varsity-note actions, which are the one
-// thing a trainer may actually write.
+// The bottom rung: anyone with any console access at all, asking no capability
+// question. Only for surfaces that HAVE no capability — the layout shell, the
+// dashboard, and the passkey routes, which must work while unverified.
 export async function getAuthenticatedConsoleUser(options: { skipPasskey?: boolean } = {}) {
-  return getAuthenticatedAtLeast('trainer', 'Admin console access required', options);
+  return getAuthenticatedConsolePlayer(
+    (level) => (atLeast(level, 'trainer') ? null : 'Admin console access required'),
+    options,
+  );
 }

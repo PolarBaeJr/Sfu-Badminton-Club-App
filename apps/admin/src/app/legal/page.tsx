@@ -1,8 +1,8 @@
 export const dynamic = 'force-dynamic';
-import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
+import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { PageHeader } from '@badminton/ui';
 import { sortLegalDocuments } from '@badminton/shared';
-import { accessLevelFor } from '@/lib/permissions';
+import { accessLevelFor, permits, UNRESTRICTED } from '@/lib/permissions';
 import { LegalDocumentsForm } from './legal-documents-form';
 import { EventWaiverTemplateForm } from './event-waiver-template-form';
 
@@ -10,13 +10,14 @@ import { EventWaiverTemplateForm } from './event-waiver-template-form';
 // audiences need it: an admin editing the text, and an exec who needs to read
 // what members agreed to — or make everyone re-sign before an event.
 //
-// Reachable at exec level (permissions.ts). Editing is admin-only, enforced in
-// updateLegalDocument(); requiring a re-signature is exec-level, enforced in
-// requireReacceptance(). The canEdit flag below only decides which controls are
-// offered — it is not the boundary.
+// legal.read is what opens the section, and an exec holds it. Editing asks for
+// legal.documents.write and legal.waivertemplate.write, which no baseline below
+// admin holds; requiring a re-signature asks for legal.reacceptance.write, which
+// every exec holds. The canEdit flag below only decides which controls are
+// offered — the server actions are the boundary.
 export default async function LegalPage() {
-  const viewer = await getAuthenticatedExecOrAdmin('external');
-  const canEdit = accessLevelFor(viewer) === 'admin';
+  const viewer = await requireCapability('legal.read');
+  const canEdit = permits(accessLevelFor(viewer), UNRESTRICTED, 'legal.documents.write');
 
   const adminClient = createAdminClient();
   const { data: legalDocuments } = await adminClient

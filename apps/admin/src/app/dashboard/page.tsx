@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
-import { accessLevelFor, atLeast, canAccess, portfolioOf, portfolioPermits } from '@/lib/permissions';
+import { accessLevelFor, atLeast, canAccess, permits, UNRESTRICTED } from '@/lib/permissions';
 import { Badge, AvatarChip, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS } from '@badminton/shared';
 import Link from 'next/link';
@@ -49,34 +49,32 @@ export default async function DashboardPage() {
   // fees and challenges, every one of which bounced them to /unauthorized.
   const viewer = await getAuthenticatedConsoleUser();
   const level = accessLevelFor(viewer);
-  // An exec's portfolio narrows this page exactly as it narrows the nav — the
-  // tiles link into sections a narrowed exec can no longer open, and the fetches
-  // behind them would otherwise ship those sections' counts into the RSC payload
-  // for someone who is refused the page itself.
-  const portfolio = portfolioOf(viewer);
-  const showPlayers = canAccess(level, portfolio, '/players');
-  const showDisputes = canAccess(level, portfolio, '/disputes');
-  const showWalkovers = canAccess(level, portfolio, '/walkovers');
-  const showChallenges = canAccess(level, portfolio, '/challenges');
-  // NOT canAccess(level, '/fees'). /fees is exec-level now so an exec can reach
-  // the Expenses tab, but the finance snapshot below is income, expenses AND
-  // the net position — the club money an exec is deliberately kept away from.
+  // Every tile links into a section, so ask the same question the nav and the
+  // middleware ask, through the same helper — the fetches behind these tiles
+  // would otherwise ship a section's counts into the RSC payload for somebody
+  // refused the page itself.
+  const showPlayers = canAccess(level, UNRESTRICTED, '/players');
+  const showDisputes = canAccess(level, UNRESTRICTED, '/disputes');
+  const showWalkovers = canAccess(level, UNRESTRICTED, '/walkovers');
+  const showChallenges = canAccess(level, UNRESTRICTED, '/challenges');
+  // NOT canAccess(level, …, '/fees'). Reaching /fees needs any one read under
+  // `fees`, and an exec holds the expenses one — but the snapshot below is
+  // income, expenses AND the net position, which is a capability of its own.
   // Asking the route map here would have leaked all three into an exec's
-  // dashboard the moment that map changed, from the one file that is supposed
-  // to be the example of gating the fetch. Ask for the level the DATA needs.
-  const showFinances = atLeast(level, 'admin');
+  // dashboard, from the one file that is supposed to be the example of gating
+  // the fetch. Ask for the capability the DATA needs.
+  const showFinances = permits(level, UNRESTRICTED, 'fees.netposition.read');
   // Sections that used to be unconditional. A varsity trainer reaches the
   // dashboard (it is where sign-in lands) but has no business in matches or
   // tournaments, and both links bounce them to /unauthorized.
-  const showMatches = canAccess(level, portfolio, '/matches');
-  const showTournaments = canAccess(level, portfolio, '/tournaments');
+  const showMatches = canAccess(level, UNRESTRICTED, '/matches');
+  const showTournaments = canAccess(level, UNRESTRICTED, '/tournaments');
   // /players is trainer-readable, but deciding a pending signup is exec work —
-  // the Edit control below saves through updatePlayer/approvePlayer, both of
-  // which gate on getExecOrAdmin('internal'). Asking the level and the portfolio
-  // directly rather than reusing showPlayers keeps the panel honest: this gates
-  // a FETCH, so a finance exec who kept the panel would be handed the
+  // the Edit control below saves through updatePlayer/approvePlayer. Asking for
+  // the capability rather than reusing showPlayers keeps the panel honest: this
+  // gates a FETCH, so anyone who kept the panel without it would be handed the
   // pending-approval list and a dialog whose every Save throws.
-  const canApprove = atLeast(level, 'exec') && portfolioPermits(level, portfolio, 'internal');
+  const canApprove = permits(level, UNRESTRICTED, 'players.approve.write');
 
   // Gate the FETCHES, not just the tiles: a hidden card whose query still ran
   // would ship admin-only counts into the RSC payload for anyone with devtools.
@@ -179,7 +177,8 @@ export default async function DashboardPage() {
       )}
 
       {/* Pending Players. Exec-allowed now that /players is — updatePlayer and
-          approvePlayer both take getExecOrAdmin(), so Edit here works for both.
+          approvePlayer both ask for capabilities an exec holds, so Edit here
+          works for both.
           Trainers reach /players but cannot approve, so this whole panel is
           theirs to not see: every row in it is a control that would reject them.
 

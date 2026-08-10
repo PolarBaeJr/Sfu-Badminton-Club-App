@@ -4,7 +4,7 @@ import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
-import { getAdminPlayer } from './_shared';
+import { requireCapability } from './_shared';
 import { runAction, type ActionResult } from '../action-result';
 
 export async function confirmWalkover(walkoverId: string, notes: string): Promise<ActionResult<void>> {
@@ -12,7 +12,7 @@ export async function confirmWalkover(walkoverId: string, notes: string): Promis
 }
 
 async function confirmWalkoverImpl(walkoverId: string, notes: string) {
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('walkovers.confirm.write');
   const adminClient = createAdminClient();
 
   const { error } = await adminClient.rpc('apply_walkover_result', {
@@ -45,7 +45,7 @@ export async function rejectWalkover(walkoverId: string, notes: string): Promise
 }
 
 async function rejectWalkoverImpl(walkoverId: string, notes: string) {
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('walkovers.reject.write');
   const adminClient = createAdminClient();
 
   const { data: walkover } = await adminClient.from('walkovers').select('*').eq('id', walkoverId).single();

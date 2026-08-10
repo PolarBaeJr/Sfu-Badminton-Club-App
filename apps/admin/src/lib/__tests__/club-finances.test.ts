@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import type { Capability } from '../permissions';
 
 // The two non-fee money ledgers (00073): other income in, club expenses out —
 // plus reimbursement of whoever fronted an expense (00077).
@@ -110,23 +111,30 @@ const makeClient = vi.hoisted(() => () => {
 vi.mock('next/cache', () => ({ revalidatePath: () => {} }));
 vi.mock('@sentry/nextjs', () => ({ captureException: () => {} }));
 vi.mock('../supabase-server', () => ({ createAdminClient: makeClient }));
-// Modelled on the real gates: getAdminPlayer rejects anyone who is not an
-// admin, including an exec; getExecOrAdmin admits both and nobody else. WHICH
-// GATE AN ACTION CALLS IS THE ENTIRE ACCESS STORY, because createAdminClient()
-// is service-role and bypasses RLS — the route map only decides who may open a
-// page, and a server action can be invoked without ever loading one.
-vi.mock('../actions/_shared', () => ({
-  getExecOrAdmin: async () => {
-    if (store.actor.role !== 'admin' && !store.actor.is_exec) {
-      throw new Error('Exec or admin access required');
-    }
-    return store.actor;
-  },
-  getAdminPlayer: async () => {
-    if (store.actor.role !== 'admin') throw new Error('Admin access required');
-    return store.actor;
-  },
-}));
+// The REAL decision, not a stand-in: permits() against the real baselines, so
+// these assertions are checking that EXEC_BASELINE says what the old gates said.
+// WHICH CAPABILITY AN ACTION NAMES IS THE ENTIRE ACCESS STORY, because
+// createAdminClient() is service-role and bypasses RLS — the route map only
+// decides who may open a page, and a server action can be invoked without ever
+// loading one.
+vi.mock('../actions/_shared', async () => {
+  const { accessLevelFor, permits, EXEC_BASELINE, UNRESTRICTED } = await import('../permissions');
+  return {
+    requireCapability: async (capability: Capability) => {
+      if (!permits(accessLevelFor(store.actor), UNRESTRICTED, capability)) {
+        // The wording the old two-gate mock used, kept so the assertions below
+        // still read as prose. Which of the two you get is now decided by the
+        // baseline rather than by which helper the action happened to call.
+        throw new Error(
+          EXEC_BASELINE.includes(capability)
+            ? 'Exec or admin access required'
+            : 'Admin access required',
+        );
+      }
+      return store.actor;
+    },
+  };
+});
 
 import {
   addOtherIncome,
@@ -292,8 +300,9 @@ describe('addOtherIncome / addExpense', () => {
     expect(expenses()[0]!.reimbursed_at).toBeUndefined();
   });
 
-  // An ordinary member is not a console user at all. getExecOrAdmin() has to
-  // reject them, or "execs may add expenses" would read as "anyone may".
+  // An ordinary member is not a console user at all, so they hold no baseline
+  // and fees.expenses.add.write is not theirs — otherwise "execs may add
+  // expenses" would read as "anyone may".
   it('refuses a plain member the one action an exec may take', async () => {
     store.actor = { id: 'player-9', role: 'player' };
 

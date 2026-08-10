@@ -1,5 +1,5 @@
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
-import { accessLevelFor, atLeast, portfolioOf, portfolioPermits } from '@/lib/permissions';
+import { accessLevelFor, permits, UNRESTRICTED } from '@/lib/permissions';
 import { Badge, Card, AvatarChip, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS, getMissingLegalDocuments, getWinRate, unwrap } from '@badminton/shared';
 import Link from 'next/link';
@@ -40,13 +40,12 @@ export default async function PlayersPage({
   const level = accessLevelFor(viewer);
   const isAdmin = level === 'admin';
   // A varsity trainer reads this page and nothing more: they are here to find
-  // the player they are writing a note about. Every mutating action under
-  // /players gates on getExecOrAdmin('internal'), so for them the roster is a
-  // directory — and for an exec narrowed to another portfolio it is the same
-  // directory, for the same reason. Middleware already turns that exec away at
-  // the door; this keeps the page honest on its own rather than trusting that
-  // it was reached through one.
-  const canManage = atLeast(level, 'exec') && portfolioPermits(level, portfolioOf(viewer), 'internal');
+  // the player they are writing a note about, and players.read is the whole of
+  // their claim on this section — so for them the roster is a directory.
+  // Editing is what every control here ends up invoking, so ask for that rather
+  // than for a level: the controls and the actions behind them then agree by
+  // construction, instead of by two people remembering the same rule.
+  const canManage = permits(level, UNRESTRICTED, 'players.update.write');
   // Hiding the tab is not the same as closing it: /players?tab=suspended is a
   // URL anyone can type, and the moderation queues are exec business. Fall back
   // rather than error — a trainer following a stale link should land on the
@@ -114,8 +113,8 @@ export default async function PlayersPage({
   const inactCount = forCount.filter((p) => p.active_flag === false).length;
 
   // Needs Attention, Suspended and Inactive are moderation states: every action
-  // they offer (edit, approve, ban, restore, mark inactive) gates on
-  // getExecOrAdmin(). A trainer reads the roster to find the player they are
+  // they offer (edit, approve, ban, restore, mark inactive) asks for a
+  // players.*.write. A trainer reads the roster to find the player they are
   // writing a varsity note about, so they get the two tabs that list people who
   // actually play, and are not shown queues they cannot act on.
   const tabs = [

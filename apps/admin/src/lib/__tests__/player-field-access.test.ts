@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import type { Capability } from '../permissions';
 
 // This suite pins the security boundary the club owner drew: "leave elevation
 // of privilege to exec/admin to admins". Execs manage the roster; only admins
@@ -28,22 +29,28 @@ vi.mock('../audit', () => ({ logAdminAudit: async () => {} }));
 
 vi.mock('@sentry/nextjs', () => ({ captureException: () => {} }));
 
-vi.mock('../actions/_shared', () => ({
-  getAdminPlayer: async () => {
-    if (state.actor.role !== 'admin') throw new Error('Admin access required');
-    return state.actor;
-  },
-  // Faithful to the real gate: admins and execs only. A varsity trainer is
-  // turned away HERE, before any payload is inspected — the field guard is the
-  // second line, not the first.
-  getExecOrAdmin: async () => {
-    if (state.actor.role !== 'admin' && state.actor.is_exec !== true) {
-      throw new Error('Admin or exec access required');
-    }
-    return state.actor;
-  },
-  getConsoleUser: async () => state.actor,
-}));
+// The REAL gate: permits() against the real baselines, with the same denial
+// wording the live one produces. A varsity trainer is turned away HERE, before
+// any payload is inspected — the field guard is the second line, not the first.
+vi.mock('../actions/_shared', async () => {
+  const {
+    accessLevelFor, permits, UNRESTRICTED, EXEC_BASELINE, TRAINER_BASELINE,
+  } = await import('../permissions');
+  return {
+    requireCapability: async (capability: Capability) => {
+      if (!permits(accessLevelFor(state.actor), UNRESTRICTED, capability)) {
+        throw new Error(
+          TRAINER_BASELINE.includes(capability)
+            ? 'Admin console access required'
+            : EXEC_BASELINE.includes(capability)
+              ? 'Admin or exec access required'
+              : 'Admin access required',
+        );
+      }
+      return state.actor;
+    },
+  };
+});
 
 vi.mock('../supabase-server', () => {
   const builder = (table: string) => {

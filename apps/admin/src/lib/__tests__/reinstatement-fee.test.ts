@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import type { Capability } from '../permissions';
 
 // An exec may lift a ban; only an admin may touch the money. The unban dialog
 // therefore hides the payment fields from execs — and the action used to file
@@ -99,16 +100,28 @@ const makeClient = vi.hoisted(() => () => {
 vi.mock('next/cache', () => ({ revalidatePath: () => {} }));
 vi.mock('@sentry/nextjs', () => ({ captureException: () => {} }));
 vi.mock('../supabase-server', () => ({ createAdminClient: makeClient }));
-// Modelled on the real gates in supabase-server: getExecOrAdmin admits both,
-// getAdminPlayer rejects an exec. Which of the two an action calls is exactly
-// what decides whether an exec can record money.
-vi.mock('../actions/_shared', () => ({
-  getExecOrAdmin: async () => store.actor,
-  getAdminPlayer: async () => {
-    if (store.actor.role !== 'admin') throw new Error('Admin access required');
-    return store.actor;
-  },
-}));
+// The REAL decision: permits() against the real baselines. Which capability an
+// action names is exactly what decides whether an exec can record money —
+// players.reinstate.write is in EXEC_BASELINE and fees.reinstatements.write is
+// not, and this suite is where that difference is checked.
+vi.mock('../actions/_shared', async () => {
+  const { accessLevelFor, permits, EXEC_BASELINE, UNRESTRICTED } = await import('../permissions');
+  return {
+    requireCapability: async (capability: Capability) => {
+      if (!permits(accessLevelFor(store.actor), UNRESTRICTED, capability)) {
+        // The wording the old two-gate mock used, kept so the assertions below
+        // still read as prose. Which of the two you get is now decided by the
+        // baseline rather than by which helper the action happened to call.
+        throw new Error(
+          EXEC_BASELINE.includes(capability)
+            ? 'Exec or admin access required'
+            : 'Admin access required',
+        );
+      }
+      return store.actor;
+    },
+  };
+});
 
 import { reinstatePlayer, recordReinstatementPayment } from '../actions/reinstatement';
 
@@ -252,8 +265,9 @@ describe('recordReinstatementPayment', () => {
     expect(fees()[0]!.season_id).toBe('season-old');
   });
 
-  // The gate that keeps the exec/admin split intact: recording money is admin
-  // work, so this action must go through getAdminPlayer, not getExecOrAdmin.
+  // The capability that keeps the exec/admin split intact: recording money is
+  // admin work, so this action asks for fees.reinstatements.write, which is not
+  // in EXEC_BASELINE — unlike players.reinstate.write, which is.
   it('is closed to execs', async () => {
     const feeId = await execUnban();
     store.actor = { ...EXEC };

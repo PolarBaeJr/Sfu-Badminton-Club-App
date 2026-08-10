@@ -12,7 +12,7 @@ import {
   type TournamentFeeMarkInput,
   ExpectedError,
 } from '@badminton/shared';
-import { getAdminPlayer } from './_shared';
+import { requireCapability } from './_shared';
 
 /**
  * Move the "default" flag onto one tier, restoring the old one if it fails.
@@ -83,7 +83,7 @@ async function promoteDefaultTier(
 
 export async function createFeeTier(input: FeeTierInput) {
   parseOrThrow(feeTierSchema, input);
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('tournaments.fees.tier.create.write');
   const adminClient = createAdminClient();
 
   // Create the tier as a NON-default first, then move the default onto it.
@@ -140,7 +140,7 @@ export async function createFeeTier(input: FeeTierInput) {
 
 export async function updateFeeTier(id: string, input: Partial<FeeTierInput>) {
   parseOrThrow(feeTierSchema.partial(), input);
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('tournaments.fees.tier.update.write');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient
@@ -189,7 +189,7 @@ export async function updateFeeTier(id: string, input: Partial<FeeTierInput>) {
 }
 
 export async function deleteFeeTier(id: string) {
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('tournaments.fees.tier.delete.write');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient
@@ -215,7 +215,7 @@ export async function deleteFeeTier(id: string) {
 
 export async function markTournamentFeePaid(input: TournamentFeeMarkInput) {
   parseOrThrow(tournamentFeeMarkSchema, input);
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('tournaments.fees.markpaid.write');
   const adminClient = createAdminClient();
 
   // Snapshot the amount: explicit input, else the chosen tier's amount, else the
@@ -291,7 +291,7 @@ export async function markTournamentFeePaid(input: TournamentFeeMarkInput) {
 }
 
 export async function markTournamentFeeUnpaid(tournamentId: string, playerId: string) {
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('tournaments.fees.markunpaid.write');
   const adminClient = createAdminClient();
 
   const { data: oldFee } = await adminClient

@@ -1,20 +1,20 @@
 export const dynamic = 'force-dynamic';
-import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
+import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { Card, Badge, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { formatDate } from '@badminton/shared';
 import { CreateSeasonForm, SeasonActions, SeasonFeesEditor } from './actions';
 import { Medal, Calendar, CalendarClock, CheckCircle2, XCircle, Clock, AlertTriangle } from 'lucide-react';
-import { accessLevelFor } from '@/lib/permissions';
+import { accessLevelFor, permits, UNRESTRICTED } from '@/lib/permissions';
 
 export default async function SeasonsPage() {
-  // Reachable at exec level (permissions.ts), but updateSeasonFees calls
-  // getAdminPlayer(). Without this the page opened a fee editor for every exec,
-  // accepted their typing, and rejected them at Save — the route and the nav
-  // agreed, and the rendered CONTROL was the layer that disagreed. Same shape
-  // the Legal page already uses: the flag decides what is offered, the server
-  // action is still the boundary.
-  const viewer = await getAuthenticatedExecOrAdmin('internal');
-  const canEditFees = accessLevelFor(viewer) === 'admin';
+  // seasons.read opens the page, but updateSeasonFees asks for
+  // seasons.fees.write, which no baseline below admin holds. Without this flag
+  // the page opened a fee editor for every exec, accepted their typing, and
+  // rejected them at Save — the route and the nav agreed, and the rendered
+  // CONTROL was the layer that disagreed. Same shape the Legal page uses: the
+  // flag decides what is offered, the server action is still the boundary.
+  const viewer = await requireCapability('seasons.read');
+  const canEditFees = permits(accessLevelFor(viewer), UNRESTRICTED, 'seasons.fees.write');
 
   const supabase = createAdminClient();
 

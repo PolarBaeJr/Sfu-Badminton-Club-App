@@ -4,7 +4,7 @@ import './globals.css';
 export const dynamic = 'force-dynamic';
 import { Sidebar } from '@/components/sidebar';
 import { getAuthenticatedConsoleUser } from '@/lib/supabase-server';
-import { accessLevelFor, portfolioOf, type AccessLevel, type Portfolio } from '@/lib/permissions';
+import { accessLevelFor, type AccessLevel } from '@/lib/permissions';
 import { MainContent } from '@/components/main-content';
 import { ToastProvider } from '@/components/toast-provider';
 import { SentryUserInit } from '@/components/sentry-user-init';
@@ -64,19 +64,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   //
   // Throws on public routes (/login, /unauthorized) where there is no session,
   // which is exactly when the sidebar renders nothing anyway.
-  //
-  // The exec portfolio is seeded from the same row for the same reason: the nav
-  // is filtered on both axes, and a first paint that knew the level but not the
-  // portfolio would show a narrowed exec every section and then take them away.
   let initialAccessLevel: AccessLevel | null = null;
-  let initialPortfolio: Portfolio | null = null;
   try {
     const viewer = await getAuthenticatedConsoleUser({ skipPasskey: true });
     initialAccessLevel = accessLevelFor(viewer);
-    initialPortfolio = portfolioOf(viewer);
   } catch {
     initialAccessLevel = null;
-    initialPortfolio = null;
   }
 
   return (
@@ -101,7 +94,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <ToastProvider>
           <ConfirmProvider>
             <SentryUserInit playerId={null} />
-            <Sidebar initialAccessLevel={initialAccessLevel} initialPortfolio={initialPortfolio} />
+            <Sidebar initialAccessLevel={initialAccessLevel} />
             <MainContent>
               {children}
             </MainContent>

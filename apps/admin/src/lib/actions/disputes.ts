@@ -5,7 +5,7 @@ import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import { parseOrThrow, disputeResolveSchema, type DisputeResolveInput } from '@badminton/shared';
-import { getAdminPlayer } from './_shared';
+import { requireCapability } from './_shared';
 import { voidMatch, convertMatchToCasual } from './matches';
 import { runAction, type ActionResult } from '../action-result';
 
@@ -15,7 +15,7 @@ export async function resolveDispute(data: DisputeResolveInput): Promise<ActionR
 
 async function resolveDisputeImpl(data: DisputeResolveInput) {
   parseOrThrow(disputeResolveSchema, data);
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('disputes.resolve.write');
   const adminClient = createAdminClient();
 
   const { data: dispute } = await adminClient

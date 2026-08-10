@@ -360,7 +360,7 @@ const makeClient = vi.hoisted(() => () => {
 vi.mock('next/cache', () => ({ revalidatePath: () => {} }));
 vi.mock('@sentry/nextjs', () => ({ captureException: () => {} }));
 vi.mock('../supabase-server', () => ({ createAdminClient: makeClient }));
-vi.mock('../actions/_shared', () => ({ getExecOrAdmin: async () => ({ id: 'admin-1' }) }));
+vi.mock('../actions/_shared', () => ({ requireCapability: async () => ({ id: 'admin-1' }) }));
 
 import {
   enterMatchResult, editMatchResult, enterWalkover, voidMatch, undoMatchResult,

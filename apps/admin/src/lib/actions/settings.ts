@@ -4,14 +4,14 @@ import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import { parseOrThrow, legalDocumentUpdateSchema, waiverDocumentSchema, eventWaiverTemplateUpdateSchema, type LegalDocumentUpdateInput, type EventWaiverTemplateUpdateInput, type WaiverDocument } from '@badminton/shared';
-import { getAdminPlayer, getExecOrAdmin } from './_shared';
+import { requireCapability } from './_shared';
 
 // Platform configuration. Admin-only, and this is the boundary that matters:
 // /ratings and /accounts merely decide who is shown the form.
 export async function updatePlatformSettings(
   updates: { key: string; value: Record<string, unknown> }[]
 ) {
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('platform.settings.write');
   const adminClient = createAdminClient();
 
   for (const update of updates) {
@@ -68,7 +68,7 @@ function nextVersion(oldVersion: string): string {
 
 export async function updateLegalDocument(input: LegalDocumentUpdateInput) {
   parseOrThrow(legalDocumentUpdateSchema, input);
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('legal.documents.write');
   const adminClient = createAdminClient();
 
   const { data: old, error: readError } = await adminClient
@@ -113,15 +113,18 @@ export async function updateLegalDocument(input: LegalDocumentUpdateInput) {
 // Save a season's event-waiver template (00074) — the text an exec pulls into
 // a new tournament's "Event waiver" box instead of retyping it.
 //
-// getAdminPlayer(), NOT getExecOrAdmin(): this is legal text, and it is the
-// same boundary updateLegalDocument() draws. Execs read it on /legal and copy
+// legal.waivertemplate.write, which no baseline below admin holds: this is
+// legal text, and it is the same boundary updateLegalDocument() draws — note
+// that the third gate in this file, requireReacceptance(), belongs to `legal`
+// too and IS exec work, so the area here does not follow the file. Execs read
+// it on /legal and copy
 // it into an event; only an admin changes the wording. There is deliberately
 // no requireReacceptance() counterpart — nobody accepts a template. Editing it
 // cannot reach anyone who has already signed, because a tournament holds its
 // own copy of the text (see the migration header).
 export async function updateEventWaiverTemplate(input: EventWaiverTemplateUpdateInput) {
   parseOrThrow(eventWaiverTemplateUpdateSchema, input);
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('legal.waivertemplate.write');
   const adminClient = createAdminClient();
 
   // maybeSingle, not single: a season with no template yet is the normal first
@@ -182,7 +185,7 @@ export async function updateEventWaiverTemplate(input: EventWaiverTemplateUpdate
 // to. Editing the TEXT stays admin-only, which is where the legal exposure is.
 export async function requireReacceptance(document: WaiverDocument) {
   parseOrThrow(waiverDocumentSchema, document);
-  const admin = await getExecOrAdmin('external');
+  const admin = await requireCapability('legal.reacceptance.write');
   const adminClient = createAdminClient();
 
   const { data: old, error: readError } = await adminClient

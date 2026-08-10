@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // available before the mocked module factories run.
 const state = vi.hoisted(() => ({
   user: null as { id: string } | null,
-  player: null as { id: string; role: string } | null,
+  player: null as { id: string; role: string; is_exec?: boolean } | null,
   // Admin-enrolled passkeys for this player. >0 arms the gate, so the caller
   // must present a verified cookie. Members'-app passkeys are excluded by the
   // query itself (enrolled_via = 'admin'), which is why this is a count of
@@ -59,7 +59,7 @@ vi.mock('@sentry/nextjs', () => ({
 }));
 
 // Import the module under test AFTER mocks are registered.
-import { getAuthenticatedAdmin } from '../supabase-server';
+import { getAuthenticatedAdmin, requireCapability } from '../supabase-server';
 
 beforeEach(() => {
   state.user = null;
@@ -116,5 +116,42 @@ describe('getAuthenticatedAdmin', () => {
     // No verified cookie is set by the next/headers mock, so the gate must bite.
     await expect(getAuthenticatedAdmin()).rejects.toThrow('Passkey verification required');
     expect(sentrySetUser).toHaveBeenCalledWith(null);
+  });
+});
+
+describe('requireCapability', () => {
+  it('admits somebody whose level baseline holds the capability', async () => {
+    state.user = { id: 'user-1' };
+    state.player = { id: 'exec-1', role: 'player', is_exec: true };
+    await expect(requireCapability('players.approve.write')).resolves.toEqual(state.player);
+    expect(sentrySetUser).toHaveBeenCalledWith({ id: 'exec-1' });
+  });
+
+  // THE ORDER, pinned. The capability is checked BEFORE the passkey gate,
+  // exactly as the level check used to be: an exec calling an admin-only action
+  // has always been told "admin access required", and being sent to enrol a
+  // passkey first would be a different answer to a different question. Both
+  // conditions are true here, so only the ordering decides which message wins.
+  it('answers the permission question before the passkey one', async () => {
+    state.user = { id: 'user-1' };
+    state.player = { id: 'exec-1', role: 'player', is_exec: true };
+    state.adminPasskeyCount = 1;
+    await expect(requireCapability('fees.clubfees.markpaid.write'))
+      .rejects.toThrow('Admin access required');
+  });
+
+  // The refusal names the lowest level that would have been enough, which is
+  // what the three level gates used to say — an ordinary member turned away
+  // from exec work is told about exec, not about admin. All three come from
+  // the same caller, so only the CAPABILITY decides which message appears.
+  it('spells the refusal by the lowest level that holds the capability', async () => {
+    state.user = { id: 'user-1' };
+    state.player = { id: 'member-1', role: 'player' };
+    await expect(requireCapability('players.approve.write'))
+      .rejects.toThrow('Admin or exec access required');
+    await expect(requireCapability('players.read'))
+      .rejects.toThrow('Admin console access required');
+    await expect(requireCapability('audit.read'))
+      .rejects.toThrow('Admin access required');
   });
 });

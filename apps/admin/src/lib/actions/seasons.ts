@@ -4,7 +4,7 @@ import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import { parseOrThrow, seasonFeeSchema, seasonCreateSchema, ExpectedError, clubToday, type SeasonFeeInput, type SeasonCreateInput } from '@badminton/shared';
-import { getAdminPlayer, getExecOrAdmin } from './_shared';
+import { requireCapability } from './_shared';
 
 // term + year are the real inputs, not a name. seasons.name is DERIVED from them
 // by trg_set_season_name (00043) so it can never drift from the pair.
@@ -15,7 +15,7 @@ import { getAdminPlayer, getExecOrAdmin } from './_shared';
 // season, created before 00043 added the columns.
 export async function createSeason(data: SeasonCreateInput) {
   const input = parseOrThrow(seasonCreateSchema, data);
-  const admin = await getExecOrAdmin('internal');
+  const admin = await requireCapability('seasons.create.write');
   const adminClient = createAdminClient();
 
   const { data: season, error } = await adminClient.from('seasons').insert({
@@ -51,7 +51,7 @@ export async function createSeason(data: SeasonCreateInput) {
 
 export async function updateSeasonFees(seasonId: string, fees: SeasonFeeInput) {
   parseOrThrow(seasonFeeSchema, fees);
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('seasons.fees.write');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient
@@ -85,7 +85,7 @@ export async function updateSeasonFees(seasonId: string, fees: SeasonFeeInput) {
 export type SeasonEloPolicy = 'carry' | 'soft' | 'full';
 
 export async function setActiveSeason(seasonId: string, eloPolicy: SeasonEloPolicy = 'carry') {
-  const admin = await getExecOrAdmin('internal');
+  const admin = await requireCapability('seasons.activate.write');
   const adminClient = createAdminClient();
 
   // Atomic: snapshot the outgoing season's ELO, switch active, apply the policy.
@@ -109,7 +109,7 @@ export async function setActiveSeason(seasonId: string, eloPolicy: SeasonEloPoli
 }
 
 export async function endSeason(seasonId: string) {
-  const admin = await getExecOrAdmin('internal');
+  const admin = await requireCapability('seasons.end.write');
   const adminClient = createAdminClient();
 
   const { error } = await adminClient.from('seasons').update({

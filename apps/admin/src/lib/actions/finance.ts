@@ -12,7 +12,7 @@ import {
 } from '@badminton/shared';
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
-import { getAdminPlayer, getExecOrAdmin } from './_shared';
+import { requireCapability } from './_shared';
 
 /**
  * The two non-fee money ledgers: other income (donations, grants, socials) and
@@ -33,8 +33,9 @@ import { getAdminPlayer, getExecOrAdmin } from './_shared';
  * be able to say so, or the club never learns the money went out and the exec
  * never gets paid back. That is bookkeeping. DELETING an expense is not — it
  * erases a spend from the season total with no second copy of the number
- * anywhere — so removeExpense keeps getAdminPlayer(), as do both halves of the
- * income ledger, which is club money an exec has no stake in.
+ * anywhere — so removeExpense keeps a capability no baseline below admin
+ * holds, as do both halves of the income ledger, which is club money an exec
+ * has no stake in.
  *
  * markExpenseReimbursed is admin-only for the plainest reason: it asserts the
  * club has paid someone. An exec confirming their own reimbursement is the
@@ -86,7 +87,7 @@ async function assertEligiblePayer(
 
 export async function addOtherIncome(input: OtherIncomeInput) {
   const parsed = parseOrThrow(otherIncomeSchema, input);
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('fees.otherincome.add.write');
   const adminClient = createAdminClient();
 
   const row = {
@@ -119,7 +120,7 @@ export async function addOtherIncome(input: OtherIncomeInput) {
 }
 
 export async function removeOtherIncome(id: string) {
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('fees.otherincome.remove.write');
   const adminClient = createAdminClient();
 
   // Read first so the audit entry carries what was destroyed. Without it the
@@ -168,7 +169,7 @@ export async function removeOtherIncome(id: string) {
  */
 export async function addExpense(input: ClubExpenseInput) {
   const parsed = parseOrThrow(clubExpenseSchema, input);
-  const actor = await getExecOrAdmin('finance');
+  const actor = await requireCapability('fees.expenses.add.write');
   const adminClient = createAdminClient();
   await assertEligiblePayer(adminClient, parsed.paid_by ?? null);
 
@@ -244,7 +245,7 @@ export async function addExpense(input: ClubExpenseInput) {
  */
 export async function updateExpense(input: ClubExpenseUpdateInput) {
   const parsed = parseOrThrow(clubExpenseUpdateSchema, input);
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('fees.expenses.update.write');
   const adminClient = createAdminClient();
 
   const { data: existing } = await adminClient
@@ -362,7 +363,7 @@ export async function markExpenseReimbursed(
   /** What the confirm dialog showed. The settlement is refused if the row has moved. */
   confirmed: { amountCents: number; paidBy: string },
 ) {
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('fees.expenses.reimburse.write');
   const adminClient = createAdminClient();
 
   const { data: existing } = await adminClient
@@ -417,7 +418,7 @@ export async function markExpenseReimbursed(
  * remove an expense an admin had already reimbursed them for.
  */
 export async function removeExpense(id: string) {
-  const admin = await getAdminPlayer();
+  const admin = await requireCapability('fees.expenses.remove.write');
   const adminClient = createAdminClient();
 
   const { data: existing } = await adminClient

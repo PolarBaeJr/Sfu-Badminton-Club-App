@@ -4,10 +4,10 @@ import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { isDoublesEvent } from '@badminton/shared';
-import { getExecOrAdmin, revalidateEventPaths } from './_internal';
+import { requireCapability, revalidateEventPaths } from './_internal';
 
 export async function updateParticipantSeed(participantId: string, seedNumber: number | null) {
-  await getExecOrAdmin('tournaments');
+  await requireCapability('tournaments.draw.seed.set.write');
   const adminClient = createAdminClient();
 
   const { data: participant } = await adminClient.from('tournament_participants')
@@ -32,7 +32,7 @@ export async function updateParticipantSeed(participantId: string, seedNumber: n
 }
 
 export async function updatePairSeed(pairId: string, seedNumber: number | null) {
-  await getExecOrAdmin('tournaments');
+  await requireCapability('tournaments.draw.seed.set.write');
   const adminClient = createAdminClient();
 
   const { data: pair } = await adminClient.from('tournament_pairs')
@@ -57,7 +57,7 @@ export async function updatePairSeed(pairId: string, seedNumber: number | null) 
 }
 
 export async function autoSeedEventByElo(eventId: string) {
-  const admin = await getExecOrAdmin('tournaments');
+  const admin = await requireCapability('tournaments.draw.seed.auto.write');
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
@@ -112,7 +112,7 @@ export async function autoSeedEventByElo(eventId: string) {
 // ============================================================
 
 export async function clearSeeds(eventId: string) {
-  const admin = await getExecOrAdmin('tournaments');
+  const admin = await requireCapability('tournaments.draw.seed.clear.write');
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();

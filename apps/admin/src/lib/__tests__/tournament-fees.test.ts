@@ -119,7 +119,7 @@ vi.mock('next/cache', () => ({ revalidatePath: () => {} }));
 vi.mock('@sentry/nextjs', () => ({ captureException: () => {} }));
 vi.mock('../supabase-server', () => ({ createAdminClient: makeClient }));
 vi.mock('../actions/_shared', () => ({
-  getAdminPlayer: async () => ({ id: 'admin-1', role: 'admin' }),
+  requireCapability: async () => ({ id: 'admin-1', role: 'admin' }),
 }));
 
 import { createFeeTier, updateFeeTier, markTournamentFeePaid } from '../actions/tournament-fees';

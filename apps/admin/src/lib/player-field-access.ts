@@ -16,21 +16,59 @@
 // so it can be reasoned about (and tested) as a plain function. (./permissions
 // is a plain module too — no framework, no I/O.)
 import { ExpectedError } from '@badminton/shared';
-import { accessLevelFor, type AccessLevel } from './permissions';
+import { accessLevelFor, permits, UNRESTRICTED, type AccessLevel } from './permissions';
 
-// Rejected when the caller is an exec who is not a full admin.
+// THE HARD FLOOR. Refused to anyone who is not `role === 'admin'`, under all
+// circumstances, and NOT reachable by any capability — not even by granting
+// one deliberately.
+//
+// Not belt-and-braces given the capability system, but the thing that system
+// cannot express. Grant closure bounds what one person may hand another, and it
+// bounds it in CAPABILITIES. These six are not capabilities: three are the level
+// markers themselves and three are where a person's permissions are stored.
+// Without this list, players.privilegedfields.write could set is_exec and mint
+// an exec, or write another person's grants directly, and grant closure could
+// not see it — because the actor holds that capability legitimately. Keeping
+// level-granting outside the capability system entirely is the point.
 //
 //  - role, is_exec  — the privilege elevation the club owner explicitly kept
-//                     with admins. An exec who could set either could promote
+//                     with admins. Anyone who could set either could promote
 //                     themselves.
-//  - fee_exempt     — money. /fees is admin-only in the same access map, and
-//                     is_exec itself exempts a player from fees, so an exec
-//                     setting fee_exempt would route around that gate.
+//  - is_trainer     — new in 00054, and here for exactly the reason is_exec is:
+//                     it opens the admin console. Only admins hand out console
+//                     access.
+//  - permission_role,
+//    permission_grants,
+//    permission_revokes
+//                   — where a person's capabilities are stored. Writing them
+//                     through the Edit dialog would be handing out permissions
+//                     with none of the closure checks setPlayerPermissions
+//                     applies, and taking them away is just as reachable.
+//                     Listed even though adminPlayerUpdateSchema does not carry
+//                     them: the day somebody adds one, this is what stops the
+//                     Edit dialog becoming a privilege editor.
+export const PLAYER_FIELD_FLOOR = [
+  'role',
+  'is_exec',
+  'is_trainer',
+  'permission_role',
+  'permission_grants',
+  'permission_revokes',
+] as const;
+
+// The GRANTABLE remainder — admin-only today, because
+// players.privilegedfields.write is in no baseline, but reachable by an
+// explicit grant in a way the floor above never is.
+//
+//  - fee_exempt     — money. is_exec itself exempts a player from fees, so
+//                     setting fee_exempt routes around the fee gate.
 //  - exec_title,
 //    exec_photo_url — only meaningful on an exec and set beside is_exec; they
 //                     publish to the club's public /exec page. Grouped with
 //                     is_exec as the conservative read (see the report — an
-//                     exec editing their OWN bio is a different flow).
+//                     exec editing their OWN bio is a different flow). They are
+//                     grantable rather than floor because they are a bio, not a
+//                     level: writing one hands out no access.
 //  - singles_elo,
 //    doubles_elo    — the ladder itself. Not privilege escalation, which is why
 //                     it was initially exec-allowed, but the club owner ruled
@@ -38,27 +76,19 @@ import { accessLevelFor, type AccessLevel } from './permissions';
 //                     factor, bound and margin rule the rating engine applies,
 //                     and it is the one number the whole ladder is FOR. Execs
 //                     record results; the engine decides ratings.
-//  - is_trainer     — new in 00054, and here for exactly the reason is_exec is:
-//                     it opens the admin console. An exec who could set it
-//                     could mint a trainer; a trainer who could set it could
-//                     promote themselves. Only admins hand out console access.
-//  - portfolio      — new in 00086. It is what NARROWS an exec, so an exec who
-//                     could write it could widen themselves back to everything
-//                     (or narrow a colleague out of their own job). Assigning
-//                     one is admin work — see setPlayerPortfolio(). Listed here
-//                     even though adminPlayerUpdateSchema does not carry it
-//                     today: the day somebody adds it there, this line is what
-//                     stops the Edit dialog becoming a privilege editor.
-export const ADMIN_ONLY_PLAYER_FIELDS = [
-  'role',
-  'is_exec',
-  'is_trainer',
-  'portfolio',
+export const PLAYER_FIELD_PRIVILEGED = [
   'exec_title',
   'exec_photo_url',
   'fee_exempt',
   'singles_elo',
   'doubles_elo',
+] as const;
+
+// Both halves, for the callers that guard the whole payload at once. The split
+// is what matters — this is the union, not a third policy.
+export const ADMIN_ONLY_PLAYER_FIELDS = [
+  ...PLAYER_FIELD_FLOOR,
+  ...PLAYER_FIELD_PRIVILEGED,
 ] as const;
 
 export type AdminOnlyPlayerField = (typeof ADMIN_ONLY_PLAYER_FIELDS)[number];
@@ -72,10 +102,10 @@ export type AdminOnlyPlayerField = (typeof ADMIN_ONLY_PLAYER_FIELDS)[number];
 // whereas a subtraction would silently grant every field somebody adds to
 // adminPlayerUpdateSchema next year.
 //
-// Belt and braces: updatePlayer/approvePlayer/createPlayer/ban/unban all gate on
-// getExecOrAdmin(), which rejects a trainer before any payload is inspected. If
-// one of them is ever moved to a lower gate by mistake, this stops it silently
-// becoming a trainer-writable action.
+// Belt and braces: updatePlayer/approvePlayer/createPlayer/ban/unban all ask
+// for a players.*.write a trainer does not hold, which rejects them before any
+// payload is inspected. If one of them is ever moved to a capability a trainer
+// DOES hold, this stops it silently becoming a trainer-writable action.
 export const TRAINER_WRITABLE_PLAYER_FIELDS: readonly string[] = [];
 
 export function isAdminActor(actor: { role?: string | null } | null | undefined): boolean {
@@ -89,6 +119,8 @@ type Actor = { role?: string | null; is_exec?: boolean | null; is_trainer?: bool
 function levelOf(actor: Actor | null | undefined): AccessLevel | null {
   return accessLevelFor(actor);
 }
+
+const FLOOR: ReadonlySet<string> = new Set<string>(PLAYER_FIELD_FLOOR);
 
 function suppliedFrom(payloads: Record<string, unknown>[], fields: readonly string[]): string[] {
   return fields.filter((f) => payloads.some((p) => p[f] !== undefined));
@@ -111,12 +143,16 @@ function suppliedFrom(payloads: Record<string, unknown>[], fields: readonly stri
  * `{ exec_title: '' }` straight at the server action, sail past the guard, and
  * blank a colleague's entry on the club's public exec page. Pass both.
  *
- * The permitted set depends on the caller's LEVEL, not on any single flag:
- *   admin    everything
- *   exec     everything except ADMIN_ONLY_PLAYER_FIELDS
- *   trainer  nothing at all (TRAINER_WRITABLE_PLAYER_FIELDS is empty)
- * Someone who is both a trainer and an exec resolves to exec and gets exec's
- * set — the restriction follows the level, never the flag in isolation.
+ * TWO REFUSALS, not one, and the difference is the whole point of the split:
+ *   PLAYER_FIELD_FLOOR       admin by LEVEL, unconditionally. No capability
+ *                            reaches it, so no grant can ever open it.
+ *   PLAYER_FIELD_PRIVILEGED  players.privilegedfields.write, which sits in no
+ *                            baseline and is therefore admin-only today, but is
+ *                            handed out per person once the editor exists.
+ * Everything else is ordinary roster work.
+ *
+ * Someone who is both a trainer and an exec resolves to exec — the restriction
+ * follows the level a person resolves to, never a flag in isolation.
  */
 export function assertPlayerFieldAccess(
   actor: Actor | null | undefined,
@@ -142,7 +178,17 @@ export function assertPlayerFieldAccess(
     return;
   }
 
-  const supplied = suppliedFrom(payloads, fields);
+  // The floor first, and it does not consult a capability at all. `fields` can
+  // be narrowed by a caller, but never past this: a caller that forgot to pass
+  // a level marker must not be able to widen the guard by passing a shorter
+  // list, so the floor is intersected with the supplied payload directly.
+  const floorSupplied = suppliedFrom(payloads, PLAYER_FIELD_FLOOR);
+  const grantable = fields.filter((f) => !FLOOR.has(f));
+  const grantableSupplied = permits(level, UNRESTRICTED, 'players.privilegedfields.write')
+    ? []
+    : suppliedFrom(payloads, grantable);
+
+  const supplied = [...floorSupplied, ...grantableSupplied];
   if (supplied.length > 0) {
     throw new ExpectedError(
       `Admin access required to change: ${supplied.join(', ')}`,

@@ -1,6 +1,6 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
-import { canAccess, type AccessLevel, type Portfolio } from '@/lib/permissions';
+import { canAccess, UNRESTRICTED, type AccessLevel } from '@/lib/permissions';
 import { PASSKEY_VERIFIED_COOKIE } from '@/lib/passkey/config';
 import { verifyPayload } from '@/lib/passkey/cookie';
 import {
@@ -105,32 +105,12 @@ export async function middleware(request: NextRequest) {
       const { data: level } = await supabase.rpc('admin_access_level', { p_user_id: user.id });
       const accessLevel = (level as AccessLevel | null) ?? null;
 
-      // The exec portfolio, the second axis of the same decision. Only an EXEC
-      // can hold one — admins are superusers and trainers hold none — so this
-      // round trip is skipped entirely for everybody else.
-      //
-      // Wrapped in its own try, like the passkey gate below, and for the same
-      // reason: this code deploys before migration 00086 is applied to a given
-      // database, where admin_portfolio() does not exist yet. supabase.rpc()
-      // returns { error } instead of throwing, so an `if (error) throw` at this
-      // level would fall into the outer catch and 307 the ENTIRE console to
-      // /login. Failing open here means "no portfolio", which is exactly the
-      // access every exec had before portfolios existed — the fail-safe
-      // direction. Deliberately NOT the sidebar's "only trust a successful
-      // read" shape: there, a failed read empties the nav; here it must widen
-      // back to today's behaviour, not narrow.
-      let portfolio: Portfolio | null = null;
-      if (accessLevel === 'exec') {
-        try {
-          const { data, error } = await supabase.rpc('admin_portfolio', { p_user_id: user.id });
-          if (error) throw new Error(error.message);
-          portfolio = (data as Portfolio | null) ?? null;
-        } catch (err) {
-          console.error('Exec portfolio lookup failed (failing open):', err);
-        }
-      }
-
-      if (!canAccess(accessLevel, portfolio, request.nextUrl.pathname)) {
+      // UNRESTRICTED, not a second round trip: nothing narrows anybody yet.
+      // Per-person permissions are stored from the next migration onwards, and
+      // until then every row resolves to its level's baseline — which is a
+      // transcription of what that level could already do, so this is the same
+      // decision the console has always made.
+      if (!canAccess(accessLevel, UNRESTRICTED, request.nextUrl.pathname)) {
         const url = request.nextUrl.clone();
         url.pathname = '/unauthorized';
         return finish(NextResponse.redirect(url));
