@@ -114,8 +114,8 @@ export default async function PlayersPage({
   const inactCount = forCount.filter((p) => p.active_flag === false).length;
 
   // Needs Attention, Suspended and Inactive are moderation states: every action
-  // they offer (approve, assign a division, ban, restore, mark inactive) gates
-  // on getExecOrAdmin(). A trainer reads the roster to find the player they are
+  // they offer (edit, approve, ban, restore, mark inactive) gates on
+  // getExecOrAdmin(). A trainer reads the roster to find the player they are
   // writing a varsity note about, so they get the two tabs that list people who
   // actually play, and are not shown queues they cannot act on.
   const tabs = [
@@ -233,7 +233,6 @@ export default async function PlayersPage({
                   <PlayerActions
                     key={rosterActionKey(action)}
                     mode={action.kind}
-                    assignStatus={action.kind === 'assign' ? action.status : undefined}
                     playerId={player.id}
                     playerName={player.full_name}
                     playerData={player}

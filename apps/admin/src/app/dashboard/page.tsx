@@ -11,7 +11,7 @@ import {
   ArrowUpRight,
   Trophy,
 } from 'lucide-react';
-import { ApproveButtons } from './approve-buttons';
+import { PlayerActions } from '../players/player-actions';
 import { getSeasonFinances } from '@/lib/season-finance';
 
 // Only needed to give the "trainer sees no matches" branch of the fetch below a
@@ -22,6 +22,22 @@ type DashboardMatch = {
   score_summary: string | null;
   result_status: string;
   match_participants?: Record<string, unknown>[] | null;
+};
+
+// Same job for the pending-approvals query: it only needs a type so the
+// not-an-exec branch agrees with the real one.
+type PendingPlayer = {
+  id: string;
+  full_name: string;
+  email: string;
+  avatar_url: string | null;
+  created_at: string;
+  status: string;
+  active_flag: boolean;
+  role: string;
+  is_exec: boolean;
+  is_trainer: boolean;
+  fee_exempt: boolean;
 };
 
 export default async function DashboardPage() {
@@ -54,11 +70,12 @@ export default async function DashboardPage() {
   // tournaments, and both links bounce them to /unauthorized.
   const showMatches = canAccess(level, portfolio, '/matches');
   const showTournaments = canAccess(level, portfolio, '/tournaments');
-  // /players is trainer-readable, but approving is exec work — the approve
-  // buttons below call approvePlayer, which gates on getExecOrAdmin('internal').
-  // Asking the level and the portfolio directly rather than reusing showPlayers
-  // keeps the panel honest: this gates a FETCH, so a finance exec who kept the
-  // panel would be handed the pending-approval list and buttons that throw.
+  // /players is trainer-readable, but deciding a pending signup is exec work —
+  // the Edit control below saves through updatePlayer/approvePlayer, both of
+  // which gate on getExecOrAdmin('internal'). Asking the level and the portfolio
+  // directly rather than reusing showPlayers keeps the panel honest: this gates
+  // a FETCH, so a finance exec who kept the panel would be handed the
+  // pending-approval list and a dialog whose every Save throws.
   const canApprove = atLeast(level, 'exec') && portfolioPermits(level, portfolio, 'internal');
 
   // Gate the FETCHES, not just the tiles: a hidden card whose query still ran
@@ -91,11 +108,14 @@ export default async function DashboardPage() {
     canApprove
       ? supabase
           .from('players')
-          .select('id, full_name, email, avatar_url, created_at')
+          // The flag columns are here for the Edit dialog, which reads them to
+          // seed its controls — it would otherwise open showing "None" for an
+          // exec's console access and offer to take it away.
+          .select('id, full_name, email, avatar_url, created_at, status, active_flag, role, is_exec, is_trainer, fee_exempt')
           .eq('status', 'pending_approval')
           .order('created_at', { ascending: false })
           .limit(10)
-      : Promise.resolve({ data: null as { id: string; full_name: string; email: string; avatar_url: string | null; created_at: string }[] | null }),
+      : Promise.resolve({ data: null as PendingPlayer[] | null }),
   ]);
 
   // Each term is gated too: the banner text names open disputes and pending
@@ -158,10 +178,15 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      {/* Pending Players. Exec-allowed now that /players is — approvePlayer
-          takes getExecOrAdmin(), so the buttons here work for both. Trainers
-          reach /players but cannot approve, so this whole panel is theirs to
-          not see: every row in it is a pair of buttons that would reject them. */}
+      {/* Pending Players. Exec-allowed now that /players is — updatePlayer and
+          approvePlayer both take getExecOrAdmin(), so Edit here works for both.
+          Trainers reach /players but cannot approve, so this whole panel is
+          theirs to not see: every row in it is a control that would reject them.
+
+          There is no Competitive/Recreational quick-approve any more. A member
+          can be an alumnus or an external, so a two-button decision was never
+          the whole question — the row opens the profile and offers the same
+          Edit dialog the roster does. */}
       {canApprove && pendingPlayersList && pendingPlayersList.length > 0 && (
         <div className="rounded-xl border border-[var(--color-warning)]/20 bg-[var(--bg-card)] overflow-hidden">
           <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between">
@@ -177,14 +202,23 @@ export default async function DashboardPage() {
           <div className="divide-y divide-[var(--border)]">
             {pendingPlayersList.map((player) => (
               <div key={player.id} className="px-5 py-3 flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3 min-w-0">
+                {/* A sibling of the Edit button, never wrapped around it: a
+                    <button> inside an <a> is unreachable by keyboard and read
+                    as one control by a screen reader. */}
+                <Link href={`/players/${player.id}`} className="flex items-center gap-3 min-w-0 hover:text-[var(--color-accent)]">
                   <AvatarChip src={player.avatar_url} name={player.full_name} size="sm" id={player.id} />
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-[var(--text-primary)] truncate">{player.full_name}</p>
                     <p className="text-xs text-[var(--text-muted)] truncate">{player.email}</p>
                   </div>
-                </div>
-                <ApproveButtons playerId={player.id} playerName={player.full_name} />
+                </Link>
+                <PlayerActions
+                  mode="edit"
+                  playerId={player.id}
+                  playerName={player.full_name}
+                  playerData={player}
+                  isAdmin={atLeast(level, 'admin')}
+                />
               </div>
             ))}
           </div>

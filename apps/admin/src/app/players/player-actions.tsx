@@ -6,14 +6,13 @@ import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { PAYMENT_METHODS, PAYMENT_METHOD_CUSTOM, resolvePaymentMethod } from '@badminton/shared';
 import { removePlayer, updatePlayer, updatePlayerFlags, approvePlayer, banPlayer, reinstatePlayer, requireWaiverResignature } from '@/lib/actions';
+import { isApprovalEdit } from '@/lib/player-approval';
 
 interface Props {
   // One button per mode; /players decides WHICH modes a row gets from the tab
   // it is on (see lib/roster-actions.ts). Every mode here is exec-allowed, so
   // nothing rendered by this component rejects on click.
-  mode: 'edit' | 'ban' | 'unban' | 'restore' | 'inactive' | 'assign' | 'remove';
-  /** 'assign' only — the division the button puts them in. */
-  assignStatus?: 'competitive' | 'recreational';
+  mode: 'edit' | 'ban' | 'unban' | 'restore' | 'inactive' | 'remove';
   playerId: string;
   playerName?: string;
   playerData?: Record<string, unknown>;
@@ -74,7 +73,7 @@ function fromRoleValue(v: ExecRole): { role: 'player' | 'admin'; is_exec: boolea
   }
 }
 
-export function PlayerActions({ mode, assignStatus, playerId, playerName, playerData, isAdmin }: Props) {
+export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin }: Props) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   // active_flag=false presents as "Inactive" regardless of the stored status —
@@ -119,11 +118,9 @@ export function PlayerActions({ mode, assignStatus, playerId, playerName, player
         // which is the only way back from removePlayer or the nightly
         // mark-inactive-players job.
         const isInactive = status === 'inactive';
-        const res = await updatePlayer(playerId, {
-          status: isInactive
-            ? undefined
-            : (status as 'competitive' | 'recreational' | 'suspended' | 'pending_approval'),
-          active_flag: isInactive ? false : true,
+        // Everything except the status/active_flag pair, which the approval
+        // branch below writes through approvePlayer instead.
+        const fields = {
           // Only sent when it actually changed. The server guard rejects a
           // non-admin who supplies `role` AT ALL, so sending it unconditionally
           // — as this dialog used to — would fail every exec's Save even when
@@ -138,9 +135,31 @@ export function PlayerActions({ mode, assignStatus, playerId, playerName, player
           // unconditionally would break every exec's Save.
           is_trainer:
             isAdmin && wantsTrainer !== Boolean(playerData?.is_trainer) ? wantsTrainer : undefined,
-          reason,
-        });
+        };
+        // Letting a pending signup in belongs to approvePlayer, not
+        // updatePlayer — see lib/player-approval.ts for why. Edit is the only
+        // control the Needs Attention tab has left, so if Edit did not make
+        // this choice, approving somebody would quietly stop emailing them and
+        // stop being recorded anywhere.
+        const approving = isApprovalEdit(playerData?.status as string | undefined, status);
+        const res = approving
+          ? await approvePlayer(playerId, status, reason)
+          : await updatePlayer(playerId, {
+              status: isInactive
+                ? undefined
+                : (status as 'competitive' | 'recreational' | 'suspended' | 'pending_approval'),
+              active_flag: isInactive ? false : true,
+              ...fields,
+              reason,
+            });
         if (!res.ok) { toast(res.error, 'error'); return; }
+        // approvePlayer writes status and active_flag and nothing else, so an
+        // admin who set a role or a rating in the same Save still needs the
+        // ordinary update afterwards.
+        if (approving && Object.values(fields).some((v) => v !== undefined)) {
+          const rest = await updatePlayer(playerId, { ...fields, reason });
+          if (!rest.ok) { toast(rest.error, 'error'); return; }
+        }
         // updatePlayerFlags is admin-only (is_exec + fee_exempt). For an exec
         // the two controls are not rendered and the state still mirrors
         // playerData, so this comparison is false and the call never fires —
@@ -148,7 +167,7 @@ export function PlayerActions({ mode, assignStatus, playerId, playerName, player
         if (isAdmin && (isExec !== Boolean(playerData?.is_exec) || feeExempt !== Boolean(playerData?.fee_exempt))) {
           await updatePlayerFlags(playerId, { is_exec: isExec, fee_exempt: feeExempt });
         }
-        toast('Player updated', 'success');
+        toast(approving ? 'Player approved' : 'Player updated', 'success');
         setOpen(false);
         setReason('');
         router.refresh();
@@ -205,23 +224,6 @@ export function PlayerActions({ mode, assignStatus, playerId, playerName, player
       () => updatePlayer(playerId, { active_flag: false, reason }),
       'Player marked inactive',
       'Failed to deactivate player',
-    );
-  }
-
-  // The Needs Attention tab holds two different situations. Someone who never
-  // got in goes through approvePlayer — that is the action that mails them
-  // "you're in" and files a player_approved audit row. Someone who was
-  // SUSPENDED and is being let back does not get a welcome email or an
-  // approval record; that is an ordinary status change.
-  function handleAssign() {
-    const status = assignStatus ?? 'recreational';
-    const isPending = playerData?.status === 'pending_approval';
-    run(
-      () => (isPending
-        ? approvePlayer(playerId, status, reason)
-        : updatePlayer(playerId, { status, active_flag: true, reason })),
-      isPending ? 'Player approved' : 'Player updated',
-      'Failed to update player',
     );
   }
 
@@ -426,34 +428,10 @@ export function PlayerActions({ mode, assignStatus, playerId, playerName, player
     );
   }
 
-  if (mode === 'assign') {
-    const label = assignStatus === 'competitive' ? 'Competitive' : 'Recreational';
-    const wasPending = playerData?.status === 'pending_approval';
-    return (
-      <>
-        <Button variant="secondary" size="sm" onClick={() => setOpen(true)}>{label}</Button>
-        <Dialog open={open} onClose={() => setOpen(false)} title={`Move to ${label}`}>
-          <div className="space-y-4">
-            <p className="text-[var(--text-secondary)]">
-              {wasPending ? 'Approve' : 'Move'}{' '}
-              <strong className="text-[var(--text-primary)]">{playerName}</strong> into the {label.toLowerCase()} roster and activate the account.
-              {wasPending && ' They will be emailed that they are in.'}
-            </p>
-            <Textarea label="Reason (required)" value={reason} onChange={(e) => setReason(e.target.value)} placeholder={`Why is this player being moved to ${label.toLowerCase()}?`} />
-            <div className="flex items-center justify-between">
-              <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button onClick={handleAssign} loading={isPending} disabled={reason.trim().length < 2}>
-                {wasPending ? 'Approve' : 'Move'} to {label}
-              </Button>
-            </div>
-          </div>
-        </Dialog>
-      </>
-    );
-  }
-
   // Edit — the only control that still reaches every field, including the
-  // 'inactive' pseudo-status and (for an admin) role and ratings.
+  // 'inactive' pseudo-status and (for an admin) role and ratings. It is also
+  // the whole of the Needs Attention tab: picking a division here for a pending
+  // signup approves them.
   return (
     <>
       <Button variant="ghost" size="sm" onClick={() => setOpen(true)}>Edit</Button>

@@ -1,8 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { rosterActionsFor, rosterActionKey, type RosterAction } from '../roster-actions';
 
-const kinds = (actions: RosterAction[]) =>
-  actions.map((a) => (a.kind === 'assign' ? `assign:${a.status}` : a.kind));
+const kinds = (actions: RosterAction[]) => actions.map((a) => a.kind);
 
 describe('rosterActionsFor', () => {
   it('offers an inactive account a way back', () => {
@@ -20,12 +19,11 @@ describe('rosterActionsFor', () => {
     expect(kinds(rosterActionsFor('suspended', {}))).toEqual(['edit', 'restore']);
   });
 
-  it('sorts a Needs Attention row into a division', () => {
-    expect(kinds(rosterActionsFor('attention', {}))).toEqual([
-      'edit',
-      'assign:recreational',
-      'assign:competitive',
-    ]);
+  it('offers a Needs Attention row nothing but Edit', () => {
+    // The Recreational / Competitive quick-approve is gone: a signup can be an
+    // alumnus or an external, so the division was never the whole decision.
+    // Edit asks all of it, and approving from it still runs approvePlayer.
+    expect(kinds(rosterActionsFor('attention', {}))).toEqual(['edit']);
   });
 
   it('gives the roster tabs Edit / Ban / Inactive', () => {
@@ -82,8 +80,7 @@ describe('rosterActionsFor', () => {
   // silent suspension, which then parked the member on the Suspended tab
   // offering to lift a ban that never happened. Every case here previously ran
   // with viewer = {}, so the admin branch that actually rendered the button was
-  // untested and it went on appearing on "needs attention", where the owner
-  // asked for Edit / Recreational / Competitive only.
+  // untested and it went on appearing on "needs attention".
   it('never offers Remove, including to an admin', () => {
     for (const tab of ['competitive', 'recreational', 'attention', 'suspended', 'inactive']) {
       for (const player of [{}, { is_banned: true }, { status: 'suspended' }]) {
@@ -93,9 +90,9 @@ describe('rosterActionsFor', () => {
     }
   });
 
-  // The owner specified this tab exactly: Edit / Recreational / Competitive.
-  it('offers exactly the three specified actions on "needs attention"', () => {
-    expect(rosterActionsFor('attention', {}, { isAdmin: true }).map((a) => a.kind))
-      .toEqual(['edit', 'assign', 'assign']);
+  // The owner specified this tab exactly: "in the players tab make it so its
+  // just the edit button". An admin gets no extra one either.
+  it('offers exactly Edit on "needs attention", admin or not', () => {
+    expect(rosterActionsFor('attention', {}, { isAdmin: true }).map((a) => a.kind)).toEqual(['edit']);
   });
 });
