@@ -6,9 +6,16 @@
 //
 //   Inactive        Edit, Restore
 //   Suspended       Edit, Unban
-//   Needs attention Edit, Recreational, Competitive
+//   Needs attention Edit
 //   Recreational    Edit, Ban, Inactive
 //   Competitive     Edit, Ban, Inactive
+//
+// "Needs attention" used to carry a Recreational and a Competitive button too.
+// The club owner took them off: a signup can be an alumnus or an external as
+// well as a division, so a two-button quick-approve was never the whole
+// decision — it just made the common half look like all of it. The Edit dialog
+// asks the whole question, and approving from it still goes through
+// approvePlayer (see player-actions.tsx).
 //
 // Three columns are being conflated whenever this gets it wrong, so keep them
 // apart:
@@ -36,8 +43,6 @@ export type RosterAction =
   | { kind: 'restore' }
   /** updatePlayer { active_flag: false } — off the active roster, status untouched. */
   | { kind: 'inactive' }
-  /** approvePlayer (pending) / updatePlayer (anything else) into a division. */
-  | { kind: 'assign'; status: 'recreational' | 'competitive' }
   | { kind: 'remove' };
 
 /** Only what changes which action applies — everything else is display. */
@@ -81,11 +86,7 @@ export function rosterActionsFor(
     case 'suspended':
       return [{ kind: 'edit' }, player.is_banned ? { kind: 'unban' } : { kind: 'restore' }];
     case 'attention':
-      return [
-        { kind: 'edit' },
-        { kind: 'assign', status: 'recreational' },
-        { kind: 'assign', status: 'competitive' },
-      ];
+      return [{ kind: 'edit' }];
     default: {
       // "when a user is suspended please make it so they cannot be marked as
       // inactive, since they may get removed from suspended" — the club owner.
@@ -104,7 +105,7 @@ export function rosterActionsFor(
   }
 }
 
-/** Stable React key — 'assign' appears twice in the same row. */
+/** Stable React key. No tab repeats a kind, so the kind is the key. */
 export function rosterActionKey(action: RosterAction): string {
-  return action.kind === 'assign' ? `assign-${action.status}` : action.kind;
+  return action.kind;
 }
