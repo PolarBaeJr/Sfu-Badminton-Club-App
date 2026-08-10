@@ -4,8 +4,10 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase-browser';
 import { Button, Input, Card } from '@badminton/ui';
-import { Shield, Mail, Loader2, Globe, CheckCircle2, AlertCircle, KeyRound } from 'lucide-react';
+import { friendlyAuthError } from '@badminton/shared';
+import { Shield, Mail, Loader2, Globe, AlertCircle, KeyRound } from 'lucide-react';
 import { signInWithPasskey, supportsPasskeys } from '@/lib/passkey-client';
+import { SIGNIN_OTP_TYPES, shouldTryNextOtpType, isUnknownAccountError } from '@/lib/auth-otp';
 import { withBase } from '@/lib/base-path';
 
 export default function LoginPage() {
@@ -15,6 +17,7 @@ export default function LoginPage() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [passkeyLoading, setPasskeyLoading] = useState(false);
   const [sent, setSent] = useState(false);
+  const [code, setCode] = useState('');
   const [error, setError] = useState('');
   // Resolved in an effect, never during render: browserSupportsWebAuthn()
   // touches window, so deciding this inline would mismatch the server HTML.
@@ -76,17 +79,59 @@ export default function LoginPage() {
     }
   }
 
-  async function handleMagicLink(e: React.FormEvent) {
-    e.preventDefault();
+  // Email the 6-digit code. No emailRedirectTo: the template is code-only, so
+  // the message renders no link and nothing on this path ever reaches
+  // /auth/callback — that route stays for Google's PKCE exchange.
+  async function sendCode() {
     setLoading(true);
     setError('');
     const supabase = createClient();
     const { error: authError } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${window.location.origin}${withBase('/auth/callback')}` },
+      // The console is sign-in only, and must not become a signup form by
+      // accident: left to its default, signInWithOtp mints an account for
+      // whatever address is typed here. Someone who cannot get in is a far
+      // smaller problem than an admin login that silently creates accounts.
+      options: { shouldCreateUser: false },
     });
-    if (authError) setError(authError.message);
-    else setSent(true);
+    if (authError) {
+      setError(
+        isUnknownAccountError(authError.message)
+          ? 'No account uses that email. The console cannot create one — sign up in the player app first, then ask an admin for access.'
+          : friendlyAuthError(authError.message)
+      );
+    } else {
+      setCode('');
+      setSent(true);
+    }
+    setLoading(false);
+  }
+
+  async function handleSendCode(e: React.FormEvent) {
+    e.preventDefault();
+    await sendCode();
+  }
+
+  async function handleVerifyCode(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    const supabase = createClient();
+    const token = code.trim();
+    let authError: { message: string } | null = null;
+    // See lib/auth-otp for why this is a list and not a single type.
+    for (const type of SIGNIN_OTP_TYPES) {
+      const { error: verifyError } = await supabase.auth.verifyOtp({ email, token, type });
+      if (!verifyError) {
+        // withBase, and a full navigation: an unprefixed /dashboard is not a
+        // 404 here, it is a live route on the PLAYER app.
+        window.location.href = withBase('/dashboard');
+        return;
+      }
+      authError = verifyError;
+      if (!shouldTryNextOtpType(verifyError.message)) break;
+    }
+    setError(friendlyAuthError(authError?.message ?? 'That code didn’t work — request a new one.'));
     setLoading(false);
   }
 
@@ -97,6 +142,22 @@ export default function LoginPage() {
       </div>
     );
   }
+
+  // Both steps of the email flow can fail, and a bad code is the likelier of
+  // the two — one banner, rendered wherever the error was raised.
+  const errorBanner = error ? (
+    <div
+      className="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm"
+      style={{
+        background: 'rgba(239,68,68,0.08)',
+        border: '1px solid rgba(239,68,68,0.2)',
+        color: '#EF4444',
+      }}
+    >
+      <AlertCircle className="w-4 h-4 flex-shrink-0" />
+      <span>{error}</span>
+    </div>
+  ) : null;
 
   return (
     <div
@@ -146,15 +207,72 @@ export default function LoginPage() {
           </div>
 
           {sent ? (
-            <div className="text-center py-6">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full mb-4" style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.2)' }}>
-                <CheckCircle2 className="w-8 h-8 text-[#10B981]" />
+            <div className="space-y-5">
+              <div className="text-center">
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-full mb-4" style={{ background: 'rgba(233,69,96,0.12)', border: '1px solid rgba(233,69,96,0.2)' }}>
+                  <Mail className="w-8 h-8" style={{ color: 'var(--color-accent)' }} />
+                </div>
+                <p className="font-semibold text-lg mb-1" style={{ color: 'var(--text-primary)' }}>
+                  Enter your code
+                </p>
+                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                  We emailed a 6-digit code to{' '}
+                  <strong style={{ color: 'var(--text-primary)' }}>{email}</strong>
+                </p>
               </div>
-              <p className="text-[#10B981] font-semibold text-lg mb-1">Check your email!</p>
-              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                Magic link sent to{' '}
-                <strong style={{ color: 'var(--text-primary)' }}>{email}</strong>
-              </p>
+
+              <form onSubmit={handleVerifyCode} className="space-y-4">
+                <Input
+                  label="Sign-in code"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="123456"
+                  autoFocus
+                  required
+                  className="text-center text-xl font-mono tracking-[0.4em]"
+                />
+
+                {errorBanner}
+
+                <button
+                  type="submit"
+                  disabled={loading || code.length < 6}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-semibold text-sm transition-all duration-200 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                  style={{
+                    background: 'var(--color-accent)',
+                    color: '#ffffff',
+                    boxShadow: '0 4px 16px rgba(233,69,96,0.25)',
+                  }}
+                >
+                  {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Shield className="w-4 h-4" />}
+                  Sign In
+                </button>
+              </form>
+
+              <div className="flex items-center justify-center gap-3 text-xs" style={{ color: 'var(--text-muted)' }}>
+                <button
+                  type="button"
+                  onClick={sendCode}
+                  disabled={loading}
+                  className="underline underline-offset-4 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  Send a new code
+                </button>
+                <span aria-hidden>·</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSent(false);
+                    setCode('');
+                    setError('');
+                  }}
+                  className="underline underline-offset-4 cursor-pointer"
+                >
+                  Use a different email
+                </button>
+              </div>
             </div>
           ) : (
             <div className="space-y-6">
@@ -229,8 +347,8 @@ export default function LoginPage() {
                 <div className="flex-1 h-px" style={{ background: 'linear-gradient(to left, transparent, var(--border))' }} />
               </div>
 
-              {/* Magic Link Form */}
-              <form onSubmit={handleMagicLink} className="space-y-4">
+              {/* Email code form */}
+              <form onSubmit={handleSendCode} className="space-y-4">
                 <div className="relative">
                   <Input
                     label="Email"
@@ -243,19 +361,7 @@ export default function LoginPage() {
                 </div>
 
                 {/* Error State */}
-                {error && (
-                  <div
-                    className="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm"
-                    style={{
-                      background: 'rgba(239,68,68,0.08)',
-                      border: '1px solid rgba(239,68,68,0.2)',
-                      color: '#EF4444',
-                    }}
-                  >
-                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                    <span>{error}</span>
-                  </div>
-                )}
+                {errorBanner}
 
                 {/* Submit Button */}
                 <button
@@ -281,7 +387,7 @@ export default function LoginPage() {
                   ) : (
                     <Mail className="w-4 h-4" />
                   )}
-                  Send Magic Link
+                  Email Me a Code
                 </button>
               </form>
             </div>

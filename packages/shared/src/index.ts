@@ -11,6 +11,7 @@ export * from './utils/ics';
 export * from './utils/tags';
 export * from './utils/notifications';
 export * from './utils/access-level';
+export * from './utils/auth-errors';
 export * from './utils/capability-gates';
 export * from './utils/expected-error';
 export * from './utils/theme';

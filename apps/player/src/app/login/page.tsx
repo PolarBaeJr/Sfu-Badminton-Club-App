@@ -3,24 +3,10 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase-browser';
-import { CHECKIN_TOKEN_REGEX } from '@badminton/shared';
+import { CHECKIN_TOKEN_REGEX, friendlyAuthError } from '@badminton/shared';
 import { Mail, CheckCircle2, ChevronRight, Loader2, KeyRound } from 'lucide-react';
 import { ShuttleMark } from '@/components/shuttle-mark';
 import { signInWithPasskey, supportsPasskeys } from '@/lib/passkey-client';
-
-// Supabase auth errors reach the client as raw strings; a gateway 503 arrives
-// with a "{}" body and rate limits phrase themselves oddly. Map both to
-// something a human can act on instead of leaking the raw payload.
-function friendlyAuthError(message: string): string {
-  const msg = (message ?? '').trim();
-  if (!msg || msg === '{}' || msg === '[object Object]') {
-    return 'Something went wrong reaching the server — please try again in a moment.';
-  }
-  if (/rate|after \d|security purposes|too many/i.test(msg)) {
-    return 'Too many attempts — please wait a moment before trying again.';
-  }
-  return msg;
-}
 
 // A player who scans a session QR while logged out arrives at
 // /login?checkin=<token>; carry that token through sign-in so they land back on
