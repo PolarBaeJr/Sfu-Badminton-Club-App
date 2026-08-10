@@ -41,6 +41,85 @@ export type AccessLevelInput = {
   is_trainer?: boolean | null;
 };
 
+// EXEC PORTFOLIOS — the club's four VP jobs. One `is_exec` boolean gave every
+// exec identical access, so the VP of Tournaments could open the club's books
+// and the VP of Finance could regenerate a draw.
+//
+// A CLOSED SET, not free-form capability strings: the club has a small number of
+// NAMED JOBS, nothing enumerates a capability string, and a typo in one is a
+// silent hole. Adding a fifth portfolio is an edit here plus the CHECK
+// constraint in migration 00086 — deliberately two places, both of them lists.
+//
+// The strings must stay byte-identical to that CHECK constraint and to what
+// admin_portfolio() returns; see portfolioOf() for what an unrecognised value
+// does.
+export type Portfolio = 'finance' | 'tournaments' | 'internal' | 'external';
+
+export const PORTFOLIOS: readonly Portfolio[] = [
+  'finance',
+  'tournaments',
+  'internal',
+  'external',
+] as const;
+
+/** For the permission editor and anywhere a portfolio is shown to a human. */
+export const PORTFOLIO_LABELS: Record<Portfolio, string> = {
+  finance: 'Finance',
+  tournaments: 'Tournaments',
+  internal: 'Internal (roster)',
+  external: 'External (legal & comms)',
+};
+
+/** Where a portfolio is stored. Separate from AccessLevelInput because holding
+ *  one is not a level — it is a NARROWING of the exec level. */
+export type PortfolioInput = {
+  portfolio?: string | null;
+};
+
+/**
+ * The portfolio a player row holds, or null for "none — this exec keeps exactly
+ * today's access".
+ *
+ * `undefined` reads as null on purpose: the admin app selects `*` from players,
+ * and until migration 00086 is applied to a given database the column does not
+ * exist. Treating a missing column as "unknown, deny" would lock every exec out
+ * of the console the moment this code deployed ahead of the migration.
+ *
+ * An unrecognised STRING is not treated as null, though — it is passed through
+ * so that every comparison against a known portfolio fails and the holder is
+ * left with the baseline. The CHECK constraint in 00086 makes it unreachable;
+ * if it ever happens, the safe reading of a portfolio nobody can interpret is
+ * "grants nothing", not "grants everything".
+ */
+export function portfolioOf(player: PortfolioInput | null | undefined): Portfolio | null {
+  const value = player?.portfolio;
+  if (value == null || value === '') return null;
+  return value as Portfolio;
+}
+
+/**
+ * Does an exec's portfolio cover work that belongs to `required`?
+ *
+ * ANSWERS ONLY THE PORTFOLIO QUESTION. The caller must already have checked the
+ * LEVEL — this returns true for a trainer and for a signed-out visitor, because
+ * neither of them holds a portfolio and neither is what this function is for.
+ * Every caller sits behind atLeast()/getAuthenticatedAtLeast().
+ *
+ * - admin: superuser, unaffected by portfolios entirely.
+ * - exec with no portfolio: today's behaviour, everything an exec has ever had.
+ *   This is what makes 00086 a no-op on deploy — every existing row is NULL.
+ * - exec with a portfolio: their portfolio's work and nothing else.
+ */
+export function portfolioPermits(
+  level: AccessLevel | null | undefined,
+  portfolio: Portfolio | null,
+  required: Portfolio,
+): boolean {
+  if (level !== 'exec') return true;
+  if (portfolio === null) return true;
+  return portfolio === required;
+}
+
 /** Standing is a separate question from level — see isInGoodStanding. */
 export type StandingInput = {
   is_banned?: boolean | null;

@@ -15,7 +15,7 @@ import { EventWaiverTemplateForm } from './event-waiver-template-form';
 // requireReacceptance(). The canEdit flag below only decides which controls are
 // offered — it is not the boundary.
 export default async function LegalPage() {
-  const viewer = await getAuthenticatedExecOrAdmin();
+  const viewer = await getAuthenticatedExecOrAdmin('external');
   const canEdit = accessLevelFor(viewer) === 'admin';
 
   const adminClient = createAdminClient();

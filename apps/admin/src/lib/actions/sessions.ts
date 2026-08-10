@@ -41,7 +41,7 @@ export async function createSession(data: {
 // plus the always-on in-app bell.
 export async function sendSessionReminders(sessionId: string): Promise<ActionResult<{ notified: number }>> {
   return runAction(async () => {
-    const admin = await getExecOrAdmin();
+    const admin = await getExecOrAdmin('tournaments');
     return remindSessionGoers(sessionId, admin.id);
   });
 }
@@ -58,7 +58,7 @@ async function createSessionImpl(data: {
   excluded_dates?: string[];
 }) {
   parseOrThrow(sessionCreateSchema, data);
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   // Weekly recurrence: same weekday, stepping +7 days up to repeat_until.
@@ -144,7 +144,7 @@ async function updateSessionImpl(sessionId: string, data: {
   track: SessionGroupInput;
 }) {
   parseOrThrow(sessionGroupSchema, data.track);
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('sessions').select('*').eq('id', sessionId).single();
@@ -178,7 +178,7 @@ export async function archiveSession(sessionId: string): Promise<ActionResult<vo
 }
 
 async function archiveSessionImpl(sessionId: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('sessions').select('status').eq('id', sessionId).single();
@@ -213,7 +213,7 @@ export async function getOrCreateSessionCheckinToken(sessionId: string): Promise
 
 async function getOrCreateSessionCheckinTokenImpl(sessionId: string): Promise<string> {
   parseOrThrow(z.string().uuid(), sessionId);
-  await getExecOrAdmin();
+  await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: existing } = await adminClient
@@ -251,7 +251,7 @@ export async function rotateSessionCheckinToken(sessionId: string): Promise<Acti
 
 async function rotateSessionCheckinTokenImpl(sessionId: string): Promise<string> {
   parseOrThrow(z.string().uuid(), sessionId);
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const token = newCheckinToken();
@@ -281,7 +281,7 @@ export async function markAttendance(input: AttendanceMarkInput): Promise<Action
 
 async function markAttendanceImpl(input: AttendanceMarkInput) {
   const data = parseOrThrow(attendanceMarkSchema, input);
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient
@@ -326,7 +326,7 @@ export async function clearAttendanceMark(sessionId: string, playerId: string): 
 async function clearAttendanceMarkImpl(sessionId: string, playerId: string) {
   parseOrThrow(z.string().uuid(), sessionId);
   parseOrThrow(z.string().uuid(), playerId);
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient
@@ -362,7 +362,7 @@ export async function deleteSession(sessionId: string): Promise<ActionResult<voi
 }
 
 async function deleteSessionImpl(sessionId: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('sessions').select('*').eq('id', sessionId).single();

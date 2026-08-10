@@ -14,6 +14,20 @@
 //             can find a player, and writes varsity notes. Nothing else — see
 //             ./player-field-access.ts, where their writable field set is EMPTY.
 //
+// SECOND AXIS — exec portfolios. The levels are a ladder; the club is not. An
+// exec may hold one of four VP portfolios (finance, tournaments, internal,
+// external), and a portfolio NARROWS that exec and never widens anyone:
+// players.portfolio IS NULL is exactly the access an exec has always had, which
+// is why assigning one is an explicit, reversible act by an admin and why
+// nothing changed for anyone when the column shipped. Admins are superusers and
+// are not narrowed; trainers hold no portfolio.
+//
+// This map is still only middleware and nav. The REAL boundary for the same
+// split is getAuthenticatedExecOrAdmin(portfolio) in ./supabase-server.ts, which
+// every server action names its portfolio to — narrowing this file alone would
+// be theatre, because the actions run on a service-role client that bypasses
+// RLS and can be called directly.
+//
 // The LEVELS themselves — the ordering, and how a player row resolves to one —
 // now live in @badminton/shared so the members' app can ask the same question
 // without hand-rolling its own copy (which it did, twice, and they disagreed
@@ -24,7 +38,12 @@
 // sender, which drags `resend` and a Supabase client in with it: importing it
 // here took the built middleware from 321 KB to 843 KB, on every request, for
 // three pure functions. Same reason push/send is imported by path elsewhere.
-import { atLeast, type AccessLevel } from '@badminton/shared/src/utils/access-level';
+import {
+  atLeast,
+  portfolioPermits,
+  type AccessLevel,
+  type Portfolio,
+} from '@badminton/shared/src/utils/access-level';
 
 // Re-exported so every existing `from '@/lib/permissions'` import keeps working
 // and there is still ONE place in the admin app to look for these.
@@ -34,8 +53,12 @@ export {
   consoleAccessLevelFor,
   hasConsoleAccess,
   isInGoodStanding,
+  portfolioOf,
+  portfolioPermits,
+  PORTFOLIOS,
+  PORTFOLIO_LABELS,
 } from '@badminton/shared/src/utils/access-level';
-export type { AccessLevel } from '@badminton/shared/src/utils/access-level';
+export type { AccessLevel, Portfolio } from '@badminton/shared/src/utils/access-level';
 
 const SECTION_ACCESS: { [pathPrefix: string]: AccessLevel } = {
   // The console root, which only redirects to /dashboard (app/page.tsx). It has
@@ -96,7 +119,51 @@ const SECTION_ACCESS: { [pathPrefix: string]: AccessLevel } = {
   '/disputes': 'admin',
   '/walkovers': 'admin',
   '/challenges': 'admin',
+  // The permission editor: who holds which exec portfolio. Admin-only, and it
+  // must STAY admin-only — an exec who could reach it could widen their own
+  // portfolio, which is the whole point of the column.
+  '/permissions': 'admin',
 };
+
+// WHICH PORTFOLIO OWNS WHICH SECTION. The second axis, and it only ever
+// NARROWS: a section is reachable when the caller clears BOTH the level above
+// and the portfolio here.
+//
+// Read with SECTION_ACCESS, never instead of it. Nothing in this map grants
+// anything — /fees is 'finance' here AND 'exec' above, so the finance VP
+// reaches the same Expenses tab any exec reaches and no more; the admin-only
+// halves of that page are still admin-only.
+//
+// That answers design open question 3 — "does the finance portfolio change the
+// exec/admin split inside /fees?" It does not, and it must not: the split
+// exists because club fees, other income, reinstatements and the net position
+// are the club's books, and "VP of Finance" is an elected student, not a second
+// admin. The portfolio decides WHICH execs reach the section; the page decides
+// what any non-admin sees inside it. Two independent questions, kept that way.
+//
+// The cost, stated plainly because somebody will meet it: an exec assigned
+// 'tournaments' can no longer file the expense for the shuttles they bought,
+// because filing an expense is /fees. Recording money is one job or it is
+// nobody's. An admin who wants the old behaviour for a particular person leaves
+// that person's portfolio at none — which is the whole point of NULL.
+const SECTION_PORTFOLIO: { [pathPrefix: string]: Portfolio } = {
+  '/fees': 'finance',
+  '/tournaments': 'tournaments',
+  '/matches': 'tournaments',
+  '/sessions': 'tournaments',
+  '/players': 'internal',
+  '/seasons': 'internal',
+  '/legal': 'external',
+  '/announcements': 'external',
+};
+
+// What every console user keeps regardless of portfolio. These are not powers:
+// the front door, the landing page, and enrolling your own passkeys. Without
+// them a portfolio would lock its holder out of the console entirely.
+//
+// Matched with the same segment-prefix rule as SECTION_ACCESS, so '/' is the
+// root and nothing else.
+const BASELINE_SECTIONS = ['/', '/dashboard', '/settings', '/api/passkey'];
 
 // Admin-only sub-routes that sit *under* an exec-allowed section and would
 // otherwise inherit its access via prefix match. Tournament entry fees live at
@@ -106,20 +173,80 @@ const ADMIN_ONLY_PATTERNS: RegExp[] = [
   /^\/tournaments\/[^/]+\/fees(\/|$)/,
 ];
 
+// Does this path sit inside this section? Segment-aware, so '/players' never
+// matches '/playersecret'. The one matching rule, shared by both maps.
+function isUnder(pathname: string, prefix: string): boolean {
+  return pathname === prefix || pathname.startsWith(prefix + '/');
+}
+
+// Longest-prefix lookup in a section map. Returns undefined when nothing
+// matches; each caller decides what an unmatched path means, and both of them
+// fail closed.
+function longestPrefixMatch<T>(map: { [prefix: string]: T }, pathname: string): T | undefined {
+  let best = '';
+  for (const prefix of Object.keys(map)) {
+    if (isUnder(pathname, prefix) && prefix.length > best.length) best = prefix;
+  }
+  return best ? map[best] : undefined;
+}
+
 // Resolve a pathname to the access level its section requires (longest-prefix
 // match). Unmatched paths default to admin-only.
 function requiredLevel(pathname: string): AccessLevel {
   if (ADMIN_ONLY_PATTERNS.some((re) => re.test(pathname))) return 'admin';
-  let best = '';
-  for (const prefix of Object.keys(SECTION_ACCESS)) {
-    if ((pathname === prefix || pathname.startsWith(prefix + '/')) && prefix.length > best.length) {
-      best = prefix;
-    }
-  }
-  return best ? SECTION_ACCESS[best]! : 'admin';
+  return longestPrefixMatch(SECTION_ACCESS, pathname) ?? 'admin';
 }
 
-export function canAccess(level: AccessLevel | null, pathname: string): boolean {
+// The portfolio half of the decision, for someone who has ALREADY cleared the
+// level. Written as an ALLOW-LIST — baseline, or a section this portfolio owns —
+// so a new section added to SECTION_ACCESS without a SECTION_PORTFOLIO entry is
+// refused to a portfolio'd exec, exactly as an unlisted path is refused to
+// everyone below admin. A deny-list would have failed open on every future
+// section, silently.
+//
+// ADMIN_ONLY_PATTERNS is not consulted here: /tournaments/<id>/fees is already
+// admin-only by level, and a portfolio never widens anyone, so the finance
+// portfolio does not reach it (open question 4). Tournament money stays with
+// admins, as it did before portfolios existed.
+function portfolioAdmits(
+  level: AccessLevel | null,
+  portfolio: Portfolio | null,
+  pathname: string,
+): boolean {
+  if (level !== 'exec' || portfolio === null) return true;
+  if (BASELINE_SECTIONS.some((prefix) => isUnder(pathname, prefix))) return true;
+  const owner = longestPrefixMatch(SECTION_PORTFOLIO, pathname);
+  return owner !== undefined && portfolioPermits(level, portfolio, owner);
+}
+
+/**
+ * May this person open this section?
+ *
+ * BOTH arguments are required, and `portfolio` deliberately so: an optional one
+ * would default to "no portfolio" at every call site that forgot it — which is
+ * full exec access, i.e. it would fail OPEN in the direction this whole feature
+ * exists to close.
+ *
+ * A portfolio narrows and never widens, so `portfolio === null` is byte-for-byte
+ * the behaviour that shipped before portfolios existed.
+ *
+ * Two consequences of narrowing, both worth stating out loud because they only
+ * bite AFTER an admin has explicitly assigned a portfolio (and are undone by
+ * setting it back to none):
+ *   1. A portfolio'd exec loses /players unless their portfolio is 'internal' —
+ *      including the read a varsity trainer keeps. Reading the roster is PII,
+ *      not a baseline convenience, so it is a power like any other.
+ *   2. An exec who is ALSO a trainer resolves to 'exec' (accessLevelFor takes
+ *      the highest level held), so a portfolio narrows them below what the
+ *      trainer marker alone would have given. Same reasoning: the restriction
+ *      follows the level someone resolves to, never a flag in isolation.
+ */
+export function canAccess(
+  level: AccessLevel | null,
+  portfolio: Portfolio | null,
+  pathname: string,
+): boolean {
   if (level === null) return false;
-  return atLeast(level, requiredLevel(pathname));
+  if (!atLeast(level, requiredLevel(pathname))) return false;
+  return portfolioAdmits(level, portfolio, pathname);
 }

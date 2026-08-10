@@ -42,10 +42,18 @@ import { accessLevelFor, type AccessLevel } from './permissions';
 //                     it opens the admin console. An exec who could set it
 //                     could mint a trainer; a trainer who could set it could
 //                     promote themselves. Only admins hand out console access.
+//  - portfolio      — new in 00086. It is what NARROWS an exec, so an exec who
+//                     could write it could widen themselves back to everything
+//                     (or narrow a colleague out of their own job). Assigning
+//                     one is admin work — see setPlayerPortfolio(). Listed here
+//                     even though adminPlayerUpdateSchema does not carry it
+//                     today: the day somebody adds it there, this line is what
+//                     stops the Edit dialog becoming a privilege editor.
 export const ADMIN_ONLY_PLAYER_FIELDS = [
   'role',
   'is_exec',
   'is_trainer',
+  'portfolio',
   'exec_title',
   'exec_photo_url',
   'fee_exempt',

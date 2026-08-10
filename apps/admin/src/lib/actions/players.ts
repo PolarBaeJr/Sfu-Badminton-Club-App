@@ -24,7 +24,7 @@ async function approvePlayerImpl(playerId: string, status: 'competitive' | 'recr
   // Roster management is exec work. The audit row records whoever actually
   // clicked, exec or admin — actor_id is a plain FK to players with no
   // admin-only constraint (checked against the live schema).
-  const actor = await getExecOrAdmin();
+  const actor = await getExecOrAdmin('internal');
   const adminClient = createAdminClient();
 
   const { data: oldPlayer } = await adminClient.from('players').select('*').eq('id', playerId).single();
@@ -92,7 +92,7 @@ async function createPlayerImpl(data: {
   // this check just gives the friendly message before Zod's enum error.
   if (data.role === 'admin') throw new Error('Admins cannot be created directly — promote an existing member instead');
   const parsed = parseOrThrow(adminPlayerCreateSchema, data);
-  const actor = await getExecOrAdmin();
+  const actor = await getExecOrAdmin('internal');
   // Adding a member is exec work; adding one who is already an exec is not.
   // Without this an exec could mint a second privileged identity and sidestep
   // "you cannot promote yourself".
@@ -149,7 +149,7 @@ export async function updatePlayer(playerId: string, data: AdminPlayerUpdateInpu
 
 async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) {
   const parsed = parseOrThrow(adminPlayerUpdateSchema, data) as Record<string, unknown>;
-  const actor = await getExecOrAdmin();
+  const actor = await getExecOrAdmin('internal');
   // Both payloads, because the write below reads from raw `data` while
   // exec_title / exec_photo_url normalize '' → undefined during parsing.
   // Guarding only `parsed` would let a hand-rolled POST of { exec_title: '' }
@@ -296,7 +296,7 @@ async function requireWaiverResignatureImpl(playerId: string) {
   // someone to re-sign is operational — a returning member after months away —
   // and cannot alter what they are agreeing to. Editing the waiver TEXT is
   // still admin-only, which is where the legal exposure lives.
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('internal');
   const adminClient = createAdminClient();
 
   const { data: oldPlayer } = await adminClient.from('players').select('waiver_reset_at').eq('id', playerId).single();

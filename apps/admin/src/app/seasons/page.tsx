@@ -13,7 +13,7 @@ export default async function SeasonsPage() {
   // agreed, and the rendered CONTROL was the layer that disagreed. Same shape
   // the Legal page already uses: the flag decides what is offered, the server
   // action is still the boundary.
-  const viewer = await getAuthenticatedExecOrAdmin();
+  const viewer = await getAuthenticatedExecOrAdmin('internal');
   const canEditFees = accessLevelFor(viewer) === 'admin';
 
   const supabase = createAdminClient();

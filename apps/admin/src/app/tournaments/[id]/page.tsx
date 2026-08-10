@@ -15,7 +15,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
   // Viewer role: tournament fees are admin-only, so only admins see the Fees
   // link (execs run tournaments but not money handling). Middleware already
   // guarantees an exec-or-admin reaches this page.
-  const viewer = await getAuthenticatedExecOrAdmin();
+  const viewer = await getAuthenticatedExecOrAdmin('tournaments');
   const isAdmin = viewer.role === 'admin';
 
   const { data: tournament } = await supabase.from('tournaments').select('*').eq('id', id).single();

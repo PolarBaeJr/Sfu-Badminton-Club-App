@@ -5,6 +5,10 @@ import {
   consoleAccessLevelFor,
   hasConsoleAccess,
   isInGoodStanding,
+  portfolioOf,
+  portfolioPermits,
+  PORTFOLIOS,
+  type Portfolio,
 } from '../access-level';
 
 const ok = { status: 'recreational', is_banned: false, active_flag: true };
@@ -67,5 +71,60 @@ describe('hasConsoleAccess — the predicate both apps use for the console link'
   it('is false for a missing player row', () => {
     expect(hasConsoleAccess(null)).toBe(false);
     expect(hasConsoleAccess(undefined)).toBe(false);
+  });
+});
+
+// This is the predicate the SERVER ACTIONS ask — getAuthenticatedExecOrAdmin()
+// calls it with the portfolio the action belongs to. The middleware and the nav
+// ask canAccess() instead, but a portfolio that narrowed only those would be
+// theatre: the actions run on a service-role client that bypasses RLS and can be
+// POSTed at directly, so this is the boundary that actually holds.
+describe('portfolioPermits — the gate every exec server action sits behind', () => {
+  it('lets an exec with no portfolio do everything an exec has always done', () => {
+    for (const required of PORTFOLIOS) {
+      expect(portfolioPermits('exec', null, required)).toBe(true);
+    }
+  });
+
+  it('narrows an exec who holds one to their own job', () => {
+    expect(portfolioPermits('exec', 'finance', 'finance')).toBe(true);
+    expect(portfolioPermits('exec', 'finance', 'tournaments')).toBe(false);
+    expect(portfolioPermits('exec', 'finance', 'internal')).toBe(false);
+    expect(portfolioPermits('exec', 'finance', 'external')).toBe(false);
+    expect(portfolioPermits('exec', 'tournaments', 'finance')).toBe(false);
+    expect(portfolioPermits('exec', 'tournaments', 'tournaments')).toBe(true);
+  });
+
+  it('leaves admins alone — they are superusers', () => {
+    for (const required of PORTFOLIOS) {
+      for (const held of PORTFOLIOS) {
+        expect(portfolioPermits('admin', held, required)).toBe(true);
+      }
+    }
+  });
+
+  // It answers ONLY the portfolio question. A trainer holds no portfolio, and
+  // whether a trainer may run an exec action is the LEVEL's decision, already
+  // made by getAuthenticatedAtLeast() before this is ever called.
+  it('does not pretend to answer the level question', () => {
+    expect(portfolioPermits('trainer', null, 'internal')).toBe(true);
+    expect(portfolioPermits(null, null, 'internal')).toBe(true);
+  });
+
+  it('refuses everything to an unrecognised portfolio', () => {
+    const bogus = 'treasurer' as Portfolio;
+    for (const required of PORTFOLIOS) {
+      expect(portfolioPermits('exec', bogus, required)).toBe(false);
+    }
+  });
+
+  // The composition the gate actually performs: read the column off the player
+  // row, then ask. A row selected before 00086 was applied has no such column,
+  // and it has to mean "not narrowed" — see portfolioOf().
+  it('treats a pre-migration player row as unnarrowed', () => {
+    const preMigrationExec = { role: 'player', is_exec: true };
+    for (const required of PORTFOLIOS) {
+      expect(portfolioPermits('exec', portfolioOf(preMigrationExec), required)).toBe(true);
+    }
   });
 });

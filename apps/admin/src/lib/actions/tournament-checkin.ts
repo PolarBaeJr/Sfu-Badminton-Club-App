@@ -21,7 +21,7 @@ export async function getOrCreateTournamentCheckinToken(
 ): Promise<ActionResult<string>> {
   return runAction(async () => {
     parseOrThrow(z.string().uuid(), tournamentId);
-    await getExecOrAdmin();
+    await getExecOrAdmin('tournaments');
     const adminClient = createAdminClient();
 
     const { data: existing } = await adminClient
@@ -56,7 +56,7 @@ export async function rotateTournamentCheckinToken(
 ): Promise<ActionResult<string>> {
   return runAction(async () => {
     parseOrThrow(z.string().uuid(), tournamentId);
-    const admin = await getExecOrAdmin();
+    const admin = await getExecOrAdmin('tournaments');
     const adminClient = createAdminClient();
 
     const token = newCheckinToken();

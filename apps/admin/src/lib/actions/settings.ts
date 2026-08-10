@@ -182,7 +182,7 @@ export async function updateEventWaiverTemplate(input: EventWaiverTemplateUpdate
 // to. Editing the TEXT stays admin-only, which is where the legal exposure is.
 export async function requireReacceptance(document: WaiverDocument) {
   parseOrThrow(waiverDocumentSchema, document);
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('external');
   const adminClient = createAdminClient();
 
   const { data: old, error: readError } = await adminClient

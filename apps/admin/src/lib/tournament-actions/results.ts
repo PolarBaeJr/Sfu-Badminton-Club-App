@@ -238,7 +238,7 @@ async function enterMatchResultImpl(
   winnerSide: 'a' | 'b',
   timeExceeded: boolean
 ) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')
@@ -443,7 +443,7 @@ async function enterWalkoverImpl(
   winnerPosition: 'a' | 'b',
   reason: string
 ) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')
@@ -512,7 +512,7 @@ async function enterWalkoverImpl(
 }
 
 async function voidMatchImpl(matchId: string, reason: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')
@@ -603,7 +603,7 @@ async function voidMatchImpl(matchId: string, reason: string) {
 // A voided match records only "voided": nothing distinguishes "nobody came"
 // from "the score was entered against the wrong pair".
 async function recordDoubleNoShowImpl(matchId: string, reason: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')
@@ -706,7 +706,7 @@ async function recordDoubleNoShowImpl(matchId: string, reason: string) {
 // the way out: put the match back, or fill the orphaned slot by hand.
 
 async function unvoidMatchImpl(matchId: string, reason: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')
@@ -793,7 +793,7 @@ async function setMatchEntryImpl(
   entryId: string | null,
   reason: string,
 ) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')
@@ -930,7 +930,7 @@ async function editMatchResultImpl(
   newWinnerSide: 'a' | 'b',
   reason: string,
 ) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')
@@ -1166,7 +1166,7 @@ async function editMatchResultImpl(
 // ============================================================
 
 async function undoMatchResultImpl(matchId: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: match } = await adminClient.from('tournament_matches')

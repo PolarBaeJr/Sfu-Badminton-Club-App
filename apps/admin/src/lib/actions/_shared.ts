@@ -6,13 +6,17 @@ import {
   getAuthenticatedExecOrAdmin,
   getAuthenticatedConsoleUser,
 } from '../supabase-server';
+import type { Portfolio } from '../permissions';
 
 export async function getAdminPlayer() {
   return getAuthenticatedAdmin();
 }
 
-export async function getExecOrAdmin() {
-  return getAuthenticatedExecOrAdmin();
+// Every caller names the exec portfolio its work belongs to, and the argument is
+// required — see getAuthenticatedExecOrAdmin() for why an optional one would
+// fail open at every call site that forgot it.
+export async function getExecOrAdmin(portfolio: Portfolio) {
+  return getAuthenticatedExecOrAdmin(portfolio);
 }
 
 // Admin, exec OR varsity trainer. Only for the handful of actions a trainer is

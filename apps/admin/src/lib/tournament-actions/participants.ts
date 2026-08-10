@@ -22,7 +22,7 @@ import {
 // ============================================================
 
 export async function addParticipantToEvent(eventId: string, playerId: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
@@ -114,7 +114,7 @@ export interface BatchAddFailure {
  * person, and other callers use it.
  */
 export async function addParticipantsToEvent(eventId: string, playerIds: string[]) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   // Deduplicate but KEEP the caller's order. Order is not cosmetic here: when
@@ -299,7 +299,7 @@ export async function addParticipantsToEvent(eventId: string, playerIds: string[
 }
 
 export async function removeParticipantFromEvent(participantId: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: participant } = await adminClient.from('tournament_participants')
@@ -332,7 +332,7 @@ export async function removeParticipantFromEvent(participantId: string) {
 }
 
 export async function checkInParticipant(participantId: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: participant } = await adminClient.from('tournament_participants')
@@ -366,7 +366,7 @@ export async function checkInParticipant(participantId: string) {
 }
 
 export async function markParticipantNoShow(participantId: string) {
-  await getExecOrAdmin();
+  await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data, error } = await adminClient.from('tournament_participants')
@@ -424,7 +424,7 @@ async function exitDrawImpl(
   status: DrawExitStatus,
   reason?: string,
 ): Promise<DrawExitResult> {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const table = isPair ? 'tournament_pairs' : 'tournament_participants';
@@ -531,7 +531,7 @@ export async function disqualifyPair(pairId: string, reason?: string): Promise<A
 // ============================================================
 
 export async function addPairToEvent(eventId: string, player1Id: string, player2Id: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
@@ -601,7 +601,7 @@ export async function addPairToEvent(eventId: string, player1Id: string, player2
 }
 
 export async function removePairFromEvent(pairId: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: pair } = await adminClient.from('tournament_pairs')
@@ -626,7 +626,7 @@ export async function removePairFromEvent(pairId: string) {
 }
 
 export async function checkInPair(pairId: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: pair } = await adminClient.from('tournament_pairs')
@@ -666,7 +666,7 @@ export async function checkInPair(pairId: string) {
 }
 
 export async function markPairNoShow(pairId: string) {
-  await getExecOrAdmin();
+  await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data, error } = await adminClient.from('tournament_pairs')
@@ -697,7 +697,7 @@ export async function markPairNoShow(pairId: string) {
 // ============================================================
 
 export async function bulkCheckIn(eventId: string, type: 'participants' | 'pairs') {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const table = type === 'pairs' ? 'tournament_pairs' : 'tournament_participants';

@@ -1,5 +1,5 @@
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
-import { accessLevelFor, atLeast } from '@/lib/permissions';
+import { accessLevelFor, atLeast, portfolioOf, portfolioPermits } from '@/lib/permissions';
 import { Card, Badge, StatCard, AvatarChip, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, TOURNAMENT_EVENT_TYPE_LABELS, getWinRate, getStreakDisplay, getPointDifferential } from '@badminton/shared';
 import { PlayerEditForm } from './edit-form';
@@ -29,7 +29,10 @@ export default async function PlayerDetailPage({
   const viewer = await getAuthenticatedConsoleUser();
   const level = accessLevelFor(viewer);
   const isAdmin = level === 'admin';
-  const canManage = atLeast(level, 'exec');
+  // Roster work belongs to the 'internal' portfolio, so an exec narrowed to
+  // another one sees this page exactly as a trainer does — read-only. Same
+  // reasoning as /players itself.
+  const canManage = atLeast(level, 'exec') && portfolioPermits(level, portfolioOf(viewer), 'internal');
   const supabase = createAdminClient();
 
   // Which season this page is showing. Defaults to the active one; ?season=

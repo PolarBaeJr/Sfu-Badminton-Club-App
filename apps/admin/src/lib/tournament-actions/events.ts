@@ -81,7 +81,7 @@ async function createTournamentEventImpl(
     placement_bonus_enabled?: boolean;
   }
 ) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const typedFormat = normalizeTypedFormat(config.games_per_match, config.points_per_game);
@@ -136,7 +136,7 @@ async function updateTournamentEventImpl(
     placement_bonus_enabled?: boolean;
   }
 ) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
@@ -216,7 +216,7 @@ export async function updateTournamentEvent(
 }
 
 export async function deleteTournamentEvent(eventId: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
@@ -240,7 +240,7 @@ export async function deleteTournamentEvent(eventId: string) {
 }
 
 export async function setEventStatus(eventId: string, status: TournamentEventStatus) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();

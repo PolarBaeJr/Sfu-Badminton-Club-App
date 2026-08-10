@@ -168,7 +168,7 @@ export async function removeOtherIncome(id: string) {
  */
 export async function addExpense(input: ClubExpenseInput) {
   const parsed = parseOrThrow(clubExpenseSchema, input);
-  const actor = await getExecOrAdmin();
+  const actor = await getExecOrAdmin('finance');
   const adminClient = createAdminClient();
   await assertEligiblePayer(adminClient, parsed.paid_by ?? null);
 

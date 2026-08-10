@@ -17,6 +17,7 @@
 //   - tournament-fees.ts — tournament fee tiers + per-player entry-fee tracking
 //   - reinstatement.ts — player ban / reinstatement (with reinstatement fee)
 //   - varsity.ts       — varsity notes
+//   - portfolios.ts    — setPlayerPortfolio (which exec holds which VP job)
 //   - reliability.ts   — adjustReliability (manual reliability-counter edits)
 //   - settings.ts      — updateLegalDocument (waiver / code of conduct),
 //                        updateEventWaiverTemplate (per-season event waiver),
@@ -127,6 +128,10 @@ export {
   createVarsityNote,
   deleteVarsityNote,
 } from './actions/varsity';
+
+export {
+  setPlayerPortfolio,
+} from './actions/portfolios';
 
 export {
   adjustReliability,

@@ -25,7 +25,7 @@ export async function voidMatch(matchId: string, reason: string): Promise<Action
 }
 
 async function voidMatchImpl(matchId: string, reason: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   // Only a confirmed match has Elo applied, so reverse it only then. A disputed
@@ -65,7 +65,7 @@ export async function convertMatchToCasual(matchId: string, reason: string): Pro
 }
 
 async function convertMatchToCasualImpl(matchId: string, reason: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: m } = await adminClient.from('matches').select('result_status').eq('id', matchId).single();
@@ -209,7 +209,7 @@ async function adminCreateMatchImpl(data: {
   admin_note?: string;
 }) {
   parseOrThrow(adminMatchCreateSchema, data);
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
   const { getFormatWeight, derivedFormatWeight } = await import('@badminton/shared');
 

@@ -56,7 +56,7 @@ export default async function FeesPage({
   // Who is looking. getAuthenticatedExecOrAdmin() is the gate — middleware
   // already ran, but a page that renders money must not depend on middleware
   // having been reached, and this is the same shape /legal uses.
-  const viewer = await getAuthenticatedExecOrAdmin();
+  const viewer = await getAuthenticatedExecOrAdmin('finance');
   const isAdmin = accessLevelFor(viewer) === 'admin';
 
   const visibleTabs = TABS.filter((t) => isAdmin || !t.adminOnly);

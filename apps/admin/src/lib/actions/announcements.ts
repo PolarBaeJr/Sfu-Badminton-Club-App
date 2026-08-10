@@ -66,7 +66,7 @@ export async function createAnnouncement(data: {
   all_seasons?: boolean;
 }) {
   parseOrThrow(announcementSchema, data);
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('external');
   const adminClient = createAdminClient();
 
   // A term-specific announcement belongs to the season being played, and
@@ -134,7 +134,7 @@ export async function updateAnnouncement(announcementId: string, data: {
   expires_at?: string;
 }) {
   parseOrThrow(announcementSchema, data);
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('external');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('announcements').select('*').eq('id', announcementId).single();
@@ -186,7 +186,7 @@ export async function updateAnnouncement(announcementId: string, data: {
 }
 
 export async function deleteAnnouncement(announcementId: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('external');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('announcements').select('*').eq('id', announcementId).single();

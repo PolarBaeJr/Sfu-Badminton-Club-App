@@ -5,7 +5,15 @@ import * as Sentry from '@sentry/nextjs';
 import { PASSKEY_VERIFIED_COOKIE } from './passkey/config';
 import { verifyPayload } from './passkey/cookie';
 import { AUTH_COOKIE_OPTIONS, ExpectedError } from '@badminton/shared';
-import { accessLevelFor, atLeast, type AccessLevel } from './permissions';
+import {
+  accessLevelFor,
+  atLeast,
+  portfolioOf,
+  portfolioPermits,
+  PORTFOLIO_LABELS,
+  type AccessLevel,
+  type Portfolio,
+} from './permissions';
 
 // NOTE: generated `Database` type is available from '@badminton/shared' but not
 // applied here — see comments in apps/player/src/lib/supabase-server.ts.
@@ -169,8 +177,33 @@ export async function getAuthenticatedAdmin(options: { skipPasskey?: boolean } =
 // varsity notes; approving, editing, banning, creating and removing players are
 // all exec work, and they all gate here. Widening this one function would have
 // handed a trainer every exec power in the app in a single line.
-export async function getAuthenticatedExecOrAdmin(options: { skipPasskey?: boolean } = {}) {
-  return getAuthenticatedAtLeast('exec', 'Admin or exec access required', options);
+//
+// `portfolio` names WHICH EXEC JOB the caller's work belongs to, and it is
+// REQUIRED. This is the real boundary for exec portfolios: canAccess() covers
+// middleware and nav, but every one of these actions runs on a service-role
+// client that bypasses RLS and can be POSTed at directly, so a portfolio that
+// narrowed only the UI would be theatre — the VP of Tournaments could still
+// call the finance actions by hand.
+//
+// Required, never optional, and that is the entire point: an optional argument
+// defaults to "no portfolio" = full exec access at every call site that forgets
+// it, and there are more than sixty of them. TypeScript finds them instead.
+//
+// An exec with no portfolio passes every check here, so this changed nothing
+// for anyone on the day it shipped.
+export async function getAuthenticatedExecOrAdmin(
+  portfolio: Portfolio,
+  options: { skipPasskey?: boolean } = {}
+) {
+  const player = await getAuthenticatedAtLeast('exec', 'Admin or exec access required', options);
+  const level = accessLevelFor(player);
+  if (!portfolioPermits(level, portfolioOf(player), portfolio)) {
+    Sentry.setUser(null);
+    throw new ExpectedError(
+      `That is ${PORTFOLIO_LABELS[portfolio]} work, and it is outside your exec portfolio`
+    );
+  }
+  return player;
 }
 
 // The bottom rung: anyone with any console access at all. Used by the read-only

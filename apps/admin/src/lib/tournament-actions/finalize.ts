@@ -82,7 +82,7 @@ async function readBonusLedger(
 }
 
 export async function applyPlacementBonuses(eventId: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
@@ -503,7 +503,7 @@ export async function recomputeEventStandings(eventId: string): Promise<{
       tournament_id: event.tournament_id,
       event_id: eventId,
       action: 'standings_recomputed',
-      performed_by: (await getExecOrAdmin()).id,
+      performed_by: (await getExecOrAdmin('tournaments')).id,
       details: { moved, bonuses_already_paid: bonusesAlreadyPaid },
     });
   }
@@ -513,7 +513,7 @@ export async function recomputeEventStandings(eventId: string): Promise<{
 }
 
 export async function finalizeEvent(eventId: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();

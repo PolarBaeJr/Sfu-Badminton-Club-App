@@ -21,7 +21,7 @@ export async function createTournament(data: {
   waiver_text?: string;
 }) {
   parseOrThrow(tournamentCreateSchema, data);
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const activeSeason = await adminClient.from('seasons').select('id').eq('active_flag', true).maybeSingle();
@@ -65,7 +65,7 @@ export async function createTournament(data: {
 }
 
 export async function updateTournamentStatus(tournamentId: string, status: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('tournaments').select('status, name').eq('id', tournamentId).single();
@@ -126,7 +126,7 @@ export async function updateTournament(tournamentId: string, data: {
   placement_bonus_enabled: boolean;
   waiver_text?: string;
 }) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('tournaments').select('*').eq('id', tournamentId).single();
@@ -164,7 +164,7 @@ export async function updateTournament(tournamentId: string, data: {
 
 export async function suspendTournament(tournamentId: string, reason: string) {
   parseOrThrow(tournamentSuspendSchema, { tournament_id: tournamentId, reason });
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('tournaments')
@@ -195,7 +195,7 @@ export async function suspendTournament(tournamentId: string, reason: string) {
 }
 
 export async function resumeTournament(tournamentId: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('tournaments')
@@ -222,7 +222,7 @@ export async function resumeTournament(tournamentId: string) {
 }
 
 export async function archiveTournament(tournamentId: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('tournaments').select('status').eq('id', tournamentId).single();
@@ -246,7 +246,7 @@ export async function archiveTournament(tournamentId: string) {
 }
 
 export async function deleteTournament(tournamentId: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('tournaments').select('*').eq('id', tournamentId).single();
@@ -270,7 +270,7 @@ export async function deleteTournament(tournamentId: string) {
 }
 
 export async function addTournamentParticipant(tournamentId: string, playerId: string, seed: number | null, partnerId?: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   // Try new table name first, fall back to old if migration hasn't run
@@ -307,7 +307,7 @@ export async function addTournamentParticipant(tournamentId: string, playerId: s
 }
 
 export async function removeTournamentParticipant(participantId: string, tournamentId: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('tournaments');
   const adminClient = createAdminClient();
 
   // Try new table name first, fall back to old if migration hasn't run

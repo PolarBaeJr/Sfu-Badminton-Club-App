@@ -15,7 +15,7 @@ import { getAdminPlayer, getExecOrAdmin } from './_shared';
 // season, created before 00043 added the columns.
 export async function createSeason(data: SeasonCreateInput) {
   const input = parseOrThrow(seasonCreateSchema, data);
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('internal');
   const adminClient = createAdminClient();
 
   const { data: season, error } = await adminClient.from('seasons').insert({
@@ -85,7 +85,7 @@ export async function updateSeasonFees(seasonId: string, fees: SeasonFeeInput) {
 export type SeasonEloPolicy = 'carry' | 'soft' | 'full';
 
 export async function setActiveSeason(seasonId: string, eloPolicy: SeasonEloPolicy = 'carry') {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('internal');
   const adminClient = createAdminClient();
 
   // Atomic: snapshot the outgoing season's ELO, switch active, apply the policy.
@@ -109,7 +109,7 @@ export async function setActiveSeason(seasonId: string, eloPolicy: SeasonEloPoli
 }
 
 export async function endSeason(seasonId: string) {
-  const admin = await getExecOrAdmin();
+  const admin = await getExecOrAdmin('internal');
   const adminClient = createAdminClient();
 
   const { error } = await adminClient.from('seasons').update({

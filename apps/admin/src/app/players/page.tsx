@@ -1,5 +1,5 @@
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
-import { accessLevelFor, atLeast } from '@/lib/permissions';
+import { accessLevelFor, atLeast, portfolioOf, portfolioPermits } from '@/lib/permissions';
 import { Badge, Card, AvatarChip, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS, getMissingLegalDocuments, getWinRate, unwrap } from '@badminton/shared';
 import Link from 'next/link';
@@ -41,8 +41,12 @@ export default async function PlayersPage({
   const isAdmin = level === 'admin';
   // A varsity trainer reads this page and nothing more: they are here to find
   // the player they are writing a note about. Every mutating action under
-  // /players gates on getExecOrAdmin(), so for them the roster is a directory.
-  const canManage = atLeast(level, 'exec');
+  // /players gates on getExecOrAdmin('internal'), so for them the roster is a
+  // directory — and for an exec narrowed to another portfolio it is the same
+  // directory, for the same reason. Middleware already turns that exec away at
+  // the door; this keeps the page honest on its own rather than trusting that
+  // it was reached through one.
+  const canManage = atLeast(level, 'exec') && portfolioPermits(level, portfolioOf(viewer), 'internal');
   // Hiding the tab is not the same as closing it: /players?tab=suspended is a
   // URL anyone can type, and the moderation queues are exec business. Fall back
   // rather than error — a trainer following a stale link should land on the
