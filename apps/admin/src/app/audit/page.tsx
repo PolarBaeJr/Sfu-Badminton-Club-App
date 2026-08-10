@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase-server';
 import { PageHeader } from '@badminton/ui';
 import Link from 'next/link';
 import { AuditList, type AuditLogRow } from './audit-list';
+import { SeasonSelect } from '@/components/season-select';
 
 /**
  * The day AFTER a season's last day, as a timestamp.
@@ -88,12 +89,6 @@ export default async function AuditPage({
 
   const { data: logs } = await query;
 
-  const linkBase =
-    'text-xs px-2.5 py-1 rounded-full border transition-colors whitespace-nowrap';
-  const linkOn = 'border-[var(--color-accent)] text-[var(--color-accent)]';
-  const linkOff =
-    'border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:border-[var(--border-hover)]';
-
   return (
     <div className="space-y-6">
       <PageHeader
@@ -103,26 +98,17 @@ export default async function AuditPage({
         watermark="A"
       />
 
-      {/* One chip per season, newest first, then the escape hatch. Rendered as
-          links rather than a dropdown so the current view is readable from the
-          URL and can be shared or bookmarked. */}
-      <div className="flex flex-wrap items-center gap-2">
-        {allSeasons.map((s) => {
-          const isOn = !fullHistory && selectedSeason?.id === s.id;
-          return (
-            <Link
-              key={s.id}
-              href={s.active_flag && activeHasStarted ? '/audit' : `/audit?season=${s.id}`}
-              className={`${linkBase} ${isOn ? linkOn : linkOff}`}
-            >
-              {s.name}
-              {s.active_flag && ' ·  now'}
-            </Link>
-          );
-        })}
+      {/* Season first, then the escape hatch. Same control as every other
+          scoped page so it does not have to be re-learned here. */}
+      <div className="flex flex-wrap items-center gap-3">
+        <SeasonSelect seasons={allSeasons} selected={selectedSeason} basePath="/audit" />
         <Link
           href="/audit?range=all"
-          className={`${linkBase} ${fullHistory ? linkOn : linkOff}`}
+          className={`text-xs px-2.5 py-1 rounded-full border transition-colors whitespace-nowrap ${
+            fullHistory
+              ? 'border-[var(--color-accent)] text-[var(--color-accent)]'
+              : 'border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:border-[var(--border-hover)]'
+          }`}
         >
           Full history →
         </Link>

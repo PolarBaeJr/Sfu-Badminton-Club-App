@@ -7,7 +7,8 @@ import { CreateTournamentForm, TournamentMenu, type WaiverTemplateContext } from
 import type { TournamentWithEventCount } from '@/lib/tournament-types';
 import Link from 'next/link';
 import { Trophy, Users, Calendar, Zap, Archive } from 'lucide-react';
-import { SeasonScopeChips, PastSeasonNotice, resolveSeasonScope } from '@/components/season-scope';
+import { PastSeasonNotice, resolveSeasonScope } from '@/components/season-scope';
+import { SeasonSelect } from '@/components/season-select';
 
 export default async function TournamentsPage({
   searchParams,
@@ -86,7 +87,7 @@ export default async function TournamentsPage({
       </div>
 
       <div className="space-y-2">
-        <SeasonScopeChips seasons={seasonList} selected={scopedSeason} basePath="/tournaments" />
+        <SeasonSelect seasons={seasonList} selected={scopedSeason} basePath="/tournaments" />
         {isPast && scopedSeason && <PastSeasonNotice season={scopedSeason} />}
       </div>
 

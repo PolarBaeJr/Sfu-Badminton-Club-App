@@ -1,7 +1,8 @@
 import Link from 'next/link';
 import { createAdminClient, getAuthenticatedExecOrAdmin } from '@/lib/supabase-server';
 import { accessLevelFor } from '@/lib/permissions';
-import { SeasonScopeChips, PastSeasonNotice, resolveSeasonScope } from '@/components/season-scope';
+import { PastSeasonNotice, resolveSeasonScope } from '@/components/season-scope';
+import { SeasonSelect } from '@/components/season-select';
 import { Badge, Card, AvatarChip, EmptyState, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { unwrap, unwrapMaybe, formatPaymentMethod } from '@badminton/shared';
 import type { Season } from '@badminton/shared';
@@ -211,7 +212,7 @@ export default async function FeesPage({
       />
 
       <div className="space-y-2">
-        <SeasonScopeChips seasons={seasonList} selected={scopedSeason} basePath="/fees" />
+        <SeasonSelect seasons={seasonList} selected={scopedSeason} basePath="/fees" />
         {isPast && scopedSeason && <PastSeasonNotice season={scopedSeason} />}
       </div>
 

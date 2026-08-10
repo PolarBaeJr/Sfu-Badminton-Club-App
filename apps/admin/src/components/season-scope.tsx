@@ -1,5 +1,3 @@
-import Link from 'next/link';
-
 export interface ScopeSeason {
   id: string;
   name: string;
@@ -36,47 +34,6 @@ export function resolveSeasonScope(
   const isPast = !!selected && !!selected.end_date && selected.end_date < today;
 
   return { seasons: all, selected, isPast };
-}
-
-/**
- * The season switcher: one chip per season, newest first.
- *
- * Links rather than a dropdown so the current view is in the URL — readable,
- * shareable, and back/forward works. Same component on every scoped page so the
- * control does not have to be re-learned per page.
- */
-export function SeasonScopeChips({
-  seasons,
-  selected,
-  basePath,
-}: {
-  seasons: ScopeSeason[];
-  selected: ScopeSeason | null;
-  /** e.g. "/sessions" — the active season is the bare path, others carry ?season= */
-  basePath: string;
-}) {
-  if (seasons.length < 2) return null;
-
-  const base =
-    'text-xs px-2.5 py-1 rounded-full border transition-colors whitespace-nowrap';
-  const on = 'border-[var(--color-accent)] text-[var(--color-accent)]';
-  const off =
-    'border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:border-[var(--border-hover)]';
-
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      {seasons.map((s) => (
-        <Link
-          key={s.id}
-          href={s.active_flag ? basePath : `${basePath}?season=${s.id}`}
-          className={`${base} ${selected?.id === s.id ? on : off}`}
-        >
-          {s.name}
-          {s.active_flag && ' ·  now'}
-        </Link>
-      ))}
-    </div>
-  );
 }
 
 /**

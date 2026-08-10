@@ -5,7 +5,8 @@ import { Card, Badge, PageHeader } from '@badminton/ui';
 import { formatDate, formatTime, type AttendanceStatus } from '@badminton/shared';
 import { CreateSessionForm, SessionCardMenu, AttendanceDialog, CheckinQrDialog } from './actions';
 import { Calendar, MapPin, FileText } from 'lucide-react';
-import { SeasonScopeChips, PastSeasonNotice, resolveSeasonScope } from '@/components/season-scope';
+import { PastSeasonNotice, resolveSeasonScope } from '@/components/season-scope';
+import { SeasonSelect } from '@/components/season-select';
 import QRCode from 'qrcode';
 
 export default async function SessionsPage({
@@ -125,7 +126,7 @@ export default async function SessionsPage({
       />
 
       <div className="space-y-2">
-        <SeasonScopeChips seasons={seasonList} selected={scopedSeason} basePath="/sessions" />
+        <SeasonSelect seasons={seasonList} selected={scopedSeason} basePath="/sessions" />
         {isPast && scopedSeason && <PastSeasonNotice season={scopedSeason} />}
       </div>
 
