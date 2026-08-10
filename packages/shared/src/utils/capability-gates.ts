@@ -1,6 +1,6 @@
 // WHERE EVERY CAPABILITY IS ACTUALLY ENFORCED.
 //
-// 115 capabilities is 115 promises that something in the app checks something.
+// 116 capabilities is 116 promises that something in the app checks something.
 // This map is what keeps them honest: every entry names the file and function
 // that stands behind it, and the drift test asserts the map is exhaustive, that
 // no two capabilities claim the same enforcement point, and that any capability
@@ -53,6 +53,15 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   'players.page': {
     label: 'Open the roster', area: 'players', group: null, mode: 'page',
     gate: 'route /players',
+  },
+  'players.read': {
+    label: 'The roster', area: 'players', group: null, mode: 'read',
+    gate: 'app/players/page.tsx roster fetch',
+    also: [
+      'app/players/[id]/page.tsx member record fetches',
+      'app/dashboard/page.tsx active players count',
+    ],
+    merged: 'The list, one member’s record and the count of them are three renderings of the same rows.',
   },
   'players.approve.write': {
     label: 'Approve a pending member', area: 'players', group: null, mode: 'write',

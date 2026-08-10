@@ -1,6 +1,6 @@
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
-import { Badge, Card, AvatarChip, PageHeader } from '@badminton/ui';
+import { Badge, Card, AvatarChip, EmptyState, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS, getMissingLegalDocuments, getWinRate, unwrap } from '@badminton/shared';
 import Link from 'next/link';
 import { PlayerActions } from './player-actions';
@@ -40,13 +40,22 @@ export default async function PlayersPage({
   const level = accessLevelFor(viewer);
   const permissions = permissionsOf(viewer);
   const isAdmin = level === 'admin';
-  // A varsity trainer reads this page and nothing more: they are here to find
-  // the player they are writing a note about, and players.read is the whole of
-  // their claim on this section — so for them the roster is a directory.
-  // Editing is what every control here ends up invoking, so ask for that rather
+  // MAY THEY SEE THE ROSTER? Its own capability, separate from the page key that
+  // let them through the door — this is the section the club owner wanted split
+  // ("access the page to add stuff, but not see the details in them"), and until
+  // now it was the only section that could not be, because the roster query was
+  // never gated at all. A varsity trainer holds it, an exec holds it, and
+  // somebody handed the page and players.create.write does not.
+  const canRead = permits(level, permissions, 'players.read');
+  // Editing is what most controls here end up invoking, so ask for that rather
   // than for a level: the controls and the actions behind them then agree by
   // construction, instead of by two people remembering the same rule.
   const canManage = permits(level, permissions, 'players.update.write');
+  // Adding is NOT editing. AddPlayerButton saves through createPlayer, which
+  // asks for its own capability — riding on canManage meant the one control the
+  // page-without-the-roster case exists for was hidden from exactly the person
+  // meant to use it.
+  const canCreate = permits(level, permissions, 'players.create.write');
   // Its own question, not a second reading of canManage. The Edit dialog does
   // approve AND update through one Save, and the two are separate capabilities
   // — so somebody who may edit a member but not let a new one in must not be
@@ -88,13 +97,22 @@ export default async function PlayersPage({
   // ?search= only seeds the box now — the filtering itself is client-side over
   // the rows below, so it costs no round trip per keystroke and cannot show a
   // list that disagrees with its own tab count.
-  const players = unwrap(await query);
+  //
+  // THE FETCH IS SKIPPED, not the table hidden. A row that reaches this
+  // component reaches the RSC payload whether or not it is drawn, so the whole
+  // point of withholding the roster would be lost by rendering it conditionally
+  // after awaiting it. Same rule the five fetches on /fees follow.
+  const players = canRead ? unwrap(await query) : [];
 
   // Current legal-document versions — a player's waiver status is "accepted"
   // only when they've accepted the current version of every document AND the
   // waiver itself within the last year (annual renewal — the shared
-  // getMissingLegalDocuments helper is the single source of truth).
-  const { data: legalDocs } = await supabase.from('legal_documents').select('document, version, reacceptance_required_since');
+  // getMissingLegalDocuments helper is the single source of truth). Nothing
+  // outside the roster rows reads them, so there is no round trip when there is
+  // no roster.
+  const { data: legalDocs } = canRead
+    ? await supabase.from('legal_documents').select('document, version, reacceptance_required_since')
+    : { data: null };
 
   // Tab counts are derived from a single fetch of every player's status flags
   // and computed here in JS, so each badge uses the exact same predicate as its
@@ -103,11 +121,17 @@ export default async function PlayersPage({
   // showed 0 while listing pending players.)
   // Also selects the identity columns the merge picker needs, so the dialog
   // doesn't cost a second query.
-  const { data: countRows } = await supabase
-    .from('players')
-    .select('id, full_name, email, avatar_url, user_id, status, is_banned, active_flag')
-    .order('full_name')
-    .limit(5000);
+  //
+  // Behind players.read like the list itself: it is every member's name, email
+  // and avatar, which is the roster by another route. The counts it feeds all
+  // collapse to 0 on an empty list, and nothing renders them without the read.
+  const { data: countRows } = canRead
+    ? await supabase
+        .from('players')
+        .select('id, full_name, email, avatar_url, user_id, status, is_banned, active_flag')
+        .order('full_name')
+        .limit(5000)
+    : { data: null };
   const forCount = countRows ?? [];
   const isCompetitive = (s: string) => !['recreational', 'suspended', 'pending_approval'].includes(s);
   const compCount = forCount.filter((p) => isCompetitive(p.status)).length;
@@ -274,11 +298,27 @@ export default async function PlayersPage({
                 }))}
               />
             )}
-            {canManage && <AddPlayerButton isAdmin={isAdmin} />}
+            {canCreate && <AddPlayerButton isAdmin={isAdmin} />}
           </div>
         }
       />
 
+      {!canRead ? (
+        <Card>
+          {/* "You may not see this" and "there is nothing to see" are different
+              statements, and an empty roster is the one lie this page could
+              tell that nobody would question — the club has members. */}
+          <EmptyState
+            title="The roster is not shown to you"
+            description={
+              canCreate
+                ? 'You can add a member, but not browse the people already on the roster.'
+                : 'Nothing on the roster is shown to you.'
+            }
+          />
+        </Card>
+      ) : (
+      <>
       {/* Tabs */}
       <Card padding={false}>
         <div className="flex gap-1 p-1 overflow-x-auto">
@@ -320,6 +360,8 @@ export default async function PlayersPage({
         }
         rows={rows}
       />
+      </>
+      )}
     </div>
   );
 }

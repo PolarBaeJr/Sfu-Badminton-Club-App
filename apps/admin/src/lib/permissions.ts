@@ -137,9 +137,14 @@ const SECTION_CAPABILITY: { [pathPrefix: string]: Capability } = {
   //
   // Trainers get in here too, and ONLY to look: this is where the varsity notes
   // live, and finding the player you are writing about means seeing the list.
-  // players.page is the whole of their claim on this section, and the area has
-  // no read because the roster list IS the page — there is no second fetch here
-  // to withhold from somebody who may open it.
+  //
+  // AND THIS LINE IS NOT THE WHOLE STORY EITHER, for the same reason /fees is
+  // not. players.page opens the section; the roster itself — the list, one
+  // member's record, the count on the dashboard — is players.read, and the
+  // owner's case for the whole three-mode split was somebody here who may add a
+  // member without browsing the club. Anything asking "may this person see who
+  // is in the club?" must ask for that read and must NOT reuse
+  // canAccess(…, '/players').
   '/players': 'players.page',
   '/disputes': 'disputes.page',
   '/walkovers': 'walkovers.page',

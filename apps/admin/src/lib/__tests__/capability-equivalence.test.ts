@@ -33,6 +33,13 @@ import { CAPABILITIES, EXEC_BASELINE, TRAINER_BASELINE, UNRESTRICTED, permits, t
 // a page key that used to be a read gates the same door it always gated, and the
 // two new keys (fees.page, platform.page) name doors that already existed and
 // take the answers those doors already gave.
+//
+// WHEN THE ROSTER FETCH GOT ITS OWN READ, one row was added and again nothing
+// moved. `players.read` is the third row in this table with no gate to
+// transcribe, and for the opposite reason to the other two: there was no gate at
+// all. The query simply ran for whoever the section admitted, so the row takes
+// that door's answers — all three levels — and the capability takes nothing from
+// anybody who has it today.
 
 type Row = {
   capability: Capability;
@@ -49,6 +56,12 @@ const F = false;
 const TODAY: Row[] = [
   // ---- players ---------------------------------------------------------
   { capability: 'players.page',                        admin: T, exec: T, trainer: T, was: "SECTION_ACCESS['/players'] = 'trainer'" },
+  // THE ROSTER FETCH WAS NEVER GATED. It ran for everybody the section let in,
+  // which is every level — so all three answers are transcribed from the door
+  // rather than from a gate, and adding a capability in front of it takes
+  // nothing away from anyone. It is also why this row is T/T/T while every other
+  // fetch gate on this page is narrower: there was no narrower gate to copy.
+  { capability: 'players.read',                        admin: T, exec: T, trainer: T, was: 'ungated fetch — players/page.tsx, behind the trainer-level section only' },
   { capability: 'players.approve.write',               admin: T, exec: T, trainer: F, was: "getExecOrAdmin('internal') — players.ts:27" },
   { capability: 'players.create.write',                admin: T, exec: T, trainer: F, was: "getExecOrAdmin('internal') — players.ts:95" },
   { capability: 'players.update.write',                admin: T, exec: T, trainer: F, was: "getExecOrAdmin('internal') — players.ts:152" },

@@ -41,13 +41,20 @@ function arrayLiteralAfter(sql: string, marker: string): string[] {
 
 describe('the migrations and the vocabulary', () => {
   const sql = migration('00087_');
-  // THE VOCABULARY CHECK MOVED. 00087 pinned 113 strings; 00088 renamed fourteen
-  // of them to `<area>.page` and added two, so it drops that constraint and
-  // re-adds it with 115. Only this one assertion follows it — the role list and
-  // the privilege guard still live in 00087, which is applied on staging and is
-  // not edited, and pointing them at 00088 would fail on a missing marker rather
-  // than on a real disagreement.
-  const vocabularySql = migration('00088_');
+  // THE VOCABULARY CHECK KEEPS MOVING, so the assertion follows it and nothing
+  // else does. 00087 pinned 113 strings; 00088 renamed fourteen of them to
+  // `<area>.page` and added two, reaching 115; 00089 adds `players.read` and
+  // reaches 116. Each drops the constraint and re-adds it, so the LATEST one is
+  // the only one whose list is live. The role list and the privilege guard still
+  // live in 00087, which is applied on staging and is not edited, and pointing
+  // them anywhere else would fail on a missing marker rather than on a real
+  // disagreement.
+  const vocabularySql = migration('00089_');
+  // The RENAME lives in 00088 and stays pinned there. Following it to 00089
+  // would look like it still passed while quietly checking nothing: 00089 renames
+  // nothing, so `dropped` would be empty and the mapping assertion would never
+  // run again.
+  const renameSql = migration('00088_');
 
   it('pins exactly the capabilities this build has', () => {
     const stored = arrayLiteralAfter(vocabularySql, 'players_permission_vocabulary_check');
@@ -63,15 +70,27 @@ describe('the migrations and the vocabulary', () => {
   // described.
   it('maps every capability 00087 had and 00088 does not', () => {
     const before = arrayLiteralAfter(sql, 'players_permission_vocabulary_check');
-    const after = new Set(arrayLiteralAfter(vocabularySql, 'players_permission_vocabulary_check'));
+    const after = new Set(arrayLiteralAfter(renameSql, 'players_permission_vocabulary_check'));
     const dropped = before.filter((capability) => !after.has(capability));
     expect(dropped.length, 'nothing was renamed — check the marker').toBeGreaterThan(0);
     for (const capability of dropped) {
       expect(
-        vocabularySql.includes(`('${capability}',`),
+        renameSql.includes(`('${capability}',`),
         `${capability} left the vocabulary with no rename in 00088`,
       ).toBe(true);
     }
+  });
+
+  // ...and 00089 is where that rule is tested in the other direction. Its header
+  // claims it needs no rewrite of the stored arrays BECAUSE it removes nothing,
+  // and this is that claim as an assertion rather than a sentence: a purely
+  // additive migration is the only kind that may skip the UPDATE step, so the day
+  // somebody drops a string here without one, the file's own reasoning fails
+  // with it.
+  it('removes nothing in 00089, which is why it needs no rewrite', () => {
+    const before = arrayLiteralAfter(renameSql, 'players_permission_vocabulary_check');
+    const after = new Set(arrayLiteralAfter(vocabularySql, 'players_permission_vocabulary_check'));
+    expect(before.filter((capability) => !after.has(capability))).toEqual([]);
   });
 
   it('pins exactly the roles this build has', () => {

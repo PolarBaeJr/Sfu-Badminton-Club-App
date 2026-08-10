@@ -19,7 +19,7 @@ import {
 } from '../access-level';
 import { CAPABILITY_GATES, ENFORCEMENT_POINTS } from '../capability-gates';
 
-// 115 capabilities is 115 promises that something is enforced. This suite is
+// 116 capabilities is 116 promises that something is enforced. This suite is
 // what keeps the vocabulary closed: it pins the list literally, refuses the
 // shapes that would let one capability quietly imply another, and asserts that
 // every one of them names a place in the app that reads it.
@@ -28,9 +28,9 @@ const resourceOf = (capability: string) => capability.split('.').slice(0, -1);
 const modeOf = (capability: string) => capability.split('.').at(-1)!;
 
 describe('the capability vocabulary', () => {
-  it('is exactly 115 entries, with no duplicates', () => {
-    expect(CAPABILITIES.length).toBe(115);
-    expect(new Set(CAPABILITIES).size).toBe(115);
+  it('is exactly 116 entries, with no duplicates', () => {
+    expect(CAPABILITIES.length).toBe(116);
+    expect(new Set(CAPABILITIES).size).toBe(116);
   });
 
   it('has 16 areas, every one of them used', () => {
@@ -113,10 +113,12 @@ describe('the capability vocabulary', () => {
 
   it('narrows only strings the vocabulary actually has', () => {
     expect(isCapability('players.page')).toBe(true);
-    // The name this area's page used to have, and no longer does. 00088 renames
-    // it in every stored array precisely so that this returning false cannot
-    // turn a live revoke into a no-op.
-    expect(isCapability('players.read')).toBe(false);
+    // BACK, AND MEANING SOMETHING ELSE. 00087 pinned `players.read` meaning "may
+    // open the roster"; 00088 renamed every stored occurrence of it to
+    // `players.page` and dropped it; 00089 reintroduces it meaning "may see the
+    // roster data". Safe only because that rename ran first — a survivor from
+    // 00087 would have changed meaning underneath its holder.
+    expect(isCapability('players.read')).toBe(true);
     expect(isCapability('players.write')).toBe(false);
     expect(isCapability('')).toBe(false);
     expect(isCapability(null)).toBe(false);
@@ -146,16 +148,16 @@ describe('CAPABILITY_GATES', () => {
   // it is a real check rather than documentation: deleting a gate without
   // deleting its capability leaves the editor offering a tick box nothing
   // reads, and that is what this fails on.
-  it('names 130 distinct enforcement points, none of them claimed twice', () => {
+  it('names 133 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(130);
-    expect(new Set(sites).size).toBe(130);
-    expect(ENFORCEMENT_POINTS).toBe(130);
+    expect(sites.length).toBe(133);
+    expect(new Set(sites).size).toBe(133);
+    expect(ENFORCEMENT_POINTS).toBe(133);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be
@@ -190,16 +192,18 @@ describe('CAPABILITY_GATES', () => {
 // written it down twice.
 
 describe('baselines', () => {
-  it('gives a trainer exactly the roster page and varsity notes', () => {
+  it('gives a trainer exactly the roster, its page, and varsity notes', () => {
     expect([...TRAINER_BASELINE]).toEqual([
       'players.page',
+      'players.read',
       'players.editor.varsitynotes.write',
     ]);
   });
 
-  it('gives an exec exactly 70 capabilities, pinned one by one', () => {
+  it('gives an exec exactly 71 capabilities, pinned one by one', () => {
     expect([...EXEC_BASELINE]).toEqual([
       'players.page',
+      'players.read',
       'players.approve.write',
       'players.create.write',
       'players.update.write',
@@ -270,7 +274,7 @@ describe('baselines', () => {
       'legal.page',
       'legal.reacceptance.write',
     ]);
-    expect(EXEC_BASELINE.length).toBe(70);
+    expect(EXEC_BASELINE.length).toBe(71);
   });
 
   // THE INVARIANT, CHECKED AGAINST THE BASELINES THEMSELVES. A baseline is fed
@@ -369,7 +373,11 @@ describe('ROLE_DEFAULTS', () => {
   // from two entries to three, because /fees was the one section whose page key
   // did not already exist under another name. The other three roles renamed
   // their reads and kept their counts, and the total tracked the exec baseline
-  // from 69 to 70.
+  // from 69 to 70. It moved by one again when the roster fetch got its own read:
+  // `internal` owns /players, so `players.read` went there and nowhere else —
+  // which is also why the pickers on /matches and /tournaments are NOT behind
+  // it. Gating those would put the same capability in two roles and this
+  // assertion is what would refuse it.
   //
   // If a future capability genuinely belongs to two jobs, THIS half is the one
   // to relax. The subset assertion above is not.
@@ -405,6 +413,7 @@ describe('ROLE_DEFAULTS', () => {
   it('gives internal the roster and the seasons, but not the season fees', () => {
     expect([...ROLE_DEFAULTS.internal]).toEqual([
       'players.page',
+      'players.read',
       'players.approve.write',
       'players.create.write',
       'players.update.write',
@@ -495,11 +504,11 @@ describe('EDITOR_OFFERABLE', () => {
 // ---------------------------------------------------------------------------
 
 describe('permits', () => {
-  it('makes an admin a superuser BY LEVEL, holding all 115', () => {
+  it('makes an admin a superuser BY LEVEL, holding all 116', () => {
     for (const capability of CAPABILITIES) {
       expect(permits('admin', UNRESTRICTED, capability), capability).toBe(true);
     }
-    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(115);
+    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(116);
   });
 
   it('gives an unrestricted person their level baseline and nothing more', () => {

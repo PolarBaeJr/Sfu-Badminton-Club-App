@@ -1,6 +1,6 @@
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
-import { Card, Badge, StatCard, AvatarChip, PageHeader } from '@badminton/ui';
+import { Card, Badge, StatCard, AvatarChip, EmptyState, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, TOURNAMENT_EVENT_TYPE_LABELS, getWinRate, getStreakDisplay, getPointDifferential } from '@badminton/shared';
 import { PlayerEditForm } from './edit-form';
 import { VarsityNotes } from './varsity-notes';
@@ -38,15 +38,52 @@ export default async function PlayerDetailPage({
   // through approvePlayer for exactly those members — so a holder of the update
   // write alone would meet a Save that can only refuse.
   const canApprove = permits(level, permissions, 'players.approve.write');
+  // This page is a data view of the same rows /players lists, one member at a
+  // time and in far more detail, so it is behind the same capability. Elo,
+  // reliability, match history and the season archive are all withheld without
+  // it.
+  const canRead = permits(level, permissions, 'players.read');
+  // ...but the two WRITES that live here are not. The coaching log is a
+  // trainer's whole reason to be in the console and the edit form is an exec's,
+  // and both need the row they act on — so a holder of either keeps the identity
+  // header and their own panel. Withholding the record from them would recreate,
+  // in the same breath, the blank-panel bug this change is fixing on /fees.
+  const canWriteNotes = permits(level, permissions, 'players.editor.varsitynotes.write');
+  const showNotes = canRead || canWriteNotes;
+  /** How many of the three panels below this viewer gets — the grid's columns. */
+  const panelCount = [canManage, canRead, showNotes].filter(Boolean).length;
+  // Nobody with a claim on this member at all. Every query below is skipped —
+  // including the one that decides notFound(), which is deliberate: whether a
+  // particular id exists is itself something the roster would tell them.
+  if (!canRead && !canManage && !canWriteNotes) {
+    return (
+      <div className="space-y-6">
+        <Link href="/players" className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--color-accent)] transition-colors">
+          <ArrowLeft className="w-4 h-4" />
+          Back to Players
+        </Link>
+        <Card>
+          <EmptyState
+            title="Member records are not shown to you"
+            description="You can open the roster section, but not the people in it."
+          />
+        </Card>
+      </div>
+    );
+  }
   const supabase = createAdminClient();
 
   // Which season this page is showing. Defaults to the active one; ?season=
-  // overrides it so a particular season's view is a shareable link.
-  const { data: seasons } = await supabase
-    .from('seasons')
-    .select('id, term, year, active_flag, start_date, end_date')
-    .order('year', { ascending: false })
-    .order('term');
+  // overrides it so a particular season's view is a shareable link. Everything
+  // it scopes is behind players.read, so without that there is nothing to scope
+  // and no picker to draw.
+  const { data: seasons } = canRead
+    ? await supabase
+        .from('seasons')
+        .select('id, term, year, active_flag, start_date, end_date')
+        .order('year', { ascending: false })
+        .order('term')
+    : { data: null };
   const seasonList = seasons ?? [];
   const selectedSeason =
     seasonList.find((s) => s.id === seasonParam)
@@ -65,32 +102,54 @@ export default async function PlayerDetailPage({
     { data: walkoverEvents },
     { data: tournamentNoShows },
   ] = await Promise.all([
+    // The member row itself stays: it is what notFound() reads, what the
+    // identity header draws, and what seeds the edit form for somebody who may
+    // change this person without browsing the club.
     supabase.from('players').select('*').eq('id', id).single(),
-    supabase.from('ratings').select('*').eq('player_id', id).single(),
-    supabase.from('reliability_metrics').select('*').eq('player_id', id).maybeSingle(),
+    // Everything from here down is the DETAIL, and every one of these is skipped
+    // rather than hidden — a row that reaches this component reaches the RSC
+    // payload whether or not it is drawn.
+    canRead
+      ? supabase.from('ratings').select('*').eq('player_id', id).single()
+      : Promise.resolve({ data: null }),
+    canRead
+      ? supabase.from('reliability_metrics').select('*').eq('player_id', id).maybeSingle()
+      : Promise.resolve({ data: null }),
     // !inner so the season filter on the embedded matches row actually
     // excludes the participant row rather than just nulling the embed.
-    supabase.from('match_participants')
-      .select('*, match:matches!inner(*, match_games(*))')
-      .eq('player_id', id)
-      .eq('matches.season_id', seasonId ?? '')
-      .order('created_at', { ascending: false, referencedTable: 'matches' })
-      .limit(10),
-    supabase.from('varsity_notes').select('*, author:players!varsity_notes_author_id_fkey(full_name)').eq('player_id', id).order('created_at', { ascending: false }),
+    canRead
+      ? supabase.from('match_participants')
+          .select('*, match:matches!inner(*, match_games(*))')
+          .eq('player_id', id)
+          .eq('matches.season_id', seasonId ?? '')
+          .order('created_at', { ascending: false, referencedTable: 'matches' })
+          .limit(10)
+      : Promise.resolve({ data: null }),
+    // The coaching log follows the NOTE capability as well as the read. It is
+    // not roster data — it is the thing a varsity trainer comes here to write —
+    // and gating it on the roster alone would leave a holder of the write
+    // staring at the blank panel this change exists to abolish.
+    showNotes
+      ? supabase.from('varsity_notes').select('*, author:players!varsity_notes_author_id_fkey(full_name)').eq('player_id', id).order('created_at', { ascending: false })
+      : Promise.resolve({ data: null }),
     // walkovers carries no season_id and reaches a match only through the
     // challenge, which has none either — so it is scoped by date against the
     // season window instead of a two-hop embed filter.
-    supabase.from('walkovers')
-      .select('id, walkover_type, notice_hours, reported_at, status, admin_notes, challenge:challenges(type), reporter:players!walkovers_reported_by_fkey(full_name)')
-      .eq('forfeit_player_id', id)
-      .gte('reported_at', selectedSeason?.start_date ?? '1970-01-01')
-      .lte('reported_at', selectedSeason?.end_date ?? '2999-12-31')
-      .order('reported_at', { ascending: false }),
-    supabase.from('tournament_participants')
-      .select('id, status, event:tournament_events!inner(event_type, tournament:tournaments!inner(name, season_id))')
-      .eq('player_id', id)
-      .eq('tournament_events.tournaments.season_id', seasonId ?? '')
-      .eq('status', 'no_show'),
+    canRead
+      ? supabase.from('walkovers')
+          .select('id, walkover_type, notice_hours, reported_at, status, admin_notes, challenge:challenges(type), reporter:players!walkovers_reported_by_fkey(full_name)')
+          .eq('forfeit_player_id', id)
+          .gte('reported_at', selectedSeason?.start_date ?? '1970-01-01')
+          .lte('reported_at', selectedSeason?.end_date ?? '2999-12-31')
+          .order('reported_at', { ascending: false })
+      : Promise.resolve({ data: null }),
+    canRead
+      ? supabase.from('tournament_participants')
+          .select('id, status, event:tournament_events!inner(event_type, tournament:tournaments!inner(name, season_id))')
+          .eq('player_id', id)
+          .eq('tournament_events.tournaments.season_id', seasonId ?? '')
+          .eq('status', 'no_show')
+      : Promise.resolve({ data: null }),
   ]);
 
   if (!player) notFound();
@@ -148,7 +207,9 @@ export default async function PlayerDetailPage({
 
       {/* Season switcher. Everything below is scoped to this season EXCEPT
           varsity notes and reliability — those are a player's standing record
-          and follow them across seasons. */}
+          and follow them across seasons. Nothing it scopes was fetched without
+          players.read, so a picker over an empty page is not offered. */}
+      {canRead && (
       <div className="flex items-end justify-between gap-4">
         <SeasonPicker seasons={seasonList} selectedId={seasonId} />
         {!isActiveSeason && (
@@ -157,6 +218,24 @@ export default async function PlayerDetailPage({
           </p>
         )}
       </div>
+      )}
+
+      {/* The roster read, withheld. Said once, above the panels that survive it,
+          rather than letting the reliability card say "No reliability data" and
+          Recent Matches say "No matches" — both of which are false and neither
+          of which a reader could tell apart from a quiet member. */}
+      {!canRead && (
+        <Card>
+          <EmptyState
+            title="This member’s record is not shown to you"
+            description={
+              canManage
+                ? 'You can edit them, but their ratings, reliability and match history are not yours to see.'
+                : 'Their ratings, reliability and match history are not yours to see.'
+            }
+          />
+        </Card>
+      )}
 
       {/* Pending self-service account deletion */}
       {player.deletion_requested_at && (
@@ -210,8 +289,13 @@ export default async function PlayerDetailPage({
         </div>
       )}
 
-      {/* Two columns for a trainer (no edit form), three for everyone else. */}
-      <div className={`grid grid-cols-1 gap-6 ${canManage ? 'lg:grid-cols-3' : 'lg:grid-cols-2'}`}>
+      {/* One column per panel that survives this viewer's capabilities: the edit
+          form on players.update.write, reliability on players.read, the notes on
+          either the read or the note write. Three for an exec, two for a
+          trainer — the same as before, now derived rather than assumed. */}
+      <div className={`grid grid-cols-1 gap-6 ${
+        panelCount >= 3 ? 'lg:grid-cols-3' : panelCount === 2 ? 'lg:grid-cols-2' : ''
+      }`}>
         {/* Edit Form. Dropped entirely for a trainer: updatePlayer asks for
             players.update.write, so every control in it — status, membership,
             the reason box, Save — would reject them. */}
@@ -230,7 +314,9 @@ export default async function PlayerDetailPage({
         </div>
         )}
 
-        {/* Reliability */}
+        {/* Reliability. Roster data — the counters are this member's record —
+            so it goes with players.read. */}
+        {canRead && (
         <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
           <div className="flex items-center gap-2 mb-4">
             <Shield className="w-4 h-4 text-[var(--text-muted)]" />
@@ -326,8 +412,12 @@ export default async function PlayerDetailPage({
             </div>
           )}
         </div>
+        )}
 
-        {/* Varsity Notes */}
+        {/* Varsity Notes. The coaching log, not the roster: a holder of the note
+            write keeps it with no players.read at all, which is the state a
+            trainer would be in if the read were ever taken off their level. */}
+        {showNotes && (
         <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6">
           <div className="flex items-center gap-2 mb-4">
             <FileText className="w-4 h-4 text-[var(--text-muted)]" />
@@ -335,9 +425,11 @@ export default async function PlayerDetailPage({
           </div>
           <VarsityNotes playerId={player.id} notes={varsityNotes ?? []} />
         </div>
+        )}
       </div>
 
       {/* Recent Matches */}
+      {canRead && (
       <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
         <div className="flex items-center gap-2 p-6 pb-4">
           <Trophy className="w-4 h-4 text-[var(--text-muted)]" />
@@ -377,6 +469,7 @@ export default async function PlayerDetailPage({
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

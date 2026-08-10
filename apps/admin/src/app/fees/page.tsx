@@ -102,7 +102,15 @@ export default async function FeesPage({
     remove: may('fees.otherincome.remove.write'),
   };
 
-  const visibleTabs = TABS.filter((t) => may(t.read) || may(t.add));
+  // Recording a reinstatement payment is its own capability, and the ledger it
+  // belongs to rides on the Club fees tab — a reinstatement IS a fee. So that
+  // tab is offered to somebody whose only claim on this page is that ledger;
+  // without this clause the card below could never be reached, which is what
+  // made the write unreachable rather than merely blank.
+  const showReinstatementsTab = showReinstatements || may('fees.reinstatements.write');
+  const visibleTabs = TABS.filter(
+    (t) => may(t.read) || may(t.add) || (t.id === 'fees' && showReinstatementsTab),
+  );
   // An exec asking for ?tab=income lands on Expenses rather than /unauthorized:
   // the query string is not a route, so middleware cannot see it, and every
   // fetch below is gated on its own capability regardless of what `tab` says.
@@ -167,8 +175,11 @@ export default async function FeesPage({
             Gated on its own capability rather than left to the tab logic: this
             branch returns BEFORE the tabs exist, and the card runs its own
             fetch — an exec opening /fees between seasons would otherwise have
-            been handed the reinstatement ledger with no tab involved. */}
-        {showReinstatements && <ReinstatementsCard seasonId={null} />}
+            been handed the reinstatement ledger with no tab involved.
+            Rendered for a holder of the WRITE as well, who gets the card with
+            its rows withheld: the read and the write are separate permissions
+            and a card that simply vanishes explains neither. */}
+        {showReinstatementsTab && <ReinstatementsCard seasonId={null} canRead={showReinstatements} />}
       </div>
     );
   }
@@ -180,11 +191,15 @@ export default async function FeesPage({
   // two queries behind it. The derived counts below all collapse to 0 on an
   // empty list and none of them are rendered off that tab.
   //
-  // `showClubFees &&` is belt as well as braces: `tab` can never be 'fees'
-  // without it (the tab list would not contain it), but this flag gates the
-  // FETCHES, and a fetch guarded only by a value derived from a query string is
-  // one refactor away from being guarded by nothing.
+  // `showClubFees &&` is belt as well as braces: this flag gates the FETCHES,
+  // and a fetch guarded only by a value derived from a query string is one
+  // refactor away from being guarded by nothing.
   const showFeeTable = showClubFees && tab === 'fees';
+  // Adding a fee by hand is offered only for the CURRENT season. Browsing a
+  // finished term is for reading its books, and a new fee filed into it would
+  // land outside the season the club is actually collecting for. Named here
+  // because the withheld message below has to describe the control truthfully.
+  const showAddManualFee = tab === 'fees' && may('fees.clubfees.addmanual.write') && !isPast;
 
   // Fee-collection list: active players (competitive/recreational) who are
   // neither exec nor fee-exempt.
@@ -251,11 +266,8 @@ export default async function FeesPage({
             ? `${season.name} · Competitive $${(season.competitive_fee_cents / 100).toFixed(2)} · Recreational $${(season.recreational_fee_cents / 100).toFixed(2)}`
             : `${season.name} · Money the club has spent`
         }
-        // Adding a fee by hand is offered only for the CURRENT season. Browsing a
-        // finished term is for reading its books, and a new fee filed into it
-        // would land outside the season the club is actually collecting for.
         actions={
-          tab === 'fees' && may('fees.clubfees.addmanual.write') && !isPast
+          showAddManualFee
             ? <AddManualFee seasonId={season.id} seasonName={season.name} />
             : undefined
         }
@@ -322,6 +334,31 @@ export default async function FeesPage({
           canRead={showExpenses}
           canWrite={expenseWrites}
         />
+      )}
+
+      {/* The Club fees tab with no club-fee read behind it. The tab is offered
+          on the ADD capability as well as on the read, so this is a reachable
+          state — and it used to render an empty body, which reads as a broken
+          page rather than as a withheld one. Same voice as the ledger cards: you
+          may not see this, not there is nothing to see.
+          Said only to somebody with a claim on THIS ledger. The tab is also
+          opened by the reinstatement pair below, and telling that holder a
+          ledger they never asked about is withheld would be a second
+          unexplained panel — which is the thing this is fixing. Asked as the
+          raw capability rather than through showAddManualFee, so that browsing
+          a finished term (where the control is withdrawn) does not silently
+          take the explanation with it. */}
+      {tab === 'fees' && !showClubFees && may('fees.clubfees.addmanual.write') && (
+        <Card>
+          <EmptyState
+            title="Club fees are not shown to you"
+            description={
+              showAddManualFee
+                ? `You can add a fee to ${season.name} by hand, but not browse who has paid.`
+                : 'Who has paid their dues this season is not shown to you.'
+            }
+          />
+        </Card>
       )}
 
       {showFeeTable && (
@@ -483,11 +520,18 @@ export default async function FeesPage({
         )}
       </Card>
 
+      </>
+      )}
+
       {/* Stays on the Club fees tab: a reinstatement IS a fee, and the rows
           with no amount recorded are the ones an admin is meant to trip over
-          while working through the fee list. */}
-      {showReinstatements && <ReinstatementsCard seasonId={season.id} />}
-      </>
+          while working through the fee list.
+          A SIBLING of the fee table rather than a child of it. Nested inside
+          showFeeTable, this card needed fees.clubfees.read to appear — a
+          different ledger's capability — so a holder of the reinstatement pair
+          and nothing else saw no card at all. */}
+      {tab === 'fees' && showReinstatementsTab && (
+        <ReinstatementsCard seasonId={season.id} canRead={showReinstatements} />
       )}
     </div>
   );

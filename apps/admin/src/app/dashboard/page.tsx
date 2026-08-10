@@ -54,10 +54,15 @@ export default async function DashboardPage() {
   // middleware ask, through the same helper — the fetches behind these tiles
   // would otherwise ship a section's counts into the RSC payload for somebody
   // refused the page itself.
-  const showPlayers = canAccess(level, permissions, '/players');
   const showDisputes = canAccess(level, permissions, '/disputes');
   const showWalkovers = canAccess(level, permissions, '/walkovers');
   const showChallenges = canAccess(level, permissions, '/challenges');
+  // NOT canAccess(…, '/players') — a COUNT of the members is roster data, and
+  // the roster has its own capability now. Reaching /players needs players.page,
+  // which somebody may hold in order to add a member without browsing the club;
+  // handing them the size of it would be the same leak, one figure at a time.
+  // Same reasoning as showFinances below, and the same shape.
+  const canReadRoster = permits(level, permissions, 'players.read');
   // NOT canAccess(level, …, '/fees'). Reaching /fees needs `fees.page`, which
   // buys the SECTION and no ledger in it — an exec holds it, and so does anybody
   // handed nothing but the ability to file an expense. The snapshot below is
@@ -72,11 +77,11 @@ export default async function DashboardPage() {
   // tournaments, and both links bounce them to /unauthorized.
   const showMatches = canAccess(level, permissions, '/matches');
   const showTournaments = canAccess(level, permissions, '/tournaments');
-  // /players is trainer-readable, but deciding a pending signup is exec work —
+  // The roster is trainer-readable, but deciding a pending signup is exec work —
   // the Edit control below saves through updatePlayer/approvePlayer. Asking for
-  // the capability rather than reusing showPlayers keeps the panel honest: this
-  // gates a FETCH, so anyone who kept the panel without it would be handed the
-  // pending-approval list and a dialog whose every Save throws.
+  // the capability rather than reusing canReadRoster keeps the panel honest:
+  // this gates a FETCH, so anyone who kept the panel without it would be handed
+  // the pending-approval list and a dialog whose every Save throws.
   const canApprove = permits(level, permissions, 'players.approve.write');
 
   // Gate the FETCHES, not just the tiles: a hidden card whose query still ran
@@ -97,7 +102,7 @@ export default async function DashboardPage() {
     { count: activeChalls },
     { data: pendingPlayersList },
   ] = await Promise.all([
-    showPlayers ? supabase.from('players').select('id', { count: 'exact', head: true }).neq('status', 'pending_approval') : noCount,
+    canReadRoster ? supabase.from('players').select('id', { count: 'exact', head: true }).neq('status', 'pending_approval') : noCount,
     canApprove ? supabase.from('players').select('id', { count: 'exact', head: true }).eq('status', 'pending_approval') : noCount,
     showDisputes ? supabase.from('disputes').select('id', { count: 'exact', head: true }).eq('status', 'open') : noCount,
     showWalkovers ? supabase.from('walkovers').select('id', { count: 'exact', head: true }).eq('status', 'pending') : noCount,
@@ -229,19 +234,19 @@ export default async function DashboardPage() {
       )}
 
       {/* Stat strip */}
-      {(showPlayers || showDisputes || showWalkovers) && (
+      {(canReadRoster || showDisputes || showWalkovers) && (
       <div className="stat-strip">
-        {showPlayers && (
+        {canReadRoster && (
           <Link href="/players" className="hover:bg-[var(--bg-card)] transition-colors">
             <p className="stat-label">Active Players</p>
             <p className="stat-value">{totalPlayers ?? 0}</p>
           </Link>
         )}
         {/* Approving is exec work, so the COUNT is exec work too. This rode on
-            showPlayers, which is trainer-level, so a trainer saw how many people
-            were waiting on a decision they cannot make — and the panel and its
-            buttons below were already exec-only, so the number was the one part
-            that leaked. */}
+            the roster flag, which is trainer-level, so a trainer saw how many
+            people were waiting on a decision they cannot make — and the panel
+            and its buttons below were already exec-only, so the number was the
+            one part that leaked. */}
         {canApprove && (
           <Link href="/players?tab=attention" className="hover:bg-[var(--bg-card)] transition-colors">
             <p className="stat-label">Pending Approvals</p>

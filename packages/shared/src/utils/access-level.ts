@@ -118,10 +118,24 @@ export type Area = (typeof AREAS)[number];
 
 export const CAPABILITIES = [
   // ---- players -----------------------------------------------------------
-  // No `players.read`: the roster list IS the page, and nothing on /players
-  // fetches behind a second gate. Opening the section and seeing the roster are
-  // the same act here, so there is one capability for it.
+  // THE OWNER'S CASE, on the page they asked for it on: "access the page to add
+  // stuff, but not see the details in them". `players.page` opens the section
+  // and `players.read` buys the ROSTER — the list, one member's record, and the
+  // count of them on the dashboard. Somebody handed the page and
+  // players.create.write comes in to add a member and browses nobody.
+  //
+  // The roster used to ride on the page key, which made that impossible here
+  // and only here: /fees had five separate fetch gates and /players had none,
+  // so the one section the club most wanted split was the one that could not be.
+  //
+  // NOT the player PICKERS. The lists behind the create-match, create-challenge,
+  // session-attendance and tournament-entrant forms are fetched by their own
+  // sections and stay there: somebody who may enter a match result must be able
+  // to name the players in it, and moving those behind this capability would
+  // also put `players.read` in two roles at once, which the partition test
+  // refuses.
   'players.page',
+  'players.read',
   'players.approve.write',
   'players.create.write',
   'players.update.write',
@@ -177,7 +191,7 @@ export const CAPABILITIES = [
   'announcements.delete.write',
 
   // ---- tournaments -------------------------------------------------------
-  // The largest area by a distance: 43 of the 115. Four groups, and the split
+  // The largest area by a distance: 43 of the 116. Four groups, and the split
   // matters — running a draw, entering results and handling entry money are
   // three different jobs that happen to share a section.
   //
@@ -334,18 +348,23 @@ export function pageOf(capability: Capability): Capability {
 // somebody has widened a level.
 //
 // "Unrestricted" is the LEVEL's baseline, not everything. An unrestricted exec
-// holds 70 capabilities, not 115.
+// holds 71 capabilities, not 116.
 //
 // EVERY AREA A BASELINE REACHES CARRIES THAT AREA'S `.page`. Not a style rule:
 // the resolver prunes any capability whose area page is missing, so a baseline
 // without one would be a level that can do nothing anywhere.
 
 export const TRAINER_BASELINE: readonly Capability[] = [
-  // The entire trainer level, and it always was: open the roster so you can
-  // find the person you are writing about, and write the note. Matches
+  // The entire trainer level, and it always was: open the roster, READ it so you
+  // can find the person you are writing about, and write the note. Matches
   // TRAINER_WRITABLE_PLAYER_FIELDS being empty — a trainer changes nothing on a
   // player record itself.
+  //
+  // The read is here because a trainer browses the roster today. It is the whole
+  // reason they have a console at all, and leaving it out would have made
+  // gating the roster fetch a change that took the section away from a level.
   'players.page',
+  'players.read',
   'players.editor.varsitynotes.write',
 ];
 
@@ -354,7 +373,12 @@ export const EXEC_BASELINE: readonly Capability[] = [
   // write coaching notes. NOT: cancelling a deletion, removing, merging,
   // adjusting reliability, or any privileged field — all of those stood behind
   // getAdminPlayer().
+  //
+  // The read is here as well as the page for the same reason it is in the
+  // trainer baseline: an exec browses the roster today, and the fetch behind it
+  // is now asked for separately.
   'players.page',
+  'players.read',
   'players.approve.write',
   'players.create.write',
   'players.update.write',
@@ -584,6 +608,7 @@ export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {
   // expenses — setting what a term costs is admin work and always was.
   internal: [
     'players.page',
+    'players.read',
     'players.approve.write',
     'players.create.write',
     'players.update.write',

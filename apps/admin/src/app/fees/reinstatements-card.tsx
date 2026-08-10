@@ -1,5 +1,5 @@
 import { createAdminClient } from '@/lib/supabase-server';
-import { Badge, Card, AvatarChip, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
+import { Badge, Card, AvatarChip, EmptyState, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { unwrap, formatPaymentMethod } from '@badminton/shared';
 import { RecordReinstatementPayment } from './fee-actions';
 
@@ -34,8 +34,41 @@ function personTitle(name: string, sub: string, avatarUrl?: string | null, id?: 
   );
 }
 
-export async function ReinstatementsCard({ seasonId }: { seasonId: string | null }) {
+export async function ReinstatementsCard({
+  seasonId,
+  canRead,
+}: {
+  seasonId: string | null;
+  /**
+   * May the viewer see the ROWS? False is a real state: recording a payment and
+   * reading the ledger are separate capabilities, and a holder of only the write
+   * used to get no card at all — the write was not merely blank, it was
+   * unreachable.
+   *
+   * WHAT THAT HOLDER CAN AND CANNOT DO, said plainly because the answer is
+   * awkward: recordReinstatementPayment takes the id of a ROW, and the only
+   * place a row id comes from is this list. So the write genuinely needs the
+   * read to be usable, and the honest card says so rather than showing a control
+   * with nothing to point it at. The query is skipped either way — a row that
+   * reaches this component reaches the RSC payload whether or not it is drawn.
+   */
+  canRead: boolean;
+}) {
   const supabase = createAdminClient();
+
+  if (!canRead) {
+    return (
+      <Card padding={false}>
+        <div className="px-4 pt-4">
+          <h2 className="text-sm font-medium text-[var(--text-primary)]">Reinstatements</h2>
+        </div>
+        <EmptyState
+          title="Reinstatement payments are not shown to you"
+          description="You can record a reinstatement payment, but it is recorded against the row it belongs to — and those rows are not yours to see."
+        />
+      </Card>
+    );
+  }
 
   // Three narrow queries merged in JS rather than one `.or()`: this season's
   // rows, every row whose amount was never recorded, and every row attached to

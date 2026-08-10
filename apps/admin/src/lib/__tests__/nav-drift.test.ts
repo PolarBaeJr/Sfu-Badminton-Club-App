@@ -94,6 +94,9 @@ describe('the console nav', () => {
     for (const read of ['fees.clubfees.read', 'fees.otherincome.read', 'fees.netposition.read', 'fees.reinstatements.read', 'fees.expenses.read'] as const) {
       expect(canAccess('exec', holding(read), '/fees'), read).toBe(false);
     }
+    // /players comes apart the same way now: the roster is data behind
+    // players.read, and holding it without players.page must not be a way in.
+    expect(canAccess('exec', holding('players.read'), '/players')).toBe(false);
   });
 
   // What an UNRESTRICTED exec — which is everybody, on the day this ships —
