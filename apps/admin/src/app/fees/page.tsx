@@ -20,16 +20,24 @@ import { NetPositionStrip } from './net-position-strip';
 // nothing, and a link to a tab is shareable.
 //
 // `read` is the exec split, and each tab names its OWN capability rather than
-// sharing one flag. /fees admits anyone holding a read under `fees`, and an
-// exec holds exactly one of them — fees.expenses.read — because the club owner
-// asked for "execs can add expenses", not for the finance page. An exec gets
-// the Expenses tab and nothing else: no fee roster, no other income, no net
+// sharing one flag. /fees admits anyone holding `fees.page`, and an exec holds
+// exactly one of the reads beneath it — fees.expenses.read — because the club
+// owner asked for "execs can add expenses", not for the finance page. An exec
+// gets the Expenses tab and nothing else: no fee roster, no other income, no net
 // position, and no tab strip advertising that they exist.
+//
+// A HOLDER OF THE PAGE AND NO READ AT ALL is a supported state, and the one this
+// section was reshaped for: they get the header, the Add expense control if they
+// hold that write, and not a single row of anybody's ledger.
+// A tab is offered to somebody who may SEE its ledger or ADD to it. Those are
+// two capabilities now, and the second without the first is the state this whole
+// reshape exists for — offering the tab only on the read would leave a holder of
+// the write with a control they cannot navigate to.
 const TABS = [
-  { id: 'fees', label: 'Club fees', read: 'fees.clubfees.read' },
-  { id: 'income', label: 'Other income', read: 'fees.otherincome.read' },
-  { id: 'expenses', label: 'Expenses', read: 'fees.expenses.read' },
-] as const satisfies readonly { id: string; label: string; read: Capability }[];
+  { id: 'fees', label: 'Club fees', read: 'fees.clubfees.read', add: 'fees.clubfees.addmanual.write' },
+  { id: 'income', label: 'Other income', read: 'fees.otherincome.read', add: 'fees.otherincome.add.write' },
+  { id: 'expenses', label: 'Expenses', read: 'fees.expenses.read', add: 'fees.expenses.add.write' },
+] as const satisfies readonly { id: string; label: string; read: Capability; add: Capability }[];
 
 type TabId = (typeof TABS)[number]['id'];
 
@@ -55,16 +63,17 @@ export default async function FeesPage({
 
   // Who is looking. requireCapability() is the gate — middleware already ran,
   // but a page that renders money must not depend on middleware having been
-  // reached, and this is the same shape /legal uses. fees.expenses.read is the
-  // one capability every viewer of this page must hold; everything else on it
-  // is asked for separately below.
-  const viewer = await requireCapability('fees.expenses.read');
+  // reached, and this is the same shape /legal uses. fees.page is the one
+  // capability every viewer of this page must hold, and it buys the section
+  // only; every ledger on it is asked for separately below.
+  const viewer = await requireCapability('fees.page');
   const level = accessLevelFor(viewer);
   const permissions = permissionsOf(viewer);
   const may = (capability: Capability) => permits(level, permissions, capability);
   // Presentation only — the page is called "Finances" when it shows more than
   // one ledger. Every FETCH below asks for the capability its own data needs.
   const isAdmin = level === 'admin';
+  const showExpenses = may('fees.expenses.read');
   const showClubFees = may('fees.clubfees.read');
   const showOtherIncome = may('fees.otherincome.read');
   const showNetPosition = may('fees.netposition.read');
@@ -93,13 +102,17 @@ export default async function FeesPage({
     remove: may('fees.otherincome.remove.write'),
   };
 
-  const visibleTabs = TABS.filter((t) => may(t.read));
+  const visibleTabs = TABS.filter((t) => may(t.read) || may(t.add));
   // An exec asking for ?tab=income lands on Expenses rather than /unauthorized:
   // the query string is not a route, so middleware cannot see it, and every
-  // admin-only fetch below is gated on isAdmin regardless of what `tab` says.
+  // fetch below is gated on its own capability regardless of what `tab` says.
   // Forcing the tab is presentation; the gating underneath is the boundary.
+  //
+  // Falls back to Expenses when nothing is visible at all, which renders
+  // nothing: a viewer with the page and no ledger capability sees the header and
+  // the season picker, and that is the whole of it.
   const requested = visibleTabs.find((t) => t.id === params.tab)?.id;
-  const tab: TabId = requested ?? (showClubFees ? 'fees' : 'expenses');
+  const tab: TabId = requested ?? visibleTabs[0]?.id ?? 'expenses';
 
   const supabase = createAdminClient();
 
@@ -241,7 +254,11 @@ export default async function FeesPage({
         // Adding a fee by hand is offered only for the CURRENT season. Browsing a
         // finished term is for reading its books, and a new fee filed into it
         // would land outside the season the club is actually collecting for.
-        actions={showFeeTable && !isPast ? <AddManualFee seasonId={season.id} seasonName={season.name} /> : undefined}
+        actions={
+          tab === 'fees' && may('fees.clubfees.addmanual.write') && !isPast
+            ? <AddManualFee seasonId={season.id} seasonName={season.name} />
+            : undefined
+        }
       />
 
       <div className="space-y-2">
@@ -281,20 +298,28 @@ export default async function FeesPage({
       </Card>
       )}
 
-      {showOtherIncome && tab === 'income' && (
+      {(showOtherIncome || incomeWrites.add) && tab === 'income' && (
         <LedgerCard
           kind="income"
           seasonId={season.id}
           seasonName={season.name}
+          canRead={showOtherIncome}
           canWrite={incomeWrites}
         />
       )}
 
-      {tab === 'expenses' && (
+      {/* The Expenses ledger, or just its Add control. Rendered when the viewer
+          may SEE it or may ADD to it — the two are separate permissions now, and
+          somebody holding only the write is exactly the person this section was
+          reshaped for. `tab` is not consulted for the write-only case: with no
+          reads there is no tab strip to have chosen from, and it falls through
+          to 'expenses' anyway. */}
+      {(showExpenses || expenseWrites.add) && tab === 'expenses' && (
         <LedgerCard
           kind="expense"
           seasonId={season.id}
           seasonName={season.name}
+          canRead={showExpenses}
           canWrite={expenseWrites}
         />
       )}

@@ -24,7 +24,7 @@ import { PermissionEditor, type PersonRow } from './permission-editor';
 // and a page that silently omitted the two levels that cannot be edited would
 // answer a narrower question than its title claims.
 export default async function PermissionsPage() {
-  const viewer = await requireCapability('permissions.read');
+  const viewer = await requireCapability('permissions.page');
   const viewerSet = effectiveCapabilities(accessLevelFor(viewer), permissionsOf(viewer));
 
   // All three permission columns, together. Selecting permission_role without

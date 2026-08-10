@@ -38,8 +38,11 @@ const holding = (...capabilities: Capability[]) => ({
 
 const EMPTY = holding();
 
-const readsIn = (area: Area): Capability[] =>
-  CAPABILITIES.filter((c) => c.split('.')[0] === area && c.endsWith('.read'));
+// The one capability a nav link is allowed to depend on. Not "any read in the
+// area": a read gates DATA, and /fees has four of them that must not open the
+// section on their own.
+const pageIn = (area: Area): Capability[] =>
+  CAPABILITIES.filter((c) => c === `${area}.page`);
 
 describe('the console nav', () => {
   it('names a real area, or none at all', () => {
@@ -67,19 +70,29 @@ describe('the console nav', () => {
     }
   });
 
-  // THE DRIFT CHECK. Holding one read under the declared area must open the
-  // link, and holding nothing must close it. Together these pin the href to the
-  // area: a typo fails the first (the path falls through to admin-only), and an
-  // area key that names the wrong section fails it too.
+  // THE DRIFT CHECK. Holding the declared area's PAGE must open the link, and
+  // holding nothing must close it. Together these pin the href to the area: a
+  // typo fails the first (the path falls through to admin-only), and an area key
+  // that names the wrong section fails it too.
   it('opens each link to exactly the area its item declares', () => {
     for (const item of ITEMS) {
       if (item.area === null) continue;
-      const reads = readsIn(item.area);
-      expect(reads.length, `${item.area} has no read capability`).toBeGreaterThan(0);
-      for (const read of reads) {
-        expect(canAccess('exec', holding(read), item.href), `${item.href} via ${read}`).toBe(true);
+      const pages = pageIn(item.area);
+      expect(pages.length, `${item.area} has no page capability`).toBe(1);
+      for (const page of pages) {
+        expect(canAccess('exec', holding(page), item.href), `${item.href} via ${page}`).toBe(true);
       }
       expect(canAccess('exec', EMPTY, item.href), `${item.href} with nothing held`).toBe(false);
+    }
+  });
+
+  // A READ DOES NOT OPEN A SECTION. The reason the page mode exists is that the
+  // two questions are separate, and /fees is where they come apart: its four
+  // ledger reads gate DATA and nothing else, so holding one without the page
+  // must leave the link — and the route — closed.
+  it('refuses to open a section on a data read alone', () => {
+    for (const read of ['fees.clubfees.read', 'fees.otherincome.read', 'fees.netposition.read', 'fees.reinstatements.read', 'fees.expenses.read'] as const) {
+      expect(canAccess('exec', holding(read), '/fees'), read).toBe(false);
     }
   });
 

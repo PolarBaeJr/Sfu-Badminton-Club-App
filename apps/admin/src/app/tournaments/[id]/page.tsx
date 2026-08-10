@@ -16,7 +16,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
   // tournaments.manage.read opens the page. The Fees link is a separate
   // capability in its own group — execs run tournaments but not entry money —
   // so ask for the read the linked PAGE requires rather than for a level.
-  const viewer = await requireCapability('tournaments.manage.read');
+  const viewer = await requireCapability('tournaments.page');
   const canSeeFees = permits(accessLevelFor(viewer), permissionsOf(viewer), 'tournaments.fees.read');
 
   const { data: tournament } = await supabase.from('tournaments').select('*').eq('id', id).single();

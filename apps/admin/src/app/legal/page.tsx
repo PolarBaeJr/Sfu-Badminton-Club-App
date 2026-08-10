@@ -16,7 +16,7 @@ import { EventWaiverTemplateForm } from './event-waiver-template-form';
 // every exec holds. The flags below only decide which controls are offered —
 // the server actions are the boundary.
 export default async function LegalPage() {
-  const viewer = await requireCapability('legal.read');
+  const viewer = await requireCapability('legal.page');
   const level = accessLevelFor(viewer);
   const permissions = permissionsOf(viewer);
   const canEdit = permits(level, permissions, 'legal.documents.write');

@@ -124,7 +124,7 @@ async function setPlayerPermissionsImpl(playerId: string, next: PermissionsPaylo
   const targetLevel = accessLevelFor(target);
 
   // Its own check with its own words, ahead of the subset test that would also
-  // catch it. An admin holds all 113 capabilities, so "their set is not a
+  // catch it. An admin holds all 115 capabilities, so "their set is not a
   // subset of yours" is technically what fails — but that sentence tells a
   // treasurer nothing, and "only an admin can change an admin's permissions"
   // tells them exactly who to ask.

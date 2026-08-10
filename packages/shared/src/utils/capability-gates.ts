@@ -1,6 +1,6 @@
 // WHERE EVERY CAPABILITY IS ACTUALLY ENFORCED.
 //
-// 113 capabilities is 113 promises that something in the app checks something.
+// 115 capabilities is 115 promises that something in the app checks something.
 // This map is what keeps them honest: every entry names the file and function
 // that stands behind it, and the drift test asserts the map is exhaustive, that
 // no two capabilities claim the same enforcement point, and that any capability
@@ -25,7 +25,7 @@ export type CapabilityGate = {
    * second path segment.
    */
   group: string | null;
-  mode: 'read' | 'write';
+  mode: 'page' | 'read' | 'write';
   /**
    * The enforcement point: `<file> <function>`, or `route <path>` where the
    * middleware's section check is the whole gate. `null` means NOT YET WIRED,
@@ -50,8 +50,8 @@ const MARK_OR_CLEAR = 'Marking and clearing an attendance mark are the same act 
 
 export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   // ---- players -----------------------------------------------------------
-  'players.read': {
-    label: 'Roster', area: 'players', group: null, mode: 'read',
+  'players.page': {
+    label: 'Open the roster', area: 'players', group: null, mode: 'page',
     gate: 'route /players',
   },
   'players.approve.write': {
@@ -108,8 +108,8 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   },
 
   // ---- seasons -----------------------------------------------------------
-  'seasons.read': {
-    label: 'Seasons', area: 'seasons', group: null, mode: 'read',
+  'seasons.page': {
+    label: 'Open Seasons', area: 'seasons', group: null, mode: 'page',
     gate: 'app/seasons/page.tsx SeasonsPage',
   },
   'seasons.create.write': {
@@ -130,8 +130,8 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   },
 
   // ---- sessions ----------------------------------------------------------
-  'sessions.read': {
-    label: 'Sessions', area: 'sessions', group: null, mode: 'read',
+  'sessions.page': {
+    label: 'Open Sessions', area: 'sessions', group: null, mode: 'page',
     gate: 'route /sessions',
   },
   'sessions.reminders.write': {
@@ -168,8 +168,8 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   },
 
   // ---- matches -----------------------------------------------------------
-  'matches.read': {
-    label: 'Ladder matches', area: 'matches', group: null, mode: 'read',
+  'matches.page': {
+    label: 'Open Ladder matches', area: 'matches', group: null, mode: 'page',
     gate: 'route /matches',
   },
   'matches.void.write': {
@@ -186,8 +186,8 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   },
 
   // ---- challenges --------------------------------------------------------
-  'challenges.read': {
-    label: 'Challenges', area: 'challenges', group: null, mode: 'read',
+  'challenges.page': {
+    label: 'Open Challenges', area: 'challenges', group: null, mode: 'page',
     gate: 'route /challenges',
   },
   'challenges.create.write': {
@@ -200,8 +200,8 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   },
 
   // ---- announcements -----------------------------------------------------
-  'announcements.read': {
-    label: 'Announcements', area: 'announcements', group: null, mode: 'read',
+  'announcements.page': {
+    label: 'Open Announcements', area: 'announcements', group: null, mode: 'page',
     gate: 'route /announcements',
   },
   'announcements.create.write': {
@@ -218,8 +218,11 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   },
 
   // ---- tournaments · manage ----------------------------------------------
-  'tournaments.manage.read': {
-    label: 'Tournaments', area: 'tournaments', group: 'manage', mode: 'read',
+  // No group: a page belongs to its AREA, not to one of the area's four jobs.
+  // It was `tournaments.manage.read` and it never gated the manage DATA — it
+  // gated the section, which is what the name now says.
+  'tournaments.page': {
+    label: 'Open Tournaments', area: 'tournaments', group: null, mode: 'page',
     gate: 'app/tournaments/[id]/page.tsx TournamentDetailPage',
   },
   'tournaments.manage.create.write': {
@@ -418,9 +421,17 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   },
 
   // ---- fees --------------------------------------------------------------
+  // The page and the Expenses ledger are two gates now, where they used to be
+  // one. FeesPage admits anyone with the page; the ledger's own fetch is what
+  // fees.expenses.read buys, and without it the tab renders the Add expense
+  // control over no rows.
+  'fees.page': {
+    label: 'Open Finances', area: 'fees', group: null, mode: 'page',
+    gate: 'app/fees/page.tsx FeesPage',
+  },
   'fees.expenses.read': {
     label: 'Expenses', area: 'fees', group: 'expenses', mode: 'read',
-    gate: 'app/fees/page.tsx FeesPage',
+    gate: 'app/fees/page.tsx expenses ledger fetch',
   },
   'fees.expenses.add.write': {
     label: 'File an expense', area: 'fees', group: 'expenses', mode: 'write',
@@ -494,8 +505,8 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   },
 
   // ---- legal -------------------------------------------------------------
-  'legal.read': {
-    label: 'Legal documents', area: 'legal', group: null, mode: 'read',
+  'legal.page': {
+    label: 'Open Legal', area: 'legal', group: null, mode: 'page',
     gate: 'app/legal/page.tsx LegalPage',
   },
   'legal.reacceptance.write': {
@@ -512,8 +523,8 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   },
 
   // ---- walkovers ---------------------------------------------------------
-  'walkovers.read': {
-    label: 'Walkovers', area: 'walkovers', group: null, mode: 'read',
+  'walkovers.page': {
+    label: 'Open Walkovers', area: 'walkovers', group: null, mode: 'page',
     gate: 'route /walkovers',
   },
   'walkovers.confirm.write': {
@@ -526,8 +537,8 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   },
 
   // ---- disputes ----------------------------------------------------------
-  'disputes.read': {
-    label: 'Disputes', area: 'disputes', group: null, mode: 'read',
+  'disputes.page': {
+    label: 'Open Disputes', area: 'disputes', group: null, mode: 'page',
     gate: 'route /disputes',
   },
   'disputes.resolve.write': {
@@ -536,8 +547,8 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   },
 
   // ---- permissions -------------------------------------------------------
-  'permissions.read': {
-    label: 'Permissions', area: 'permissions', group: null, mode: 'read',
+  'permissions.page': {
+    label: 'Open Permissions', area: 'permissions', group: null, mode: 'page',
     gate: 'app/permissions/page.tsx PermissionsPage',
   },
   'permissions.write': {
@@ -546,20 +557,31 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   },
 
   // ---- audit / ratings / accounts ----------------------------------------
-  'audit.read': {
-    label: 'Audit log', area: 'audit', group: null, mode: 'read',
+  'audit.page': {
+    label: 'Open the Audit log', area: 'audit', group: null, mode: 'page',
     gate: 'route /audit',
   },
-  'ratings.read': {
-    label: 'Rating settings', area: 'ratings', group: null, mode: 'read',
+  'ratings.page': {
+    label: 'Open Ratings', area: 'ratings', group: null, mode: 'page',
     gate: 'app/ratings/page.tsx RatingsPage',
   },
-  'accounts.read': {
-    label: 'Account settings', area: 'accounts', group: null, mode: 'read',
+  'accounts.page': {
+    label: 'Open Accounts', area: 'accounts', group: null, mode: 'page',
     gate: 'app/accounts/page.tsx AccountsPage',
   },
 
   // ---- platform ----------------------------------------------------------
+  // THE ONE PAGE CAPABILITY WITH NO ROUTE. Platform settings have no section of
+  // their own — the form is drawn inside /ratings and /accounts, each of which
+  // is its own area — so this gates the FORM rather than a path, and both pages
+  // render it only for a holder. Every area needs a page for the resolver's
+  // invariant to be uniform, and an honest gate is the price of that.
+  'platform.page': {
+    label: 'Open Platform settings', area: 'platform', group: null, mode: 'page',
+    gate: 'app/ratings/page.tsx platform settings form',
+    also: ['app/accounts/page.tsx platform settings form'],
+    merged: 'One form, rendered on the two pages that carry the settings it holds.',
+  },
   'platform.settings.write': {
     label: 'Platform settings', area: 'platform', group: null, mode: 'write',
     gate: 'actions/settings.ts updatePlatformSettings',

@@ -156,9 +156,9 @@ describe('requireCapability', () => {
     state.player = { id: 'member-1', role: 'player' };
     await expect(requireCapability('players.approve.write'))
       .rejects.toThrow('Admin or exec access required');
-    await expect(requireCapability('players.read'))
+    await expect(requireCapability('players.page'))
       .rejects.toThrow('Admin console access required');
-    await expect(requireCapability('audit.read'))
+    await expect(requireCapability('audit.page'))
       .rejects.toThrow('Admin access required');
   });
 
@@ -199,6 +199,6 @@ describe('requireCapability', () => {
       permission_grants: [],
       permission_revokes: [],
     };
-    await expect(requireCapability('audit.read')).rejects.toThrow('Admin access required');
+    await expect(requireCapability('audit.page')).rejects.toThrow('Admin access required');
   });
 });

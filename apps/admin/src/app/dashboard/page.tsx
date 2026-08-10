@@ -58,12 +58,14 @@ export default async function DashboardPage() {
   const showDisputes = canAccess(level, permissions, '/disputes');
   const showWalkovers = canAccess(level, permissions, '/walkovers');
   const showChallenges = canAccess(level, permissions, '/challenges');
-  // NOT canAccess(level, …, '/fees'). Reaching /fees needs any one read under
-  // `fees`, and an exec holds the expenses one — but the snapshot below is
+  // NOT canAccess(level, …, '/fees'). Reaching /fees needs `fees.page`, which
+  // buys the SECTION and no ledger in it — an exec holds it, and so does anybody
+  // handed nothing but the ability to file an expense. The snapshot below is
   // income, expenses AND the net position, which is a capability of its own.
   // Asking the route map here would have leaked all three into an exec's
   // dashboard, from the one file that is supposed to be the example of gating
-  // the fetch. Ask for the capability the DATA needs.
+  // the fetch, and the page-versus-read split makes that a wider leak rather
+  // than a narrower one. Ask for the capability the DATA needs.
   const showFinances = permits(level, permissions, 'fees.netposition.read');
   // Sections that used to be unconditional. A varsity trainer reaches the
   // dashboard (it is where sign-in lands) but has no business in matches or

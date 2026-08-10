@@ -5,8 +5,8 @@ import { CAPABILITIES, PERMISSION_ROLES } from '../access-level';
 
 // REMOVAL IS A MIGRATION, made self-enforcing.
 //
-// Migration 00087 pins all 113 capability strings in a CHECK constraint, and
-// that constraint is there for the REVOKES. An unknown element in `grants` is
+// The vocabulary CHECK pins every capability string, and that constraint is
+// there for the REVOKES. An unknown element in `grants` is
 // harmless — the resolver drops it and nobody gains anything. An unknown
 // element in `revokes` is the opposite: it fails to REMOVE something, and the
 // something it fails to remove might be permissions.write. So deleting a
@@ -39,13 +39,39 @@ function arrayLiteralAfter(sql: string, marker: string): string[] {
   return [...sql.slice(open, close).matchAll(/'([^']+)'/g)].map((m) => m[1]!);
 }
 
-describe('migration 00087 and the vocabulary', () => {
+describe('the migrations and the vocabulary', () => {
   const sql = migration('00087_');
+  // THE VOCABULARY CHECK MOVED. 00087 pinned 113 strings; 00088 renamed fourteen
+  // of them to `<area>.page` and added two, so it drops that constraint and
+  // re-adds it with 115. Only this one assertion follows it — the role list and
+  // the privilege guard still live in 00087, which is applied on staging and is
+  // not edited, and pointing them at 00088 would fail on a missing marker rather
+  // than on a real disagreement.
+  const vocabularySql = migration('00088_');
 
   it('pins exactly the capabilities this build has', () => {
-    const stored = arrayLiteralAfter(sql, 'players_permission_vocabulary_check');
+    const stored = arrayLiteralAfter(vocabularySql, 'players_permission_vocabulary_check');
     expect(stored.length).toBe(CAPABILITIES.length);
     expect([...stored].sort()).toEqual([...CAPABILITIES].sort());
+  });
+
+  // Every capability 00087 pinned and 00088 does not is a string that may still
+  // be sitting in somebody's stored revokes, and a revoke that stops naming a
+  // capability the code has is a revoke that silently stops biting. So a removal
+  // has to be a RENAME with a mapping, and this is the assertion that there is
+  // one for each — the exact hazard 00087's header describes, tested rather than
+  // described.
+  it('maps every capability 00087 had and 00088 does not', () => {
+    const before = arrayLiteralAfter(sql, 'players_permission_vocabulary_check');
+    const after = new Set(arrayLiteralAfter(vocabularySql, 'players_permission_vocabulary_check'));
+    const dropped = before.filter((capability) => !after.has(capability));
+    expect(dropped.length, 'nothing was renamed — check the marker').toBeGreaterThan(0);
+    for (const capability of dropped) {
+      expect(
+        vocabularySql.includes(`('${capability}',`),
+        `${capability} left the vocabulary with no rename in 00088`,
+      ).toBe(true);
+    }
   });
 
   it('pins exactly the roles this build has', () => {

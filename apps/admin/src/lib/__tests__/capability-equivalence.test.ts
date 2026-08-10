@@ -26,6 +26,13 @@ import { CAPABILITIES, EXEC_BASELINE, TRAINER_BASELINE, UNRESTRICTED, permits, t
 // prove nothing at all. It is deliberately a second, independent write-down of
 // the same fact, and the last assertion in this file is the two of them being
 // compared.
+//
+// WHEN `<area>.page` SPLIT OFF FROM `<area>.read`, fourteen rows were RENAMED
+// and two were added — and not one existing row's admin/exec/trainer answer
+// moved. That is the whole claim of that change and this is where it is checked:
+// a page key that used to be a read gates the same door it always gated, and the
+// two new keys (fees.page, platform.page) name doors that already existed and
+// take the answers those doors already gave.
 
 type Row = {
   capability: Capability;
@@ -41,7 +48,7 @@ const F = false;
 
 const TODAY: Row[] = [
   // ---- players ---------------------------------------------------------
-  { capability: 'players.read',                        admin: T, exec: T, trainer: T, was: "SECTION_ACCESS['/players'] = 'trainer'" },
+  { capability: 'players.page',                        admin: T, exec: T, trainer: T, was: "SECTION_ACCESS['/players'] = 'trainer'" },
   { capability: 'players.approve.write',               admin: T, exec: T, trainer: F, was: "getExecOrAdmin('internal') — players.ts:27" },
   { capability: 'players.create.write',                admin: T, exec: T, trainer: F, was: "getExecOrAdmin('internal') — players.ts:95" },
   { capability: 'players.update.write',                admin: T, exec: T, trainer: F, was: "getExecOrAdmin('internal') — players.ts:152" },
@@ -58,14 +65,14 @@ const TODAY: Row[] = [
   { capability: 'players.privilegedfields.write',      admin: T, exec: F, trainer: F, was: 'ADMIN_ONLY_PLAYER_FIELDS — player-field-access.ts' },
 
   // ---- seasons ---------------------------------------------------------
-  { capability: 'seasons.read',                        admin: T, exec: T, trainer: F, was: "getAuthenticatedExecOrAdmin('internal') — seasons/page.tsx:16" },
+  { capability: 'seasons.page',                        admin: T, exec: T, trainer: F, was: "getAuthenticatedExecOrAdmin('internal') — seasons/page.tsx:16" },
   { capability: 'seasons.create.write',                admin: T, exec: T, trainer: F, was: "getExecOrAdmin('internal') — seasons.ts:18" },
   { capability: 'seasons.activate.write',              admin: T, exec: T, trainer: F, was: "getExecOrAdmin('internal') — seasons.ts:88" },
   { capability: 'seasons.end.write',                   admin: T, exec: T, trainer: F, was: "getExecOrAdmin('internal') — seasons.ts:112" },
   { capability: 'seasons.fees.write',                  admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — seasons.ts:54' },
 
   // ---- sessions --------------------------------------------------------
-  { capability: 'sessions.read',                       admin: T, exec: T, trainer: F, was: "SECTION_ACCESS['/sessions'] = 'exec'" },
+  { capability: 'sessions.page',                       admin: T, exec: T, trainer: F, was: "SECTION_ACCESS['/sessions'] = 'exec'" },
   { capability: 'sessions.reminders.write',            admin: T, exec: T, trainer: F, was: "getExecOrAdmin('tournaments') — sessions.ts:44" },
   { capability: 'sessions.create.write',               admin: T, exec: T, trainer: F, was: "getExecOrAdmin('tournaments') — sessions.ts:61" },
   { capability: 'sessions.update.write',               admin: T, exec: T, trainer: F, was: "getExecOrAdmin('tournaments') — sessions.ts:147" },
@@ -75,7 +82,7 @@ const TODAY: Row[] = [
   { capability: 'sessions.delete.write',               admin: T, exec: T, trainer: F, was: "getExecOrAdmin('tournaments') — sessions.ts:365" },
 
   // ---- matches ---------------------------------------------------------
-  { capability: 'matches.read',                        admin: T, exec: T, trainer: F, was: "SECTION_ACCESS['/matches'] = 'exec'" },
+  { capability: 'matches.page',                        admin: T, exec: T, trainer: F, was: "SECTION_ACCESS['/matches'] = 'exec'" },
   { capability: 'matches.void.write',                  admin: T, exec: T, trainer: F, was: "getExecOrAdmin('tournaments') — matches.ts:28" },
   { capability: 'matches.convert.write',               admin: T, exec: T, trainer: F, was: "getExecOrAdmin('tournaments') — matches.ts:68" },
   { capability: 'matches.create.write',                admin: T, exec: T, trainer: F, was: "getExecOrAdmin('tournaments') — matches.ts:212" },
@@ -83,18 +90,18 @@ const TODAY: Row[] = [
   // ---- challenges ------------------------------------------------------
   // Both live in actions/matches.ts, and both stood behind getAdminPlayer().
   // Filing them under `matches` would have handed them to every exec.
-  { capability: 'challenges.read',                     admin: T, exec: F, trainer: F, was: "SECTION_ACCESS['/challenges'] = 'admin'" },
+  { capability: 'challenges.page',                     admin: T, exec: F, trainer: F, was: "SECTION_ACCESS['/challenges'] = 'admin'" },
   { capability: 'challenges.create.write',             admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — matches.ts:386' },
   { capability: 'challenges.expire.write',             admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — matches.ts:464' },
 
   // ---- announcements ---------------------------------------------------
-  { capability: 'announcements.read',                  admin: T, exec: T, trainer: F, was: "SECTION_ACCESS['/announcements'] = 'exec'" },
+  { capability: 'announcements.page',                  admin: T, exec: T, trainer: F, was: "SECTION_ACCESS['/announcements'] = 'exec'" },
   { capability: 'announcements.create.write',          admin: T, exec: T, trainer: F, was: "getExecOrAdmin('external') — announcements.ts:69" },
   { capability: 'announcements.update.write',          admin: T, exec: T, trainer: F, was: "getExecOrAdmin('external') — announcements.ts:137" },
   { capability: 'announcements.delete.write',          admin: T, exec: T, trainer: F, was: "getExecOrAdmin('external') — announcements.ts:189" },
 
   // ---- tournaments · manage --------------------------------------------
-  { capability: 'tournaments.manage.read',             admin: T, exec: T, trainer: F, was: "getAuthenticatedExecOrAdmin('tournaments') — tournaments/[id]/page.tsx:18" },
+  { capability: 'tournaments.page',                    admin: T, exec: T, trainer: F, was: "getAuthenticatedExecOrAdmin('tournaments') — tournaments/[id]/page.tsx:18" },
   { capability: 'tournaments.manage.create.write',     admin: T, exec: T, trainer: F, was: "getExecOrAdmin('tournaments') — tournaments.ts:24" },
   { capability: 'tournaments.manage.update.write',     admin: T, exec: T, trainer: F, was: "getExecOrAdmin('tournaments') — tournaments.ts:129" },
   { capability: 'tournaments.manage.status.write',     admin: T, exec: T, trainer: F, was: "getExecOrAdmin('tournaments') — tournaments.ts:68" },
@@ -147,8 +154,15 @@ const TODAY: Row[] = [
   { capability: 'tournaments.fees.markunpaid.write',  admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — tournament-fees.ts:294' },
 
   // ---- fees ------------------------------------------------------------
-  // The two exec rows in this whole area are the club owner's "allow execs to
-  // add expenses too", and nothing else on the page ever was.
+  // The exec rows in this whole area are the club owner's "allow execs to add
+  // expenses too", and nothing else on the page ever was.
+  //
+  // fees.page is one of the two capabilities in this table with no predecessor
+  // to transcribe, because /fees was the one section whose page key did not
+  // already exist under a `.read` name. Its exec answer is not a judgement: an
+  // exec reaches /fees today, so an exec holds the key that admits them, or this
+  // change would have taken the Expenses tab away from every exec in the club.
+  { capability: 'fees.page',                          admin: T, exec: T, trainer: F, was: "SECTION_ACCESS['/fees'] = 'exec' — the route an exec already reaches" },
   { capability: 'fees.expenses.read',                 admin: T, exec: T, trainer: F, was: "getAuthenticatedExecOrAdmin('finance') — fees/page.tsx:59" },
   { capability: 'fees.expenses.add.write',            admin: T, exec: T, trainer: F, was: "getExecOrAdmin('finance') — finance.ts:171" },
   { capability: 'fees.expenses.update.write',         admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — finance.ts:247' },
@@ -172,30 +186,34 @@ const TODAY: Row[] = [
   // requireReacceptance lives in actions/settings.ts but belongs to /legal —
   // the one exec gate in that file, and the reason this area is not uniform
   // with its file.
-  { capability: 'legal.read',                         admin: T, exec: T, trainer: F, was: "getAuthenticatedExecOrAdmin('external') — legal/page.tsx:18" },
+  { capability: 'legal.page',                         admin: T, exec: T, trainer: F, was: "getAuthenticatedExecOrAdmin('external') — legal/page.tsx:18" },
   { capability: 'legal.reacceptance.write',           admin: T, exec: T, trainer: F, was: "getExecOrAdmin('external') — settings.ts:185" },
   { capability: 'legal.documents.write',              admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — settings.ts:71' },
   { capability: 'legal.waivertemplate.write',         admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — settings.ts:124' },
 
   // ---- walkovers -------------------------------------------------------
-  { capability: 'walkovers.read',                     admin: T, exec: F, trainer: F, was: "SECTION_ACCESS['/walkovers'] = 'admin'" },
+  { capability: 'walkovers.page',                     admin: T, exec: F, trainer: F, was: "SECTION_ACCESS['/walkovers'] = 'admin'" },
   { capability: 'walkovers.confirm.write',            admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — walkovers.ts:15' },
   { capability: 'walkovers.reject.write',             admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — walkovers.ts:48' },
 
   // ---- disputes --------------------------------------------------------
-  { capability: 'disputes.read',                      admin: T, exec: F, trainer: F, was: "SECTION_ACCESS['/disputes'] = 'admin'" },
+  { capability: 'disputes.page',                      admin: T, exec: F, trainer: F, was: "SECTION_ACCESS['/disputes'] = 'admin'" },
   { capability: 'disputes.resolve.write',             admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — disputes.ts:18' },
 
   // ---- permissions -----------------------------------------------------
-  { capability: 'permissions.read',                   admin: T, exec: F, trainer: F, was: 'getAuthenticatedAdmin() — permissions/page.tsx:18' },
+  { capability: 'permissions.page',                   admin: T, exec: F, trainer: F, was: 'getAuthenticatedAdmin() — permissions/page.tsx:18' },
   { capability: 'permissions.write',                  admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — portfolios.ts:32 (setPlayerPortfolio)' },
 
   // ---- audit / ratings / accounts --------------------------------------
-  { capability: 'audit.read',                         admin: T, exec: F, trainer: F, was: "SECTION_ACCESS['/audit'] = 'admin'" },
-  { capability: 'ratings.read',                       admin: T, exec: F, trainer: F, was: 'getAuthenticatedAdmin() — ratings/page.tsx:17' },
-  { capability: 'accounts.read',                      admin: T, exec: F, trainer: F, was: 'getAuthenticatedAdmin() — accounts/page.tsx:12' },
+  { capability: 'audit.page',                         admin: T, exec: F, trainer: F, was: "SECTION_ACCESS['/audit'] = 'admin'" },
+  { capability: 'ratings.page',                       admin: T, exec: F, trainer: F, was: 'getAuthenticatedAdmin() — ratings/page.tsx:17' },
+  { capability: 'accounts.page',                      admin: T, exec: F, trainer: F, was: 'getAuthenticatedAdmin() — accounts/page.tsx:12' },
 
   // ---- platform --------------------------------------------------------
+  // The other capability with no predecessor. `platform` has no route, so its
+  // page gates the settings FORM on /ratings and /accounts — both of which were
+  // admin-only in every half, which is where this row's answers come from.
+  { capability: 'platform.page',                      admin: T, exec: F, trainer: F, was: 'getAuthenticatedAdmin() — the form on ratings/page.tsx and accounts/page.tsx' },
   { capability: 'platform.settings.write',            admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — settings.ts:14' },
 ];
 

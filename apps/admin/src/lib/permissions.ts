@@ -19,16 +19,22 @@
 //             ./player-field-access.ts, where their writable field set is EMPTY.
 //
 // This file's job is the admin-only half: which PATH needs which capability.
-// It maps a path to a capability NAMESPACE, and admits anyone holding at least
-// one `<namespace>.….read`. Written that way rather than as "the section's
-// level" because the two answers have come apart: an exec granted `audit.read`
-// must reach /audit, and no minimum level expresses that.
+// It maps a path to ONE capability and admits anyone holding it. Written that
+// way rather than as "the section's level" because the two answers have come
+// apart: an exec granted `audit.page` must reach /audit, and no minimum level
+// expresses that.
+//
+// THE CAPABILITY A SECTION ASKS FOR IS ITS `<area>.page` — that is what a page
+// key is for, and it is why the mode exists. Asking for "any read in the area"
+// (which this map used to do) made opening a section and seeing its data the
+// same permission, so somebody who should come in to ADD without browsing could
+// not get through the door at all.
 //
 // THREE OUTCOMES, no `||` on a security check:
 //   1. A baseline path (`/`, `/dashboard`, `/settings`, `/api/passkey`) — the
 //      front door, the landing page and enrolling your own passkeys. Any
 //      console level at all.
-//   2. A path that resolves to a namespace — holds a read under it.
+//   2. A path that resolves to a capability — holds it.
 //   3. An UNMATCHED path — admin by level. The safety net is kept: a section
 //      added to the app without an entry here is admin-only, not open to the
 //      newest level.
@@ -44,6 +50,7 @@ import {
   atLeast,
   effectiveCapabilities,
   type AccessLevel,
+  type Capability,
   type Permissions,
 } from '@badminton/shared/src/utils/access-level';
 
@@ -57,6 +64,7 @@ export {
   hasConsoleAccess,
   isCapability,
   isInGoodStanding,
+  pageOf,
   permissionsOf,
   permissionTripleOf,
   permits,
@@ -80,78 +88,85 @@ export type {
   PermissionsInput,
 } from '@badminton/shared/src/utils/access-level';
 
-// WHICH SECTION ASKS FOR WHICH CAPABILITIES. The value is a dotted namespace,
-// and a person may open the section when they hold at least one read beneath it.
+// WHICH SECTION ASKS FOR WHICH CAPABILITY. One page key per section, and a
+// person may open it when they hold that key.
 //
 // The level column that used to live here is gone. It said the same thing twice
 // for every row but one, and the row where it did not — /fees — is the reason
 // this shape changed.
-const SECTION_NAMESPACE: { [pathPrefix: string]: string } = {
-  '/announcements': 'announcements',
-  '/matches': 'matches',
-  '/tournaments': 'tournaments',
-  '/sessions': 'sessions',
-  '/seasons': 'seasons',
-  // Finances. `fees` covers five ledgers with five separate reads, and an exec
-  // holds exactly one of them — fees.expenses.read — because the club owner
-  // asked for "execs can add expenses", not for the finance page. Club fees,
-  // other income, reinstatements and the net position are separate capabilities
-  // in nobody's baseline, and /fees/page.tsx enforces that by skipping their
-  // FETCHES rather than hiding the rendered output: a hidden card whose query
-  // still ran ships the figures into the RSC payload for anyone with devtools.
-  // Same reasoning, and the same shape, as dashboard/page.tsx.
+const SECTION_CAPABILITY: { [pathPrefix: string]: Capability } = {
+  '/announcements': 'announcements.page',
+  '/matches': 'matches.page',
+  '/tournaments': 'tournaments.page',
+  '/sessions': 'sessions.page',
+  '/seasons': 'seasons.page',
+  // Finances. `fees.page` buys the SECTION and nothing in it: the five ledgers
+  // behind it — club fees, other income, expenses, reinstatements, the net
+  // position — each have their own read, and an exec holds exactly one of them
+  // (fees.expenses.read) because the club owner asked for "execs can add
+  // expenses", not for the finance page. /fees/page.tsx enforces that by
+  // skipping their FETCHES rather than hiding the rendered output: a hidden card
+  // whose query still ran ships the figures into the RSC payload for anyone with
+  // devtools. Same reasoning, and the same shape, as dashboard/page.tsx.
   //
-  // This line is therefore NOT the whole story for this section, unlike every
-  // other entry in this map. Anything that asks "may this person see club
-  // money?" must ask for the capability the DATA needs — fees.clubfees.read,
-  // fees.netposition.read — and must NOT reuse canAccess(…, '/fees'), which is
-  // satisfied by the expenses read alone. The dashboard finance snapshot is the
-  // one place that nearly did, and reusing this line is precisely what would
-  // have leaked it.
-  '/fees': 'fees',
-  '/audit': 'audit',
-  // Execs read the documents and may require a re-signature; only admins edit
+  // SO THIS LINE IS NOT THE WHOLE STORY FOR THIS SECTION, and the split into
+  // page-and-reads makes that sharper rather than softer: fees.page is now
+  // satisfied by somebody who may see NO ledger at all. Anything that asks "may
+  // this person see club money?" must ask for the capability the DATA needs —
+  // fees.clubfees.read, fees.netposition.read — and must NOT reuse
+  // canAccess(…, '/fees'). The dashboard finance snapshot is the one place that
+  // nearly did, and reusing this line is precisely what would have leaked it.
+  '/fees': 'fees.page',
+  '/audit': 'audit.page',
+  // Execs open the documents and may require a re-signature; only admins edit
   // the text. That split is three separate capabilities under `legal`, enforced
   // in the page and in the server actions — this line only decides who may open
   // the section.
-  '/legal': 'legal',
+  '/legal': 'legal.page',
   // Platform configuration, split out of /settings. Admin-only in BOTH halves,
   // unlike Legal: the club owner wants execs kept off the rating and account
-  // rules entirely, not shown a read-only copy. Neither read is in any
+  // rules entirely, not shown a read-only copy. Neither page key is in any
   // baseline, and each page re-checks — this line only decides who may open the
-  // section.
-  '/ratings': 'ratings',
-  '/accounts': 'accounts',
+  // section. The settings FORM on both is its own area, `platform.page`.
+  '/ratings': 'ratings.page',
+  '/accounts': 'accounts.page',
   // Execs run the roster: approve, edit, ban/unban, varsity notes. Granting
   // exec/admin is NOT part of that — the per-field split lives in
   // ./player-field-access.ts, and destructive actions (remove, merge) ask for
   // capabilities no baseline holds.
   //
-  // Trainers get in here too, and ONLY to read: this is where the varsity notes
+  // Trainers get in here too, and ONLY to look: this is where the varsity notes
   // live, and finding the player you are writing about means seeing the list.
-  // players.read is the whole of their claim on this section.
-  '/players': 'players',
-  '/disputes': 'disputes',
-  '/walkovers': 'walkovers',
-  '/challenges': 'challenges',
-  // The permission editor. permissions.read is in no baseline, so it is
+  // players.page is the whole of their claim on this section, and the area has
+  // no read because the roster list IS the page — there is no second fetch here
+  // to withhold from somebody who may open it.
+  '/players': 'players.page',
+  '/disputes': 'disputes.page',
+  '/walkovers': 'walkovers.page',
+  '/challenges': 'challenges.page',
+  // The permission editor. permissions.page is in no baseline, so it is
   // admin-only exactly as before, and it must STAY that way for anyone who is
   // not deliberately given it — someone who could reach it and hold
   // permissions.write could hand themselves anything they already have.
-  '/permissions': 'permissions',
+  '/permissions': 'permissions.page',
 };
 
-// Sub-routes whose namespace is NARROWER than the section they sit inside, and
-// which would otherwise inherit it by prefix match. Tournament entry fees live
-// at /tournaments/<id>/fees: execs run tournaments, but entry money is its own
-// group under `tournaments.fees` and no baseline holds its read. Checked before
-// the prefix map.
+// Sub-routes that ask for something NARROWER than the section they sit inside,
+// and which would otherwise inherit its page key by prefix match. Tournament
+// entry fees live at /tournaments/<id>/fees: execs run tournaments and hold
+// tournaments.page, but entry money is its own group and no baseline holds
+// tournaments.fees.read. Checked before the prefix map.
+//
+// A READ, not a second page: page keys are one per AREA, at depth 2, and entry
+// money is a group inside `tournaments` rather than an area of its own. What the
+// sub-route withholds is the fee roster, which is data — so a read is the right
+// mode as well as the only available one.
 //
 // This replaces the old ADMIN_ONLY_PATTERNS list, and the replacement is a
-// namespace rather than a hard "admin": the whole point of the reshape is that
+// capability rather than a hard "admin": the whole point of the reshape is that
 // an admin can hand this section to a treasurer without making them an admin.
-const SECTION_PATTERNS: { pattern: RegExp; namespace: string }[] = [
-  { pattern: /^\/tournaments\/[^/]+\/fees(\/|$)/, namespace: 'tournaments.fees' },
+const SECTION_PATTERNS: { pattern: RegExp; capability: Capability }[] = [
+  { pattern: /^\/tournaments\/[^/]+\/fees(\/|$)/, capability: 'tournaments.fees.read' },
 ];
 
 // What every console user keeps regardless of what they hold. These are not
@@ -159,7 +174,7 @@ const SECTION_PATTERNS: { pattern: RegExp; namespace: string }[] = [
 // Without them a narrowed person would be locked out of the console entirely —
 // including out of enrolling the passkey the console demands of them.
 //
-// Matched with the same segment-prefix rule as SECTION_NAMESPACE, so '/' is the
+// Matched with the same segment-prefix rule as SECTION_CAPABILITY, so '/' is the
 // root and nothing else. The console root only redirects to /dashboard
 // (app/page.tsx), but middleware runs BEFORE the redirect, so without it every
 // non-admin opening /admin — which is where the player app's "Exec Panel" link
@@ -182,24 +197,12 @@ function longestPrefixMatch<T>(map: { [prefix: string]: T }, pathname: string): 
   return best ? map[best] : undefined;
 }
 
-// The capability namespace this path belongs to, or undefined for a path no
-// section claims.
-function sectionNamespace(pathname: string): string | undefined {
-  for (const { pattern, namespace } of SECTION_PATTERNS) {
-    if (pattern.test(pathname)) return namespace;
+// The capability this path asks for, or undefined for a path no section claims.
+function sectionCapability(pathname: string): Capability | undefined {
+  for (const { pattern, capability } of SECTION_PATTERNS) {
+    if (pattern.test(pathname)) return capability;
   }
-  return longestPrefixMatch(SECTION_NAMESPACE, pathname);
-}
-
-// Holds at least one READ beneath this namespace. Reads only: a section is a
-// place you look at, and a write without its read is pruned by the resolver
-// anyway, so "holds a write here but no read" is not a state that exists.
-function holdsReadIn(capabilities: ReadonlySet<string>, namespace: string): boolean {
-  const prefix = namespace + '.';
-  for (const capability of capabilities) {
-    if (capability.startsWith(prefix) && capability.endsWith('.read')) return true;
-  }
-  return false;
+  return longestPrefixMatch(SECTION_CAPABILITY, pathname);
 }
 
 /**
@@ -223,9 +226,9 @@ export function canAccess(
   if (BASELINE_SECTIONS.some((prefix) => isUnder(pathname, prefix))) {
     return atLeast(level, 'trainer');
   }
-  const namespace = sectionNamespace(pathname);
+  const capability = sectionCapability(pathname);
   // Fail closed on a path nobody claimed. An admin still gets in, so a new
   // section is reachable by the person who can fix the omission.
-  if (namespace === undefined) return level === 'admin';
-  return holdsReadIn(effectiveCapabilities(level, permissions), namespace);
+  if (capability === undefined) return level === 'admin';
+  return effectiveCapabilities(level, permissions).has(capability);
 }

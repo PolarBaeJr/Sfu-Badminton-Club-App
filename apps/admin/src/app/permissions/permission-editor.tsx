@@ -6,7 +6,7 @@ import { Badge, Button, Card, Dialog, Input, Select, useConfirm } from '@badmint
 import { ChevronDown, ChevronRight, ShieldAlert } from 'lucide-react';
 import { useToast } from '@/components/toast-provider';
 import { setPlayerPermissions } from '@/lib/actions';
-// Labels and grouping for all 113. Its own module precisely so that pages
+// Labels and grouping for all 115. Its own module precisely so that pages
 // which only need the vocabulary do not ship it; the editor is the one screen
 // that genuinely does.
 import { CAPABILITY_GATES } from '@badminton/shared/src/utils/capability-gates';
@@ -69,15 +69,20 @@ const GROUP_LABELS: Record<string, string> = {
   playerflags: 'Fee flags',
 };
 
-// TIER 2 APPEARS ONLY WHERE IT EARNS ITS KEEP. Tournaments is 37 of the 69
+// TIER 2 APPEARS ONLY WHERE IT EARNS ITS KEEP. Tournaments is 38 of the 70
 // offerable capabilities and is unreadable as one flat list; every other area
 // is eight rows or fewer, and wrapping four rows in a collapsible group is a
 // click that buys nothing. The threshold is a rendering decision, not a
 // boundary — nothing about access depends on which tier a leaf is drawn at.
 const FLAT_UNDER = 9;
 
-type Leaf = { capability: Capability; label: string; mode: 'read' | 'write' };
-type Node = { key: string; label: string; leaves: Leaf[]; children: Node[] };
+type Leaf = { capability: Capability; label: string; mode: 'page' | 'read' | 'write' };
+// `page` is held apart from `leaves` rather than sorted to the front of them.
+// It is not a peer of the data reads: it is the thing every other row in the
+// area depends on, and the resolver prunes the lot when it is off. Giving it its
+// own slot is what lets the area render it as a statement rather than as the
+// first tick box in a list.
+type Node = { key: string; label: string; page: Leaf | null; leaves: Leaf[]; children: Node[] };
 
 // The tree, built once from the offerable list. Ordering follows
 // EDITOR_OFFERABLE, which follows the exec baseline, which reads top-down as
@@ -88,10 +93,12 @@ function buildTree(): Node[] {
     const entry = CAPABILITY_GATES[capability];
     let area = areas.find((a) => a.key === entry.area);
     if (!area) {
-      area = { key: entry.area, label: AREA_LABELS[entry.area], leaves: [], children: [] };
+      area = { key: entry.area, label: AREA_LABELS[entry.area], page: null, leaves: [], children: [] };
       areas.push(area);
     }
-    area.leaves.push({ capability, label: entry.label, mode: entry.mode });
+    const leaf: Leaf = { capability, label: entry.label, mode: entry.mode };
+    if (entry.mode === 'page') area.page = leaf;
+    else area.leaves.push(leaf);
   }
   for (const area of areas) {
     if (area.leaves.length < FLAT_UNDER) continue;
@@ -103,6 +110,7 @@ function buildTree(): Node[] {
         child = {
           key: `${area.key}.${group}`,
           label: GROUP_LABELS[group] ?? group,
+          page: null,
           leaves: [],
           children: [],
         };
@@ -290,8 +298,16 @@ export function PermissionEditor({
     leaf.label.toLowerCase().includes(query) ||
     leaf.capability.includes(query);
 
+  function allLeaves(node: Node): Leaf[] {
+    return [
+      ...(node.page ? [node.page] : []),
+      ...node.leaves,
+      ...node.children.flatMap(allLeaves),
+    ];
+  }
+
   function visibleLeaves(node: Node): Leaf[] {
-    return [...node.leaves.filter(matches), ...node.children.flatMap(visibleLeaves)];
+    return allLeaves(node).filter(matches);
   }
 
   function isOpen(node: Node): boolean {
@@ -306,7 +322,7 @@ export function PermissionEditor({
 
   /** Roll-up for a header. Display only — a header is never a control. */
   function chipFor(node: Node): string {
-    const leaves = [...node.leaves, ...node.children.flatMap((c) => c.leaves)];
+    const leaves = allLeaves(node);
     const on = leaves.filter((l) => effective.has(l.capability)).length;
     const granted = leaves.filter((l) => stateOf(l.capability) === 'granted').length;
     const revoked = leaves.filter((l) => stateOf(l.capability) === 'revoked').length;
@@ -320,9 +336,14 @@ export function PermissionEditor({
   // that toggled would need an aggregate state — half on, half off — and an
   // aggregate state is a thing a person can misread. These write the individual
   // leaves, one delta element each, exactly as clicking them would.
+  //
+  // "Reads" means everything that is not a WRITE, so the page comes with them.
+  // A set of reads without the area's page is a set the resolver deletes on the
+  // way in, and a button that silently produced one would be a button that does
+  // nothing.
   function setAll(node: Node, on: boolean, readsOnly: boolean) {
-    const leaves = [...node.leaves, ...node.children.flatMap((c) => c.leaves)]
-      .filter((l) => (readsOnly ? l.mode === 'read' : true))
+    const leaves = allLeaves(node)
+      .filter((l) => (readsOnly ? l.mode !== 'write' : true))
       .filter((l) => held.has(l.capability))
       .filter((l) => l.capability !== 'permissions.write');
     for (const leaf of leaves) {
@@ -394,6 +415,39 @@ export function PermissionEditor({
     );
   };
 
+  // THE PAGE ROW. Its own shape at the top of the area, not a cell in the list
+  // below it, because it is not one more thing you can tick: it is the switch
+  // the rest of the area hangs off. Everything else here is deleted by the
+  // resolver while this is off, and a row that looked like a peer of the data
+  // reads would make that look like a bug rather than the rule.
+  const pageCell = (leaf: Leaf) => {
+    const state = stateOf(leaf.capability);
+    const mine = held.has(leaf.capability);
+    const on = effective.has(leaf.capability);
+    return (
+      <div className="flex items-center justify-between gap-3 py-2.5 pl-6 pr-3 border-t border-[var(--border)] bg-[var(--bg-elevated)]">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-[var(--text-primary)]">{leaf.label}</p>
+          <p className="text-[11px] text-[var(--text-muted)]">
+            {on
+              ? 'They can open this section. What they see and do inside it is set below.'
+              : 'Off — nothing else in this area applies, whatever is set below.'}
+          </p>
+          <p className="font-mono text-[11px] text-[var(--text-muted)]">{leaf.capability}</p>
+          {!mine && <p className="text-[11px] text-[var(--text-muted)]">You do not hold this.</p>}
+        </div>
+        <button
+          type="button"
+          disabled={!editable || role === null || !mine}
+          onClick={() => toggle(leaf.capability)}
+          className={`flex-shrink-0 min-h-[36px] px-3 rounded-[8px] border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${CELL_CLASS[state]}`}
+        >
+          {CELL_TEXT[state]}
+        </button>
+      </div>
+    );
+  };
+
   const renderNode = (node: Node, depth: number) => {
     const leaves = visibleLeaves(node);
     if (leaves.length === 0) return null;
@@ -423,6 +477,7 @@ export function PermissionEditor({
         </div>
         {open && (
           <div>
+            {node.page && matches(node.page) && pageCell(node.page)}
             {node.leaves.filter(matches).map(cell)}
             {node.children.map((child) => renderNode(child, depth + 1))}
           </div>
@@ -547,10 +602,10 @@ export function PermissionEditor({
             </div>
 
             {/* NO DELTA CONTROLS FOR AN UNRESTRICTED PERSON, and the tree goes
-                with them. An unrestricted exec holds all 69 of these, but they
+                with them. An unrestricted exec holds all 70 of these, but they
                 hold them because of their LEVEL and not because of anything
-                stored — so every cell would read "off" beside a panel saying 69
-                of 113, which is two true statements that look like a
+                stored — so every cell would read "off" beside a panel saying 70
+                of 115, which is two true statements that look like a
                 contradiction. Pick a role first. */}
             {editable && role !== null && (
               <Input

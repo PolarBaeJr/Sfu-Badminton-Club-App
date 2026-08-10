@@ -46,7 +46,23 @@ export type AccessLevelInput = {
 // THE CAPABILITY VOCABULARY
 // ---------------------------------------------------------------------------
 // One capability per distinct enforced action. `area ('.' resource)* '.' mode`,
-// segments lower-case alphanumeric, mode ∈ {read, write}, depth 2–5.
+// segments lower-case alphanumeric, mode ∈ {page, read, write}, depth 2–5.
+//
+// THREE MODES, because "may open this section" and "may see the data in it" are
+// different questions and the club needs them answered separately. The owner's
+// case is somebody who comes in to ADD without browsing: "access the page to add
+// stuff, but not see the details in them".
+//
+//  - `<area>.page`                   may open the section. Depth 2, exactly one
+//                                    per area, and the only thing the route gate
+//                                    and the nav ever ask for.
+//  - `<area>.<resource>.read`        may see that particular data. Gates an
+//                                    individual FETCH, never a page shell.
+//  - `<area>.<resource>.<verb>.write` may perform that action.
+//
+// A `.read` exists only where something is actually gated on it. Several areas
+// have a page and no read at all, and that is correct rather than an omission —
+// inventing a read nothing checks would be a tick box the app does not honour.
 //
 // This replaces exec portfolios, which were a closed set of four VP jobs. Four
 // jobs could only ever cut the console four ways, and the club's real question
@@ -64,8 +80,8 @@ export type AccessLevelInput = {
 //     every entry. A capability with no gate is a promise the app does not keep.
 //  4. Drift tests: the literal list is pinned, no capability's resource path is
 //     a strict prefix of another's at the same mode, every first segment is an
-//     area, every area has at least one capability, and both baselines are
-//     subsets of this list.
+//     area, every area has exactly one `.page`, and both baselines are subsets
+//     of this list.
 //  5. REMOVAL IS A MIGRATION. Once permissions are stored (00087), deleting a
 //     capability while a stored `permission_revokes` array still names it turns
 //     a live revoke into a silent no-op — the one way this model can widen
@@ -102,7 +118,10 @@ export type Area = (typeof AREAS)[number];
 
 export const CAPABILITIES = [
   // ---- players -----------------------------------------------------------
-  'players.read',
+  // No `players.read`: the roster list IS the page, and nothing on /players
+  // fetches behind a second gate. Opening the section and seeing the roster are
+  // the same act here, so there is one capability for it.
+  'players.page',
   'players.approve.write',
   'players.create.write',
   'players.update.write',
@@ -120,14 +139,14 @@ export const CAPABILITIES = [
   'players.privilegedfields.write',
 
   // ---- seasons -----------------------------------------------------------
-  'seasons.read',
+  'seasons.page',
   'seasons.create.write',
   'seasons.activate.write',
   'seasons.end.write',
   'seasons.fees.write',
 
   // ---- sessions ----------------------------------------------------------
-  'sessions.read',
+  'sessions.page',
   'sessions.reminders.write',
   'sessions.create.write',
   'sessions.update.write',
@@ -137,7 +156,7 @@ export const CAPABILITIES = [
   'sessions.delete.write',
 
   // ---- matches -----------------------------------------------------------
-  'matches.read',
+  'matches.page',
   'matches.void.write',
   'matches.convert.write',
   'matches.create.write',
@@ -147,21 +166,26 @@ export const CAPABILITIES = [
   // actions live in actions/matches.ts, but /challenges is its own section and
   // its own boundary. Filing them under matches would have handed both to every
   // exec, because everything else in that file is exec work.
-  'challenges.read',
+  'challenges.page',
   'challenges.create.write',
   'challenges.expire.write',
 
   // ---- announcements -----------------------------------------------------
-  'announcements.read',
+  'announcements.page',
   'announcements.create.write',
   'announcements.update.write',
   'announcements.delete.write',
 
   // ---- tournaments -------------------------------------------------------
-  // The largest area by a distance: 43 of the 113. Four groups, and the split
+  // The largest area by a distance: 43 of the 115. Four groups, and the split
   // matters — running a draw, entering results and handling entry money are
   // three different jobs that happen to share a section.
-  'tournaments.manage.read',
+  //
+  // `tournaments.fees.read` is the one read that survives here, and it is a read
+  // rather than a second page because a page is one per AREA: entry money sits
+  // at /tournaments/<id>/fees, inside a section execs already reach, and its own
+  // roster is the data being withheld.
+  'tournaments.page',
   'tournaments.manage.create.write',
   'tournaments.manage.update.write',
   'tournaments.manage.status.write',
@@ -206,9 +230,17 @@ export const CAPABILITIES = [
   'tournaments.fees.markunpaid.write',
 
   // ---- fees --------------------------------------------------------------
-  // Four ledgers plus the net position, each with its own read. /fees is a
-  // single section that has always been two boundaries: an exec may file the
-  // expense they paid out of pocket, and nothing else on the page is theirs.
+  // Four ledgers plus the net position, each with its own read, under one page
+  // key. /fees is a single section that has always been two boundaries: an exec
+  // may file the expense they paid out of pocket, and nothing else on the page
+  // is theirs.
+  //
+  // THE AREA THE THREE-MODE SPLIT WAS FOR. `fees.page` plus
+  // `fees.expenses.add.write` and no read at all opens the section, shows no
+  // ledger and no net position, and offers the Add expense form — the club
+  // owner's "access the page to add stuff, but not see the details in them",
+  // which the old model could not express at all.
+  'fees.page',
   'fees.expenses.read',
   'fees.expenses.add.write',
   'fees.expenses.update.write',
@@ -229,35 +261,41 @@ export const CAPABILITIES = [
   'fees.playerflags.write',
 
   // ---- legal -------------------------------------------------------------
-  'legal.read',
+  'legal.page',
   'legal.reacceptance.write',
   'legal.documents.write',
   'legal.waivertemplate.write',
 
   // ---- walkovers ---------------------------------------------------------
-  'walkovers.read',
+  'walkovers.page',
   'walkovers.confirm.write',
   'walkovers.reject.write',
 
   // ---- disputes ----------------------------------------------------------
-  'disputes.read',
+  'disputes.page',
   'disputes.resolve.write',
 
   // ---- permissions -------------------------------------------------------
   // The dangerous pair. A holder of permissions.write can hand out any
   // capability they themselves hold — grant closure bounds that, but within the
   // bound it is unlimited and the audit log is the only trace.
-  'permissions.read',
+  'permissions.page',
   'permissions.write',
 
   // ---- audit / ratings / accounts ----------------------------------------
-  // Read-only sections. Each is its own area so that opening one to somebody
-  // does not open the others.
-  'audit.read',
-  'ratings.read',
-  'accounts.read',
+  // Sections whose whole content is their page. Each is its own area so that
+  // opening one to somebody does not open the others.
+  'audit.page',
+  'ratings.page',
+  'accounts.page',
 
   // ---- platform ----------------------------------------------------------
+  // THE ONE AREA WITH NO ROUTE OF ITS OWN. Platform settings are a form drawn
+  // inside /ratings and /accounts, so `platform.page` gates that form rather
+  // than a path in the section map. It exists because every capability in an
+  // area requires that area's page — without it, platform.settings.write would
+  // be pruned from anybody the resolver ever runs for.
+  'platform.page',
   'platform.settings.write',
 ] as const;
 
@@ -268,6 +306,19 @@ const ALL_CAPABILITIES: ReadonlySet<Capability> = new Set(CAPABILITIES);
 /** Narrow an arbitrary stored string to a capability the vocabulary still has. */
 export function isCapability(value: unknown): value is Capability {
   return typeof value === 'string' && ALL_CAPABILITIES.has(value as Capability);
+}
+
+/**
+ * The page capability of the area a capability belongs to — `fees.expenses.read`
+ * → `fees.page`, and `fees.page` → itself.
+ *
+ * A plain first-segment lookup, which is the whole reason the new invariant
+ * fires for every capability where the old `write ⊆ read` prune fired for two of
+ * ninety-three: it never has to find a sibling that might not exist. Every area
+ * has a page, pinned by a test, so the cast cannot be wrong.
+ */
+export function pageOf(capability: Capability): Capability {
+  return `${capability.split('.')[0]}.page` as Capability;
 }
 
 // ---------------------------------------------------------------------------
@@ -283,14 +334,18 @@ export function isCapability(value: unknown): value is Capability {
 // somebody has widened a level.
 //
 // "Unrestricted" is the LEVEL's baseline, not everything. An unrestricted exec
-// holds 69 capabilities, not 113.
+// holds 70 capabilities, not 115.
+//
+// EVERY AREA A BASELINE REACHES CARRIES THAT AREA'S `.page`. Not a style rule:
+// the resolver prunes any capability whose area page is missing, so a baseline
+// without one would be a level that can do nothing anywhere.
 
 export const TRAINER_BASELINE: readonly Capability[] = [
-  // The entire trainer level, and it always was: read the roster so you can
+  // The entire trainer level, and it always was: open the roster so you can
   // find the person you are writing about, and write the note. Matches
   // TRAINER_WRITABLE_PLAYER_FIELDS being empty — a trainer changes nothing on a
   // player record itself.
-  'players.read',
+  'players.page',
   'players.editor.varsitynotes.write',
 ];
 
@@ -299,7 +354,7 @@ export const EXEC_BASELINE: readonly Capability[] = [
   // write coaching notes. NOT: cancelling a deletion, removing, merging,
   // adjusting reliability, or any privileged field — all of those stood behind
   // getAdminPlayer().
-  'players.read',
+  'players.page',
   'players.approve.write',
   'players.create.write',
   'players.update.write',
@@ -309,13 +364,13 @@ export const EXEC_BASELINE: readonly Capability[] = [
   'players.editor.varsitynotes.write',
 
   // Seasons, except setting the fees — money has always been admin work.
-  'seasons.read',
+  'seasons.page',
   'seasons.create.write',
   'seasons.activate.write',
   'seasons.end.write',
 
   // Sessions, all of them.
-  'sessions.read',
+  'sessions.page',
   'sessions.reminders.write',
   'sessions.create.write',
   'sessions.update.write',
@@ -326,21 +381,22 @@ export const EXEC_BASELINE: readonly Capability[] = [
 
   // Ladder matches, all of them. Challenges are NOT here: both challenge
   // actions live in the same file and both stood behind getAdminPlayer().
-  'matches.read',
+  'matches.page',
   'matches.void.write',
   'matches.convert.write',
   'matches.create.write',
 
   // Announcements, all of them.
-  'announcements.read',
+  'announcements.page',
   'announcements.create.write',
   'announcements.update.write',
   'announcements.delete.write',
 
   // Tournaments: the whole of manage, draw and results. Entry fees are the one
   // group execs never reached — /tournaments/<id>/fees was the single
-  // admin-only sub-route under an exec-allowed section.
-  'tournaments.manage.read',
+  // admin-only sub-route under an exec-allowed section, and it stays out of
+  // reach because `tournaments.fees.read` is not here, not because the page is.
+  'tournaments.page',
   'tournaments.manage.create.write',
   'tournaments.manage.update.write',
   'tournaments.manage.status.write',
@@ -386,12 +442,17 @@ export const EXEC_BASELINE: readonly Capability[] = [
   // was "execs can add expenses", not "execs can see the books" — club fees,
   // other income, reinstatements and the net position stayed admin-only, and
   // /fees enforced that by skipping their FETCHES rather than hiding cards.
+  //
+  // The read is here as well as the page because an exec sees the expense
+  // LEDGER today, not just the form. Dropping it would be the change this task
+  // is forbidden to make.
+  'fees.page',
   'fees.expenses.read',
   'fees.expenses.add.write',
 
-  // Legal: read the documents and require a re-signature. Editing the text is
+  // Legal: open the documents and require a re-signature. Editing the text is
   // admin work.
-  'legal.read',
+  'legal.page',
   'legal.reacceptance.write',
 ];
 
@@ -429,9 +490,10 @@ const BASELINES: Record<AccessLevel, ReadonlySet<Capability>> = {
 // than writing four fresh lists is what makes "assigning a role does the same
 // thing the portfolio did" a fact instead of a hope.
 //
-// EVERY ROLE CARRIES THE READ FOR EVERY AREA IT WRITES IN. Route access is
-// "holds at least one <area>.….read", so a role of writes with no read is a set
-// of controls on a page its holder cannot open. Pinned by a test.
+// EVERY ROLE CARRIES THE PAGE FOR EVERY AREA IT TOUCHES. That is now an
+// invariant of the resolver rather than a courtesy: a capability whose area page
+// is absent is pruned, so a role missing one would grant nothing at all in that
+// area. Pinned by a test.
 export type PermissionRole = 'finance' | 'tournaments' | 'internal' | 'external';
 
 export const PERMISSION_ROLES: readonly PermissionRole[] = [
@@ -456,6 +518,7 @@ export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {
   // rule was "execs can add expenses", and a role that reached the books would
   // be the first role that widens somebody.
   finance: [
+    'fees.page',
     'fees.expenses.read',
     'fees.expenses.add.write',
   ],
@@ -465,7 +528,7 @@ export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {
   // — it was admin-only before and it stays admin-only, which is also why the
   // old portfolio could not reach /tournaments/<id>/fees.
   tournaments: [
-    'sessions.read',
+    'sessions.page',
     'sessions.reminders.write',
     'sessions.create.write',
     'sessions.update.write',
@@ -473,11 +536,11 @@ export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {
     'sessions.checkin.token.write',
     'sessions.attendance.write',
     'sessions.delete.write',
-    'matches.read',
+    'matches.page',
     'matches.void.write',
     'matches.convert.write',
     'matches.create.write',
-    'tournaments.manage.read',
+    'tournaments.page',
     'tournaments.manage.create.write',
     'tournaments.manage.update.write',
     'tournaments.manage.status.write',
@@ -520,7 +583,7 @@ export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {
   // `seasons.fees.write` is absent for the same reason `finance` stops at
   // expenses — setting what a term costs is admin work and always was.
   internal: [
-    'players.read',
+    'players.page',
     'players.approve.write',
     'players.create.write',
     'players.update.write',
@@ -528,21 +591,21 @@ export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {
     'players.ban.write',
     'players.reinstate.write',
     'players.editor.varsitynotes.write',
-    'seasons.read',
+    'seasons.page',
     'seasons.create.write',
     'seasons.activate.write',
     'seasons.end.write',
   ],
 
-  // What the club says to its members and what they sign. Reading the legal
+  // What the club says to its members and what they sign. Opening the legal
   // documents and forcing a re-signature, but not editing the text — that split
   // predates capabilities and is unchanged.
   external: [
-    'announcements.read',
+    'announcements.page',
     'announcements.create.write',
     'announcements.update.write',
     'announcements.delete.write',
-    'legal.read',
+    'legal.page',
     'legal.reacceptance.write',
   ],
 };
@@ -589,8 +652,8 @@ export type PermissionsInput = {
  * holds. That is why varsity notes need no special case — one capability, three
  * baseline entries.
  *
- * Order is load-bearing. Pruning before subtraction would let a revoked read
- * keep its write.
+ * Order is load-bearing. Pruning before subtraction would let a revoked page
+ * keep the section it was supposed to close.
  */
 export function resolvePermissions(
   role: string | null | undefined,
@@ -618,14 +681,24 @@ export function resolvePermissions(
   // to be total — a row that somehow holds both must have one clear answer.
   for (const cap of revokes) if (isCapability(cap)) effective.delete(cap);
 
-  // write ⊆ read, applied AFTER subtraction. This is no longer expressible in
-  // SQL because it is a property of the RESOLVED set, so it lives here: taking
-  // away someone's view of a ledger has to take away their ability to write to
-  // it, or they keep a control they cannot see the consequences of.
+  // THE ONE STRUCTURAL INVARIANT: every capability in an area requires that
+  // area's page. Applied AFTER subtraction, and that order is the whole reason
+  // it is here rather than in a CHECK — revoking `fees.page` has to take the
+  // ledgers and the ledger controls with it even when they came from the ROLE
+  // and are named nowhere in either array. Closing a section has to close it.
+  //
+  // THIS REPLACES `write ⊆ read`, which is GONE and must not come back. Write
+  // without read is now a supported state — the club owner asked for people who
+  // can "access the page to add stuff, but not see the details in them", and the
+  // old rule made exactly that impossible. It was also broken: it looked for an
+  // exact sibling by swapping `.write` for `.read` at the same path, which only
+  // two of the ninety-three writes had, so it fired for two and silently did
+  // nothing for ninety-one. This one is a first-segment lookup, so it fires for
+  // every capability there is.
   for (const cap of Array.from(effective)) {
-    if (!cap.endsWith('.write')) continue;
-    const sibling = `${cap.slice(0, -'.write'.length)}.read`;
-    if (isCapability(sibling) && !effective.has(sibling)) effective.delete(cap);
+    const page = pageOf(cap);
+    if (cap === page) continue;
+    if (!effective.has(page)) effective.delete(cap);
   }
 
   return { kind: 'restricted', capabilities: effective };

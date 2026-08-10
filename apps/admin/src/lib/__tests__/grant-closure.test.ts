@@ -157,7 +157,7 @@ describe('setPlayerPermissions — who may edit whom', () => {
   it('tells a non-admin in plain words that admins are off limits', async () => {
     store.actor = rowFor(EXEC_A);
     store.actor.permission_role = 'finance';
-    store.actor.permission_grants = ['permissions.read', 'permissions.write'];
+    store.actor.permission_grants = ['permissions.page', 'permissions.write'];
 
     const res = await setPlayerPermissions(OTHER_ADMIN, {
       role: 'finance',
@@ -175,7 +175,7 @@ describe('setPlayerPermissions — who may edit whom', () => {
   it('refuses a non-subset target even when the change only narrows them', async () => {
     store.actor = rowFor(EXEC_A);
     store.actor.permission_role = 'finance';
-    store.actor.permission_grants = ['permissions.read', 'permissions.write'];
+    store.actor.permission_grants = ['permissions.page', 'permissions.write'];
 
     // EXEC_B is unrestricted, so they hold the whole exec baseline — far more
     // than the actor's Expenses tab.
@@ -190,13 +190,13 @@ describe('setPlayerPermissions — nobody grants what they do not hold', () => {
   it('lets an admin grant anything the editor offers', async () => {
     const res = await setPlayerPermissions(EXEC_A, {
       role: 'finance',
-      grants: ['players.read', 'players.approve.write'],
+      grants: ['players.page', 'players.approve.write'],
       revokes: [],
     });
     expect(res.ok).toBe(true);
     expect(rowFor(EXEC_A).permission_grants).toEqual([
       'players.approve.write',
-      'players.read',
+      'players.page',
     ]);
   });
 
@@ -205,9 +205,9 @@ describe('setPlayerPermissions — nobody grants what they do not hold', () => {
     store.actor = rowFor(EXEC_A);
     store.actor.permission_role = 'finance';
     store.actor.permission_grants = [
-      'permissions.read',
+      'permissions.page',
       'permissions.write',
-      'players.read',
+      'players.page',
       'players.approve.write',
     ];
     // The target must already be inside the actor's set for the whom-rule to
@@ -216,14 +216,14 @@ describe('setPlayerPermissions — nobody grants what they do not hold', () => {
 
     const ok = await setPlayerPermissions(EXEC_B, {
       role: 'finance',
-      grants: ['players.read', 'players.approve.write'],
+      grants: ['players.page', 'players.approve.write'],
       revokes: [],
     });
     expect(ok.ok).toBe(true);
 
     const overreach = await setPlayerPermissions(EXEC_B, {
       role: 'finance',
-      grants: ['players.read', 'players.approve.write', 'players.ban.write'],
+      grants: ['players.page', 'players.approve.write', 'players.ban.write'],
       revokes: [],
     });
     expect(overreach.ok).toBe(false);
@@ -232,7 +232,7 @@ describe('setPlayerPermissions — nobody grants what they do not hold', () => {
     // must not have been written on the way to refusing the third.
     expect(rowFor(EXEC_B).permission_grants).toEqual([
       'players.approve.write',
-      'players.read',
+      'players.page',
     ]);
   });
 
@@ -241,7 +241,7 @@ describe('setPlayerPermissions — nobody grants what they do not hold', () => {
   it('binds a revoke by the same rule as a grant', async () => {
     store.actor = rowFor(EXEC_A);
     store.actor.permission_role = 'finance';
-    store.actor.permission_grants = ['permissions.read', 'permissions.write'];
+    store.actor.permission_grants = ['permissions.page', 'permissions.write'];
     Object.assign(rowFor(EXEC_B), {
       permission_role: 'finance',
       permission_grants: [],
@@ -263,7 +263,7 @@ describe('setPlayerPermissions — nobody grants what they do not hold', () => {
   it('catches a role change whose defaults exceed the actor’s set', async () => {
     store.actor = rowFor(EXEC_A);
     store.actor.permission_role = 'finance';
-    store.actor.permission_grants = ['permissions.read', 'permissions.write'];
+    store.actor.permission_grants = ['permissions.page', 'permissions.write'];
     Object.assign(rowFor(EXEC_B), {
       permission_role: 'finance',
       permission_grants: [],
@@ -287,20 +287,20 @@ describe('setPlayerPermissions — nobody grants what they do not hold', () => {
     store.actor = rowFor(EXEC_A);
     store.actor.permission_role = 'finance';
     store.actor.permission_grants = [
-      'permissions.read',
+      'permissions.page',
       'permissions.write',
-      'players.read',
+      'players.page',
       'players.update.write',
     ];
     Object.assign(rowFor(EXEC_B), {
       permission_role: 'finance',
-      permission_grants: ['players.read', 'players.update.write'],
+      permission_grants: ['players.page', 'players.update.write'],
       permission_revokes: [],
     });
 
     const res = await setPlayerPermissions(EXEC_B, {
       role: 'finance',
-      grants: ['players.read', 'players.update.write', 'players.editor.varsitynotes.write'],
+      grants: ['players.page', 'players.update.write', 'players.editor.varsitynotes.write'],
       revokes: [],
     });
     expect(res.ok).toBe(false);
@@ -322,7 +322,7 @@ describe('setPlayerPermissions — nobody grants what they do not hold', () => {
       revokes: [],
     });
     expect(first.ok).toBe(true);
-    rowFor(EXEC_A).permission_grants = ['permissions.read', 'permissions.write'];
+    rowFor(EXEC_A).permission_grants = ['permissions.page', 'permissions.write'];
 
     // A → C, so that C starts somewhere B is allowed to reach.
     const second = await setPlayerPermissions(EXEC_B, {
@@ -371,14 +371,14 @@ describe('setPlayerPermissions — the shape of what gets stored', () => {
   it('clears both arrays when the role goes back to unrestricted', async () => {
     await setPlayerPermissions(EXEC_A, {
       role: 'finance',
-      grants: ['players.read'],
+      grants: ['players.page'],
       revokes: ['fees.expenses.add.write'],
     });
-    expect(rowFor(EXEC_A).permission_grants).toEqual(['players.read']);
+    expect(rowFor(EXEC_A).permission_grants).toEqual(['players.page']);
 
     await setPlayerPermissions(EXEC_A, {
       role: null,
-      grants: ['players.read'],
+      grants: ['players.page'],
       revokes: ['fees.expenses.add.write'],
     });
     expect(rowFor(EXEC_A).permission_role).toBeNull();
@@ -392,11 +392,11 @@ describe('setPlayerPermissions — the shape of what gets stored', () => {
   it('normalises away a grant the role already gives', async () => {
     const res = await setPlayerPermissions(EXEC_A, {
       role: 'finance',
-      grants: ['fees.expenses.read', 'players.read'],
+      grants: ['fees.expenses.read', 'players.page'],
       revokes: [],
     });
     expect(res.ok).toBe(true);
-    expect(rowFor(EXEC_A).permission_grants).toEqual(['players.read']);
+    expect(rowFor(EXEC_A).permission_grants).toEqual(['players.page']);
   });
 
   it('refuses a string the vocabulary does not have', async () => {
@@ -412,8 +412,8 @@ describe('setPlayerPermissions — the shape of what gets stored', () => {
   it('refuses granting and revoking the same thing', async () => {
     const res = await setPlayerPermissions(EXEC_A, {
       role: 'finance',
-      grants: ['players.read'],
-      revokes: ['players.read'],
+      grants: ['players.page'],
+      revokes: ['players.page'],
     });
     expect(res.ok).toBe(false);
     expect(res.ok === false && res.error).toMatch(/grant and revoke the same thing/);
@@ -424,7 +424,7 @@ describe('setPlayerPermissions — the shape of what gets stored', () => {
   // at what execs already had, which is what keeps this change provably inside
   // the envelope that shipped before it. Opening these up is its own change.
   it('refuses even an admin the admin-only half of the vocabulary', async () => {
-    for (const capability of ['audit.read', 'fees.clubfees.read', 'permissions.write'] as const) {
+    for (const capability of ['audit.page', 'fees.clubfees.read', 'permissions.write'] as const) {
       const res = await setPlayerPermissions(EXEC_A, {
         role: 'finance',
         grants: [capability],
@@ -441,7 +441,7 @@ describe('setPlayerPermissions — the shape of what gets stored', () => {
   it('logs the triple AND the resolved set on both sides', async () => {
     await setPlayerPermissions(EXEC_A, {
       role: 'finance',
-      grants: ['players.read'],
+      grants: ['players.page'],
       revokes: [],
     });
 
@@ -456,13 +456,14 @@ describe('setPlayerPermissions — the shape of what gets stored', () => {
     expect(before.permission_role).toBeNull();
     // Unrestricted before, so the resolved set is the whole exec baseline —
     // which the triple on its own says nothing about.
-    expect((before.effective as string[]).length).toBe(69);
+    expect((before.effective as string[]).length).toBe(70);
     expect(after.permission_role).toBe('finance');
-    expect(after.permission_grants).toEqual(['players.read']);
+    expect(after.permission_grants).toEqual(['players.page']);
     expect((after.effective as string[]).sort()).toEqual([
       'fees.expenses.add.write',
       'fees.expenses.read',
-      'players.read',
+      'fees.page',
+      'players.page',
     ]);
   });
 });

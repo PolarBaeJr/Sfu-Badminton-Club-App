@@ -10,6 +10,7 @@ import {
   UNRESTRICTED,
   effectiveCapabilities,
   isCapability,
+  pageOf,
   permits,
   permissionsOf,
   permissionTripleOf,
@@ -18,7 +19,7 @@ import {
 } from '../access-level';
 import { CAPABILITY_GATES, ENFORCEMENT_POINTS } from '../capability-gates';
 
-// 113 capabilities is 113 promises that something is enforced. This suite is
+// 115 capabilities is 115 promises that something is enforced. This suite is
 // what keeps the vocabulary closed: it pins the list literally, refuses the
 // shapes that would let one capability quietly imply another, and asserts that
 // every one of them names a place in the app that reads it.
@@ -27,9 +28,9 @@ const resourceOf = (capability: string) => capability.split('.').slice(0, -1);
 const modeOf = (capability: string) => capability.split('.').at(-1)!;
 
 describe('the capability vocabulary', () => {
-  it('is exactly 113 entries, with no duplicates', () => {
-    expect(CAPABILITIES.length).toBe(113);
-    expect(new Set(CAPABILITIES).size).toBe(113);
+  it('is exactly 115 entries, with no duplicates', () => {
+    expect(CAPABILITIES.length).toBe(115);
+    expect(new Set(CAPABILITIES).size).toBe(115);
   });
 
   it('has 16 areas, every one of them used', () => {
@@ -50,15 +51,40 @@ describe('the capability vocabulary', () => {
     }
   });
 
-  it('ends every capability in read or write, at depth 2 to 5', () => {
+  it('ends every capability in page, read or write, at depth 2 to 5', () => {
     for (const capability of CAPABILITIES) {
       const segments = capability.split('.');
-      expect(['read', 'write']).toContain(segments.at(-1));
+      expect(['page', 'read', 'write']).toContain(segments.at(-1));
       expect(segments.length, `${capability} depth`).toBeGreaterThanOrEqual(2);
       expect(segments.length, `${capability} depth`).toBeLessThanOrEqual(5);
       for (const segment of segments) {
         expect(segment, `${capability} segment`).toMatch(/^[a-z0-9]+$/);
       }
+    }
+  });
+
+  // EXACTLY ONE PAGE PER AREA, AT DEPTH 2. The resolver deletes every capability
+  // whose area page is absent from the resolved set, and pageOf() builds that
+  // name by taking the first segment and appending '.page' — so an area with no
+  // page is an area where nothing can ever be held, and an area with two is a
+  // second name for the same door that only one of the two closes.
+  it('gives every area exactly one page, and puts it at depth 2', () => {
+    for (const area of AREAS) {
+      const pages = CAPABILITIES.filter((c) => c.split('.')[0] === area && modeOf(c) === 'page');
+      expect(pages, `area ${area}`).toEqual([`${area}.page`]);
+    }
+    expect(CAPABILITIES.filter((c) => modeOf(c) === 'page').length).toBe(AREAS.length);
+  });
+
+  // pageOf() is a first-segment lookup and the resolver's whole invariant rests
+  // on it landing on a real capability for every input — including for a page,
+  // which must map to itself or the rule would delete every page there is.
+  it('maps every capability to its area’s page, and a page to itself', () => {
+    for (const capability of CAPABILITIES) {
+      const page = pageOf(capability);
+      expect(isCapability(page), `${capability} → ${page}`).toBe(true);
+      expect(page.split('.')[0]).toBe(capability.split('.')[0]);
+      if (modeOf(capability) === 'page') expect(page).toBe(capability);
     }
   });
 
@@ -73,7 +99,7 @@ describe('the capability vocabulary', () => {
   // are a read and a write, which is the ordinary read/write pairing, not a
   // coarse capability over a fine one.
   it('never lets one capability be a prefix of another at the same mode', () => {
-    for (const mode of ['read', 'write']) {
+    for (const mode of ['page', 'read', 'write']) {
       const paths = CAPABILITIES.filter((c) => modeOf(c) === mode).map(resourceOf);
       for (const a of paths) {
         for (const b of paths) {
@@ -86,7 +112,11 @@ describe('the capability vocabulary', () => {
   });
 
   it('narrows only strings the vocabulary actually has', () => {
-    expect(isCapability('players.read')).toBe(true);
+    expect(isCapability('players.page')).toBe(true);
+    // The name this area's page used to have, and no longer does. 00088 renames
+    // it in every stored array precisely so that this returning false cannot
+    // turn a live revoke into a no-op.
+    expect(isCapability('players.read')).toBe(false);
     expect(isCapability('players.write')).toBe(false);
     expect(isCapability('')).toBe(false);
     expect(isCapability(null)).toBe(false);
@@ -116,16 +146,16 @@ describe('CAPABILITY_GATES', () => {
   // it is a real check rather than documentation: deleting a gate without
   // deleting its capability leaves the editor offering a tick box nothing
   // reads, and that is what this fails on.
-  it('names 127 distinct enforcement points, none of them claimed twice', () => {
+  it('names 130 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(127);
-    expect(new Set(sites).size).toBe(127);
-    expect(ENFORCEMENT_POINTS).toBe(127);
+    expect(sites.length).toBe(130);
+    expect(new Set(sites).size).toBe(130);
+    expect(ENFORCEMENT_POINTS).toBe(130);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be
@@ -160,16 +190,16 @@ describe('CAPABILITY_GATES', () => {
 // written it down twice.
 
 describe('baselines', () => {
-  it('gives a trainer exactly the roster read and varsity notes', () => {
+  it('gives a trainer exactly the roster page and varsity notes', () => {
     expect([...TRAINER_BASELINE]).toEqual([
-      'players.read',
+      'players.page',
       'players.editor.varsitynotes.write',
     ]);
   });
 
-  it('gives an exec exactly 69 capabilities, pinned one by one', () => {
+  it('gives an exec exactly 70 capabilities, pinned one by one', () => {
     expect([...EXEC_BASELINE]).toEqual([
-      'players.read',
+      'players.page',
       'players.approve.write',
       'players.create.write',
       'players.update.write',
@@ -177,11 +207,11 @@ describe('baselines', () => {
       'players.ban.write',
       'players.reinstate.write',
       'players.editor.varsitynotes.write',
-      'seasons.read',
+      'seasons.page',
       'seasons.create.write',
       'seasons.activate.write',
       'seasons.end.write',
-      'sessions.read',
+      'sessions.page',
       'sessions.reminders.write',
       'sessions.create.write',
       'sessions.update.write',
@@ -189,15 +219,15 @@ describe('baselines', () => {
       'sessions.checkin.token.write',
       'sessions.attendance.write',
       'sessions.delete.write',
-      'matches.read',
+      'matches.page',
       'matches.void.write',
       'matches.convert.write',
       'matches.create.write',
-      'announcements.read',
+      'announcements.page',
       'announcements.create.write',
       'announcements.update.write',
       'announcements.delete.write',
-      'tournaments.manage.read',
+      'tournaments.page',
       'tournaments.manage.create.write',
       'tournaments.manage.update.write',
       'tournaments.manage.status.write',
@@ -234,12 +264,27 @@ describe('baselines', () => {
       'tournaments.results.bonuses.write',
       'tournaments.results.standings.write',
       'tournaments.results.finalize.write',
+      'fees.page',
       'fees.expenses.read',
       'fees.expenses.add.write',
-      'legal.read',
+      'legal.page',
       'legal.reacceptance.write',
     ]);
-    expect(EXEC_BASELINE.length).toBe(69);
+    expect(EXEC_BASELINE.length).toBe(70);
+  });
+
+  // THE INVARIANT, CHECKED AGAINST THE BASELINES THEMSELVES. A baseline is fed
+  // to permits() directly and never goes through the resolver, so a missing page
+  // here would not be pruned — it would be a level quietly holding writes in a
+  // section it cannot open, which is the shape of bug this suite exists to make
+  // impossible to ship.
+  it('carries the page for every area either baseline reaches', () => {
+    for (const list of [EXEC_BASELINE, TRAINER_BASELINE]) {
+      const held = new Set<Capability>(list);
+      for (const capability of list) {
+        expect(held.has(pageOf(capability)), `${capability} without its area page`).toBe(true);
+      }
+    }
   });
 
   it('keeps both baselines inside the vocabulary, with no duplicates', () => {
@@ -292,19 +337,24 @@ describe('ROLE_DEFAULTS', () => {
     }
   });
 
-  // A role of writes with no read is a set of controls on a page its holder
-  // cannot open: route access asks for at least one `<area>.….read`, so a
-  // missing read locks them out of the section the role is FOR.
-  it('gives every role the read for every area it can write in', () => {
+  // A role missing an area's page does not merely leave its holder outside the
+  // section — the resolver DELETES everything the role gave them there. So this
+  // is not a courtesy check any more: a role that failed it would be a named job
+  // that silently confers nothing.
+  it('gives every role the page for every area it touches', () => {
     for (const role of PERMISSION_ROLES) {
       const list = ROLE_DEFAULTS[role];
-      const areasWritten = new Set(list.filter((c) => c.endsWith('.write')).map((c) => c.split('.')[0]));
-      for (const area of areasWritten) {
+      const held = new Set<Capability>(list);
+      for (const capability of list) {
         expect(
-          list.some((c) => c.split('.')[0] === area && c.endsWith('.read')),
-          `${role} writes in ${area} but holds no read there`,
+          held.has(pageOf(capability)),
+          `${role} gives ${capability} but not ${pageOf(capability)}`,
         ).toBe(true);
       }
+      // ...and the resolver agrees, which is the assertion that matters: an
+      // unadjusted role must survive its own invariant intact.
+      const resolved = resolvePermissions(role, [], []);
+      expect(RESTRICTED(resolved), role).toEqual([...list].sort());
     }
   });
 
@@ -314,6 +364,12 @@ describe('ROLE_DEFAULTS', () => {
   // /announcements — intersected with the exec baseline. So they partition it
   // exactly, and that is not a coincidence to be preserved for its own sake: it
   // is the assertion that assigning a role does what assigning a portfolio did.
+  //
+  // The arithmetic moved by exactly one when page keys arrived: finance went
+  // from two entries to three, because /fees was the one section whose page key
+  // did not already exist under another name. The other three roles renamed
+  // their reads and kept their counts, and the total tracked the exec baseline
+  // from 69 to 70.
   //
   // If a future capability genuinely belongs to two jobs, THIS half is the one
   // to relax. The subset assertion above is not.
@@ -329,6 +385,7 @@ describe('ROLE_DEFAULTS', () => {
   // position and reinstatements are handed over per person by explicit grant.
   it('gives finance today’s scope and nothing more', () => {
     expect([...ROLE_DEFAULTS.finance]).toEqual([
+      'fees.page',
       'fees.expenses.read',
       'fees.expenses.add.write',
     ]);
@@ -336,18 +393,18 @@ describe('ROLE_DEFAULTS', () => {
 
   it('gives external the announcements and the legal documents', () => {
     expect([...ROLE_DEFAULTS.external]).toEqual([
-      'announcements.read',
+      'announcements.page',
       'announcements.create.write',
       'announcements.update.write',
       'announcements.delete.write',
-      'legal.read',
+      'legal.page',
       'legal.reacceptance.write',
     ]);
   });
 
   it('gives internal the roster and the seasons, but not the season fees', () => {
     expect([...ROLE_DEFAULTS.internal]).toEqual([
-      'players.read',
+      'players.page',
       'players.approve.write',
       'players.create.write',
       'players.update.write',
@@ -355,7 +412,7 @@ describe('ROLE_DEFAULTS', () => {
       'players.ban.write',
       'players.reinstate.write',
       'players.editor.varsitynotes.write',
-      'seasons.read',
+      'seasons.page',
       'seasons.create.write',
       'seasons.activate.write',
       'seasons.end.write',
@@ -366,7 +423,7 @@ describe('ROLE_DEFAULTS', () => {
   it('gives tournaments the draw, the ladder and the sessions, but not entry money', () => {
     expect(ROLE_DEFAULTS.tournaments.length).toBe(49);
     expect([...ROLE_DEFAULTS.tournaments].slice(0, 12)).toEqual([
-      'sessions.read',
+      'sessions.page',
       'sessions.reminders.write',
       'sessions.create.write',
       'sessions.update.write',
@@ -374,7 +431,7 @@ describe('ROLE_DEFAULTS', () => {
       'sessions.checkin.token.write',
       'sessions.attendance.write',
       'sessions.delete.write',
-      'matches.read',
+      'matches.page',
       'matches.void.write',
       'matches.convert.write',
       'matches.create.write',
@@ -405,10 +462,11 @@ describe('EDITOR_OFFERABLE', () => {
     const offerable = new Set<Capability>(EDITOR_OFFERABLE);
     for (const capability of [
       'permissions.write',
-      'permissions.read',
-      'audit.read',
-      'ratings.read',
-      'accounts.read',
+      'permissions.page',
+      'audit.page',
+      'ratings.page',
+      'accounts.page',
+      'platform.page',
       'platform.settings.write',
       'fees.clubfees.read',
       'fees.otherincome.read',
@@ -419,9 +477,9 @@ describe('EDITOR_OFFERABLE', () => {
       'players.privilegedfields.write',
       'players.merge.write',
       'players.remove.write',
-      'challenges.read',
-      'disputes.read',
-      'walkovers.read',
+      'challenges.page',
+      'disputes.page',
+      'walkovers.page',
     ] as const) {
       expect(offerable.has(capability), `${capability} is offerable`).toBe(false);
     }
@@ -437,11 +495,11 @@ describe('EDITOR_OFFERABLE', () => {
 // ---------------------------------------------------------------------------
 
 describe('permits', () => {
-  it('makes an admin a superuser BY LEVEL, holding all 113', () => {
+  it('makes an admin a superuser BY LEVEL, holding all 115', () => {
     for (const capability of CAPABILITIES) {
       expect(permits('admin', UNRESTRICTED, capability), capability).toBe(true);
     }
-    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(113);
+    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(115);
   });
 
   it('gives an unrestricted person their level baseline and nothing more', () => {
@@ -453,14 +511,14 @@ describe('permits', () => {
 
   it('gives somebody with no level nothing at all', () => {
     expect(effectiveCapabilities(null, UNRESTRICTED).size).toBe(0);
-    expect(permits(null, UNRESTRICTED, 'players.read')).toBe(false);
-    expect(permits(undefined, UNRESTRICTED, 'players.read')).toBe(false);
+    expect(permits(null, UNRESTRICTED, 'players.page')).toBe(false);
+    expect(permits(undefined, UNRESTRICTED, 'players.page')).toBe(false);
   });
 
   it('reads a restricted set literally, with no implication', () => {
     const permissions = {
       kind: 'restricted' as const,
-      capabilities: new Set<Capability>(['players.read', 'players.update.write']),
+      capabilities: new Set<Capability>(['players.page', 'players.update.write']),
     };
     expect(permits('exec', permissions, 'players.update.write')).toBe(true);
     // Holding the coarse-looking roster write does NOT reach a leaf beneath it.
@@ -487,66 +545,107 @@ describe('resolvePermissions', () => {
     // exec baseline to zero — a grant that removes fifty-odd capabilities, one
     // click, silent.
     expect(resolvePermissions(null, [], [])).toEqual(UNRESTRICTED);
-    expect(resolvePermissions(null, ['audit.read'], [])).toEqual(UNRESTRICTED);
+    expect(resolvePermissions(null, ['audit.page'], [])).toEqual(UNRESTRICTED);
     // And a revoke stored while the role is NULL stays dormant rather than
     // biting — it must not remove anything now, nor wake up later without
     // somebody choosing a role.
-    expect(resolvePermissions(null, [], ['players.read'])).toEqual(UNRESTRICTED);
+    expect(resolvePermissions(null, [], ['players.page'])).toEqual(UNRESTRICTED);
     expect(resolvePermissions('', [], [])).toEqual(UNRESTRICTED);
   });
 
+  // audit.page survives a lone grant with no role behind it because a page
+  // requires only ITSELF — that is what makes it the thing you hand somebody
+  // first, and the reason every stock grant in this suite is one.
   it('gives an unrecognised role no defaults, but still applies the deltas', () => {
-    const resolved = resolvePermissions('treasurer', ['audit.read'], []);
-    expect(RESTRICTED(resolved)).toEqual(['audit.read']);
+    const resolved = resolvePermissions('treasurer', ['audit.page'], []);
+    expect(RESTRICTED(resolved)).toEqual(['audit.page']);
   });
 
-  // Every case below uses `finance`, whose defaults are the two Expenses
-  // capabilities, so the expectations carry that base as well as the delta
-  // under test. Deliberately not an empty-base role: a resolver test against a
-  // role that gives nothing would pass identically if the base were dropped on
-  // the floor.
-  const FINANCE_BASE = ['fees.expenses.add.write', 'fees.expenses.read'];
+  // Every case below uses `finance`, whose defaults are the Finances page and
+  // the two Expenses capabilities, so the expectations carry that base as well
+  // as the delta under test. Deliberately not an empty-base role: a resolver
+  // test against a role that gives nothing would pass identically if the base
+  // were dropped on the floor.
+  const FINANCE_BASE = ['fees.expenses.add.write', 'fees.expenses.read', 'fees.page'];
 
   it('lets a revoke beat a grant of the same capability', () => {
-    const resolved = resolvePermissions('finance', ['audit.read'], ['audit.read']);
+    const resolved = resolvePermissions('finance', ['audit.page'], ['audit.page']);
     expect(RESTRICTED(resolved)).toEqual(FINANCE_BASE);
   });
 
   it('lets a revoke reach into the role’s own defaults', () => {
     const resolved = resolvePermissions('finance', [], ['fees.expenses.add.write']);
-    expect(RESTRICTED(resolved)).toEqual(['fees.expenses.read']);
+    expect(RESTRICTED(resolved)).toEqual(['fees.expenses.read', 'fees.page']);
   });
 
   it('drops an element the vocabulary no longer has, without throwing', () => {
-    const resolved = resolvePermissions('finance', ['players.write', 'audit.read'], ['nonsense']);
-    expect(RESTRICTED(resolved)).toEqual([...FINANCE_BASE, 'audit.read'].sort());
+    const resolved = resolvePermissions('finance', ['players.write', 'audit.page'], ['nonsense']);
+    expect(RESTRICTED(resolved)).toEqual([...FINANCE_BASE, 'audit.page'].sort());
   });
 
-  // write ⊆ read, applied AFTER subtraction. Taking away somebody's view of a
-  // ledger has to take away their ability to write to it, or they keep a
-  // control whose consequences they cannot see. Order is load-bearing: pruning
-  // first would leave the write behind.
-  it('takes the write with the read when the read is revoked', () => {
+  // WRITE WITHOUT READ IS THE POINT, and this is the test that says so. The old
+  // model pruned a write whose `.read` sibling was missing; the club owner's
+  // rule is ".page would be required to have .write, but .read isnt required",
+  // so somebody handed the Finances page and the ability to file an expense
+  // keeps it while holding no view of the ledger at all.
+  it('keeps a write with no read of its own', () => {
     const resolved = resolvePermissions(
       'finance',
-      ['fees.reinstatements.read', 'fees.reinstatements.write'],
-      ['fees.reinstatements.read'],
+      ['fees.reinstatements.write'],
+      ['fees.expenses.read'],
     );
-    expect(RESTRICTED(resolved)).toEqual(FINANCE_BASE);
+    expect(RESTRICTED(resolved)).toEqual([
+      'fees.expenses.add.write',
+      'fees.page',
+      'fees.reinstatements.write',
+    ]);
   });
 
-  it('leaves a write alone when its resource has no read in the vocabulary', () => {
+  // Revoking a read takes that read and NOTHING ELSE. This is the exact case
+  // the old `write ⊆ read` prune existed for, inverted deliberately.
+  it('leaves the write behind when the matching read is revoked', () => {
+    const resolved = resolvePermissions(
+      'finance',
+      ['fees.otherincome.read', 'fees.otherincome.add.write'],
+      ['fees.otherincome.read'],
+    );
+    expect(RESTRICTED(resolved)).toEqual([...FINANCE_BASE, 'fees.otherincome.add.write'].sort());
+  });
+
+  // THE ONE INVARIANT, in the direction it exists for. A grant in an area whose
+  // page the person does not hold is pruned — a control on a screen they cannot
+  // reach is not access, it is a promise the route gate would refuse.
+  it('prunes a granted capability whose area page is not held', () => {
     const resolved = resolvePermissions('finance', ['players.approve.write'], []);
-    expect(RESTRICTED(resolved)).toEqual([...FINANCE_BASE, 'players.approve.write'].sort());
+    expect(RESTRICTED(resolved)).toEqual(FINANCE_BASE);
+    // ...and it is the PAGE that was missing, not the capability: hand that over
+    // and the write comes with it.
+    const withPage = resolvePermissions('finance', ['players.page', 'players.approve.write'], []);
+    expect(RESTRICTED(withPage)).toEqual(
+      [...FINANCE_BASE, 'players.page', 'players.approve.write'].sort(),
+    );
+  });
+
+  // REVOKING THE PAGE CLOSES THE WHOLE AREA, reads and writes alike, including
+  // the ones the ROLE gave and neither array names. This is why the invariant
+  // runs after subtraction rather than before: pruning first would leave the
+  // ledger and its controls standing behind a door that had just been shut.
+  it('takes every capability in an area with that area’s page', () => {
+    const resolved = resolvePermissions(
+      'finance',
+      ['fees.clubfees.read', 'fees.clubfees.waive.write'],
+      ['fees.page'],
+    );
+    expect(RESTRICTED(resolved)).toEqual([]);
   });
 
   it('is pure — the same inputs give the same answer and nothing is mutated', () => {
-    const grants = ['audit.read'];
+    const grants = ['audit.page'];
     const revokes: string[] = [];
     const first = RESTRICTED(resolvePermissions('finance', grants, revokes));
     const second = RESTRICTED(resolvePermissions('finance', grants, revokes));
     expect(first).toEqual(second);
-    expect(grants).toEqual(['audit.read']);
+    expect(grants).toEqual(['audit.page']);
     expect(revokes).toEqual([]);
   });
 });
@@ -580,11 +679,11 @@ describe('permissionsOf', () => {
   it('resolves a complete row', () => {
     const resolved = permissionsOf({
       permission_role: 'finance',
-      permission_grants: ['audit.read'],
+      permission_grants: ['audit.page'],
       permission_revokes: [],
     });
     expect(RESTRICTED(resolved)).toEqual(
-      ['audit.read', 'fees.expenses.add.write', 'fees.expenses.read'],
+      ['audit.page', 'fees.expenses.add.write', 'fees.expenses.read', 'fees.page'],
     );
   });
 });
@@ -604,13 +703,13 @@ describe('permissionTripleOf', () => {
     expect(
       permissionTripleOf({
         permission_role: 'finance',
-        permission_grants: ['audit.read'],
-        permission_revokes: ['players.read'],
+        permission_grants: ['audit.page'],
+        permission_revokes: ['players.page'],
       }),
     ).toEqual({
       permission_role: 'finance',
-      permission_grants: ['audit.read'],
-      permission_revokes: ['players.read'],
+      permission_grants: ['audit.page'],
+      permission_revokes: ['players.page'],
     });
   });
 
@@ -649,12 +748,17 @@ describe('varsity notes', () => {
   it('is NOT held by an exec narrowed to finance', () => {
     const finance = resolvePermissions('finance', [], []);
     expect(permits('exec', finance, VARSITY)).toBe(false);
-    // ...and the roster read goes with it, so they cannot even find the person.
-    expect(permits('exec', finance, 'players.read')).toBe(false);
+    // ...and the roster page goes with it, so they cannot even find the person.
+    expect(permits('exec', finance, 'players.page')).toBe(false);
   });
 
-  it('is held again the moment it is granted to that same person', () => {
-    const granted = resolvePermissions('finance', ['players.read', VARSITY], []);
+  // The page has to come with it. Granting the note alone would be pruned —
+  // there is no roster area for that person to hold a capability in — which is
+  // the invariant behaving exactly as intended and worth showing here, because
+  // this is the capability people will reach for first.
+  it('is held again the moment it and the roster page are granted', () => {
+    expect(permits('exec', resolvePermissions('finance', [VARSITY], []), VARSITY)).toBe(false);
+    const granted = resolvePermissions('finance', ['players.page', VARSITY], []);
     expect(permits('exec', granted, VARSITY)).toBe(true);
   });
 

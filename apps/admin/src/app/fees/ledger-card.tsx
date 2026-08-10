@@ -91,11 +91,20 @@ export async function LedgerCard({
   kind,
   seasonId,
   seasonName,
+  canRead,
   canWrite,
 }: {
   kind: LedgerKind;
   seasonId: string;
   seasonName: string;
+  /**
+   * May the viewer see the ROWS? False is a real state, not an empty ledger:
+   * somebody handed the add capability and not the read comes here to file an
+   * expense and has no business reading what the club has spent. The query is
+   * skipped rather than the table hidden — a row that reaches this component
+   * reaches the RSC payload whether or not it is drawn.
+   */
+  canRead: boolean;
   /** Passed in rather than re-derived, so the page is the one place deciding. */
   canWrite: LedgerWrites;
 }) {
@@ -106,14 +115,16 @@ export async function LedgerCard({
   // season_id is NOT NULL on both tables (00073), so unlike the reinstatement
   // card there is no "attached to no season" bucket to sweep up: every row
   // belongs to exactly one season and this query cannot miss one.
-  const rows = unwrap(
-    await supabase
-      .from(table)
-      .select(isIncome ? INCOME_COLS : EXPENSE_COLS)
-      .eq('season_id', seasonId)
-      .order('paid_at', { ascending: false, nullsFirst: true })
-      .order('created_at', { ascending: false }),
-  ) as unknown as LedgerRow[];
+  const rows = canRead
+    ? (unwrap(
+        await supabase
+          .from(table)
+          .select(isIncome ? INCOME_COLS : EXPENSE_COLS)
+          .eq('season_id', seasonId)
+          .order('paid_at', { ascending: false, nullsFirst: true })
+          .order('created_at', { ascending: false }),
+      ) as unknown as LedgerRow[])
+    : [];
 
   // Names for the payer / confirmer ids, in ONE lookup.
   //
@@ -235,7 +246,19 @@ export async function LedgerCard({
         ))}
       </div>
 
-      {rows.length === 0 ? (
+      {/* "You may not see this" and "there is nothing to see" are different
+          statements, and telling somebody the ledger is empty when it is merely
+          withheld is the kind of small lie a permission model should not tell. */}
+      {!canRead ? (
+        <EmptyState
+          title={isIncome ? 'Other income is not shown to you' : 'Expenses are not shown to you'}
+          description={
+            canWrite.add
+              ? `You can record ${isIncome ? 'income' : 'an expense'} for ${seasonName}, but not browse what has already been recorded.`
+              : `Nothing on this ledger is shown to you.`
+          }
+        />
+      ) : rows.length === 0 ? (
         <EmptyState
           title={isIncome ? 'No other income recorded' : 'No expenses recorded'}
           description={

@@ -13,7 +13,7 @@ export default async function SeasonsPage() {
   // rejected them at Save — the route and the nav agreed, and the rendered
   // CONTROL was the layer that disagreed. Same shape the Legal page uses: the
   // flag decides what is offered, the server action is still the boundary.
-  const viewer = await requireCapability('seasons.read');
+  const viewer = await requireCapability('seasons.page');
   const canEditFees = permits(accessLevelFor(viewer), permissionsOf(viewer), 'seasons.fees.write');
 
   const supabase = createAdminClient();
