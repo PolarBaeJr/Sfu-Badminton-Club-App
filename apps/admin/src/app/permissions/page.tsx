@@ -16,12 +16,20 @@ import { PermissionEditor, type PersonRow } from './permission-editor';
 // form that writes them, so it must not depend on middleware having been
 // reached.
 //
-// EVERYONE WITH A LEVEL IS LISTED, not only the people who can be composed.
-// Admins and trainers are read-only here — an admin is a superuser by level and
-// their stored role is never consulted, and a trainer's whole level is reading
-// the roster and writing varsity notes, with nothing in it to narrow. Listing
-// them anyway is the point: this page answers "who can get into the console",
-// and a page that silently omitted the two levels that cannot be edited would
+// EVERYONE WITH A LEVEL IS LISTED, and execs and trainers alike can be composed
+// here. A trainer used to be read-only on the grounds that their whole level is
+// the roster and varsity notes, with nothing in it to narrow — but the club has
+// a varsity trainer who also runs sessions, and the alternative was making them
+// an exec and handing over the whole exec baseline. The resolver never cared
+// about levels, so composing one takes the same path composing an exec does.
+//
+// ADMINS STAY READ-ONLY, and for a different reason that has not changed: an
+// admin is a superuser by LEVEL, permits() short-circuits before any stored set
+// is consulted, so a role on an admin's row would look like a narrowing and
+// would not be one.
+//
+// Listing an admin anyway is the point: this page answers "who can get into the
+// console", and a page that silently omitted the level it cannot edit would
 // answer a narrower question than its title claims.
 export default async function PermissionsPage() {
   const viewer = await requireCapability('permissions.page');

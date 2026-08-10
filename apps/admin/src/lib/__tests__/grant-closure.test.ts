@@ -120,6 +120,17 @@ const admin = (id: string): Row => ({
 const rowFor = (id: string) => store.db.players!.find((p) => p.id === id)!;
 const audits = () => store.db.audit_logs ?? [];
 
+/**
+ * What a stored row actually resolves to, through the same path every gate
+ * uses — permissionsOf, resolvePermissions, effectiveCapabilities. Imported
+ * lazily because the module mocks above have to be in place first.
+ */
+const setOfRow = async (id: string) => {
+  const { accessLevelFor, effectiveCapabilities, permissionsOf } = await import('../permissions');
+  const row = rowFor(id);
+  return effectiveCapabilities(accessLevelFor(row), permissionsOf(row));
+};
+
 beforeEach(() => {
   store.db = {
     players: [
@@ -358,13 +369,6 @@ describe('setPlayerPermissions — nobody grants what they do not hold', () => {
 });
 
 describe('setPlayerPermissions — the shape of what gets stored', () => {
-  it('refuses a role on a trainer, whose level has nothing to narrow', async () => {
-    const res = await setPlayerPermissions(TRAINER, { role: 'internal', grants: [], revokes: [] });
-    expect(res.ok).toBe(false);
-    expect(res.ok === false && res.error).toMatch(/Only an executive/);
-    expect(rowFor(TRAINER).permission_role).toBeNull();
-  });
-
   // A stored delta with no role is dormant today and WAKES UP the day somebody
   // picks a role. The database CHECK makes that state unreachable; this is what
   // stops an admin ever meeting the constraint.
@@ -465,5 +469,80 @@ describe('setPlayerPermissions — the shape of what gets stored', () => {
       'fees.page',
       'players.page',
     ]);
+  });
+});
+
+describe('setPlayerPermissions — a varsity trainer can be composed too', () => {
+  // THE POINT OF THE CHANGE. A trainer used to be refused a role on the grounds
+  // that their level held nothing worth narrowing — true, and beside the point:
+  // the only way to give one an area was to make them an exec, which handed the
+  // whole exec baseline to somebody who needed one part of it.
+  //
+  // No machinery had to change to allow this. resolvePermissions is
+  // level-agnostic, so a composed trainer resolves through exactly the path a
+  // composed exec does; the guard in the save action was the only thing
+  // refusing to create one.
+  it('gives a trainer who also runs sessions exactly that, and nothing more', async () => {
+    const res = await setPlayerPermissions(TRAINER, {
+      role: 'tournaments',
+      // Granted back, deliberately: the role replaces the base, so the varsity
+      // notes have to be asked for again by name.
+      grants: ['players.page', 'players.read', 'players.editor.varsitynotes.write'],
+      revokes: [],
+    });
+    expect(res.ok).toBe(true);
+    expect(rowFor(TRAINER).permission_role).toBe('tournaments');
+
+    const set = await setOfRow(TRAINER);
+    expect(set.has('sessions.create.write')).toBe(true);
+    expect(set.has('players.editor.varsitynotes.write')).toBe(true);
+    // And still nothing above the ceiling this feature ships with.
+    expect(set.has('fees.expenses.read')).toBe(false);
+    expect(set.has('permissions.write')).toBe(false);
+  });
+
+  // THE CONSEQUENCE, PINNED RATHER THAN AVOIDED. A role REPLACES the base, so a
+  // trainer given Tournaments and nothing else loses the varsity notes their
+  // level gave them. That is the same semantics an exec has, and it is
+  // deliberately NOT special-cased in the resolver — a trainer whose baseline
+  // survived composition would give the level ladder a second meaning, which is
+  // exactly what this model exists to remove. The editor is where it is made
+  // visible; this is where it is kept honest.
+  it('drops the trainer baseline when a role replaces it', async () => {
+    const res = await setPlayerPermissions(TRAINER, {
+      role: 'tournaments',
+      grants: [],
+      revokes: [],
+    });
+    expect(res.ok).toBe(true);
+
+    const set = await setOfRow(TRAINER);
+    expect(set.has('players.editor.varsitynotes.write')).toBe(false);
+    expect(set.has('players.page')).toBe(false);
+  });
+
+  // NOTHING CHANGES FOR ANYONE WHO IS NOT DELIBERATELY COMPOSED. Every row in
+  // the database has permission_role IS NULL, and a NULL role still means the
+  // level baseline and not one capability more or fewer.
+  it('leaves an uncomposed trainer on exactly TRAINER_BASELINE', async () => {
+    const { TRAINER_BASELINE } = await import('../permissions');
+    const set = await setOfRow(TRAINER);
+    expect([...set].sort()).toEqual([...TRAINER_BASELINE].sort());
+  });
+
+  // AND ADMINS ARE STILL REFUSED, in words of their own. permits()
+  // short-circuits on level === 'admin' before any stored set is consulted, so
+  // a role here would not take away one capability — it would only look as
+  // though it had, which is worse than refusing. This is the case the
+  // actor-level check cannot catch: the actor IS an admin.
+  it('refuses a role on an admin, because nothing would ever read it', async () => {
+    const res = await setPlayerPermissions(OTHER_ADMIN, {
+      role: 'internal',
+      grants: [],
+      revokes: [],
+    });
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/never be consulted/);
+    expect(rowFor(OTHER_ADMIN).permission_role).toBeNull();
   });
 });

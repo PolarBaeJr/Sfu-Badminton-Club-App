@@ -148,10 +148,35 @@ const CELL_CLASS: Record<CellState, string> = {
 
 const UNRESTRICTED_OPTION = '';
 
-const ROLE_OPTIONS = [
-  { value: UNRESTRICTED_OPTION, label: 'Unrestricted — today’s exec access' },
-  ...PERMISSION_ROLES.map((role) => ({ value: role, label: PERMISSION_ROLE_LABELS[role] })),
-];
+const LEVEL_LABELS: Record<AccessLevel, string> = {
+  admin: 'Admin',
+  exec: 'Executive',
+  trainer: 'Varsity trainer',
+};
+
+// WHAT "UNRESTRICTED" MEANS, IN WORDS, PER LEVEL. Two places describe the state
+// somebody returns to when no role is set — the confirmation behind the select
+// and the line under it — and both used to say "the executive baseline" because
+// only an exec could be composed. On a trainer's row that is simply false, so
+// the phrase is read from the row being edited rather than written into the
+// prose.
+const BASELINE_PHRASE: Record<AccessLevel, string> = {
+  admin: 'every capability there is',
+  exec: 'the full executive baseline — everything an exec could do before anybody was narrowed',
+  trainer: 'the varsity-trainer baseline — opening the roster, reading it, and writing varsity notes',
+};
+
+// Built per row for the same reason: the first option names the person's own
+// level, so it cannot be a module constant any more.
+function roleOptions(level: AccessLevel) {
+  return [
+    {
+      value: UNRESTRICTED_OPTION,
+      label: `Unrestricted — today’s ${LEVEL_LABELS[level].toLowerCase()} access`,
+    },
+    ...PERMISSION_ROLES.map((role) => ({ value: role, label: PERMISSION_ROLE_LABELS[role] })),
+  ];
+}
 
 const CONFIRM_PHRASE = 'HAND OUT PERMISSIONS';
 
@@ -199,10 +224,8 @@ export function PermissionEditor({
       : selected.id === viewerId
         ? 'This is you. A permissions screen where the row you are editing might be your own is where misreadings live — ask another admin to change yours.'
         : selected.level === 'admin'
-          ? 'Admins are superusers by level. They hold every capability and nothing stored here is consulted for them.'
-          : selected.level === 'trainer'
-            ? 'A varsity trainer’s whole level is reading the roster and writing varsity notes. There is nothing in it to narrow.'
-            : null;
+          ? 'Admins are superusers by level. They hold every capability and nothing stored here is consulted for them — a role on this row would look like a narrowing and would not be one. Make them an executive first.'
+          : null;
   const editable = selected !== null && readOnlyReason === null;
 
   function select(person: PersonRow) {
@@ -268,8 +291,8 @@ export function PermissionEditor({
         message: (
           <>
             <span className="text-[var(--text-primary)] font-medium">{selected?.name}</span> will
-            get the full executive baseline again — everything an exec could do before anybody was
-            narrowed. Both the grants and the revokes below are cleared.
+            get {selected ? BASELINE_PHRASE[selected.level] : 'their level’s baseline'} again. Both
+            the grants and the revokes below are cleared.
           </>
         ),
         confirmLabel: 'Make unrestricted',
@@ -289,6 +312,30 @@ export function PermissionEditor({
   // how an editor comes to show one thing while the console does another.
   const permissions = resolvePermissions(role, grants, revokes);
   const effective = effectiveCapabilities(selected?.level ?? null, permissions);
+
+  // WHAT PRESSING SAVE WOULD TAKE AWAY, worked out from the row as it is
+  // STORED — the same resolver, run a second time on the values this screen was
+  // seeded with.
+  //
+  // A role REPLACES the base rather than adding to it, so the first role picked
+  // for somebody who was unrestricted drops their whole level baseline. On an
+  // exec that is the point of the feature and the confirmation above says so.
+  // On a trainer it is a surprise: giving them Tournaments so they can run a
+  // session also takes away varsity notes, which is the one thing their level
+  // existed to give them. The semantics are correct and deliberately not
+  // special-cased in the resolver — a trainer whose baseline survived
+  // composition would give the level ladder a second meaning — so the editor is
+  // where it has to be visible, and visible BEFORE the save rather than after.
+  //
+  // Against the STORED row, not against the level's baseline: the question is
+  // what this EDIT removes. An exec who was narrowed to Finance months ago
+  // should see the delta they are making now, not the fifty-odd capabilities
+  // somebody else took away then.
+  const before = effectiveCapabilities(
+    selected?.level ?? null,
+    resolvePermissions(seededRole, selected?.grants ?? [], selected?.revokes ?? []),
+  );
+  const losing = [...before].filter((capability) => !effective.has(capability));
 
   const orphanRevokes = revokes.filter((capability) => !base.includes(capability));
 
@@ -526,7 +573,7 @@ export function PermissionEditor({
             <div>
               <h2 className="text-sm font-medium text-[var(--text-primary)]">{selected.name}</h2>
               <p className="text-xs text-[var(--text-muted)]">
-                {selected.level === 'admin' ? 'Admin' : selected.level === 'exec' ? 'Executive' : 'Varsity trainer'}
+                {LEVEL_LABELS[selected.level]}
               </p>
             </div>
 
@@ -538,7 +585,7 @@ export function PermissionEditor({
               <>
                 <Select
                   label="Starts from"
-                  options={ROLE_OPTIONS}
+                  options={roleOptions(selected.level)}
                   value={role ?? UNRESTRICTED_OPTION}
                   onChange={(e) => void changeRole(e.target.value)}
                   className="max-w-sm"
@@ -549,7 +596,7 @@ export function PermissionEditor({
                     reports that it has been adjusted. */}
                 <p className="text-xs text-[var(--text-muted)]">
                   {role === null
-                    ? 'Unrestricted. Nothing below applies — this person keeps the whole executive baseline.'
+                    ? `Unrestricted. Nothing below applies — this person keeps ${BASELINE_PHRASE[selected.level]}.`
                     : grants.length === 0 && revokes.length === 0
                       ? `${PERMISSION_ROLE_LABELS[role]}, unadjusted.`
                       : `Custom — ${PERMISSION_ROLE_LABELS[role]} with ${grants.length} granted and ${revokes.length} revoked.`}
@@ -601,12 +648,31 @@ export function PermissionEditor({
               </p>
             </div>
 
+            {/* WHAT SAVING WOULD TAKE AWAY. The panel above answers "what will
+                they hold"; this one answers the question that actually catches
+                people out, which is "what do they hold RIGHT NOW that they
+                would stop holding". They are not the same question and only the
+                second one is a warning. See the note on `losing` above for why
+                a trainer needs it more sharply than an exec does. */}
+            {editable && losing.length > 0 && (
+              <div className="rounded-[8px] border border-[var(--color-danger)] p-3">
+                <p className="text-xs font-medium text-[var(--color-danger)]">
+                  Saving takes away {losing.length}{' '}
+                  {losing.length === 1 ? 'capability' : 'capabilities'} they hold today
+                </p>
+                <p className="mt-1 text-[11px] text-[var(--text-muted)] leading-relaxed">
+                  {losing.map((capability) => CAPABILITY_GATES[capability].label).join(' · ')}
+                </p>
+              </div>
+            )}
+
             {/* NO DELTA CONTROLS FOR AN UNRESTRICTED PERSON, and the tree goes
-                with them. An unrestricted exec holds all 70 of these, but they
-                hold them because of their LEVEL and not because of anything
-                stored — so every cell would read "off" beside a panel saying 70
-                of 115, which is two true statements that look like a
-                contradiction. Pick a role first. */}
+                with them. An unrestricted person holds their level's baseline —
+                70 capabilities for an exec, 3 for a trainer — but they hold them
+                because of their LEVEL and not because of anything stored, so
+                every cell would read "off" beside a panel saying 70 of 115,
+                which is two true statements that look like a contradiction.
+                Pick a role first. */}
             {editable && role !== null && (
               <Input
                 label="Search"
@@ -666,12 +732,26 @@ export function PermissionEditor({
   );
 }
 
-/** The one-line summary on a person's row in the list. */
+/**
+ * The one-line summary on a person's row in the list.
+ *
+ * THE ROLE IS CONSULTED BEFORE THE LEVEL IS ALLOWED TO ANSWER FOR ITSELF, and
+ * that ordering is what changed here. This used to return "roster and varsity
+ * notes" for any trainer, because a trainer could not hold a role — now they
+ * can, and answering from the level would describe the baseline of somebody who
+ * has been composed out of it.
+ */
 function describe(person: PersonRow): string {
+  // Still answered from the level, and still correctly: an admin's stored role
+  // is never consulted, so there is nothing else it could say.
   if (person.level === 'admin') return 'Admin — holds everything';
-  if (person.level === 'trainer') return 'Varsity trainer — roster and varsity notes';
-  if (!isRole(person.role)) return 'Executive — unrestricted';
+  const level = LEVEL_LABELS[person.level];
+  if (!isRole(person.role)) {
+    return person.level === 'trainer'
+      ? `${level} — roster and varsity notes`
+      : `${level} — unrestricted`;
+  }
   const label = PERMISSION_ROLE_LABELS[person.role];
   const adjusted = person.grants.length + person.revokes.length;
-  return adjusted === 0 ? `Executive — ${label}` : `Executive — ${label}, adjusted`;
+  return adjusted === 0 ? `${level} — ${label}` : `${level} — ${label}, adjusted`;
 }

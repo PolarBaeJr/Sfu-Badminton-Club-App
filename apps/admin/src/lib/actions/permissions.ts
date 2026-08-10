@@ -136,14 +136,31 @@ async function setPlayerPermissionsImpl(playerId: string, next: PermissionsPaylo
     throw new ExpectedError('That is not a permission role.');
   }
 
-  // ROLES ARE EXEC-ONLY. An admin is a superuser by LEVEL and their stored role
-  // is never consulted; a trainer's whole level is two capabilities and there
-  // is nothing in it to narrow. Storing a role on either would be a value
-  // nothing reads — and on a trainer it would come into force silently the day
-  // somebody made them an exec.
-  if (next.role !== null && targetLevel !== 'exec') {
+  // A ROLE ON AN ADMIN IS A VALUE NOTHING READS, and that is the whole reason
+  // it is refused. permits() short-circuits on level === 'admin' before any set
+  // is consulted, so a stored role would not take one capability away from
+  // them; it would only look as though it had, which is worse than refusing.
+  // Narrowing an admin means making them an executive first.
+  //
+  // TRAINERS USED TO BE REFUSED HERE TOO, and that is what this change undoes.
+  // The old reasoning was that a trainer's whole level is three capabilities
+  // with nothing in it to narrow — true, and beside the point: the club has a
+  // varsity trainer who also runs sessions, and the only way to say so was to
+  // make them an exec, which hands over the entire exec baseline to somebody
+  // who needed one area of it. Composition is the answer to exactly that, and
+  // no machinery had to change to allow it: resolvePermissions is
+  // LEVEL-AGNOSTIC, so a composed trainer has always resolved through the same
+  // path as a composed exec, and the level decides only what an UNCOMPOSED
+  // person holds. This guard was the one thing refusing to create one.
+  //
+  // The cost, and it is real: a role REPLACES the base, so a trainer given
+  // `tournaments` loses TRAINER_BASELINE — varsity notes included — unless the
+  // role carries it or it is granted back. That is the same semantics an exec
+  // has had since this shipped, and the editor shows what will be lost before
+  // the save rather than after.
+  if (next.role !== null && targetLevel === 'admin') {
     throw new ExpectedError(
-      'Only an executive can be given a permission role. Admins are unrestricted and trainers hold the varsity-notes baseline.',
+      'An admin holds every capability by level, so a permission role on one would never be consulted. Make them an executive first.',
     );
   }
 

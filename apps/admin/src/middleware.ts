@@ -131,11 +131,20 @@ export async function middleware(request: NextRequest) {
         // deliberately taken away. A silent grant leaves no trace; a lockout is
         // loud within minutes.
         //
-        // Trainers hold a baseline of two capabilities and no role can be set on
-        // them, so there is nothing for a failure to restore. Admins are
-        // superusers by level and hold no stored capabilities — and they are the
-        // people who can repair whatever broke, so they must never be the ones
-        // locked out.
+        // TRAINERS STILL GO THROUGH, and that is now a judgement rather than an
+        // impossibility. A trainer used to be uncomposable, so a failure had
+        // nothing to restore to them; they can be composed now, and the fallback
+        // hands a composed one the trainer BASELINE — three capabilities, the
+        // roster and varsity notes, which every trainer holds today. So the
+        // exposure is capped at three things nobody has ever been refused, and
+        // the expected direction of composing a trainer is widening, where the
+        // fallback lands on LESS access rather than more. Failing them closed
+        // would instead lock every ordinary trainer out of the console during an
+        // outage to protect a revoke that may not exist.
+        //
+        // Admins are superusers by level and hold no stored capabilities — and
+        // they are the people who can repair whatever broke, so they must never
+        // be the ones locked out.
         const { data: level } = await supabase.rpc('admin_access_level', { p_user_id: user.id });
         accessLevel = (level as AccessLevel | null) ?? null;
         if (accessLevel === 'exec') {

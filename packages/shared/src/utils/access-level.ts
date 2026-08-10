@@ -498,13 +498,23 @@ const BASELINES: Record<AccessLevel, ReadonlySet<Capability>> = {
 // not reach the books, and a purely additive role would need a dozen
 // hand-written revokes to achieve that.
 //
-// ASSIGNING A ROLE IS NEVER ITSELF A WIDENING. Every role is a SUBSET of
-// EXEC_BASELINE, pinned by a test, and that is the whole property this table is
-// built to have — an admin who picks "Finance" from a dropdown has narrowed
-// somebody and cannot have done anything else. Anything beyond today's scope
-// for an area (the club's books, reinstatements, the net position) is handed
-// over per person by an explicit grant, which is a reviewed act with an audit
-// row rather than a side effect of choosing a word.
+// EVERY ROLE IS A SUBSET OF EXEC_BASELINE, pinned by a test, and that is the
+// whole property this table is built to have: a role is bounded by what execs
+// could already do, so nothing beyond today's scope for an area (the club's
+// books, reinstatements, the net position) can arrive from choosing a word. It
+// is handed over per person by an explicit grant, which is a reviewed act with
+// an audit row.
+//
+// THAT IS A BOUND, NOT A DIRECTION, and the difference started mattering when
+// trainers became composable. While roles were exec-only the two were the same
+// thing — the role was a subset of the target's OWN base, so picking one could
+// only subtract, and this comment used to say assigning a role was never itself
+// a widening. On a trainer it plainly is: ROLE_DEFAULTS.tournaments is fifty
+// capabilities against a baseline of three, and giving a varsity trainer the
+// club's competitive calendar without making them an exec is the reason
+// composition was opened to them. What survives, unchanged and load-bearing, is
+// the ceiling: whoever is composed, a role can only ever leave them inside the
+// exec baseline.
 //
 // The four lists are NOT a new design. They are the old SECTION_PORTFOLIO map —
 // the four VP jobs, each owning a set of sections — intersected with
@@ -540,7 +550,7 @@ export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {
   // money, other income, the net position and reinstatements are NOT here even
   // though a treasurer is the obvious person to hold them: the club owner's
   // rule was "execs can add expenses", and a role that reached the books would
-  // be the first role that widens somebody.
+  // be the first role to put somebody outside the exec baseline.
   finance: [
     'fees.page',
     'fees.expenses.read',
@@ -637,12 +647,18 @@ export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {
 
 // WHAT THE EDITOR MAY HAND OUT — the exec baseline, and nothing above it.
 //
-// The one line that keeps this change provably inside the old envelope. Every
+// The one line that keeps composition provably inside the old envelope. Every
 // capability outside EXEC_BASELINE (the club's books, reinstatements, audit,
 // ratings, accounts, platform settings, permissions.write itself) is admin work
-// today, and offering it here would make this the change that widens somebody
-// — which is not what it is for. It ships with storage, grant closure and the
-// editor proven first, and exposing the rest is its own small reviewable diff.
+// today, and offering it here would put somebody outside everything an exec
+// could already do. It ships with storage, grant closure and the editor proven
+// first, and exposing the rest is its own small reviewable diff.
+//
+// A COMPOSED TRAINER IS BOUNDED BY THE SAME LINE, and it is the only thing
+// bounding them: composing a trainer WIDENS them past their level, on purpose,
+// so "nothing here can widen anyone" is not the property this constant has.
+// The property it has is a ceiling — nobody, whatever their level, can be
+// composed above what an exec already held.
 //
 // Grant closure would already stop a non-admin handing out anything they do not
 // hold; this bounds what an ADMIN can hand out too, which closure by definition

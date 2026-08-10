@@ -314,17 +314,26 @@ describe('baselines', () => {
 // ---------------------------------------------------------------------------
 // ROLE_DEFAULTS
 // ---------------------------------------------------------------------------
-// THE PROPERTY THESE TESTS EXIST FOR: assigning a role is never itself a
-// widening. Everything below is a way of writing that down so it cannot be lost
-// by accident — the subset assertion is the security one, and the literal
+// THE PROPERTY THESE TESTS EXIST FOR: a role can never put somebody outside the
+// exec baseline. Everything below is a way of writing that down so it cannot be
+// lost by accident — the subset assertion is the security one, and the literal
 // pinning is what makes a change to a role a reviewed diff rather than a
 // discovery six months later.
+//
+// It used to be stated as "assigning a role is never itself a widening", which
+// was the same claim only while roles were exec-only: the role was a subset of
+// the TARGET's own base, so picking one could only subtract. Trainers are
+// composable now, and ROLE_DEFAULTS.tournaments against TRAINER_BASELINE is a
+// widening by fifty capabilities — deliberately, because that is what lets a
+// varsity trainer run sessions without being made an exec. The subset assertion
+// below is unchanged and still the security one; only the sentence describing
+// what it buys had to move from a direction to a ceiling.
 
 describe('ROLE_DEFAULTS', () => {
   // The one that matters. A role that reached beyond the exec baseline would
-  // make "pick Finance from a dropdown" an act that GIVES somebody something,
-  // and this whole feature exists to be the other kind of act.
-  it('keeps every role inside the exec baseline, so a role can only narrow', () => {
+  // let "pick Finance from a dropdown" hand out something no exec ever had,
+  // with no grant to review and no audit row saying what it was.
+  it('keeps every role inside the exec baseline, so a role can never exceed it', () => {
     const exec = new Set<Capability>(EXEC_BASELINE);
     for (const role of PERMISSION_ROLES) {
       for (const capability of ROLE_DEFAULTS[role]) {
