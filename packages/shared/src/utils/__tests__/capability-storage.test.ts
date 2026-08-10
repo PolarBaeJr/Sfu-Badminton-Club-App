@@ -94,10 +94,16 @@ describe('the migrations and the vocabulary', () => {
   });
 
   it('pins exactly the roles this build has', () => {
+    // THE ROLE LIST MOVED, for the same reason the vocabulary list did: 00087
+    // pinned the four VP jobs, and 00091 drops and re-adds the constraint with
+    // `custom` alongside them. Both files write a list; only the LATEST one is
+    // live, so the assertion follows it there.
+    //
     // Written as `permission_role IN ('a', 'b', …)` rather than as an array, so
     // it is matched separately.
-    const from = sql.indexOf('players_permission_role_check');
-    const check = sql.slice(from, sql.indexOf(';', sql.indexOf('CHECK', from)));
+    const roleSql = migration('00091_');
+    const from = roleSql.indexOf('players_permission_role_check');
+    const check = roleSql.slice(from, roleSql.indexOf(';', roleSql.indexOf('CHECK', from)));
     const roles = [...check.matchAll(/'([a-z]+)'/g)].map((m) => m[1]!);
     expect([...roles].sort()).toEqual([...PERMISSION_ROLES].sort());
   });

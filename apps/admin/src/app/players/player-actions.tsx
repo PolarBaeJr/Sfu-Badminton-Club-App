@@ -7,6 +7,9 @@ import { useRouter } from 'next/navigation';
 import { PAYMENT_METHODS, PAYMENT_METHOD_CUSTOM, resolvePaymentMethod } from '@badminton/shared';
 import { removePlayer, updatePlayer, updatePlayerFlags, approvePlayer, banPlayer, reinstatePlayer, requireWaiverResignature } from '@/lib/actions';
 import { isApprovalEdit } from '@/lib/player-approval';
+// Shared with /permissions, which asks the same question about the same three
+// columns. See lib/console-access.ts for why it is one mapping and not two.
+import { EXEC_ROLE_OPTIONS, fromRoleValue, toRoleValue, type ExecRole } from '@/lib/console-access';
 
 interface Props {
   // One button per mode; /players decides WHICH modes a row gets from the tab
@@ -47,39 +50,6 @@ const STATUS_OPTIONS = [
   // way to set or clear it from the console at all.
   { value: 'inactive', label: 'Inactive' },
 ];
-
-// ONE question — what console access does this person have — instead of a
-// role select, an is_exec flag and a trainer switch that had to be combined in
-// the reader's head. "Admin + Executive" is gone because admin already outranks
-// exec everywhere (accessLevelFor resolves the highest level held, and
-// atLeast() orders admin > exec > trainer), so the pair was never a distinct
-// state — only a way to get it wrong.
-const EXEC_ROLE_OPTIONS = [
-  { value: 'none', label: 'None — ordinary member' },
-  { value: 'executive', label: 'Executive' },
-  { value: 'trainer', label: 'Varsity trainer' },
-  { value: 'admin', label: 'Admin' },
-];
-
-type ExecRole = 'none' | 'executive' | 'trainer' | 'admin';
-
-function toRoleValue(role: string, isExec: boolean, isTrainer: boolean): ExecRole {
-  if (role === 'admin') return 'admin';
-  if (isExec) return 'executive';
-  if (isTrainer) return 'trainer';
-  return 'none';
-}
-
-// Admin implies is_exec: an admin already has every exec power, and the club's
-// admin sits on the exec team, so they belong on the public /exec page too.
-function fromRoleValue(v: ExecRole): { role: 'player' | 'admin'; is_exec: boolean; is_trainer: boolean } {
-  switch (v) {
-    case 'admin':     return { role: 'admin',  is_exec: true,  is_trainer: false };
-    case 'executive': return { role: 'player', is_exec: true,  is_trainer: false };
-    case 'trainer':   return { role: 'player', is_exec: false, is_trainer: true };
-    default:          return { role: 'player', is_exec: false, is_trainer: false };
-  }
-}
 
 export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin, canApprove }: Props) {
   const [open, setOpen] = useState(false);

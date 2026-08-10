@@ -66,6 +66,13 @@ const EXPECTED_DB_GUARDS: readonly string[] = [
   'Only a participant can dispute this match',
   'The submitter cannot confirm their own result',
   'Not authenticated',
+  // 00050's last-admin guard, verbatim from its two RAISE EXCEPTION statements.
+  // An admin being told they are about to make the console unreachable is the
+  // invariant working, not a fault — and /permissions now offers taking console
+  // access away as an ordinary control, so this is a refusal somebody can meet
+  // by accident rather than a corner of the settings page.
+  'This is the only admin with a passkey. Give another admin a passkey before demoting this one.',
+  'This is the only admin with a passkey. Give another admin a passkey before deleting this account.',
 ];
 
 // The same, for guards whose message ends in runtime values (the offending

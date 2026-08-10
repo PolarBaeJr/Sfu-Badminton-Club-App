@@ -528,13 +528,32 @@ const BASELINES: Record<AccessLevel, ReadonlySet<Capability>> = {
 // invariant of the resolver rather than a courtesy: a capability whose area page
 // is absent is pruned, so a role missing one would grant nothing at all in that
 // area. Pinned by a test.
-export type PermissionRole = 'finance' | 'tournaments' | 'internal' | 'external';
+//
+// `custom` IS NOT A FIFTH VP JOB. It is the empty base — a role whose defaults
+// are nothing, so the whole of a hand-picked set lives in `permission_grants`
+// and reads back exactly as it was chosen.
+//
+// It exists because the storage cannot express a hand-picked set any other way.
+// resolvePermissions() reads a NULL role as "not composed" and does not consult
+// the deltas at all, so anything stored has to name a role — and before this
+// existed, the editor's only way to hand somebody a set of its own was to borrow
+// the closest VP name and paper over the difference with grants and revokes. A
+// varsity trainer who ticked one session capability would have been stored as
+// `finance` with three revokes of the club's expense capabilities: a row that
+// says the trainer is the treasurer, an audit entry that says the same, and —
+// the part that actually bites — membership of the blast radius of any future
+// edit to ROLE_DEFAULTS.finance. An empty base has no blast radius, because
+// there is nothing in it to change.
+export type PermissionRole = 'finance' | 'tournaments' | 'internal' | 'external' | 'custom';
 
+// The four jobs first and `custom` last, because this order is the order the
+// editor offers them in and a named job is the choice to reach for first.
 export const PERMISSION_ROLES: readonly PermissionRole[] = [
   'finance',
   'tournaments',
   'internal',
   'external',
+  'custom',
 ] as const;
 
 /** Shown wherever a role is chosen or reported. */
@@ -543,6 +562,7 @@ export const PERMISSION_ROLE_LABELS: Record<PermissionRole, string> = {
   tournaments: 'Tournaments',
   internal: 'Internal',
   external: 'External',
+  custom: 'Custom — hand-picked',
 };
 
 export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {
@@ -643,6 +663,13 @@ export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {
     'legal.page',
     'legal.reacceptance.write',
   ],
+
+  // EMPTY, AND THAT IS THE WHOLE DEFINITION. Everything a hand-picked person
+  // holds is in their grants, so the row says what they hold rather than a name
+  // plus two corrections. It satisfies the invariants above for free: the empty
+  // set is inside the exec baseline, has no duplicates, and touches no area
+  // whose page it could be missing.
+  custom: [],
 };
 
 // WHAT THE EDITOR MAY HAND OUT — the exec baseline, and nothing above it.

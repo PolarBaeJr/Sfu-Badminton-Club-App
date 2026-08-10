@@ -7,6 +7,9 @@ import { createAdminClient } from '../supabase-server';
 import { requireCapability } from './_shared';
 import { logAdminAudit } from '../audit';
 import { runAction, type ActionResult } from '../action-result';
+import { updatePlayer } from './players';
+import { fromRoleValue, toRoleValue, type ExecRole } from '../console-access';
+import { isAdminActor } from '../player-field-access';
 import {
   accessLevelFor,
   effectiveCapabilities,
@@ -305,5 +308,134 @@ async function setPlayerPermissionsImpl(playerId: string, next: PermissionsPaylo
   // The sidebar and the dashboard are both filtered by what the viewer holds,
   // so the person whose access just changed must not keep a cached copy of the
   // old answer.
+  revalidatePath('/dashboard');
+}
+
+/**
+ * Give somebody the console, or take it away — the other half of /permissions,
+ * and the half the page's own subtitle has always promised.
+ *
+ * THIS ACTION WRITES NOTHING ITSELF. It composes two existing guarded actions,
+ * in an order chosen below, and that is deliberate: `role`, `is_exec` and
+ * `is_trainer` are the hard floor in player-field-access.ts — refused to anyone
+ * below admin under all circumstances and reachable by no capability — and the
+ * one place enforcing that floor is assertPlayerFieldAccess() inside
+ * updatePlayer(). A second path that set those columns directly would be a
+ * second place the floor has to be remembered.
+ *
+ * (Worth knowing while reading that: the guard_player_privileged_columns trigger
+ * names the same columns and does NOT cover this path. It opens with `IF
+ * auth.uid() IS NULL … RETURN NEW`, and every admin action writes through the
+ * service-role client where auth.uid() is NULL — see the header of
+ * player-field-access.ts, verified against the live definition. The trigger
+ * protects a member editing their own row through PostgREST. The application
+ * guard is the only one standing here.)
+ *
+ * ADMIN BY LEVEL, not by capability, and checked here as well as inside
+ * updatePlayer(). Handing out a level is the one act the capability system
+ * deliberately cannot express, so `permissions.write` — which an exec may hold —
+ * must not be mistaken for permission to do it. The early check is what makes
+ * the refusal say so; without it a treasurer would meet "Admin access required
+ * to change: role, is_exec, is_trainer", which is true and tells them nothing.
+ */
+export async function setConsoleAccess(
+  playerId: string,
+  access: ExecRole,
+  reason: string,
+): Promise<ActionResult<void>> {
+  return runAction(() => setConsoleAccessImpl(playerId, access, reason));
+}
+
+async function setConsoleAccessImpl(playerId: string, access: ExecRole, reason: string) {
+  const actor = await requireCapability('permissions.write');
+  if (!isAdminActor(actor)) {
+    throw new ExpectedError(
+      'Only an admin can give somebody the console or take it away. Ask an admin.',
+    );
+  }
+
+  // SELF-DEMOTION IS REFUSED, for the reason the permissions row beside it is:
+  // this is a page only an admin can open, so an admin who takes their own
+  // console access away on it loses the screen they would need to put it back.
+  // The database's last-admin guard does not cover this — it protects the last
+  // admin who holds a PASSKEY, so a club with two admins would let either one
+  // lock themselves out. Somebody who genuinely means to step down asks the
+  // other admin, which is the same answer the permissions half already gives.
+  if (actor.id === playerId) {
+    throw new ExpectedError(
+      'You cannot change your own console access. Ask another admin to do it.',
+    );
+  }
+
+  const adminClient = createAdminClient();
+  // The level markers, plus all three permission columns together — naming
+  // permission_role without both delta columns makes permissionsOf() throw.
+  const { data: target } = await adminClient
+    .from('players')
+    .select('id, full_name, role, is_exec, is_trainer, permission_role, permission_grants, permission_revokes')
+    .eq('id', playerId)
+    .maybeSingle();
+  if (!target) throw new ExpectedError('That member no longer exists.');
+
+  const was = toRoleValue(
+    (target.role as string | null) ?? 'player',
+    target.is_exec === true,
+    target.is_trainer === true,
+  );
+  if (was === access) return;
+
+  // A COMPOSITION IS ONLY CONSULTED AT TWO OF THE FOUR LEVELS. An admin is a
+  // superuser by level and permits() short-circuits before any stored set is
+  // read; somebody with no level never reaches a gate at all. So the stored
+  // triple survives exactly one kind of move — executive to varsity trainer and
+  // back — where the resolver, which is level-agnostic, goes on resolving it and
+  // the page goes on showing it. Every other move clears it.
+  //
+  // Left behind, it is the dormant-delta hazard the storage CHECKs exist to
+  // prevent, one level up: a revoke that stops biting and a grant that stops
+  // showing, both invisible on a row with nowhere to apply, ready to wake up the
+  // day somebody is promoted again months later.
+  const live = (value: ExecRole) => value === 'executive' || value === 'trainer';
+  const clears = !(live(was) && live(access));
+  const hasComposition =
+    (target.permission_role ?? null) !== null ||
+    ((target.permission_grants as string[] | null) ?? []).length > 0 ||
+    ((target.permission_revokes as string[] | null) ?? []).length > 0;
+
+  // ORDER, AND IT IS NOT ARBITRARY. Clearing a LIVE composition first and then
+  // failing to write the level would leave an executive who had just lost their
+  // narrowing — a widening produced by a failed operation, which is the one
+  // outcome this action must not have. So a live composition is cleared AFTER,
+  // where the worst case is an inert delta on a row that no longer reaches a
+  // gate, reported loudly here rather than discovered later.
+  //
+  // A composition that is ALREADY inert — on somebody with no level, or on an
+  // admin — has the opposite answer for the same reason: clearing it cannot
+  // widen anybody, because it is granting nobody anything right now, and doing
+  // it first means a failed level write leaves nothing stale behind at all.
+  const clearFirst = clears && hasComposition && !live(was);
+  const clearAfter = clears && hasComposition && live(was);
+
+  async function clearComposition() {
+    const cleared = await setPlayerPermissions(playerId, { role: null, grants: [], revokes: [] });
+    if (!cleared.ok) throw new ExpectedError(cleared.error);
+  }
+
+  if (clearFirst) await clearComposition();
+
+  // Through updatePlayer, which applies the field guard, refuses a non-admin,
+  // writes the audit row and meets the database's last-admin trigger. All three
+  // columns every time, never a subset: fromRoleValue answers the whole question,
+  // so moving somebody from executive to trainer clears is_exec in the same write
+  // that sets is_trainer, and no marker survives a move it was not part of.
+  const res = await updatePlayer(playerId, { ...fromRoleValue(access), reason });
+  if (!res.ok) throw new ExpectedError(res.error);
+
+  if (clearAfter) await clearComposition();
+
+  // updatePlayer revalidates /players and the member's own page; neither is this
+  // one, and an executive moved to trainer never reaches setPlayerPermissions
+  // above, so nothing else would refresh the list this was changed from.
+  revalidatePath('/permissions');
   revalidatePath('/dashboard');
 }
