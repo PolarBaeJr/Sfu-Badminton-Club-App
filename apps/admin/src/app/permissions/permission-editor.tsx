@@ -7,13 +7,16 @@ import {
   Button,
   Card,
   Dialog,
+  EmptyState,
   Input,
+  SearchFilter,
   Select,
   Textarea,
+  cn,
   filterPlayerOptions,
   useConfirm,
 } from '@badminton/ui';
-import { ChevronDown, ChevronRight, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ChevronDown, ChevronRight, ShieldAlert } from 'lucide-react';
 import { useToast } from '@/components/toast-provider';
 import { setConsoleAccess, setPlayerPermissions } from '@/lib/actions';
 // The one mapping between "what console access does this person have" and the
@@ -158,6 +161,8 @@ function buildTree(): Node[] {
 
 const TREE = buildTree();
 
+const ALL_KEYS = TREE.flatMap((area) => [area.key, ...area.children.map((c) => c.key)]);
+
 // `level` is the state a person is in before anybody composes them: they hold
 // the capability because of the LEVEL they were given, and nothing is stored.
 // Its own state rather than a shade of `role`, because the two answer different
@@ -165,23 +170,52 @@ const TREE = buildTree();
 // and the first click on a `level` cell is what turns one into the other.
 type CellState = 'level' | 'role' | 'granted' | 'revoked' | 'off';
 
-const CELL_TEXT: Record<CellState, string> = {
-  level: '● from level',
-  role: '● from role',
-  granted: '+● granted',
-  revoked: '⊘ revoked',
-  off: '· off',
+// THE THREE SEGMENTS, and the whole of the model they stand for. `inherit` is
+// no delta at all — whatever the base gives, they get; `on` is a grant; `off` is
+// a revoke. Five cell states collapse onto three segments because two pairs of
+// them are the SAME stored row read against different bases: "from level" and
+// "from role" are both "nothing stored for this", and so is an `off` under a
+// role that never gave it.
+type Segment = 'inherit' | 'off' | 'on';
+
+const SEGMENT_OF: Record<CellState, Segment> = {
+  level: 'inherit',
+  role: 'inherit',
+  off: 'inherit',
+  granted: 'on',
+  revoked: 'off',
 };
 
-const CELL_CLASS: Record<CellState, string> = {
-  // Info, not accent: --color-accent is the same #c00 as --color-danger, and
-  // "they hold this because of their level" must not be the colour that means
-  // "this has been taken away".
-  level: 'text-[var(--color-info)] border-[var(--color-info)]',
-  role: 'text-[var(--text-primary)] border-[var(--border-hover)]',
-  granted: 'text-[var(--color-success)] border-[var(--color-success)]',
-  revoked: 'text-[var(--color-danger)] border-[var(--color-danger)]',
-  off: 'text-[var(--text-muted)] border-[var(--border)]',
+// The active segment is FILLED and the other two are not, so a row reads as one
+// answer rather than as three buttons. Green is the only colour here that means
+// anything on its own — it is the same green the counts use for "they hold this".
+const SEGMENTS: readonly { value: Segment; label: string; activeClass: string }[] = [
+  { value: 'inherit', label: 'Inherit', activeClass: 'bg-[var(--surface-2)] text-[var(--mute)]' },
+  { value: 'off', label: 'Off', activeClass: 'bg-[var(--surface-3)] text-[var(--ink)]' },
+  { value: 'on', label: 'On', activeClass: 'bg-[var(--win)] text-[var(--bg)]' },
+];
+
+// UNDER A HAND-PICKED SET THERE IS NOTHING TO INHERIT. `custom`'s base is empty
+// by construction, so a row with no delta is not "whatever the job gives them" —
+// it is off, and Inherit is a segment that could never light. Left live it would
+// be the one control on this screen that does not do what it says: press it and
+// Off would fill instead. This is not a corner either — asCustom() seeds
+// `custom` on the first press for anybody sitting on their level default, which
+// is everybody on day one.
+const HAND_PICKED_SEGMENTS = SEGMENTS.map((segment) =>
+  segment.value === 'inherit' ? { ...segment, disabled: true } : segment,
+);
+
+// page has no badge. The design called for purple and the console has no purple
+// token — and adding one is the single thing ds-bundle/guidelines/admin-console
+// forbids outright ("No new colour values", "Badge — success/warning/danger/
+// neutral only"). It costs nothing here: the page row is already the one row in
+// an area drawn on its own surface with its own prose, so it is told apart by
+// shape rather than by hue.
+const SCOPE_BADGE: Record<Leaf['mode'], 'info' | 'warning' | null> = {
+  page: null,
+  read: 'info',
+  write: 'warning',
 };
 
 const LEVEL_DEFAULT_OPTION = '';
@@ -246,6 +280,66 @@ function search(people: PersonRow[], query: string): PersonRow[] {
   return filterPlayerOptions(people.map((p) => ({ ...p, meta: p.email })), query);
 }
 
+/** 11px/700 uppercase — the console's one micro-label, used for every field name here. */
+const MICRO = 'text-[11px] font-bold uppercase tracking-[0.12em]';
+
+type FilterMode = 'all' | 'granted' | 'changed';
+
+const MODES: readonly { value: FilterMode; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'granted', label: 'Granted' },
+  { value: 'changed', label: 'Changed' },
+];
+
+/**
+ * A row of hairline-joined buttons where exactly one is filled.
+ *
+ * Not a Tabs and not a Switch: the tri-state below has three answers and no
+ * "current view", and the filter above it has three that are peers. Both are one
+ * question with one answer, which is what makes them the same control.
+ */
+function Segmented<T extends string>({
+  value,
+  options,
+  onChange,
+  disabled,
+  label,
+  className,
+}: {
+  value: T;
+  options: readonly { value: T; label: string; activeClass?: string; disabled?: boolean }[];
+  onChange: (next: T) => void;
+  disabled?: boolean;
+  label: string;
+  className?: string;
+}) {
+  return (
+    <div role="group" aria-label={label} className={cn('inline-flex flex-shrink-0 border border-[var(--line)]', className)}>
+      {options.map((option) => {
+        const active = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={active}
+            disabled={disabled || option.disabled}
+            onClick={() => onChange(option.value)}
+            className={cn(
+              MICRO,
+              'px-2.5 min-h-[36px] border-l border-[var(--line)] first:border-l-0 transition-colors disabled:opacity-40 disabled:cursor-not-allowed',
+              active
+                ? option.activeClass ?? 'bg-[var(--surface-3)] text-[var(--ink)]'
+                : 'text-[var(--mute)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]',
+            )}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function PermissionEditor({
   holders,
   others,
@@ -264,6 +358,7 @@ export function PermissionEditor({
   const [grants, setGrants] = useState<Capability[]>([]);
   const [revokes, setRevokes] = useState<Capability[]>([]);
   const [capabilitySearch, setCapabilitySearch] = useState('');
+  const [mode, setMode] = useState<FilterMode>('all');
   const [memberSearch, setMemberSearch] = useState('');
   const [access, setAccess] = useState<ExecRole>('none');
   const [accessReason, setAccessReason] = useState('');
@@ -329,6 +424,7 @@ export function PermissionEditor({
     setAccess(accessForLevel(person.level));
     setAccessReason('');
     setCapabilitySearch('');
+    setMode('all');
     setExpanded([]);
   }
 
@@ -357,6 +453,28 @@ export function PermissionEditor({
     if (revokes.includes(capability)) return 'revoked';
     return base.includes(capability) ? 'role' : 'off';
   }
+
+  // WHICH SEGMENT IS FILLED. `off` is the one cell state that reads differently
+  // depending on what is behind the row: under a level default or a named job it
+  // means "nothing stored, and the base does not give it", which is Inherit;
+  // under a hand-picked set there is no base at all, so it means Off. See
+  // HAND_PICKED_SEGMENTS.
+  const segmentOf = (state: CellState): Segment =>
+    state === 'off' && role === 'custom' ? 'off' : SEGMENT_OF[state];
+
+  // WHAT INHERITING WOULD GIVE THEM — the answer the `Inherit` segment stands
+  // for, said out loud beside it. Off a level default that is the level's own
+  // baseline (nothing is stored, so `effective` IS the baseline); under a role
+  // it is what the role gives.
+  const inherits = (capability: Capability) =>
+    role === null ? effective.has(capability) : base.includes(capability);
+
+  // DIFFERS FROM SAVED, measured in what the person can DO rather than in what
+  // the row stores. Switching somebody from their level default to a hand-picked
+  // set of exactly the same capabilities changes the row and changes nothing
+  // about them, and marking sixty rows amber for it would bury the one row that
+  // did move.
+  const changed = (capability: Capability) => before.has(capability) !== effective.has(capability);
 
   /**
    * The triple as it would have to be STORED for the ticks on screen to survive
@@ -387,48 +505,43 @@ export function PermissionEditor({
     return seedCustom();
   }
 
-  // ONE CLICK WRITES EXACTLY ONE DELTA ELEMENT, and only the legal transition.
-  // If the base gives it, the only move is on ⇄ revoked; if it does not, the
-  // only move is off ⇄ granted. That is what stops a redundant grant ever being
-  // stored, and it is why there is no third branch here to get wrong.
+  // ONE CLICK WRITES EXACTLY ONE DELTA ELEMENT, and only the one the chosen
+  // segment needs. `inherit` clears both lists; `on` stores a grant ONLY where
+  // the base does not already give it; `off` stores a revoke ONLY where it does.
+  // That is what stops a redundant grant ever being stored — the same rule the
+  // old two-state cell enforced by having nowhere else to go, said explicitly
+  // now that there are three places to go.
   //
-  // On a level default the click ALSO performs the switch above, so the first
-  // tick does what the person pressing it expects instead of nothing. That was
-  // the club owner's report — "i cant edit varsity trainer?" — and it was fair:
-  // the cells were inert until a role was picked, with nothing on screen saying
-  // that picking one was the way in.
-  function toggle(capability: Capability) {
+  // On a level default the click ALSO performs the switch to a hand-picked set,
+  // so the first segment pressed does what the person pressing it expects
+  // instead of nothing. That was the club owner's report — "i cant edit varsity
+  // trainer?" — and it was fair: the cells were inert until a role was picked,
+  // with nothing on screen saying that picking one was the way in.
+  function setCell(capability: Capability, target: Segment) {
     const next = asCustom();
     const inBase = (ROLE_DEFAULTS[next.role] as readonly Capability[]).includes(capability);
+    const nextGrants = next.grants.filter((c) => c !== capability);
+    const nextRevokes = next.revokes.filter((c) => c !== capability);
+    if (target === 'on' && !inBase) nextGrants.push(capability);
+    if (target === 'off' && inBase) nextRevokes.push(capability);
     setRole(next.role);
-    if (inBase) {
-      setRevokes(
-        next.revokes.includes(capability)
-          ? next.revokes.filter((c) => c !== capability)
-          : [...next.revokes, capability],
-      );
-      setGrants(next.grants);
-      return;
-    }
-    setGrants(
-      next.grants.includes(capability)
-        ? next.grants.filter((c) => c !== capability)
-        : [...next.grants, capability],
-    );
-    setRevokes(next.revokes);
+    setGrants(nextGrants);
+    setRevokes(nextRevokes);
   }
 
-  function onCellClick(capability: Capability) {
-    // The one capability that can replicate itself. A tick box is the wrong
+  function onCellClick(capability: Capability, target: Segment) {
+    // The one capability that can replicate itself. A segment is the wrong
     // weight of control for "this person can hand out anything they hold,
-    // including this", so turning it ON costs a typed phrase; turning it off
-    // stays one click, because taking access away is the safe direction.
-    if (capability === 'permissions.write' && stateOf(capability) === 'off') {
+    // including this", so turning it ON costs a typed phrase; every other move
+    // stays one click, because taking access away is the safe direction — and so
+    // is putting back something a revoke had taken off a role that still gives
+    // it, which is why the test is the cell's state and not its effect.
+    if (capability === 'permissions.write' && target === 'on' && stateOf(capability) === 'off') {
       setDangerous(capability);
       setTyped('');
       return;
     }
-    toggle(capability);
+    setCell(capability, target);
   }
 
   async function changeRole(value: string) {
@@ -450,11 +563,11 @@ export function PermissionEditor({
       setRevokes([]);
       return;
     }
-    // Choosing Hand-picked explicitly is the same act the first tick performs,
-    // so it starts from the same place: what they hold today. From a NAMED role
-    // as much as from a level default — the base is about to become empty, so
-    // without the seed "convert this to a hand-picked set" would silently take
-    // away everything the role was giving them.
+    // Choosing Hand-picked explicitly is the same act the first segment press
+    // performs, so it starts from the same place: what they hold today. From a
+    // NAMED role as much as from a level default — the base is about to become
+    // empty, so without the seed "convert this to a hand-picked set" would
+    // silently take away everything the role was giving them.
     if (value === 'custom') {
       const next = seedCustom();
       setRole(next.role);
@@ -486,14 +599,22 @@ export function PermissionEditor({
   // for the same reason — the seed changes what is on screen, never what is
   // stored, so the comparison still has both sides.
   const losing = [...before].filter((capability) => !effective.has(capability));
+  const gaining = [...effective].filter((capability) => !before.has(capability));
 
   const orphanRevokes = revokes.filter((capability) => !base.includes(capability));
 
   const query = capabilitySearch.trim().toLowerCase();
+  // A search or a mode OPENS everything it matched. Making somebody expand three
+  // tiers to find the row they just filtered for is the same as not having a
+  // filter — so while either is active the expand/collapse toggle has nothing
+  // left to do, and is disabled rather than left looking broken.
+  const filtering = query !== '' || mode !== 'all';
   const matches = (leaf: Leaf) =>
-    query === '' ||
-    leaf.label.toLowerCase().includes(query) ||
-    leaf.capability.includes(query);
+    (query === '' ||
+      leaf.label.toLowerCase().includes(query) ||
+      leaf.capability.includes(query)) &&
+    (mode === 'all' ||
+      (mode === 'granted' ? effective.has(leaf.capability) : changed(leaf.capability)));
 
   function allLeaves(node: Node): Leaf[] {
     return [
@@ -507,33 +628,23 @@ export function PermissionEditor({
     return allLeaves(node).filter(matches);
   }
 
+  const shownLeaves = TREE.reduce((total, area) => total + visibleLeaves(area).length, 0);
+
   function isOpen(node: Node): boolean {
-    // A search opens everything it matched. Making somebody expand three tiers
-    // to find the row they just searched for is the same as not having search.
-    return query !== '' || expanded.includes(node.key);
+    return filtering || expanded.includes(node.key);
   }
 
   function toggleOpen(key: string) {
     setExpanded((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
   }
 
-  /** Roll-up for a header. Display only — a header is never a control. */
-  function chipFor(node: Node): string {
-    const leaves = allLeaves(node);
-    const on = leaves.filter((l) => effective.has(l.capability)).length;
-    const granted = leaves.filter((l) => stateOf(l.capability) === 'granted').length;
-    const revoked = leaves.filter((l) => stateOf(l.capability) === 'revoked').length;
-    const parts = [`${on} of ${leaves.length}`];
-    if (granted > 0) parts.push(`+${granted} granted`);
-    if (revoked > 0) parts.push(`−${revoked} revoked`);
-    return parts.join(' · ');
-  }
+  const allExpanded = ALL_KEYS.every((key) => expanded.includes(key));
 
   // "Turn on everything here" is a BUTTON, never the header itself. A header
   // that toggled would need an aggregate state — half on, half off — and an
   // aggregate state is a thing a person can misread. These write the individual
-  // leaves, one delta element each, exactly as clicking them would, and they
-  // perform the same switch to a hand-picked set that a click does.
+  // leaves, one delta element each, exactly as pressing their segments would,
+  // and they perform the same switch to a hand-picked set that a press does.
   //
   // "Reads" means everything that is not a WRITE, so the page comes with them.
   // A set of reads without the area's page is a set the resolver deletes on the
@@ -608,35 +719,54 @@ export function PermissionEditor({
     });
   }
 
-  const cell = (leaf: Leaf) => {
+  const segments = (leaf: Leaf, state: CellState) => (
+    <Segmented
+      label={leaf.label}
+      value={segmentOf(state)}
+      options={role === 'custom' ? HAND_PICKED_SEGMENTS : SEGMENTS}
+      disabled={!composable || !held.has(leaf.capability)}
+      onChange={(target) => onCellClick(leaf.capability, target)}
+    />
+  );
+
+  const cell = (leaf: Leaf, dimmed: boolean) => {
     const state = stateOf(leaf.capability);
     const mine = held.has(leaf.capability);
-    const disabled = !composable || !mine;
     const isDangerous = leaf.capability === 'permissions.write';
+    const badge = SCOPE_BADGE[leaf.mode];
     return (
       <div
         key={leaf.capability}
-        className="flex items-center justify-between gap-3 py-2 pl-6 pr-3 border-t border-[var(--border)]"
+        className={cn(
+          'group flex items-center justify-between gap-3 py-2 pl-4 pr-3 border-t border-t-[var(--line)] border-l-[3px] transition-opacity',
+          changed(leaf.capability) ? 'border-l-[var(--color-warning)]' : 'border-l-transparent',
+          dimmed && 'opacity-45',
+        )}
       >
         <div className="min-w-0">
-          <p className="text-sm text-[var(--text-primary)] flex items-center gap-2">
-            {isDangerous && <ShieldAlert className="w-3.5 h-3.5 text-[var(--color-danger)]" />}
+          <p className="flex flex-wrap items-center gap-2 text-sm text-[var(--ink)]">
+            {isDangerous && <ShieldAlert className="w-3.5 h-3.5 flex-shrink-0 text-[var(--red)]" />}
             {leaf.label}
-            <Badge variant="neutral">{leaf.mode}</Badge>
+            {badge && <Badge variant={badge}>{leaf.mode}</Badge>}
+            {segmentOf(state) === 'inherit' && (
+              <span className="text-[11px] text-[var(--mute)]">
+                from {role === null ? 'level' : 'role'} · {inherits(leaf.capability) ? 'on' : 'off'}
+              </span>
+            )}
           </p>
-          <p className="font-mono text-[11px] text-[var(--text-muted)]">{leaf.capability}</p>
+          {/* THE DOTTED PATH IS THERE WHEN IT IS WANTED AND SILENT WHEN IT IS
+              NOT. It is what an engineer greps for and what nobody else needs to
+              read 116 times, so it is drawn at zero opacity and always occupies
+              its line — fading it in rather than revealing it keeps every row
+              the same height as the pointer crosses the list. */}
+          <p className="font-mono text-[11px] text-[var(--mute)] opacity-0 transition-opacity duration-150 group-hover:opacity-50 group-focus-within:opacity-50">
+            {leaf.capability}
+          </p>
           {!mine && (
-            <p className="text-[11px] text-[var(--text-muted)]">You do not hold this.</p>
+            <p className="text-[11px] text-[var(--mute)]">You do not hold this.</p>
           )}
         </div>
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => onCellClick(leaf.capability)}
-          className={`flex-shrink-0 min-h-[36px] px-3 rounded-[8px] border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${CELL_CLASS[state]}`}
-        >
-          {CELL_TEXT[state]}
-        </button>
+        {segments(leaf, state)}
       </div>
     );
   };
@@ -645,98 +775,150 @@ export function PermissionEditor({
   // below it, because it is not one more thing you can tick: it is the switch
   // the rest of the area hangs off. Everything else here is deleted by the
   // resolver while this is off, and a row that looked like a peer of the data
-  // reads would make that look like a bug rather than the rule.
+  // reads would make that look like a bug rather than the rule. It is also the
+  // one row never dimmed by the gate below it — the control you need to fix the
+  // state cannot be the one faded out.
   const pageCell = (leaf: Leaf) => {
     const state = stateOf(leaf.capability);
     const mine = held.has(leaf.capability);
     const on = effective.has(leaf.capability);
     return (
-      <div className="flex items-center justify-between gap-3 py-2.5 pl-6 pr-3 border-t border-[var(--border)] bg-[var(--bg-elevated)]">
+      <div
+        className={cn(
+          'group flex items-center justify-between gap-3 py-2.5 pl-4 pr-3 border-t border-t-[var(--line)] border-l-[3px] bg-[var(--surface-2)]',
+          changed(leaf.capability) ? 'border-l-[var(--color-warning)]' : 'border-l-transparent',
+        )}
+      >
         <div className="min-w-0">
-          <p className="text-sm font-medium text-[var(--text-primary)]">{leaf.label}</p>
-          <p className="text-[11px] text-[var(--text-muted)]">
+          <p className="text-sm font-medium text-[var(--ink)]">{leaf.label}</p>
+          <p className="text-[11px] text-[var(--mute)]">
             {on
               ? 'They can open this section. What they see and do inside it is set below.'
               : 'Off — nothing else in this area applies, whatever is set below.'}
           </p>
-          <p className="font-mono text-[11px] text-[var(--text-muted)]">{leaf.capability}</p>
-          {!mine && <p className="text-[11px] text-[var(--text-muted)]">You do not hold this.</p>}
+          <p className="font-mono text-[11px] text-[var(--mute)] opacity-0 transition-opacity duration-150 group-hover:opacity-50 group-focus-within:opacity-50">
+            {leaf.capability}
+          </p>
+          {!mine && <p className="text-[11px] text-[var(--mute)]">You do not hold this.</p>}
         </div>
-        <button
-          type="button"
-          disabled={!composable || !mine}
-          onClick={() => toggle(leaf.capability)}
-          className={`flex-shrink-0 min-h-[36px] px-3 rounded-[8px] border text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${CELL_CLASS[state]}`}
-        >
-          {CELL_TEXT[state]}
-        </button>
+        {segments(leaf, state)}
       </div>
     );
   };
 
-  const renderNode = (node: Node, depth: number) => {
-    const leaves = visibleLeaves(node);
-    if (leaves.length === 0) return null;
+  const renderNode = (node: Node, depth: number, dimmed: boolean) => {
+    if (visibleLeaves(node).length === 0) return null;
     const open = isOpen(node);
+    // COUNTED OVER THE WHOLE AREA, never over what the filter left standing. A
+    // header that read "2 of 2" because the filter hid the other nine would be
+    // the one number on this screen that is not the truth about the person.
+    const leaves = allLeaves(node);
+    const on = leaves.filter((l) => effective.has(l.capability)).length;
+    const areaChanged = leaves.some((l) => changed(l.capability));
+    // GATED, NOT BROKEN. The resolver deletes every other key in an area whose
+    // page is off, so the rows below are describing something that cannot
+    // happen. Dimming them and saying why is the difference between a screen
+    // that looks wrong and one that explains itself.
+    const gated = node.page !== null && !effective.has(node.page.capability);
     return (
-      <div key={node.key} className={depth === 0 ? 'border-t border-[var(--border)]' : ''}>
-        <div className="flex items-center gap-2 px-3 py-2.5">
-          {/* Expands, NEVER toggles. The chip beside it is a read-out. */}
+      <div key={node.key} className={cn(depth === 0 && 'border-t border-[var(--line)]')}>
+        <div className={cn('flex items-center gap-2 px-3 py-2.5', dimmed && 'opacity-45')}>
+          {/* Expands, NEVER toggles. The counts beside it are a read-out. */}
           <button
             type="button"
             onClick={() => toggleOpen(node.key)}
-            className="flex items-center gap-2 min-h-[36px] text-left flex-1 min-w-0"
+            aria-expanded={open}
+            className="flex flex-1 min-w-0 items-center gap-2 min-h-[36px] text-left"
           >
-            {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-            <span className={depth === 0 ? 'text-sm font-medium text-[var(--text-primary)]' : 'text-sm text-[var(--text-secondary)]'}>
+            {open ? (
+              <ChevronDown className="w-4 h-4 flex-shrink-0 text-[var(--mute)]" />
+            ) : (
+              <ChevronRight className="w-4 h-4 flex-shrink-0 text-[var(--mute)]" />
+            )}
+            <span
+              className={cn(
+                'font-display font-bold uppercase tracking-[0.02em] truncate',
+                depth === 0 ? 'text-[15px] text-[var(--ink)]' : 'text-[13px] text-[var(--ink-2)]',
+              )}
+            >
               {node.label}
             </span>
-            <span className="text-xs text-[var(--text-muted)] truncate">{chipFor(node)}</span>
+            <span
+              className={cn(
+                'font-mono text-[11px] flex-shrink-0',
+                on > 0 ? 'text-[var(--win)]' : 'text-[var(--mute)]',
+              )}
+            >
+              {on} of {leaves.length}
+            </span>
+            {areaChanged && <Badge variant="warning">changed</Badge>}
           </button>
           {composable && (
             <div className="flex items-center gap-1 flex-shrink-0">
-              <Button variant="ghost" onClick={() => setAll(node, true, true)}>Reads</Button>
-              <Button variant="ghost" onClick={() => setAll(node, true, false)}>All</Button>
-              <Button variant="ghost" onClick={() => setAll(node, false, false)}>None</Button>
+              <Button variant="ghost" size="sm" onClick={() => setAll(node, true, true)}>Reads</Button>
+              <Button variant="ghost" size="sm" onClick={() => setAll(node, true, false)}>All</Button>
+              <Button variant="ghost" size="sm" onClick={() => setAll(node, false, false)}>None</Button>
             </div>
           )}
         </div>
         {open && (
           <div>
             {node.page && matches(node.page) && pageCell(node.page)}
-            {node.leaves.filter(matches).map(cell)}
-            {node.children.map((child) => renderNode(child, depth + 1))}
+            {gated && !dimmed && node.page && (
+              <div className="flex items-start gap-2 border-t border-[var(--line)] bg-[color-mix(in_oklab,var(--color-warning)_10%,transparent)] px-4 py-2">
+                <AlertTriangle className="mt-px w-3.5 h-3.5 flex-shrink-0 text-[var(--color-warning)]" />
+                <p className="text-[11px] text-[var(--color-warning)]">
+                  {node.page.label} is off — nothing below applies until it is on
+                </p>
+              </div>
+            )}
+            {node.leaves.filter(matches).map((leaf) => cell(leaf, dimmed || gated))}
+            {node.children.map((child) => renderNode(child, depth + 1, dimmed || gated))}
           </div>
         )}
       </div>
     );
   };
 
-  const personRow = (person: PersonRow) => (
-    <div key={person.id} className="settings-row">
-      <div className="min-w-0">
-        <div className="settings-row-label">
-          {person.name}
-          {person.id === viewerId && (
-            <span className="ml-2 text-[var(--text-muted)]">(you)</span>
-          )}
-        </div>
-        <div className="settings-row-hint">
-          {person.title ? `${person.title} · ` : ''}
-          {describe(person)}
-          {person.level !== null && !person.canSignIn && ' · cannot sign in'}
-        </div>
-      </div>
-      <div className="settings-row-control">
-        <Button
-          variant={selectedId === person.id ? 'secondary' : 'ghost'}
-          onClick={() => select(person)}
-        >
-          {selectedId === person.id ? 'Editing' : 'Open'}
-        </Button>
-      </div>
-    </div>
-  );
+  /** The badge on a person's row — one word for how their access was arrived at. */
+  const personBadge = (person: PersonRow) => {
+    if (person.level === null) return <Badge variant="neutral">no access</Badge>;
+    // An admin's stored row is never consulted, so "custom" would be a lie
+    // whatever is in it.
+    if (person.level === 'admin') return <Badge variant="success">all</Badge>;
+    const deltas = person.grants.length + person.revokes.length;
+    if (deltas > 0) return <Badge variant="warning">{deltas} custom</Badge>;
+    return <Badge variant="neutral">role only</Badge>;
+  };
+
+  const personRow = (person: PersonRow) => {
+    const active = selectedId === person.id;
+    return (
+      <button
+        key={person.id}
+        type="button"
+        onClick={() => select(person)}
+        aria-current={active}
+        className={cn(
+          'flex w-full items-center gap-3 px-3 py-2.5 text-left border-b border-b-[var(--line)] border-l-[3px] transition-colors',
+          active
+            ? 'border-l-[var(--red)] bg-[var(--surface-2)]'
+            : 'border-l-transparent hover:bg-[var(--surface-2)]',
+        )}
+      >
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-display text-[15px] font-bold uppercase tracking-[0.01em] text-[var(--ink)]">
+            {person.name}
+            {person.id === viewerId && <span className="text-[var(--mute)]"> (you)</span>}
+          </span>
+          <span className="mt-0.5 block truncate text-[11px] text-[var(--mute)]">
+            {describe(person)}
+          </span>
+        </span>
+        {personBadge(person)}
+      </button>
+    );
+  };
 
   const shownHolders = search(holders, memberSearch);
   // EVERY MEMBER IS HERE; ONLY THE PEOPLE WITH THE CONSOLE ARE LISTED UNPROMPTED.
@@ -748,275 +930,387 @@ export function PermissionEditor({
   const matchedOthers = memberSearch.trim() === '' ? [] : search(others, memberSearch);
   const shownOthers = matchedOthers.slice(0, OTHERS_SHOWN);
 
+  const groupHeading = (text: string) => (
+    <p className={cn(MICRO, 'px-3 pt-3 pb-1.5 text-[var(--mute)]')}>{text}</p>
+  );
+
+  const note = (text: string) => (
+    <p className="px-3 py-3 text-[11px] text-[var(--mute)]">{text}</p>
+  );
+
+  const changes = gaining.length + losing.length;
+
   return (
-    <div className="space-y-6">
-      <Card padding={false}>
-        <p className="settings-section-desc px-4 pt-4">
-          {viewerIsAdmin
-            ? 'Console access is the level somebody holds; capabilities are what they may do once they have it. Leave a role unset and they keep everything their level has always had. You can only hand out capabilities you hold yourself. Every change is recorded in the audit log.'
-            : 'A role decides what somebody STARTS from; grants and revokes adjust it person by person. Leave a role unset and they keep the full access their level has always had. You can only hand out capabilities you hold yourself. Every change is recorded in the audit log.'}
-        </p>
-        <div className="px-4 pt-3 pb-1">
-          <Input
-            label="Find a member"
-            placeholder={
-              viewerIsAdmin
-                ? 'Search the whole club by name or email'
-                : 'Search by name or email'
-            }
-            value={memberSearch}
-            onChange={(e) => setMemberSearch(e.target.value)}
-          />
-        </div>
+    <>
+      {/* TWO PANES ON A LAPTOP, ONE COLUMN ON A PHONE. Below `md` the grid
+          collapses and exactly one of the two is drawn: the list until somebody
+          is picked, the editor afterwards, with a back control that clears the
+          selection. A 296px rail beside a capability tree on a 390px screen
+          would be two unusable columns rather than one usable one. */}
+      <Card padding={false} className="md:grid md:grid-cols-[296px_minmax(0,1fr)]">
+        <div
+          className={cn(
+            'md:sticky md:top-[120px] md:self-start md:h-[calc(100vh-140px)] md:flex md:flex-col md:border-r md:border-[var(--line)]',
+            selected && 'hidden md:flex',
+          )}
+        >
+          <div className="p-3">
+            <SearchFilter
+              label="Find a person by name or email"
+              placeholder="Find a person"
+              value={memberSearch}
+              onChange={setMemberSearch}
+              resultCount={shownHolders.length + shownOthers.length}
+              noun="person"
+              nounPlural="people"
+            />
+          </div>
 
-        {shownHolders.length > 0 && (
-          <>
-            <p className="px-4 pt-3 pb-1 text-xs font-medium text-[var(--text-muted)]">
-              With console access
-            </p>
-            {shownHolders.map(personRow)}
-          </>
-        )}
-
-        {!viewerIsAdmin ? (
-          memberSearch.trim() !== '' && shownHolders.length === 0 && (
-            <p className="px-4 py-3 text-xs text-[var(--text-muted)]">
-              Nobody with console access matches “{memberSearch.trim()}”.
-            </p>
-          )
-        ) : memberSearch.trim() === '' ? (
-          <p className="px-4 py-3 text-xs text-[var(--text-muted)]">
-            {others.length} other {others.length === 1 ? 'member has' : 'members have'} no console
-            access. Search for one by name to give them some.
-          </p>
-        ) : (
-          <>
-            {shownOthers.length > 0 && (
+          <div className="md:flex-1 md:min-h-0 md:overflow-y-auto border-t border-[var(--line)]">
+            {shownHolders.length > 0 && (
               <>
-                <p className="px-4 pt-3 pb-1 text-xs font-medium text-[var(--text-muted)]">
-                  No console access
-                </p>
-                {shownOthers.map(personRow)}
+                {groupHeading('With console access')}
+                {shownHolders.map(personRow)}
               </>
             )}
-            {matchedOthers.length > shownOthers.length && (
-              <p className="px-4 py-3 text-xs text-[var(--text-muted)]">
-                {matchedOthers.length - shownOthers.length} more match “{memberSearch.trim()}”. Type
-                a little more to narrow it.
-              </p>
-            )}
-            {shownHolders.length === 0 && matchedOthers.length === 0 && (
-              <p className="px-4 py-3 text-xs text-[var(--text-muted)]">
-                Nobody matches “{memberSearch.trim()}”.
-              </p>
-            )}
-          </>
-        )}
-      </Card>
 
-      {selected && (
-        <Card padding={false}>
-          <div className="px-4 py-4 space-y-4">
-            <div>
-              <h2 className="text-sm font-medium text-[var(--text-primary)]">{selected.name}</h2>
-              <p className="text-xs text-[var(--text-muted)]">
-                {selectedLevel ? LEVEL_LABELS[selectedLevel] : 'No console access'}
-                {selected.email ? ` · ${selected.email}` : ''}
-              </p>
-            </div>
+            {!viewerIsAdmin
+              ? memberSearch.trim() !== '' &&
+                shownHolders.length === 0 &&
+                note(`Nobody with console access matches “${memberSearch.trim()}”.`)
+              : memberSearch.trim() !== '' && (
+                  <>
+                    {shownOthers.length > 0 && (
+                      <>
+                        {groupHeading('No console access')}
+                        {shownOthers.map(personRow)}
+                      </>
+                    )}
+                    {matchedOthers.length > shownOthers.length &&
+                      note(
+                        `${matchedOthers.length - shownOthers.length} more match “${memberSearch.trim()}”. Type a little more to narrow it.`,
+                      )}
+                    {shownHolders.length === 0 &&
+                      matchedOthers.length === 0 &&
+                      note(`Nobody matches “${memberSearch.trim()}”.`)}
+                  </>
+                )}
+          </div>
 
-            {/* CONSOLE ACCESS — the half of this page's subtitle it could not
-                answer until now. It is a LEVEL, not a capability: admins alone
-                hand it out (the hard floor in player-field-access.ts, which no
-                grant reaches), so the control is not drawn for anybody else and
-                the server refuses it again regardless. */}
-            {viewerIsAdmin && (
-              <div className="rounded-[8px] border border-[var(--border)] p-3 space-y-3">
-                <p className="text-xs font-medium text-[var(--text-primary)]">Console access</p>
-                {selected.id === viewerId ? (
-                  <p className="text-[11px] text-[var(--text-muted)] max-w-[64ch]">
-                    You cannot change your own. This is the only page that hands console access out,
-                    so an admin who takes their own away loses the screen they would need to put it
-                    back — and the database only protects the last admin holding a passkey, which is
-                    not the same promise. Ask another admin.
+          {/* THE FOOTNOTE IS PERMANENT, and it is where the page's one paragraph
+              of explanation lives now that the list is a rail rather than a
+              card. It also carries the reason the rail looks short: every member
+              of the club is reachable from that search box, and only the people
+              who already hold the console are listed without being asked for. */}
+          <p className="border-t border-[var(--line)] px-3 py-3 text-[11px] leading-relaxed text-[var(--mute)]">
+            {viewerIsAdmin
+              ? `Console access is the level somebody holds; capabilities are what they may do once they have it. ${others.length} other ${others.length === 1 ? 'member has' : 'members have'} none — search by name or email to bring one in. You can only hand out capabilities you hold yourself, and every change is recorded in the audit log.`
+              : 'A role decides what somebody STARTS from; grants and revokes adjust it person by person. Leave a role unset and they keep the full access their level has always had. You can only hand out capabilities you hold yourself, and every change is recorded in the audit log.'}
+          </p>
+        </div>
+
+        <div className={cn('min-w-0', !selected && 'hidden md:block')}>
+          {selected === null ? (
+            <EmptyState
+              title="Nobody picked"
+              description="Choose somebody on the left to see what they can do, and to change it."
+            />
+          ) : (
+            <>
+              <div className="border-b border-[var(--line)] px-4 py-4">
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(null)}
+                  className={cn(
+                    MICRO,
+                    'md:hidden mb-3 inline-flex items-center gap-2 min-h-[36px] text-[var(--mute)] hover:text-[var(--ink)] transition-colors',
+                  )}
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  All people
+                </button>
+
+                <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
+                  <div className="min-w-0">
+                    <h2 className="font-display text-[26px] font-bold uppercase leading-none text-[var(--ink)]">
+                      {selected.name}
+                    </h2>
+                    <p className="mt-1.5 text-[13px] text-[var(--mute)]">
+                      {selected.title ? `${selected.title} · ` : ''}
+                      {selectedLevel ? LEVEL_LABELS[selectedLevel] : 'No console access'}
+                      {selected.email ? ` · ${selected.email}` : ''}
+                      {selectedLevel !== null && !selected.canSignIn ? ' · cannot sign in' : ''}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-end gap-x-8 gap-y-4">
+                    {selectedLevel !== null && composable && (
+                      <div className="w-[200px]">
+                        <Select
+                          label="Starts from"
+                          options={roleOptions(selectedLevel)}
+                          value={role ?? LEVEL_DEFAULT_OPTION}
+                          onChange={(e) => void changeRole(e.target.value)}
+                        />
+                      </div>
+                    )}
+                    {selectedLevel !== null && (
+                      <div>
+                        <p className={cn(MICRO, 'text-[var(--mute)]')}>Effective access</p>
+                        <p className="mt-1.5 font-mono text-[22px] leading-none text-[var(--ink)]">
+                          {effective.size}
+                          <span className="text-[var(--mute)]"> of {CAPABILITIES.length}</span>
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {selectedLevel !== null && composable && (
+                  <p className="mt-3 text-[11px] leading-relaxed text-[var(--mute)]">
+                    {role === null
+                      ? `${LEVEL_ACCESS_LABELS[selectedLevel]} — ${BASELINE_PHRASE[selectedLevel]}. Nothing is stored; move anything below off Inherit and they become a hand-picked set starting from exactly this.`
+                      : role === 'custom'
+                        ? `Hand-picked — ${grants.length} ${grants.length === 1 ? 'capability' : 'capabilities'} chosen one at a time, starting from no job at all.`
+                        : grants.length === 0 && revokes.length === 0
+                          ? `${PERMISSION_ROLE_LABELS[role]}, unadjusted.`
+                          : `Custom — ${PERMISSION_ROLE_LABELS[role]} with ${grants.length} granted and ${revokes.length} revoked.`}
+                  </p>
+                )}
+              </div>
+
+              <div className="px-4 py-4 space-y-4">
+                {/* CONSOLE ACCESS — the half of this page's subtitle it could not
+                    answer until now. It is a LEVEL, not a capability: admins alone
+                    hand it out (the hard floor in player-field-access.ts, which no
+                    grant reaches), so the control is not drawn for anybody else and
+                    the server refuses it again regardless. */}
+                {viewerIsAdmin && (
+                  <div className="border border-[var(--line)] p-3 space-y-3">
+                    <p className={cn(MICRO, 'text-[var(--mute)]')}>Console access</p>
+                    {selected.id === viewerId ? (
+                      <p className="text-[11px] text-[var(--mute)] max-w-[64ch]">
+                        You cannot change your own. This is the only page that hands console access out,
+                        so an admin who takes their own away loses the screen they would need to put it
+                        back — and the database only protects the last admin holding a passkey, which is
+                        not the same promise. Ask another admin.
+                      </p>
+                    ) : (
+                      <>
+                        <Select
+                          label="Level"
+                          options={EXEC_ROLE_OPTIONS}
+                          value={access}
+                          onChange={(e) => setAccess(e.target.value as ExecRole)}
+                          className="max-w-sm"
+                        />
+                        {selectedLevel !== null && !selected.canSignIn && (
+                          <p className="text-[11px] text-[var(--red)]">
+                            They hold this level but cannot sign in — banned, suspended, awaiting
+                            approval or deactivated. Their access starts working when their account
+                            does.
+                          </p>
+                        )}
+                        {access !== accessForLevel(selected.level) && (
+                          <>
+                            <p className="text-[11px] text-[var(--mute)] max-w-[64ch]">
+                              {access === 'none'
+                                ? 'They lose the console entirely, and anything set below is cleared with it — a stored role nobody can reach would sit dormant and wake up if they were ever promoted again.'
+                                : selected.level === null
+                                  ? 'They get the console, starting from everything that level has always had. Narrow it below afterwards.'
+                                  : access === 'admin'
+                                    ? 'Admins hold every capability by level, so anything set below stops being consulted and is cleared.'
+                                    : 'Their level changes. Anything set below still applies — the resolver does not look at levels.'}
+                            </p>
+                            <Textarea
+                              label="Reason (required)"
+                              value={accessReason}
+                              onChange={(e) => setAccessReason(e.target.value)}
+                              placeholder="Why is this changing?"
+                            />
+                            <div className="flex justify-end">
+                              <Button
+                                onClick={applyAccess}
+                                loading={savingAccess}
+                                disabled={accessReason.trim().length < 2}
+                              >
+                                Apply console access
+                              </Button>
+                            </div>
+                          </>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {selectedLevel === null ? (
+                  <p className="text-sm text-[var(--mute)] max-w-[64ch]">
+                    An ordinary member. Capabilities are what somebody with the console may do inside
+                    it, so there is nothing to set here until they have one.
                   </p>
                 ) : (
                   <>
-                    <Select
-                      label="Level"
-                      options={EXEC_ROLE_OPTIONS}
-                      value={access}
-                      onChange={(e) => setAccess(e.target.value as ExecRole)}
-                      className="max-w-sm"
-                    />
-                    {selectedLevel !== null && !selected.canSignIn && (
-                      <p className="text-[11px] text-[var(--color-danger)]">
-                        They hold this level but cannot sign in — banned, suspended, awaiting
-                        approval or deactivated. Their access starts working when their account
-                        does.
-                      </p>
+                    {readOnlyReason && (
+                      <p className="text-sm text-[var(--mute)] max-w-[64ch]">{readOnlyReason}</p>
                     )}
-                    {access !== accessForLevel(selected.level) && (
-                      <>
-                        <p className="text-[11px] text-[var(--text-muted)] max-w-[64ch]">
-                          {access === 'none'
-                            ? 'They lose the console entirely, and anything set below is cleared with it — a stored role nobody can reach would sit dormant and wake up if they were ever promoted again.'
-                            : selected.level === null
-                              ? 'They get the console, starting from everything that level has always had. Narrow it below afterwards.'
-                              : access === 'admin'
-                                ? 'Admins hold every capability by level, so anything set below stops being consulted and is cleared.'
-                                : 'Their level changes. Anything set below still applies — the resolver does not look at levels.'}
+
+                    {/* WHAT SAVING WOULD TAKE AWAY. The figure in the header
+                        answers "what will they hold"; this band answers the
+                        question that actually catches people out, which is "what
+                        do they hold RIGHT NOW that they would stop holding". They
+                        are not the same question and only the second one is a
+                        warning. See the note on `losing` above for why a trainer
+                        needs it more sharply than an exec does. */}
+                    {composable && losing.length > 0 && (
+                      <div className="border border-[var(--red-border)] bg-[var(--red-wash)] p-3">
+                        <p className={cn(MICRO, 'text-[var(--red)]')}>
+                          Saving takes away {losing.length}{' '}
+                          {losing.length === 1 ? 'capability' : 'capabilities'} they hold today
                         </p>
-                        <Textarea
-                          label="Reason (required)"
-                          value={accessReason}
-                          onChange={(e) => setAccessReason(e.target.value)}
-                          placeholder="Why is this changing?"
-                        />
-                        <div className="flex justify-end">
+                        <p className="mt-2 text-[11px] text-[var(--mute)] leading-relaxed">
+                          {losing.map((capability) => CAPABILITY_GATES[capability].label).join(' · ')}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* ORPHANED REVOKES — a revoke of something the current role does
+                        not give. Inert today, and KEPT rather than tidied away: if the
+                        role ever regains that capability, the revoke should bite again,
+                        and deleting it now would be a silent future re-grant nobody
+                        chose. Surfaced instead, with a one-click clear, so that "inert"
+                        is a state somebody can see rather than one they discover. */}
+                    {composable && orphanRevokes.length > 0 && (
+                      <div className="border border-[var(--line)] p-3">
+                        <p className={cn(MICRO, 'text-[var(--ink)]')}>
+                          {orphanRevokes.length} revoke{orphanRevokes.length === 1 ? '' : 's'} the{' '}
+                          {role === null ? 'current' : PERMISSION_ROLE_LABELS[role]} role does not give
+                        </p>
+                        <p className="mt-2 text-[11px] text-[var(--mute)]">
+                          {orphanRevokes.map((c) => CAPABILITY_GATES[c].label).join(' · ')} — doing
+                          nothing today, and will apply again if the role regains them.
+                        </p>
+                        <div className="mt-2">
                           <Button
-                            onClick={applyAccess}
-                            loading={savingAccess}
-                            disabled={accessReason.trim().length < 2}
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setRevokes((prev) => prev.filter((c) => !orphanRevokes.includes(c)))}
                           >
-                            Apply console access
+                            Clear them
                           </Button>
                         </div>
-                      </>
+                      </div>
                     )}
+
+                    {/* ALWAYS VISIBLE. The cost of a model where a role is a name and
+                        the deltas are two lists is that the stored row no longer says
+                        what a person can do. The figure above is the count; this is
+                        the same set in words, and it is computed by the same function
+                        the gates call. */}
+                    <div className="border border-[var(--line)] bg-[var(--surface-2)] p-3">
+                      <p className={cn(MICRO, 'text-[var(--mute)]')}>Everything they hold</p>
+                      <p className="mt-2 text-[11px] text-[var(--mute)] leading-relaxed">
+                        {effective.size === 0
+                          ? 'Nothing. This person can sign in and reach the dashboard, and no section at all.'
+                          : [...effective]
+                              .map((capability) => CAPABILITY_GATES[capability].label)
+                              .join(' · ')}
+                      </p>
+                    </div>
                   </>
                 )}
               </div>
-            )}
 
-            {selectedLevel === null ? (
-              <p className="text-sm text-[var(--text-muted)] max-w-[64ch]">
-                An ordinary member. Capabilities are what somebody with the console may do inside
-                it, so there is nothing to set here until they have one.
-              </p>
-            ) : (
-              <>
-                {readOnlyReason && (
-                  <p className="text-sm text-[var(--text-muted)] max-w-[64ch]">{readOnlyReason}</p>
-                )}
-
-                {composable && (
-                  <>
-                    <Select
-                      label="Starts from"
-                      options={roleOptions(selectedLevel)}
-                      value={role ?? LEVEL_DEFAULT_OPTION}
-                      onChange={(e) => void changeRole(e.target.value)}
-                      className="max-w-sm"
+              {/* THE TREE IS ALWAYS HERE, and that is what changed when trainers
+                  became composable. It used to be hidden for anybody on their
+                  level default, on the grounds that every cell would read "off"
+                  beside a panel saying 71 of 116 — two true statements that look
+                  like a contradiction. The contradiction was real; hiding the
+                  tree was the wrong end of it. Showing the level's own
+                  capabilities in their own state fixes the disagreement instead,
+                  and leaves the common case — which is everybody, on day one —
+                  looking like something you can edit. */}
+              {composable && (
+                <>
+                  <div className="sticky top-[120px] z-10 flex flex-wrap items-center gap-2 border-y border-[var(--line)] bg-[var(--surface)] px-3 py-2.5">
+                    <SearchFilter
+                      className="min-w-[200px] flex-1"
+                      label="Filter capabilities by name or dotted path"
+                      placeholder="Filter by name or by dotted path"
+                      value={capabilitySearch}
+                      onChange={setCapabilitySearch}
+                      resultCount={shownLeaves}
+                      noun="capability"
+                      nounPlural="capabilities"
                     />
-                    <p className="text-xs text-[var(--text-muted)]">
-                      {role === null
-                        ? `${LEVEL_ACCESS_LABELS[selectedLevel]} — ${BASELINE_PHRASE[selectedLevel]}. Nothing is stored; tick anything below and they become a hand-picked set starting from exactly this.`
-                        : role === 'custom'
-                          ? `Hand-picked — ${grants.length} ${grants.length === 1 ? 'capability' : 'capabilities'} chosen one at a time, starting from no job at all.`
-                          : grants.length === 0 && revokes.length === 0
-                            ? `${PERMISSION_ROLE_LABELS[role]}, unadjusted.`
-                            : `Custom — ${PERMISSION_ROLE_LABELS[role]} with ${grants.length} granted and ${revokes.length} revoked.`}
-                    </p>
-                  </>
-                )}
-
-                {/* ORPHANED REVOKES — a revoke of something the current role does
-                    not give. Inert today, and KEPT rather than tidied away: if the
-                    role ever regains that capability, the revoke should bite again,
-                    and deleting it now would be a silent future re-grant nobody
-                    chose. Surfaced instead, with a one-click clear, so that "inert"
-                    is a state somebody can see rather than one they discover. */}
-                {composable && orphanRevokes.length > 0 && (
-                  <div className="rounded-[8px] border border-[var(--border)] p-3">
-                    <p className="text-xs text-[var(--text-primary)]">
-                      {orphanRevokes.length} revoke{orphanRevokes.length === 1 ? '' : 's'} the{' '}
-                      {role === null ? 'current' : PERMISSION_ROLE_LABELS[role]} role does not give
-                    </p>
-                    <p className="mt-1 text-[11px] text-[var(--text-muted)]">
-                      {orphanRevokes.map((c) => CAPABILITY_GATES[c].label).join(' · ')} — doing
-                      nothing today, and will apply again if the role regains them.
-                    </p>
-                    <div className="mt-2">
-                      <Button
-                        variant="ghost"
-                        onClick={() => setRevokes((prev) => prev.filter((c) => !orphanRevokes.includes(c)))}
-                      >
-                        Clear them
-                      </Button>
-                    </div>
+                    <Segmented label="Show" value={mode} options={MODES} onChange={setMode} />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={filtering}
+                      onClick={() => setExpanded(allExpanded ? [] : ALL_KEYS)}
+                    >
+                      {allExpanded ? 'Collapse all' : 'Expand all'}
+                    </Button>
                   </div>
-                )}
 
-                {/* ALWAYS VISIBLE. The cost of a model where a role is a name and
-                    the deltas are two lists is that the stored row no longer says
-                    what a person can do. This panel is where that is paid back, and
-                    it is computed by the same function the gates call. */}
-                <div className="rounded-[8px] border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
-                  <p className="text-xs font-medium text-[var(--text-primary)]">
-                    Effective access — {effective.size} of {CAPABILITIES.length}
-                  </p>
-                  <p className="mt-2 text-[11px] text-[var(--text-muted)] leading-relaxed">
-                    {effective.size === 0
-                      ? 'Nothing. This person can sign in and reach the dashboard, and no section at all.'
-                      : [...effective]
-                          .map((capability) => CAPABILITY_GATES[capability].label)
-                          .join(' · ')}
-                  </p>
+                  {TREE.map((node) => renderNode(node, 0, false))}
+
+                  {shownLeaves === 0 && (
+                    <p className="border-t border-[var(--line)] px-4 py-6 text-center text-[11px] text-[var(--mute)]">
+                      No capability matches this filter.
+                    </p>
+                  )}
+                </>
+              )}
+
+              {/* THE SAVE BAR EXISTS ONLY WHEN THERE IS SOMETHING TO SAVE, and
+                  says what that something is. `dirty` is about the stored ROW;
+                  the two figures beside it are about the PERSON, and the two can
+                  disagree — turning a level default into a hand-picked set of
+                  exactly the same capabilities rewrites the row and changes
+                  nothing about them. That state is reachable in one click here,
+                  so it gets a sentence rather than a "0". */}
+              {composable && dirty && (
+                <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line)] bg-[var(--surface)] px-4 py-3">
+                  <div className="min-w-0">
+                    <p className={cn(MICRO, 'text-[var(--ink)]')}>
+                      {changes === 0 ? (
+                        'Nothing changes for them'
+                      ) : (
+                        <>
+                          <span className="font-mono">{changes}</span>{' '}
+                          {changes === 1 ? 'change' : 'changes'} pending
+                        </>
+                      )}
+                    </p>
+                    <p className="mt-1 text-[11px] text-[var(--mute)]">
+                      {changes === 0
+                        ? 'The stored row changes; what they can do does not.'
+                        : [
+                            gaining.length > 0 &&
+                              `${gaining.length} ${gaining.length === 1 ? 'capability' : 'capabilities'} added`,
+                            losing.length > 0 &&
+                              `${losing.length} taken away`,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button variant="ghost" onClick={() => select(selected)} disabled={saving}>
+                      Reset
+                    </Button>
+                    <Button onClick={save} loading={saving}>
+                      Save
+                    </Button>
+                  </div>
                 </div>
-
-                {/* WHAT SAVING WOULD TAKE AWAY. The panel above answers "what will
-                    they hold"; this one answers the question that actually catches
-                    people out, which is "what do they hold RIGHT NOW that they
-                    would stop holding". They are not the same question and only the
-                    second one is a warning. See the note on `losing` above for why
-                    a trainer needs it more sharply than an exec does. */}
-                {composable && losing.length > 0 && (
-                  <div className="rounded-[8px] border border-[var(--color-danger)] p-3">
-                    <p className="text-xs font-medium text-[var(--color-danger)]">
-                      Saving takes away {losing.length}{' '}
-                      {losing.length === 1 ? 'capability' : 'capabilities'} they hold today
-                    </p>
-                    <p className="mt-1 text-[11px] text-[var(--text-muted)] leading-relaxed">
-                      {losing.map((capability) => CAPABILITY_GATES[capability].label).join(' · ')}
-                    </p>
-                  </div>
-                )}
-
-                {/* THE TREE IS ALWAYS HERE, and that is what changed. It used to be
-                    hidden for anybody on their level default, on the grounds that
-                    every cell would read "off" beside a panel saying 71 of 116 —
-                    two true statements that look like a contradiction. The
-                    contradiction was real; hiding the tree was the wrong end of it.
-                    Showing the level's own capabilities in their own state fixes
-                    the disagreement instead, and leaves the common case — which is
-                    everybody, on day one — looking like something you can edit. */}
-                {composable && (
-                  <Input
-                    label="Search capabilities"
-                    placeholder="Filter by name or by dotted path"
-                    value={capabilitySearch}
-                    onChange={(e) => setCapabilitySearch(e.target.value)}
-                  />
-                )}
-              </>
-            )}
-          </div>
-
-          {composable && TREE.map((node) => renderNode(node, 0))}
-
-          {composable && (
-            <div className="flex items-center justify-end gap-2 px-4 py-4 border-t border-[var(--border)]">
-              <Button variant="ghost" onClick={() => select(selected)} disabled={saving}>
-                Reset
-              </Button>
-              <Button onClick={save} loading={saving} disabled={!dirty}>
-                Save permissions
-              </Button>
-            </div>
+              )}
+            </>
           )}
-        </Card>
-      )}
+        </div>
+      </Card>
 
       <Dialog
         open={dangerous !== null}
@@ -1039,7 +1333,7 @@ export function PermissionEditor({
             <Button
               disabled={typed !== CONFIRM_PHRASE}
               onClick={() => {
-                if (dangerous) toggle(dangerous);
+                if (dangerous) setCell(dangerous, 'on');
                 setDangerous(null);
               }}
             >
@@ -1048,34 +1342,35 @@ export function PermissionEditor({
           </div>
         </div>
       </Dialog>
-    </div>
+    </>
   );
 }
 
 /**
- * The one-line summary on a person's row in the list.
+ * The one-line summary under a person's name in the rail.
  *
  * THE ROLE IS CONSULTED BEFORE THE LEVEL IS ALLOWED TO ANSWER FOR ITSELF, and
  * that ordering is what changed when trainers became composable. This used to
  * return "roster and varsity notes" for any trainer, because a trainer could not
  * hold a role — now they can, and answering from the level would describe the
  * baseline of somebody who has been composed out of it.
+ *
+ * The title leads it where there is one, because "Treasurer · Finance" is how
+ * the club refers to the person and "Finance" alone is how the code does.
  */
 function describe(person: PersonRow): string {
+  const parts: string[] = [];
+  if (person.title) parts.push(person.title);
+  parts.push(accessSummary(person));
+  if (person.level !== null && !person.canSignIn) parts.push('cannot sign in');
+  return parts.join(' · ');
+}
+
+function accessSummary(person: PersonRow): string {
   if (person.level === null) return 'No console access';
   // Still answered from the level, and still correctly: an admin's stored role
   // is never consulted, so there is nothing else it could say.
-  if (person.level === 'admin') return 'Admin access — holds everything';
-  if (!isRole(person.role)) {
-    return `${LEVEL_ACCESS_LABELS[person.level]} — ${BASELINE_PHRASE[person.level]}`;
-  }
-  const level = LEVEL_LABELS[person.level];
-  const label = PERMISSION_ROLE_LABELS[person.role];
-  // "Adjusted" means a delta on top of a named job. A hand-picked set is ALL
-  // deltas by construction — its base is empty — so the count that means
-  // "somebody changed this afterwards" for the other four roles means nothing
-  // here, and reporting it would call every hand-picked row adjusted.
-  if (person.role === 'custom') return `${level} — ${label}`;
-  const adjusted = person.grants.length + person.revokes.length;
-  return adjusted === 0 ? `${level} — ${label}` : `${level} — ${label}, adjusted`;
+  if (person.level === 'admin') return 'Admin';
+  if (!isRole(person.role)) return LEVEL_ACCESS_LABELS[person.level];
+  return PERMISSION_ROLE_LABELS[person.role];
 }
