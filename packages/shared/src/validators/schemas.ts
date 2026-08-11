@@ -382,6 +382,20 @@ export const feeTierSchema = z.object({
   name: z.string().min(1).max(40),
   amount_cents: z.number().int().min(0),
   is_default: z.boolean(),
+  // Which memberships this tier prices (00094). Absent and null both mean
+  // "anyone", matching the column: a tier with no audience is the general
+  // price, which is what every tier created before this feature is.
+  //
+  // An EMPTY ARRAY IS REFUSED rather than normalised to null. The column CHECK
+  // refuses it too, and for the same reason 00040 refuses an empty
+  // allowed_memberships: it is the shape a form produces when every box is
+  // deselected, the author meant something by deselecting them, and quietly
+  // reading it as "everybody" would price the opposite of what they asked for.
+  applies_to: z
+    .array(z.enum(['internal', 'alumni', 'external']))
+    .min(1, 'Choose at least one membership, or leave it unset to price everyone.')
+    .nullable()
+    .optional(),
 });
 
 export const tournamentFeeMarkSchema = z.object({

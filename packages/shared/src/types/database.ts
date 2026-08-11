@@ -1,6 +1,7 @@
 // Generated types matching the SQL schema
 
 import type { SeedBy } from '../utils/standings';
+import type { MembershipType } from '../utils/membership';
 
 export type PlayerStatus =
   | 'competitive'
@@ -457,25 +458,47 @@ export interface ReliabilityMetrics {
   updated_at: string;
 }
 
+/**
+ * What a club_fees row is money FOR (00094).
+ *
+ * The three kinds used to be three tables. They differed only in this, which
+ * is a column and not a schema — see 00094's header for the club owner's own
+ * reason ("just wanted to have less db tables around").
+ */
+export type FeeType = 'dues' | 'tournament' | 'reinstatement';
+
+/**
+ * The club's one fee ledger.
+ *
+ * Columns beyond the common five are per-kind, and which ones may be set is
+ * enforced by club_fees_shape_check rather than by convention:
+ *
+ *   dues           season_id, and the other four NULL
+ *   tournament     tournament_id (+ optional tier_id), a real player
+ *   reinstatement  ban_started_at (+ ban_reason), a real player
+ *
+ * EVERY QUERY FILTERS ON fee_type. Reading the ledger unfiltered is the leak
+ * this type exists to make visible: /admin/fees gates club dues and
+ * reinstatements behind two separate capabilities.
+ */
 export interface ClubFee {
   id: string;
+  fee_type: FeeType;
   player_id: string | null;
   manual_name: string | null;
-  season_id: string;
+  /** NOT NULL for dues; nullable for the other two. See 00069 and 00094. */
+  season_id: string | null;
   amount_cents: number | null;
   paid_at: string | null;
   marked_by: string | null;
   method: string | null;
-  created_at: string;
-}
-
-export interface ReinstatementFee {
-  id: string;
-  player_id: string;
-  amount_cents: number | null;
-  paid_at: string | null;
-  marked_by: string | null;
-  method: string | null;
+  reference: string | null;
+  /** fee_type 'tournament' only. */
+  tournament_id: string | null;
+  /** fee_type 'tournament' only — which tier priced it, at entry time. */
+  tier_id: string | null;
+  /** fee_type 'reinstatement' only — which ban episode this settled (00065). */
+  ban_started_at: string | null;
   ban_reason: string | null;
   created_at: string;
 }
@@ -487,18 +510,11 @@ export interface TournamentFeeTier {
   amount_cents: number;
   is_default: boolean;
   sort_order: number;
-  created_at: string;
-}
-
-export interface TournamentFee {
-  id: string;
-  tournament_id: string;
-  player_id: string;
-  tier_id: string | null;
-  amount_cents: number | null;
-  paid_at: string | null;
-  marked_by: string | null;
-  method: string | null;
+  /**
+   * Membership groups this tier prices; NULL means anyone (00094). Read by
+   * selectFeeTier(), never by a page doing its own matching.
+   */
+  applies_to: MembershipType[] | null;
   created_at: string;
 }
 
