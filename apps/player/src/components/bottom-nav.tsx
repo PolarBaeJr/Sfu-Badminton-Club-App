@@ -5,6 +5,12 @@ import { usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { cn } from '@badminton/ui';
 import { createClient } from '@/lib/supabase-browser';
+import {
+  ANNOUNCEMENT_VISIBILITY_COLUMNS,
+  addressedTo,
+  unreadAnnouncementCount,
+  withVisibleAnnouncements,
+} from '@/lib/announcement-visibility';
 import { Home, Trophy, Crosshair, Calendar, Sparkles, LogIn } from 'lucide-react';
 
 // `gated` = needs an approved account (see top-bar.tsx).
@@ -36,23 +42,60 @@ export function BottomNav({
   useEffect(() => {
     const supabase = createClient();
 
+    // THE BADGE COUNTS WHAT /announcements WOULD ACTUALLY SHOW.
+    //
+    // It used to be count(all published) − count(my reads), with no expiry,
+    // audience or season filter on either side. That is wrong in both
+    // directions at once. A published post this member can never see — expired,
+    // addressed to the other division, retired with last term's season — is in
+    // the first number and can never reach the second, so it inflates the badge
+    // forever; after a rollover the tab sat on a red dot with nothing behind it
+    // to click. And a read row for a post that has since retired is in the
+    // second number and not the first, so it can hide a post that IS unread.
+    //
+    // So: fetch the ids this member can see, fetch the ids they have read, and
+    // take the difference. Ids rather than counts is the whole fix — two counts
+    // taken over different populations cannot be subtracted, however they are
+    // clamped.
+    //
+    // This matters more since the redesign dropped the per-row NEW tag: the
+    // badge is now the only unread signal there is.
     async function checkUnread() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const { data: player } = await supabase.from('players').select('id').eq('user_id', user.id).maybeSingle();
+      const { data: player } = await supabase
+        .from('players')
+        // status and eligibility_flag because target_audience is matched
+        // against the viewer, not filtered in the query.
+        .select('id, status, eligibility_flag')
+        .eq('user_id', user.id)
+        .maybeSingle();
       if (!player) return;
 
-      const { count: totalAnnouncements } = await supabase
-        .from('announcements')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'published');
+      const { data: activeSeason } = await supabase
+        .from('seasons')
+        .select('id')
+        .eq('active_flag', true)
+        .maybeSingle();
 
-      const { count: readCount } = await supabase
-        .from('announcement_reads')
-        .select('*', { count: 'exact', head: true })
-        .eq('player_id', player.id);
+      const [{ data: visible }, { data: reads }] = await Promise.all([
+        withVisibleAnnouncements(
+          supabase
+            .from('announcements')
+            .select(ANNOUNCEMENT_VISIBILITY_COLUMNS)
+            .eq('status', 'published'),
+          new Date().toISOString(),
+          activeSeason?.id,
+        ),
+        supabase.from('announcement_reads').select('announcement_id').eq('player_id', player.id),
+      ]);
 
-      setUnreadAnnouncements(Math.max(0, (totalAnnouncements ?? 0) - (readCount ?? 0)));
+      setUnreadAnnouncements(
+        unreadAnnouncementCount(
+          addressedTo(visible ?? [], player).map((a) => a.id),
+          (reads ?? []).map((r) => r.announcement_id as string),
+        ),
+      );
     }
 
     checkUnread();
