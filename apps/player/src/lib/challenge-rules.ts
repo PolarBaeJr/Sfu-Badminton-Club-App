@@ -136,11 +136,16 @@ export function expiryState(
 /**
  * The statuses validate_challenge_creation counts against
  * challenge_rules.max_active_challenges. Copied from the SQL rather than
- * reasoned out, because a quota meter that counts a different set from the gate
- * is worse than no meter: it would read "2 of 3" on the screen that just
- * refused you.
+ * reasoned out, and EXPORTED so the query that counts them and the meter that
+ * draws them cannot come to disagree — a meter reading "2 of 3" on the screen
+ * that just refused you is worse than no meter at all.
+ *
+ * Note this is a status list and not a clock: the sweep that retires a lapsed
+ * challenge runs hourly, so one still sitting at 'proposed' past its deadline
+ * genuinely does hold a slot until the job catches it. The screen says so
+ * because the database means it.
  */
-const QUOTA_STATUSES = new Set(['proposed', 'partially_confirmed', 'accepted']);
+export const ACTIVE_CHALLENGE_STATUSES = ['proposed', 'partially_confirmed', 'accepted'] as const;
 
 export interface ChallengeQuota {
   used: number;
@@ -152,23 +157,17 @@ export interface ChallengeQuota {
 }
 
 /**
- * How much of the member's own quota is spent.
+ * How much of the member's own allowance is spent.
  *
- * Only challenges THEY created count, because the SQL counts `created_by =
- * p_creator_id`. Being challenged by four people does not use up your allowance,
- * and a meter that said otherwise would be telling members to stop accepting.
+ * `used` counts only challenges THEY created, because the SQL counts
+ * `created_by = p_creator_id`. Being challenged by four people does not use up
+ * your allowance, and a meter that said otherwise would be telling members to
+ * stop accepting.
  */
-export function challengeQuota(
-  challenges: { created_by: string; status: string }[],
-  viewerId: string,
-  max: number,
-): ChallengeQuota {
-  const used = challenges.filter(
-    (c) => c.created_by === viewerId && QUOTA_STATUSES.has(c.status),
-  ).length;
+export function challengeQuota(used: number, max: number): ChallengeQuota {
   // A max of 0 or less cannot be divided by, and would come from a settings row
   // somebody typed a 0 into. Treat the bar as full rather than rendering NaN.
-  const ratio = max > 0 ? Math.min(1, used / max) : 1;
+  const ratio = max > 0 ? Math.min(1, Math.max(0, used) / max) : 1;
   return { used, max, full: used >= max, ratio };
 }
 

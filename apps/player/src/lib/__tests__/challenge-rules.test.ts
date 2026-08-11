@@ -4,6 +4,7 @@ import {
   FALLBACK_CHALLENGE_RULES,
   expiryState,
   challengeQuota,
+  ACTIVE_CHALLENGE_STATUSES,
   partitionChallenges,
   challengeSearchKeys,
 } from '../challenge-rules';
@@ -90,36 +91,41 @@ describe('expiryState', () => {
   });
 });
 
+describe('ACTIVE_CHALLENGE_STATUSES', () => {
+  // The list validate_challenge_creation counts. It is exported precisely so
+  // the counting query and the meter share one definition; pinning it here is
+  // what makes a silent edit to either side fail loudly.
+  it('is exactly the set the SQL cap counts', () => {
+    expect([...ACTIVE_CHALLENGE_STATUSES]).toEqual(['proposed', 'partially_confirmed', 'accepted']);
+  });
+
+  it('excludes every status that is already resolved', () => {
+    for (const done of ['completed', 'walkover_confirmed', 'rejected', 'cancelled', 'expired']) {
+      expect(ACTIVE_CHALLENGE_STATUSES).not.toContain(done);
+    }
+  });
+});
+
 describe('challengeQuota', () => {
-  const rows = [
-    { created_by: 'me', status: 'proposed' },
-    { created_by: 'me', status: 'accepted' },
-    { created_by: 'me', status: 'completed' },   // answered and played — not active
-    { created_by: 'me', status: 'rejected' },    // answered — not active
-    { created_by: 'them', status: 'proposed' },  // theirs, against their quota
-  ];
-
-  it('counts only the viewer’s own open challenges, as the SQL does', () => {
-    expect(challengeQuota(rows, 'me', 3)).toEqual({ used: 2, max: 3, full: false, ratio: 2 / 3 });
-  });
-
-  it('counts partially_confirmed, which the gate also counts', () => {
-    expect(challengeQuota([{ created_by: 'me', status: 'partially_confirmed' }], 'me', 3).used).toBe(1);
-  });
-
-  // Being challenged by half the club does not use up your own allowance.
-  it('ignores challenges issued against the viewer', () => {
-    expect(challengeQuota([{ created_by: 'them', status: 'accepted' }], 'me', 3).used).toBe(0);
+  it('reports what is used against the club’s cap', () => {
+    expect(challengeQuota(2, 3)).toEqual({ used: 2, max: 3, full: false, ratio: 2 / 3 });
   });
 
   it('is full at the cap, not one past it', () => {
-    expect(challengeQuota(rows, 'me', 2).full).toBe(true);
-    expect(challengeQuota(rows, 'me', 3).full).toBe(false);
+    expect(challengeQuota(3, 3).full).toBe(true);
+    expect(challengeQuota(2, 3).full).toBe(false);
   });
 
   it('stays drawable when a settings row says zero or the count overshoots', () => {
-    expect(challengeQuota(rows, 'me', 0)).toMatchObject({ full: true, ratio: 1 });
-    expect(challengeQuota(rows, 'me', 1).ratio).toBe(1);
+    expect(challengeQuota(2, 0)).toMatchObject({ full: true, ratio: 1 });
+    expect(challengeQuota(5, 3).ratio).toBe(1);
+  });
+
+  // A failed count query hands back null; the caller coalesces to 0, but a
+  // negative could only come from a bug and must not produce a backwards bar.
+  it('never draws a negative bar', () => {
+    expect(challengeQuota(0, 3).ratio).toBe(0);
+    expect(challengeQuota(-1, 3).ratio).toBe(0);
   });
 });
 
@@ -179,17 +185,33 @@ describe('partitionChallenges', () => {
     expect(keys(p.active)).toEqual(['a']);
   });
 
+  // Every label in the challenge_status enum (00001_schema.sql:50).
+  const ALL_STATUSES = [
+    'proposed', 'partially_confirmed', 'accepted', 'rejected', 'expired',
+    'cancelled', 'completed', 'disputed', 'walkover_pending', 'walkover_confirmed',
+  ];
+  const TERMINAL = ['rejected', 'expired', 'cancelled', 'completed', 'walkover_confirmed'];
+
   it('leaves nothing unfiled', () => {
-    const statuses = [
-      'proposed', 'partially_confirmed', 'accepted', 'rejected', 'expired',
-      'cancelled', 'completed', 'disputed', 'walkover_pending', 'walkover_confirmed',
-    ];
-    for (const status of statuses) {
+    for (const status of ALL_STATUSES) {
       for (const owner of ['me', 'them']) {
         const p = partitionChallenges([row('a', status, owner, 'pending')], 'me');
         const filed = p.incoming.length + p.active.length + p.outgoing.length + p.archived.length;
         expect(filed, `${status} / created_by=${owner}`).toBeGreaterThan(0);
       }
+    }
+  });
+
+  // The invariant that keeps "leaves nothing unfiled" honest: archived alone
+  // satisfies that count, so without this a finished challenge could also be
+  // sitting in a live section and both tests would still pass. Today `active`
+  // has no terminal check of its own and is safe only because no terminal
+  // status is accepted or partially_confirmed — this is what states that.
+  it.each(TERMINAL)('files %s in no live section at all', (status) => {
+    for (const owner of ['me', 'them']) {
+      const p = partitionChallenges([row('a', status, owner, 'pending')], 'me');
+      expect(p.incoming.length + p.active.length + p.outgoing.length, `created_by=${owner}`).toBe(0);
+      expect(p.archived).toHaveLength(1);
     }
   });
 });

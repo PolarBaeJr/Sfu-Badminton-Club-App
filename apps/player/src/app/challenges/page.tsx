@@ -18,6 +18,7 @@ import {
   challengeQuota,
   partitionChallenges,
   challengeSearchKeys,
+  ACTIVE_CHALLENGE_STATUSES,
   type ExpiryState,
 } from '@/lib/challenge-rules';
 import { ChallengeSections } from './challenge-sections';
@@ -32,27 +33,48 @@ export default async function ChallengesPage() {
 
   const supabase = await createServerSupabaseClient();
 
-  // The club's live rules, not the constants in packages/shared: the caps are
-  // configurable (00048/00053) and the database reads platform_settings on every
-  // validate_challenge_creation call. See challenge-settings.ts.
-  const rules = await getChallengeRules(supabase);
+  // Three independent reads, so they go together rather than one after another.
+  // Nothing here feeds anything else — the rules and the quota count are both
+  // keyed on the signed-in member alone — and awaiting them in sequence would
+  // cost three round-trips for a screen that needs one.
+  const [rules, myChallengesRes, activeIssuedRes] = await Promise.all([
+    // The club's live rules, not the constants in packages/shared: the caps are
+    // configurable (00048/00053) and the database re-reads platform_settings on
+    // every validate_challenge_creation call. See challenge-settings.ts.
+    getChallengeRules(supabase),
 
-  const { data: myChallenges } = await supabase
-    .from('challenge_participants')
-    // expires_at, scheduled_date and scheduled_time have been on challenges
-    // since 00001 and were never selected, so the list could not say when a
-    // challenge lapses or when it is being played — the two things a member
-    // opens this screen to find out. handle arrives with 00092 and is rendered
-    // beside every name.
-    .select('id, confirmation_status, challenge:challenges(id, created_by, type, format, rated_flag, status, created_at, expires_at, scheduled_date, scheduled_time, creator:players!challenges_created_by_fkey(id, full_name, handle, avatar_url), challenge_participants(id, player_id, role, team_side, player:players(id, full_name, handle)))')
-    .eq('player_id', player.id)
-    // No server-side order: challenge_participants has no timestamp of its own,
-    // and the previous `referencedTable: 'challenges'` order sorted *within* the
-    // embedded resource — which is to-one, so it did nothing. Rows therefore came
-    // back arbitrarily, and a LIMIT over an unordered set silently dropped
-    // whichever challenges the planner happened not to return. Order below, on
-    // the embedded created_at, once the rows are in hand.
-    .limit(200);
+    supabase
+      .from('challenge_participants')
+      // expires_at, scheduled_date and scheduled_time have been on challenges
+      // since 00001 and were never selected, so the list could not say when a
+      // challenge lapses or when it is being played — the two things a member
+      // opens this screen to find out. handle arrives with 00092 and is rendered
+      // beside every name.
+      .select('id, confirmation_status, challenge:challenges(id, created_by, type, format, rated_flag, status, created_at, expires_at, scheduled_date, scheduled_time, creator:players!challenges_created_by_fkey(id, full_name, handle, avatar_url), challenge_participants(id, player_id, role, team_side, player:players(id, full_name, handle)))')
+      .eq('player_id', player.id)
+      // No server-side order: challenge_participants has no timestamp of its own,
+      // and the previous `referencedTable: 'challenges'` order sorted *within* the
+      // embedded resource — which is to-one, so it did nothing. Rows therefore came
+      // back arbitrarily, and a LIMIT over an unordered set silently dropped
+      // whichever challenges the planner happened not to return. Order below, on
+      // the embedded created_at, once the rows are in hand.
+      .limit(200),
+
+    // The quota, counted at the database rather than over the 200 rows above.
+    // That list is capped and unordered, so a long-standing member's open
+    // challenge can simply not be in it — and a quota that undercounts is the
+    // exact bug this meter exists to prevent, promising a slot the server will
+    // refuse. Same predicate as validate_challenge_creation, over the same
+    // table; challenges_select is USING (TRUE) for authenticated, so no
+    // escalation is needed.
+    supabase
+      .from('challenges')
+      .select('id', { count: 'exact', head: true })
+      .eq('created_by', player.id)
+      .in('status', [...ACTIVE_CHALLENGE_STATUSES]),
+  ]);
+
+  const myChallenges = myChallengesRes.data;
 
   type CP = NonNullable<typeof myChallenges>[number];
   type Person = { id: string; full_name: string; handle?: string | null; avatar_url?: string | null };
@@ -95,7 +117,8 @@ export default async function ChallengesPage() {
   // let two cards a millisecond apart disagree about whether the same deadline
   // has passed.
   const now = Date.now();
-  const quota = challengeQuota(all.map(({ c }) => c), player.id, rules.maxActive);
+
+  const quota = challengeQuota(activeIssuedRes.count ?? 0, rules.maxActive);
 
   // The quota is the club's rule, so it gates the entry points the same way
   // standing does — validate_challenge_creation refuses a fourth challenge, and
@@ -104,13 +127,31 @@ export default async function ChallengesPage() {
   const canIssue = standing.ok && !quota.full;
   const quotaFullNote = `You have ${quota.used} of ${quota.max} challenges open. Play or cancel one to issue another.`;
 
+  // Who is in reach, for the empty state. Both limits are genuinely enforced by
+  // validate_challenge_creation (00053) whatever their value, so this is not a
+  // guess about whether the rule runs — it is a judgement about whether it is
+  // worth saying. 9999 is the number 00053 chose to mean "a settings row went
+  // missing, do not start refusing challenges on a figure nobody picked", and
+  // repeating it back as "within 9999 Elo" would dress a non-limit up as a rule.
+  //
+  // Deliberately NOT on the cards or the header: the check is creator-vs-
+  // opponent, so it only means something once there is a pair. That is
+  // /challenges/new's job, and this screen has no opponent in hand.
+  const NO_LIMIT = 9999;
+  const reach = [
+    rules.ladderRange < NO_LIMIT ? `${rules.ladderRange} ladder positions` : null,
+    rules.eloRange < NO_LIMIT ? `${rules.eloRange} Elo` : null,
+  ].filter(Boolean);
+  const reachClause = reach.length ? ` — from opponents within ${reach.join(' and ')}` : '';
+
   /** The deadline chip. Absent entirely on a challenge that can no longer expire. */
   function ExpiryChip({ state }: { state: ExpiryState }) {
     if (!state.label) return null;
     return (
       <span
         className={state.kind === 'open' ? 'tag tag-outline' : state.kind === 'urgent' ? 'tag tag-gold' : 'tag tag-red'}
-        // A colour alone would carry the urgency only to people who can see it.
+        // "3h left" does not say left until what. The colour answers that only
+        // for people who can see it, so the sentence is here as well.
         title={state.kind === 'expired' ? 'Past its reply window' : 'Time left to answer'}
       >
         <Hourglass size={11} style={{ verticalAlign: '-1px', marginRight: 4 }} />
@@ -315,13 +356,8 @@ export default async function ChallengesPage() {
             <span className="empty-icon"><Swords size={20} /></span>
             <div className="empty-title">No challenges yet</div>
             <p className="empty-hint">
-              {/* The eligibility rules, said where somebody is about to run into
-                  them. elo_range at its 9999 sentinel means the club has not set
-                  one, so quoting it would invent a limit that is not enforced. */}
               Pick someone from the ladder and send one. You can have {quota.max} open at a time,
-              and an unanswered challenge stands for {rules.expiryHours} hours
-              {rules.ladderRange < 9999 && ` — opponents within ${rules.ladderRange} ladder positions`}
-              {rules.eloRange < 9999 && ` and ${rules.eloRange} Elo`}.
+              and an unanswered challenge stands for {rules.expiryHours} hours{reachClause}.
             </p>
             {canIssue ? (
               <Link href="/challenges/new" className="btn btn-primary">
