@@ -32,6 +32,9 @@ export * from './utils/match-result';
 export * from './utils/season';
 export * from './utils/standings';
 export * from './utils/account-standing';
+// Safe in the barrel BECAUSE it computes no hashes. ./utils/event-waiver, which
+// does, stays out of it — node:crypto must not reach the player bundle.
+export * from './utils/event-waiver-eligibility';
 export * from './validators/schemas';
 export * from './validators/parse';
 export * from './email/templates';
