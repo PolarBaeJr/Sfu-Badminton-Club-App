@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic';
-import { createAdminClient } from '@/lib/supabase-server';
+import { createAdminClient, requireCapability } from '@/lib/supabase-server';
+import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { Card, Badge, PageHeader, TableCard, Atomic } from '@badminton/ui';
 import { MATCH_FORMAT_LABELS, formatDateTime, unwrap } from '@badminton/shared';
 import { SearchableTable } from '@/components/searchable-table';
@@ -16,6 +17,14 @@ import {
 } from 'lucide-react';
 
 export default async function MatchesPage() {
+  // Same capability middleware resolves for '/matches', re-asked at the fetch.
+  const viewer = await requireCapability('matches.page');
+  // The roster below is not this page's data — it is the option list of ONE
+  // control, the Create Match form, and it answers to the capability that
+  // form's own action re-checks. Skipping the query rather than the form is the
+  // rule: `players` is handed straight to a client component, so it crosses to
+  // the browser whether or not anything is drawn with it.
+  const canCreate = permits(accessLevelFor(viewer), permissionsOf(viewer), 'matches.create.write');
   const supabase = createAdminClient();
 
   const matches = unwrap(
@@ -27,14 +36,16 @@ export default async function MatchesPage() {
   );
 
   // Get all active players for the create match form
-  const allPlayers = unwrap(
-    await supabase
-      .from('players')
-      .select('id, full_name, avatar_url')
-      .eq('active_flag', true)
-      .neq('status', 'pending_approval')
-      .order('full_name')
-  );
+  const allPlayers = canCreate
+    ? unwrap(
+        await supabase
+          .from('players')
+          .select('id, full_name, avatar_url')
+          .eq('active_flag', true)
+          .neq('status', 'pending_approval')
+          .order('full_name')
+      )
+    : [];
 
   // Fetch disputes and walkovers inline
   const matchIds = matches?.map(m => m.id) || [];

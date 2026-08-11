@@ -3,8 +3,11 @@ import {
   accessLevelFor,
   atLeast,
   canAccess,
+  permits,
   UNRESTRICTED,
   type AccessLevel,
+  type Capability,
+  type Permissions,
 } from '../permissions';
 
 // This suite pins the console's access boundary now that there are THREE
@@ -176,5 +179,64 @@ describe('canAccess — three-level matrix', () => {
     for (const level of LEVELS) {
       expect(canAccess(level, UNRESTRICTED, '/playersecret')).toBe(level === 'admin');
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE IN-PAGE GATE AND THE MIDDLEWARE GATE ARE THE SAME GATE
+// ---------------------------------------------------------------------------
+// Six console pages opened a service-role client and queried immediately,
+// trusting middleware to have run. Each now calls requireCapability() with a
+// capability written out by hand at the top of the file — and a hand-written
+// second copy of a routing decision is exactly the kind of thing that drifts.
+//
+// The risk is not that a string is wrong today; it is that somebody later moves
+// a route into SECTION_PATTERNS (as /tournaments/<id>/fees already is) or
+// renames an area, and the page keeps asking for the old key. The page would
+// then either refuse somebody middleware admits — a locked-out officer, which
+// nobody reports as a security bug — or admit somebody middleware refuses.
+//
+// So this table is the pairing itself, checked against both halves of the
+// model: every level, and a restricted set holding one of these capabilities
+// and not the others. Add a row whenever a page hard-codes a capability that
+// its own path already resolves to.
+describe('a page-level capability matches what its route resolves to', () => {
+  const PAGE_GATES: { path: string; capability: Capability }[] = [
+    // The event control centre. Prefix-matched to '/tournaments', deliberately:
+    // it is a route INSIDE the tournaments section, not a section of its own,
+    // and giving it an entry of its own would be the widening the gate on that
+    // page must not make.
+    { path: '/tournaments/abc/events/def', capability: 'tournaments.page' },
+    { path: '/matches', capability: 'matches.page' },
+    { path: '/challenges', capability: 'challenges.page' },
+    { path: '/disputes', capability: 'disputes.page' },
+    { path: '/walkovers', capability: 'walkovers.page' },
+    { path: '/audit', capability: 'audit.page' },
+  ];
+
+  it.each(PAGE_GATES)('$path is $capability at every level', ({ path, capability }) => {
+    for (const level of LEVELS) {
+      expect(canAccess(level, UNRESTRICTED, path)).toBe(
+        permits(level, UNRESTRICTED, capability),
+      );
+    }
+  });
+
+  // The levels agree on far too much to prove anything on their own: an admin
+  // is admitted by short-circuit everywhere, so a row could name the WRONG
+  // capability and still pass the loop above whenever the exec answers happen
+  // to match — which, for five of these six, they do. A restricted set holding
+  // exactly one key separates them.
+  it.each(PAGE_GATES)('$path opens for a set holding only $capability', ({ path, capability }) => {
+    const only: Permissions = { kind: 'restricted', capabilities: new Set([capability]) };
+    expect(canAccess('trainer', only, path)).toBe(true);
+    expect(canAccess('exec', only, path)).toBe(true);
+  });
+
+  it.each(PAGE_GATES)('$path stays shut for a set without $capability', ({ path, capability }) => {
+    const others = PAGE_GATES.map((g) => g.capability).filter((c) => c !== capability);
+    const without: Permissions = { kind: 'restricted', capabilities: new Set(others) };
+    expect(canAccess('trainer', without, path)).toBe(false);
+    expect(canAccess('exec', without, path)).toBe(false);
   });
 });

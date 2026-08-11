@@ -1,5 +1,5 @@
 export const dynamic = 'force-dynamic';
-import { createAdminClient } from '@/lib/supabase-server';
+import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { PageHeader } from '@badminton/ui';
 import Link from 'next/link';
 import { AuditList, type AuditLogRow } from './audit-list';
@@ -27,6 +27,10 @@ export default async function AuditPage({
 }) {
   const { range, season } = await searchParams;
   const fullHistory = range === 'all';
+  // Same capability middleware resolves for '/audit', re-asked at the fetch. An
+  // audit trail names who did what to whom, so it is the last page that should
+  // rely on a route match having happened upstream.
+  await requireCapability('audit.page');
   const supabase = createAdminClient();
 
   // The seasons themselves are the navigation. An audit trail is read to answer

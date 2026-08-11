@@ -1,11 +1,13 @@
 export const dynamic = 'force-dynamic';
-import { createAdminClient } from '@/lib/supabase-server';
+import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { Card, Badge } from '@badminton/ui';
 import { formatRelativeTime, unwrap } from '@badminton/shared';
 import { DisputeActions } from './actions';
 import { AlertTriangle, User, MessageSquare, CheckCircle2, Scale } from 'lucide-react';
 
 export default async function DisputesPage() {
+  // Same capability middleware resolves for '/disputes', re-asked at the fetch.
+  await requireCapability('disputes.page');
   const supabase = createAdminClient();
 
   const disputes = unwrap(

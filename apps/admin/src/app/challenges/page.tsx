@@ -1,5 +1,5 @@
 export const dynamic = 'force-dynamic';
-import { createAdminClient } from '@/lib/supabase-server';
+import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { Card, Badge, TableCard, Atomic } from '@badminton/ui';
 import { MATCH_FORMAT_LABELS, formatRelativeTime } from '@badminton/shared';
 import { SearchableTable } from '@/components/searchable-table';
@@ -8,6 +8,10 @@ import { CreateChallengeForm } from './create-challenge';
 import { Swords, Plus, Clock, CheckCircle2, XCircle, Users, Trophy } from 'lucide-react';
 
 export default async function ChallengesPage() {
+  // The same capability middleware already resolves for '/challenges', re-asked
+  // where the rows are read. This page opened a service-role client and queried
+  // immediately, so every row below depended on middleware having run.
+  await requireCapability('challenges.page');
   const supabase = createAdminClient();
 
   const { data: challenges } = await supabase

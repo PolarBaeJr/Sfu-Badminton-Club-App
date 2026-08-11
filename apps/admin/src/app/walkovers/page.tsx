@@ -1,11 +1,13 @@
 export const dynamic = 'force-dynamic';
-import { createAdminClient } from '@/lib/supabase-server';
+import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { Card, Badge, PageHeader } from '@badminton/ui';
 import { formatRelativeTime } from '@badminton/shared';
 import { WalkoverActions } from './actions';
 import { Clock, User, AlertTriangle, MessageSquare, CheckCircle2 } from 'lucide-react';
 
 export default async function WalkoversPage() {
+  // Same capability middleware resolves for '/walkovers', re-asked at the fetch.
+  await requireCapability('walkovers.page');
   const supabase = createAdminClient();
 
   const { data: walkovers } = await supabase
