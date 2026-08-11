@@ -193,7 +193,15 @@ export const tournamentCreateSchema = z.object({
   scope: z.enum(['open', 'eligible_only']),
   type: z.enum(['internal', 'open_official', 'invitational']),
   format: z.enum(['singles', 'doubles', 'mixed_event']),
-  start_date: z.string(),
+  // .min(1), because `tournaments.start_date` is NOT NULL and a blank date
+  // input posts "" rather than being absent. Without this the empty string
+  // passes validation, reaches Postgres, and comes back as
+  // `invalid input syntax for type date: ""` — which a production build
+  // redacts to "An error occurred in the Server Components render", so the
+  // officer sees an unexplained crash instead of "Start date is required".
+  // end_date below is optional and separately coerced to null by the action;
+  // it is start_date, the required one, that had no floor.
+  start_date: z.string().min(1),
   end_date: z.string().optional(),
   // Upper bound matters: bracket_size feeds nextPowerOf2 bracket generation,
   // so an unbounded value is a DoS lever into a very expensive insert loop.
