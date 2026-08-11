@@ -1521,3 +1521,116 @@ html, body { overflow-x: clip; }
   0%   { box-shadow: 0 0 0 2px var(--red-border); }
   100% { box-shadow: 0 0 0 2px transparent; }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   FEED — the activity river and the check-in bar
+   ═══════════════════════════════════════════════════════════ */
+
+/* The river is deliberately NOT made of cards. A card per event turns a day's
+   activity into a stack of boxes with more border than content; full-bleed rows
+   separated by hairlines read as one list, which is what it is. */
+.river-day {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  padding: 18px 0 8px;
+}
+.river-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+  width: 100%;
+  text-align: left;
+}
+/* A 2px red spine marks the rows that are about the reader. On a screen that
+   mixes "You beat Marcus Ng" with "Jordan Lee beat Priya Patel", this is what
+   lets a member find their own results without reading every sentence. The
+   padding replaces what the border consumes, so avatars stay in one column
+   across rows that have the spine and rows that do not. */
+.river-row.mine {
+  border-left: 2px solid var(--red);
+  padding-left: 12px;
+  margin-left: -14px;
+}
+.river-sentence { font-size: 14px; line-height: 1.35; }
+.river-meta {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--mute);
+  margin-top: 4px;
+}
+.river-value {
+  margin-left: auto;
+  text-align: right;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.river-delta { font-size: 14px; font-weight: 600; line-height: 1.2; }
+.river-rating { font-size: 11px; color: var(--mute); margin-top: 2px; }
+.river-end {
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  border-top: 1px solid var(--line);
+  padding: 20px 0 4px;
+}
+
+/* Three mono figures under the next-session card, divided by hairlines. */
+.session-stats {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  padding-top: 14px;
+}
+.session-stats > * { padding-left: 14px; border-left: 1px solid var(--line); }
+.session-stats > *:first-child { padding-left: 0; border-left: 0; }
+
+/* Check-in is the most time-critical action in the product — it is used while a
+   queue forms behind you — so it is pinned under the thumb rather than left at
+   the end of a scroll.
+   `sticky`, not `fixed`: a sticky element stays in the document, so it cannot
+   cover the last row of the river and needs no compensating page padding. The
+   bottom offset clears .mobile-tabbar (6px + a 48px min-height + 6px + the safe
+   area, see the .mobile-tabbar rules above) and the z-index stays BELOW the tab
+   bar's 40, so if the two ever meet the navigation wins. */
+.feed-checkin-bar {
+  position: sticky;
+  bottom: 24px;
+  z-index: 30;
+  padding-top: 14px;
+  /* Opaque, because a sticky element floats over whatever it is currently
+     covering and a translucent primary button over a list of match results is
+     unreadable. The page background rather than the card surface: this is a
+     bar attached to the viewport, not a card. */
+  background: var(--bg);
+}
+/* The bar is the width of the page on a phone, which is what a bottom bar
+   should be; on a desktop a full-width red slab is a shout, so cap it and let
+   it sit under the sidebar it belongs to. */
+@media (min-width: 981px) {
+  .feed-checkin-bar { max-width: 320px; margin-left: auto; }
+}
+@media (max-width: 980px) {
+  .feed-checkin-bar {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 4.75rem);
+  }
+}
+
+/* The mockup's header has a hairline under it — it separates the identity
+   block from the river, which is otherwise also hairline-ruled rows. */
+.feed-header {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 18px;
+}
