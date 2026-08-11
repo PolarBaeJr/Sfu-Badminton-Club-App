@@ -124,4 +124,65 @@ describe('the migrations and the vocabulary', () => {
     // portfolio is gone from both, and the column with it.
     expect(body.includes('NEW.portfolio')).toBe(false);
   });
+
+  // ------------------------------------------------------------------
+  // 00093 — the baselines table
+  // ------------------------------------------------------------------
+  // A THIRD COPY OF THE VOCABULARY exists as of 00093: permission_baselines
+  // constrains its own `capabilities` array to the same 116 strings. Two copies
+  // in SQL can drift, and the direction this one drifts in is a baseline that
+  // stores a string the code does not know and therefore hands out nothing. So
+  // it is pinned exactly as the players copy is, against the same array.
+  describe('the baselines table', () => {
+    const baselineSql = migration('00093_');
+
+    it('pins the same vocabulary the players columns pin', () => {
+      const stored = arrayLiteralAfter(baselineSql, 'permission_baselines_vocabulary_check');
+      expect(stored.length).toBe(CAPABILITIES.length);
+      expect([...stored].sort()).toEqual([...CAPABILITIES].sort());
+    });
+
+    // The two SQL copies, compared to each other rather than only to the code.
+    // Both assertions above could pass while the constraints were written in
+    // different migrations against different builds; this one says they are the
+    // same list today.
+    it('agrees with the players vocabulary check', () => {
+      const players = arrayLiteralAfter(vocabularySql, 'players_permission_vocabulary_check');
+      const baselines = arrayLiteralAfter(baselineSql, 'permission_baselines_vocabulary_check');
+      expect([...baselines].sort()).toEqual([...players].sort());
+    });
+
+    // THE GUARD IS REPLACED WHOLESALE by 00093 (CREATE OR REPLACE takes the
+    // whole body), so the live definition is that file's — and everything 00087
+    // protected has to still be in it. A column dropped in the copy is a guard
+    // silently removed, which is the failure 00072's header describes.
+    it('carries every guarded column forward and adds the baseline label', () => {
+      const from = baselineSql.indexOf(
+        'CREATE OR REPLACE FUNCTION public.guard_player_privileged_columns',
+      );
+      expect(from, '00093 must replace the guard').toBeGreaterThan(-1);
+      const body = baselineSql.slice(from);
+      const [insertBranch, updateBranch] = body.split('IF TG_OP = \'INSERT\' THEN')[1]!
+        .split('RETURN NEW;\n  END IF;');
+      const columns = [
+        'permission_role',
+        'permission_grants',
+        'permission_revokes',
+        'permission_baseline_id',
+      ];
+      for (const column of columns) {
+        expect(insertBranch!.includes(column), `INSERT branch misses ${column}`).toBe(true);
+        expect(updateBranch!.includes(column), `UPDATE branch misses ${column}`).toBe(true);
+      }
+      // Everything 00087's UPDATE branch named, still named here. Read off that
+      // file rather than listed by hand, so a column added to the guard later
+      // cannot be dropped by the next replacement without this failing.
+      const previous = sql.slice(
+        sql.indexOf('CREATE OR REPLACE FUNCTION public.guard_player_privileged_columns'),
+      );
+      for (const [, column] of previous.matchAll(/NEW\.([a-z_]+)\s+IS DISTINCT FROM/g)) {
+        expect(updateBranch!.includes(`NEW.${column}`), `00093 dropped ${column}`).toBe(true);
+      }
+    });
+  });
 });
