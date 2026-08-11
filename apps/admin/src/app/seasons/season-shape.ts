@@ -9,7 +9,7 @@
  * band once did.
  */
 
-/** Milliseconds in a day. Dates here are DATE columns, so no DST arithmetic. */
+/** Milliseconds in a day. Exact, because `at()` below parses at UTC midnight. */
 const MS_DAY = 86_400_000;
 
 /**
@@ -23,9 +23,23 @@ export function today(): string {
   return new Date().toLocaleDateString('en-CA');
 }
 
-/** Parse a DATE column at local midnight. `new Date('2026-01-06')` is UTC. */
+/**
+ * Parse a DATE column at UTC midnight, for ARITHMETIC only.
+ *
+ * Local midnight is the intuitive choice and it is wrong here: Vancouver falls
+ * back an hour in November, so a fall term measured between two local midnights
+ * is 98.0417 days rather than 98, and ceil(98.0417 / 7) reports a 14-week season
+ * as 15 — a phantom block on the bar and a wrong total printed beside it. Under
+ * UTC both endpoints shift together and the difference is an exact multiple of a
+ * day again. Spring hid the bug: springing forward subtracts an hour and the
+ * ceil absorbs it.
+ *
+ * Comparisons stay honest because the caller's `now` is a local calendar date
+ * STRING parsed the same way. Display is a different question — see shortDate,
+ * which must keep local parsing or it renders the day before.
+ */
 function at(date: string): number {
-  return new Date(`${date}T00:00:00`).getTime();
+  return new Date(`${date}T00:00:00Z`).getTime();
 }
 
 /** "2026-01-06" -> "6 Jan". The table has a column, not a sentence, of room. */

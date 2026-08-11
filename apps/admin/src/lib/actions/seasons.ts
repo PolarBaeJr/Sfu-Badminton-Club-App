@@ -104,7 +104,20 @@ export async function updateSeasonFees(seasonId: string, fees: SeasonFeeInput, r
 
 export type SeasonEloPolicy = 'carry' | 'soft' | 'full';
 
-export async function setActiveSeason(seasonId: string, eloPolicy: SeasonEloPolicy = 'carry') {
+// The most destructive write on the seasons screen, and the one that carried no
+// explanation at all. Under the `full` policy activate_season resets every
+// player's ELO to the ladder floor and marks them provisional again; under
+// `soft` it compresses the whole ladder. Closing a season only stamps a date and
+// now takes a reason — this taking none was the wrong way round.
+// Both arguments are REQUIRED rather than defaulted: a default reason is a
+// reason nobody wrote, and an optional one would let a call site drop it and
+// only fail at runtime. The type system names every caller instead.
+export async function setActiveSeason(
+  seasonId: string,
+  eloPolicy: SeasonEloPolicy,
+  reason: string,
+) {
+  const why = requireReason(reason, 'Activating a season');
   const admin = await requireCapability('seasons.activate.write');
   const adminClient = createAdminClient();
 
@@ -122,6 +135,7 @@ export async function setActiveSeason(seasonId: string, eloPolicy: SeasonEloPoli
     target_type: 'season',
     target_id: seasonId,
     new_value: { elo_policy: eloPolicy },
+    reason: why,
   }, { seasonId });
 
   revalidatePath('/seasons');

@@ -351,6 +351,7 @@ export function SeasonRowActions({
   const [endOpen, setEndOpen] = useState(false);
   const [feesOpen, setFeesOpen] = useState(false);
   const [policy, setPolicy] = useState<SeasonEloPolicy>('carry');
+  const [activateReason, setActivateReason] = useState('');
   const [endReason, setEndReason] = useState('');
   const { toast } = useToast();
   const router = useRouter();
@@ -363,9 +364,10 @@ export function SeasonRowActions({
   async function handleActivate() {
     setLoading(true);
     try {
-      await setActiveSeason(seasonId, policy);
+      await setActiveSeason(seasonId, policy, activateReason);
       toast('Season activated', 'success');
       setActivateOpen(false);
+      setActivateReason('');
       router.refresh();
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
@@ -480,7 +482,7 @@ export function SeasonRowActions({
 
       {!isLive && can.activate && (
         <>
-          <Button size="sm" variant="ghost" className={TOUCH} onClick={() => { setPolicy('carry'); setActivateOpen(true); }}>
+          <Button size="sm" variant="ghost" className={TOUCH} onClick={() => { setPolicy('carry'); setActivateReason(''); setActivateOpen(true); }}>
             Set active
           </Button>
           <Dialog open={activateOpen} onClose={() => setActivateOpen(false)} title={`Activate ${seasonName}?`}>
@@ -496,12 +498,23 @@ export function SeasonRowActions({
                   {warning}
                 </div>
               )}
+              {/* Activation is the heaviest write on this screen — under `full`
+                  it puts every rating in the club back to the floor — so it
+                  takes a sentence like the other two. */}
+              <Textarea
+                label="Reason (required)"
+                placeholder="Rolling the club onto a new season is logged. Say why."
+                value={activateReason}
+                onChange={(e) => setActivateReason(e.target.value)}
+                required
+              />
               <div className="flex gap-2">
                 <Button variant="ghost" onClick={() => setActivateOpen(false)}>Cancel</Button>
                 <Button
                   variant={policy === 'carry' ? 'primary' : 'danger'}
                   onClick={handleActivate}
                   loading={loading}
+                  disabled={!enoughReason(activateReason)}
                   className="flex-1"
                 >
                   {policy === 'carry' ? 'Activate' : 'Activate & reset ELO'}

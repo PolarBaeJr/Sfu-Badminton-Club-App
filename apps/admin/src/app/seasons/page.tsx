@@ -33,7 +33,16 @@ async function playersPlayedBySeason(
   const PAGE = 1000;
   const bySeason = new Map<string, Set<string>>();
 
-  for (let page = 0; page < 100; page++) {
+  // The offset advances by WHAT CAME BACK, not by the window size, and the loop
+  // stops on an empty page rather than on a short one. PostgREST's row cap is a
+  // server setting: this is a self-hosted instance, and if `db-max-rows` is
+  // below 1000 then page one is short while there is plenty more — "short page
+  // means last page" would then have produced exactly the silent undercount the
+  // paging exists to prevent. Advancing by the row count is correct under any
+  // cap, because the cap limits the window and not the offset.
+  let from = 0;
+
+  for (let guard = 0; guard < 100; guard++) {
     const { data, error } = await supabase
       .from('match_participants')
       .select('player_id, matches!inner(season_id)')
@@ -41,9 +50,9 @@ async function playersPlayedBySeason(
       // it: an unordered paged read may return the same row twice and miss
       // another entirely.
       .order('id')
-      .range(page * PAGE, page * PAGE + PAGE - 1);
+      .range(from, from + PAGE - 1);
 
-    if (error || !data) break;
+    if (error || !data || data.length === 0) break;
 
     for (const row of data) {
       // A to-one embed comes back as an object, but the generated types for an
@@ -62,7 +71,7 @@ async function playersPlayedBySeason(
       seen.add(row.player_id);
     }
 
-    if (data.length < PAGE) break;
+    from += data.length;
   }
 
   return new Map([...bySeason].map(([id, players]) => [id, players.size]));
@@ -168,8 +177,10 @@ export default async function SeasonsPage() {
       <span className="font-mono text-sm text-[var(--text-muted)]">—</span>
     );
 
+  // separator="·" so the line may wrap BETWEEN the two amounts and never
+  // inside one: `$25.` / `00` is the split Atomic was written to stop.
   const feesLine = (s: (typeof rows)[number]) => (
-    <Atomic>
+    <Atomic separator="·">
       {`Comp ${money(s.competitive_fee_cents ?? 0)} · Rec ${money(s.recreational_fee_cents ?? 0)}`}
     </Atomic>
   );
