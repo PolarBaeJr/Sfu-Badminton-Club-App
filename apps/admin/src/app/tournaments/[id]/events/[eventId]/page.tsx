@@ -1,11 +1,14 @@
-import { createAdminClient } from '@/lib/supabase-server';
+import { createAdminClient, requireCapability } from '@/lib/supabase-server';
+import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { notFound } from 'next/navigation';
 import { TOURNAMENT_EVENT_TYPE_LABELS, isDoublesEvent } from '@badminton/shared';
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { EventControlCenter } from './components/EventControlCenter';
 import { getTournamentBonusSettings } from '@/lib/platform-settings';
-import type { ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';
+import type { Capability } from '@/lib/permissions';
+import type { ParticipantWithPlayer, PairWithPlayers, PlayerSummary } from '@/lib/tournament-types';
+import type { SiblingEvent } from '../../event-format-fields';
 
 export default async function EventPage({
   params,
@@ -13,6 +16,24 @@ export default async function EventPage({
   params: Promise<{ id: string; eventId: string }>;
 }) {
   const { id: tournamentId, eventId } = await params;
+
+  // WHO IS LOOKING, asked here and not left to middleware. This page opened a
+  // service-role client and queried straight away — the same shape the index,
+  // /sessions and /fees have all been moved off. Middleware does resolve
+  // `tournaments.page` for this path (longest-prefix '/tournaments', see
+  // lib/permissions.ts), so this call is not a new door: it is the same door,
+  // re-asked where the rows are actually read, because a fetch that runs for
+  // the wrong viewer has already put its rows in the RSC payload by the time
+  // any JSX decides not to draw them.
+  //
+  // `tournaments.page` and nothing narrower, deliberately. It is exactly what
+  // sectionCapability() already resolves for this route, so the boundary does
+  // not move in either direction.
+  const viewer = await requireCapability('tournaments.page');
+  const level = accessLevelFor(viewer);
+  const permissions = permissionsOf(viewer);
+  const may = (capability: Capability) => permits(level, permissions, capability);
+
   const supabase = createAdminClient();
 
   // The tournament and the event first, and together: everything below needs
@@ -26,6 +47,33 @@ export default async function EventPage({
   if (!event) notFound();
 
   const doubles = isDoublesEvent(event.event_type);
+
+  // TWO OF THE SIX READS BELOW BELONG TO A CONTROL RATHER THAN TO THE PAGE, and
+  // each is asked for with the capability that control's own server action
+  // re-checks. Neither is a level and neither is `tournaments.page` again: the
+  // club can hand somebody the results desk without the draw, and this page has
+  // to be able to render that person without shipping them the pickers' data.
+  //
+  // THE ROSTER IS THE ONE THAT MATTERED. `allPlayers` is every non-suspended
+  // member of the club — the whole roster, names and avatars — and it exists
+  // for exactly one widget: the Add Player / Add Pair picker in ParticipantsTab.
+  // It was fetched for everybody the section admitted, so a hand-picked
+  // baseline holding `tournaments.page` without the add-writes had the club's
+  // membership list delivered in its RSC payload behind a button it was never
+  // offered.
+  //
+  // NOT `players.read`, which is the capability that owns the roster elsewhere:
+  // ROLE_DEFAULTS.tournaments does not contain it, so gating on it would blank
+  // the picker for the club's VP of Tournaments — the very person this page is
+  // for. The right question here is "may this viewer add an entry?", and the
+  // answer differs by discipline because the two adds are separate capabilities.
+  const canAddEntries = doubles
+    ? may('tournaments.draw.pairs.add.write')
+    : may('tournaments.draw.participants.add.write');
+  // `siblingEvents` feeds one picker too: the "seed from" list in
+  // EventSettingsDialog, which is reached from EventHeader's settings button and
+  // whose save calls updateEvent. Same capability that action asks for.
+  const canEditEvent = may('tournaments.manage.event.update.write');
 
   // The remaining five reads do not depend on each other, and were awaited one
   // at a time. On a 100-player event that is five sequential round trips to the
@@ -43,12 +91,14 @@ export default async function EventPage({
     bonusSettings,
     { data: allPlayers },
   ] = await Promise.all([
-    supabase
-      .from('tournament_events')
-      .select('id, event_type, format')
-      .eq('tournament_id', tournamentId)
-      .neq('id', eventId)
-      .order('created_at'),
+    canEditEvent
+      ? supabase
+          .from('tournament_events')
+          .select('id, event_type, format')
+          .eq('tournament_id', tournamentId)
+          .neq('id', eventId)
+          .order('created_at')
+      : Promise.resolve({ data: [] as SiblingEvent[] }),
     // Only the one that matches the discipline is actually queried; the other
     // resolves immediately to an empty result rather than reading a table whose
     // rows this event cannot have.
@@ -77,12 +127,17 @@ export default async function EventPage({
     // has to use the same numbers (and the same on/off decision) the finaliser
     // would — otherwise the panel says "off" while the table advertises +32.
     getTournamentBonusSettings(supabase),
-    // Everyone the participant picker may offer (includes admins).
-    supabase
-      .from('players')
-      .select('id, full_name, avatar_url')
-      .not('status', 'in', '("suspended","pending_approval")')
-      .order('full_name'),
+    // Everyone the participant picker may offer (includes admins). Skipped
+    // outright, not hidden, for a viewer who cannot add an entry: this is the
+    // club roster and it crosses to the browser as a prop on a client
+    // component, so trimming the JSX would leave it in the payload regardless.
+    canAddEntries
+      ? supabase
+          .from('players')
+          .select('id, full_name, avatar_url')
+          .not('status', 'in', '("suspended","pending_approval")')
+          .order('full_name')
+      : Promise.resolve({ data: [] as PlayerSummary[] }),
   ]);
 
   const pairs: PairWithPlayers[] = (pairRows ?? []) as PairWithPlayers[];
