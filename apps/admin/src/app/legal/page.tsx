@@ -73,7 +73,13 @@ export default async function LegalPage() {
       .from('players')
       .select('id, full_name, avatar_url, waiver_reset_at, waiver_acceptances(document, version, accepted_at)')
       .eq('active_flag', true)
-      .order('full_name');
+      .order('full_name')
+      // An EXPLICIT ceiling rather than PostgREST's implicit one. activeMemberCount
+      // is counted from these rows and is the number in "all N active members are
+      // gated" — the loudest sentence on the screen — so it must not be silently
+      // truncated by a default nobody set here. The club is two orders of
+      // magnitude under this.
+      .limit(2000);
 
     const members = roster ?? [];
     activeMemberCount = members.length;

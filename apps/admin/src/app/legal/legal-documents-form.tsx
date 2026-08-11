@@ -118,6 +118,13 @@ export function LegalConsole({
   }
 
   async function publish(bumpVersion: boolean) {
+    // The buttons are already disabled without a reason; this is the guard
+    // behind them, so no path reaches a confirm dialog whose own confirm button
+    // has no reason gate of its own.
+    if (!reasonOk) {
+      toast(`Give a reason of at least ${MIN_REASON_LENGTH} characters first.`, 'error');
+      return;
+    }
     const confirmed = await confirm({
       title: bumpVersion ? `Publish ${label} and require re-sign?` : `Publish ${label} quietly?`,
       message: bumpVersion ? (
@@ -167,6 +174,10 @@ export function LegalConsole({
   }
 
   async function forceResign() {
+    if (!reasonOk) {
+      toast(`Give a reason of at least ${MIN_REASON_LENGTH} characters first.`, 'error');
+      return;
+    }
     const confirmed = await confirm({
       title: `Require re-signature of ${label}?`,
       message: (
@@ -501,7 +512,20 @@ function SignaturePanel({
           Every active member has signed {documentLabel}.
         </p>
       ) : (
-        <ul className="mt-4">
+        /* Capped and scrolled to match the preview beside it. Uncapped, a
+           freshly bumped document puts every active member in this list and the
+           column runs off the page. */
+        <ul className="mt-4 max-h-[420px] overflow-y-auto">
+          {/* The state is named once, here, instead of an UNSIGNED badge on
+              every row: each row in this list is unsigned by construction, so
+              a per-row badge repeats a constant as many times as there are
+              members and tells the reader nothing. */}
+          <li
+            className="sticky top-0 bg-[var(--surface)] pb-1 font-mono uppercase text-[var(--mute)]"
+            style={{ fontSize: 10, letterSpacing: '.1em' }}
+          >
+            Has not signed v{version}
+          </li>
           {stats.members.map((member) => (
             <li key={member.id} className="border-t border-[var(--line)]">
               {/* Links to the member's record rather than offering a re-sign
@@ -529,7 +553,6 @@ function SignaturePanel({
                       : 'never signed'}
                   </span>
                 </span>
-                <Badge variant="warning">Unsigned</Badge>
               </Link>
             </li>
           ))}
