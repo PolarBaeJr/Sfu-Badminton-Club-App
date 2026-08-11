@@ -1478,13 +1478,15 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
 
 /* ═══════════════════════════════════════════════════════════
    MOBILE OVERFLOW GUARD
-   Flex/grid items default to min-width:auto, so wide content (the
-   leaderboard table's 680px min-width) inflates its card past the
-   viewport — the document grows wider than the screen and phones let
-   you pinch-zoom the whole page. min-width:0 lets items shrink so
-   wide content scrolls inside its own overflow container instead;
-   overflow-x:clip on the root is the belt against any stragglers.
-   Verified: leaderboard @390px went 698px → 390px document width.
+   Flex/grid items default to min-width:auto, so wide content
+   inflates its card past the viewport — the document grows wider
+   than the screen and phones let you pinch-zoom the whole page.
+   min-width:0 lets items shrink so wide content scrolls inside its
+   own overflow container instead; overflow-x:clip on the root is
+   the belt against any stragglers.
+   The 680px-wide leaderboard table this was written for is gone
+   (the ladder is a row list now), but the guard is not leaderboard-
+   specific and still covers every other wide table in the app.
    ═══════════════════════════════════════════════════════════ */
 .feed-col > * { min-width: 0; }
 .grid-2 > *, .grid-3 > *, .grid-12 > * { min-width: 0; }
@@ -1520,4 +1522,240 @@ html, body { overflow-x: clip; }
 @keyframes session-deeplink-flash {
   0%   { box-shadow: 0 0 0 2px var(--red-border); }
   100% { box-shadow: 0 0 0 2px transparent; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   RANKS (/leaderboard)
+   The ladder used to be a 680px-wide <table> in a horizontal
+   scroller, which on the phone this app is designed for meant
+   dragging sideways to read a column — one-handed, in a gym. It is
+   a row list now: every row fits 360px with nothing clipped, and
+   the desktop layout is the same rows in a wider column rather
+   than a different component.
+   ═══════════════════════════════════════════════════════════ */
+
+/* --- the format/sort chip rails ----------------------------- */
+/* Five formats do not fit across a phone. Scrolling the rail sideways is
+   right where scrolling the ladder sideways was wrong: a chip rail advertises
+   its own overflow (a chip is cut off at the edge) and losing sight of one
+   costs a swipe, where a clipped ELO column costs you the number. */
+.ranks-rail {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 2px;
+}
+.ranks-rail::-webkit-scrollbar { display: none; }
+.ranks-rail > * { flex: 0 0 auto; }
+
+/* Full-bleed on the phone and thumb-height, rather than the 180px pill wedged
+   into the page header — search is how you find one person in ninety. */
+.ranks-search { width: 100%; padding: 10px 12px; }
+.ranks-search input { width: 100%; font-size: 16px; }
+@media (min-width: 981px) {
+  .ranks-search { width: 260px; }
+  .ranks-search input { font-size: 13px; }
+}
+
+/* --- your position ------------------------------------------ */
+.rung {
+  height: 6px;
+  background: var(--surface-3);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.rung > i {
+  display: block;
+  height: 100%;
+  background: var(--red);
+  border-radius: 999px;
+}
+
+/* The distribution strip: one hairline per player across the field's rating
+   range, the member's own in red. Plain absolutely-positioned elements rather
+   than SVG — at ~100 players a 1px rule is the whole mark, and an SVG scaled
+   with preserveAspectRatio="none" would stretch those rules unevenly. */
+.spread {
+  position: relative;
+  height: 30px;
+  margin: 2px 0 6px;
+}
+.spread::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--line);
+}
+.spread i {
+  position: absolute;
+  top: 8px;
+  bottom: 1px;
+  width: 1px;
+  margin-left: -0.5px;
+  background: var(--faint);
+}
+.spread i.me {
+  top: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--red);
+}
+.spread-axis {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .08em;
+  color: var(--mute);
+}
+
+/* --- the ladder rows ---------------------------------------- */
+.ladder-list { display: flex; flex-direction: column; }
+.ladder-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 12px 0 4px;
+  border-bottom: 1px solid var(--line);
+}
+.ladder-row:last-child { border-bottom: 0; }
+.ladder-row.me { background: var(--red-wash); }
+@media (hover: hover) {
+  .ladder-row:hover { background: var(--surface-2); }
+  .ladder-row.me:hover { background: var(--red-wash); }
+}
+@media (min-width: 981px) {
+  .ladder-row { padding: 0 20px 0 12px; }
+}
+
+/* The row body is a link and the Challenge control is its SIBLING, not a
+   button nested inside an anchor — nesting them is invalid and leaves the
+   button unreachable by keyboard in some browsers. */
+.lr-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 34px auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  color: inherit;
+  text-decoration: none;
+}
+@media (min-width: 981px) {
+  .lr-main { grid-template-columns: 44px auto minmax(0, 1fr) auto; gap: 14px; }
+}
+
+.lr-rank {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: right;
+  color: var(--dim);
+}
+.lr-rank[data-medal="1"] { color: var(--gold); }
+.lr-rank[data-medal="2"] { color: var(--silver); }
+.lr-rank[data-medal="3"] { color: var(--bronze); }
+@media (min-width: 981px) { .lr-rank { font-size: 16px; } }
+
+.lr-id { min-width: 0; display: block; }
+.lr-name {
+  display: block;
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lr-sub {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--mute);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lr-metrics { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.lr-value {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+}
+.lr-record {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--mute);
+  white-space: nowrap;
+}
+.lr-streak-win  { color: var(--win); }
+.lr-streak-loss { color: var(--loss); }
+
+/* Win share as a two-tone rule: won on the left in --win, lost on the right in
+   --loss. It is the aggregate W-L the RPC returns, not a run of recent
+   results — the query carries no per-match history to draw one from. */
+.lr-share {
+  width: 72px;
+  height: 3px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in oklab, var(--loss) 45%, transparent);
+}
+.lr-share > i { display: block; height: 100%; background: var(--win); }
+
+/* 44px minimum, because this is pressed with a thumb next to a row that
+   navigates somewhere else entirely. */
+.lr-action {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out-expo);
+}
+.lr-action:hover { background: var(--surface-2); color: var(--ink); }
+.lr-action:active { transform: scale(0.94); }
+/* Icon-only on the phone, where 90 rows of the word "Challenge" is noise and
+   the label lives in aria-label; spelled out once there is room for it. */
+.lr-action span { display: none; }
+@media (min-width: 981px) {
+  .lr-action {
+    width: auto;
+    gap: 6px;
+    grid-auto-flow: column;
+    padding: 0 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+  .lr-action span { display: inline; }
+}
+
+/* A column key, since a row list has no <th> to say what 18–6 · 75% means. */
+.ladder-key {
+  display: flex;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--dim);
 }
