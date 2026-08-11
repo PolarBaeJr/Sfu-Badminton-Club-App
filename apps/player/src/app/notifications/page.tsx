@@ -58,11 +58,20 @@ export default async function NotificationsPage() {
   const all = (listResult.data ?? []) as NotificationRecord[];
   const unreadCount = countResult.count ?? 0;
 
-  // Tournament result notifications are written with { match_id, event_id } and
-  // no tournament_id (apps/admin/.../tournament-actions/results.ts), but the
-  // event route needs both ids. One batched lookup back-fills them so those
-  // rows get a live link instead of no link — the alternative is a whole class
-  // of notification that can never be opened.
+  // KEPT ON PURPOSE, for rows already in the table.
+  //
+  // Tournament result notifications used to be written with { match_id,
+  // event_id } and no tournament_id, while the event route needs both ids. The
+  // producer now writes tournament_id (apps/admin/.../tournament-actions/
+  // results.ts), so newly written rows do not need this — but every result
+  // notification written before that fix is still sitting in `notifications`
+  // with only an event_id, and there is no backfill migration for them. Delete
+  // this and a member's tournament history quietly loses its links.
+  //
+  // It costs one batched lookup and only when there is actually something to
+  // resolve: `orphanEventIds` is empty for rows that carry both ids, and the
+  // query is skipped entirely. As the old rows age out it becomes free by
+  // itself, which is the right way for it to go.
   const orphanEventIds = [
     ...new Set(
       all

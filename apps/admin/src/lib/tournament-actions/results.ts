@@ -431,7 +431,12 @@ async function enterMatchResultImpl(
   await notifyPlayers(adminClient, matchPlayerIds,
     'Match Result Confirmed',
     `Your match result has been recorded. Score: ${scores.map((s: { a: number; b: number }) => `${s.a}-${s.b}`).join(', ')}`,
-    { match_id: matchId, event_id: match.event_id },
+    // tournament_id as well as event_id: the player app links a tournament
+    // notification at /tournaments/[id]/events/[eventId], so an event id on its
+    // own is not a route. This was the one producer that omitted it — the
+    // bracket and finalize notifications (brackets.ts, finalize.ts) have always
+    // written both — which is why /notifications carries a back-fill query.
+    { match_id: matchId, event_id: match.event_id, tournament_id: event.tournament_id as string },
     'tournament_match_result'
   );
 
