@@ -55,9 +55,13 @@ const TD = 'px-4 py-3 align-middle';
 // Only needed to give the "no matches for you" branch of the fetch below a type
 // to agree with — the admin client carries no generated Database type, so the
 // real query's rows are untyped.
+type MatchPlayer = { id: string; full_name: string; avatar_url: string | null };
+// supabase-js types an embedded one-to-one as EITHER an object or an array
+// depending on how it inferred the relationship, and for this select it infers
+// the array. Both shapes are admitted here and normalised once, in describeMatch.
 type MatchParticipant = {
   team_side: string;
-  player?: { id: string; full_name: string; avatar_url: string | null } | null;
+  player?: MatchPlayer | MatchPlayer[] | null;
 };
 type DashboardMatch = {
   id: string;
@@ -417,7 +421,7 @@ export default async function DashboardPage() {
     // club_fees only, so recorded reinstatement and tournament money read as
     // $0.00 — and it was wrong here AND on /fees because each page did its own
     // arithmetic. Net is computed in exactly one place for the same reason.
-    const finances = await getSeasonFinances(supabase, { id: season.id, name: season.name });
+    const finances = await getSeasonFinances(supabase, { id: season.id });
     seasonIncomeCents = finances.income.totalCents;
     seasonExpenseCents = finances.expenseCents;
     seasonNetCents = finances.netCents;
@@ -581,11 +585,16 @@ export default async function DashboardPage() {
               <p className="stat-value">{sessionsThisWeek ?? 0}</p>
             </Link>
           )}
-          {showClubFees && outstandingCents !== null && (
+          {/* Rendered for the capability, not for the figure. A null here means
+              there is no active season to collect for, which is a real answer
+              and gets an em dash — dropping the cell instead would leave the
+              strip empty for somebody whose only capability is this one, and an
+              empty strip is two hairlines with nothing between them. */}
+          {showClubFees && (
             <Link href="/fees" className="hover:bg-[var(--surface)] transition-colors">
               <p className="stat-label">Fees outstanding</p>
-              <p className={`stat-value is-money ${outstandingCents > 0 ? 'text-[var(--color-warning)]' : ''}`}>
-                <Atomic>{money(outstandingCents)}</Atomic>
+              <p className={`stat-value is-money ${(outstandingCents ?? 0) > 0 ? 'text-[var(--color-warning)]' : ''}`}>
+                {outstandingCents === null ? '—' : <Atomic>{money(outstandingCents)}</Atomic>}
               </p>
             </Link>
           )}
@@ -697,7 +706,7 @@ export default async function DashboardPage() {
                       </table>
                     </ResponsiveTable>
                   ) : (
-                    <div className="px-4 py-6">
+                    <div className="px-4">
                       <EmptyState title="Nobody is waiting" description="Every signup has been decided." />
                     </div>
                   )}
@@ -793,7 +802,7 @@ export default async function DashboardPage() {
                       </table>
                     </ResponsiveTable>
                   ) : (
-                    <div className="px-4 py-6">
+                    <div className="px-4">
                       <EmptyState title="Every result is settled" description="No match is waiting on a confirmation." />
                     </div>
                   )}
@@ -853,7 +862,10 @@ export default async function DashboardPage() {
                         </p>
                       </div>
                     ) : (
-                      <EmptyState title="Nothing scheduled" description="No session is on the calendar." />
+                      // A plain line rather than EmptyState: this card is one
+                      // column of a 1fr track, and EmptyState's illustration
+                      // block is taller than the card it would sit in.
+                      <p className="text-sm text-[var(--text-muted)]">No session is on the calendar.</p>
                     )}
                   </div>
                 </Card>
@@ -889,9 +901,9 @@ export default async function DashboardPage() {
                       ))}
                     </div>
                   ) : (
-                    <div className="px-4 py-6">
-                      <EmptyState title="Nobody new" description="No member has joined this week." />
-                    </div>
+                    <p className="px-4 py-4 text-sm text-[var(--text-muted)]">
+                      No member has joined this week.
+                    </p>
                   )}
                 </Card>
               )}
@@ -1039,13 +1051,14 @@ export default async function DashboardPage() {
  * "Marcus Ng vs Kiera Watanabe" over "SINGLES · RATED CHALLENGE", plus the
  * member whose avatar leads the row.
  *
- * supabase-js types an embedded one-to-one as either an object or an array
- * depending on how it inferred the relationship, so the player is normalised
- * here rather than at four call sites.
+ * The embedded player arrives as an object or a one-element array depending on
+ * how supabase-js inferred the relationship, so it is normalised here rather
+ * than at four call sites.
  */
 function describeMatch(match: DashboardMatch) {
   const participants = match.match_participants ?? [];
-  const playerOf = (p: MatchParticipant) => (Array.isArray(p.player) ? p.player[0] : p.player) ?? null;
+  const playerOf = (p: MatchParticipant): MatchPlayer | null =>
+    (Array.isArray(p.player) ? p.player[0] : p.player) ?? null;
   const names = (side: string) =>
     participants
       .filter((p) => p.team_side === side)
