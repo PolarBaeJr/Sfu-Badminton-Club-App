@@ -1,3 +1,53 @@
+// ############################################################################
+// THIS FILE IS BADLY OUT OF DATE, AND A REGENERATION IS STILL OWED.
+//
+// Measured against the staging database on 2026-08-11:
+//
+//   32 tables here, 50 there. Missing entirely: calendar_feed_tokens,
+//   club_expenses, club_fees, cron_config, email_suppressions, event_feedback,
+//   event_waiver_acceptances, event_waiver_templates, other_income,
+//   passkey_credentials, permission_baselines, reinstatement_fees,
+//   season_final_ratings, session_checkin_tokens, session_rsvp,
+//   tournament_checkin_tokens, tournament_fee_tiers, tournament_fees.
+//
+//   `players` has 23 columns here and 43 there. Missing: ban_reason,
+//   banned_at, banned_by, deletion_requested_at, exec_photo_url, exec_title,
+//   fee_exempt, handle, inactive_since, inactivity_notice_sent_at, is_banned,
+//   is_exec, is_trainer, member_code, membership_type, permission_baseline_id,
+//   permission_grants, permission_revokes, permission_role, waiver_reset_at —
+//   which is to say every column the permission system and the whole of
+//   00092's member identity are built on.
+//
+// WHY IT HAS NOT BITTEN. Both apps construct their Supabase clients UNTYPED,
+// deliberately (see the note at the top of each supabase-server.ts), so
+// nothing type-checks a query against this. `Database` itself is read in
+// exactly two places — lib/tournament-types.ts for the tournament row shapes
+// and lib/notify.ts for the notification_type enum — and both happen to touch
+// only definitions that predate the drift. The day somebody types a client is
+// the day this stops being harmless, and it will be wrong about a table that
+// exists rather than merely silent about one that does not.
+//
+// IT IS NOT HAND-EDITABLE, AND IT HAS NOT BEEN HAND-EDITED. Eighteen tables
+// and twenty columns written by hand into a file named .gen.ts would look
+// generated and be fiction, and the next real regeneration would silently
+// disagree with everything anyone had built on it.
+//
+// REGENERATING IT NEEDS THE DATABASE. The RUNBOOK's "regenerate types if
+// applicable" (Apply a database migration, step 5) names no command, there is
+// no script in any package.json, and there is no supabase/config.toml — the
+// Supabase CLI is not part of this repo's toolchain. The command is:
+//
+//   npx supabase gen types typescript --db-url "$SUPABASE_DB_URL" \
+//     > packages/shared/src/types/database.gen.ts
+//
+// run against production (NOT staging: staging is ahead on some migrations and
+// behind on others, so it describes a schema no deploy has). The URL carries
+// the postgres password, which is why this is the owner's to run.
+//
+// A real regeneration OVERWRITES this comment, which is correct — it exists to
+// describe a state that will have stopped being true.
+// ############################################################################
+
 export type Json =
   | string
   | number
