@@ -682,7 +682,26 @@ export async function disqualifyPair(pairId: string, reason?: string): Promise<A
 // Doubles Pair Management
 // ============================================================
 
-export async function addPairToEvent(eventId: string, player1Id: string, player2Id: string) {
+/**
+ * Add a doubles pair.
+ *
+ * RETURNS ActionResult RATHER THAN THROWING, for the reason the withdraw and
+ * check-in actions in this file already give: Next.js redacts an error thrown
+ * out of a Server Action in production, so every refusal below — "Event is
+ * full", "Draw is locked", and above all the entry-cap refusal that NAMES THE
+ * HALF AT FAULT — would reach the exec as an opaque banner. A refusal whose
+ * reason is redacted is a refusal the exec cannot act on, and naming the player
+ * is the entire point of that message.
+ */
+export async function addPairToEvent(
+  eventId: string,
+  player1Id: string,
+  player2Id: string,
+): Promise<ActionResult<unknown>> {
+  return runAction(() => addPairToEventImpl(eventId, player1Id, player2Id));
+}
+
+async function addPairToEventImpl(eventId: string, player1Id: string, player2Id: string) {
   const admin = await requireCapability('tournaments.draw.pairs.add.write');
   const adminClient = createAdminClient();
 

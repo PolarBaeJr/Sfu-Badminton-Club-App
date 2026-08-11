@@ -185,17 +185,22 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     e.preventDefault();
     if (!playerId) return;
     setLoading(true);
-    try {
-      if (!player2Id) { toast('Select both players', 'error'); setLoading(false); return; }
-      await addPairToEvent(event.id, playerId, player2Id);
-      toast('Added successfully', 'success');
-      setAddOpen(false);
-      setPlayerId('');
-      setPlayer2Id('');
-      router.refresh();
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Failed', 'error');
+    if (!player2Id) { toast('Select both players', 'error'); setLoading(false); return; }
+    // Result, not try/catch: addPairToEvent returns its refusals so they survive
+    // production's redaction of thrown Server Action errors. The entry-cap
+    // refusal names which half of the pair is at their limit, and that sentence
+    // is the whole reason the exec can fix it on the spot.
+    const res = await addPairToEvent(event.id, playerId, player2Id);
+    if (!res.ok) {
+      toast(res.error, 'error');
+      setLoading(false);
+      return;
     }
+    toast('Added successfully', 'success');
+    setAddOpen(false);
+    setPlayerId('');
+    setPlayer2Id('');
+    router.refresh();
     setLoading(false);
   }
 
