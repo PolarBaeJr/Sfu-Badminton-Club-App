@@ -431,7 +431,13 @@ async function enterMatchResultImpl(
   await notifyPlayers(adminClient, matchPlayerIds,
     'Match Result Confirmed',
     `Your match result has been recorded. Score: ${scores.map((s: { a: number; b: number }) => `${s.a}-${s.b}`).join(', ')}`,
-    { match_id: matchId, event_id: match.event_id },
+    // The parent id as well as the event and the match. A notification route in
+    // the members' app is /tournaments/<tournament>/events/<event>, so a payload
+    // without it cannot be turned into a link and the player app has to go back
+    // to tournament_events to look the parent up. The producer already has it —
+    // it is the same value logAudit is handed twenty lines above, and the same
+    // one revalidateEventPaths uses four lines below.
+    { tournament_id: event.tournament_id as string, match_id: matchId, event_id: match.event_id },
     'tournament_match_result'
   );
 

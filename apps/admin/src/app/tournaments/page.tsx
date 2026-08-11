@@ -6,7 +6,6 @@ import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/p
 import {
   Card,
   Badge,
-  Button,
   AvatarChip,
   EmptyState,
   PageHeader,
@@ -477,11 +476,7 @@ export default async function TournamentsPage({
                     ]}
                     actions={
                       <>
-                        <Link href={`/tournaments/${t.id}`} className="no-underline">
-                          <Button variant="secondary" size="sm" className="min-h-[44px]">
-                            {STAGE_ACTION[stage]}
-                          </Button>
-                        </Link>
+                        <ActionLink href={`/tournaments/${t.id}`}>{STAGE_ACTION[stage]}</ActionLink>
                         <TournamentRowActions
                           tournament={t as unknown as TournamentData}
                           waiverTemplates={waiverTemplateContext}
@@ -549,11 +544,7 @@ export default async function TournamentsPage({
                               canArchive={canArchive}
                               canDelete={canDelete}
                             />
-                            <Link href={`/tournaments/${t.id}`} className="no-underline">
-                              <Button variant="secondary" size="sm" className="min-h-[44px]">
-                                {STAGE_ACTION[stage]}
-                              </Button>
-                            </Link>
+                            <ActionLink href={`/tournaments/${t.id}`}>{STAGE_ACTION[stage]}</ActionLink>
                           </div>
                         </td>
                       </tr>
@@ -730,6 +721,24 @@ function StatCell({
         {value}
       </span>
     </>
+  );
+}
+
+/**
+ * The row's navigation control, styled as a secondary button.
+ *
+ * A <Button> inside a <Link> is an interactive element inside an anchor, which
+ * is invalid and gives screen readers two overlapping controls. This is one
+ * anchor wearing the button's classes, at the 44px the row-action slot requires.
+ */
+function ActionLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <Link
+      href={href}
+      className="inline-flex min-h-[44px] items-center justify-center gap-2 whitespace-nowrap rounded-none border border-[var(--line)] bg-[var(--surface-2)] px-3 text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--ink)] no-underline transition-all duration-150 hover:bg-[var(--line)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--red)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)]"
+    >
+      {children}
+    </Link>
   );
 }
 
