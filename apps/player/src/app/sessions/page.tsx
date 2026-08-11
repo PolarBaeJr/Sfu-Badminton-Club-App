@@ -1,15 +1,39 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
 import { getCheckinSettings } from '@/lib/checkin-settings';
-import { CLUB_TIMEZONE, formatDate, formatTime, getCheckinWindow, isCheckinOpen, getAccountStanding, type AttendanceStatus, type SessionIntent } from '@badminton/shared';
+import {
+  CLUB_TIMEZONE,
+  formatDate,
+  formatTime,
+  getCheckinWindow,
+  isCheckinOpen,
+  getAccountStanding,
+  type AttendanceStatus,
+  type SessionIntent,
+} from '@badminton/shared';
 import { StandingNote } from '@/components/standing-notice';
 import { redirect } from 'next/navigation';
 import { SubscribeAllButton } from './subscribe-all';
-import { Calendar, MapPin, FileText, Users, UserCheck, Clock } from 'lucide-react';
+import { Calendar } from 'lucide-react';
 import { PageHeader } from '@badminton/ui';
-import { CheckInButton } from './check-in-button';
-import { AddToCalendarButton } from './add-to-calendar';
-import { RsvpButtons } from './rsvp-buttons';
+import { SessionCard } from './session-card';
 import { DeepLinkScroll } from './deep-link-scroll';
+import {
+  clubDateISO,
+  describeMyState,
+  groupSessionsByDay,
+  tallyBySession,
+  type MyState,
+} from '@/lib/schedule';
+
+// Past-session outcomes, in the member's own words. 'going'/'declined' never
+// reach here (a closed session has no live RSVP worth reporting), so they map
+// to nothing rather than to a misleading "Going" on a night already over.
+const PAST_STATE_LABEL: Partial<Record<MyState, { text: string; tone: string }>> = {
+  checked_in: { text: 'Attended', tone: 'chip chip-success' },
+  attended: { text: 'Attended', tone: 'chip chip-success' },
+  no_show: { text: 'No-show', tone: 'chip' },
+  excused: { text: 'Excused', tone: 'chip' },
+};
 
 export default async function SessionsPage() {
   const player = await getCurrentPlayer();
@@ -33,19 +57,23 @@ export default async function SessionsPage() {
   // dropping them would leave them on no page at all. If nothing is active the
   // filter is skipped, because an empty schedule caused by an unactivated season
   // looks exactly like a cancelled club.
+  //
+  // The season's name is selected as well: it is the difference between an
+  // empty schedule that reads as a bug and one that names the term it is empty
+  // for.
   const { data: activeSeason } = await supabase
-    .from('seasons').select('id').eq('active_flag', true).maybeSingle();
+    .from('seasons').select('id, name').eq('active_flag', true).maybeSingle();
   const inActiveSeason = <T extends { or: (f: string) => T }>(q: T): T =>
     activeSeason ? q.or(`season_id.eq.${activeSeason.id},season_id.is.null`) : q;
 
-  const [{ data: openSessions }, { data: closedSessions }, { data: myAttendance }, { data: attendanceCounts }, { data: myRsvp }, { data: goingCounts }] = await Promise.all([
+  const [{ data: openSessions }, { data: closedSessions }, { data: myAttendance }, { data: attendanceRows }, { data: myRsvp }, { data: goingRows }] = await Promise.all([
     inActiveSeason(
       supabase
         .from('sessions')
         .select('*')
         .eq('status', 'open')
         .in('track', [player.status, 'all'])
-    ).order('date', { ascending: true }),
+    ).order('date', { ascending: true }).order('start_time', { ascending: true, nullsFirst: false }),
     inActiveSeason(
       supabase
         .from('sessions')
@@ -63,18 +91,7 @@ export default async function SessionsPage() {
     supabase
       .from('session_attendance')
       .select('session_id')
-      .in('status', ['checked_in', 'present'])
-      .then(({ data, error }) => ({
-        data: data
-          ? Object.entries(
-              data.reduce<Record<string, number>>((acc, row) => {
-                acc[row.session_id] = (acc[row.session_id] ?? 0) + 1;
-                return acc;
-              }, {})
-            ).map(([session_id, count]) => ({ session_id, count }))
-          : null,
-        error,
-      })),
+      .in('status', ['checked_in', 'present']),
     supabase
       .from('session_rsvp')
       .select('session_id, intent')
@@ -82,186 +99,189 @@ export default async function SessionsPage() {
     supabase
       .from('session_rsvp')
       .select('session_id')
-      .eq('intent', 'going')
-      .then(({ data, error }) => ({
-        data: data
-          ? Object.entries(
-              data.reduce<Record<string, number>>((acc, row) => {
-                acc[row.session_id] = (acc[row.session_id] ?? 0) + 1;
-                return acc;
-              }, {})
-            ).map(([session_id, count]) => ({ session_id, count }))
-          : null,
-        error,
-      })),
+      .eq('intent', 'going'),
   ]);
 
   const myStatusBySession = new Map<string, AttendanceStatus>(
     (myAttendance ?? []).map((r) => [r.session_id as string, r.status as AttendanceStatus])
   );
-  const countBySession = Object.fromEntries(
-    (attendanceCounts ?? []).map((r) => [r.session_id, r.count])
-  );
   const myIntentBySession = new Map<string, SessionIntent>(
     (myRsvp ?? []).map((r) => [r.session_id as string, r.intent as SessionIntent])
   );
-  const goingBySession = Object.fromEntries(
-    (goingCounts ?? []).map((r) => [r.session_id, r.count])
-  );
+  const checkedInBySession = tallyBySession(attendanceRows);
+  const goingBySession = tallyBySession(goingRows);
 
-  const upcomingCount = openSessions?.length ?? 0;
+  const upcoming = openSessions ?? [];
+  const upcomingCount = upcoming.length;
+
+  // One clock reading for the whole render. Every "Today"/"Tomorrow" heading
+  // and every check-in window on the page is derived from these two values, so
+  // the screen cannot contradict itself — and because it is all resolved on the
+  // server there is no second, browser-local answer to disagree with.
+  const now = new Date();
+  const todayISO = clubDateISO(now);
+  const days = groupSessionsByDay(upcoming, todayISO);
+
+  // Closing a session is a manual admin action with no cron behind it, so a
+  // night the exec forgot to close stays 'open' and sorts to the top. It still
+  // belongs on the page — the day heading now shows its real date, which is
+  // more than the old flat list did — but calling last Tuesday "Next up" would
+  // be a straight lie, so the accent goes to the first session dated today or
+  // later.
+  const nextSessionId = (upcoming.find((s) => s.date >= todayISO) ?? upcoming[0])?.id as string | undefined;
+
+  // How many upcoming nights the member has already committed to. It is the
+  // one number that answers "what have I said yes to?" without opening a card.
+  const myUpcomingCount = upcoming.filter((s) => {
+    const state = describeMyState(myStatusBySession.get(s.id), myIntentBySession.get(s.id));
+    return state === 'going' || state === 'checked_in' || state === 'attended';
+  }).length;
 
   return (
     <div data-screen-label="Schedule">
       <DeepLinkScroll />
+      {/* "Capacity fills fast" was dropped from the subtitle: sessions have no
+          capacity column and no waitlist, so it promised a scarcity the app
+          cannot actually show anyone. What survives is the true half — checking
+          in is the act that claims your spot. */}
       <PageHeader
+        eyebrow="Play"
         title="Schedule"
-        sub="Open practices, drop-ins, and ladder nights. Sign in to claim a court spot — capacity fills fast."
+        sub="Open practices, drop-ins and ladder nights. RSVP so the exec knows who's coming, then check in when you arrive to claim your spot."
+        actions={upcomingCount > 0 ? <SubscribeAllButton /> : undefined}
       />
 
-      <div className="feed-col">
-        <div className="card-base reveal reveal-1">
+      {/* A suspended member reaches this page from a notification or a saved
+          link even though the nav tab is gone, so the reason has to be on the
+          screen itself and above the sessions — not tucked under a card title
+          they may never scroll to. */}
+      <StandingNote
+        standing={standing}
+        activity="RSVP and check-in"
+        className="alert-danger"
+        style={{ marginBottom: 20 }}
+      />
+
+      {/* Phone and desktop show the same two things in the same order; the wide
+          layout only stops the schedule from stretching across a 27" monitor by
+          moving the finished nights into a side column, the 8/4 split the feed
+          already uses. Below 1100px this collapses and they stack again. */}
+      <div className="sched-wide">
+        <section className="reveal reveal-1">
           <div className="card-head">
             <div>
-              <h3 className="card-title">Upcoming</h3>
-              <div className="card-sub">{upcomingCount === 0 ? 'No sessions on the calendar.' : `${upcomingCount} session${upcomingCount === 1 ? '' : 's'} accepting check-ins.`}</div>
-              <StandingNote standing={standing} activity="RSVP and check-in" style={{ marginTop: 6 }} />
+              <h2 className="card-title">Upcoming</h2>
+              <div className="card-sub">
+                {upcomingCount === 0
+                  ? 'Nothing on the calendar.'
+                  : `${upcomingCount} session${upcomingCount === 1 ? '' : 's'} accepting check-ins${myUpcomingCount > 0 ? ` · you're in for ${myUpcomingCount}` : ''}.`}
+              </div>
             </div>
-            <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-              {/* Subscribing beats adding sessions one by one, and unlike a
-                  downloaded .ics it keeps itself right when one moves. */}
-              {upcomingCount > 0 && <SubscribeAllButton />}
-              {upcomingCount > 0 && <span className="tag tag-win">{upcomingCount} OPEN</span>}
-            </div>
+            {upcomingCount > 0 && <span className="tag tag-win">{upcomingCount} OPEN</span>}
           </div>
+
           {upcomingCount === 0 ? (
-            <div className="empty">
-              <div className="empty-icon"><Calendar size={20} /></div>
-              <div className="empty-title">No upcoming sessions</div>
-              <div className="empty-hint">
-                New practices are posted here — check back soon or watch announcements.
+            <div className="card-base" style={{ padding: 0 }}>
+              <div className="empty">
+                <div className="empty-icon"><Calendar size={20} /></div>
+                {/* An empty schedule has two very different causes and a member
+                    cannot tell them apart from a blank card, so each says which
+                    one it is. */}
+                <div className="empty-title">{activeSeason ? 'No sessions yet' : 'No season is running'}</div>
+                <div className="empty-hint">
+                  {activeSeason
+                    ? `Nothing has been posted for ${activeSeason.name} yet. New practices show up here as soon as the exec adds them — watch announcements.`
+                    : 'Sessions appear here once the exec opens a new term. Watch announcements for the start date.'}
+                </div>
               </div>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {(openSessions ?? []).map((session) => {
-                const myStatus = myStatusBySession.get(session.id) ?? null;
-                // Once attendance is recorded (checked in / attended / no-show /
-                // excused) the RSVP is moot — hide it so we never show a
-                // contradiction like "Checked In" + "Not going".
-                const attended = myStatus === 'checked_in' || myStatus === 'present' || myStatus === 'no_show' || myStatus === 'excused';
-                const attendees = countBySession[session.id] ?? 0;
-                const now = new Date();
-                const canCheckIn = isCheckinOpen(session, now, checkinSettings);
-                const { opensAt } = getCheckinWindow(session, checkinSettings);
-                let windowLabel: string | undefined;
-                if (!canCheckIn) {
-                  if (opensAt && now < opensAt) {
-                    // Club-local HH:MM of the opening instant, rendered like session times.
-                    const opensLocal = opensAt.toLocaleTimeString('en-GB', {
-                      timeZone: CLUB_TIMEZONE,
-                      hourCycle: 'h23',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    });
-                    windowLabel = `Opens at ${formatTime(opensLocal)}`;
-                  } else {
-                    windowLabel = 'Check-in closed';
-                  }
-                }
-                return (
-                  <div
-                    key={session.id}
-                    id={`session-${session.id}`}
-                    style={{
-                      padding: 18,
-                      border: '1px solid var(--line)',
-                      borderRadius: 'var(--r-lg)',
-                      background: 'var(--surface)',
-                    }}
-                    className="session-card"
-                  >
-                    <div
-                      className="session-grid"
-                    >
-                      <div>
-                        <div className="card-title card-title-lg">
-                          {session.name ?? 'Practice Session'}
-                        </div>
-                        <div className="session-meta" style={{ flexWrap: 'wrap' }}>
-                          <span className="row" style={{ gap: 6 }}>
-                            <Calendar size={14} /> <span className="mono">{formatDate(session.date).toUpperCase()}</span>
-                          </span>
-                          {session.start_time && (
-                            <span className="row" style={{ gap: 6 }}>
-                              <Clock size={14} />{' '}
-                              <span className="mono">
-                                {formatTime(session.start_time)}
-                                {session.end_time ? ` – ${formatTime(session.end_time)}` : ''}
-                              </span>
-                            </span>
-                          )}
-                          <span className="row" style={{ gap: 6 }}>
-                            <MapPin size={14} /> <span>{session.location}</span>
-                          </span>
-                          <span className="row" style={{ gap: 6 }}>
-                            <Users size={14} /> <span className="mono">{attendees} attending</span>
-                          </span>
-                          <span className="row" style={{ gap: 6 }}>
-                            <UserCheck size={14} /> <span className="mono">{goingBySession[session.id] ?? 0} going</span>
-                          </span>
-                        </div>
-                        {session.notes && (
-                          <div className="row" style={{ gap: 6, fontSize: 13, color: 'var(--ink-2)', marginTop: 10, alignItems: 'flex-start' }}>
-                            <FileText size={14} className="text-[var(--mute)]" style={{ marginTop: 2, flexShrink: 0 }} />
-                            <span>{session.notes}</span>
-                          </div>
-                        )}
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
-                        <CheckInButton sessionId={session.id} myStatus={myStatus} canCheckIn={canCheckIn} windowLabel={windowLabel} myIntent={myIntentBySession.get(session.id) ?? null} />
-                        {!attended && <RsvpButtons sessionId={session.id} myIntent={myIntentBySession.get(session.id) ?? null} />}
-                        <AddToCalendarButton
-                          name={session.name ?? 'Practice Session'}
-                          date={session.date}
-                          start_time={session.start_time}
-                          end_time={session.end_time}
-                          location={session.location}
-                          notes={session.notes}
+            <div>
+              {days.map((day) => (
+                <div key={day.dateISO} className={`sched-day${day.isToday ? ' is-today' : ''}`}>
+                  <div className="sched-day-rail">
+                    <div className="sched-day-label">{day.label}</div>
+                    {/* The absolute date is always present next to the relative
+                        word: "Today" alone is worthless on a page left open
+                        overnight, and it is the only date on the card. */}
+                    <div className="sched-day-date">{day.dateLabel}</div>
+                  </div>
+                  <div className="sched-day-list">
+                    {day.sessions.map((session) => {
+                      const canCheckIn = isCheckinOpen(session, now, checkinSettings);
+                      const { opensAt } = getCheckinWindow(session, checkinSettings);
+                      let windowLabel: string | undefined;
+                      // Only for nights still ahead. A session left 'open' after
+                      // its date has passed would otherwise stamp every stale
+                      // card with "CHECK-IN CLOSED" — an answer to a question
+                      // nobody is asking about last week.
+                      if (!canCheckIn && session.date >= todayISO) {
+                        if (opensAt && now < opensAt) {
+                          // Club-local HH:MM of the opening instant, rendered
+                          // like session times.
+                          const opensLocal = opensAt.toLocaleTimeString('en-GB', {
+                            timeZone: CLUB_TIMEZONE,
+                            hourCycle: 'h23',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          });
+                          windowLabel = `Opens at ${formatTime(opensLocal)}`;
+                        } else {
+                          windowLabel = 'Check-in closed';
+                        }
+                      }
+                      return (
+                        <SessionCard
+                          key={session.id}
+                          session={session}
+                          myStatus={myStatusBySession.get(session.id) ?? null}
+                          myIntent={myIntentBySession.get(session.id) ?? null}
+                          checkedInCount={checkedInBySession[session.id] ?? 0}
+                          goingCount={goingBySession[session.id] ?? 0}
+                          canCheckIn={canCheckIn}
+                          windowLabel={windowLabel}
+                          isNext={session.id === nextSessionId}
+                          standingOk={standing.ok}
                         />
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {closedSessions && closedSessions.length > 0 && (
+          <section className="card-base reveal reveal-2">
+            <div className="card-head">
+              <div>
+                <h2 className="card-title">Past sessions</h2>
+                <div className="card-sub">The last {closedSessions.length} nights that have closed.</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {closedSessions.map((session) => {
+                const outcome = PAST_STATE_LABEL[describeMyState(myStatusBySession.get(session.id), null)];
+                const attended = checkedInBySession[session.id] ?? 0;
+                return (
+                  <div key={session.id} className="list-row">
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="row-title">{session.name ?? 'Practice Session'}</div>
+                      <div className="row-sub">
+                        {formatDate(session.date).toUpperCase()} · {session.location}
+                        {attended > 0 && ` · ${attended} ATTENDED`}
                       </div>
                     </div>
+                    {/* Whether the member was there is the only thing worth
+                        saying about a night already over; "CLOSED" on every row
+                        said nothing they could not see from the heading. */}
+                    {outcome ? <span className={outcome.tone}>{outcome.text}</span> : <span className="tag">CLOSED</span>}
                   </div>
                 );
               })}
             </div>
-          )}
-        </div>
-
-        {closedSessions && closedSessions.length > 0 && (
-          <div className="card-base reveal reveal-2">
-            <div className="card-head">
-              <h3 className="card-title">Past sessions</h3>
-              <div className="card-sub">Last {closedSessions.length} closed.</div>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {closedSessions.map((session) => (
-                <div
-                  key={session.id}
-                  style={{ opacity: 0.7 }}
-                  className="list-row"
-                >
-                  <div style={{ flex: 1 }}>
-                    <div className="row-title">{session.name ?? 'Practice Session'}</div>
-                    <div className="row-sub">
-                      {formatDate(session.date).toUpperCase()} · {session.location}
-                    </div>
-                  </div>
-                  <span className="tag">CLOSED</span>
-                </div>
-              ))}
-            </div>
-          </div>
+          </section>
         )}
       </div>
     </div>
