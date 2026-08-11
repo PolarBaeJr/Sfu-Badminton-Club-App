@@ -143,12 +143,14 @@ async function CurrentSeasonStats() {
     // read rather than two round trips.
     // `end_date` and `active_flag` came along for the season control: a term is
     // past because it is not active, never because of where its dates sit — see
-    // season-history.ts.
+    // season-history.ts. The limit went from 8 to 40 with it, because 8 is a
+    // club's fourth year and the control must not quietly stop offering the
+    // oldest term a member played — these are five short columns.
     supabase
       .from('seasons')
       .select('id, name, start_date, end_date, active_flag')
       .order('start_date', { ascending: false })
-      .limit(8),
+      .limit(40),
     supabase
       .from('session_attendance')
       .select('session_id, status')
