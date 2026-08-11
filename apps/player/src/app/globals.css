@@ -3623,9 +3623,19 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
   font-weight: 600;
   /* Room on the right for the caret, which is a background
      image on the box rather than a pseudo-element because a
-     <select> cannot have children to hang one off. */
+     <select> cannot have children to hang one off. The fill is
+     written as a literal #888 rather than var(--mute) — a
+     custom property cannot be read from inside a data URI — and
+     that is safe here only because --mute is #888 in BOTH
+     themes. If either theme's --mute ever moves, this moves
+     with it or the caret goes off-palette in one of them. */
   padding: 0 18px 0 0;
-  max-width: 46vw;
+  /* No viewport-width cap. .page-header is a COLUMN at <=980px,
+     so on a phone the control already has the line to itself and
+     a vw ceiling would only truncate "Fall 2026 · now" for no
+     reason; above that width the header is a row with 24px of
+     gap and room to spare for a term name. */
+  max-width: 100%;
   text-overflow: ellipsis;
   cursor: pointer;
   background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M0 0h8L4 5z' fill='%23888888'/%3E%3C/svg%3E");
@@ -3643,15 +3653,6 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
   background: var(--surface);
   color: var(--ink);
 }
-/* At 360px the page title and a 46vw control fight over one
-   line. .page-header is a flex row, so giving the control the
-   full width drops it onto its own line under the title —
-   better than truncating a term to "Fall 20…". */
-@media (max-width: 420px) {
-  .season-pick { width: 100%; }
-  .season-pick-select { max-width: 100%; flex: 1; }
-}
-
 /* The figure grids inside the past-season rail cards — the
    record, and the archived ladder.
 

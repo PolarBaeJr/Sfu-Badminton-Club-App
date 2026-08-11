@@ -127,7 +127,14 @@ export function PastRatingCard({
           seasonStart={null}
           provisional={false}
           label={label}
-          currentLabel="LAST MATCH"
+          // "ENDED", not "LAST MATCH": the four figures under the chart are one
+          // flex row of 25% cells, and a ten-character label wraps at 390px and
+          // shoves its own number onto a second line. Five characters is
+          // shorter than the "CURRENT" this replaces, so the row is no tighter
+          // than it is on the live screen — and it still says something the
+          // headline above does not, which is where the LINE stopped rather
+          // than what the club archived.
+          currentLabel="ENDED"
         />
       )}
     </div>
