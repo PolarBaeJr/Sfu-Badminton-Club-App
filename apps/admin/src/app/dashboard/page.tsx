@@ -12,6 +12,7 @@ import {
   wallClockToUtc,
 } from '@badminton/shared';
 import Link from 'next/link';
+import { ArrowUpRight } from 'lucide-react';
 import { PlayerActions } from '../players/player-actions';
 import { openableSections } from '@/components/nav-sections';
 import { getSeasonFinances } from '@/lib/season-finance';
@@ -300,6 +301,12 @@ export default async function DashboardPage() {
     // How many results are actually unsettled, which is NOT the length of the
     // capped list of rows below — the card header prints the total and the
     // table shows the six most recent of it.
+    //
+    // DELIBERATELY NOT SEASON-SCOPED, unlike the count above it. "Matches
+    // logged" is a term figure in a term-framed strip; a result nobody has
+    // agreed on is work waiting on an officer no matter which term it was
+    // played in, and scoping it would hide the oldest and most stuck rows —
+    // precisely the ones somebody needs to see.
     showMatches
       ? supabase.from('matches').select('id', { count: 'exact', head: true }).in('result_status', ['pending_confirmation', 'disputed'])
       : noCount,
@@ -517,16 +524,26 @@ export default async function DashboardPage() {
   // section's page key (the resolver prunes anything whose area page is
   // missing), so none of these can 404 into /unauthorized.
   //
-  // fees.expenses.add.write is deliberately NOT in this list: the narrowed
-  // landing below already offers that exact affordance with the explanation
-  // beside it, and two red buttons for one action is one of them being wrong.
-  const primaryAction = permits(level, permissions, 'matches.create.write')
-    ? { href: '/matches', label: 'Log a match' }
-    : permits(level, permissions, 'sessions.create.write')
-      ? { href: '/sessions', label: 'New session' }
-      : permits(level, permissions, 'players.create.write')
-        ? { href: '/players', label: 'Add a member' }
-        : null;
+  // GATED ON hasTiles, and that is the load-bearing part. The narrowed landing
+  // has its own single call to action, so this one has to belong to the
+  // ordinary dashboard or there are two accents on one screen — and the club's
+  // rule is that a second red button means one of them is wrong.
+  //
+  // Excluding fees.expenses.add.write from the pick order is NOT enough on its
+  // own, which is exactly the trap the page/read split sets. `players.create
+  // .write` needs `players.page`; hasTiles asks for `players.read`. A
+  // hand-picked set of players.page + players.create.write + fees.page +
+  // fees.expenses.add.write, with no read anywhere, therefore lands on the
+  // narrowed landing AND would have drawn "Add a member" in red above it.
+  const primaryAction = !hasTiles
+    ? null
+    : permits(level, permissions, 'matches.create.write')
+      ? { href: '/matches', label: 'Log a match' }
+      : permits(level, permissions, 'sessions.create.write')
+        ? { href: '/sessions', label: 'New session' }
+        : permits(level, permissions, 'players.create.write')
+          ? { href: '/players', label: 'Add a member' }
+          : null;
 
   const eyebrow = season ? `Console · ${season.name}` : 'Console';
 
@@ -1041,15 +1058,19 @@ export default async function DashboardPage() {
               it: somebody may be able to file an expense and to see none, which
               is the state /fees was reshaped to support. */}
           {canAddExpense && (
-            <Card className="flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium text-[var(--text-primary)]">Paid for something out of pocket?</p>
-                <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-                  File it against the season so the club has a record of the spend and can pay you back.
-                </p>
-              </div>
-              <ActionLink href="/fees?tab=expenses">Add an expense</ActionLink>
-            </Card>
+            <Link href="/fees?tab=expenses" className="group block">
+              <Card className="flex flex-wrap items-center justify-between gap-4 transition-colors hover:border-[var(--border-hover)]">
+                <div>
+                  <p className="text-sm font-medium text-[var(--text-primary)]">Paid for something out of pocket?</p>
+                  <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                    File it against the season so the club has a record of the spend and can pay you back.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 text-sm text-[var(--text-muted)]">
+                  Add an expense <ArrowUpRight className="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-100" />
+                </div>
+              </Card>
+            </Link>
           )}
 
           {openSections.length > 0 && (
