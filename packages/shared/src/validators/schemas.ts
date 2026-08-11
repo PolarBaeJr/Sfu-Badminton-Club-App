@@ -217,6 +217,20 @@ export const tournamentCreateSchema = z.object({
     .min(1, 'Pick at least one group')
     .default(['internal', 'alumni', 'external']),
   waiver_text: z.string().max(50000).optional(),
+  // How many of this tournament's events one member may enter (00098).
+  // NULLABLE IS THE FEATURE: null is uncapped and is the default, so a
+  // tournament created without touching the field behaves exactly as every
+  // tournament did before the cap existed.
+  //
+  // Refuses zero and below, matching the column CHECK. A cap of zero means
+  // "nobody may enter anything", which is what not opening registration is
+  // for; allowing it to be stored would make every entry path in both apps
+  // responsible for telling it apart from null.
+  //
+  // The upper bound is deliberately loose — a tournament cannot have more
+  // events than it has events, so a cap above that is merely redundant rather
+  // than dangerous, and nothing here loops over it.
+  max_events_per_player: z.number().int().min(1).max(100).nullable().optional(),
 });
 
 export const tournamentSuspendSchema = z.object({

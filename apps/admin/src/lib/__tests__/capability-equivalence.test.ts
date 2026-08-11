@@ -150,6 +150,14 @@ const TODAY: Row[] = [
   // `tournaments.page`, and adding the capability takes nothing from anybody who
   // can open that page today.
   { capability: 'tournaments.draw.waivers.read',              admin: T, exec: T, trainer: F, was: 'new fetch — no predecessor gate; behind tournaments.page on the event page' },
+  // THE FIFTH ROW WITH NO GATE TO TRANSCRIBE, and the same reason again: there
+  // was no gate because there was no fetch. Nobody had ever asked how many of a
+  // tournament's events one member had entered, because until 00098 there was
+  // no cap for the answer to mean anything against. So the answers come from
+  // the DOOR — the tournament page's `tournaments.page`, which is the screen
+  // this is rendered on — and the capability takes nothing from anybody who can
+  // open that page today.
+  { capability: 'tournaments.draw.entrycounts.read',          admin: T, exec: T, trainer: F, was: 'new fetch — no predecessor gate; behind tournaments.page on the tournament page' },
 
   // ---- tournaments · results -------------------------------------------
   { capability: 'tournaments.results.enter.write',        admin: T, exec: T, trainer: F, was: "getExecOrAdmin('tournaments') — results.ts:241" },

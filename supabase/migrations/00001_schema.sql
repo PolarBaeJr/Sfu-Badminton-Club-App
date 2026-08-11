@@ -343,18 +343,25 @@ CREATE INDEX idx_event_feedback_tournament ON event_feedback(tournament_id);
 -- tournament_participants table, so the two names are not two spellings of
 -- one thing).
 --
--- NO FILE PATH HERE ON PURPOSE. This comment used to name one, it named a
--- barrel re-export rather than the module doing the writing, and the last
--- writer is being retired as this is written. Grep for the table name before
--- assuming any application code still touches it; anything this file asserts
--- about app structure is out of date the moment somebody moves a file.
+-- RETAINED FOR HISTORY ONLY. As of 00098 nothing inserts into it. The action
+-- that did (addTournamentParticipant) was reached from one dialog that nothing
+-- imported and nothing rendered, and it was also a way into a tournament that
+-- went round the event waiver 00097 requires, so it was deleted along with the
+-- dialog. One vestige is left: removeTournamentParticipant still DELETEs from
+-- here, and it too is unreachable from any rendered screen.
 --
--- WHAT IS DURABLE, AND WHY THE TABLE STAYS EVEN WITH NO WRITER LEFT: it holds
--- real historical placements, and merge_players() rewrites its player_id and
--- partner_id when two members are merged — 00026 first, then 00079 and 00095,
--- each of which lists this table by name. Dropping it would silently break
--- that path and lose the history. Do not add new writers; the event-based
--- tables are where new work goes.
+-- NO FILE PATH HERE ON PURPOSE. This comment used to name one, it named a
+-- barrel re-export rather than the module doing the writing, and that writer
+-- has since been deleted anyway. Grep for the table name before assuming any
+-- application code still touches it; anything this file asserts about app
+-- structure is out of date the moment somebody moves a file.
+--
+-- WHY THE TABLE STAYS EVEN WITH NO WRITER LEFT: it holds real historical
+-- placements — production may still have pre-event-system rows — and
+-- merge_players() rewrites its player_id and partner_id when two members are
+-- merged (00026 first, then 00079 and 00095, each of which lists this table by
+-- name). Dropping it would silently break that path and lose the history. Do
+-- not add new writers; the event-based tables are where new work goes.
 CREATE TABLE legacy_tournament_participants (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   tournament_id UUID NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,

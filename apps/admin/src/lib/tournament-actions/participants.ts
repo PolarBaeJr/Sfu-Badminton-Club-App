@@ -10,6 +10,9 @@ import {
   eventHasDraw,
   screenForEventWaiver,
   eventWaiverRefusal,
+  loadTournamentEntryCounts,
+  isAtEntryCap,
+  entryCapRefusal,
   ExpectedError,
 } from '@badminton/shared';
 import { runAction, type ActionResult } from '../action-result';
@@ -36,6 +39,53 @@ import {
 function pickName(embed: unknown): string | null {
   const row = Array.isArray(embed) ? embed[0] : embed;
   return (row as { full_name?: string | null } | null)?.full_name ?? null;
+}
+
+/**
+ * The tournament's per-member event cap, and how many events each member has
+ * already taken — or nulls, when the tournament is uncapped.
+ *
+ * READS NOTHING WHEN THERE IS NO CAP, which is every tournament that exists
+ * today. `max_events_per_player IS NULL` means uncapped, so the counting
+ * queries are only paid for by the tournaments that asked for the rule.
+ *
+ * REFUSES RATHER THAN RETURNING ZERO on a failed read. A swallowed error here
+ * reads as "this member has entered nothing", which waves them straight past
+ * the cap — the one failure mode a limit must not have. Same reasoning the
+ * batch capacity check already applies to its own count.
+ */
+async function loadEntryCapState(
+  adminClient: ReturnType<typeof createAdminClient>,
+  tournamentId: string,
+): Promise<{ cap: number | null; counts: Map<string, number> }> {
+  const { data: tournament, error } = await adminClient
+    .from('tournaments')
+    .select('max_events_per_player')
+    .eq('id', tournamentId)
+    .single();
+  if (error || !tournament) {
+    if (error) Sentry.captureException(error);
+    throw new Error('Could not check this tournament’s event limit. Nothing was added — try again.');
+  }
+
+  const cap = (tournament as { max_events_per_player: number | null }).max_events_per_player;
+  if (cap === null || cap === undefined) return { cap: null, counts: new Map() };
+
+  try {
+    return { cap, counts: await loadTournamentEntryCounts(adminClient, tournamentId) };
+  } catch (err) {
+    Sentry.captureException(err);
+    throw new Error('Could not check how many events these players have entered. Nothing was added — try again.');
+  }
+}
+
+/** The name to put in a cap refusal, without letting a failed lookup mask it. */
+async function nameOf(
+  adminClient: ReturnType<typeof createAdminClient>,
+  playerId: string,
+): Promise<string> {
+  const { data } = await adminClient.from('players').select('full_name').eq('id', playerId).maybeSingle();
+  return (data as { full_name?: string | null } | null)?.full_name ?? 'This player';
 }
 
 // ============================================================
@@ -67,6 +117,15 @@ export async function addParticipantToEvent(eventId: string, playerId: string) {
     if (count && count >= event.max_participants) {
       throw new Error('Event is full');
     }
+  }
+
+  // THE PER-MEMBER CAP, one level up from the capacity check above: that one
+  // asks whether the EVENT has room, this one asks whether the PLAYER has any
+  // entries left at this tournament. Both sit before the insert, for the same
+  // reason — a refusal must leave no trace of an entry that did not happen.
+  const { cap, counts } = await loadEntryCapState(adminClient, event.tournament_id);
+  if (cap !== null && isAtEntryCap(counts.get(playerId) ?? 0, cap)) {
+    throw new ExpectedError(entryCapRefusal(await nameOf(adminClient, playerId), cap));
   }
 
   // Get or create player's ratings record
@@ -215,6 +274,37 @@ export async function addParticipantsToEvent(eventId: string, playerIds: string[
     if (candidates.length > room) {
       for (const id of candidates.slice(room)) failures.push({ id, message: 'Event is full' });
       candidates = candidates.slice(0, room);
+    }
+  }
+
+  // THE PER-MEMBER CAP — PARTITION, exactly as the two checks above do, because
+  // a batch that refused whole because one person was at their limit would make
+  // the exec pick the other fifty-nine again by hand. Nothing half-applies: the
+  // refusals are decided here, before the single insert, and reported per
+  // player alongside "already registered" and "Event is full".
+  //
+  // DELIBERATELY NOT A `room`/slice() CUTOFF like max_participants above.
+  // That cap is a SHARED POOL — the event has N places and the first N in the
+  // exec's order win, so order decides who gets in. This cap is a PER-PERSON
+  // ALLOWANCE: each candidate is adding exactly one event to their own count,
+  // so each is independently either at their limit or not, and one person being
+  // at theirs must not cost the next person in the list their place. Written as
+  // a slice it would refuse an arbitrary tail of innocent players.
+  if (candidates.length > 0) {
+    const { cap, counts } = await loadEntryCapState(adminClient, event.tournament_id);
+    if (cap !== null) {
+      candidates = candidates.filter((id) => {
+        if (isAtEntryCap(counts.get(id) ?? 0, cap)) {
+          // Keyed by player id, so the caller already knows who this is —
+          // hence no name, matching the other two failure messages here.
+          failures.push({
+            id,
+            message: `Already entered in ${cap} ${cap === 1 ? 'event' : 'events'} at this tournament, which is the limit.`,
+          });
+          return false;
+        }
+        return true;
+      });
     }
   }
 
@@ -592,7 +682,26 @@ export async function disqualifyPair(pairId: string, reason?: string): Promise<A
 // Doubles Pair Management
 // ============================================================
 
-export async function addPairToEvent(eventId: string, player1Id: string, player2Id: string) {
+/**
+ * Add a doubles pair.
+ *
+ * RETURNS ActionResult RATHER THAN THROWING, for the reason the withdraw and
+ * check-in actions in this file already give: Next.js redacts an error thrown
+ * out of a Server Action in production, so every refusal below — "Event is
+ * full", "Draw is locked", and above all the entry-cap refusal that NAMES THE
+ * HALF AT FAULT — would reach the exec as an opaque banner. A refusal whose
+ * reason is redacted is a refusal the exec cannot act on, and naming the player
+ * is the entire point of that message.
+ */
+export async function addPairToEvent(
+  eventId: string,
+  player1Id: string,
+  player2Id: string,
+): Promise<ActionResult<unknown>> {
+  return runAction(() => addPairToEventImpl(eventId, player1Id, player2Id));
+}
+
+async function addPairToEventImpl(eventId: string, player1Id: string, player2Id: string) {
   const admin = await requireCapability('tournaments.draw.pairs.add.write');
   const adminClient = createAdminClient();
 
@@ -627,6 +736,26 @@ export async function addPairToEvent(eventId: string, player1Id: string, player2
   const { data: players } = await adminClient.from('players')
     .select('id, full_name')
     .in('id', [player1Id, player2Id]);
+
+  // THE PER-MEMBER CAP, FOR BOTH HALVES. A pair is two entrants who happen to
+  // play together — this row spends one of each player's allowance — so EITHER
+  // of them being at their limit refuses the whole pair. There is no half-entry
+  // to fall back to: a doubles event needs two people.
+  //
+  // The refusal NAMES THE HALF AT FAULT. "This pair is at the limit" tells the
+  // exec the team is broken but not whose entries to go and look at, and with
+  // the partner standing right there that is the difference between a two-second
+  // fix and a support question. Checked before the insert, and before the fee
+  // rows and waiver notices below, so a refused pair leaves nothing behind.
+  const { cap, counts } = await loadEntryCapState(adminClient, event.tournament_id);
+  if (cap !== null) {
+    const nameFor = (id: string) => players?.find((p) => p.id === id)?.full_name ?? 'This player';
+    for (const half of [player1Id, player2Id]) {
+      if (isAtEntryCap(counts.get(half) ?? 0, cap)) {
+        throw new ExpectedError(entryCapRefusal(nameFor(half), cap));
+      }
+    }
+  }
 
   const p1Rating = ratings?.find(r => r.player_id === player1Id)?.doubles_elo ?? 400;
   const p2Rating = ratings?.find(r => r.player_id === player2Id)?.doubles_elo ?? 400;

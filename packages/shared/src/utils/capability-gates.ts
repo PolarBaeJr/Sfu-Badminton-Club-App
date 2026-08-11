@@ -1,6 +1,6 @@
 // WHERE EVERY CAPABILITY IS ACTUALLY ENFORCED.
 //
-// 117 capabilities is 117 promises that something in the app checks something.
+// 118 capabilities is 118 promises that something in the app checks something.
 // This map is what keeps them honest: every entry names the file and function
 // that stands behind it, and the drift test asserts the map is exhaustive, that
 // no two capabilities claim the same enforcement point, and that any capability
@@ -283,11 +283,8 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   'tournaments.draw.participants.add.write': {
     label: 'Add a participant', area: 'tournaments', group: 'draw', mode: 'write',
     gate: 'tournament-actions/participants.ts addParticipantToEvent',
-    also: [
-      'tournament-actions/participants.ts addParticipantsToEvent',
-      'actions/tournaments.ts addTournamentParticipant',
-    ],
-    merged: 'One entrant or a form full of them, at the tournament or at an event: one act.',
+    also: ['tournament-actions/participants.ts addParticipantsToEvent'],
+    merged: 'One entrant or a whole selection of them, added to an event: one act at two sizes.',
   },
   'tournaments.draw.participants.remove.write': {
     label: 'Remove a participant', area: 'tournaments', group: 'draw', mode: 'write',
@@ -359,6 +356,10 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   'tournaments.draw.waivers.read': {
     label: 'Who has signed the event waiver', area: 'tournaments', group: 'draw', mode: 'read',
     gate: 'app/tournaments/[id]/events/[eventId]/page.tsx event-waiver fetch',
+  },
+  'tournaments.draw.entrycounts.read': {
+    label: 'How many events each entrant has taken', area: 'tournaments', group: 'draw', mode: 'read',
+    gate: 'app/tournaments/[id]/page.tsx entry-count fetch',
   },
 
   // ---- tournaments · results ---------------------------------------------

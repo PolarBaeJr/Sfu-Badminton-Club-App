@@ -49,9 +49,17 @@ describe('the migrations and the vocabulary', () => {
   // live in 00087, which is applied on staging and is not edited, and pointing
   // them anywhere else would fail on a missing marker rather than on a real
   // disagreement.
-  // ...and 00097 adds `tournaments.draw.waivers.read`, reaching 117. THE LIVE
-  // LIST IS THIS ONE, and only this one.
-  const vocabularySql = migration('00097_');
+  // ...00097 adds `tournaments.draw.waivers.read`, reaching 117, and 00098 adds
+  // `tournaments.draw.entrycounts.read`, reaching 118. THE LIVE LIST IS THE
+  // LAST ONE, and only the last one.
+  const vocabularySql = migration('00098_');
+  // 00097 stays pinned under its own name rather than being overwritten by the
+  // pointer above. If `vocabularySql` simply moved to 00098, the hop that used
+  // to be asserted (00089 -> 00097) would silently become 00089 -> 00098 and
+  // the 00097 link would stop being checked at all — the chain would still look
+  // unbroken while having a gap in it. So each hop keeps its own name and each
+  // gets its own assertion.
+  const prevVocabularySql = migration('00097_');
   // The RENAME lives in 00088 and stays pinned there. Following it forward
   // would look like it still passed while quietly checking nothing: no later
   // migration renames anything, so `dropped` would be empty and the mapping
@@ -107,6 +115,16 @@ describe('the migrations and the vocabulary', () => {
   // asserted to remove nothing.
   it('removes nothing in 00097 either, which is why it needs no rewrite', () => {
     const before = arrayLiteralAfter(additiveSql, 'players_permission_vocabulary_check');
+    const after = new Set(arrayLiteralAfter(prevVocabularySql, 'players_permission_vocabulary_check'));
+    expect(before.filter((capability) => !after.has(capability))).toEqual([]);
+  });
+
+  // ...nor in 00098, the next link. Every hop from the last RENAME (00088) to
+  // the live list is now asserted individually: 00088 -> 00089 -> 00097 ->
+  // 00098. Adding a migration means adding a hop here, which is the price of
+  // the chain staying a chain.
+  it('removes nothing in 00098 either, which is why it needs no rewrite', () => {
+    const before = arrayLiteralAfter(prevVocabularySql, 'players_permission_vocabulary_check');
     const after = new Set(arrayLiteralAfter(vocabularySql, 'players_permission_vocabulary_check'));
     expect(before.filter((capability) => !after.has(capability))).toEqual([]);
   });
@@ -153,13 +171,15 @@ describe('the migrations and the vocabulary', () => {
   // it is pinned exactly as the players copy is, against the same array.
   describe('the baselines table', () => {
     // TWO POINTERS, ON PURPOSE. 00093 created the table and owns the live
-    // definition of guard_player_privileged_columns; 00097 re-adds only the
-    // vocabulary CHECK. Following the guard assertion to 00097 would fail on a
+    // definition of guard_player_privileged_columns; 00098 re-adds only the
+    // vocabulary CHECK. Following the guard assertion to 00098 would fail on a
     // missing function rather than on a real disagreement, and following the
     // vocabulary assertion back to 00093 would check a list that is no longer
-    // the live one.
+    // the live one. The vocabulary pointer moves with every migration that
+    // re-adds the CHECK — it was 00097 before 00098 — while the guard pointer
+    // stays where the function is defined.
     const baselineGuardSql = migration('00093_');
-    const baselineSql = migration('00097_');
+    const baselineSql = migration('00098_');
 
     it('pins the same vocabulary the players columns pin', () => {
       const stored = arrayLiteralAfter(baselineSql, 'permission_baselines_vocabulary_check');
