@@ -776,28 +776,52 @@ NOTIFY pgrst, 'reload schema';
 -- match, and never on production once real members have seen their handles.
 -- Nulling a handle and re-deriving it CHANGES A PUBLIC NAME.
 --
--- Find out whether it would change anything at all first — on a club with no
--- name collisions the answer is "nothing", and then there is nothing to do:
+-- THERE ARE TWO OLD-SCHEME SHAPES AND THEY ARE NOT EQUALLY SAFE TO MATCH.
 --
---   SELECT id, full_name, handle FROM players
---    WHERE handle ~ '_[0-9]+$' OR handle LIKE 'member\_%'
---    ORDER BY handle;
+-- (a) THE OLD FALLBACK, `member_0008`. Provable, and safe to automate. A handle
+--     of the form member_<something> is either the OLD fallback (four digits) or
+--     the NEW one (seven characters of the code alphabet), and nothing else can
+--     produce it: `member` is not a reserved name only because the length rule
+--     never lets a member type these. So this predicate is exact —
 --
--- If that returns rows and you want them re-derived, run the two statements
--- below TOGETHER, in one transaction, and then re-run this whole file so
--- section 5b fills them back in:
+--       SELECT id, full_name, handle FROM players
+--        WHERE handle LIKE 'member\_%'
+--          AND handle !~ '^member_[23456789abcdefghjkmnpqrstvwxyz]{7}$'
+--        ORDER BY handle;
 --
---   BEGIN;
---     UPDATE players
---        SET handle = NULL
---      WHERE handle ~ '_[0-9]+$' OR handle LIKE 'member\_%';
---   COMMIT;
+--     Those rows, and only those, can be nulled without reading them:
 --
---   -- then: cat supabase/migrations/00092_member_handle_and_number.sql | psql …
+--       BEGIN;
+--         UPDATE players SET handle = NULL
+--          WHERE handle LIKE 'member\_%'
+--            AND handle !~ '^member_[23456789abcdefghjkmnpqrstvwxyz]{7}$';
+--       COMMIT;
 --
--- Only the collided handles are nulled, not all of them: a member whose handle
--- came straight off their name derives to the same string either way, so
--- nulling it would be churn with a window in which they have no handle at all.
+-- (b) THE OLD TIEBREAK, `bianca_rodrigues_6`. NOT provable, and it must be
+--     reviewed by eye. The old suffix was the member number — but the column is
+--     gone by the time you are reading this, so there is nothing left to check a
+--     suffix against. `handle ~ '_[0-9]+$'` finds these, and it ALSO finds every
+--     handle a member chose for themselves that happens to end in digits, and
+--     every name-derived base that does (`matt_2000`). Nulling one of those
+--     rewrites a name its owner picked.
+--
+--     So: list them, decide row by row, and null the specific ids you meant.
+--
+--       SELECT id, full_name, display_name, handle FROM players
+--        WHERE handle ~ '_[0-9]+$' ORDER BY handle;
+--
+--       -- then, with the ids you actually chose:
+--       BEGIN;
+--         UPDATE players SET handle = NULL WHERE id IN ('…', '…');
+--       COMMIT;
+--
+-- AFTER EITHER, re-run this whole file so section 5b fills the gaps back in:
+--
+--   cat supabase/migrations/00092_member_handle_and_number.sql | psql …
+--
+-- Handles that came straight off a name are deliberately left alone in both
+-- cases: they derive to the same string under either scheme, so nulling them
+-- would be churn plus a window in which the member has no handle at all.
 
 -- ============================================================
 -- If either unique index above failed, these show what it found
