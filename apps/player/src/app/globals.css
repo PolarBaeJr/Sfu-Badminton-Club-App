@@ -2724,12 +2724,14 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
    inside a media query at the bottom.
    ═══════════════════════════════════════════════════════════ */
 
-/* The gutter .page is already paying on each side — 16px on a
-   phone, 28px from 981px up. Named here so the officer blocks
-   can bleed out by exactly that and pay it straight back as
-   padding: the hairlines then run bezel to bezel while the text
-   keeps the same left edge as the title above it. */
-/* The measure, at EVERY width — .page carries no max-width
+/* --exec-gutter is the padding .page is already paying on each
+   side — 16px on a phone, 28px from 981px up. Named here so the
+   officer blocks can bleed out by exactly that and pay it
+   straight back as padding: the hairlines then run bezel to
+   bezel while the text keeps the same left edge as the title
+   above it.
+
+   max-width is the measure, at EVERY width — .page carries no max-width
    (--page-max: none), so without this the 14px bio ran the full
    width of whatever window it was in. 640px is .news's 620px
    nudged out to pay for the 48px avatar that sits in this
