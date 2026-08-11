@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { cn } from '@badminton/ui';
 import { createClient } from '@/lib/supabase-browser';
 import {
@@ -38,79 +38,138 @@ export function BottomNav({
 }) {
   const pathname = usePathname();
   const [unreadAnnouncements, setUnreadAnnouncements] = useState(0);
+  /** The viewer's players.id, once resolved. Null while signed out. */
+  const [playerId, setPlayerId] = useState<string | null>(null);
 
+  // ONE CLIENT FOR THE LIFE OF THE NAV. This component sits in the layout and
+  // never unmounts, and the count is re-read on every navigation now — a client
+  // built inside that effect would be a new one per route change, each with its
+  // own auth listener and its own socket.
+  const supabase = useMemo(() => createClient(), []);
+
+  // THE BADGE COUNTS WHAT /announcements WOULD ACTUALLY SHOW.
+  //
+  // It used to be count(all published) − count(my reads), with no expiry,
+  // audience or season filter on either side. That is wrong in both
+  // directions at once. A published post this member can never see — expired,
+  // addressed to the other division, retired with last term's season — is in
+  // the first number and can never reach the second, so it inflates the badge
+  // forever; after a rollover the tab sat on a red dot with nothing behind it
+  // to click. And a read row for a post that has since retired is in the
+  // second number and not the first, so it can hide a post that IS unread.
+  //
+  // So: fetch the ids this member can see, fetch the ids they have read, and
+  // take the difference. Ids rather than counts is the whole fix — two counts
+  // taken over different populations cannot be subtracted, however they are
+  // clamped.
+  //
+  // This matters more since the redesign dropped the per-row NEW tag: the
+  // badge is now the only unread signal there is.
+  const checkUnread = useCallback(async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const { data: player } = await supabase
+      .from('players')
+      // status and eligibility_flag because target_audience is matched
+      // against the viewer, not filtered in the query.
+      .select('id, status, eligibility_flag')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (!player) return;
+    // Kept in state rather than returned: it is what the reads subscription
+    // filters on, and resolving it there as well would be the same two queries
+    // a second time on every mount.
+    setPlayerId(player.id as string);
+
+    const { data: activeSeason } = await supabase
+      .from('seasons')
+      .select('id')
+      .eq('active_flag', true)
+      .maybeSingle();
+
+    const [{ data: visible }, { data: reads }] = await Promise.all([
+      withVisibleAnnouncements(
+        supabase
+          .from('announcements')
+          .select(ANNOUNCEMENT_VISIBILITY_COLUMNS)
+          .eq('status', 'published'),
+        new Date().toISOString(),
+        activeSeason?.id,
+      ),
+      supabase.from('announcement_reads').select('announcement_id').eq('player_id', player.id),
+    ]);
+
+    setUnreadAnnouncements(
+      unreadAnnouncementCount(
+        addressedTo(visible ?? [], player).map((a) => a.id),
+        (reads ?? []).map((r) => r.announcement_id as string),
+      ),
+    );
+  }, [supabase]);
+
+  // RE-READ ON EVERY NAVIGATION, and this is the half that works today.
+  //
+  // The nav lives in the layout and never remounts, so the count was read once
+  // per full page load and after that only when somebody PUBLISHED. A member
+  // who read every post kept the badge until the next announcement went out:
+  // the read rows are written by their own device, and nothing told the nav.
+  //
+  // Posts are marked read as they scroll into view on /announcements, so
+  // leaving that screen is exactly the moment the answer has changed. Needs no
+  // realtime and no migration, which is why it is here as well as below.
   useEffect(() => {
-    const supabase = createClient();
+    void checkUnread();
+  }, [checkUnread, pathname]);
 
-    // THE BADGE COUNTS WHAT /announcements WOULD ACTUALLY SHOW.
-    //
-    // It used to be count(all published) − count(my reads), with no expiry,
-    // audience or season filter on either side. That is wrong in both
-    // directions at once. A published post this member can never see — expired,
-    // addressed to the other division, retired with last term's season — is in
-    // the first number and can never reach the second, so it inflates the badge
-    // forever; after a rollover the tab sat on a red dot with nothing behind it
-    // to click. And a read row for a post that has since retired is in the
-    // second number and not the first, so it can hide a post that IS unread.
-    //
-    // So: fetch the ids this member can see, fetch the ids they have read, and
-    // take the difference. Ids rather than counts is the whole fix — two counts
-    // taken over different populations cannot be subtracted, however they are
-    // clamped.
-    //
-    // This matters more since the redesign dropped the per-row NEW tag: the
-    // badge is now the only unread signal there is.
-    async function checkUnread() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data: player } = await supabase
-        .from('players')
-        // status and eligibility_flag because target_audience is matched
-        // against the viewer, not filtered in the query.
-        .select('id, status, eligibility_flag')
-        .eq('user_id', user.id)
-        .maybeSingle();
-      if (!player) return;
-
-      const { data: activeSeason } = await supabase
-        .from('seasons')
-        .select('id')
-        .eq('active_flag', true)
-        .maybeSingle();
-
-      const [{ data: visible }, { data: reads }] = await Promise.all([
-        withVisibleAnnouncements(
-          supabase
-            .from('announcements')
-            .select(ANNOUNCEMENT_VISIBILITY_COLUMNS)
-            .eq('status', 'published'),
-          new Date().toISOString(),
-          activeSeason?.id,
-        ),
-        supabase.from('announcement_reads').select('announcement_id').eq('player_id', player.id),
-      ]);
-
-      setUnreadAnnouncements(
-        unreadAnnouncementCount(
-          addressedTo(visible ?? [], player).map((a) => a.id),
-          (reads ?? []).map((r) => r.announcement_id as string),
-        ),
-      );
-    }
-
-    checkUnread();
+  // THE SAME QUESTION ASKED FROM THE SERVER'S SIDE, for the cases a navigation
+  // cannot see: a post published while the member sits on one screen, and a
+  // read that lands from their other device.
+  //
+  // Nothing is subscribed until the viewer is resolved. A signed-out visitor
+  // has no badge to keep up to date — publicNavItems has no Feed tab — so a
+  // socket for them would be a socket for nothing.
+  useEffect(() => {
+    if (!playerId) return;
 
     const channel = supabase
       .channel('announcements-nav')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'announcements' }, () => {
-        checkUnread();
+        void checkUnread();
       })
+      // READS, TOO — the other direction the count can move, and the one the
+      // member causes themselves. Filtered to their own rows: every member's
+      // reads land in the same table, and an unfiltered subscription would
+      // re-run this whole query for the entire club every time anybody opened
+      // the announcements screen. RLS already withholds other people's rows
+      // (ann_reads_select scopes SELECT to the viewer's own player_id, and
+      // Realtime applies the same policy per subscriber), so the filter is
+      // about noise rather than about exposure.
+      //
+      // *** INERT UNTIL THE PUBLICATION SAYS SO. *** announcement_reads is not
+      // a member of `supabase_realtime` — 00036 published `ratings` and
+      // `announcements` and deliberately nothing else — and a subscription to
+      // an unpublished table SUCCEEDS and then never fires, which is the exact
+      // silent failure 00036 was written to fix. 00096 adds it; until the owner
+      // applies that migration this listener does nothing whatsoever, and the
+      // navigation effect above is the entire fix.
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'announcement_reads',
+          filter: `player_id=eq.${playerId}`,
+        },
+        () => {
+          void checkUnread();
+        },
+      )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [checkUnread, supabase, playerId]);
 
   // Auth / onboarding screens render their own full-screen layout — no app chrome.
   if (pathname === '/login' || pathname.startsWith('/auth') || pathname === '/onboarding') {

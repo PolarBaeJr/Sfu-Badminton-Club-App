@@ -87,3 +87,52 @@ COMMENT ON FUNCTION public.get_executives() IS
 -- arguments nor the return type moved; a body change is picked up on the next
 -- call. 00092 needed the reload because it added columns and changed a return
 -- type.
+
+-- ---- 2. announcement_reads is published to Realtime -------
+-- WHAT THIS UNBLOCKS: the unread badge in the player app's tab bar clearing
+-- itself. bottom-nav.tsx lives in the layout and never remounts, so the count
+-- was read on a full page load and after that only when somebody PUBLISHED —
+-- a member who had read every post kept the red dot until the next
+-- announcement went out. That component now re-reads on navigation, which
+-- fixes the common case on its own, and subscribes to its OWN read rows for
+-- the cases a navigation cannot see: a post published while they sit on one
+-- screen, and a read that lands from their other device. THE SUBSCRIPTION DOES
+-- NOTHING UNTIL THIS STATEMENT IS RUN.
+--
+-- 00036 published `ratings` and `announcements` and said the list should stay
+-- the minimum the UI actually listens to, with players called out as the one
+-- table that must never be added. This is a third entry against that rule, and
+-- it earns it: the UI listens to it, and it is not players.
+--
+-- SAFE TO PUBLISH. RLS is on, and ann_reads_select scopes SELECT to
+-- `player_id = get_player_id(auth.uid())` — Realtime evaluates that policy per
+-- subscriber, so a member is streamed their own read rows and nobody else's.
+-- The row carries an announcement id, a player id and a timestamp; there is
+-- nothing in it a member cannot already read. Replica identity is left at
+-- default (primary key): the callback only needs to know something happened.
+--
+-- IDEMPOTENT, unlike 00036's bare ADD. `ALTER PUBLICATION … ADD TABLE` raises
+-- "relation is already member of publication" on a second run, and a migration
+-- that cannot be piped in twice is a migration nobody dares re-run.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+     WHERE pubname = 'supabase_realtime'
+       AND schemaname = 'public'
+       AND tablename = 'announcement_reads'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.announcement_reads;
+  END IF;
+END
+$$;
+
+-- WORTH KNOWING BEFORE THIS IS RUN ON STAGING: staging's supabase_realtime
+-- publication is EMPTY — 00036 has never been applied there — so `ratings` and
+-- `announcements` are unpublished on that database too, and the leaderboard's
+-- live standings and the publish-side of this badge are equally silent. This
+-- file does not fix that, because reapplying 00036 is 00036's job:
+--
+--   ALTER PUBLICATION supabase_realtime ADD TABLE ratings, announcements;
+--
+-- Production has both, verified against pg_publication_tables.
