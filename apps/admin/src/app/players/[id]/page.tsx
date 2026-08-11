@@ -12,6 +12,8 @@ import { notFound } from 'next/navigation';
 import { ArrowLeft, Shield, Trophy, FileText, AlertTriangle, ArrowUpRight, ArrowDownRight, SquarePen } from 'lucide-react';
 import Link from 'next/link';
 import { SeasonPicker } from './season-picker';
+import { RecentMatches } from './recent-matches';
+import { matchSearchKeys } from '@/lib/match-search';
 
 /** Local date only. The hour a match was played is noise in a history list. */
 const day = (iso: string | null | undefined) =>
@@ -486,6 +488,90 @@ export default async function PlayerDetailPage({
         )}
       </div>
 
+      {/* Recent Matches, ABOVE Membership: the season's play is what an officer
+          opens this page for, and two standing facts should not push it below
+          the fold. Through ResponsiveTable so the console works from the door
+          on a phone — the desktop <table> is untouched below md, and the
+          TableCard stack replaces it above. */}
+      {canRead && (
+      <Panel title="Recent matches" icon={<Trophy className="h-4 w-4 text-[var(--text-muted)]" />} padded={false}>
+        <RecentMatches
+          seasonNote="Nothing has been recorded for this member in the season shown above."
+          head={
+            <tr className="border-b border-[var(--border)]">
+              <th className="px-5 py-3 text-left text-xs font-medium uppercase text-[var(--text-muted)]">Result</th>
+              <th className="px-5 py-3 text-left text-xs font-medium uppercase text-[var(--text-muted)]">Score</th>
+              <th className="px-5 py-3 text-left text-xs font-medium uppercase text-[var(--text-muted)]">Format</th>
+              <th className="px-5 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">Rating</th>
+              <th className="px-5 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">Played</th>
+            </tr>
+          }
+          // flatMap, not map: a participation row whose match failed to embed
+          // is dropped outright rather than becoming a null the filter would
+          // then have to count and skip.
+          rows={(recentMatches ?? []).flatMap((mp) => {
+            const m = mp.match as Record<string, unknown> | null;
+            if (!m) return [];
+            const score = (m.score_summary as string) || '—';
+            const formatLabel =
+              MATCH_FORMAT_LABELS[(m.format as string) as keyof typeof MATCH_FORMAT_LABELS] ||
+              (m.format as string);
+            const played = day(m.played_at as string | null);
+            return [
+              {
+                id: mp.id,
+                // The same strings the row draws, so anything visible is
+                // findable and nothing invisible is.
+                keys: matchSearchKeys({
+                  win: Boolean(mp.win_flag),
+                  score,
+                  format: formatLabel,
+                  playedAt: played,
+                }),
+                value: {
+                  row: (
+                    <tr className="transition-colors hover:bg-[var(--bg-elevated)]">
+                      <td className="px-5 py-3">
+                        <Badge variant={mp.win_flag ? 'success' : 'danger'}>{mp.win_flag ? 'W' : 'L'}</Badge>
+                      </td>
+                      <td className="px-5 py-3 font-mono text-sm text-[var(--text-secondary)]">
+                        <Atomic separator=",">{score}</Atomic>
+                      </td>
+                      <td className="px-5 py-3 text-sm text-[var(--text-secondary)]">{formatLabel}</td>
+                      <td className="px-5 py-3 text-right">
+                        <RatingDelta delta={mp.rating_delta as number | null} />
+                      </td>
+                      <td className="px-5 py-3 text-right font-mono text-xs text-[var(--text-muted)]">
+                        {played}
+                      </td>
+                    </tr>
+                  ),
+                  card: (
+                    <TableCard
+                      title={mp.win_flag ? 'Win' : 'Loss'}
+                      // Atomic keeps "21-18, 21-15" from breaking after a
+                      // hyphen — the exact wrap this component was built to stop.
+                      value={<Atomic separator=",">{score}</Atomic>}
+                      badges={
+                        <>
+                          <Badge variant={mp.win_flag ? 'success' : 'danger'}>{mp.win_flag ? 'W' : 'L'}</Badge>
+                          <Badge variant="neutral">{formatLabel}</Badge>
+                        </>
+                      }
+                      fields={[
+                        { label: 'Rating', value: <RatingDelta delta={mp.rating_delta as number | null} /> },
+                        { label: 'Played', value: played },
+                      ]}
+                    />
+                  ),
+                },
+              },
+            ];
+          })}
+        />
+      </Panel>
+      )}
+
       {/* The standing membership facts, as opposed to the season's numbers
           above. Behind players.read with everything else that describes this
           member: the header carries only what the page already showed without
@@ -510,85 +596,6 @@ export default async function PlayerDetailPage({
             ))}
           </dl>
         </Panel>
-      )}
-
-      {/* Recent Matches. Through ResponsiveTable so the console works from the
-          door on a phone: the desktop <table> is untouched below md, and the
-          TableCard stack replaces it above. */}
-      {canRead && (
-      <Panel title="Recent matches" icon={<Trophy className="h-4 w-4 text-[var(--text-muted)]" />} padded={false}>
-        {recentMatches && recentMatches.length > 0 ? (
-          <ResponsiveTable
-            cards={recentMatches.map((mp) => {
-              const m = mp.match as Record<string, unknown> | null;
-              if (!m) return null;
-              return (
-                <TableCard
-                  key={mp.id}
-                  title={mp.win_flag ? 'Win' : 'Loss'}
-                  // Atomic keeps "21-18, 21-15" from breaking after a hyphen —
-                  // the exact wrap this component was built to stop.
-                  value={<Atomic separator=",">{(m.score_summary as string) || '—'}</Atomic>}
-                  badges={
-                    <>
-                      <Badge variant={mp.win_flag ? 'success' : 'danger'}>{mp.win_flag ? 'W' : 'L'}</Badge>
-                      <Badge variant="neutral">
-                        {MATCH_FORMAT_LABELS[(m.format as string) as keyof typeof MATCH_FORMAT_LABELS] || (m.format as string)}
-                      </Badge>
-                    </>
-                  }
-                  fields={[
-                    { label: 'Rating', value: <RatingDelta delta={mp.rating_delta as number | null} /> },
-                    { label: 'Played', value: day(m.played_at as string | null) },
-                  ]}
-                />
-              );
-            })}
-          >
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-[var(--border)]">
-                  <th className="px-5 py-3 text-left text-xs font-medium uppercase text-[var(--text-muted)]">Result</th>
-                  <th className="px-5 py-3 text-left text-xs font-medium uppercase text-[var(--text-muted)]">Score</th>
-                  <th className="px-5 py-3 text-left text-xs font-medium uppercase text-[var(--text-muted)]">Format</th>
-                  <th className="px-5 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">Rating</th>
-                  <th className="px-5 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">Played</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border)]">
-                {recentMatches.map((mp) => {
-                  const m = mp.match as Record<string, unknown> | null;
-                  if (!m) return null;
-                  return (
-                    <tr key={mp.id} className="transition-colors hover:bg-[var(--bg-elevated)]">
-                      <td className="px-5 py-3">
-                        <Badge variant={mp.win_flag ? 'success' : 'danger'}>{mp.win_flag ? 'W' : 'L'}</Badge>
-                      </td>
-                      <td className="px-5 py-3 font-mono text-sm text-[var(--text-secondary)]">
-                        <Atomic separator=",">{(m.score_summary as string) || '—'}</Atomic>
-                      </td>
-                      <td className="px-5 py-3 text-sm text-[var(--text-secondary)]">
-                        {MATCH_FORMAT_LABELS[(m.format as string) as keyof typeof MATCH_FORMAT_LABELS] || (m.format as string)}
-                      </td>
-                      <td className="px-5 py-3 text-right">
-                        <RatingDelta delta={mp.rating_delta as number | null} />
-                      </td>
-                      <td className="px-5 py-3 text-right font-mono text-xs text-[var(--text-muted)]">
-                        {day(m.played_at as string | null)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </ResponsiveTable>
-        ) : (
-          <EmptyState
-            title="No matches this season"
-            description="Nothing has been recorded for this member in the season shown above."
-          />
-        )}
-      </Panel>
       )}
     </div>
   );
