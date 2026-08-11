@@ -84,7 +84,19 @@ vi.mock('../actions/_shared', async () => {
   };
 });
 
-import { setPlayerPermissions } from '../actions/permissions';
+import { setPlayerPermissions as setPlayerPermissionsWithReason } from '../actions/permissions';
+import type { PermissionsPayload } from '../actions/permissions';
+
+// A REASON IS REQUIRED NOW, AND IT IS NOISE HERE. Every audited action in the
+// console takes a typed reason and setPlayerPermissions is no longer the
+// exception, but none of the closure properties this file exists to pin depends
+// on the text — so it is supplied once, in one place, and the cases below go on
+// reading as what they are about. The floor itself, and the reason's arrival on
+// every audit row, are pinned in permission-reason.test.ts.
+const setPlayerPermissions = (
+  playerId: string,
+  next: Omit<PermissionsPayload, 'reason'> & { reason?: string },
+) => setPlayerPermissionsWithReason(playerId, { reason: 'Exec handover', ...next });
 
 const ADMIN = 'aaaaaaaa-0000-4000-8000-000000000001';
 const OTHER_ADMIN = 'aaaaaaaa-0000-4000-8000-000000000002';

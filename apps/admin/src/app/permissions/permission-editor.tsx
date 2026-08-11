@@ -19,6 +19,11 @@ import {
 import { AlertTriangle, ArrowLeft, ChevronDown, ChevronRight, ShieldAlert } from 'lucide-react';
 import { useToast } from '@/components/toast-provider';
 import { setConsoleAccess, setPlayerPermissions } from '@/lib/actions';
+// The console's shared floor for a typed reason, imported and never copied —
+// audit-reason.ts is a plain module, so a client component may read it. The
+// server measures against the same constant; this only decides when Save stops
+// being disabled.
+import { REASON_MIN } from '@/lib/audit-reason';
 // The one mapping between "what console access does this person have" and the
 // three columns that store it, shared with the /players Edit dialog.
 import { EXEC_ROLE_OPTIONS, accessForLevel, type ExecRole } from '@/lib/console-access';
@@ -401,6 +406,14 @@ export function PermissionEditor({
   const [memberSearch, setMemberSearch] = useState('');
   const [access, setAccess] = useState<ExecRole>('none');
   const [accessReason, setAccessReason] = useState('');
+  /**
+   * ONE REASON FOR THE WHOLE QUEUE, and it belongs beside the Save button
+   * rather than on each person. A batch is one decision an officer made — "the
+   * new socials team starts this week" — and asking for it five times would get
+   * the same five words typed five times, or four of them abbreviated to "as
+   * above". Every person's audit row is written with this text.
+   */
+  const [batchReason, setBatchReason] = useState('');
   const [expanded, setExpanded] = useState<string[]>([]);
   // The capability awaiting a typed confirmation, and what has been typed.
   const [dangerous, setDangerous] = useState<Capability | null>(null);
@@ -792,6 +805,14 @@ export function PermissionEditor({
   function save() {
     const queued = entries;
     if (queued.length === 0) return;
+    // The Save button is disabled without one, so this is the stale-tab case
+    // rather than the ordinary one. Refused here as well as on the server so
+    // that a batch of five does not write its first person and then stop.
+    const why = batchReason.trim();
+    if (why.length < REASON_MIN) {
+      toast(`Say why this is changing — at least ${REASON_MIN} characters.`, 'error');
+      return;
+    }
     startSaving(async () => {
       const result = await saveBatch(
         queued.map((entry) => ({ ...entry, id: entry.person.id })),
@@ -799,7 +820,14 @@ export function PermissionEditor({
           validate: (entry) => localRefusal(entry.person, entry.draft, { id: viewerId, held }),
           write: async (entry) => {
             try {
-              const res = await setPlayerPermissions(entry.person.id, entry.draft);
+              // THE SAME REASON ON EVERY PERSON'S ROW. saveBatch is N calls and
+              // each writes its own audit row against its own target, which is
+              // where "why did my access change" is looked up — so the text
+              // typed once has to travel with each of them.
+              const res = await setPlayerPermissions(entry.person.id, {
+                ...entry.draft,
+                reason: why,
+              });
               return res.ok ? { ok: true } : { ok: false, error: res.error };
             } catch (err) {
               return {
@@ -851,6 +879,10 @@ export function PermissionEditor({
           : `${queued.length} people updated`,
         'success',
       );
+      // Only once the whole queue landed. A partial save leaves people still
+      // pending, and clearing the box would make the admin retype the reason
+      // they already gave for the very same act.
+      setBatchReason('');
       setSelectedId(null);
     });
   }
@@ -881,6 +913,8 @@ export function PermissionEditor({
       if (!ok) return;
     }
     setPending({});
+    // The reason described the queue, and the queue is gone.
+    setBatchReason('');
   }
 
   // LEAVING WITH A QUEUE STILL IN IT. Two cases and two mechanisms: the browser
@@ -1412,7 +1446,13 @@ export function PermissionEditor({
                               <Button
                                 onClick={applyAccess}
                                 loading={savingAccess}
-                                disabled={accessReason.trim().length < 2}
+                                // REASON_MIN, where this used to be 2. "ok"
+                                // cleared the old floor and told the next
+                                // reader of the log nothing — and this reason
+                                // is now forwarded into setPlayerPermissions
+                                // when the move clears a stored composition,
+                                // which measures against the shared floor.
+                                disabled={accessReason.trim().length < REASON_MIN}
                               >
                                 Apply console access
                               </Button>
@@ -1610,11 +1650,33 @@ export function PermissionEditor({
                     .join(' · ')}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+            {/* ONE BOX FOR THE WHOLE QUEUE. It sits with the Save button and
+                not in the tree, because the reason describes the DECISION —
+                "the new socials team starts this week" — rather than any one
+                of the people it reaches, and every one of their audit rows is
+                written with it. Save is disabled until it says something: this
+                was the last audited action in the console whose rows all read
+                `reason: null`, and a box that could be skipped would leave it
+                that way for anyone in a hurry. */}
+            <div className="w-full min-w-0 sm:w-[300px]">
+              <Input
+                value={batchReason}
+                onChange={(e) => setBatchReason(e.target.value)}
+                aria-label="Reason (required)"
+                placeholder={
+                  only ? 'Reason (required)' : `Reason (required) — for all ${entries.length}`
+                }
+              />
+            </div>
             <Button variant="ghost" onClick={() => void resetAll()} disabled={saving}>
               Reset
             </Button>
-            <Button onClick={save} loading={saving}>
+            <Button
+              onClick={save}
+              loading={saving}
+              disabled={batchReason.trim().length < REASON_MIN}
+            >
               {only ? 'Save' : 'Save all'}
             </Button>
           </div>
