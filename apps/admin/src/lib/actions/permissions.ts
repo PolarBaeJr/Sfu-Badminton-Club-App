@@ -5,6 +5,7 @@ import { ExpectedError } from '@badminton/shared';
 import { CAPABILITY_GATES } from '@badminton/shared/src/utils/capability-gates';
 import { createAdminClient } from '../supabase-server';
 import { requireCapability } from './_shared';
+import { requireReason } from '../audit-reason';
 import { logAdminAudit } from '../audit';
 import { runAction, type ActionResult } from '../action-result';
 import { updatePlayer } from './players';
@@ -50,11 +51,22 @@ export type PermissionsPayload = {
    */
   baselineId?: string | null;
   /**
-   * Why, for the audit row. Optional because the two-pane editor saves a batch
-   * of people at once and the club has never typed one there; supplied by
-   * baseline propagation, where the reason belongs to the edit that caused it.
+   * WHY, AND IT IS NOT OPTIONAL.
+   *
+   * It used to be, and the consequence was that `player_permissions_changed`
+   * was the ONE audited action in the console with `reason: null` on every row
+   * — sessions, announcements, legal documents, ratings and platform settings
+   * all require one. An access change is the last thing that should be the
+   * exception: "who gave them tournaments.write, and why" is exactly the
+   * question the log exists to answer, and a null there answers half of it.
+   *
+   * ONE REASON COVERS A BATCH. The two-pane editor saves several people at
+   * once and asks for a single reason, which is then written to every one of
+   * their audit rows — the same shape baseline propagation already used, where
+   * the reason belongs to the edit that caused the change rather than to each
+   * person it reached.
    */
-  reason?: string;
+  reason: string;
 };
 
 /**
@@ -109,6 +121,23 @@ function missingFrom(held: ReadonlySet<Capability>, wanted: readonly Capability[
   return wanted.filter((capability) => !held.has(capability));
 }
 
+/**
+ * The typed reason, trimmed, or a refusal.
+ *
+ * THE SHARED FLOOR, never a second copy of it — requireReason and REASON_MIN
+ * live in lib/audit-reason.ts and every audited action in the console measures
+ * against them. All this adds is the error CLASS: that helper throws a plain
+ * Error, and every refusal in this file is an ExpectedError so that somebody
+ * being told to type a reason is the system working rather than a Sentry fault.
+ */
+function reasonFor(reason: string, what: string): string {
+  try {
+    return requireReason(reason, what);
+  } catch (err) {
+    throw new ExpectedError(err instanceof Error ? err.message : 'A reason is required.');
+  }
+}
+
 async function setPlayerPermissionsImpl(playerId: string, next: PermissionsPayload) {
   // THE ACTOR'S SET COMES FROM THEIR OWN ROW, resolved server-side through the
   // same path every gate uses — permissionsOf, resolvePermissions,
@@ -122,6 +151,12 @@ async function setPlayerPermissionsImpl(playerId: string, next: PermissionsPaylo
   const actor = await requireCapability('permissions.write');
   const actorLevel = accessLevelFor(actor);
   const actorSet = effectiveCapabilities(actorLevel, permissionsOf(actor));
+
+  // Before anything is read and long before anything is written. The reason is
+  // a property of the REQUEST, so refusing it early keeps a reasonless call
+  // from ever touching the database — and the trimmed value is what reaches
+  // the audit row, never the whitespace that got it past the length check.
+  const why = reasonFor(next.reason, 'Changing somebody’s permissions');
 
   // SELF-EDIT IS BLOCKED OUTRIGHT, and it is worth saying that this is not
   // load-bearing: granting yourself something you already hold is a no-op, and
@@ -380,11 +415,12 @@ async function setPlayerPermissionsImpl(playerId: string, next: PermissionsPaylo
         permission_baseline_id: role === null ? null : baselineId,
         effective: [...after].sort(),
       },
-      // Absent for an ordinary editor save, which has never asked for one.
-      // Baseline propagation supplies the reason typed on the edit that caused
-      // it, so a member's own audit trail says why their access moved without
-      // needing the baseline's row to be found first.
-      ...(next.reason ? { reason: next.reason } : {}),
+      // ALWAYS PRESENT NOW. An editor save carries the one reason typed for the
+      // batch; baseline propagation carries the reason typed on the edit that
+      // caused it; setConsoleAccess carries its own. So a member's audit trail
+      // says why their access moved without anything else having to be found
+      // first, which is the entire reason the column is there.
+      reason: why,
     },
     { playerId },
   );
@@ -432,8 +468,15 @@ export async function setConsoleAccess(
   return runAction(() => setConsoleAccessImpl(playerId, access, reason));
 }
 
-async function setConsoleAccessImpl(playerId: string, access: ExecRole, reason: string) {
+async function setConsoleAccessImpl(playerId: string, access: ExecRole, rawReason: string) {
   const actor = await requireCapability('permissions.write');
+  // THE SAME FLOOR AS EVERY OTHER AUDITED ACTION. This used to be enforced only
+  // by the dialog, at two characters — "ok" reached the audit log — and it now
+  // has to hold here as well, because both clearComposition paths below forward
+  // this reason into setPlayerPermissions, which measures it against REASON_MIN.
+  // Left at two, a console-access change that also cleared a composition would
+  // half-apply and report a refusal about a screen the admin never saw.
+  const reason = reasonFor(rawReason, 'Changing somebody’s console access');
   if (!isAdminActor(actor)) {
     throw new ExpectedError(
       'Only an admin can give somebody the console or take it away. Ask an admin.',
@@ -514,7 +557,18 @@ async function setConsoleAccessImpl(playerId: string, access: ExecRole, reason: 
   if (!levelChanged && !clearFirst && !clearAfter) return;
 
   async function clearComposition(levelAlreadyChanged: boolean) {
-    const cleared = await setPlayerPermissions(playerId, { role: null, grants: [], revokes: [] });
+    // THE CALLER'S OWN REASON, forwarded. This clear is not a separate decision
+    // an admin made; it is part of the console-access change they typed a
+    // reason for, and the member's audit trail should say so rather than carry
+    // a permissions row explaining nothing beside a level row explaining
+    // everything. (It is also what keeps this path working at all now that
+    // setPlayerPermissions requires one.)
+    const cleared = await setPlayerPermissions(playerId, {
+      role: null,
+      grants: [],
+      revokes: [],
+      reason,
+    });
     if (!cleared.ok) {
       throw new ExpectedError(
         levelAlreadyChanged

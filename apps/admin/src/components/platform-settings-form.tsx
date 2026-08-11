@@ -1,9 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Textarea } from '@badminton/ui';
+import { Button, Input, Textarea } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
 import { updatePlatformSettings } from '@/lib/actions';
+// IMPORTED, NOT REDECLARED. /ratings and /seasons each copied this number into
+// their own file and the console now has three literal 5s that have to be kept
+// in step by hand; this is the shared one, and it is a plain module with no
+// 'use server' so a client component may read it.
+import { REASON_MIN } from '@/lib/audit-reason';
 // Labels, descriptions and field metadata moved to lib/ so that /ratings, which
 // draws the same JSONB rows in its own layout, cannot describe a field
 // differently from the way this form describes it.
@@ -62,8 +67,16 @@ type FieldValue = string | boolean;
 export function PlatformSettingsForm({ settings }: { settings: PlatformSetting[] }) {
   const [fieldEdits, setFieldEdits] = useState<Record<string, Record<string, FieldValue>>>({});
   const [jsonEdits, setJsonEdits] = useState<Record<string, string>>({});
+  const [reason, setReason] = useState('');
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+
+  /**
+   * Mirrors the floor updatePlatformSettings enforces. The server is the
+   * boundary; this only decides when Save stops being disabled, so a reason
+   * nobody wrote is never even submittable.
+   */
+  const enoughReason = reason.trim().length >= REASON_MIN;
 
   function handleFieldChange(key: string, field: string, next: FieldValue, original: FieldValue) {
     setFieldEdits((prev) => {
@@ -140,10 +153,11 @@ export function PlatformSettingsForm({ settings }: { settings: PlatformSetting[]
         return;
       }
 
-      await updatePlatformSettings(updates);
+      await updatePlatformSettings(updates, reason);
       toast('Settings saved', 'success');
       setFieldEdits({});
       setJsonEdits({});
+      setReason('');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed to save settings', 'error');
     }
@@ -156,14 +170,30 @@ export function PlatformSettingsForm({ settings }: { settings: PlatformSetting[]
     <div>
       {/* The page title now lives in its PageHeader; this row is just the
           standing warning and the Save button, which needs the form's state. */}
-      <div className="flex min-h-[38px] items-center justify-between gap-4">
+      <div className="flex min-h-[38px] flex-wrap items-center justify-between gap-4">
         <p className="settings-section-desc !mb-0">
           Changes apply to every player immediately and are recorded in the audit log.
         </p>
+        {/* THE REASON BOX APPEARS WITH THE SAVE BUTTON, not before it. There is
+            nothing to explain until something has been changed, and a box
+            standing on an untouched page reads as a field somebody forgot to
+            fill in. Save stays disabled until it holds real text — the same
+            rule /ratings' save bar follows, and the same rule the server
+            enforces for anyone who gets past this. */}
         {hasChanges && (
-          <Button onClick={handleSave} loading={loading}>
-            Save Changes
-          </Button>
+          <div className="flex w-full flex-wrap items-center gap-3 sm:w-auto">
+            <div className="w-full min-w-0 sm:w-[320px]">
+              <Input
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                aria-label="Reason (required)"
+                placeholder="Reason (required) — logged with your name."
+              />
+            </div>
+            <Button onClick={handleSave} loading={loading} disabled={!enoughReason}>
+              Save Changes
+            </Button>
+          </div>
         )}
       </div>
 

@@ -495,13 +495,12 @@ export default async function AccountsPage() {
                       </div>
                     </div>
                   </div>
-                  {/* Rendered only when there is one to render. `reason` is
-                      NULL on every player_permissions_changed row — the editor
-                      does not collect one and setPlayerPermissions does not
-                      write one — so an unconditional blockquote here would be a
-                      permanent empty pair of quotation marks. Console-access
-                      changes go through updatePlayer(), which does carry the
-                      typed reason, and those are the rows this shows. */}
+                  {/* Rendered only when there is one to render. Every access
+                      change written from here on carries a typed reason —
+                      player_permissions_changed included, which was the last
+                      one that did not — but rows written BEFORE that have
+                      `reason` NULL for good, and an unconditional blockquote
+                      would show them as an empty pair of quotation marks. */}
                   {typeof lastChange.reason === 'string' && lastChange.reason.trim() !== '' && (
                     <blockquote className="mt-3 border-l-2 border-[var(--line)] pl-3 text-[13px] text-[var(--ink-2)]">
                       {lastChange.reason}

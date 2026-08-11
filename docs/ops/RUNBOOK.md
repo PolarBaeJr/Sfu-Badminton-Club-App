@@ -104,7 +104,10 @@ To re-seed the primary admin from scratch, see `scripts/reseed-admin.sql`.
      | ssh <pi-host> "docker exec -i supabase-db psql -U postgres -d postgres -v ON_ERROR_STOP=1"
    ```
 4. If the change touches the ELO math, update **both** the SQL and the TypeScript engine.
-5. Regenerate types if applicable, redeploy the app.
+5. Regenerate types if applicable, redeploy the app. "Types" means
+   `packages/shared/src/types/database.gen.ts` — its header says what the
+   command is, why it needs the production DB URL, and how far behind the file
+   currently is. Nothing enforces this step, which is how it got that far.
 
 Nothing in CI or the app runs SQL — so migrations are always a deliberate manual step.
 
