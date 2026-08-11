@@ -52,10 +52,11 @@ export function SessionCard({
   const attendanceRecorded = isAttendanceRecorded(myStatus);
   const state = describeMyState(myStatus, myIntent);
 
-  // The window label only helps where a button is genuinely missing because of
-  // the clock. When the member declined, is already on the attendance list, or
-  // had the control withheld for their standing, the reason is elsewhere on the
-  // card and repeating a time here would just be noise.
+  // CheckInButton returns null before it ever reaches its own `windowLabel`
+  // branch, so the reason a button is missing has to be said out here. It only
+  // helps where the clock is the reason: when the member declined, is already
+  // on the attendance list, or had the control withheld for their standing, the
+  // explanation is elsewhere on the card and a time here would just be noise.
   const showWindowLabel =
     Boolean(windowLabel) && !attendanceRecorded && !canCheckIn && myIntent !== 'declined' && standingOk;
 

@@ -121,7 +121,14 @@ export default async function SessionsPage() {
   const now = new Date();
   const todayISO = clubDateISO(now);
   const days = groupSessionsByDay(upcoming, todayISO);
-  const nextSessionId = upcoming[0]?.id as string | undefined;
+
+  // Closing a session is a manual admin action with no cron behind it, so a
+  // night the exec forgot to close stays 'open' and sorts to the top. It still
+  // belongs on the page — the day heading now shows its real date, which is
+  // more than the old flat list did — but calling last Tuesday "Next up" would
+  // be a straight lie, so the accent goes to the first session dated today or
+  // later.
+  const nextSessionId = (upcoming.find((s) => s.date >= todayISO) ?? upcoming[0])?.id as string | undefined;
 
   // How many upcoming nights the member has already committed to. It is the
   // one number that answers "what have I said yes to?" without opening a card.
@@ -204,7 +211,11 @@ export default async function SessionsPage() {
                       const canCheckIn = isCheckinOpen(session, now, checkinSettings);
                       const { opensAt } = getCheckinWindow(session, checkinSettings);
                       let windowLabel: string | undefined;
-                      if (!canCheckIn) {
+                      // Only for nights still ahead. A session left 'open' after
+                      // its date has passed would otherwise stamp every stale
+                      // card with "CHECK-IN CLOSED" — an answer to a question
+                      // nobody is asking about last week.
+                      if (!canCheckIn && session.date >= todayISO) {
                         if (opensAt && now < opensAt) {
                           // Club-local HH:MM of the opening instant, rendered
                           // like session times.
