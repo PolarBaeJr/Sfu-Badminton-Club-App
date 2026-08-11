@@ -257,6 +257,75 @@ export async function assertEventWaiverSigned(
 }
 
 /**
+ * THE SECOND ENFORCEMENT POINT: the draw.
+ *
+ * Check-in is the obvious place to stop an unsigned entrant, and it is not
+ * sufficient on its own. Bracket generation seeds from
+ * `status IN ('registered','checked_in')` — it does NOT require a check-in — so
+ * an unsigned member an exec added lands in the draw, is handed an opponent and
+ * a court, and plays, having passed no gate at all. "Must not be able to take
+ * part" has to hold here too or it does not hold.
+ *
+ * REFUSES WHOLE rather than partitioning, which is the opposite of what
+ * bulkCheckIn does, and deliberately. Check-in is a queue of people arriving one
+ * at a time, where excluding somebody costs them a wait. A draw is a single
+ * structure: quietly generating it without three of the field produces a
+ * bracket that LOOKS complete, with byes where people should be, and the exec
+ * finds out when somebody turns up for a match that was never created. Better to
+ * refuse, name them, and let the exec chase the signatures or withdraw them.
+ *
+ * Screened from the FIELD as built rather than from the event's rows, so a
+ * pool-seeded bracket is covered by the same call — its field is promoted from
+ * another event and would otherwise never be looked at.
+ */
+export async function assertDrawFieldEventWaiverSigned(
+  adminClient: ReturnType<typeof createAdminClient>,
+  tournamentId: string,
+  entryIds: readonly string[],
+  doubles: boolean,
+): Promise<void> {
+  if (entryIds.length === 0) return;
+  const { requiredHash, acceptances } = await loadTournamentWaiverContext(adminClient, tournamentId);
+  if (!requiredHash) return;
+
+  const { data: rows, error } = doubles
+    ? await adminClient.from('tournament_pairs')
+      .select('id, player1_id, player2_id, player1:players!tournament_pairs_player1_id_fkey(full_name), player2:players!tournament_pairs_player2_id_fkey(full_name)')
+      .in('id', entryIds as string[])
+    : await adminClient.from('tournament_participants')
+      .select('id, player_id, player:players!player_id(full_name)')
+      .in('id', entryIds as string[]);
+  // A failed read must not read as "everybody has signed".
+  if (error) {
+    Sentry.captureException(error);
+    throw new Error('Could not check who has signed the event waiver. The draw was not generated — try again.');
+  }
+
+  const entries: EventWaiverEntry[] = (rows ?? []).map((row) => {
+    const r = row as Record<string, unknown>;
+    const name = (embed: unknown, fallback: string) => {
+      const one = Array.isArray(embed) ? embed[0] : embed;
+      return (one as { full_name?: string | null } | null)?.full_name || fallback;
+    };
+    return {
+      id: r.id as string,
+      members: doubles
+        ? [
+          { id: r.player1_id as string, name: name(r.player1, r.player1_id as string) },
+          { id: r.player2_id as string, name: name(r.player2, r.player2_id as string) },
+        ]
+        : [{ id: r.player_id as string, name: name(r.player, 'This player') }],
+    };
+  });
+
+  const { blocked } = screenForEventWaiver(entries, requiredHash, acceptances);
+  if (blocked.length === 0) return;
+  throw new ExpectedError(
+    `${eventWaiverRefusal(blocked)} The draw was not generated — get their signatures, or take them out of the event first.`,
+  );
+}
+
+/**
  * The members of a pair, in a shape screenForEventWaiver understands, from the
  * embedded player rows the pair selects already carry. Falls back to the id so
  * a missing name degrades to something unhelpful rather than to a crash — the

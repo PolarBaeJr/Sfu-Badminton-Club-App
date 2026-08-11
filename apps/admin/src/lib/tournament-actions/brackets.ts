@@ -12,6 +12,7 @@ import {
   notifyPlayers,
   getStandardSeedPositions,
   assertTournamentNotSuspended,
+  assertDrawFieldEventWaiverSigned,
   computeRoundRobinStandings,
   settleWrites,
   assertWritesSucceeded,
@@ -404,6 +405,14 @@ async function generateSingleEliminationBracketImpl(eventId: string, includeThir
   const N = entries.length;
   if (N < 2) throw new Error('Need at least 2 participants to generate a bracket');
 
+  // THE SECOND HARD BLOCK. The field above is drawn from
+  // status IN ('registered','checked_in') — no check-in required — so without
+  // this an unsigned entrant an exec added is handed an opponent and a court
+  // having passed no gate at all.
+  await assertDrawFieldEventWaiverSigned(
+    adminClient, event.tournament_id, entries.map(e => e.id), doubles,
+  );
+
   // If not yet seeded, auto-seed by Elo
   const needsSeeding = !seededFromPool && entries.some(e => e.seed === null);
   if (needsSeeding) {
@@ -693,6 +702,12 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
 
   const N = entries.length;
   if (N < 3) throw new Error('Need at least 3 participants for round robin');
+
+  // Same block as the knockout path, for the same reason — a round robin gives
+  // every entrant a match, so an unsigned one plays the whole field.
+  await assertDrawFieldEventWaiverSigned(
+    adminClient, event.tournament_id, entries.map(e => e.id), doubles,
+  );
 
   // Delete any existing matches
   await adminClient.from('tournament_matches').delete().eq('event_id', eventId);
