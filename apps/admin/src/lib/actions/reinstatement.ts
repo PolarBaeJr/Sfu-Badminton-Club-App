@@ -53,7 +53,7 @@ export async function reinstatePlayer(input: ReinstatementInput) {
   const parsed = parseOrThrow(reinstatementSchema, input);
   const actor = await requireCapability('players.reinstate.write');
   // Lifting the ban is exec work; recording what was collected for it is not.
-  // This inserts a reinstatement_fees row and revalidates /fees, which is
+  // This inserts a club_fees row tagged 'reinstatement' and revalidates /fees, which is
   // admin-only in the same access map — so an exec reinstates for free and an
   // admin records the money. Rejected rather than dropped: a silently ignored
   // amount would leave the ledger short with nothing to show for it.
@@ -129,7 +129,7 @@ export async function reinstatePlayer(input: ReinstatementInput) {
   // produced a row that claimed a payment had been taken and recorded its
   // amount as nothing. It counted as $0 in the season income and could never
   // be corrected: reinstatePlayer refuses a second call because the member is
-  // no longer banned, and reinstatement_fees_player_ban_key (00065) refuses a
+  // no longer banned, and club_fees_reinstatement_ban_key (00065, 00094) refuses a
   // second row for the same ban. Real money, permanently booked as zero.
   //
   // An admin SAW the amount box and left it blank, which the dialog spells out
@@ -142,9 +142,15 @@ export async function reinstatePlayer(input: ReinstatementInput) {
   const paymentRecorded = isAdminActor(actor);
   const amountCents = paymentRecorded ? (input.amount_cents ?? 0) : null;
 
+  // Into club_fees, the club's one fee ledger since 00094 — tagged
+  // 'reinstatement' and keyed on the ban episode, exactly as
+  // reinstatement_fees was. The columns are the same columns; what changed is
+  // that a member's dues, entry fees and this now answer "what do you owe?" in
+  // one query instead of three.
   const { data: fee, error: feeError } = await adminClient
-    .from('reinstatement_fees')
+    .from('club_fees')
     .insert({
+      fee_type: 'reinstatement',
       player_id: input.player_id,
       amount_cents: amountCents,
       paid_at: paymentRecorded ? new Date().toISOString() : null,
@@ -180,7 +186,7 @@ export async function reinstatePlayer(input: ReinstatementInput) {
   revalidatePath('/fees');
 
   if (feeError) {
-    // reinstatement_fees_player_ban_key (00065): two admins submitting the same
+    // club_fees_reinstatement_ban_key (00065, 00094): two admins submitting the same
     // reinstatement at once both read is_banned = true, so the precondition
     // above cannot separate them — they snapshot the same banned_at and the
     // index does. The member is unbanned either way; only the duplicate charge
@@ -205,7 +211,7 @@ export async function reinstatePlayer(input: ReinstatementInput) {
  *
  * Which is also why the fix is an update and not "skip the placeholder row".
  * The row IS the ban episode: reinstatePlayer clears players.banned_at, and
- * reinstatement_fees.ban_started_at is NOT NULL with no default precisely so
+ * club_fees.ban_started_at is required for a reinstatement row (00094's shape CHECK) precisely so
  * that nothing can invent one later (00065). Once the row is gone the ban
  * identity is gone with it, and a later insert becomes impossible to key. So
  * the row is written unconditionally and the payment fields are filled in here.
@@ -219,9 +225,14 @@ export async function recordReinstatementPayment(input: ReinstatementPaymentInpu
   const adminClient = createAdminClient();
 
   const { data: fee } = await adminClient
-    .from('reinstatement_fees')
+    .from('club_fees')
     .select('id, player_id, amount_cents, paid_at, method, reference, season_id')
     .eq('id', parsed.fee_id)
+    // The id arrives from a rendered list, and the ledger now holds three kinds
+    // of row. Without this a dues row's id would be accepted here and filled in
+    // as though it were a reinstatement — bypassing markFeePaid's own
+    // capability, which is a different one.
+    .eq('fee_type', 'reinstatement')
     .maybeSingle();
   if (!fee) throw new ExpectedError('That reinstatement no longer exists.');
 
@@ -254,7 +265,7 @@ export async function recordReinstatementPayment(input: ReinstatementPaymentInpu
   }
 
   const { data: updated, error } = await adminClient
-    .from('reinstatement_fees')
+    .from('club_fees')
     .update({
       amount_cents: parsed.amount_cents,
       paid_at: new Date().toISOString(),

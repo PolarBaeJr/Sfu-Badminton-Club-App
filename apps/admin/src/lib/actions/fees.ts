@@ -76,20 +76,67 @@ export async function markFeePaid(input: FeeMarkInput) {
         : season?.recreational_fee_cents ?? null;
   }
 
-  const { data: fee, error } = await adminClient
+  // READ, THEN UPDATE OR INSERT — no upsert. This used to be
+  // .upsert(…, { onConflict: 'player_id,season_id' }) against
+  // club_fees_player_id_season_id_key, and 00094 replaced that constraint with
+  // a PARTIAL unique index (… WHERE fee_type = 'dues'), because a member who
+  // enters two tournaments in one season is two rows in the same table.
+  // PostgREST emits ON CONFLICT (cols) with no index predicate, so a partial
+  // index cannot be inferred as the arbiter and the upsert would fail outright.
+  //
+  // The shape is waiveFee's, a few lines below, for the same reasons it gives:
+  // the 23505 branch turns the race into a message rather than a crash.
+  const { data: existing } = await adminClient
     .from('club_fees')
-    .upsert({
-      player_id: input.player_id,
-      season_id: input.season_id,
-      paid_at: new Date().toISOString(),
-      marked_by: admin.id,
-      amount_cents: amountCents,
-      method: input.method ?? null,
-      reference: input.reference ?? null,
-    }, { onConflict: 'player_id,season_id' })
     .select('id')
-    .single();
-  if (error) throw new Error(error.message);
+    .eq('player_id', input.player_id)
+    .eq('season_id', input.season_id)
+    .eq('fee_type', 'dues')
+    .maybeSingle();
+
+  const payment = {
+    paid_at: new Date().toISOString(),
+    marked_by: admin.id,
+    amount_cents: amountCents,
+    method: input.method ?? null,
+    reference: input.reference ?? null,
+  };
+
+  let fee: { id: string };
+  if (existing) {
+    const { data: updated, error } = await adminClient
+      .from('club_fees')
+      .update(payment)
+      .eq('id', existing.id)
+      .select('id')
+      .single();
+    if (error) throw new Error(error.message);
+    fee = updated;
+  } else {
+    const { data: inserted, error } = await adminClient
+      .from('club_fees')
+      .insert({
+        player_id: input.player_id,
+        season_id: input.season_id,
+        // Explicit rather than left to the column default. This is the club's
+        // season fee, and a row that reached the table without saying so would
+        // be indistinguishable from an entry fee to every reader that filters.
+        fee_type: 'dues',
+        ...payment,
+      })
+      .select('id')
+      .single();
+    if (error) {
+      // Somebody recorded this member's dues between the read and the insert.
+      if (error.code === '23505') {
+        throw new ExpectedError(
+          'A fee was recorded for this member while you were marking it paid. Reload and check before trying again.',
+        );
+      }
+      throw new Error(error.message);
+    }
+    fee = inserted;
+  }
 
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
@@ -130,6 +177,10 @@ export async function waiveFee(input: FeeWaiveInput) {
     .select('id, player_id, season_id, amount_cents, paid_at, method, reference')
     .eq('player_id', input.player_id)
     .eq('season_id', input.season_id)
+    // Dues only. Waiving is a decision about the SEASON FEE; since 00094 the
+    // same table also holds this member's entry fees and reinstatements, and
+    // without this filter maybeSingle() would throw the moment they had one.
+    .eq('fee_type', 'dues')
     .maybeSingle();
 
   if (existing?.paid_at && !isWaivedFee(existing)) {
@@ -176,6 +227,7 @@ export async function waiveFee(input: FeeWaiveInput) {
       .insert({
         player_id: input.player_id,
         season_id: input.season_id,
+        fee_type: 'dues',
         paid_at: new Date().toISOString(),
         marked_by: admin.id,
         amount_cents: 0,
@@ -224,6 +276,9 @@ export async function markFeeUnpaid(playerId: string, seasonId: string) {
     .select('id, player_id, season_id, amount_cents, paid_at, method')
     .eq('player_id', playerId)
     .eq('season_id', seasonId)
+    // Dues only — this is the /fees roster's Unpaid button, and reversing a
+    // season fee must never reach into an entry fee or a reinstatement.
+    .eq('fee_type', 'dues')
     .single();
   if (!oldFee) throw new Error('Fee record not found');
 
@@ -259,6 +314,11 @@ export async function addManualFee(input: ManualFeeInput) {
       player_id: null,
       manual_name: input.manual_name,
       season_id: input.season_id,
+      // A manual entry is somebody paying their SEASON FEE without an account.
+      // Entry fees and reinstatements always have a real player row — the shape
+      // CHECK in 00094 refuses a manual_name on either — so 'dues' is the only
+      // legal value here, said out loud rather than left to the default.
+      fee_type: 'dues',
       paid_at: new Date().toISOString(),
       marked_by: admin.id,
       amount_cents: input.amount_cents ?? null,
@@ -304,6 +364,12 @@ export async function removeManualFee(id: string) {
     .from('club_fees')
     .select('id, manual_name, season_id, amount_cents, paid_at, method')
     .eq('id', id)
+    // Manual dues only. This action deletes a row outright, and the id comes
+    // from a rendered table — so the filter is what stops a stale or crafted id
+    // from destroying an entry fee or a reinstatement through the one control
+    // on this page that does not merely edit.
+    .eq('fee_type', 'dues')
+    .not('manual_name', 'is', null)
     .single();
   if (!oldFee) throw new Error('Fee record not found');
 

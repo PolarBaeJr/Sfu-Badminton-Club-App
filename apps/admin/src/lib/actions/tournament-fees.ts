@@ -105,6 +105,10 @@ export async function createFeeTier(input: FeeTierInput) {
       tournament_id: input.tournament_id,
       name: input.name,
       amount_cents: input.amount_cents,
+      // Which memberships this tier prices (00094). `?? null` and not omitted:
+      // null is the meaningful value — "anyone" — and leaving the key out would
+      // work only because the column happens to default to it.
+      applies_to: input.applies_to ?? null,
       is_default: false,
     })
     .select('id')
@@ -158,7 +162,7 @@ export async function updateFeeTier(id: string, input: Partial<FeeTierInput>) {
   //
   // tournament_id is dropped rather than applied. feeTierSchema.partial()
   // accepts it, so this action would happily move a tier to another
-  // tournament — and every tournament_fees row already pointing at that tier
+  // tournament — and every entry-fee row already pointing at that tier
   // would silently become a cross-tournament reference, which is the same
   // corruption markTournamentFeePaid now refuses to create. A tier belongs to
   // the tournament it was made for; renaming and repricing are the edits.
@@ -224,7 +228,7 @@ export async function markTournamentFeePaid(input: TournamentFeeMarkInput) {
   let amountCents = input.amount_cents ?? null;
 
   if (tierId) {
-    // tournament_fees.tier_id is a plain FK to tournament_fee_tiers(id)
+    // club_fees.tier_id is a plain FK to tournament_fee_tiers(id)
     // (00001), which constrains the tier to exist and nothing more — a tier
     // belonging to a DIFFERENT tournament is a perfectly valid row as far as
     // Postgres is concerned. The lookup used to be keyed on the id alone, so
@@ -256,21 +260,71 @@ export async function markTournamentFeePaid(input: TournamentFeeMarkInput) {
     amountCents = tier?.amount_cents ?? null;
   }
 
-  const { data: fee, error } = await adminClient
-    .from('tournament_fees')
-    .upsert({
-      tournament_id: input.tournament_id,
-      player_id: input.player_id,
-      tier_id: tierId,
-      amount_cents: amountCents,
-      paid_at: new Date().toISOString(),
-      marked_by: admin.id,
-      method: input.method ?? null,
-      reference: input.reference ?? null,
-    }, { onConflict: 'tournament_id,player_id' })
+  // WHICH SEASON THIS MONEY COUNTS TOWARD, stamped on rather than joined.
+  // Entry fees used to reach a season through tournaments.season_id at read
+  // time; club_fees carries the season itself, the same rule 00069 arrived at
+  // for reinstatements and 00073 built in from the start. Nullable, because
+  // tournaments.season_id is (00001) — a tournament outside every season is a
+  // real row, and refusing to record its money would be worse than recording it
+  // unattached.
+  const { data: tournament } = await adminClient
+    .from('tournaments')
+    .select('season_id')
+    .eq('id', input.tournament_id)
+    .maybeSingle();
+
+  // READ, THEN UPDATE OR INSERT — see the note in actions/fees.ts. 00094's
+  // uniqueness is a partial index (… WHERE fee_type = 'tournament'), which
+  // PostgREST cannot infer as an upsert arbiter.
+  const { data: existing } = await adminClient
+    .from('club_fees')
     .select('id')
-    .single();
-  if (error) throw new Error(error.message);
+    .eq('tournament_id', input.tournament_id)
+    .eq('player_id', input.player_id)
+    .eq('fee_type', 'tournament')
+    .maybeSingle();
+
+  const payment = {
+    tier_id: tierId,
+    amount_cents: amountCents,
+    paid_at: new Date().toISOString(),
+    marked_by: admin.id,
+    method: input.method ?? null,
+    reference: input.reference ?? null,
+  };
+
+  let fee: { id: string };
+  if (existing) {
+    const { data: updated, error } = await adminClient
+      .from('club_fees')
+      .update(payment)
+      .eq('id', existing.id)
+      .select('id')
+      .single();
+    if (error) throw new Error(error.message);
+    fee = updated;
+  } else {
+    const { data: inserted, error } = await adminClient
+      .from('club_fees')
+      .insert({
+        fee_type: 'tournament',
+        tournament_id: input.tournament_id,
+        player_id: input.player_id,
+        season_id: tournament?.season_id ?? null,
+        ...payment,
+      })
+      .select('id')
+      .single();
+    if (error) {
+      if (error.code === '23505') {
+        throw new ExpectedError(
+          'An entry fee was recorded for this player while you were marking it paid. Reload and check before trying again.',
+        );
+      }
+      throw new Error(error.message);
+    }
+    fee = inserted;
+  }
 
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
@@ -295,15 +349,18 @@ export async function markTournamentFeeUnpaid(tournamentId: string, playerId: st
   const adminClient = createAdminClient();
 
   const { data: oldFee } = await adminClient
-    .from('tournament_fees')
+    .from('club_fees')
     .select('id, tournament_id, player_id, tier_id, amount_cents, paid_at, method')
     .eq('tournament_id', tournamentId)
     .eq('player_id', playerId)
+    .eq('fee_type', 'tournament')
     .single();
   if (!oldFee) throw new Error('Fee record not found');
 
+  // The row STAYS, with only the payment fields cleared — the entry itself is
+  // still a fact, and the member still owes for it. Same as markFeeUnpaid.
   const { error } = await adminClient
-    .from('tournament_fees')
+    .from('club_fees')
     .update({ paid_at: null, marked_by: null, method: null })
     .eq('id', oldFee.id);
   if (error) throw new Error(error.message);

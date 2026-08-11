@@ -3,7 +3,7 @@
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
-import { calculateTeamRating, isDoublesEvent, eventHasDraw, ExpectedError } from '@badminton/shared';
+import { calculateTeamRating, ensureEntryFees, isDoublesEvent, eventHasDraw, ExpectedError } from '@badminton/shared';
 import { runAction, type ActionResult } from '../action-result';
 import {
   requireCapability,
@@ -76,6 +76,13 @@ export async function addParticipantToEvent(eventId: string, playerId: string) {
     Sentry.captureException(error);
     throw new Error(error.message);
   }
+
+  // What this entry costs, on the club's fee ledger. One row per tournament
+  // rather than per event, so adding somebody to a second event here finds the
+  // row the first one made. Never throws — see ensureEntryFees — because the
+  // participant is already committed and an incomplete price list must not
+  // report a registration that happened as a failure.
+  await ensureEntryFees(adminClient, event.tournament_id, [playerId]);
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id,
@@ -270,6 +277,11 @@ export async function addParticipantsToEvent(eventId: string, playerIds: string[
   }
 
   const added = (inserted ?? []).map((r) => r.player_id as string);
+
+  // Entry fees for everyone who actually landed, in one call. Priced from each
+  // player's own membership_type, so a batch of internal members and alumni
+  // comes out at two different amounts without anybody choosing a tier.
+  if (added.length > 0) await ensureEntryFees(adminClient, event.tournament_id, added);
 
   // One row per player, same shape as the single-player path writes, in one
   // statement. Collapsing the batch into a single row with a list would change
@@ -587,6 +599,11 @@ export async function addPairToEvent(eventId: string, player1Id: string, player2
     Sentry.captureException(error);
     throw new Error(error.message);
   }
+
+  // BOTH HALVES OF THE PAIR, each priced off their own membership_type. A pair
+  // is two entrants who happen to play together, not one; an internal member
+  // partnering an alum pays the internal price and the alum pays theirs.
+  await ensureEntryFees(adminClient, event.tournament_id, [player1Id, player2Id]);
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id,

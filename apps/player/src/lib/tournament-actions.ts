@@ -4,6 +4,7 @@ import { headers } from 'next/headers';
 import { createServiceRoleClient } from './supabase-server';
 import { revalidatePath } from 'next/cache';
 import {
+  ensureEntryFees,
   isDoublesEvent,
   isMembershipAllowed,
   membershipRefusalMessage,
@@ -106,6 +107,13 @@ async function registerForEventImpl(eventId: string, opts?: { eventWaiverAccepte
     status: 'registered',
   });
   if (insertErr) throw new Error(insertErr.message);
+
+  // What this entry costs, on the club's fee ledger, priced from the member's
+  // membership_type. Deliberately AFTER the participant row and deliberately
+  // not awaited for its success: the member is registered either way, and
+  // ensureEntryFees never throws for exactly that reason. Per tournament, not
+  // per event, so entering a second event here finds the existing row.
+  await ensureEntryFees(service, event.tournament_id, [player.id]);
 
   // Record immutable acceptance evidence keyed by the text hash. onConflict
   // ignore keeps it idempotent if the same text is accepted twice.
