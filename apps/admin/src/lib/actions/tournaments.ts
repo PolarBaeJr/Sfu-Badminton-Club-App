@@ -362,43 +362,6 @@ export async function deleteTournament(tournamentId: string) {
   revalidatePath('/tournaments');
 }
 
-export async function addTournamentParticipant(tournamentId: string, playerId: string, seed: number | null, partnerId?: string) {
-  const admin = await requireCapability('tournaments.draw.participants.add.write');
-  const adminClient = createAdminClient();
-
-  // Try new table name first, fall back to old if migration hasn't run
-  let error;
-  const insertData = {
-    tournament_id: tournamentId,
-    player_id: playerId,
-    partner_id: partnerId || null,
-    seed,
-  };
-  const result = await adminClient.from('legacy_tournament_participants').insert(insertData);
-  if (result.error) {
-    // Fallback: migration not yet run
-    const fallback = await adminClient.from('tournament_participants').insert(insertData);
-    error = fallback.error;
-  } else {
-    error = result.error;
-  }
-
-  if (error) {
-    if (error.code === '23505') throw new Error('Player already in tournament');
-    throw new Error(error.message);
-  }
-
-  await logAdminAudit(adminClient, {
-    actor_id: admin.id,
-    action_type: 'tournament_participant_added',
-    target_type: 'tournament',
-    target_id: tournamentId,
-    new_value: { player_id: playerId, seed, partner_id: partnerId },
-  }, { tournamentId });
-
-  revalidatePath(`/tournaments/${tournamentId}`);
-}
-
 export async function removeTournamentParticipant(participantId: string, tournamentId: string) {
   const admin = await requireCapability('tournaments.draw.participants.remove.write');
   const adminClient = createAdminClient();

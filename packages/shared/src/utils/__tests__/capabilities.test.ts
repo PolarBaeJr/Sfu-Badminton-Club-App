@@ -148,16 +148,16 @@ describe('CAPABILITY_GATES', () => {
   // it is a real check rather than documentation: deleting a gate without
   // deleting its capability leaves the editor offering a tick box nothing
   // reads, and that is what this fails on.
-  it('names 135 distinct enforcement points, none of them claimed twice', () => {
+  it('names 134 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(135);
-    expect(new Set(sites).size).toBe(135);
-    expect(ENFORCEMENT_POINTS).toBe(135);
+    expect(sites.length).toBe(134);
+    expect(new Set(sites).size).toBe(134);
+    expect(ENFORCEMENT_POINTS).toBe(134);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be

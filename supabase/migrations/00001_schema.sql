@@ -339,8 +339,19 @@ CREATE INDEX idx_event_feedback_tournament ON event_feedback(tournament_id);
 -- Legacy Tournament Participants
 -- Pre-event-system participant table (originally named
 -- tournament_participants, renamed when the event-based tournament
--- system replaced it). Still read/written by the admin app's legacy
--- tournament management (apps/admin/src/lib/actions.ts).
+-- system replaced it).
+--
+-- RETAINED FOR HISTORY ONLY. This once said the admin app's legacy
+-- tournament management still read and wrote it; as of 00098 nothing
+-- inserts into it. The action that did (addTournamentParticipant) was
+-- reached from one dialog that nothing imported and nothing rendered,
+-- and it was also a way into a tournament that went round the event
+-- waiver 00097 requires, so it was deleted along with the dialog. One
+-- vestige is left: removeTournamentParticipant still DELETEs from here,
+-- and it too is unreachable from any rendered screen.
+--
+-- The table is deliberately NOT dropped — production may hold real
+-- pre-event-system tournament history. See 00098.
 CREATE TABLE legacy_tournament_participants (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   tournament_id UUID NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
