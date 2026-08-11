@@ -10,6 +10,15 @@ import { AvatarChip, PageHeader, normalizeSearchQuery } from '@badminton/ui';
 import { getWinRate, getWinRateNumeric } from '@badminton/shared';
 import { useStanding } from '@/components/standing-provider';
 import { StandingNote } from '@/components/standing-notice';
+import {
+  topPercentile,
+  gapToNext,
+  rungProgress,
+  winShare,
+  formatStreak,
+  ladderHistogram,
+  bandHeight,
+} from '@/lib/ladder';
 
 type Ratings = {
   singles_elo: number;
@@ -66,6 +75,117 @@ const sortOptions: { id: SortId; label: string }[] = [
 // ranking by win rate (a 1-0 record shouldn't outrank a 20-5 one).
 const MIN_GAMES_FOR_WIN_RATE_RANK = 5;
 
+// Rating bands in the distribution bar chart. Chosen against the 360px design
+// width: 22 bands with a 2px gap gives ~12px bars in the narrow card, which is
+// wide enough to draw without the fractional-pixel moiré that a mark-per-player
+// strip produced, and fine enough that a ninety-member club still has a shape.
+const SPREAD_BANDS = 22;
+
+/** The number this tab ranks by: ELO for a discipline, points for the tournament tab. */
+function metricOf(p: LeaderboardEntry, isDoubles: boolean, isTpts: boolean): number {
+  if (isTpts) return p._tournamentPoints ?? 0;
+  if (!p.ratings) return 0;
+  return isDoubles ? p.ratings.doubles_elo : p.ratings.singles_elo;
+}
+
+function recordOf(p: LeaderboardEntry, isDoubles: boolean): { wins: number; losses: number } {
+  const r = p.ratings;
+  return {
+    wins: r ? (isDoubles ? r.doubles_wins : r.singles_wins) : 0,
+    losses: r ? (isDoubles ? r.doubles_losses : r.singles_losses) : 0,
+  };
+}
+
+/** "Kiera Watanabe" -> "Kiera". Used only where a full name would wrap a button. */
+function firstName(name: string): string {
+  return name.trim().split(/\s+/)[0] || name;
+}
+
+function LadderRow({
+  player,
+  rank,
+  isMe,
+  isDoubles,
+  isTpts,
+  canChallenge,
+  onChallenge,
+}: {
+  player: LeaderboardEntry;
+  /** Position on the ladder, 1-based — not the row's index in a filtered list. */
+  rank: number;
+  isMe: boolean;
+  isDoubles: boolean;
+  isTpts: boolean;
+  canChallenge: boolean;
+  onChallenge: (id: string) => void;
+}) {
+  const value = metricOf(player, isDoubles, isTpts);
+  const { wins, losses } = recordOf(player, isDoubles);
+  const share = winShare(wins, losses);
+  const streak = formatStreak(
+    player.ratings ? (isDoubles ? player.ratings.current_doubles_streak : player.ratings.current_singles_streak) : null,
+  );
+  const provisional = player.ratings
+    ? (isDoubles ? player.ratings.doubles_provisional : player.ratings.singles_provisional)
+    : false;
+
+  // Real name first, handle beside it. A row reading only `@kiera` tells a
+  // reader less than both together do, and handle is nullable.
+  const subline = [player.handle ? `@${player.handle}` : null, provisional ? 'Provisional' : null]
+    .filter(Boolean)
+    .join(' · ');
+
+  return (
+    <div className={'ladder-row' + (isMe ? ' me' : '')}>
+      <Link href={`/leaderboard/${player.id}`} className="lr-main press">
+        <span className="lr-rank" data-medal={rank <= 3 ? rank : undefined}>
+          {rank}
+        </span>
+        <AvatarChip name={player.full_name} id={player.id} src={player.avatar_url} size="sm" ring={isMe} />
+        <span className="lr-id">
+          <span className="lr-name">{player.full_name}</span>
+          {/* A non-breaking space when there is nothing to say, so rows with and
+              without a handle keep the same height and the ladder stays a grid. */}
+          <span className="lr-sub">{subline || ' '}</span>
+        </span>
+        <span className="lr-metrics">
+          <span className="lr-value">{value}</span>
+          {!isTpts && (
+            <span className="lr-record">
+              {wins}–{losses}
+              {share !== null && <> · {getWinRate(wins, losses)}</>}
+              {streak && (
+                <>
+                  {' · '}
+                  <span className={streak.tone === 'win' ? 'lr-streak-win' : 'lr-streak-loss'}>
+                    {streak.label}
+                  </span>
+                </>
+              )}
+            </span>
+          )}
+          {!isTpts && share !== null && (
+            <span className="lr-share" aria-hidden>
+              <i style={{ width: `${share * 100}%` }} />
+            </span>
+          )}
+        </span>
+      </Link>
+      {canChallenge && (
+        <button
+          className="lr-action"
+          type="button"
+          aria-label={`Challenge ${player.full_name}`}
+          onClick={() => onChallenge(player.id)}
+        >
+          <Crosshair size={16} />
+          <span>Challenge</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function LeaderboardClient({
   initialPlayers,
   meId,
@@ -78,7 +198,7 @@ export default function LeaderboardClient({
   const [searchQuery, setSearchQuery] = useState('');
   const router = useRouter();
   // The ladder itself stays for everyone — it is public. Only the CHALLENGE
-  // column goes, because createChallenge -> requirePlayer() would refuse it.
+  // control goes, because createChallenge -> requirePlayer() would refuse it.
   const standing = useStanding();
 
   const players = initialPlayers;
@@ -118,21 +238,16 @@ export default function LeaderboardClient({
     return players;
   }, [players, activeTab, isTpts]);
 
-  // Name OR handle, and the `@` is optional — a member is searchable by the
-  // thing the club calls them. NOT filterPlayerOptions, which re-ranks: this
-  // list is ordered by rating and that ordering is the whole point of a ladder.
-  // Only the matching is shared in spirit; the order stays the page's.
-  const filtered = useMemo(() => {
-    const q = normalizeSearchQuery(searchQuery);
-    if (!q) return tabFiltered;
-    return tabFiltered.filter(
-      (p) => p.full_name.toLowerCase().includes(q) || (p.handle ?? '').toLowerCase().includes(q),
-    );
-  }, [tabFiltered, searchQuery]);
-
+  // THE LADDER, ordered. Sorted BEFORE the search filter, so a rank is a
+  // position on the ladder and not a position in your search results — type
+  // "grace" and she is still #37, where numbering the filtered list would put
+  // "#1" beside her and say she leads the club.
+  //
+  // Search is order-preserving, so moving it after the sort changes no
+  // ordering: this is the same comparator over the same rows.
   const ranked = useMemo(() => {
     if (isTpts) {
-      return [...filtered].sort((a, b) => (b._tournamentPoints ?? 0) - (a._tournamentPoints ?? 0));
+      return [...tabFiltered].sort((a, b) => (b._tournamentPoints ?? 0) - (a._tournamentPoints ?? 0));
     }
     if (sortBy === 'win_rate') {
       const record = (p: LeaderboardEntry) => {
@@ -144,7 +259,7 @@ export default function LeaderboardClient({
         const tier = rate === null ? 2 : wins + losses < MIN_GAMES_FOR_WIN_RATE_RANK ? 1 : 0;
         return { rate, tier };
       };
-      return [...filtered].sort((a, b) => {
+      return [...tabFiltered].sort((a, b) => {
         const ra = record(a);
         const rb = record(b);
         if (ra.tier !== rb.tier) return ra.tier - rb.tier;
@@ -152,13 +267,31 @@ export default function LeaderboardClient({
       });
     }
     // Default: sort by ELO for the active discipline.
-    return [...filtered].sort((a, b) =>
+    return [...tabFiltered].sort((a, b) =>
       isDoubles
         ? (b.ratings?.doubles_elo ?? 0) - (a.ratings?.doubles_elo ?? 0)
         : (b.ratings?.singles_elo ?? 0) - (a.ratings?.singles_elo ?? 0)
     );
-  }, [filtered, sortBy, isDoubles, isTpts]);
+  }, [tabFiltered, sortBy, isDoubles, isTpts]);
 
+  // Name OR handle, and the `@` is optional — a member is searchable by the
+  // thing the club calls them. NOT filterPlayerOptions, which re-ranks by match
+  // quality: this list is ordered by rating and that ordering is the whole point
+  // of a ladder. Only the matching is shared in spirit; the order stays the
+  // page's, and each row carries the rank it had before the filter ran.
+  const visible = useMemo(() => {
+    const withRank = ranked.map((player, i) => ({ player, rank: i + 1 }));
+    const q = normalizeSearchQuery(searchQuery);
+    if (!q) return withRank;
+    return withRank.filter(
+      ({ player }) =>
+        player.full_name.toLowerCase().includes(q) || (player.handle ?? '').toLowerCase().includes(q),
+    );
+  }, [ranked, searchQuery]);
+
+  // Everything about YOU is measured against the whole field, never against
+  // what the search box has left on screen. Your rank does not change because
+  // you typed someone else's name.
   const meIndex = useMemo(
     () => ranked.findIndex((p) => p.id === meId),
     [ranked, meId]
@@ -167,43 +300,173 @@ export default function LeaderboardClient({
   const myElo = me?.ratings ? (isDoubles ? me.ratings.doubles_elo : me.ratings.singles_elo) : null;
   const aboveMe = meIndex > 0 ? ranked[meIndex - 1] : null;
   const aboveMeElo = aboveMe?.ratings ? (isDoubles ? aboveMe.ratings.doubles_elo : aboveMe.ratings.singles_elo) : null;
-  const eloToNext = myElo !== null && aboveMeElo !== null ? aboveMeElo - myElo : null;
+  const eloToNext = gapToNext(myElo, aboveMeElo);
 
+  // The rung is measured against the player immediately BELOW as well, so the
+  // bar spans the slot you can actually cross rather than the whole rating axis.
+  const belowMe = meIndex >= 0 && meIndex < ranked.length - 1 ? ranked[meIndex + 1] : null;
+  const belowMeElo = belowMe?.ratings ? (isDoubles ? belowMe.ratings.doubles_elo : belowMe.ratings.singles_elo) : null;
+  const rung = myElo !== null ? rungProgress(belowMeElo, myElo, aboveMeElo) : 0;
+
+  const percentile = topPercentile(meIndex, ranked.length);
+
+  // The shape of the field. The TAB decides the field — "where am I among the
+  // competitive players" is a real question — but the search box does not.
+  const spread = useMemo(
+    () => ladderHistogram(ranked.map((p) => metricOf(p, isDoubles, isTpts)), meIndex, SPREAD_BANDS),
+    [ranked, isDoubles, isTpts, meIndex],
+  );
+
+  // The players to beat are the players to beat, not the top 3 of your search.
   const top3 = ranked.slice(0, 3);
+  const activeLabel = tabs.find((t) => t.id === activeTab)?.label ?? '';
+
+  const goChallenge = (id: string) => router.push(`/challenges/new?opponent=${id}`);
 
   return (
     <div data-screen-label="Leaderboard">
-      <PageHeader
-        title="Leaderboard"
-        actions={
-          <div className="search-pill">
+      <PageHeader eyebrow="LADDER" title="Ranks" sub="Where you sit against everyone." />
+
+      {/* Controls stack above the content on a phone rather than crowding the
+          header: the format rail first, then search and sort on one line. */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
+        {/* aria-pressed rather than role="tab": these chips re-filter the page
+            in place, there is no tabpanel for a tab to control, and claiming
+            the tab pattern without one is worse for a screen reader than not. */}
+        <div className="ranks-rail" role="group" aria-label="Leaderboard format">
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              className={'filter-chip' + (activeTab === t.id ? ' active' : '')}
+              onClick={() => setActiveTab(t.id)}
+              type="button"
+              aria-pressed={activeTab === t.id}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+          <div className="search-pill ranks-search">
             <Search size={14} className="text-[var(--mute)]" />
             <input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Name or @handle"
               aria-label="Search leaderboard"
-              style={{ width: 180 }}
             />
           </div>
-        }
-      />
-
-      <div className="chips" style={{ marginBottom: 20 }}>
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            className={'filter-chip' + (activeTab === t.id ? ' active' : '')}
-            onClick={() => setActiveTab(t.id)}
-            type="button"
-          >
-            {t.label}
-          </button>
-        ))}
+          {!isTpts && (
+            <div className="ranks-rail" role="group" aria-label="Sort ladder by">
+              {sortOptions.map((s) => (
+                <button
+                  key={s.id}
+                  className={'filter-chip' + (sortBy === s.id ? ' active' : '')}
+                  onClick={() => setSortBy(s.id)}
+                  type="button"
+                  aria-pressed={sortBy === s.id}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
+      {/* Phone: one column, in this source order — you, then who to beat, then
+          the ladder. Desktop: the same three, with the ladder alongside. */}
       <div className="grid grid-12">
         <div style={{ gridColumn: 'span 4' }} className="feed-col reveal reveal-1">
+          {me && !isTpts && (
+            <div className="card-base">
+              <div className="card-head">
+                <h3 className="card-title">Your position</h3>
+                <span className="tag tag-red">YOU</span>
+              </div>
+              <div className="row" style={{ gap: 20, alignItems: 'flex-end' }}>
+                <div className="rank-big">
+                  <span className="hash">#</span>
+                  <span className="num">{meIndex + 1}</span>
+                </div>
+                <div style={{ flex: 1, textAlign: 'right' }}>
+                  <div className="mono" style={{ fontSize: 26, fontWeight: 700, lineHeight: 1 }}>
+                    {myElo ?? '—'}
+                  </div>
+                  <div className="mono muted" style={{ fontSize: 11, marginTop: 4 }}>
+                    {isDoubles ? 'DOUBLES ELO' : 'SINGLES ELO'}
+                  </div>
+                </div>
+              </div>
+              {percentile !== null && (
+                <div className="mono muted" style={{ fontSize: 11, marginTop: 10, letterSpacing: '.08em' }}>
+                  TOP {percentile}% · {ranked.length} RANKED
+                </div>
+              )}
+
+              {/* The field itself: how many members sit in each slice of the
+                  rating range, yours in red. It is the only picture this screen
+                  can honestly draw — get_leaderboard() returns a current rating
+                  and no history, so there is no rating-over-time line to plot.
+                  Hidden when everyone is on the same rating, because a chart of
+                  one band is a rectangle that says nothing. */}
+              {spread.meBucket !== null && spread.max > spread.min && (
+                <div style={{ marginTop: 16 }}>
+                  <div className="spread" aria-hidden>
+                    {spread.buckets.map((count, i) => (
+                      <i
+                        key={i}
+                        className={
+                          count === 0 ? 'none' : i === spread.meBucket ? 'me' : undefined
+                        }
+                        style={{
+                          height: count === 0 ? 1 : `${bandHeight(count, spread.peak) * 100}%`,
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <div className="spread-axis">
+                    <span>{spread.min}</span>
+                    <span>THE FIELD</span>
+                    <span>{spread.max}</span>
+                  </div>
+                </div>
+              )}
+
+              {eloToNext !== null && eloToNext > 0 && aboveMe && (
+                <div style={{ marginTop: 16 }}>
+                  <div className="rung">
+                    <i style={{ width: `${rung * 100}%` }} />
+                  </div>
+                  <div className="row" style={{ justifyContent: 'space-between', marginTop: 6, gap: 10 }}>
+                    <span className="mono muted" style={{ fontSize: 11, letterSpacing: '.08em' }}>
+                      {eloToNext} ELO TO #{meIndex}
+                    </span>
+                    <span
+                      className="mono"
+                      style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    >
+                      {aboveMe.full_name}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* The one primary action on the screen, at the bottom of the card
+                  where a thumb reaches it. Same gate as the per-row control. */}
+              {standing.ok && aboveMe && (
+                <button
+                  className="btn btn-primary"
+                  type="button"
+                  style={{ width: '100%', justifyContent: 'center', marginTop: 16, padding: '13px 14px' }}
+                  onClick={() => goChallenge(aboveMe.id)}
+                >
+                  <Crosshair size={14} /> Challenge {firstName(aboveMe.full_name)}
+                </button>
+              )}
+            </div>
+          )}
+
           <div className="card-base" style={{ padding: 0, overflow: 'hidden' }}>
             <div
               className="card-head"
@@ -215,14 +478,13 @@ export default function LeaderboardClient({
               </div>
               <span className="tag tag-gold">PODIUM</span>
             </div>
-            <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
               {top3.length === 0 && (
                 <div className="empty" style={{ padding: 16 }}>No ranked players yet.</div>
               )}
               {top3.map((p, i) => {
-                const elo = p.ratings ? (isDoubles ? p.ratings.doubles_elo : p.ratings.singles_elo) : (p._tournamentPoints ?? 0);
-                const wins = p.ratings ? (isDoubles ? p.ratings.doubles_wins : p.ratings.singles_wins) : 0;
-                const losses = p.ratings ? (isDoubles ? p.ratings.doubles_losses : p.ratings.singles_losses) : 0;
+                const value = metricOf(p, isDoubles, isTpts);
+                const { wins, losses } = recordOf(p, isDoubles);
                 return (
                   <Link
                     key={p.id}
@@ -233,13 +495,12 @@ export default function LeaderboardClient({
                       ...(i === 0 ? { background: 'var(--red-wash)' } : {}),
                     }}
                   >
-                    <div style={{ width: 40, display: 'grid', placeItems: 'center' }}>
+                    <div style={{ width: 36, display: 'grid', placeItems: 'center' }}>
                       <div className="rank-big">
-                        <span className="hash">#</span>
                         <span
                           className="num"
                           style={{
-                            fontSize: 32,
+                            fontSize: 30,
                             color: i === 0 ? 'var(--gold)' : i === 1 ? 'var(--silver)' : 'var(--bronze)',
                           }}
                         >
@@ -248,19 +509,14 @@ export default function LeaderboardClient({
                       </div>
                     </div>
                     <AvatarChip name={p.full_name} id={p.id} src={p.avatar_url} size="md" ring={i === 0} />
-                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                      {/* Real name first, handle beside it. A row reading only
-                          `@kiera` tells a reader less than both together do. */}
-                      <div style={{ fontWeight: 600, fontSize: 15 }}>
-                        {p.full_name}
-                        {p.handle && <span className="muted" style={{ fontWeight: 400 }}> · @{p.handle}</span>}
-                      </div>
-                      <div className="mono muted" style={{ fontSize: 11 }}>
-                        {isTpts ? 'Tournament points' : isDoubles ? 'Doubles' : 'Singles'}
+                    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                      <div className="lr-name" style={{ fontSize: 15 }}>{p.full_name}</div>
+                      <div className="lr-sub">
+                        {p.handle ? `@${p.handle}` : isTpts ? 'Tournament points' : isDoubles ? 'Doubles' : 'Singles'}
                       </div>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center' }}>
-                      <div className="mono" style={{ fontWeight: 700, fontSize: 18 }}>{elo}</div>
+                      <div className="mono" style={{ fontWeight: 700, fontSize: 18 }}>{value}</div>
                       {!isTpts && (
                         <div className="mono muted" style={{ fontSize: 11 }}>
                           {wins}–{losses}{wins + losses > 0 ? ` · ${getWinRate(wins, losses)}` : ''}
@@ -272,80 +528,31 @@ export default function LeaderboardClient({
               })}
             </div>
           </div>
-
-          {me && !isTpts && (
-            <div className="card-base">
-              <div className="card-head">
-                <h3 className="card-title">Your position</h3>
-                <span className="tag tag-red">YOU</span>
-              </div>
-              <div className="row" style={{ gap: 20, alignItems: 'flex-end', marginBottom: 10 }}>
-                <div className="rank-big">
-                  <span className="hash">#</span>
-                  <span className="num">{meIndex + 1}</span>
-                </div>
-                <div style={{ flex: 1, textAlign: 'right' }}>
-                  <div className="mono" style={{ fontSize: 22, fontWeight: 700 }}>{myElo ?? '—'}</div>
-                  <div className="mono muted" style={{ fontSize: 11 }}>
-                    {isDoubles ? 'Doubles ELO' : 'Singles ELO'}
-                  </div>
-                </div>
-              </div>
-              {eloToNext !== null && eloToNext > 0 && aboveMe && (
-                <>
-                  <div
-                    className="capacity-bar"
-                    style={{ height: 8 }}
-                  >
-                    <div
-                      className="fill"
-                      style={{
-                        width: `${Math.min(100, ((myElo ?? 0) / (aboveMeElo ?? 1)) * 100)}%`,
-                        background: 'var(--red)',
-                      }}
-                    />
-                  </div>
-                  <div className="row" style={{ justifyContent: 'space-between', fontSize: 11, marginTop: 6 }}>
-                    <span className="mono muted">TO #{meIndex} · {eloToNext} ELO</span>
-                    <span className="mono">TARGET {aboveMeElo}</span>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
         </div>
 
         <div style={{ gridColumn: 'span 8' }} className="reveal reveal-2">
           <div className="card-base" style={{ padding: 0, overflow: 'hidden' }}>
             <div
-              className="card-head row"
-              style={{ padding: '20px 20px 14px', borderBottom: '1px solid var(--line)', marginBottom: 0, justifyContent: 'space-between' }}
+              className="card-head"
+              style={{ padding: '20px 20px 14px', borderBottom: '1px solid var(--line)', marginBottom: 0 }}
             >
-              <div>
-                <h3 className="card-title">{tabs.find((t) => t.id === activeTab)?.label} · Full Ladder</h3>
+              <div style={{ width: '100%' }}>
+                <h3 className="card-title">{activeLabel} · Full ladder</h3>
                 <div className="card-sub">
-                  Sorted by {isTpts ? 'points' : sortBy === 'win_rate' ? 'win rate' : 'ELO'} · {ranked.length} of {players.length}
+                  Sorted by {isTpts ? 'points' : sortBy === 'win_rate' ? 'win rate' : 'ELO'} · {visible.length} of {players.length}
                 </div>
-                {/* One line, so a ladder with no Challenge column reads as an
+                {/* One line, so a ladder with no Challenge control reads as an
                     account state rather than a broken page. */}
                 <StandingNote standing={standing} activity="Challenges" style={{ marginTop: 6 }} />
-              </div>
-              {!isTpts && (
-                <div className="chips">
-                  {sortOptions.map((s) => (
-                    <button
-                      key={s.id}
-                      className={'filter-chip' + (sortBy === s.id ? ' active' : '')}
-                      onClick={() => setSortBy(s.id)}
-                      type="button"
-                    >
-                      {s.label}
-                    </button>
-                  ))}
+                {/* A row list has no <th> to say what "18–6 · 75% · W3" is. */}
+                <div className="ladder-key" style={{ marginTop: 10 }}>
+                  <span>#</span>
+                  <span>Player</span>
+                  <span className="right">{isTpts ? 'Points' : 'ELO · W–L · Win % · Streak'}</span>
                 </div>
-              )}
+              </div>
             </div>
-            {ranked.length === 0 ? (
+            {visible.length === 0 ? (
               <div className="empty">
                 <div className="empty-icon"><Trophy size={20} /></div>
                 <div className="empty-title">
@@ -356,101 +563,21 @@ export default function LeaderboardClient({
                 </div>
               </div>
             ) : (
-              <div className="scroll-fade-x" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-                <table className="data-table" style={{ minWidth: 680 }}>
-                  <thead>
-                    <tr>
-                      <th style={{ width: 56 }}>Rank</th>
-                      <th>Player</th>
-                      <th className="num" style={{ width: 80, textAlign: 'right' }}>{isTpts ? 'Pts' : 'ELO'}</th>
-                      {!isTpts && <th className="num" style={{ width: 110, textAlign: 'right' }}>W–L</th>}
-                      {!isTpts && <th className="num" style={{ width: 90, textAlign: 'right' }}>Win %</th>}
-                      {!isTpts && <th className="num" style={{ width: 90, textAlign: 'right' }}>Streak</th>}
-                      {standing.ok && <th style={{ width: 110 }} />}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ranked.map((p, i) => {
-                      const r = p.ratings;
-                      const elo = r ? (isDoubles ? r.doubles_elo : r.singles_elo) : (p._tournamentPoints ?? 0);
-                      const wins = r ? (isDoubles ? r.doubles_wins : r.singles_wins) : 0;
-                      const losses = r ? (isDoubles ? r.doubles_losses : r.singles_losses) : 0;
-                      const total = wins + losses;
-                      const streak = r ? (isDoubles ? r.current_doubles_streak : r.current_singles_streak) : 0;
-                      const prov = r ? (isDoubles ? r.doubles_provisional : r.singles_provisional) : false;
-                      const isMeRow = p.id === meId;
-
-                      return (
-                        <tr
-                          key={p.id}
-                          className={'row-hover' + (isMeRow ? ' me' : '')}
-                          onClick={() => { router.push(`/leaderboard/${p.id}`); }}
-                        >
-                          <td
-                            className="num"
-                            style={{
-                              fontSize: 16,
-                              fontWeight: 600,
-                              color:
-                                i === 0 ? 'var(--gold)'
-                                : i === 1 ? 'var(--silver)'
-                                : i === 2 ? 'var(--bronze)'
-                                : 'var(--ink)',
-                            }}
-                          >
-                            #{i + 1}
-                          </td>
-                          <td>
-                            <div className="row" style={{ gap: 12 }}>
-                              <AvatarChip name={p.full_name} id={p.id} src={p.avatar_url} size="sm" ring={isMeRow} />
-                              <div>
-                                <div style={{ fontWeight: 600, fontSize: 14 }}>{p.full_name}</div>
-                                {p.handle && (
-                                  <div className="mono muted" style={{ fontSize: 11 }}>@{p.handle}</div>
-                                )}
-                                {prov && (
-                                  <div className="mono muted" style={{ fontSize: 11 }}>Provisional</div>
-                                )}
-                              </div>
-                            </div>
-                          </td>
-                          <td className="num" style={{ fontWeight: 600, fontSize: 14, textAlign: 'right' }}>{elo}</td>
-                          {!isTpts && <td className="num muted" style={{ textAlign: 'right' }}>{wins}–{losses}</td>}
-                          {!isTpts && (
-                            <td className="num" style={{ textAlign: 'right' }}>
-                              {total > 0 ? getWinRate(wins, losses) : <span className="muted">—</span>}
-                            </td>
-                          )}
-                          {!isTpts && (
-                            <td className="num" style={{ textAlign: 'right' }}>
-                              {typeof streak === 'number' && streak !== 0 ? (
-                                <span style={{ color: streak > 0 ? 'var(--win)' : 'var(--loss)' }}>
-                                  {streak > 0 ? 'W' : 'L'}{Math.abs(streak)}
-                                </span>
-                              ) : (
-                                <span className="muted">—</span>
-                              )}
-                            </td>
-                          )}
-                          {standing.ok && (
-                            <td>
-                              <button
-                                className="btn btn-sm btn-ghost"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  router.push(`/challenges/new?opponent=${p.id}`);
-                                }}
-                                type="button"
-                              >
-                                <Crosshair size={12} /> Challenge
-                              </button>
-                            </td>
-                          )}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+              <div className="ladder-list">
+                {visible.map(({ player: p, rank }) => (
+                  <LadderRow
+                    key={p.id}
+                    player={p}
+                    rank={rank}
+                    isMe={p.id === meId}
+                    isDoubles={isDoubles}
+                    isTpts={isTpts}
+                    // Same gate as before. Your own row is excluded because
+                    // there is no such thing as challenging yourself.
+                    canChallenge={standing.ok && p.id !== meId}
+                    onChallenge={goChallenge}
+                  />
+                ))}
               </div>
             )}
           </div>
