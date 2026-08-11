@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Check, ChevronDown, Search } from 'lucide-react';
 import type { ScopeSeason } from './season-scope';
 
@@ -33,6 +33,7 @@ export function SeasonSelect({
   basePath: string;
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -68,7 +69,17 @@ export function SeasonSelect({
   function choose(s: ScopeSeason) {
     setOpen(false);
     setQuery('');
-    router.push(s.active_flag ? basePath : `${basePath}?season=${s.id}`);
+    // Change the season and NOTHING ELSE. Rebuilding the URL from basePath
+    // alone threw away every other query parameter: picking a season while
+    // reading /fees?tab=expenses dropped you back on the Club fees tab, and on
+    // /audit it cleared the filters that were the reason for looking.
+    // The active season is still the bare path, so the canonical URL for "now"
+    // has no ?season= on it.
+    const next = new URLSearchParams(searchParams?.toString() ?? '');
+    if (s.active_flag) next.delete('season');
+    else next.set('season', s.id);
+    const qs = next.toString();
+    router.push(qs ? `${basePath}?${qs}` : basePath);
   }
 
   function onKeyDown(e: React.KeyboardEvent) {

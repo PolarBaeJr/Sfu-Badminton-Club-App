@@ -139,6 +139,14 @@ export default async function FeesPage({
   const pageTitle = onlyExpenses ? 'Expenses' : 'Finances';
   const pageWatermark = onlyExpenses ? 'E' : 'F';
 
+  // A tab link keeps the season you are looking at. The two selectors on this
+  // page are independent — which ledger, and which term — and a tab href built
+  // from the path alone silently reset the second one, so opening Expenses
+  // while reading a finished term snapped you back to the current season and
+  // showed you a different set of numbers under the same heading.
+  const tabHref = (id: TabId) =>
+    params.season ? `/fees?tab=${id}&season=${encodeURIComponent(params.season)}` : `/fees?tab=${id}`;
+
   const supabase = createAdminClient();
 
   // Every season, so a finished term's books stay reachable. This page was
@@ -357,7 +365,7 @@ export default async function FeesPage({
         {visibleTabs.map((t) => (
           <Link
             key={t.id}
-            href={`/fees?tab=${t.id}`}
+            href={tabHref(t.id)}
             aria-current={tab === t.id ? 'page' : undefined}
             className={`px-5 min-h-[44px] whitespace-nowrap text-[11px] font-bold uppercase tracking-[0.1em] transition-colors flex items-center border-r border-[var(--border)] last:border-r-0 ${
               tab === t.id
