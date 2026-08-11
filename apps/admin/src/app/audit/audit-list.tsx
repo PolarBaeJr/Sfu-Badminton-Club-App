@@ -201,11 +201,18 @@ export function AuditList({
               <TableCard
                 key={log.id}
                 title={
-                  <span title={exact(log.created_at)}>
-                    <time dateTime={log.created_at} className="font-mono">
-                      {when(log.created_at)}
-                    </time>
-                  </span>
+                  <time
+                    dateTime={log.created_at}
+                    className="font-mono"
+                    // Both readings are formatted in the reader's timezone, and
+                    // the server prerenders this component in the container's —
+                    // UTC. The two disagree by design, so the client's answer is
+                    // the right one and React is told to take it rather than to
+                    // warn. `dateTime` carries the unambiguous instant either way.
+                    suppressHydrationWarning
+                  >
+                    {when(log.created_at)}
+                  </time>
                 }
                 badges={<Badge variant={actionTone(log.action_type)}>{actionLabel(log.action_type)}</Badge>}
                 fields={[
@@ -217,16 +224,29 @@ export function AuditList({
                     label: 'Officer',
                     value: log.actor?.full_name ?? 'System',
                   },
-                  // The exact timestamp gets its own field rather than a tooltip:
-                  // there is nothing to hover on a phone, and "2 days ago" alone
-                  // is not a record of when something happened.
-                  { label: 'Recorded', value: <Atomic separator=",">{exact(log.created_at)}</Atomic> },
                   {
                     label: 'Ref',
                     value: (
                       <Atomic className="font-mono text-xs text-[var(--text-muted)]">
                         {shortRef(log.id)}
                       </Atomic>
+                    ),
+                  },
+                  {
+                    // The exact timestamp gets its own field rather than a
+                    // tooltip: there is nothing to hover on a phone, and
+                    // "2 days ago" alone is not a record of when something
+                    // happened. Full width so it never has to wrap.
+                    label: 'Recorded',
+                    wide: true,
+                    value: (
+                      <time
+                        dateTime={log.created_at}
+                        className="whitespace-nowrap"
+                        suppressHydrationWarning
+                      >
+                        {exact(log.created_at)}
+                      </time>
                     ),
                   },
                   { label: 'Reason', wide: true, value: <Reason reason={log.reason} /> },
@@ -252,6 +272,7 @@ export function AuditList({
                         dateTime={log.created_at}
                         title={exact(log.created_at)}
                         className="font-mono text-xs text-[var(--text-secondary)]"
+                        suppressHydrationWarning
                       >
                         {when(log.created_at)}
                       </time>
