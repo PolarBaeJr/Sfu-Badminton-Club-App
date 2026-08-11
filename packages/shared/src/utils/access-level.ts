@@ -230,6 +230,11 @@ export const CAPABILITIES = [
   // field is managed — the roster and the check-in board — and because the
   // thing it gates is a fetch, not a page.
   'tournaments.draw.waivers.read',
+  // How many of this tournament's events each entrant has taken, and who is at
+  // the cap. A READ of tournament_participants and tournament_pairs folded into
+  // a per-player count, in the `draw` group for the same reason as the line
+  // above: it is read where the field is managed, and it gates a fetch.
+  'tournaments.draw.entrycounts.read',
   'tournaments.results.enter.write',
   'tournaments.results.walkover.write',
   'tournaments.results.void.write',
@@ -456,6 +461,10 @@ export const EXEC_BASELINE: readonly Capability[] = [
   // whose reason the officer at the door cannot see is a gate they will work
   // around. No predecessor: nothing read this table before.
   'tournaments.draw.waivers.read',
+  // Who is at the per-tournament event cap. An exec who adds entrants is the
+  // person the cap refuses, and a refusal they cannot see coming is one they
+  // will read as a bug. Same door as the waiver state, same answer.
+  'tournaments.draw.entrycounts.read',
   'tournaments.results.enter.write',
   'tournaments.results.walkover.write',
   'tournaments.results.void.write',
@@ -641,6 +650,9 @@ export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {
     // the tournaments job, and the officer who runs check-in is the one person
     // who has to see why an entrant was refused.
     'tournaments.draw.waivers.read',
+    // The entry cap is a tournament rule, so it lands in the tournaments job
+    // alongside every other thing that decides who is in a draw.
+    'tournaments.draw.entrycounts.read',
     'tournaments.results.enter.write',
     'tournaments.results.walkover.write',
     'tournaments.results.void.write',

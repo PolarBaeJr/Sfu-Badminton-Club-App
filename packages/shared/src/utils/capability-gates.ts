@@ -360,6 +360,10 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
     label: 'Who has signed the event waiver', area: 'tournaments', group: 'draw', mode: 'read',
     gate: 'app/tournaments/[id]/events/[eventId]/page.tsx event-waiver fetch',
   },
+  'tournaments.draw.entrycounts.read': {
+    label: 'How many events each entrant has taken', area: 'tournaments', group: 'draw', mode: 'read',
+    gate: 'app/tournaments/[id]/page.tsx entry-count fetch',
+  },
 
   // ---- tournaments · results ---------------------------------------------
   'tournaments.results.enter.write': {

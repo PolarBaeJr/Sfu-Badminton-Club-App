@@ -325,6 +325,11 @@ export interface Tournament {
   suspended_at: string | null;
   suspension_reason: string | null;
   waiver_text: string | null;
+  /**
+   * How many of this tournament's events one member may enter (00098).
+   * NULL is uncapped, and is the default — see utils/tournament-entry-cap.
+   */
+  max_events_per_player: number | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
