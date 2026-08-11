@@ -2705,3 +2705,310 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
 @media (min-width: 1024px) {
   .me-form-cell { width: 28px; height: 36px; }
 }
+
+/* ════════════════════════════════════════════════════════════
+   PLAYER TOURNAMENTS — THE INDEX SCREEN  (/tournaments)
+
+   Self-contained appended block. Every selector is prefixed `.ptourn-` so it
+   cannot collide with the blocks other screens are appending alongside it, and
+   nothing above this point is edited.
+
+   The screen is three things in one column on a phone: what is open, what you
+   are in, what you have done. On a laptop it borrows the house .wide-grid
+   (1.6fr / 1fr, gap 20px, align-items: start) from the WIDE LAYOUTS block
+   rather than declaring a second two-column grid — the river keeps the first
+   two, the rail takes the third plus the rest of the calendar. There is no
+   width-specific rule below except the one that widens the title, because the
+   composition is the same at every size; only the column count changes, and
+   .wide-grid already owns that.
+   ════════════════════════════════════════════════════════════ */
+
+/* ── Header ───────────────────────────────────────────────── */
+
+.ptourn-head { margin-bottom: 20px; }
+
+/* Not a chevron and not a button: the five-tab bar is the navigation, and this
+   is a label saying where you came from. Sized as a mono micro-cap so it reads
+   as furniture and never competes with the title under it. */
+.ptourn-back {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--mute);
+  margin-bottom: 10px;
+}
+.ptourn-back:hover { color: var(--ink-2); }
+
+.ptourn-title {
+  font-family: var(--display);
+  font-size: 38px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.03em;
+  margin: 0;
+}
+/* The house full stop. Red, and only ever after the title — it is the brand
+   mark at text size, not punctuation the sentence needs. */
+.ptourn-stop { color: var(--red); }
+
+.ptourn-sub {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  margin: 8px 0 0;
+  max-width: 46ch;
+}
+
+@media (min-width: 1101px) {
+  .ptourn-title { font-size: 46px; }
+}
+
+/* ── The river ────────────────────────────────────────────── */
+
+.ptourn-river {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+/* ── The open event ───────────────────────────────────────── */
+
+/* The 2px red spine is the whole reason this card is not a .card-base: it is
+   the one thing on the screen a member can act on, and the spine says so
+   without spending a second red button on a screen that already has one. */
+.ptourn-open {
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--red);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  padding: 18px;
+}
+/* Nothing to enter: the spine would be pointing at an absence. */
+.ptourn-open-empty { border-left-color: var(--line); }
+
+.ptourn-open-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.ptourn-eyebrow {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--red);
+}
+.ptourn-open-empty .ptourn-eyebrow { color: var(--mute); }
+
+.ptourn-open-name {
+  font-family: var(--display);
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -.02em;
+  margin: 0;
+}
+
+.ptourn-open-meta {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 8px 0 0;
+}
+
+/* Three figures, hairline above and hairlines between. Equal flex basis rather
+   than a grid so a two-cell fallback would still divide the width evenly if a
+   cell is ever dropped for want of data. */
+.ptourn-cells {
+  display: flex;
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  padding-top: 14px;
+}
+.ptourn-cell {
+  flex: 1;
+  min-width: 0;
+  padding-left: 14px;
+  border-left: 1px solid var(--line);
+}
+.ptourn-cell:first-child { padding-left: 0; border-left: 0; }
+
+.ptourn-cell-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--mute);
+}
+.ptourn-cell-value {
+  font-size: 22px;
+  line-height: 1.15;
+  margin-top: 5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 44px is the thumb target the player app's guidelines ask for, and this is the
+   one primary action on the screen. Full width because a phone's thumb should
+   not have to aim. */
+.ptourn-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 44px;
+  margin-top: 16px;
+  text-align: center;
+}
+
+/* ── Sections ─────────────────────────────────────────────── */
+
+.ptourn-sec { min-width: 0; }
+
+.ptourn-sec-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-bottom: 10px;
+}
+
+/* The sentence that says what an empty section MEANS. .wide-note supplies the
+   type; this only stops it sitting flush against the label above it. */
+.ptourn-empty { margin-top: 0; }
+
+/* ── An entry you are in ──────────────────────────────────── */
+
+.ptourn-entry {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  padding: 14px;
+}
+.ptourn-entry + .ptourn-entry { margin-top: 10px; }
+
+.ptourn-entry-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.ptourn-entry-head { min-width: 0; }
+
+.ptourn-entry-name {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.ptourn-entry-sub {
+  font-size: 10px;
+  letter-spacing: .1em;
+  color: var(--mute);
+  margin-top: 4px;
+}
+
+/* Hairline-topped, because the partner is a second fact about the same entry
+   rather than a new one. */
+.ptourn-partner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+.ptourn-partner-body { min-width: 0; }
+.ptourn-partner-name {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ptourn-partner-state {
+  font-size: 10px;
+  letter-spacing: .12em;
+  color: var(--mute);
+  margin-top: 3px;
+}
+
+/* ── Past results ─────────────────────────────────────────── */
+
+.ptourn-results { margin-top: 4px; }
+
+/* Hairline-separated rows, not cards: a result is one line of record and a
+   member reads a column of them at once. */
+.ptourn-result {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 0;
+  border-top: 1px solid var(--line);
+}
+.ptourn-result:first-child { border-top: 0; padding-top: 4px; }
+
+/* Fixed 38px so every placing in the column starts on the same vertical line —
+   the figures are the content here, and a ragged left edge makes them a list of
+   words instead. */
+.ptourn-place {
+  flex: 0 0 38px;
+  font-size: 18px;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.ptourn-result-body { flex: 1; min-width: 0; }
+.ptourn-result-name {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ptourn-result-sub {
+  font-size: 10px;
+  letter-spacing: .08em;
+  color: var(--mute);
+  margin-top: 3px;
+}
+
+.ptourn-swing {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── The rest of the calendar ─────────────────────────────── */
+
+.ptourn-also { margin-top: 4px; }
+
+/* ── Closing note ─────────────────────────────────────────── */
+
+/* Centred, quiet, and last. It explains why any of the numbers above matter,
+   which is a thing to read once and then never again — so it is sized to be
+   skipped. */
+.ptourn-note {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--dim);
+  text-align: center;
+  margin: 28px 0 0;
+}
