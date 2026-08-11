@@ -21,6 +21,13 @@ export interface AuditLogEntry {
   target_id: string | null;
   reason: string | null;
   actor: { full_name: string } | null;
+  /**
+   * The person the entry is ABOUT, resolved by the page for the rows whose
+   * target is a player. Absent for every other target type, and absent for a
+   * player row that no longer exists — a subject uuid with no name is still a
+   * complete entry and must still render.
+   */
+  subject?: { full_name: string; avatar_url: string | null } | null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -199,6 +206,10 @@ export function matchesQuery(log: AuditLogEntry, query: string): boolean {
       log.action_type,
       log.target_type ?? '',
       log.target_id ?? '',
+      // The subject's name, when the page resolved one. "What did we do to
+      // Aiko" is the second question anybody brings to an audit log, and
+      // without this it could only be answered by a uuid.
+      log.subject?.full_name ?? '',
       log.reason ?? '',
       log.id,
     ].join(' ')

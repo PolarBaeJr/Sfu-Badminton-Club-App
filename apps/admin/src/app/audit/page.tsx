@@ -88,6 +88,46 @@ export default async function AuditPage({
   }
 
   const { data: logs } = await query;
+  const rows = (logs ?? []) as AuditLogRow[];
+
+  // Put a NAME on the rows that are about a person.
+  //
+  // `target_id` is a bare uuid against a table named only by `target_type`, so
+  // there is no join that resolves all of them — but `player` is by far the
+  // commonest target and the one where the uuid is least use: "PLAYER BANNED /
+  // 4b1c2d3e" answers nothing anybody opens this page to ask. Only that one
+  // type is resolved; every other target keeps its type and short reference,
+  // which is all the schema actually knows.
+  //
+  // Chunked because this fetch is capped at 500-1000 rows and PostgREST puts
+  // `in=(…)` in the QUERY STRING: a few hundred uuids is a URL long enough to
+  // be truncated or refused by a proxy, and the failure is silent — missing
+  // names rather than an error.
+  const subjectIds = [
+    ...new Set(
+      rows
+        .filter((log) => log.target_type === 'player' && log.target_id)
+        .map((log) => log.target_id as string)
+    ),
+  ];
+  const chunks: string[][] = [];
+  for (let i = 0; i < subjectIds.length; i += 100) chunks.push(subjectIds.slice(i, i + 100));
+  const fetched = await Promise.all(
+    chunks.map((ids) => supabase.from('players').select('id, full_name, avatar_url').in('id', ids))
+  );
+  const subjects = new Map<string, { full_name: string; avatar_url: string | null }>();
+  for (const { data } of fetched) {
+    for (const player of data ?? []) {
+      subjects.set(player.id, { full_name: player.full_name, avatar_url: player.avatar_url });
+    }
+  }
+  // A player who has since been removed or merged away has no row to resolve.
+  // The entry stays exactly as it is, subject-less — deleting the person does
+  // not delete the record of what was done to them.
+  const withSubjects = rows.map((log) => ({
+    ...log,
+    subject: (log.target_id && subjects.get(log.target_id)) || null,
+  }));
 
   return (
     <div className="space-y-6">
@@ -102,7 +142,7 @@ export default async function AuditPage({
       />
 
       <AuditList
-        logs={(logs ?? []) as AuditLogRow[]}
+        logs={withSubjects}
         scopeLabel={scopeLabel}
         controls={
           // Rendered here and passed down so the whole control band is one row:

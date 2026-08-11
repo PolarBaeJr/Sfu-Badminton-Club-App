@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { Atomic, Badge, Card, EmptyState, ResponsiveTable, SearchFilter, Tabs, TableCard } from '@badminton/ui';
+import { Atomic, AvatarChip, Badge, Card, EmptyState, ResponsiveTable, SearchFilter, Tabs, TableCard } from '@badminton/ui';
 import { formatDateTime } from '@badminton/shared';
 import {
   ALL_GROUP,
@@ -35,6 +35,41 @@ function subjectLabel(targetType: string | null): string {
   if (!targetType) return 'System';
   const words = targetType.replace(/_/g, ' ');
   return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
+ * What the entry is ABOUT.
+ *
+ * A name and a face when the page could resolve one, and the target's type plus
+ * its short reference otherwise — which is everything the schema knows for the
+ * nineteen target types that are not players. The two forms sit in one column
+ * on purpose: the question is always "what was this done to", and splitting it
+ * by whether we happen to have a name would make the column two columns.
+ */
+function Subject({ log }: { log: AuditLogRow }) {
+  if (log.subject) {
+    return (
+      <span className="flex items-center gap-2">
+        <AvatarChip
+          name={log.subject.full_name}
+          src={log.subject.avatar_url}
+          id={log.target_id ?? undefined}
+          size="xs"
+        />
+        <span className="text-[var(--text-primary)]">{log.subject.full_name}</span>
+      </span>
+    );
+  }
+  return (
+    <span className="flex flex-wrap items-baseline gap-x-1.5">
+      <span>{subjectLabel(log.target_type)}</span>
+      {log.target_id && (
+        <span className="font-mono text-xs text-[var(--text-muted)]" title={log.target_id}>
+          {shortRef(log.target_id)}
+        </span>
+      )}
+    </span>
+  );
 }
 
 /**
@@ -174,19 +209,7 @@ export function AuditList({
                 }
                 badges={<Badge variant={actionTone(log.action_type)}>{actionLabel(log.action_type)}</Badge>}
                 fields={[
-                  {
-                    label: 'Subject',
-                    value: (
-                      <>
-                        {subjectLabel(log.target_type)}
-                        {log.target_id && (
-                          <span className="ml-1.5 font-mono text-xs text-[var(--text-muted)]">
-                            {shortRef(log.target_id)}
-                          </span>
-                        )}
-                      </>
-                    ),
-                  },
+                  { label: 'Subject', wide: true, value: <Subject log={log} /> },
                   {
                     // The phone card writes the officer out in full: there is no
                     // column width to fight for here, and the hover that reveals
@@ -237,15 +260,7 @@ export function AuditList({
                       <Badge variant={actionTone(log.action_type)}>{actionLabel(log.action_type)}</Badge>
                     </td>
                     <td className="px-4 py-3.5 align-top text-sm text-[var(--text-secondary)]">
-                      <span className="whitespace-nowrap">{subjectLabel(log.target_type)}</span>
-                      {log.target_id && (
-                        <span
-                          className="ml-1.5 font-mono text-xs text-[var(--text-muted)]"
-                          title={log.target_id}
-                        >
-                          {shortRef(log.target_id)}
-                        </span>
-                      )}
+                      <Subject log={log} />
                     </td>
                     <td className="whitespace-nowrap px-4 py-3.5 align-top">
                       {/* Abbreviated to keep the column narrow enough that Reason

@@ -219,6 +219,28 @@ describe('matchesQuery', () => {
   it('finds a row by its reference', () => {
     expect(matchesQuery(log, shortRef(log.id))).toBe(true);
   });
+
+  it('finds a row by the person it is about', () => {
+    const banned = entry({
+      action_type: 'player_banned',
+      actor: { full_name: 'Aiko Tanaka' },
+      subject: { full_name: 'Ravi Menon', avatar_url: null },
+      reason: 'Three no-shows in a term',
+    });
+    expect(matchesQuery(banned, 'ravi')).toBe(true);
+    expect(matchesQuery(banned, 'menon banned')).toBe(true);
+    // The officer and the subject are different people and stay distinguishable.
+    expect(matchesQuery(banned, 'aiko')).toBe(true);
+    expect(matchesQuery(banned, 'ravi tanaka menon')).toBe(true);
+  });
+
+  it('does not require a subject to have been resolved', () => {
+    // A player merged away leaves entries whose subject cannot be named. They
+    // are still searchable by everything else on the row.
+    const orphan = entry({ subject: null, reason: 'Corrected a mis-keyed score' });
+    expect(matchesQuery(orphan, 'mis-keyed')).toBe(true);
+    expect(matchesQuery(orphan, '')).toBe(true);
+  });
 });
 
 describe('sortLogs', () => {
