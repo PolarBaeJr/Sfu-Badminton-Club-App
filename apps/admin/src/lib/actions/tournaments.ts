@@ -27,6 +27,7 @@ export async function createTournament(data: {
   event_multiplier: number;
   placement_bonus_enabled: boolean;
   waiver_text?: string;
+  max_events_per_player?: number | null;
 }) {
   parseOrThrow(tournamentCreateSchema, data);
   const admin = await requireCapability('tournaments.manage.create.write');
@@ -53,6 +54,11 @@ export async function createTournament(data: {
     event_multiplier: data.event_multiplier,
     placement_bonus_enabled: data.placement_bonus_enabled,
     waiver_text: data.waiver_text?.trim() || null,
+    // undefined and null both mean uncapped, and both write NULL. `?? null`
+    // rather than a spread, because on the UPDATE path an omitted field has to
+    // CLEAR the cap — an exec emptying the box is removing the limit, and a
+    // spread would silently leave the old number in place.
+    max_events_per_player: data.max_events_per_player ?? null,
     status: 'draft',
     season_id: seasonId,
     created_by: admin.id,
@@ -133,6 +139,7 @@ export async function updateTournament(tournamentId: string, data: {
   event_multiplier: number;
   placement_bonus_enabled: boolean;
   waiver_text?: string;
+  max_events_per_player?: number | null;
 }) {
   const admin = await requireCapability('tournaments.manage.update.write');
   const adminClient = createAdminClient();
@@ -166,6 +173,11 @@ export async function updateTournament(tournamentId: string, data: {
     event_multiplier: data.event_multiplier,
     placement_bonus_enabled: data.placement_bonus_enabled,
     waiver_text: data.waiver_text?.trim() || null,
+    // undefined and null both mean uncapped, and both write NULL. `?? null`
+    // rather than a spread, because on the UPDATE path an omitted field has to
+    // CLEAR the cap — an exec emptying the box is removing the limit, and a
+    // spread would silently leave the old number in place.
+    max_events_per_player: data.max_events_per_player ?? null,
   }).eq('id', tournamentId);
 
   if (error) throw new Error(error.message);

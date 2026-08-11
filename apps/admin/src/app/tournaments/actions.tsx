@@ -20,6 +20,9 @@ export interface TournamentData {
   event_multiplier: number;
   placement_bonus_enabled: boolean;
   waiver_text: string | null;
+  // How many of this tournament's events one member may enter (00098).
+  // null is uncapped. Present on the page's `select('*')`.
+  max_events_per_player?: number | null;
   // Which season's waiver template this tournament's editor offers. Present on
   // the page's `select('*')`; declared here so the template lookup is typed.
   season_id?: string | null;
@@ -56,6 +59,12 @@ function TournamentFormDialog({
   const [eventMultiplier, setEventMultiplier] = useState(tournament?.event_multiplier ?? 1.15);
   const [placementBonus, setPlacementBonus] = useState(tournament?.placement_bonus_enabled ?? true);
   const [waiverText, setWaiverText] = useState(tournament?.waiver_text ?? '');
+  // Held as a STRING, not a number, because "" is a meaningful value here: it
+  // is how the exec says "no limit". A numeric state would have to pick some
+  // sentinel to stand for empty, and 0 is exactly the value the column refuses.
+  const [maxEventsPerPlayer, setMaxEventsPerPlayer] = useState(
+    tournament?.max_events_per_player != null ? String(tournament.max_events_per_player) : '',
+  );
   const [allowedMemberships, setAllowedMemberships] = useState<string[]>(
     (tournament as { allowed_memberships?: string[] } | undefined)?.allowed_memberships
       ?? ALL_MEMBERSHIP_TYPES,
@@ -88,6 +97,9 @@ function TournamentFormDialog({
         event_multiplier: eventMultiplier,
         placement_bonus_enabled: placementBonus,
         waiver_text: waiverText,
+        // Blank box -> null -> uncapped. Passed explicitly rather than omitted
+        // so that clearing the box on an existing tournament REMOVES the cap.
+        max_events_per_player: maxEventsPerPlayer.trim() ? Number(maxEventsPerPlayer) : null,
       };
       if (isEdit) {
         // EDITING THE WAIVER TEXT SILENTLY UN-SIGNS EVERYONE WHO ACCEPTED THE
@@ -222,6 +234,20 @@ function TournamentFormDialog({
           value={String(eventMultiplier)}
           onChange={(e) => setEventMultiplier(Number(e.target.value))}
         />
+        <div>
+          <Input
+            label="Max events per player (optional)"
+            type="number"
+            min={1}
+            value={maxEventsPerPlayer}
+            onChange={(e) => setMaxEventsPerPlayer(e.target.value)}
+          />
+          <p className="mt-1 text-xs text-[var(--text-muted)]">
+            Leave blank for no limit. Counts singles entries and doubles pairs
+            together, so entering a doubles event with a partner uses one of
+            these. Withdrawing frees it up again.
+          </p>
+        </div>
         <div className="flex items-center gap-3">
           <Switch checked={placementBonus} onChange={setPlacementBonus} />
           <span className="text-sm text-[var(--text-secondary)]">Enable placement bonuses</span>

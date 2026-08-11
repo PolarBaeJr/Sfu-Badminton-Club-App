@@ -2,7 +2,7 @@ import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { Card, Badge, PageHeader } from '@badminton/ui';
 import { TournamentCheckinQr } from './checkin-qr';
-import { formatDate, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS, describeMatchShape } from '@badminton/shared';
+import { formatDate, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS, describeMatchShape, loadTournamentEntryCounts } from '@badminton/shared';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Users, Calendar, Zap, Crown, Plus, Swords, DollarSign } from 'lucide-react';
 import Link from 'next/link';
@@ -18,6 +18,10 @@ export default async function TournamentDetailPage({ params }: { params: Promise
   // so ask for the read the linked PAGE requires rather than for a level.
   const viewer = await requireCapability('tournaments.page');
   const canSeeFees = permits(accessLevelFor(viewer), permissionsOf(viewer), 'tournaments.fees.read');
+  // Who is at the per-member event cap. Its own capability, and its own fetch —
+  // the entry-count read below is skipped entirely when this is false, so the
+  // gate withholds the query rather than only hiding its output.
+  const canSeeEntryCounts = permits(accessLevelFor(viewer), permissionsOf(viewer), 'tournaments.draw.entrycounts.read');
 
   const { data: tournament } = await supabase.from('tournaments').select('*').eq('id', id).single();
   if (!tournament) notFound();
@@ -52,6 +56,39 @@ export default async function TournamentDetailPage({ params }: { params: Promise
       }
     }
   }
+
+  // HOW MANY EVENTS EACH ENTRANT HAS TAKEN, and who is at the cap (00098).
+  //
+  // Behind its own capability, and the read is inside the `if` rather than the
+  // render — a gate that fetches and then hides has not withheld anything.
+  //
+  // Counted by the SAME function the four entry paths enforce with, so the
+  // number on this screen cannot disagree with the number that refuses an add.
+  // That is also why this does not reuse the `participantRows`/`pairRows` above:
+  // those are filtered `status != 'withdrawn'` only, which is the rule
+  // max_participants has always used, and folding the cap into them would put a
+  // number on screen that the actions do not enforce.
+  const entryCap = (tournament as { max_events_per_player?: number | null }).max_events_per_player ?? null;
+  let entrantCounts: { id: string; name: string; count: number }[] = [];
+  if (canSeeEntryCounts) {
+    const counts = await loadTournamentEntryCounts(supabase, id);
+    if (counts.size > 0) {
+      const { data: named } = await supabase
+        .from('players')
+        .select('id, full_name')
+        .in('id', [...counts.keys()]);
+      entrantCounts = [...counts.entries()]
+        .map(([playerId, count]) => ({
+          id: playerId,
+          name: named?.find((p) => p.id === playerId)?.full_name ?? 'Unknown',
+          count,
+        }))
+        // Busiest first: the reason an exec opens this is to find who is at or
+        // near the limit, and that is the top of the list rather than a scan.
+        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+    }
+  }
+  const atCap = entryCap === null ? [] : entrantCounts.filter((e) => e.count >= entryCap);
 
   // Player feedback for this tournament (attributed — the exec team moderates).
   const { data: feedback } = await supabase
@@ -175,6 +212,51 @@ export default async function TournamentDetailPage({ params }: { params: Promise
           </div>
         )}
       </div>
+
+      {/* Entries per member — the cap, and who has reached it. Rendered only
+          for a viewer holding tournaments.draw.entrycounts.read, and only once
+          somebody has actually entered something. */}
+      {canSeeEntryCounts && entrantCounts.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Users className="w-4 h-4 text-[var(--text-muted)]" />
+            <h2 className="text-lg font-semibold text-[var(--text-primary)]">
+              Entries per member <span className="text-[var(--text-muted)] font-normal">({entrantCounts.length})</span>
+            </h2>
+            {entryCap === null ? (
+              <Badge variant="neutral">No limit</Badge>
+            ) : (
+              <Badge variant="info">Limit {entryCap} per member</Badge>
+            )}
+            {atCap.length > 0 && (
+              <Badge variant="warning">{atCap.length} at the limit</Badge>
+            )}
+          </div>
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
+            <p className="text-xs text-[var(--text-muted)] mb-3">
+              Singles entries and doubles pairs counted together. Withdrawn and
+              disqualified entries are not counted, so leaving an event frees a place up.
+            </p>
+            <ul className="divide-y divide-[var(--border)]">
+              {entrantCounts.map((e) => {
+                const isAtCap = entryCap !== null && e.count >= entryCap;
+                return (
+                  <li key={e.id} className="flex items-center justify-between gap-3 py-2">
+                    <span className="text-sm text-[var(--text-primary)]">{e.name}</span>
+                    <span className="flex items-center gap-2">
+                      {isAtCap && <Badge variant="warning">At the limit</Badge>}
+                      <span className="font-mono text-sm text-[var(--text-secondary)]">
+                        {e.count}{entryCap !== null ? `/${entryCap}` : ''}
+                        <span className="sr-only"> {e.count === 1 ? 'event' : 'events'} entered</span>
+                      </span>
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        </div>
+      )}
 
       {/* Player feedback — attributed, for the exec team to review. */}
       <div className="space-y-3">
