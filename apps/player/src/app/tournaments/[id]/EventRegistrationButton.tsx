@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Dialog, LegalMarkdown, useConfirm } from '@badminton/ui';
+import { Button, Dialog, useConfirm } from '@badminton/ui';
+import { EventWaiverConsent } from './EventWaiverConsent';
 import { registerForEvent, withdrawFromEvent, selfCheckIn } from '@/lib/tournament-actions';
 import type { ActionResult } from '@/lib/actions/_shared';
 import { useToast } from '@/components/toast-provider';
@@ -83,18 +84,11 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
             </Button>
             <Dialog open={waiverOpen} onClose={() => setWaiverOpen(false)} title="Event waiver">
               <div className="space-y-4">
-                <div style={{ maxHeight: '50vh', overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 10, padding: 14 }}>
-                  <LegalMarkdown content={waiverText} />
-                </div>
-                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 13, lineHeight: 1.5, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={waiverAccepted}
-                    onChange={(e) => setWaiverAccepted(e.target.checked)}
-                    style={{ marginTop: 2, accentColor: 'var(--red)', flexShrink: 0 }}
-                  />
-                  <span>I have read and accept the event waiver.</span>
-                </label>
+                <EventWaiverConsent
+                  text={waiverText}
+                  accepted={waiverAccepted}
+                  onAcceptedChange={setWaiverAccepted}
+                />
                 <div className="flex items-center justify-between">
                   <Button variant="ghost" type="button" onClick={() => setWaiverOpen(false)}>Cancel</Button>
                   <Button

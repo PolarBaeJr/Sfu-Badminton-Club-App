@@ -1,4 +1,4 @@
-import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, createServiceRoleClient, getCurrentPlayer } from '@/lib/supabase-server';
 import {
   formatDate,
   isDoublesEvent,
@@ -7,7 +7,10 @@ import {
   TOURNAMENT_STATUS_TAG,
   hasTournamentEnded,
   getAccountStanding,
+  resolveEventWaiverText,
 } from '@badminton/shared';
+import { loadMyEventWaiver } from '@/lib/event-waiver';
+import { EventWaiverGate } from './EventWaiverGate';
 import { StandingNote } from '@/components/standing-notice';
 import type { TournamentEventType, TournamentEventStatus } from '@badminton/shared';
 import { notFound } from 'next/navigation';
@@ -15,6 +18,28 @@ import { Trophy, Users, Zap, ArrowLeft, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 import { EventRegistrationButton } from './EventRegistrationButton';
 import { FeedbackForm } from './feedback-form';
+
+/**
+ * Is this member half of a pair in any of these events?
+ *
+ * Its own function because the `.or()` is the easy thing to get wrong: a pair
+ * names its two members in separate columns, so a filter on one of them misses
+ * every entry where the member happens to be player2 — and would show no waiver
+ * demand to half the doubles field.
+ */
+async function hasPairEntry(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  eventIds: string[],
+  playerId: string,
+): Promise<boolean> {
+  const { data } = await supabase
+    .from('tournament_pairs')
+    .select('id')
+    .in('event_id', eventIds)
+    .or(`player1_id.eq.${playerId},player2_id.eq.${playerId}`)
+    .limit(1);
+  return (data?.length ?? 0) > 0;
+}
 
 export default async function TournamentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -55,6 +80,31 @@ export default async function TournamentDetailPage({ params }: { params: Promise
       .eq('player_id', currentPlayer.id)
       .maybeSingle();
     myFeedback = (fb as { rating: number | null; comment: string | null } | null) ?? null;
+  }
+
+  // ---------------------------------------------------------------------
+  // EVENT WAIVER — is this member entered here without having signed?
+  // ---------------------------------------------------------------------
+  // Only asked of somebody who is actually IN the tournament: the panel is a
+  // demand for a signature, and demanding one from a browsing member would be
+  // noise. BOTH disciplines are checked, because a doubles entrant has no
+  // tournament_participants row at all — they exist only as half of a pair,
+  // and pairs are created exclusively by an exec. That is the population this
+  // whole feature is about.
+  let waiverGate: { text: string; state: 'unsigned' | 'stale' } | null = null;
+  if (currentPlayer && resolveEventWaiverText(tournament)) {
+    const eventIds = (events ?? []).map((e) => e.id);
+    const entered = Object.keys(registrationMap).length > 0
+      || (eventIds.length > 0 && await hasPairEntry(supabase, eventIds, currentPlayer.id));
+    if (entered) {
+      // Service role: event_waiver_acceptances' SELECT policy admits a member's
+      // own rows, so the user client would work — but loadMyEventWaiver also
+      // hashes the text, which has to happen server-side either way.
+      const { text, status } = await loadMyEventWaiver(createServiceRoleClient(), id, currentPlayer.id);
+      if (text && (status.state === 'unsigned' || status.state === 'stale')) {
+        waiverGate = { text, state: status.state };
+      }
+    }
   }
 
   // The member's own standing — distinct from tournament.suspended_at, which is
@@ -121,6 +171,12 @@ export default async function TournamentDetailPage({ params }: { params: Promise
             {tournament.suspension_reason ? `: ${tournament.suspension_reason}` : ' until further notice.'}
           </p>
         </div>
+      )}
+
+      {/* Above the event list, so it is the first thing between the member and
+          the buttons they are about to be refused at. */}
+      {waiverGate && (
+        <EventWaiverGate tournamentId={id} text={waiverGate.text} state={waiverGate.state} />
       )}
 
       <div className="card-head" style={{ marginBottom: 14 }}>
