@@ -19,6 +19,7 @@ function line(over: Partial<FeeLine> = {}): FeeLine {
     kind: 'season',
     name: 'Term membership',
     owedCents: 4000,
+    recordedCents: 4000,
     paid: false,
     waived: false,
     paidAt: null,
@@ -161,6 +162,26 @@ describe('summariseFees', () => {
     expect(s.totalCents).toBe(4000);
     expect(s.unknownCount).toBe(1);
     expect(headlineAmount(s)).toBe('$40.00');
+  });
+
+  it('keeps a receipt’s recorded amount separate from a derived price', () => {
+    // A tournament fee marked paid with amount_cents null still has an owed
+    // figure — the default tier's list price. The receipt must not print that
+    // beside "PAID": nobody recorded taking it.
+    const s = summariseFees(
+      [
+        line({
+          kind: 'tournament',
+          owedCents: 1500,
+          recordedCents: null,
+          paid: true,
+          paidAt: '2026-02-01T20:00:00Z',
+        }),
+      ],
+      { exempt: false },
+    );
+    expect(money(s.receipts[0]!.recordedCents)).toBe('TBD');
+    expect(money(s.receipts[0]!.owedCents)).toBe('$15.00');
   });
 
   it('shows TBD when the only thing outstanding has no recorded price', () => {

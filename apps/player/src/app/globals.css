@@ -2882,13 +2882,18 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
 }
 
 /* --- the price list ----------------------------------------- */
+/* The spine is carried by EVERY row and only coloured on the member's own, so
+   the two rows keep one left edge. Declaring it on the marked row alone would
+   start its text 14px right of its neighbour's — two prices in a list that do
+   not line up read as a rendering fault. */
 .fees-price {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 14px;
-  padding: 12px 0;
+  padding: 12px 0 12px 12px;
   border-top: 1px solid var(--line);
+  border-left: 2px solid transparent;
 }
 /* The gap between the card's label and the first row. Keyed off the label
    rather than :first-of-type, which matches the first sibling of the same TAG —
@@ -2897,10 +2902,7 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
 /* The viewer's own tier. A red spine is how .news-pin already says "this is the
    one that concerns you"; no new colour, and it survives at a glance where a
    weight change would not. */
-.fees-price[data-mine="true"] {
-  border-left: 2px solid var(--red);
-  padding-left: 12px;
-}
+.fees-price[data-mine="true"] { border-left-color: var(--red); }
 .fees-price-main { min-width: 0; }
 .fees-price-name {
   display: flex;

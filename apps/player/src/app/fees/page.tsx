@@ -134,6 +134,7 @@ export default async function FeesPage() {
       // 0, so the figure correctly reads $0.00); before that, the season's
       // per-status price is what will be charged.
       owedCents: clubFee?.paid_at != null ? clubFee.amount_cents : seasonFeeCents,
+      recordedCents: clubFee?.amount_cents ?? null,
       paid,
       waived,
       paidAt: clubFee?.paid_at ?? null,
@@ -221,6 +222,7 @@ export default async function FeesPage() {
           kind: 'tournament',
           name: t.name,
           owedCents,
+          recordedCents: fee?.amount_cents ?? null,
           paid,
           waived,
           paidAt: fee?.paid_at ?? null,
@@ -253,6 +255,7 @@ export default async function FeesPage() {
       kind: 'reinstatement',
       name: 'Reinstatement fee',
       owedCents: r.amount_cents,
+      recordedCents: r.amount_cents,
       paid,
       waived,
       paidAt: r.paid_at,
@@ -370,7 +373,11 @@ export default async function FeesPage() {
                         </div>
                       </div>
                       <div className="fees-receipt-side">
-                        <div className="fees-receipt-amount">{money(l.owedCents)}</div>
+                        {/* recordedCents, not owedCents. A receipt states what
+                            the club recorded taking; owedCents can fall back to
+                            a tier's list price, and printing that beside "PAID"
+                            would assert a figure nobody entered. */}
+                        <div className="fees-receipt-amount">{money(l.recordedCents)}</div>
                         <div className={l.waived ? 'fees-receipt-state is-waived' : 'fees-receipt-state'}>
                           {l.waived ? 'WAIVED' : 'PAID'}
                         </div>

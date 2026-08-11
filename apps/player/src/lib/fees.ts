@@ -41,8 +41,17 @@ export interface FeeLine {
   kind: FeeKind;
   /** What the money is for, in the member's words. */
   name: string;
-  /** Cents owed, or null when nothing in the database records a price. */
+  /**
+   * Cents owed. May be derived — a tournament with no fee row falls back to its
+   * default tier's price — and is null when no source records one at all.
+   */
   owedCents: number | null;
+  /**
+   * The row's OWN amount_cents, never a fallback. What a receipt must print: a
+   * settled row whose amount was never filled in shows 'TBD' rather than a tier
+   * price the club may not actually have taken.
+   */
+  recordedCents: number | null;
   /** `paid_at` is set and the method is not the reserved 'waived'. */
   paid: boolean;
   /** `paid_at` is set and method === 'waived' — settled, but no money moved. */
