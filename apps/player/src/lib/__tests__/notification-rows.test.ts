@@ -6,6 +6,7 @@ import {
   notificationHeadline,
   notificationLabel,
   notificationTone,
+  summariseByKind,
   unreadEyebrow,
 } from '@/lib/notification-rows';
 
@@ -305,5 +306,56 @@ describe('unreadEyebrow', () => {
   it('says so when there is nothing to read', () => {
     expect(unreadEyebrow(0)).toBe('ALL CAUGHT UP');
     expect(unreadEyebrow(-1)).toBe('ALL CAUGHT UP');
+  });
+});
+
+describe('summariseByKind', () => {
+  it('counts each kind, commonest first', () => {
+    expect(
+      summariseByKind([
+        { kind: 'Session', tone: 'mute' },
+        { kind: 'Challenge', tone: 'red' },
+        { kind: 'Challenge', tone: 'red' },
+        { kind: 'Challenge', tone: 'red' },
+      ]),
+    ).toEqual([
+      { kind: 'Challenge', tone: 'red', count: 3 },
+      { kind: 'Session', tone: 'mute', count: 1 },
+    ]);
+  });
+
+  it('breaks ties alphabetically so the order is stable between renders', () => {
+    expect(
+      summariseByKind([
+        { kind: 'Tournament', tone: 'gold' },
+        { kind: 'Alert', tone: 'red' },
+        { kind: 'Result', tone: 'gold' },
+      ]).map((k) => k.kind),
+    ).toEqual(['Alert', 'Result', 'Tournament']);
+  });
+
+  it('mutes a kind whose rows disagree about tone rather than picking the first', () => {
+    // "Challenge" covers challenge_received (red) and challenge_accepted (win).
+    // Neither is the colour of the group.
+    expect(
+      summariseByKind([
+        { kind: 'Challenge', tone: 'red' },
+        { kind: 'Challenge', tone: 'win' },
+      ]),
+    ).toEqual([{ kind: 'Challenge', tone: 'mute', count: 2 }]);
+  });
+
+  it('keeps a unanimous tone however many rows share it', () => {
+    expect(
+      summariseByKind([
+        { kind: 'Tournament', tone: 'gold' },
+        { kind: 'Tournament', tone: 'gold' },
+        { kind: 'Tournament', tone: 'gold' },
+      ]),
+    ).toEqual([{ kind: 'Tournament', tone: 'gold', count: 3 }]);
+  });
+
+  it('summarises nothing as nothing', () => {
+    expect(summariseByKind([])).toEqual([]);
   });
 });

@@ -2386,3 +2386,155 @@ html, body { overflow-x: clip; }
    it, so the rule can no longer match; this releases the cap for
    any caller that still manages to. */
 .sched-wide > section:only-child { max-width: none; }
+
+/* ════════════════════════════════════════════════════════════
+   NOTIFICATIONS — THE DESKTOP COMPOSITION  (/notifications)
+
+   Self-contained appended block. It OVERRIDES the NOTIFICATIONS block above
+   rather than editing it: every selector here is the same specificity and
+   later in source order, so it wins, and nothing above has to move.
+
+   The bug it fixes. .page carries no max-width on purpose (--page-max: none),
+   so on a 2000px display the header ran the full 2000px — "5 UNREAD" and the
+   title at the far left, "MARK ALL READ" nineteen hundred pixels away — while
+   .notif-list was capped at 560px and pinned hard left underneath it. Header
+   and list sized independently, so they read as two different screens, and the
+   unread row's red spine ran down the edge of the VIEWPORT instead of the edge
+   of the list.
+
+   The fix is a measure on a container that holds both. .page's own comment
+   says as much: "If one page of prose ever reads too long, give THAT page a
+   measure — putting the cap back here decides it for the fixtures table and
+   the leaderboard as well." This is that page.
+
+   Everything below 981px is untouched. The phone layout is the design.
+   ════════════════════════════════════════════════════════════ */
+
+/* 1240px is chosen backwards from the river, not picked for roundness: inside
+   .page's 28px padding it leaves the notification column ~710px — a sentence
+   that is still one glance wide — and the aside ~445px. The extra 28px of
+   bottom padding puts the last row 56px clear of the tab bar. */
+@media (min-width: 981px) {
+  .notif-screen {
+    max-width: 1240px;
+    margin-inline: auto;
+    padding-bottom: 28px;
+  }
+}
+
+/* River beside a supporting column. The 1101px floor is .sched-wide's: below
+   it there is not room for both, and 981–1100px gets the capped single column,
+   which is a coherent thing to be. */
+.notif-wide { display: grid; gap: 20px; }
+@media (min-width: 1101px) {
+  .notif-wide {
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
+@media (min-width: 981px) {
+  /* The 560px cap is what pinned the list to the corner. The measure now comes
+     from .notif-screen, so the river simply fills the column it is given. */
+  .notif-list {
+    max-width: none;
+    --notif-gutter: 16px;
+  }
+  /* .notif-row bleeds itself out by one gutter so its surface reaches .page's
+     padding edge. Inside a grid column that bleed lands in the 20px gap and
+     under the aside, and the unread spine ends up outside the list it marks —
+     which is the reported bug at 60% scale. Zero the bleed so the spine sits
+     on the column's left edge. The gutter stays POSITIVE: .notif-row.unread's
+     padding-left is calc(var(--notif-gutter) - 2px) and must not go negative. */
+  .notif-row { margin-inline: 0; }
+  /* Follows the row's padding so the group label and the headlines beneath it
+     share one left edge instead of stepping. */
+  .notif-group { padding-left: var(--notif-gutter); }
+}
+
+/* The sticky .topbar is 14px + a 34px mark + 14px + a hairline ≈ 63px tall.
+   Without this the aside's jump links park a section heading underneath it. */
+.notif-section { scroll-margin-top: 84px; }
+
+/* A wide-screen affordance. Hidden rather than stacked below 1101px: on a
+   phone it would sit under fifty rows, indexing a list already scrolled past,
+   and the brief for this screen is that the phone must not change. */
+.notif-aside { display: none; }
+@media (min-width: 1101px) {
+  .notif-aside {
+    display: block;
+    /* Follows the river down. The index is only useful while there is still
+       list left to jump into. */
+    position: sticky;
+    top: 84px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    padding: 18px 18px 16px;
+  }
+}
+
+.notif-aside-head {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  padding-bottom: 6px;
+}
+/* Rules between the two breakdowns, and only between them — the first heading
+   already has the card's own edge above it. */
+.notif-index + .notif-aside-head {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.notif-index { list-style: none; margin: 0; padding: 0; }
+.notif-index-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  color: inherit;
+  text-decoration: none;
+}
+a.notif-index-row:hover .notif-index-label { color: var(--ink); }
+
+.notif-index-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--mute);
+}
+/* Numbers are the content in this app, so the count is the largest thing in
+   the row and set in --mono with tabular figures so the column lines up. */
+.notif-index-count {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  color: var(--ink);
+}
+
+/* The same four tokens the river's kind labels already use — no new colour on
+   this screen. A kind whose rows disagree about tone resolves to 'mute' in
+   summariseByKind() rather than picking one arbitrarily. */
+.notif-dot { width: 6px; height: 6px; flex: 0 0 auto; }
+.notif-dot[data-tone="red"]  { background: var(--red); }
+.notif-dot[data-tone="win"]  { background: var(--win); }
+.notif-dot[data-tone="gold"] { background: var(--gold); }
+.notif-dot[data-tone="mute"] { background: var(--mute); }
+
+.notif-aside-note {
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--mute);
+}
