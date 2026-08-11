@@ -108,7 +108,17 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
   if (toClaim.length > 0) {
     const { error } = await service
       .from('tournament_participants')
-      .update({ status: 'checked_in' })
+      // The TIMESTAMP as well as the status, because the console reads the
+      // timestamp. This wrote status alone, so a member who scanned the QR at
+      // the door was checked_in in the data and absent from the admin
+      // check-in board — the one screen an officer watches while a queue
+      // forms. `selfCheckIn` in tournament-actions.ts has always written both;
+      // this path was the outlier.
+      //
+      // No checked_in_by: nobody let them in. That column names the officer
+      // who did it, and a self-scan has none — filling it with the member's
+      // own id would read as an officer checking themselves in.
+      .update({ status: 'checked_in', checked_in_at: new Date().toISOString() })
       .in('id', toClaim)
       // Re-assert the precondition in the WHERE clause so two rapid scans
       // cannot both claim the same row.
