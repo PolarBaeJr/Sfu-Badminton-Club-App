@@ -248,6 +248,7 @@ export default async function DashboardPage() {
     { count: pendingWalkovers },
     { count: sessionsThisWeek },
     { count: matchesLogged },
+    { count: unsettledMatches },
     { count: activeTournaments },
     { count: activeChallenges },
     { data: pendingPlayersList },
@@ -294,6 +295,13 @@ export default async function DashboardPage() {
       ? (season
           ? supabase.from('matches').select('id', { count: 'exact', head: true }).eq('result_status', 'confirmed').eq('season_id', season.id)
           : supabase.from('matches').select('id', { count: 'exact', head: true }).eq('result_status', 'confirmed'))
+      : noCount,
+
+    // How many results are actually unsettled, which is NOT the length of the
+    // capped list of rows below — the card header prints the total and the
+    // table shows the six most recent of it.
+    showMatches
+      ? supabase.from('matches').select('id', { count: 'exact', head: true }).in('result_status', ['pending_confirmation', 'disputed'])
       : noCount,
 
     // ---- tournaments.page / challenges.page ------------------------------
@@ -490,7 +498,10 @@ export default async function DashboardPage() {
   ].filter(Boolean) as string[];
 
   // Where Review goes. Always a door this person can open, in the order the
-  // clauses are written, so the button never lands on /unauthorized.
+  // clauses are written, so the button never lands on /unauthorized. The
+  // /players fallback is the waiver clause's own door and is only reached when
+  // that clause is the band's only one — and it required players.read, which
+  // the resolver cannot grant without players.page.
   const reviewHref = canApprove && (pendingPlayers ?? 0) > 0
     ? '/players?tab=attention'
     : showDisputes && (openDisputes ?? 0) > 0
@@ -521,6 +532,14 @@ export default async function DashboardPage() {
 
   // Panels, decided before the grid so an empty column collapses rather than
   // leaving a 2fr gap beside a lone card.
+  //
+  // EVERY TERM HERE MUST ALWAYS DRAW SOMETHING. These are the same flags
+  // hasTiles is built from, so a term that can render nothing on a quiet day —
+  // a card gated on its data arriving rather than on the capability — would
+  // give a narrowed viewer hasTiles and a blank screen, which is the exact
+  // state the narrowed landing exists to prevent. That is why the approvals,
+  // results, tonight, joiners and net-position cards each render their own
+  // empty state instead of disappearing.
   const hasLeft = canApprove || showMatches;
   const hasRight = showSessions || canReadRoster || showTournaments || showChallenges || showFinances;
 
@@ -628,7 +647,11 @@ export default async function DashboardPage() {
                   <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
                     <h2 className={SECTION}>Pending approvals</h2>
                     <span className={MICRO}>
-                      {pendingPlayersList?.length ?? 0} waiting
+                      {/* The TRUE total, not the length of the capped list
+                          below it. The table shows the six most recent; a
+                          header reading "6 waiting" when twelve people are
+                          would be a figure that quietly contradicts /players. */}
+                      {pendingPlayers ?? 0} waiting
                     </span>
                   </div>
                   {pendingPlayersList && pendingPlayersList.length > 0 ? (
@@ -724,7 +747,7 @@ export default async function DashboardPage() {
                 <Card padding={false}>
                   <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
                     <h2 className={SECTION}>Awaiting confirmation</h2>
-                    <span className={MICRO}>{unconfirmedMatches?.length ?? 0} waiting</span>
+                    <span className={MICRO}>{unsettledMatches ?? 0} waiting</span>
                   </div>
                   {unconfirmedMatches && unconfirmedMatches.length > 0 ? (
                     <ResponsiveTable
@@ -938,24 +961,34 @@ export default async function DashboardPage() {
               )}
 
               {/* NET POSITION. In, out, and whether the club is in the
-                  positives — the question the club owner actually asks. */}
-              {showFinances && season && (
+                  positives — the question the club owner actually asks; income
+                  alone reads like good news no matter what has been spent.
+                  Rendered for the capability rather than for the season, so
+                  somebody whose only panel this is cannot be handed a blank
+                  page in the gap between two terms. */}
+              {showFinances && (
                 <Card padding={false}>
                   <div className="border-b border-[var(--border)] px-4 py-3">
-                    <h2 className={SECTION}>{season.name} · Net position</h2>
+                    <h2 className={SECTION}>{season ? `${season.name} · Net position` : 'Net position'}</h2>
                   </div>
-                  <Link href="/fees" className="block px-4 py-4 hover:bg-[var(--surface-2)] transition-colors">
-                    <p
-                      className={`font-mono text-[32px] font-bold leading-none tracking-tight ${
-                        seasonNetCents < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--color-success)]'
-                      }`}
-                    >
-                      <Atomic>{`${seasonNetCents < 0 ? '-' : ''}${money(seasonNetCents)}`}</Atomic>
+                  {season ? (
+                    <Link href="/fees" className="block px-4 py-4 hover:bg-[var(--surface-2)] transition-colors">
+                      <p
+                        className={`font-mono text-[32px] font-bold leading-none tracking-tight ${
+                          seasonNetCents < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--color-success)]'
+                        }`}
+                      >
+                        <Atomic>{`${seasonNetCents < 0 ? '-' : ''}${money(seasonNetCents)}`}</Atomic>
+                      </p>
+                      <p className={`mt-3 ${MICRO}`}>
+                        <Atomic>{money(seasonIncomeCents)}</Atomic> in · <Atomic>{money(seasonExpenseCents)}</Atomic> out
+                      </p>
+                    </Link>
+                  ) : (
+                    <p className="px-4 py-4 text-sm text-[var(--text-muted)]">
+                      No season is active, so there is nothing to add up yet.
                     </p>
-                    <p className={`mt-3 ${MICRO}`}>
-                      <Atomic>{money(seasonIncomeCents)}</Atomic> in · <Atomic>{money(seasonExpenseCents)}</Atomic> out
-                    </p>
-                  </Link>
+                  )}
                 </Card>
               )}
             </div>
@@ -1071,7 +1104,10 @@ function describeMatch(match: DashboardMatch) {
   const lead = participants.filter((p) => p.team_side === 'a').map(playerOf).find(Boolean) ?? null;
 
   const kindWords = [
-    match.match_type,
+    // 'singles' → 'Singles'. The desktop cell renders this uppercase, but the
+    // mobile TableCard field does not, and a lowercase word beside a Title Case
+    // one reads as a bug.
+    match.match_type.charAt(0).toUpperCase() + match.match_type.slice(1),
     EVENT_TYPE_LABELS[match.event_type as keyof typeof EVENT_TYPE_LABELS] ?? match.event_type,
   ];
 
