@@ -9,10 +9,12 @@ interface RouteErrorProps {
   reset: () => void;
 }
 
-/** Default error.tsx component for app routes. Renders a card-base
- * with a red-wash exclamation, the error message, and a reset button.
- * Auto-logs digest to console for triage; Sentry already auto-captures
- * server component errors. */
+/** Default error.tsx component for app routes. Renders a centred column — a
+ * red-wash exclamation disc, the error message, the digest and a reset button.
+ * No card: every style below is inline and there is no surface, border or
+ * .card-base anywhere in it. (The docstring used to claim a card-base, which
+ * is why this says so explicitly.) Auto-logs digest to console for triage;
+ * Sentry already auto-captures server component errors. */
 export function RouteError({ error, reset }: RouteErrorProps) {
   useEffect(() => {
     Sentry.captureException(error);

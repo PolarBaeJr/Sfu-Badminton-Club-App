@@ -58,7 +58,11 @@ export function SearchFilter({
 
   return (
     <div className={className}>
-      <div className="w-full pl-3 pr-2 min-h-[48px] flex items-center gap-2 bg-[var(--bg-surface)] border border-[var(--border)] rounded-[8px] transition-colors focus-within:ring-2 focus-within:ring-[var(--color-accent)] focus-within:border-transparent">
+      {/* rounded-[var(--r-control,8px)] — see the note in Input.tsx. This div
+          is the reason the radius had to become a token rather than a prop:
+          `className` lands on the wrapper above, nothing reaches here, so a
+          caller could not flatten it without editing this file. */}
+      <div className="w-full pl-3 pr-2 min-h-[48px] flex items-center gap-2 bg-[var(--bg-surface)] border border-[var(--border)] rounded-[var(--r-control,8px)] transition-colors focus-within:ring-2 focus-within:ring-[var(--color-accent)] focus-within:border-transparent">
         <Search aria-hidden="true" className="w-4 h-4 shrink-0 text-[var(--text-muted)]" />
         <input
           type="text"

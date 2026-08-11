@@ -100,9 +100,9 @@ export function RosterTable({ head, rows, tabs, total, initialQuery = '', note }
 
       {/* Zero padding: the table is full-bleed to the hairline, so the rows'
           own cell padding is the only inset and the header rule meets both
-          edges. rounded-none because the shared Card is rounded-xl and this
-          screen's radius is 0 everywhere but a dialog. */}
-      <Card padding={false} className="rounded-none">
+          edges. No rounded-none: Card's rounded-xl already compiles to 0 —
+          this app's tailwind.config.ts replaces the whole radius scale. */}
+      <Card padding={false}>
         {filtered.length === 0 ? (
           // Say what was searched. "No results" leaves the reader wondering
           // whether they mistyped or the row genuinely is not there.

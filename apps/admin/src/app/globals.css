@@ -109,6 +109,25 @@ input, textarea, select, button, a {
   --loss: var(--color-danger);
   --display: var(--font-display), ui-sans-serif, system-ui, sans-serif;
   --mono: var(--font-mono), ui-monospace, monospace;
+
+  /* Corner radius on shared form controls — Input, Textarea and the
+     SearchFilter field, which all carry rounded-[var(--r-control,8px)].
+     0 here, because this console is radius 0 outside dialog panels.
+
+     Why a token and not tailwind.config.ts: that config already zeroes the
+     whole NAMED radius scale (rounded-md, rounded-lg, rounded-xl … all
+     compile to 0 in both apps), but an ARBITRARY value like rounded-[8px]
+     bypasses the scale entirely, so those three controls were the last 8px
+     corners in the console and could not be reached from here at all.
+     SearchFilter's field in particular takes no className, so a caller could
+     not override it either.
+
+     The player app deliberately does NOT define this: it falls through to the
+     8px fallback baked into the class, which is exactly what it renders today.
+     Its own --r-sm/md/lg/xl are all 0, so those controls are arguably a
+     leftover there too — but flattening them is a player-side design decision
+     and not this token's business. */
+  --r-control: 0;
 }
 [data-theme="light"] { --surface-3: #eee; }
 

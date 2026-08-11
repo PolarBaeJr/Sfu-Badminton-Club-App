@@ -24,7 +24,10 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
           ref={ref}
           id={textareaId}
           className={cn(
-            'w-full px-3 py-3 bg-[var(--bg-surface)] border border-[var(--border)] rounded-[8px] text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent resize-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
+            // rounded-[var(--r-control,8px)] — see the note in Input.tsx. The
+            // console defines --r-control: 0; the player app leaves it unset
+            // and keeps the 8px fallback.
+            'w-full px-3 py-3 bg-[var(--bg-surface)] border border-[var(--border)] rounded-[var(--r-control,8px)] text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent resize-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
             error && 'border-[var(--color-danger)]',
             className
           )}

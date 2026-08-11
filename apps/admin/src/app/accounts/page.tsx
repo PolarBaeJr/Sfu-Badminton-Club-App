@@ -244,7 +244,7 @@ export default async function AccountsPage() {
               {/* The anchor lives on a wrapper because Card takes no id, and
                   packages/ui is not this change's to edit. */}
               <section id="officers" className="scroll-mt-32">
-              <Card className="rounded-none p-0">
+              <Card className="p-0">
                 <CardHeading
                   title="Officers"
                   sub="Everyone who can open this console."
@@ -358,7 +358,7 @@ export default async function AccountsPage() {
                   than out of a sentence somebody typed, and the one control on
                   it is a link to the screen that really does this. */}
               <section id="roles" className="scroll-mt-32">
-              <Card className="rounded-none">
+              <Card>
                 <CardHeading
                   title="What roles can do"
                   sub={
@@ -408,7 +408,7 @@ export default async function AccountsPage() {
           ) : (
             // WITHHELD, NOT EMPTY. A blank panel reads as broken; this says who
             // is not being shown what, and why.
-            <Card className="rounded-none">
+            <Card>
               <CardHeading title="Officers" />
               <p className="mt-3 text-[13px] text-[var(--mute)]">
                 The list of officers is not shown to you. It needs the Permissions section.
@@ -418,7 +418,7 @@ export default async function AccountsPage() {
 
           {showPlatformSettings && (
             <section id="account-rules" className="scroll-mt-32">
-              <Card className="rounded-none">
+              <Card>
                 <CardHeading
                   title="Account rules"
                   sub="What a member's account may do — challenges, match caps, no-shows, inactivity, check-in."
@@ -440,7 +440,7 @@ export default async function AccountsPage() {
                 the day permissions became composable, and never a hand-assembled
                 bundle like "can touch money", which drifts the moment a
                 capability is added. See officer-access.ts. */}
-            <Card className="rounded-none">
+            <Card>
               <CardHeading title="Access right now" />
               <div className="mt-4 flex items-baseline gap-3">
                 <span className="font-mono text-4xl leading-none text-[var(--ink)]">
@@ -476,7 +476,7 @@ export default async function AccountsPage() {
               )}
             </Card>
 
-            <Card className="rounded-none">
+            <Card>
               <CardHeading title="Last changed" />
               {lastChange ? (
                 <div className="mt-4">

@@ -22,7 +22,7 @@ interface SectionProps {
  * cards, /challenges sections, /settings groups, etc. */
 export function Section({ title, sub, trailing, flush, stack = true, id, className, children }: SectionProps) {
   return (
-    <div id={id} className={'card-base' + (flush ? '' : '') + (className ? ' ' + className : '')} style={flush ? { padding: 0, overflow: 'hidden' } : undefined}>
+    <div id={id} className={'card-base' + (className ? ' ' + className : '')} style={flush ? { padding: 0, overflow: 'hidden' } : undefined}>
       <div
         className="card-head"
         style={flush ? { padding: '20px 20px 14px', borderBottom: '1px solid var(--line)', marginBottom: 0 } : undefined}

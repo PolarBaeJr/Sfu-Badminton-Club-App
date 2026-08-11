@@ -414,7 +414,7 @@ export default async function PlayersPage({
       />
 
       {!canRead ? (
-        <Card className="rounded-none">
+        <Card>
           {/* "You may not see this" and "there is nothing to see" are different
               statements, and an empty roster is the one lie this page could
               tell that nobody would question — the club has members. */}
