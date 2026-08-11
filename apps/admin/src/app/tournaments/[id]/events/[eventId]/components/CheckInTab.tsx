@@ -39,10 +39,16 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
   async function handleCheckIn(id: string) {
     setLoading(id);
     try {
-      if (isDoubles) {
-        await checkInPair(id);
-      } else {
-        await checkInParticipant(id);
+      // ActionResult, not a throw. These two now refuse an entrant with no
+      // current event-waiver acceptance, and Next.js REDACTS an error thrown
+      // out of a server action in production — so the one message that tells
+      // the officer at the door what to do about it would arrive as "an error
+      // occurred". Returned as a value, it arrives intact.
+      const result = isDoubles ? await checkInPair(id) : await checkInParticipant(id);
+      if (!result.ok) {
+        toast(result.error, 'error');
+        setLoading(null);
+        return;
       }
       toast('Checked in', 'success');
       // No router.refresh() here. Every one of these actions ends in
@@ -73,8 +79,23 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
   async function handleBulkCheckIn() {
     setBulkLoading(true);
     try {
-      await bulkCheckIn(event.id, isDoubles ? 'pairs' : 'participants');
-      toast('All present participants checked in', 'success');
+      const result = await bulkCheckIn(event.id, isDoubles ? 'pairs' : 'participants');
+      if (!result.ok) {
+        toast(result.error, 'error');
+        setBulkLoading(false);
+        return;
+      }
+      // PARTIAL SUCCESS IS THE NORMAL CASE NOW, and it has to read as one. The
+      // action checks in everybody who may play and names the ones it could
+      // not, so a plain "all present participants checked in" would be a lie
+      // that leaves an unsigned entrant looking checked in to the exec who
+      // pressed the button.
+      const { checkedIn, skippedForWaiver } = result.data;
+      if (skippedForWaiver) {
+        toast(`${checkedIn} checked in. ${skippedForWaiver}`, 'error');
+      } else {
+        toast(`${checkedIn} checked in`, 'success');
+      }
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }

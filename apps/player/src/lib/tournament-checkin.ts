@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { CHECKIN_TOKEN_REGEX, ExpectedError } from '@badminton/shared';
 import { createServiceRoleClient } from './supabase-server';
+import { assertMyEventWaiverSigned } from './event-waiver';
 import { requirePlayer, assertCurrentWaiver, runAction, type ActionResult } from './actions/_shared';
 
 export interface TournamentCheckInResult {
@@ -60,6 +61,15 @@ async function checkInToTournamentImpl(token: string): Promise<TournamentCheckIn
       `This tournament is suspended${tournament.suspension_reason ? `: ${tournament.suspension_reason}` : ''}`,
     );
   }
+
+  // THE HARD BLOCK, on the third way in. One scan checks a member into every
+  // event they are entered in, and the waiver is per TOURNAMENT — so this is a
+  // single question asked once, before any of those rows move.
+  //
+  // Refusing the whole scan is right HERE and wrong in the exec's bulk button:
+  // this is one person, standing at the door, who can fix it themselves in the
+  // next ten seconds. Nobody else is held up behind them.
+  await assertMyEventWaiverSigned(service, tokenRow.tournament_id, player.id);
 
   // Every entry this player holds in the tournament, with its event's status.
   const { data: entries } = await service

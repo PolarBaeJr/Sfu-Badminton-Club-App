@@ -9,7 +9,7 @@ import {
   eventWaiverStateLabel,
   screenForEventWaiver,
   eventWaiverRefusal,
-  type EventWaiverAcceptance,
+  type AcceptedEventWaiver,
 } from '../event-waiver-eligibility';
 
 // ELIGIBILITY IS THE KIND OF LOGIC THAT MUST NOT BE WRONG IN EITHER DIRECTION.
@@ -23,7 +23,7 @@ const HASH_B = 'b'.repeat(64);
 
 const at = (iso: string) => `2026-08-${iso}T12:00:00.000Z`;
 
-function row(player_id: string, waiver_hash: string, day: string): EventWaiverAcceptance {
+function row(player_id: string, waiver_hash: string, day: string): AcceptedEventWaiver {
   return { player_id, waiver_hash, accepted_at: at(day) };
 }
 
@@ -152,7 +152,7 @@ describe('eventWaiverStatus', () => {
   // later cannot quietly default to eligible.
   it('lets exactly two states through', () => {
     const cases = [
-      { hash: null, rows: [] as EventWaiverAcceptance[], state: 'not_required', eligible: true },
+      { hash: null, rows: [] as AcceptedEventWaiver[], state: 'not_required', eligible: true },
       { hash: HASH_A, rows: [row('p1', HASH_A, '01')], state: 'signed', eligible: true },
       { hash: HASH_A, rows: [row('p1', HASH_B, '01')], state: 'stale', eligible: false },
       { hash: HASH_A, rows: [], state: 'unsigned', eligible: false },
@@ -284,7 +284,7 @@ describe('screenForEventWaiver', () => {
 // ---------------------------------------------------------------------------
 
 describe('eventWaiverRefusal', () => {
-  const screen = (entries: Parameters<typeof screenForEventWaiver>[0], rows: EventWaiverAcceptance[]) =>
+  const screen = (entries: Parameters<typeof screenForEventWaiver>[0], rows: AcceptedEventWaiver[]) =>
     eventWaiverRefusal(screenForEventWaiver(entries, HASH_A, rows).blocked);
 
   it('is empty when nothing is blocked', () => {

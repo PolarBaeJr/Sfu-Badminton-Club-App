@@ -12,6 +12,11 @@ import {
   ExpectedError,
 } from '@badminton/shared';
 import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
+import {
+  assertMyEventWaiverSigned,
+  loadMyEventWaiver,
+  recordEventWaiverAcceptance,
+} from './event-waiver';
 import { requirePlayer, assertCurrentWaiver, runAction, type ActionResult } from './actions/_shared';
 
 // Revalidate every surface that surfaces tournament_participants /
@@ -131,6 +136,71 @@ async function registerForEventImpl(eventId: string, opts?: { eventWaiverAccepte
   revalidateTournamentPaths(event.tournament_id, eventId);
 }
 
+/**
+ * Accept a tournament's event waiver on its own, outside registration.
+ *
+ * This is what closes the loop for somebody an EXEC added: they never went
+ * through registerForEvent, so nothing ever asked them. The tournament page
+ * shows them the text and this records the acceptance.
+ *
+ * IT IS THE MEMBER'S ACTION AND NOBODY ELSE'S. requirePlayer() reads the
+ * signed-in session, and the row is written for THAT player — there is no
+ * parameter for whose signature this is, deliberately, because a parameter is
+ * all an exec-facing wrapper would need to start recording signatures on other
+ * people's behalf.
+ *
+ * "Sign at the door" is therefore: the exec hands over a device the member is
+ * signed in on, and the member reads and accepts. Same action, same evidence,
+ * no proxy.
+ */
+export async function acceptEventWaiver(
+  tournamentId: string,
+  opts: { accepted: boolean },
+): Promise<ActionResult> {
+  return runAction(() => acceptEventWaiverImpl(tournamentId, opts));
+}
+
+async function acceptEventWaiverImpl(tournamentId: string, opts: { accepted: boolean }) {
+  const player = await requirePlayer();
+  const service = createServiceRoleClient();
+
+  // The tick box is a UI affordance and this is the server's copy of the same
+  // question. Without it, a request with the box unchecked records agreement.
+  if (!opts.accepted) throw new ExpectedError('Tick the box to accept the event waiver.');
+
+  const { text, status } = await loadMyEventWaiver(service, tournamentId, player.id);
+  if (!text) throw new ExpectedError('This tournament has no event waiver to accept.');
+  // Idempotent by the unique index anyway; saying so is friendlier than a
+  // silent no-op that looks like the button did nothing.
+  if (status.state === 'signed') return;
+
+  // ENTRANTS ONLY. An acceptance from somebody who is not in the tournament is
+  // evidence of nothing and would sit in the table forever. Checked across both
+  // disciplines because a doubles entrant has no tournament_participants row at
+  // all — they exist only as half of a pair, which is exactly the population
+  // this feature was built for.
+  const [singles, pairs] = await Promise.all([
+    service.from('tournament_participants')
+      .select('id, event:tournament_events!inner(tournament_id)')
+      .eq('player_id', player.id)
+      .eq('tournament_events.tournament_id', tournamentId)
+      .limit(1),
+    service.from('tournament_pairs')
+      .select('id, event:tournament_events!inner(tournament_id)')
+      .or(`player1_id.eq.${player.id},player2_id.eq.${player.id}`)
+      .eq('tournament_events.tournament_id', tournamentId)
+      .limit(1),
+  ]);
+  if ((singles.data?.length ?? 0) === 0 && (pairs.data?.length ?? 0) === 0) {
+    throw new ExpectedError('You are not entered in this tournament, so there is nothing to accept yet.');
+  }
+
+  await recordEventWaiverAcceptance(service, tournamentId, player.id, text);
+
+  revalidatePath('/tournaments');
+  revalidatePath(`/tournaments/${tournamentId}`);
+}
+
 export async function withdrawFromEvent(eventId: string): Promise<ActionResult> {
   return runAction(() => withdrawFromEventImpl(eventId));
 }
@@ -202,6 +272,13 @@ async function selfCheckInImpl(eventId: string) {
   if (!event || event.status !== 'checkin') throw new Error('Check-in is not open');
   if (!participant) throw new Error('Not registered');
   if (participant.status !== 'registered') throw new Error('Cannot check in');
+
+  // THE HARD BLOCK, on the member's own route in. An exec who added them never
+  // asked for the event waiver — that is the whole gap — so this is the point
+  // where being on the sheet stops being enough. registerForEvent already
+  // refuses without an acceptance, but an admin-added entrant never went
+  // through it, and an edited waiver un-signs somebody who did.
+  await assertMyEventWaiverSigned(service, event.tournament_id, player.id);
 
   const { error } = await service.from('tournament_participants')
     .update({ status: 'checked_in', checked_in_at: new Date().toISOString() })

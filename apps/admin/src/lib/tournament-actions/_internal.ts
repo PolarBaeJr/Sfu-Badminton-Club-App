@@ -18,8 +18,14 @@ import {
   forfeitOutcome,
   OPEN_MATCH_STATUSES,
   sortStandings,
+  resolveEventWaiverText,
+  screenForEventWaiver,
+  eventWaiverRefusal,
   ExpectedError,
 } from '@badminton/shared';
+// By SUBPATH, never through the barrel — eventWaiverHash uses node:crypto and
+// the barrel is imported by client components in both apps.
+import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
 import type {
   TournamentEventType,
   TournamentMatchFormat,
@@ -27,6 +33,8 @@ import type {
   RatingSettings,
   SeedBy,
   EventMatchShape,
+  AcceptedEventWaiver,
+  EventWaiverEntry,
 } from '@badminton/shared';
 
 // The tournament engine rates matches in TypeScript while challenges are rated
@@ -163,6 +171,111 @@ export async function assertTournamentNotSuspended(
     const reason = data.suspension_reason;
     throw new Error(`Tournament is suspended${reason ? `: ${reason}` : ''}. Resume it to continue.`);
   }
+}
+
+// ============================================================
+// Event waivers — the hard block on taking part
+// ============================================================
+// An exec may add anybody to a tournament; that is deliberate and unchanged,
+// because somebody joining on the morning of an event has to be able to get
+// onto the sheet. What they may not do is PLAY without having accepted the
+// tournament's event waiver, and check-in is where that is enforced.
+//
+// WHY THIS READ IS NOT GATED ON `tournaments.draw.waivers.read`. That capability
+// gates the roster's DISPLAY of waiver state — an exec looking up who has
+// signed. This is the enforcement read, run by check-in itself on the way to
+// deciding whether a write is allowed at all. Gating enforcement on a
+// display permission would mean an officer who lacks that permission could
+// check in unsigned entrants, which is precisely backwards: the narrower
+// somebody's access, the MORE the rule would relax.
+
+/** Everything the screening needs, loaded once for a whole tournament. */
+export interface TournamentWaiverContext {
+  /** null when this tournament has no waiver — every entry then passes. */
+  requiredHash: string | null;
+  acceptances: AcceptedEventWaiver[];
+}
+
+/**
+ * Load a tournament's waiver requirement and every acceptance recorded against
+ * it, in two reads, regardless of how many entrants are being screened.
+ *
+ * A FAILED READ IS NOT "NOBODY SIGNED". Treating an error as an empty
+ * acceptance list would refuse an entire field at the door because Postgres
+ * hiccuped, so it throws and the caller reports that nothing was changed. The
+ * opposite default — treating an error as "no waiver required" — would be worse
+ * still: it would silently disable the gate.
+ */
+export async function loadTournamentWaiverContext(
+  adminClient: ReturnType<typeof createAdminClient>,
+  tournamentId: string,
+): Promise<TournamentWaiverContext> {
+  const { data: tournament, error: tournamentError } = await adminClient
+    .from('tournaments')
+    .select('waiver_text')
+    .eq('id', tournamentId)
+    .maybeSingle();
+  if (tournamentError) {
+    Sentry.captureException(tournamentError);
+    throw new Error('Could not check this tournament’s event waiver. Nothing was changed — try again.');
+  }
+
+  const text = resolveEventWaiverText(tournament);
+  if (!text) return { requiredHash: null, acceptances: [] };
+
+  // The hash is always taken from the SERVER's copy of the text, never from
+  // anything a client sent — the same rule registerForEvent follows.
+  const requiredHash = eventWaiverHash(text);
+
+  const { data: acceptances, error: acceptancesError } = await adminClient
+    .from('event_waiver_acceptances')
+    .select('player_id, waiver_hash, accepted_at')
+    .eq('tournament_id', tournamentId);
+  if (acceptancesError) {
+    Sentry.captureException(acceptancesError);
+    throw new Error('Could not check who has signed the event waiver. Nothing was changed — try again.');
+  }
+
+  return { requiredHash, acceptances: (acceptances ?? []) as AcceptedEventWaiver[] };
+}
+
+/**
+ * Refuse outright — for the paths that check in exactly ONE entry, where there
+ * is nothing to partition and the exec pressed a button next to a name.
+ */
+export async function assertEventWaiverSigned(
+  adminClient: ReturnType<typeof createAdminClient>,
+  tournamentId: string,
+  entry: EventWaiverEntry,
+): Promise<void> {
+  const { requiredHash, acceptances } = await loadTournamentWaiverContext(adminClient, tournamentId);
+  const { blocked } = screenForEventWaiver([entry], requiredHash, acceptances);
+  // ExpectedError, not Error: Next.js redacts errors thrown out of a server
+  // action in production, and a redacted message at the check-in desk is the
+  // unexplained refusal this whole design is trying not to create.
+  if (blocked.length > 0) throw new ExpectedError(eventWaiverRefusal(blocked));
+}
+
+/**
+ * The members of a pair, in a shape screenForEventWaiver understands, from the
+ * embedded player rows the pair selects already carry. Falls back to the id so
+ * a missing name degrades to something unhelpful rather than to a crash — the
+ * refusal still names two distinct people.
+ */
+export function pairWaiverMembers(pair: {
+  player1_id: string;
+  player2_id: string;
+  player1?: { full_name?: string | null } | { full_name?: string | null }[] | null;
+  player2?: { full_name?: string | null } | { full_name?: string | null }[] | null;
+}): { id: string; name: string }[] {
+  const name = (embed: unknown, fallback: string) => {
+    const row = Array.isArray(embed) ? embed[0] : embed;
+    return (row as { full_name?: string | null } | null)?.full_name || fallback;
+  };
+  return [
+    { id: pair.player1_id, name: name(pair.player1, pair.player1_id) },
+    { id: pair.player2_id, name: name(pair.player2, pair.player2_id) },
+  ];
 }
 
 // Map tournament match format to the shared elo engine's MatchFormat

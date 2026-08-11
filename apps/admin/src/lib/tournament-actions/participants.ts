@@ -3,7 +3,15 @@
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
-import { calculateTeamRating, ensureEntryFees, isDoublesEvent, eventHasDraw, ExpectedError } from '@badminton/shared';
+import {
+  calculateTeamRating,
+  ensureEntryFees,
+  isDoublesEvent,
+  eventHasDraw,
+  screenForEventWaiver,
+  eventWaiverRefusal,
+  ExpectedError,
+} from '@badminton/shared';
 import { runAction, type ActionResult } from '../action-result';
 import {
   requireCapability,
@@ -12,10 +20,21 @@ import {
   participantContextSelect,
   pairContextSelect,
   assertTournamentNotSuspended,
+  assertEventWaiverSigned,
+  loadTournamentWaiverContext,
+  pairWaiverMembers,
   forfeitOpenMatchesForEntry,
   FORFEIT_REASON,
   type DrawExitStatus,
 } from './_internal';
+
+// Supabase returns a to-one embed as object-or-array depending on how it
+// inferred the relationship. Unwrap defensively — the whole reason this matters
+// is that a name is what the refusal message is FOR.
+function pickName(embed: unknown): string | null {
+  const row = Array.isArray(embed) ? embed[0] : embed;
+  return (row as { full_name?: string | null } | null)?.full_name ?? null;
+}
 
 // ============================================================
 // Singles Participant Management
@@ -343,12 +362,16 @@ export async function removeParticipantFromEvent(participantId: string) {
   revalidateEventPaths(event.tournament_id as string, participant.event_id as string);
 }
 
-export async function checkInParticipant(participantId: string) {
+export async function checkInParticipant(participantId: string): Promise<ActionResult> {
+  return runAction(() => checkInParticipantImpl(participantId));
+}
+
+async function checkInParticipantImpl(participantId: string) {
   const admin = await requireCapability('tournaments.draw.checkin.mark.write');
   const adminClient = createAdminClient();
 
   const { data: participant } = await adminClient.from('tournament_participants')
-    .select(participantContextSelect)
+    .select(`${participantContextSelect}, player_id, player:players!player_id(full_name)`)
     .eq('id', participantId)
     .single();
 
@@ -360,6 +383,17 @@ export async function checkInParticipant(participantId: string) {
   const participantCtx = extractEventContext(participant);
   if (!participantCtx) throw new Error('Could not read this participant. Nothing was changed — try again.');
   await assertTournamentNotSuspended(adminClient, participantCtx.tid);
+
+  // THE HARD BLOCK. Adding somebody stays permissive; taking part does not.
+  // Deliberately BEFORE the update, so a refused check-in leaves no trace of a
+  // check-in that did not happen.
+  await assertEventWaiverSigned(adminClient, participantCtx.tid, {
+    id: participantId,
+    members: [{
+      id: participant!.player_id as string,
+      name: pickName(participant!.player) ?? 'This player',
+    }],
+  });
 
   const { error } = await adminClient.from('tournament_participants')
     .update({
@@ -642,17 +676,36 @@ export async function removePairFromEvent(pairId: string) {
   revalidateEventPaths(event.tournament_id as string, pair.event_id as string);
 }
 
-export async function checkInPair(pairId: string) {
+export async function checkInPair(pairId: string): Promise<ActionResult> {
+  return runAction(() => checkInPairImpl(pairId));
+}
+
+async function checkInPairImpl(pairId: string) {
   const admin = await requireCapability('tournaments.draw.checkin.mark.write');
   const adminClient = createAdminClient();
 
   const { data: pair } = await adminClient.from('tournament_pairs')
-    .select(pairContextSelect)
+    .select(`${pairContextSelect}, player1_id, player2_id, player1:players!tournament_pairs_player1_id_fkey(full_name), player2:players!tournament_pairs_player2_id_fkey(full_name)`)
     .eq('id', pairId)
     .single();
 
   const pairCtx = extractEventContext(pair);
   if (pairCtx) await assertTournamentNotSuspended(adminClient, pairCtx.tid);
+
+  // BOTH HALVES, OR NEITHER. A pair with one signature is not half-eligible: the
+  // unsigned partner would be on court. The refusal names only the half at
+  // fault, so the exec knows whose phone to point at rather than being told the
+  // team is broken.
+  //
+  // Unlike the singles path this cannot proceed without context, because
+  // without a tournament id there is nothing to screen against — and a
+  // check-in that silently skipped the gate is the one outcome that must not
+  // be possible.
+  if (!pairCtx) throw new Error('Could not read this pair. Nothing was changed — try again.');
+  await assertEventWaiverSigned(adminClient, pairCtx.tid, {
+    id: pairId,
+    members: pairWaiverMembers(pair as never),
+  });
 
   const { data, error } = await adminClient.from('tournament_pairs')
     .update({
@@ -713,7 +766,24 @@ export async function markPairNoShow(pairId: string) {
 // Bulk check-in
 // ============================================================
 
-export async function bulkCheckIn(eventId: string, type: 'participants' | 'pairs') {
+/** What "Check In All Present" reports back when it could not take everybody. */
+export interface BulkCheckInResult {
+  checkedIn: number;
+  /** Empty when the whole field went through. The sentence names the people. */
+  skippedForWaiver: string;
+}
+
+export async function bulkCheckIn(
+  eventId: string,
+  type: 'participants' | 'pairs',
+): Promise<ActionResult<BulkCheckInResult>> {
+  return runAction(() => bulkCheckInImpl(eventId, type));
+}
+
+async function bulkCheckInImpl(
+  eventId: string,
+  type: 'participants' | 'pairs',
+): Promise<BulkCheckInResult> {
   const admin = await requireCapability('tournaments.draw.checkin.mark.write');
   const adminClient = createAdminClient();
 
@@ -727,7 +797,57 @@ export async function bulkCheckIn(eventId: string, type: 'participants' | 'pairs
   if (!event) throw new Error('Could not read this event. Nobody was checked in — try again.');
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
-  const { error } = await adminClient.from(table)
+  // PARTITION, DO NOT REFUSE WHOLE. This is the button an exec presses with a
+  // room full of people in front of them. Failing the whole press because one
+  // entrant has not signed would hold up everybody else — the queue at the door
+  // this feature exists to prevent, caused by the feature itself. So the ones
+  // who may play are checked in, and the ones who may not are named.
+  const { requiredHash, acceptances } = await loadTournamentWaiverContext(adminClient, event.tournament_id);
+
+  let idsToCheckIn: string[] | null = null;
+  let skippedForWaiver = '';
+
+  if (requiredHash) {
+    const { data: waiting, error: waitingError } = type === 'pairs'
+      ? await adminClient.from('tournament_pairs')
+        .select('id, player1_id, player2_id, player1:players!tournament_pairs_player1_id_fkey(full_name), player2:players!tournament_pairs_player2_id_fkey(full_name)')
+        .eq('event_id', eventId).eq('status', 'registered')
+      : await adminClient.from('tournament_participants')
+        .select('id, player_id, player:players!player_id(full_name)')
+        .eq('event_id', eventId).eq('status', 'registered');
+    // A failed read here must not read as "nobody is waiting" — that would
+    // check in zero people and report success — nor may it be allowed to skip
+    // the gate. Refuse and say nothing happened.
+    if (waitingError) {
+      Sentry.captureException(waitingError);
+      throw new Error('Could not check who has signed the event waiver. Nobody was checked in — try again.');
+    }
+
+    const entries = (waiting ?? []).map((row) => {
+      const r = row as Record<string, unknown>;
+      return {
+        id: r.id as string,
+        members: type === 'pairs'
+          ? pairWaiverMembers(r as never)
+          : [{ id: r.player_id as string, name: pickName(r.player) ?? 'This player' }],
+      };
+    });
+
+    const screening = screenForEventWaiver(entries, requiredHash, acceptances);
+    idsToCheckIn = screening.allowed;
+    skippedForWaiver = eventWaiverRefusal(screening.blocked);
+
+    if (idsToCheckIn.length === 0) {
+      // Nothing to write. Still not an error: the exec asked a reasonable
+      // question and gets the reason, not a failure.
+      if (skippedForWaiver) throw new ExpectedError(skippedForWaiver);
+      return { checkedIn: 0, skippedForWaiver: '' };
+    }
+  }
+
+  // No waiver on this tournament → the original single-statement update, over
+  // the whole field, exactly as before.
+  let query = adminClient.from(table)
     .update({
       status: 'checked_in',
       checked_in_at: new Date().toISOString(),
@@ -735,6 +855,9 @@ export async function bulkCheckIn(eventId: string, type: 'participants' | 'pairs
     })
     .eq('event_id', eventId)
     .eq('status', 'registered');
+  if (idsToCheckIn) query = query.in('id', idsToCheckIn);
+
+  const { data: updated, error } = await query.select('id');
 
   if (error) {
     Sentry.captureException(error);
@@ -742,4 +865,5 @@ export async function bulkCheckIn(eventId: string, type: 'participants' | 'pairs
   }
 
   revalidateEventPaths(event.tournament_id, eventId);
+  return { checkedIn: (updated ?? []).length, skippedForWaiver };
 }

@@ -46,8 +46,12 @@ export type EventWaiverState =
   /** No acceptance of any wording, ever. */
   | 'unsigned';
 
-/** The shape this module needs off an `event_waiver_acceptances` row. */
-export interface EventWaiverAcceptance {
+// The minimal shape these rules read off an `event_waiver_acceptances` row.
+// NOT named `EventWaiverAcceptance` — that name is already the full row type in
+// ./types/database, and this is deliberately narrower so a caller can pass a
+// projected select (three columns, not six) without a cast. The real row is
+// structurally compatible, so passing one works.
+export interface AcceptedEventWaiver {
   player_id: string;
   waiver_hash: string;
   accepted_at: string;
@@ -116,7 +120,7 @@ export function eventWaiverRequired(
 export function eventWaiverStatus(
   playerId: string,
   requiredHash: string | null,
-  acceptances: readonly EventWaiverAcceptance[],
+  acceptances: readonly AcceptedEventWaiver[],
 ): EventWaiverStatus {
   if (!requiredHash) return NOT_REQUIRED;
 
@@ -231,7 +235,7 @@ export interface EventWaiverScreening {
 export function screenForEventWaiver(
   entries: readonly EventWaiverEntry[],
   requiredHash: string | null,
-  acceptances: readonly EventWaiverAcceptance[],
+  acceptances: readonly AcceptedEventWaiver[],
 ): EventWaiverScreening {
   if (!requiredHash) return { allowed: entries.map((e) => e.id), blocked: [] };
 
