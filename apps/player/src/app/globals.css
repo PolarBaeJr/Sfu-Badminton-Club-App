@@ -794,6 +794,19 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
    content, two arrangements; nothing appears or disappears with width.
    ═══════════════════════════════════════════════════════════ */
 
+/* Upcoming beside past on a wide screen, stacked everywhere else. The 1101px
+   floor is where .grid-12 drops to six columns; below it there is not enough
+   room for a rail AND a side column, and the phone order (what's next, then
+   what's finished) is the right one anyway. */
+.sched-wide { display: grid; gap: 20px; }
+@media (min-width: 1101px) {
+  .sched-wide { grid-template-columns: minmax(0, 2.4fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+  /* A member in their first week has no past sessions yet. Rather than leave
+     the side column as a bare gap, the schedule takes the full width back and
+     keeps a measure of its own. */
+  .sched-wide > section:only-child { grid-column: 1 / -1; max-width: 1100px; }
+}
+
 .sched-day { display: grid; grid-template-columns: 132px 1fr; gap: 24px; align-items: start; }
 .sched-day + .sched-day { margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--line); }
 .sched-day-label {

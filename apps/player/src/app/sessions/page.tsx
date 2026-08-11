@@ -155,7 +155,11 @@ export default async function SessionsPage() {
         style={{ marginBottom: 20 }}
       />
 
-      <div className="feed-col">
+      {/* Phone and desktop show the same two things in the same order; the wide
+          layout only stops the schedule from stretching across a 27" monitor by
+          moving the finished nights into a side column, the 8/4 split the feed
+          already uses. Below 1100px this collapses and they stack again. */}
+      <div className="sched-wide">
         <section className="reveal reveal-1">
           <div className="card-head">
             <div>
