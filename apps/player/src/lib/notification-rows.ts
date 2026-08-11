@@ -32,12 +32,46 @@ export interface NotificationAction {
 
 /** The whole `notification_type` enum as of 00001_schema.sql, mapped to the
  *  micro-caps label a row leads its detail line with and the tone it reads in.
- *  Eight of these have no producer in the codebase today (result_confirmed,
- *  dispute_opened, dispute_resolved, rank_changed, walkover_confirmed,
- *  opponent_withdrew, tournament_match_ready, tournament_checkin_open) — they
- *  are mapped anyway because rows of those types can already exist in the
- *  table and a screen that only handles what is currently written is a screen
- *  that breaks the day someone wires the rest up. */
+ *
+ *  EIGHT OF THESE STILL HAVE NO PRODUCER, AND ALL EIGHT ARE KEPT ON PURPOSE.
+ *  Audited against every writer of `notifications` in the tree — the two
+ *  notifyPlayers helpers (apps/player/src/lib/actions/_shared.ts,
+ *  apps/admin/src/lib/notify.ts), the tournament one in
+ *  apps/admin/src/lib/tournament-actions/_internal.ts, seven edge functions
+ *  under supabase/functions, and the one trigger INSERT in 00004_triggers.sql.
+ *  Between them those write thirteen of the twenty-one values. The other eight
+ *  are NOT vestigial: each names something the product genuinely does and
+ *  simply never tells the member about in-app.
+ *
+ *    result_confirmed   confirmMatchResult() sends notifyMatchConfirmed(), an
+ *                       EMAIL. No row is written, so the bell stays silent.
+ *    dispute_opened     disputeMatchResult() emails the admins — its own Sentry
+ *                       tag is literally `email: 'dispute_opened'`.
+ *    dispute_resolved   resolveDispute() (admin actions/disputes.ts) writes an
+ *                       audit_log entry and nothing the member can see.
+ *    rank_changed       a ratings recalculation already counts rank movements
+ *                       (see /ratings' "22 rank changes" aside).
+ *    walkover_confirmed confirmWalkover() exists and audit-logs under exactly
+ *                       this name; the challenge reaches status
+ *                       'walkover_confirmed' in 00003/00049 too.
+ *    opponent_withdrew  reportWalkover() notifies on REPORT
+ *                       (walkover_reported); the withdrawal itself never lands.
+ *    tournament_match_ready
+ *    tournament_checkin_open
+ *                       both are carried in the notificationType union of
+ *                       tournament-actions/_internal.ts as unwired hooks — no
+ *                       call site passes either, but check-in and bracket
+ *                       advancement are both real, shipped features.
+ *
+ *  So the gap is a MISSING PRODUCER in eight places, not dead weight here, and
+ *  deleting the branches below would delete the landing spot rather than the
+ *  problem. They are also not removable from the enum in any case:
+ *  `ALTER TYPE … DROP VALUE` does not exist in Postgres, and rebuilding the
+ *  type would rewrite every historical `notifications` row.
+ *
+ *  Independent of all that, the map has to stay total: rows of these types can
+ *  already exist in the table, and a screen that only handles what is currently
+ *  written is a screen that breaks the day someone wires the rest up. */
 const TYPES: Record<string, { label: string; tone: NotificationTone }> = {
   challenge_received: { label: 'Challenge', tone: 'red' },
   challenge_accepted: { label: 'Challenge', tone: 'win' },
