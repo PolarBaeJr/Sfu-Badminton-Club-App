@@ -54,14 +54,14 @@ import {
 //                     Listed even though adminPlayerUpdateSchema does not carry
 //                     them: the day somebody adds one, this is what stops the
 //                     Edit dialog becoming a privilege editor.
-//  - member_number  — not privilege, and the only entry here that is not. It is
+//  - member_code    — not privilege, and the only entry here that is not. It is
 //                     an identity the club assigns once and never reuses, so
 //                     there is no such thing as editing one correctly: a
-//                     renumber either collides with somebody or rewrites who
-//                     joined first. Floor rather than grantable because no
-//                     capability should ever reach it — "may edit privileged
-//                     profile fields" is about a person's details, and this is
-//                     not one of their details.
+//                     reissue either collides with somebody or breaks a code
+//                     that has already been written down. Floor rather than
+//                     grantable because no capability should ever reach it —
+//                     "may edit privileged profile fields" is about a person's
+//                     details, and this is not one of their details.
 export const PLAYER_FIELD_FLOOR = [
   'role',
   'is_exec',
@@ -69,7 +69,7 @@ export const PLAYER_FIELD_FLOOR = [
   'permission_role',
   'permission_grants',
   'permission_revokes',
-  'member_number',
+  'member_code',
 ] as const;
 
 // The GRANTABLE remainder — admin-only today, because

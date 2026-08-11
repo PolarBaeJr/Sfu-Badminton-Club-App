@@ -132,7 +132,7 @@ export default async function PlayersPage({
 
   let query = supabase
     .from('players')
-    .select('id, full_name, handle, member_number, email, avatar_url, status, role, active_flag, last_active_at, is_exec, is_trainer, fee_exempt, is_banned, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
+    .select('id, full_name, handle, member_code, email, avatar_url, status, role, active_flag, last_active_at, is_exec, is_trainer, fee_exempt, is_banned, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
     .order('created_at', { ascending: false })
     .limit(500);
 
@@ -235,9 +235,9 @@ export default async function PlayersPage({
       (legalDocs?.length ?? 0) > 0 &&
       getMissingLegalDocuments(legalDocs ?? [], acceptances, new Date(), player.waiver_reset_at).length === 0;
     const standing = standingOf(player, waiverCurrent);
-    // The handle if they picked one, else the number the club assigned — and
-    // that number goes through a formatter rather than being printed, because
-    // the column is mid-change from an integer to a seven-character code.
+    // The handle if they picked one, else the seven-character code the club
+    // assigned. One helper decides which, so the roster and the member's own
+    // page cannot disagree about what identifies somebody.
     const identifier = memberIdentifier(player);
     // ONE record, both disciplines summed. The two rating columns beside it
     // already say which discipline is which, and a fifth number in a row read

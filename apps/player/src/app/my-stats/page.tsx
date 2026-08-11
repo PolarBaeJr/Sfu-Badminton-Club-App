@@ -1,9 +1,8 @@
 import { createServerSupabaseClient, getCurrentPlayer, getActiveSeason } from '@/lib/supabase-server';
-import { getWinRate, getOverallRecord, getStreakDisplay, getPointDifferential, formatDate, formatRelativeTime, clubToday, TOURNAMENT_EVENT_TYPE_LABELS } from '@badminton/shared';
+import { getWinRate, getOverallRecord, getStreakDisplay, getPointDifferential, formatDate, formatRelativeTime, clubToday, formatMemberCode, TOURNAMENT_EVENT_TYPE_LABELS } from '@badminton/shared';
 import { redirect } from 'next/navigation';
 import { Atomic, AvatarChip, PageHeader } from '@badminton/ui';
 import { buildRatingSeries, buildOverallFormFlags, deriveAttendance, deriveSessionCadence, type RatingSourceRow, type FormSourceRow } from '@/lib/stats-charts';
-import { formatMemberIdentifier } from '@/lib/member-identifier';
 import { RatingCard } from '@/components/my-stats/rating-card';
 import { FormCard } from '@/components/my-stats/form-card';
 import { AttendanceGrid } from '@/components/my-stats/attendance-grid';
@@ -278,18 +277,17 @@ export default async function MyStatsPage() {
   const created = (player.created_at as string | undefined) || '';
   const joined = created ? new Date(created).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }).toUpperCase() : '';
 
-  // `@kiera · MEMBER #0042 · JOINED SEP 2025`, and whichever parts exist when
+  // `@kiera · MEMBER K3F9TQ2 · JOINED SEP 2025`, and whichever parts exist when
   // some do not. The handle is genuinely absent for anyone who has not chosen
-  // one, and a member awaiting approval has no identifier yet.
+  // one, and a member awaiting approval has no code yet.
   //
-  // The identifier goes through formatMemberIdentifier and NOT through the
-  // column, because its shape is mid-change — see lib/member-identifier.ts for
-  // the seam and why it takes `unknown`.
+  // formatMemberCode rather than the column, so this page, the roster and the
+  // admin console cannot drift on casing.
   const handle = (player.handle as string | null | undefined) || null;
-  const memberIdentifier = formatMemberIdentifier(player.member_number);
+  const memberCode = formatMemberCode(player.member_code);
   const identity = [
     handle ? `@${handle}` : null,
-    memberIdentifier ? `MEMBER ${memberIdentifier}` : null,
+    memberCode ? `MEMBER ${memberCode}` : null,
     joined ? `JOINED ${joined}` : null,
   ].filter(Boolean).join(' · ');
 

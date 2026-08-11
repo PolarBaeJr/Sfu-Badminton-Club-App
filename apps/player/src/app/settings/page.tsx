@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Input, Textarea, Switch, Select, PageHeader, Dialog } from '@badminton/ui';
 import { updateProfile, updateNotificationPreferences, deleteMyAccount } from '@/lib/actions';
-import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, normalizeEmailPreferences, emailPreferenceKey, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, clearHostOnlyAuthCookies, hasConsoleAccess, getAccountStanding, normalizeHandle, handleError, formatMemberNumber, HANDLE_MAX_LENGTH, HANDLE_TAKEN_MESSAGE, type NotificationCategory } from '@badminton/shared';
+import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, normalizeEmailPreferences, emailPreferenceKey, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, clearHostOnlyAuthCookies, hasConsoleAccess, getAccountStanding, normalizeHandle, handleError, formatMemberCode, HANDLE_MAX_LENGTH, HANDLE_TAKEN_MESSAGE, type NotificationCategory } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -70,7 +70,7 @@ export default function SettingsPage() {
   // rules below so typing clears it: the answer is about a value that is no
   // longer in the box.
   const [handleTaken, setHandleTaken] = useState(false);
-  const [memberNumber, setMemberNumber] = useState<number | null>(null);
+  const [memberCode, setMemberCode] = useState<string | null>(null);
   const [phone, setPhone] = useState('');
   const [bio, setBio] = useState('');
   const [loading, setLoading] = useState(false);
@@ -127,14 +127,14 @@ export default function SettingsPage() {
       const { data } = await supabase.from('players_self').select('*').maybeSingle();
       // NOT from players_self. Postgres expands `SELECT *` when a view is
       // CREATEd and freezes the column list into it, so the view still returns
-      // exactly the columns players had in 00032 — handle and member_number are
+      // exactly the columns players had in 00032 — handle and member_code are
       // not among them, and re-creating it would also undo 00060's deliberate
       // exclusion of inactivity_notice_sent_at. Read the two from the base
       // table instead: players_select opens the caller's own row to them, and
       // 00092's column grant is what makes them public anyway.
       const { data: identity } = await supabase
         .from('players')
-        .select('handle, member_number')
+        .select('handle, member_code')
         .eq('user_id', user.id)
         .maybeSingle();
       if (data) {
@@ -143,7 +143,7 @@ export default function SettingsPage() {
         setFirstName(data.first_name);
         setLastName(data.last_name || '');
         setHandle(identity?.handle || '');
-        setMemberNumber(identity?.member_number ?? null);
+        setMemberCode(identity?.member_code ?? null);
         setPhone(data.phone || '');
         setBio(data.bio || '');
         setShowOnLeaderboard(!data.hide_from_leaderboard);
@@ -384,14 +384,14 @@ export default function SettingsPage() {
               {/* Assigned by the club, never typed — so it is stated here rather
                   than offered as a field. A member who has not been approved yet
                   has none, and sees nothing. */}
-              {memberNumber !== null && (
+              {memberCode !== null && (
                 <div className="settings-row">
                   <div>
-                    <div className="settings-row-label">Member number</div>
+                    <div className="settings-row-label">Member code</div>
                     <div className="settings-row-hint">Assigned when you joined the club. It never changes.</div>
                   </div>
                   <div className="settings-row-control">
-                    <span className="mono tag">{formatMemberNumber(memberNumber)}</span>
+                    <span className="mono tag">{formatMemberCode(memberCode)}</span>
                   </div>
                 </div>
               )}
