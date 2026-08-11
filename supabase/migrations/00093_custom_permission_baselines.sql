@@ -185,45 +185,34 @@ ALTER TABLE public.permission_baselines
     ]::TEXT[]
   );
 
--- EVERY AREA THE BASELINE REACHES CARRIES THAT AREA'S PAGE.
+-- EVERY AREA THE BASELINE REACHES MUST CARRY THAT AREA'S PAGE — AND THAT RULE
+-- IS DELIBERATELY NOT A CHECK HERE.
 --
--- This is the resolver's one structural invariant, and it is expressible HERE
--- in a way it is not on players: resolvePermissions applies it to the RESOLVED
--- set, after subtraction, and a revoke can take a page away from capabilities
--- that came from the role and are named in neither array — so no CHECK on
--- players could see it. A baseline has no revokes and no base underneath it, so
--- its stored array IS the set, and the invariant is a property of the array.
+-- The rule itself is real and load-bearing: a baseline of
+-- ['fees.expenses.add.write'] with no fees.page resolves to the EMPTY SET,
+-- because the resolver prunes every capability whose area page is absent. It
+-- would save, assign and audit, and hand out nothing, and the only symptom
+-- would be an officer who cannot do the job they were just given. It is
+-- enforced, in baselineCapabilityRefusal(), on every path that writes this
+-- table — create and edit — and pinned three ways in
+-- custom-baselines.test.ts, including by resolving everything the check accepts
+-- and asserting the resolved set equals the array.
 --
--- Without it, a baseline of ['fees.expenses.add.write'] is legal, assignable,
--- audited — and resolves to the empty set, because the resolver prunes every
--- capability whose area page is missing. That is a named job that hands out
--- nothing, and the only symptom is an officer who cannot do the thing.
+-- IT IS EXPRESSIBLE IN SQL, unlike the same rule on players (there it is a
+-- property of the RESOLVED set, after subtraction, which no CHECK can see). But
+-- expressing it needs an IMMUTABLE helper function, because a CHECK cannot
+-- contain a subquery — and a CHECK constraint that depends on a user-defined
+-- function is a pattern none of the other ninety-two migrations use, has known
+-- ordering hazards in dump/restore, and cannot be verified from here against
+-- the club's nightly pg_dump. This migration is run by hand against a live
+-- database; a novelty in it that nobody has restored from is not worth a second
+-- copy of a rule the only writer already enforces.
 --
--- Through an IMMUTABLE function because a CHECK cannot contain a subquery. The
--- known caveat: a CHECK depending on a user function is not re-validated if the
--- function is later replaced. Nothing replaces it — it is written once, here,
--- and it uses only built-ins.
-CREATE OR REPLACE FUNCTION public.capabilities_carry_their_pages(caps TEXT[])
-RETURNS BOOLEAN
-LANGUAGE sql
-IMMUTABLE
-SET search_path TO 'pg_catalog', 'pg_temp'
-AS $function$
-  SELECT COALESCE(
-    bool_and((split_part(capability, '.', 1) || '.page') = ANY (caps)),
-    TRUE
-  )
-  FROM unnest(caps) AS capability;
-$function$;
-
-COMMENT ON FUNCTION public.capabilities_carry_their_pages(TEXT[]) IS
-  'True when every capability in the array is accompanied by its area page — fees.expenses.add.write requires fees.page. Mirrors the one structural invariant in resolvePermissions(), which prunes any capability whose area page is absent. A baseline that fails this resolves to the empty set and hands out nothing.';
-
-ALTER TABLE public.permission_baselines
-  DROP CONSTRAINT IF EXISTS permission_baselines_pages_check;
-ALTER TABLE public.permission_baselines
-  ADD CONSTRAINT permission_baselines_pages_check
-  CHECK (public.capabilities_carry_their_pages(capabilities));
+-- WHAT MAKES THAT SAFE, stated so the trade is visible: RLS is on with no
+-- policies and every grant is revoked below, so the ONLY writer is the admin
+-- console's service-role client, and it goes through baselineCapabilityRefusal.
+-- The same reasoning 00087 gives for leaving its resolved-set rule to the
+-- resolver.
 
 COMMENT ON TABLE public.permission_baselines IS
   'Named capability sets the club writes for itself — the answer to "we will have others" beyond the four VP jobs hard-coded in ROLE_DEFAULTS. NOT consulted by the resolver: assigning one COPIES its capabilities into players.permission_grants with permission_role = ''custom'', so the person''s row says what they hold and resolvePermissions stays pure and synchronous. Editing a baseline re-copies to every holder in one audited act; deleting one is refused while anybody holds it (players.permission_baseline_id ON DELETE RESTRICT). Written only by the admin console, which enforces grant closure against the author''s own set and caps contents at EDITOR_OFFERABLE.';
