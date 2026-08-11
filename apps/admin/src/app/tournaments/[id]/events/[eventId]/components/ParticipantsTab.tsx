@@ -15,7 +15,8 @@ import {
   withdrawPair,
 } from '@/lib/tournament-actions';
 import { summarizeBulk } from '@/lib/bulk-add';
-import { nextPowerOf2, pickOne, eventHasDraw, isOutOfEvent } from '@badminton/shared';
+import { participantControls, type DrawCapabilities } from '@/lib/participant-controls';
+import { nextPowerOf2, pickOne, isOutOfEvent } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil, UserMinus } from 'lucide-react';
@@ -29,6 +30,10 @@ interface Props {
   pairs: PairWithPlayers[];
   allPlayers: Array<{ id: string; full_name: string; avatar_url?: string | null }>;
   isDoubles: boolean;
+  // What the viewer may DO, resolved on the server against the same
+  // capabilities the actions below re-check. Every control on this tab is gated
+  // on one of these AND on the event's status — see participantControls().
+  capabilities: DrawCapabilities;
   // null = draw no waiver column. See WaiverState.
   waiverStates: Record<string, EventWaiverStatus> | null;
 }
@@ -154,7 +159,7 @@ function SeedCell({
   );
 }
 
-export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoubles, waiverStates }: Props) {
+export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoubles, capabilities, waiverStates }: Props) {
   const [addOpen, setAddOpen] = useState(false);
   // Doubles adds a PAIR — two named people, one entry — so it keeps two
   // single-select fields. Singles adds any number of individuals at once.
@@ -171,15 +176,21 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   const activeEntries = entries.filter((e) => !isOutOfEvent(e.status));
   const bracketSize = nextPowerOf2(activeEntries.length);
   const byes = bracketSize - activeEntries.length;
-  const canModify = event.status === 'registration';
   const drawLocked = event.draw_locked as boolean;
-  // Deleting an entry is only safe before a draw exists. After that the only
-  // coherent exit is a withdrawal, which forfeits the matches they are already
-  // seeded into — and it has to be reachable here, because this is the moment
-  // the player themselves is no longer allowed to do it.
   const eventLive = event.status === 'live';
-  const canWithdraw = eventHasDraw(event.status) && event.status !== 'completed';
-  const showActions = (canModify && !drawLocked) || canWithdraw;
+  // WHAT IS ON SCREEN, decided by status AND capability together.
+  //
+  // This was a single `event.status === 'registration'`, so every control here
+  // rendered for anybody the event page admitted and the server action refused
+  // on click. Deleting an entry is still only safe before a draw exists — after
+  // that the only coherent exit is a withdrawal, which forfeits the matches they
+  // are already seeded into, and it has to be reachable here because this is the
+  // moment the player themselves is no longer allowed to do it. That rule has
+  // not moved; it now has to be held by somebody who may actually perform it.
+  const controls = participantControls(
+    { status: event.status as string, drawLocked },
+    capabilities,
+  );
 
   async function handleAddPair(e: React.FormEvent) {
     e.preventDefault();
@@ -315,7 +326,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     // forfeit applied to it.
     if (isOutOfEvent(status)) return <span className="text-xs text-[var(--text-muted)]">—</span>;
 
-    if (canModify && !drawLocked) {
+    if (controls.remove) {
       return (
         <Button size="sm" variant="ghost" onClick={() => handleRemove(id)} loading={actionLoading === id} aria-label={`Remove ${name}`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
           <Trash2 className="w-3.5 h-3.5 text-[var(--color-danger)]" />
@@ -323,7 +334,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
       );
     }
 
-    if (canWithdraw) {
+    if (controls.withdraw) {
       return (
         <Button size="sm" variant="ghost" onClick={() => handleWithdraw(id, name)} loading={actionLoading === id} aria-label={`Withdraw ${name}`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
           <UserMinus className="w-3.5 h-3.5 mr-1 text-[var(--color-danger)]" />
@@ -366,29 +377,34 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
             </span>
           )}
         </div>
+        {/* Three buttons, three separate capabilities — a seeding desk without
+            the roster is a real shape the club can hand out, so these are not
+            one flag. */}
         <div className="flex gap-2">
-          {canModify && !drawLocked && (
-            <>
-              <Button size="sm" variant="ghost" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={async () => {
-                setLoading(true);
-                try {
-                  await clearSeeds(event.id);
-                  toast('Seeds cleared', 'success');
-                  router.refresh();
-                } catch (err) {
-                  toast(err instanceof Error ? err.message : 'Failed', 'error');
-                }
-                setLoading(false);
-              }} loading={loading}>
-                <XCircle className="w-3.5 h-3.5 mr-1" /> Clear Seeds
-              </Button>
-              <Button size="sm" variant="ghost" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={handleAutoSeed} loading={loading}>
-                <ArrowUpDown className="w-3.5 h-3.5 mr-1" /> Auto-Seed
-              </Button>
-              <Button size="sm" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={() => setAddOpen(true)}>
-                <Plus className="w-3.5 h-3.5 mr-1" /> Add {isDoubles ? 'Pair' : 'Player'}
-              </Button>
-            </>
+          {controls.clearSeeds && (
+            <Button size="sm" variant="ghost" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={async () => {
+              setLoading(true);
+              try {
+                await clearSeeds(event.id);
+                toast('Seeds cleared', 'success');
+                router.refresh();
+              } catch (err) {
+                toast(err instanceof Error ? err.message : 'Failed', 'error');
+              }
+              setLoading(false);
+            }} loading={loading}>
+              <XCircle className="w-3.5 h-3.5 mr-1" /> Clear Seeds
+            </Button>
+          )}
+          {controls.autoSeed && (
+            <Button size="sm" variant="ghost" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={handleAutoSeed} loading={loading}>
+              <ArrowUpDown className="w-3.5 h-3.5 mr-1" /> Auto-Seed
+            </Button>
+          )}
+          {controls.add && (
+            <Button size="sm" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={() => setAddOpen(true)}>
+              <Plus className="w-3.5 h-3.5 mr-1" /> Add {isDoubles ? 'Pair' : 'Player'}
+            </Button>
           )}
         </div>
       </div>
@@ -410,7 +426,10 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
             <tr className="border-b border-[var(--border)]">
               <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-20">
                 Seed
-                {canModify && !drawLocked && (
+                {/* The hint follows the seed cell it describes — seed.set.write,
+                    not the add flag. Telling somebody to click something that
+                    does nothing is the same dead invitation as the buttons. */}
+                {controls.editSeed && (
                   <span className="ml-1 text-[10px] text-[var(--text-muted)] normal-case font-normal">(click to edit)</span>
                 )}
               </th>
@@ -425,7 +444,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               )}
               <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-24">Elo</th>
               <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-28">Status</th>
-              {showActions && (
+              {controls.actionsColumn && (
                 <th className="text-right text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-32">Actions</th>
               )}
             </tr>
@@ -438,7 +457,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                     <SeedCell
                       entryId={pair.id}
                       seedNumber={pair.seed_number}
-                      canEdit={canModify && !drawLocked}
+                      canEdit={controls.editSeed}
                       maxSeed={activeEntries.length}
                       usedSeeds={usedSeeds}
                       onSave={handleSeedSave}
@@ -462,7 +481,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                       <span className="sr-only">Status: </span>{statusLabel(pair.status)}
                     </span>
                   </td>
-                  {showActions && (
+                  {controls.actionsColumn && (
                     <td className="px-4 py-3 text-right">
                       {renderActions(pair.id, pair.pair_name ?? `${pair.player1?.full_name} / ${pair.player2?.full_name}`, pair.status)}
                     </td>
@@ -480,7 +499,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                       <SeedCell
                         entryId={p.id}
                         seedNumber={p.seed_number}
-                        canEdit={canModify && !drawLocked}
+                        canEdit={controls.editSeed}
                         maxSeed={activeEntries.length}
                         usedSeeds={usedSeeds}
                         onSave={handleSeedSave}
@@ -505,7 +524,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                         <span className="sr-only">Status: </span>{statusLabel(p.status)}
                       </span>
                     </td>
-                    {showActions && (
+                    {controls.actionsColumn && (
                       <td className="px-4 py-3 text-right">
                         {renderActions(p.id, player?.full_name ?? 'participant', p.status)}
                       </td>

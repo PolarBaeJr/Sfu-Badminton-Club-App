@@ -15,6 +15,8 @@ import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { EventControlCenter } from './components/EventControlCenter';
 import { getTournamentBonusSettings } from '@/lib/platform-settings';
+import { hasResultsTab } from '@/lib/event-tabs';
+import type { DrawCapabilities } from '@/lib/participant-controls';
 import type { Capability } from '@/lib/permissions';
 import type { ParticipantWithPlayer, PairWithPlayers, PlayerSummary } from '@/lib/tournament-types';
 import type { SiblingEvent } from '../../event-format-fields';
@@ -79,6 +81,22 @@ export default async function EventPage({
   const canAddEntries = doubles
     ? may('tournaments.draw.pairs.add.write')
     : may('tournaments.draw.participants.add.write');
+  // THE SAME QUESTION ASKED FOR EVERY CONTROL ON THE PARTICIPANTS TAB, not just
+  // the one whose fetch it gates. The tab decided what to render from
+  // `event.status === 'registration'` alone, so Add / Auto-Seed / Clear Seeds
+  // were offered to anybody who could open the page and the server action
+  // refused on click. Six controls, six capabilities — the ones the actions
+  // themselves re-check. See lib/participant-controls.ts for the transcription.
+  const drawCapabilities: DrawCapabilities = {
+    add: canAddEntries,
+    remove: doubles
+      ? may('tournaments.draw.pairs.remove.write')
+      : may('tournaments.draw.participants.remove.write'),
+    seedSet: may('tournaments.draw.seed.set.write'),
+    seedAuto: may('tournaments.draw.seed.auto.write'),
+    seedClear: may('tournaments.draw.seed.clear.write'),
+    exit: may('tournaments.draw.exit.write'),
+  };
   // `siblingEvents` feeds one picker too: the "seed from" list in
   // EventSettingsDialog, which is reached from EventHeader's settings button and
   // whose save calls updateEvent. Same capability that action asks for.
@@ -136,7 +154,22 @@ export default async function EventPage({
     // bonus column from final_position rather than reading stored history, so it
     // has to use the same numbers (and the same on/off decision) the finaliser
     // would — otherwise the panel says "off" while the table advertises +32.
-    getTournamentBonusSettings(supabase),
+    //
+    // ON NEED, NOT ON CAPABILITY. The Results tab is the only thing that reads
+    // this and it exists only at `completed` (EventControlCenter builds its tab
+    // list from the status), so for every other event this was a round trip to
+    // platform_settings for a value nothing could render. NOT gated on
+    // `platform.page` — no exec holds that key, and gating on it would blank the
+    // Results tab for every exec in the club.
+    //
+    // `null` when not fetched, and never a default object. getTournamentBonusSettings
+    // falls back to the CONSTANTS on a failed read precisely so a broken read
+    // cannot silently read as "bonuses off"; handing the same constants to a tab
+    // that was simply never asked for would reintroduce that lie by the back
+    // door. Absent means absent, and the tab it feeds is not rendered.
+    hasResultsTab(event.status)
+      ? getTournamentBonusSettings(supabase)
+      : Promise.resolve(null),
     // Everyone the participant picker may offer (includes admins). Skipped
     // outright, not hidden, for a viewer who cannot add an entry: this is the
     // club roster and it crosses to the browser as a prop on a client
@@ -211,6 +244,7 @@ export default async function EventPage({
         siblingEvents={siblingEvents ?? []}
         isDoubles={doubles}
         bonusSettings={bonusSettings}
+        drawCapabilities={drawCapabilities}
         waiverStates={waiverStates}
       />
     </div>

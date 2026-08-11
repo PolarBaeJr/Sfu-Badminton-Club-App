@@ -22,6 +22,8 @@ import type {
   PairWithPlayers,
 } from '@/lib/tournament-types';
 import type { SiblingEvent } from '../../../event-format-fields';
+import type { DrawCapabilities } from '@/lib/participant-controls';
+import { hasResultsTab } from '@/lib/event-tabs';
 import { EventHeader } from './EventHeader';
 import { ParticipantsTab } from './ParticipantsTab';
 import { CheckInTab } from './CheckInTab';
@@ -45,7 +47,17 @@ interface Props {
   isDoubles: boolean;
   // Resolved from platform_settings on the server — client components cannot
   // read the table, so the Results tab gets it as a prop.
-  bonusSettings: TournamentBonusSettings;
+  //
+  // `null` when the event is not `completed`, because that is the only status
+  // with a Results tab and the page does not spend a round trip on a value
+  // nothing can render. Never substituted with a default: the fallback constants
+  // exist to keep a FAILED read from reading as "bonuses off", and using them
+  // for a read that never happened would make that distinction meaningless.
+  bonusSettings: TournamentBonusSettings | null;
+  // What the viewer may DO on the participants tab, one flag per server action
+  // behind a control. Resolved on the server for the same reason bonusSettings
+  // is: a client component cannot ask the permission model anything.
+  drawCapabilities: DrawCapabilities;
   // Event-waiver state per player id, resolved on the server because the
   // comparison needs a SHA-256 of the tournament's text and node:crypto cannot
   // run here. `null` means DO NOT SHOW THE COLUMN — either this tournament has
@@ -55,7 +67,7 @@ interface Props {
   waiverStates: Record<string, EventWaiverStatus> | null;
 }
 
-export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, waiverStates }: Props) {
+export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates }: Props) {
   const status = event.status as TournamentEventStatus;
   const eventType = event.event_type as TournamentEventType;
   const format = event.format;
@@ -73,13 +85,20 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
     tabs.push({ id: 'bracket', label: format === 'round_robin' ? 'Round Robin' : 'Bracket', icon: <Swords className="w-4 h-4" /> });
   }
 
-  if (status === 'completed') {
+  // hasResultsTab() rather than a second `status === 'completed'`: the event
+  // page decides whether to fetch the bonus settings from the same predicate,
+  // and the two must not be able to drift apart. Leaderboard needs nothing from
+  // platform_settings, so it keeps its own condition.
+  if (hasResultsTab(status)) {
     tabs.push({ id: 'results', label: 'Results', icon: <BarChart3 className="w-4 h-4" /> });
+  }
+
+  if (status === 'completed') {
     tabs.push({ id: 'leaderboard', label: 'Leaderboard', icon: <ListOrdered className="w-4 h-4" /> });
   }
 
   // Default to the most relevant tab
-  const defaultTab: TabId = status === 'completed' ? 'results'
+  const defaultTab: TabId = hasResultsTab(status) ? 'results'
     : ['bracket_generated', 'live'].includes(status) ? 'bracket'
     : status === 'checkin' ? 'checkin'
     : 'participants';
@@ -154,6 +173,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             pairs={pairs}
             allPlayers={allPlayers}
             isDoubles={isDoubles}
+            capabilities={drawCapabilities}
             waiverStates={waiverStates}
           />
         )}
@@ -184,7 +204,11 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             isDoubles={isDoubles}
           />
         )}
-        {activeTab === 'results' && (
+        {/* Both conditions say the same thing — the tab only exists at
+            `completed` and that is the only status the settings are fetched for
+            — but the null check is what makes it true by construction rather
+            than by two lists agreeing. */}
+        {activeTab === 'results' && bonusSettings && (
           <ResultsTab
             event={event}
             participants={participants}

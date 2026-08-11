@@ -10,6 +10,7 @@ import {
   bylineName,
   reachPercent,
   shortDate,
+  tallyOpens,
   typeBadge,
   type AnnouncementStatus,
   type AnnouncementType,
@@ -118,8 +119,27 @@ async function pushReachableCount(
  * (apps/player/src/lib/actions/notifications.ts:54), so this count is the
  * genuine article rather than an estimate.
  *
- * Published posts only. A draft was never sent to anybody, so "0 opened" on
- * one is not a reach figure, it is a category error.
+ * ONE READ FOR THE WHOLE SCREEN, not one per post. This was a `head: true`
+ * count per published announcement, which is a query count that rises with the
+ * post count on a `force-dynamic` page with no list limit — and unlike the
+ * seasons page it copied, nothing ever retires an announcement from this list.
+ * PostgREST has no GROUP BY, so the receipts are paged in and bucketed by
+ * tallyOpens(): ceil(receipts / 1000) round trips instead of N, and the figures
+ * stay exact because every receipt is counted rather than sampled.
+ *
+ * PAGED, AND NOT FILTERED TO THE POSTS ON SCREEN. An `.in(publishedIds)` would
+ * put every announcement id in a query string, which is a URL that grows without
+ * bound on exactly the table that grows without bound. It buys nothing either:
+ * `announcement_reads.announcement_id` is ON DELETE CASCADE (00001:616), so
+ * there are no receipts for posts that no longer exist, and tallyOpens ignores
+ * any row whose post is not on this screen.
+ *
+ * Advancing by what came back rather than by the window is correct under any
+ * server-side cap — the same loop shape as pushReachableCount above.
+ *
+ * Published posts only, which tallyOpens enforces by seeding the map with those
+ * ids. A draft was never sent to anybody, so "0 opened" on one is not a reach
+ * figure, it is a category error.
  */
 async function openedCounts(
   supabase: ReturnType<typeof createAdminClient>,
@@ -128,16 +148,28 @@ async function openedCounts(
   const published = rows.filter((r) => r.status === 'published');
   if (published.length === 0) return new Map();
 
-  const entries = await Promise.all(
-    published.map(async (r) => {
-      const { count } = await supabase
-        .from('announcement_reads')
-        .select('id', { count: 'exact', head: true })
-        .eq('announcement_id', r.id);
-      return [r.id, count ?? 0] as const;
-    }),
-  );
-  return new Map(entries);
+  const PAGE = 1000;
+  // A HIGHER CEILING THAN THE TWO LOOPS ABOVE, on purpose. Those page `players`
+  // and `push_subscriptions`, which are bounded by the club's membership, so 100
+  // windows is a runaway guard there and nothing else. This table is posts ×
+  // members — the one that grows without bound, which is the whole reason this
+  // function was rewritten — and stopping at 100 windows would silently
+  // undercount past 100k receipts. That is the same bounded-list assumption,
+  // carried into the unbounded case, that the per-post count queries made.
+  const MAX_WINDOWS = 1000;
+  const receipts: Array<{ announcement_id: string }> = [];
+  for (let from = 0, guard = 0; guard < MAX_WINDOWS; guard++) {
+    const { data, error } = await supabase
+      .from('announcement_reads')
+      .select('announcement_id')
+      .order('id')
+      .range(from, from + PAGE - 1);
+    if (error || !data || data.length === 0) break;
+    for (const row of data) receipts.push({ announcement_id: row.announcement_id as string });
+    from += data.length;
+  }
+
+  return tallyOpens(receipts, published.map((r) => r.id));
 }
 
 export default async function AnnouncementsPage() {

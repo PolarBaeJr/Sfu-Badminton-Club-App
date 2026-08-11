@@ -446,9 +446,14 @@ export default async function DashboardPage() {
   // read and none at all for the ledgers they may not, decided inside
   // getDashboardFinances. Nothing is fetched when the ordinary dashboard
   // rendered.
+  //
+  // The season goes in rather than being looked up again in there — it was
+  // fetched above for the header eyebrow before either branch of this page
+  // decided anything, so re-selecting it was a round trip for a row already in
+  // hand. `null` (no active term) still means no ledgers and no figures.
   const ledgers = hasTiles
     ? null
-    : await getDashboardFinances(supabase, {
+    : await getDashboardFinances(supabase, season && { id: season.id, name: season.name }, {
         expenses: showExpenses,
         clubFees: showClubFees,
         otherIncome: showOtherIncome,
