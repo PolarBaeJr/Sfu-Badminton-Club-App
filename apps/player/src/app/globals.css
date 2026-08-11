@@ -2729,17 +2729,45 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
    can bleed out by exactly that and pay it straight back as
    padding: the hairlines then run bezel to bezel while the text
    keeps the same left edge as the title above it. */
-.exec-screen { --exec-gutter: 16px; }
-@media (min-width: 981px) {
-  .exec-screen {
-    --exec-gutter: 28px;
-    /* .page carries no max-width (--page-max: none), so on a
-       2000px monitor the header ran the full width with the
-       officer list under it. 1240px is .notif-screen's measure,
-       chosen there for the same two-column reason. */
-    max-width: 1240px;
-    margin-inline: auto;
+/* The measure, at EVERY width — .page carries no max-width
+   (--page-max: none), so without this the 14px bio ran the full
+   width of whatever window it was in. 640px is .news's 620px
+   nudged out to pay for the 48px avatar that sits in this
+   screen's rows and not in that one's. Inert on a phone, which
+   is why it is the base rule rather than something a media query
+   remembers to add. */
+.exec-screen {
+  --exec-gutter: 16px;
+  max-width: 640px;
+  margin-inline: auto;
+}
+
+/* The full-bleed hairlines, and the arithmetic that keeps them
+   honest. A 672px viewport minus .page's two 16px gutters is
+   exactly the 640px cap, so at and below this width the cap
+   cannot be binding and the container really is the page — the
+   bleed lands on the bezel, which is the whole point of it. One
+   pixel wider and the container starts floating in the middle of
+   the window, where a block bleeding 16px past it would end its
+   hairline in open space rather than at an edge. So the bleed
+   retires at exactly the width where it stops meaning anything.
+
+   Paid for in WIDTH as well as margin: a negative inline margin
+   with a `100%` width shifts the box left without widening it,
+   leaving the hairline one gutter short on the right — the bug
+   .notif-row documents above. */
+@media (max-width: 672px) {
+  .exec-officer {
+    width: calc(100% + var(--exec-gutter) * 2);
+    margin-inline: calc(var(--exec-gutter) * -1);
+    padding-inline: var(--exec-gutter);
   }
+}
+
+@media (min-width: 981px) {
+  /* Matches .page's own step from 16px to 28px, so the two agree
+     about where the edge of the page is. */
+  .exec-screen { --exec-gutter: 28px; }
 }
 
 /* --- the header block --------------------------------------- */
@@ -2782,14 +2810,12 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
 }
 
 /* --- one officer -------------------------------------------- */
-/* The bleed is paid for in WIDTH as well as margin. A negative
-   inline margin with a `100%` width shifts the box left without
-   widening it, which leaves the hairline one gutter short of the
-   right edge — the bug .notif-row documents above. */
+/* Inside the capped column by default; the bleed above adds
+   itself back on a phone. 16px of vertical padding on each side
+   of the hairline is what turns a stack of rules into a rhythm
+   rather than a table. */
 .exec-officer {
-  width: calc(100% + var(--exec-gutter) * 2);
-  margin-inline: calc(var(--exec-gutter) * -1);
-  padding: 16px var(--exec-gutter);
+  padding: 16px 0;
   border-top: 1px solid var(--line);
 }
 /* The header already rules itself off from the body above
@@ -2867,30 +2893,24 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
    1101px is the house floor, matching .wide-grid and
    .notif-wide; 981-1100px gets the capped single column.
 
-   row-gap stays 0 so each row's two blocks meet the same
-   hairline and the rules run straight across both columns.
-   Default `align-items: stretch` is load-bearing for that — with
-   `start` the taller cell would drag its neighbour's rule out of
-   line. */
+   row-gap stays 0 so the two blocks in a row share one hairline
+   and the rules run straight across both columns; a gap here
+   would break each rule in half at the column gutter. */
 @media (min-width: 1101px) {
+  /* The cap opens up because there are two columns to fill now.
+     1240px is .notif-screen's figure, chosen there for the same
+     reason: two columns and a 28px gutter either side. */
+  .exec-screen { max-width: 1240px; }
   .exec-list {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     column-gap: 40px;
     row-gap: 0;
   }
-  /* Bleed zeroed inside the grid, and the width compensation
-     with it. Left in, the negative margin would push each block
-     a gutter out of its own column: the left one under the page
-     edge, the right one into the 40px gap. This is exactly what
-     the NOTIFICATIONS block hit when .notif-row's bleed landed
-     in the column gap, and it is cheaper to copy the fix than to
-     find it again. */
-  .exec-officer {
-    width: 100%;
-    margin-inline: 0;
-    padding: 20px 0;
-  }
+  /* A little more air than the phone gets, because the rules are
+     now twice as long and a long rule 16px from its text reads
+     tighter than a short one at the same distance. */
+  .exec-officer { padding: 20px 0; }
   /* :first-child only zeroes the first block; in two columns the
      SECOND one also sits on the top row and needs the same. */
   .exec-officer:nth-child(2) { border-top: 0; }
