@@ -1,28 +1,35 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { unwrap } from '@badminton/shared';
+import { unwrap, type FeeType } from '@badminton/shared';
 
 /**
  * Money the club actually took in during a season.
  *
- * There are three fee ledgers and the "income collected" figure used to sum
- * only one of them (club_fees), so a recorded reinstatement or tournament
- * payment left the total reading $0.00 while the money was sitting in the
- * database. Two pages computed that total independently, which is how they
- * agreed on being wrong.
+ * ONE FEE TABLE NOW, THREE KINDS OF ROW IN IT (00094). This function used to
+ * read club_fees, tournament_fees and reinstatement_fees and add them up; the
+ * first two are the same table since the collapse, and the arithmetic that
+ * matters is that EACH PAYMENT IS COUNTED EXACTLY ONCE. A version of this file
+ * that kept the old tournament_fees branch alongside a club_fees sum would
+ * double every entry fee in the club's income — which is the specific hazard
+ * the collapse creates and the reason season-income.test.ts makes any read of
+ * the retired tables throw.
  *
- * The ledgers reach a season by different routes, which is the whole
- * reason this is a function and not a query:
+ *   club_fees    season_id directly, split by fee_type
+ *   other_income season_id directly, NOT NULL, since 00073
  *
- *   club_fees          season_id directly
- *   tournament_fees    via tournaments.season_id
- *   reinstatement_fees season_id directly, since 00069
- *   other_income       season_id directly, NOT NULL, since 00073
+ * SEASON IS A COLUMN, NEVER A JOIN AND NEVER A DATE WINDOW. Entry fees used to
+ * reach a season through tournaments.season_id; they now carry the season
+ * stamped on at entry, which is the rule 00069 arrived at the hard way for
+ * reinstatements (money paid three weeks before its season began belonged to no
+ * season and was invisible in every total) and the rule 00084 restated for
+ * corrections. The cost, stated plainly: moving a tournament to another season
+ * afterwards no longer moves the entry money with it. That is the intended
+ * behaviour — recorded money does not migrate — and an exec who really wants it
+ * moved edits the fee rows.
  *
- * reinstatement_fees used to be bucketed by paid_at, because it had no season
- * column. Money paid outside every season window then belonged to no season and
- * showed in no total — a real $20 payment was invisible because it was taken
- * three weeks before the season it was for began. It now carries the season it
- * was recorded under, so the gap between terms cannot swallow a payment.
+ * A row whose season_id is NULL — an entry fee for a tournament with no season,
+ * a reinstatement taken between terms — belongs to no season's income. That is
+ * unchanged from before the collapse and deliberate; reinstatePlayer refuses to
+ * create one, see its comment.
  *
  * EVERY LEDGER IS FOLDED INTO totalCents HERE, and a caller wanting "income"
  * reads that field rather than adding ledgers up itself. other_income
@@ -39,7 +46,7 @@ import { unwrap } from '@badminton/shared';
  * what is forbidden is a second piece of arithmetic, not a second entry point.
  *
  * Only rows with paid_at set count, in EVERY ledger — one rule, not one per
- * table. An unpaid or waived row is a liability, not income.
+ * kind. An unpaid or waived row is a liability, not income.
  */
 export interface SeasonIncome {
   /** Everything below, added up. This is the number to show as "income". */
@@ -76,7 +83,32 @@ const sum = (result: { data: { amount_cents: number | null }[] | null; error: un
     .reduce((acc, r) => acc + (r.amount_cents ?? 0), 0);
 
 /**
- * ONE LEDGER, ON ITS OWN — club fees, and nothing else.
+ * One KIND of fee, summed for one season.
+ *
+ * `.eq('fee_type', …)` is not a nicety. Since the collapse the same table holds
+ * dues, entry fees and reinstatements, and the three figures below have to
+ * partition it — a sum without this filter is every fee three times over. It is
+ * also the permission boundary: fees.clubfees.read and fees.reinstatements.read
+ * are separate capabilities, so an unfiltered read hands one holder the other's
+ * ledger.
+ */
+async function feeIncome(
+  supabase: SupabaseClient,
+  season: SeasonWindow,
+  feeType: FeeType,
+): Promise<number> {
+  return sum(
+    await supabase
+      .from('club_fees')
+      .select('amount_cents')
+      .eq('season_id', season.id)
+      .eq('fee_type', feeType)
+      .not('paid_at', 'is', null),
+  );
+}
+
+/**
+ * SEASON DUES, ON THEIR OWN — and nothing else in the table.
  *
  * For the caller who may see this ledger and no other. Drawing the figure out
  * of getSeasonIncome instead would read the club's tournament money and
@@ -87,13 +119,7 @@ export async function getClubFeeIncome(
   supabase: SupabaseClient,
   season: SeasonWindow,
 ): Promise<number> {
-  return sum(
-    await supabase
-      .from('club_fees')
-      .select('amount_cents')
-      .eq('season_id', season.id)
-      .not('paid_at', 'is', null),
-  );
+  return feeIncome(supabase, season, 'dues');
 }
 
 /**
@@ -117,30 +143,21 @@ export async function getSeasonIncome(
   supabase: SupabaseClient,
   season: SeasonWindow,
 ): Promise<SeasonIncome> {
-  const [clubCents, tournament, reinstatement, otherCents] = await Promise.all([
+  // THREE DISJOINT SLICES OF ONE TABLE, plus other_income. fee_type is a
+  // single NOT NULL column with a three-value CHECK, so these three filters
+  // cannot overlap and cannot leave a paid fee out: the only way a row escapes
+  // all three is a fourth fee_type, which the CHECK forbids. That is what makes
+  // "counted exactly once" a property of the schema rather than a hope.
+  const [clubCents, tournamentCents, reinstatementCents, otherCents] = await Promise.all([
     getClubFeeIncome(supabase, season),
+    feeIncome(supabase, season, 'tournament'),
+    feeIncome(supabase, season, 'reinstatement'),
 
-    // Inner join: a fee whose tournament is not in this season must not count.
-    supabase
-      .from('tournament_fees')
-      .select('amount_cents, tournaments!inner(season_id)')
-      .eq('tournaments.season_id', season.id)
-      .not('paid_at', 'is', null),
-
-    supabase
-      .from('reinstatement_fees')
-      .select('amount_cents')
-      .eq('season_id', season.id)
-      .not('paid_at', 'is', null),
-
-    // 00073. season_id is NOT NULL here, so unlike reinstatements there is no
-    // "attached to no season" row to worry about — but the paid_at rule is the
-    // same, so a row recorded before the money actually arrived stays out.
+    // 00073. season_id is NOT NULL here, so unlike fees there is no "attached
+    // to no season" row to worry about — but the paid_at rule is the same, so a
+    // row recorded before the money actually arrived stays out.
     getOtherIncome(supabase, season),
   ]);
-
-  const tournamentCents = sum(tournament);
-  const reinstatementCents = sum(reinstatement);
 
   return {
     clubCents,
