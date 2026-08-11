@@ -1,10 +1,18 @@
 -- ============================================================
 -- 00093 — the club writes its own baselines
 --
--- *** APPLY THIS BEFORE DEPLOYING THE CODE THAT GOES WITH IT. *** Without it,
--- /permissions still works exactly as it does today — the Baselines tab simply
--- fails to load, because permission_baselines does not exist. Nothing an admin
--- can do on the existing two panes touches anything added here.
+-- *** APPLY THIS BEFORE DEPLOYING THE CODE THAT GOES WITH IT, AND THIS ONE
+-- MATTERS. *** /permissions selects players.permission_baseline_id in the same
+-- statement it selects everything else. PostgREST answers an unknown column
+-- with an error and no rows, so on a database without this migration the page
+-- renders with NOBODY in the rail — not a missing feature, the whole screen
+-- empty. (The baselines table itself fails softly, to an empty list; the column
+-- is the one that bites.)
+--
+-- NOTHING CHANGES FOR ANYONE WHEN IT IS APPLIED. The new column is NULL on
+-- every row, the new table is empty, and the resolver does not read either of
+-- them — no capability anybody holds moves by one entry. Safe to apply well
+-- ahead of the code, and it has to be.
 --
 -- WHAT THE OWNER ASKED FOR: "I should be able to create new baselines, since we
 -- will have others." Today the only named starting points are the four VP jobs
