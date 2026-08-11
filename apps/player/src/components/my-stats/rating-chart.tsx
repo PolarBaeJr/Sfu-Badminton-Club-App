@@ -34,6 +34,13 @@ export interface RatingChartProps {
   /** Ratings below the provisional threshold are still settling; the chart says so. */
   provisional: boolean;
   label: string;
+  /**
+   * What to call the last point on the line. "CURRENT" is right on the live
+   * screen and a lie on a finished season, where the last point is where the
+   * member's rating stood after their last match of that term and not where it
+   * stands now — a distinction the whole past-season screen turns on.
+   */
+  currentLabel?: string;
 }
 
 /**
@@ -53,6 +60,7 @@ export function RatingChart({
   seasonStart,
   provisional,
   label,
+  currentLabel = 'CURRENT',
 }: RatingChartProps) {
   const windowed = points.slice(Math.max(0, points.length - MAX_POINTS));
 
@@ -96,7 +104,7 @@ export function RatingChart({
           viewBox={`0 0 ${BOX.width} ${BOX.height}`}
           preserveAspectRatio="none"
           role="img"
-          aria-label={`${label} rating over the last ${windowed.length} matches. Currently ${summary.current}, peak ${summary.peak}, low ${summary.low}.`}
+          aria-label={`${label} rating over ${windowed.length} matches. ${summary.current} ${currentLabel.toLowerCase()}, peak ${summary.peak}, low ${summary.low}.`}
         >
           {/* preserveAspectRatio="none" and a HEIGHT SET IN CSS, not by the
               aspect ratio. On a phone the two are the same thing; in the wide
@@ -292,7 +300,7 @@ export function RatingChart({
           flexWrap: 'wrap',
         }}
       >
-        <Figure label="CURRENT" value={String(summary.current)} />
+        <Figure label={currentLabel} value={String(summary.current)} />
         <Figure
           label="OVER WINDOW"
           value={formatSigned(summary.change)}
