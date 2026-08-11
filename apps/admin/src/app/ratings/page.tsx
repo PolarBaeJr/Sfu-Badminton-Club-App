@@ -8,9 +8,10 @@ import { RatingsForm } from './ratings-form';
 import {
   RatingsAside,
   type LadderShape,
+  type LastActivation,
   type LastChange,
-  type LastRewrite,
 } from './ratings-aside';
+import { PROVISIONAL_THRESHOLD } from '@badminton/shared/src/utils/constants';
 
 // Split out of /settings, which is trainer-level so everyone can enrol their own
 // passkeys. Platform configuration had no business living behind that gate.
@@ -34,10 +35,11 @@ import {
 // and lands in the RSC payload whether or not anything draws it. The four reads
 // here and the capability each one answers to:
 //
-//   platform_settings                      platform.page
-//   ratings (counts for the ladder card)   players.read
-//   season_final_ratings (last rewrite)    seasons.page
-//   audit_logs (who changed it, and why)   audit.page
+//   platform_settings                        platform.page
+//   ratings (counts for the ladder card)     players.read
+//   season_final_ratings (last activation)   seasons.page
+//   audit_logs (who changed it, and why)     audit.page
+//   players (the officer's name and photo)   players.read
 //
 // None of these is a new capability. Adding one would move an answer in
 // capability-equivalence.test.ts, and none of these doors needs a new key —
@@ -65,8 +67,8 @@ export default async function RatingsPage() {
   // platform.page holder — so the reads do not happen without it either. A
   // query that runs for output nobody renders still ships its rows into the RSC
   // payload; that is the leak, not the render.
-  const ladder = await loadLadder(db, canReadSettings && canReadRoster);
-  const lastRewrite = await loadLastRewrite(db, canReadSettings && canReadSeasons);
+  const ladder = await loadLadder(db, canReadSettings && canReadRoster, thresholdOf(settings));
+  const lastActivation = await loadLastActivation(db, canReadSettings && canReadSeasons);
   const lastChange = await loadLastChange(db, settings, {
     canReadAudit: canReadSettings && canReadAudit,
     canReadRoster: canReadSettings && canReadRoster,
@@ -86,7 +88,11 @@ export default async function RatingsPage() {
           settings={settings}
           canWrite={canWriteSettings}
           aside={
-            <RatingsAside ladder={ladder} lastRewrite={lastRewrite} lastChange={lastChange} />
+            <RatingsAside
+              ladder={ladder}
+              lastActivation={lastActivation}
+              lastChange={lastChange}
+            />
           }
         />
       ) : (
@@ -101,18 +107,40 @@ export default async function RatingsPage() {
 
 type Db = ReturnType<typeof createAdminClient>;
 
+/** The placement-match count as it is configured right now. */
+function thresholdOf(settings: PlatformSetting[]): number {
+  const raw = settings.find((s) => s.key === 'rating_defaults')?.value?.provisional_threshold;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : PROVISIONAL_THRESHOLD;
+}
+
 /**
- * How many members these settings will apply to, and how many of them the
- * placement-match threshold still counts as provisional. Three head counts —
- * no rows leave the database.
+ * How many members these settings apply to, and how many of them still move on
+ * the provisional K-factors. Three head counts — no rows leave the database.
+ *
+ * The condition is the STORED FLAG OR the match count, because that is what
+ * decides the K-factor on both sides of the engine:
+ * apply_match_result (00041) branches on
+ * `singles_provisional OR singles_matches_played < v_threshold`, and
+ * getKFactor() in the TS engine says the same thing. Counting the flag alone
+ * would print a figure that does not move when the field above it does — the
+ * threshold clears the flag only on the match that crosses it, so raising the
+ * threshold makes established players provisional again through the second
+ * clause and through nothing else.
  */
-async function loadLadder(db: Db, allowed: boolean): Promise<LadderShape> {
+async function loadLadder(db: Db, allowed: boolean, threshold: number): Promise<LadderShape> {
   if (!allowed) return { state: 'withheld' };
+
+  const provisional = (discipline: 'singles' | 'doubles') =>
+    db
+      .from('ratings')
+      .select('id', { count: 'exact', head: true })
+      .or(`${discipline}_provisional.eq.true,${discipline}_matches_played.lt.${threshold}`);
 
   const [total, singles, doubles] = await Promise.all([
     db.from('ratings').select('id', { count: 'exact', head: true }),
-    db.from('ratings').select('id', { count: 'exact', head: true }).eq('singles_provisional', true),
-    db.from('ratings').select('id', { count: 'exact', head: true }).eq('doubles_provisional', true),
+    provisional('singles'),
+    provisional('doubles'),
   ]);
 
   return {
@@ -124,26 +152,27 @@ async function loadLadder(db: Db, allowed: boolean): Promise<LadderShape> {
 }
 
 /**
- * The last time every rating on the ladder was rewritten at once. That only
- * happens in activate_season, which snapshots the outgoing season into
- * season_final_ratings before applying its Elo policy — so the newest
- * archived_at IS the date of the last wholesale rewrite.
+ * When a season was last activated.
+ *
+ * activate_season snapshots the outgoing season into season_final_ratings
+ * BEFORE it looks at the Elo policy, and its default policy ('carry') then
+ * rewrites nothing at all. So this date proves an activation, not a rewrite,
+ * and the card is labelled accordingly. Claiming "ladder last rewritten" off
+ * this column would be false for every carry-over season the club has ever
+ * run.
  */
-async function loadLastRewrite(db: Db, allowed: boolean): Promise<LastRewrite> {
+async function loadLastActivation(db: Db, allowed: boolean): Promise<LastActivation> {
   if (!allowed) return { state: 'withheld' };
 
   const { data } = await db
     .from('season_final_ratings')
-    .select('archived_at, seasons(name)')
+    .select('archived_at')
     .order('archived_at', { ascending: false })
     .limit(1)
     .maybeSingle();
 
   if (!data) return { state: 'none' };
-
-  const season = data.seasons as { name?: string } | { name?: string }[] | null;
-  const name = Array.isArray(season) ? (season[0]?.name ?? null) : (season?.name ?? null);
-  return { state: 'ok', at: data.archived_at as string, season: name };
+  return { state: 'ok', at: data.archived_at as string };
 }
 
 /** audit_logs.reason for a platform setting is "<key> — <text>" (settings.ts). */
@@ -178,7 +207,9 @@ async function loadLastChange(
   settings: PlatformSetting[],
   access: { canReadAudit: boolean; canReadRoster: boolean }
 ): Promise<LastChange> {
-  if (settings.length === 0) return { state: 'withheld' };
+  // Empty, not withheld: the aside is only rendered for a platform.page
+  // holder, so reaching here with no rows means the table is empty.
+  if (settings.length === 0) return { state: 'none' };
 
   const ratingKeys = new Set(settings.map((s) => s.key));
 

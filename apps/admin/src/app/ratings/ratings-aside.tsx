@@ -12,21 +12,25 @@ import { AvatarChip } from '@badminton/ui';
 // activate_season, and that is a different screen and a different decision.
 //
 // So the card says what is true: how many members these settings will apply
-// to, how many of them are still provisional (the one count a threshold change
-// really does move), and when the ladder was last rewritten wholesale. No
-// invented deltas.
+// to, how many of them the placement-match threshold still moves on the
+// provisional K-factors, and when a season was last activated — the only
+// operation in the product that touches every rating at once. No invented
+// deltas.
 
 /** Each block is either shown, withheld from this viewer, or genuinely empty. */
 export type Withheld = { state: 'withheld' };
 
 export type LadderShape =
   | Withheld
-  | { state: 'ok'; total: number; singlesProvisional: number; doublesProvisional: number };
+  | {
+      state: 'ok';
+      total: number;
+      /** On the provisional K-factors right now — see loadLadder(). */
+      singlesProvisional: number;
+      doublesProvisional: number;
+    };
 
-export type LastRewrite =
-  | Withheld
-  | { state: 'none' }
-  | { state: 'ok'; at: string; season: string | null };
+export type LastActivation = Withheld | { state: 'none' } | { state: 'ok'; at: string };
 
 export type LastChange =
   | Withheld
@@ -70,11 +74,11 @@ function NotShown({ what }: { what: string }) {
 
 export function RatingsAside({
   ladder,
-  lastRewrite,
+  lastActivation,
   lastChange,
 }: {
   ladder: LadderShape;
-  lastRewrite: LastRewrite;
+  lastActivation: LastActivation;
   lastChange: LastChange;
 }) {
   return (
@@ -103,13 +107,17 @@ export function RatingsAside({
                 <dd className="font-mono text-[var(--ink)]">{ladder.doublesProvisional}</dd>
               </div>
               <div className="flex items-baseline justify-between gap-3 py-1">
-                <dt className={MONO_LABEL}>Ladder last rewritten</dt>
+                {/* NOT "ladder last rewritten": activate_season snapshots the
+                    outgoing season whatever Elo policy it is given, and the
+                    default policy ('carry') rewrites nothing. The date proves
+                    an activation happened, so that is what it is called. */}
+                <dt className={MONO_LABEL}>Season last activated</dt>
                 <dd className="font-mono text-right text-[var(--ink)]">
-                  {lastRewrite.state === 'withheld'
+                  {lastActivation.state === 'withheld'
                     ? '—'
-                    : lastRewrite.state === 'none'
+                    : lastActivation.state === 'none'
                       ? 'NEVER'
-                      : formatDay(lastRewrite.at)}
+                      : formatDay(lastActivation.at)}
                 </dd>
               </div>
             </dl>
@@ -119,7 +127,7 @@ export function RatingsAside({
         <p className={`${MONO_LABEL} border-t border-[var(--line)] px-4 py-3 leading-[1.6]`}>
           These settings apply to matches confirmed from now on. Nothing here
           recalculates a rating that is already recorded — only activating a
-          season does that.
+          season on a soft or full Elo policy rewrites the ladder.
         </p>
       </CardShell>
 
