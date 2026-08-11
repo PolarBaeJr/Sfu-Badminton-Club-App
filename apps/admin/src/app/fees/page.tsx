@@ -281,6 +281,23 @@ export default async function FeesPage({
           .from('club_fees')
           .select('id, player_id, manual_name, amount_cents, paid_at, method, reference')
           .eq('season_id', season.id)
+          // DUES ONLY, and this filter is load-bearing twice over.
+          //
+          // It is the PERMISSION BOUNDARY. Since 00094 this table also holds
+          // reinstatements, which are a separate capability on this very page
+          // (fees.reinstatements.read, see ReinstatementsCard below). Without
+          // it, holding fees.clubfees.read would hand you the reinstatement
+          // ledger — including ban_reason — through the roster query.
+          //
+          // It is also what keeps the three figures above meaning anything.
+          // summariseFeeCollection counts ONE ROW PER LINE OF THE TABLE and
+          // derives Outstanding as the remainder, so a row that is not a line
+          // of this table inflates Paid and shrinks Outstanding by one apiece
+          // — a mixed count over three populations with three different
+          // exemption rules, presented as a count of members who have paid
+          // their dues. Entry fees and reinstatements have their own screens
+          // with their own totals, and that is where they are counted.
+          .eq('fee_type', 'dues')
       )
     : [];
   const feeByPlayer = new Map(

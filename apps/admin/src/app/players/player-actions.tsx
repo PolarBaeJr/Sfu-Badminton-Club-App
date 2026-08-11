@@ -265,8 +265,9 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin,
                 : ' Recording a reinstatement fee is admin-only. Go ahead and unban — if money changed hands, an admin records it afterwards from the Fees page.'}
             </p>
             {/* Money stays with admins even though the unban itself does not:
-                this writes a reinstatement_fees row into the admin-only fees
-                ledger. The server action rejects the fields too. */}
+                this writes a club_fees row tagged 'reinstatement' into the
+                admin-only fees ledger. The server action rejects the fields
+                too. */}
             {isAdmin && (
               <>
                 <div className="flex gap-2">

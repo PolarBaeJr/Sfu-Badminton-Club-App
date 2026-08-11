@@ -1,7 +1,7 @@
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { Card, Badge, AvatarChip, PageHeader, ResponsiveTable, TableCard } from '@badminton/ui';
 import { unwrap } from '@badminton/shared';
-import type { TournamentFeeTier, TournamentFee, Player } from '@badminton/shared';
+import type { TournamentFeeTier, ClubFee, Player } from '@badminton/shared';
 import { notFound } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
@@ -33,7 +33,7 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
   const tiers = unwrap(
     await supabase
       .from('tournament_fee_tiers')
-      .select('id, tournament_id, name, amount_cents, is_default, sort_order, created_at')
+      .select('id, tournament_id, name, amount_cents, is_default, sort_order, applies_to, created_at')
       .eq('tournament_id', id)
       .order('sort_order')
   ) as TournamentFeeTier[];
@@ -80,12 +80,18 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
       ) as Pick<Player, 'id' | 'full_name' | 'email' | 'avatar_url'>[])
     : [];
 
+  // Entry fees off the club's one ledger (00094), which is also where the
+  // /fees page and the member's own screen read them — so "who has paid for
+  // this tournament" and "what does this member owe" can no longer disagree.
+  // fee_type is not optional: without it this reads every member's dues and
+  // every reinstatement in the club through a capability that buys neither.
   const fees = unwrap(
     await supabase
-      .from('tournament_fees')
+      .from('club_fees')
       .select('player_id, tier_id, amount_cents, paid_at, method')
       .eq('tournament_id', id)
-  ) as Pick<TournamentFee, 'player_id' | 'tier_id' | 'amount_cents' | 'paid_at' | 'method'>[];
+      .eq('fee_type', 'tournament')
+  ) as Pick<ClubFee, 'player_id' | 'tier_id' | 'amount_cents' | 'paid_at' | 'method'>[];
   const feeByPlayer = new Map(fees.map((f) => [f.player_id, f]));
 
   const paidCount = players.filter((p) => feeByPlayer.get(p.id)?.paid_at).length;

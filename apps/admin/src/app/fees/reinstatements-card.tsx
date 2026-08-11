@@ -8,7 +8,7 @@ import { CardHeading } from './card-heading';
  * Reinstatement payments, and the ones nobody has been able to write down.
  *
  * An exec may lift a ban but may not touch the ledger, so their unban files a
- * reinstatement_fees row with no amount and no paid_at. Before this section
+ * club_fees row tagged 'reinstatement' with no amount and no paid_at. Before this section
  * existed there was no route back to that row at all — the member was no longer
  * banned, so the Unban dialog was gone, and 00065 forbids a second row for the
  * same ban. Whatever changed hands stayed off the books permanently.
@@ -16,7 +16,7 @@ import { CardHeading } from './card-heading';
  * Its own component, rendered on /fees whether or not a season is active. The
  * rest of that page is meaningless without a season and bails out early — but a
  * lapsed member coming back BETWEEN terms is the ordinary case, not the odd one
- * (it is why reinstatement_fees.season_id is nullable, see 00069), and those are
+ * (it is why the season is nullable on these rows, see 00069 and 00094), and those are
  * exactly the rows that must not be hidden.
  */
 
@@ -75,11 +75,20 @@ export async function ReinstatementsCard({
   // an unrecorded payment is the whole point of the section, and a row recorded
   // while the club was between terms belongs to no season's income and would be
   // findable nowhere else.
+  //
+  // Every one of them says fee_type = 'reinstatement'. club_fees holds three
+  // kinds of row since 00094, and the first two queries here filter on
+  // NOTHING BUT a null column — `amount_cents IS NULL` matches every unpriced
+  // entry fee in the club, and `season_id IS NULL` matches every fee attached
+  // to no season. Unfiltered, this card would list them all, under people's
+  // names, to a holder of fees.reinstatements.read.
+  const reinstatements = () =>
+    supabase.from('club_fees').select(COLS).eq('fee_type', 'reinstatement');
   const queries = [
-    supabase.from('reinstatement_fees').select(COLS).is('amount_cents', null),
-    supabase.from('reinstatement_fees').select(COLS).is('season_id', null),
+    reinstatements().is('amount_cents', null),
+    reinstatements().is('season_id', null),
   ];
-  if (seasonId) queries.push(supabase.from('reinstatement_fees').select(COLS).eq('season_id', seasonId));
+  if (seasonId) queries.push(reinstatements().eq('season_id', seasonId));
 
   const results = await Promise.all(queries);
   const rows = results

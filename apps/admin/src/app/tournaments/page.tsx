@@ -218,9 +218,14 @@ export default async function TournamentsPage({
         .from('tournament_fee_tiers')
         .select('tournament_id, amount_cents, is_default')
         .in('tournament_id', tournamentIds),
+      // Entry fees off the one ledger (00094). fee_type is required, not
+      // tidiness: club_fees also holds dues and reinstatements, and neither
+      // has a tournament_id — so an unfiltered read would pull every fee in
+      // the club and only the .in() would hold it back.
       supabase
-        .from('tournament_fees')
+        .from('club_fees')
         .select('tournament_id, player_id, amount_cents, paid_at')
+        .eq('fee_type', 'tournament')
         .in('tournament_id', tournamentIds),
     ]);
     const tiers = (tierData ?? []) as {

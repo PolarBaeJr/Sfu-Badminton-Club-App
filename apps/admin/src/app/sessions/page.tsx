@@ -374,6 +374,10 @@ export default async function SessionsPage({
         .from('club_fees')
         .select('player_id, paid_at, method')
         .eq('season_id', feeSeasonId)
+        // Dues only (00094). The door badge answers "has this member paid for
+        // the term", and feeByPlayer keys on player_id — an entry fee in the
+        // same table would answer in a season fee's place.
+        .eq('fee_type', 'dues')
     : { data: [] };
   const payerStatus = new Map((payers ?? []).map((p) => [p.id as string, p.status as string]));
   const feeByPlayer = new Map(

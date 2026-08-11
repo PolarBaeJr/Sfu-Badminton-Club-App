@@ -56,7 +56,14 @@ export async function getOutstandingClubFees(
     supabase
       .from('club_fees')
       .select('player_id, paid_at, method')
-      .eq('season_id', season.id),
+      .eq('season_id', season.id)
+      // DUES ONLY (00094). This figure is "how much SEASON money is still
+      // owed", and the ledger now also holds entry fees and reinstatements.
+      // Without the filter a member who had paid a tournament entry would be
+      // read as having settled their dues — feeByPlayer keys on player_id, so
+      // whichever of their rows arrived last would answer for all of them, and
+      // the dashboard would under-report what the club is owed.
+      .eq('fee_type', 'dues'),
   ]);
 
   // unwrap() rather than `?? []`: a query that errored would otherwise read as
