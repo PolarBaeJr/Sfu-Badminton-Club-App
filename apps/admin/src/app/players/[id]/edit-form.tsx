@@ -180,8 +180,10 @@ export function PlayerEditForm({
         />
       </div>
       )}
+      {/* Square hairline group, like the rest of the screen. The gate is
+          untouched: still `isAdmin`, still the same fields inside it. */}
       {isAdmin && (
-      <div className="rounded-lg border border-[var(--border)] p-3 space-y-1">
+      <div className="border border-[var(--border)] p-3 space-y-1">
         {isExec && (
           <>
             <Input
