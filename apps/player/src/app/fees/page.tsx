@@ -98,6 +98,17 @@ export default async function FeesPage() {
       ? season.competitive_fee_cents
       : season.recreational_fee_cents
     : null;
+  // Which tier to MARK as the member's own, which is not the same question.
+  // player_status also has 'pending_approval' and 'suspended', and neither is a
+  // fee tier. The amount above falls through to the recreational figure for
+  // them (unchanged from before the redesign), but printing "YOURS" beside a
+  // tier they have not been placed in would be an assertion the roster does not
+  // make.
+  const ownTier = competitive
+    ? 'competitive'
+    : player.status === 'recreational'
+      ? 'recreational'
+      : null;
 
   const lines: FeeLine[] = [];
   let seasonLine: FeeLine | null = null;
@@ -379,23 +390,27 @@ export default async function FeesPage() {
                     to anonymous visitors, so showing both discloses nothing —
                     and showing only one would hide that the club charges by
                     status at all. */}
-                <div className="fees-price" data-mine={competitive ? 'true' : undefined}>
+                <div className="fees-price" data-mine={ownTier === 'competitive' ? 'true' : undefined}>
                   <div className="fees-price-main">
                     <div className="fees-price-name">
                       Competitive membership
-                      {competitive && <span className="fees-yours">YOURS</span>}
+                      {ownTier === 'competitive' && <span className="fees-yours">YOURS</span>}
                     </div>
-                    <div className="fees-price-note">Rated ladder · one season</div>
+                    {/* What the two tiers actually mean, from the schema and
+                        not from the mockup: 00001's session_group enum sets a
+                        session's track to competitive / recreational / all, so
+                        the status decides which sessions are aimed at you. */}
+                    <div className="fees-price-note">Competitive sessions · one season</div>
                   </div>
                   <div className="fees-price-amount">{money(season.competitive_fee_cents)}</div>
                 </div>
-                <div className="fees-price" data-mine={!competitive ? 'true' : undefined}>
+                <div className="fees-price" data-mine={ownTier === 'recreational' ? 'true' : undefined}>
                   <div className="fees-price-main">
                     <div className="fees-price-name">
                       Recreational membership
-                      {!competitive && <span className="fees-yours">YOURS</span>}
+                      {ownTier === 'recreational' && <span className="fees-yours">YOURS</span>}
                     </div>
-                    <div className="fees-price-note">Social play · one season</div>
+                    <div className="fees-price-note">Recreational sessions · one season</div>
                   </div>
                   <div className="fees-price-amount">{money(season.recreational_fee_cents)}</div>
                 </div>
