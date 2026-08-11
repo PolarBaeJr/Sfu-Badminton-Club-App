@@ -11,8 +11,10 @@ import {
 
 const TZ = 'America/Vancouver';
 
-/** Every value of the `notification_type` enum in 00001_schema.sql. If a
- *  migration adds one, this list is the thing that should fail first. */
+/** Every value of the `notification_type` enum, mirrored BY HAND from
+ *  00001_schema.sql — nothing cross-checks the two, so a migration that adds a
+ *  value has to add it here as well. Until it does, the new type is covered
+ *  only by the unrecognised-type cases below, which is the point of those. */
 const ENUM_TYPES = [
   'challenge_received',
   'challenge_accepted',
