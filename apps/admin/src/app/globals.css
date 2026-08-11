@@ -177,6 +177,74 @@ input, textarea, select, button, a {
 }
 [data-theme="light"] .page-watermark { color: rgba(0, 0, 0, 0.03); }
 
+/* ------------------------------------------------------------------
+   Content card
+   `.card-base` and its head/title/sub siblings were declared only in the
+   player app's globals.css, so every @badminton/ui component that reaches
+   for them — Section, StatBlock, RouteLoading — rendered in this console
+   with no surface, no border and no padding. RouteLoading is the live
+   casualty: fourteen loading.tsx routes.
+
+   Not a copy of the player's rules. The contract each class provides is the
+   same, but the console is flat and sharp: hairline border, radius 0, no
+   shadow, depth from the --surface step over --bg. The dimensions are chosen
+   to land exactly on the hand-rolled card chrome already shipped on /legal
+   and /fees (`border border-[var(--line)] bg-[var(--surface)] p-5`), so a
+   Section and a hand-rolled panel are indistinguishable side by side.
+   ------------------------------------------------------------------ */
+.card-base {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  padding: 20px;
+  position: relative;
+}
+/* Console section type, not the player's 18px sentence case: inside a card the
+   heading has to out-rank body copy that is already sentence case at a similar
+   size, so it is condensed display caps — the same shape as the SECTION_HEADING
+   constant in app/fees/card-heading.tsx. */
+.card-title {
+  font-family: var(--display);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--ink);
+  margin: 0 0 4px;
+}
+.card-sub { color: var(--mute); font-size: 13px; }
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+/* Loading placeholder bar. The player app shimmers a gradient across these;
+   gradients are ruled out here, so it pulses between two flat fills instead.
+
+   The fills are the hairline overlays rather than a surface step, because a
+   surface step does not survive the light theme: --surface-2 resolves to
+   --bg-elevated, which is #fff there — the same value as the --surface card
+   underneath it, so the bar would be invisible on every light-theme console.
+   --line and --line-2 are alpha neutrals, so they read against #111 and #fff
+   alike, and they are the tone this console already draws its edges in. */
+.skeleton {
+  background: var(--line);
+  border-radius: 0;
+  animation: admin-skeleton-pulse 1.6s ease-in-out infinite;
+}
+@keyframes admin-skeleton-pulse {
+  0%, 100% { background-color: var(--line); }
+  50%      { background-color: var(--line-2); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}
+
 /* Stat strip — full-width row of hairline-separated cells */
 .stat-strip {
   display: grid;
