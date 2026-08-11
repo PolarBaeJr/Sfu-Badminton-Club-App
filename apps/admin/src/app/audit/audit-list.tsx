@@ -319,23 +319,26 @@ export function AuditList({
         )}
 
         {/* The card's own footer says what is on screen and what this table is.
-            The append-only line is not decoration: audit_logs carries a SELECT
+            The immutability line is not decoration: audit_logs carries a SELECT
             and an INSERT policy and nothing else (00005_rls), and TRUNCATE was
             revoked from every application role (00072). Somebody reading a row
             they dislike should know, without asking, that it cannot be removed.
 
-            The line claims exactly that and no more, and the distinction is
-            real: merging two members runs `UPDATE audit_logs SET actor_id` in a
-            SECURITY DEFINER function (00026, 00079), which bypasses RLS. So a
+            It says DELETED and not "append-only", because append-only would be
+            a stronger claim than the schema makes and it is not true: merging
+            two members runs `UPDATE audit_logs SET actor_id` in a SECURITY
+            DEFINER function (00026, 00079), which bypasses RLS entirely. So a
             row's ACTOR can be repointed — deliberately, so the history follows
-            the surviving member — while the row itself cannot be deleted. Do
-            not read the policy list above as proof of immutability. */}
+            the surviving member — while the row itself cannot be deleted. That
+            is the whole promise this footer is allowed to make. Do not read the
+            policy list above as proof of immutability, and do not put the word
+            back. */}
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border)] px-4 py-2.5">
           <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
             Showing {rows.length} of {logs.length} · {scopeLabel}
           </span>
           <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
-            Entries are append-only and cannot be deleted
+            Entries cannot be deleted
           </span>
         </div>
       </Card>

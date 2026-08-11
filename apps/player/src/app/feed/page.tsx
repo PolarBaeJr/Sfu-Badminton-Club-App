@@ -21,6 +21,7 @@ import {
   sessionDayLabel,
   type RiverPerson,
 } from '@/lib/feed-activity';
+import { isAddressedTo, withVisibleAnnouncements } from '@/lib/announcement-visibility';
 
 type PlayerEmbed = { id: string; full_name: string | null; handle: string | null; avatar_url: string | null };
 type MatchParticipantRow = {
@@ -165,15 +166,24 @@ export default async function FeedPage() {
     // Three rather than one, because target_audience cannot be filtered in the
     // query (it is matched against the viewer's own division below) and the
     // newest row might not be for them.
-    supabase
-      .from('announcements')
-      // Unhinted embed: `announcements` has exactly one foreign key to
-      // `players` (author_id), so PostgREST resolves it without a constraint
-      // name — and a constraint name guessed from the schema would only fail at
-      // runtime if it were wrong.
-      .select('id, title, body, created_at, target_audience, author:players(full_name)')
-      .eq('status', 'published')
-      .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
+    //
+    // withVisibleAnnouncements applies expiry AND the 00085 season shape — the
+    // same filter /announcements runs, from the same module, so the home screen
+    // and the news screen cannot disagree about whether a notice is retired.
+    // NOT inActiveSeason() above: that is the sessions shape (a nullable
+    // season_id) and it would match no evergreen announcement at all.
+    withVisibleAnnouncements(
+      supabase
+        .from('announcements')
+        // Unhinted embed: `announcements` has exactly one foreign key to
+        // `players` (author_id), so PostgREST resolves it without a constraint
+        // name — and a constraint name guessed from the schema would only fail
+        // at runtime if it were wrong.
+        .select('id, title, body, created_at, target_audience, author:players(full_name)')
+        .eq('status', 'published'),
+      nowIso,
+      activeSeason?.id,
+    )
       .order('pinned', { ascending: false })
       .order('created_at', { ascending: false })
       .limit(3),
@@ -216,13 +226,11 @@ export default async function FeedPage() {
         .eq('intent', 'going')
     : { count: null };
 
-  // RLS only checks status='published'; expiry is filtered in the query and
-  // audience has to be matched here, the same way /announcements does it.
-  const notice = ((announcementsRes.data ?? []) as unknown as AnnouncementRow[]).find(
-    (a) =>
-      a.target_audience === 'all' ||
-      a.target_audience === player.status ||
-      (a.target_audience === 'eligible_only' && player.eligibility_flag),
+  // RLS only checks status='published'. Expiry and season are filtered in the
+  // query above; audience is the one part that cannot be, because it is matched
+  // against a value on the viewer rather than on the row.
+  const notice = ((announcementsRes.data ?? []) as unknown as AnnouncementRow[]).find((a) =>
+    isAddressedTo(a, player),
   );
   const noticeAuthor = pickOne(notice?.author ?? null);
 

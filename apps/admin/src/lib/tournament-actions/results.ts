@@ -433,10 +433,11 @@ async function enterMatchResultImpl(
     `Your match result has been recorded. Score: ${scores.map((s: { a: number; b: number }) => `${s.a}-${s.b}`).join(', ')}`,
     // The parent id as well as the event and the match. A notification route in
     // the members' app is /tournaments/<tournament>/events/<event>, so a payload
-    // without it cannot be turned into a link and the player app has to go back
-    // to tournament_events to look the parent up. The producer already has it —
-    // it is the same value logAudit is handed twenty lines above, and the same
-    // one revalidateEventPaths uses four lines below.
+    // without it cannot be turned into a link. This was the ONE producer that
+    // omitted it — brackets.ts and finalize.ts have always written both — which
+    // is why /notifications still carries a back-fill query for the rows written
+    // before this line existed. The value was already to hand: it is what
+    // logAudit is given twenty lines above and revalidateEventPaths four below.
     { tournament_id: event.tournament_id as string, match_id: matchId, event_id: match.event_id },
     'tournament_match_result'
   );

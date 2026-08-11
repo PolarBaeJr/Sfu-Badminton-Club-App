@@ -3,6 +3,7 @@
 import { randomBytes } from 'crypto';
 import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
+import { requireReason } from '../audit-reason';
 import { notifyPlayers } from '../notify';
 import { revalidatePath } from 'next/cache';
 import {
@@ -122,6 +123,25 @@ async function createSessionImpl(data: {
   return { sessions, count: dates.length };
 }
 
+// A typed reason on every audited session write.
+//
+// The console's rule is that every audited action carries one — ban, remove,
+// restore, EDIT, approve — and `audit_logs` already has the column:
+// logAdminAudit takes `reason`, and voidMatch, removePlayer and approvePlayer
+// all fill it. The session writes did not, so the log recorded that a night's
+// schedule changed and never why.
+//
+// Editing needs it as much as the destructive pair, for a different reason.
+// Archiving silently ends check-in for everybody still walking through the door
+// and deleting takes the attendance rows with it — loud, obvious harm. An edit
+// is quiet: a date or a location moved, old_value and new_value dutifully
+// recorded, and no way to tell a correction of a typo from a room change
+// somebody needs to have been told about. The diff says what moved; only the
+// reason says whether anyone should care.
+//
+// The floor itself is in lib/audit-reason — this file is 'use server' and may
+// only export async functions, so a predicate declared here could be neither
+// shared with another action nor unit-tested.
 export async function updateSession(sessionId: string, data: {
   name: string;
   date: string;
@@ -130,8 +150,8 @@ export async function updateSession(sessionId: string, data: {
   location: string;
   notes?: string;
   track: SessionGroupInput;
-}): Promise<ActionResult<void>> {
-  return runAction(() => updateSessionImpl(sessionId, data));
+}, reason: string): Promise<ActionResult<void>> {
+  return runAction(() => updateSessionImpl(sessionId, data, reason));
 }
 
 async function updateSessionImpl(sessionId: string, data: {
@@ -142,7 +162,8 @@ async function updateSessionImpl(sessionId: string, data: {
   location: string;
   notes?: string;
   track: SessionGroupInput;
-}) {
+}, reason: string) {
+  const why = requireReason(reason, 'Editing a session');
   parseOrThrow(sessionGroupSchema, data.track);
   const admin = await requireCapability('sessions.update.write');
   const adminClient = createAdminClient();
@@ -168,33 +189,10 @@ async function updateSessionImpl(sessionId: string, data: {
     target_id: sessionId,
     old_value: old,
     new_value: data,
+    reason: why,
   }, { sessionId });
 
   revalidatePath('/sessions');
-}
-
-// A typed reason on the two audited session writes that destroy something.
-//
-// The console's rule is that every audited action carries one, and `audit_logs`
-// already has the column — logAdminAudit takes `reason`, and voidMatch,
-// removePlayer and approvePlayer all fill it. Archiving and deleting a session
-// did not, so the log recorded that a night's schedule changed and never why.
-// Closing a session is the one write that silently ends check-in for everybody
-// still walking through the door, and deleting one takes its attendance rows
-// with it (see deleteSessionImpl) — the two writes on this page that most need
-// a sentence attached.
-//
-// Checked on the server rather than only in the dialog: the dialog is a
-// courtesy, this is the rule. A trimmed floor is the point — "." satisfies
-// `required` on the client and tells the next reader nothing.
-const REASON_MIN = 5;
-
-function requireReason(reason: string, what: string): string {
-  const trimmed = reason.trim();
-  if (trimmed.length < REASON_MIN) {
-    throw new Error(`${what} needs a reason of at least ${REASON_MIN} characters.`);
-  }
-  return trimmed;
 }
 
 export async function archiveSession(sessionId: string, reason: string): Promise<ActionResult<void>> {
