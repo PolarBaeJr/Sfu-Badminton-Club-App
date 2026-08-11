@@ -1,226 +1,292 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { Badge, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
+import { Atomic, Badge, Card, EmptyState, ResponsiveTable, SearchFilter, Tabs, TableCard } from '@badminton/ui';
 import { formatDateTime } from '@badminton/shared';
-import { User } from 'lucide-react';
+import {
+  ALL_GROUP,
+  abbreviateActor,
+  actionLabel,
+  actionTone,
+  buildTabs,
+  relativeWhen,
+  resolveTab,
+  shortRef,
+  visibleLogs,
+  type AuditLogEntry,
+  type SortOrder,
+} from '@/lib/audit-log-view';
 
-export interface AuditLogRow {
-  id: string;
-  created_at: string;
-  action_type: string;
-  target_type: string | null;
-  target_id: string | null;
-  reason: string | null;
-  actor: { full_name: string } | null;
-}
+export type AuditLogRow = AuditLogEntry;
 
-const actionCategory = (action: string): 'success' | 'danger' | 'warning' | 'info' | 'neutral' => {
-  if (action.includes('created') || action.includes('added')) return 'success';
-  if (action.includes('voided') || action.includes('removed') || action.includes('rejected')) return 'danger';
-  if (action.includes('expired') || action.includes('ended') || action.includes('closed')) return 'warning';
-  if (action.includes('updated') || action.includes('changed') || action.includes('converted')) return 'info';
-  return 'neutral';
-};
-
-// Explicit target_type → filter-bucket mapping. Core buckets always render as
-// options; extras only appear when present in the fetched rows.
-const TARGET_BUCKETS: Record<string, string> = {
-  player: 'players',
-  rating: 'players',
-  varsity_note: 'players',
-  match: 'matches',
-  walkover: 'matches',
-  challenge: 'matches',
-  dispute: 'disputes',
-  session: 'sessions',
-  session_attendance: 'sessions',
-  platform_setting: 'settings',
-  legal_document: 'settings',
-  passkey_credential: 'settings',
-  season: 'seasons',
-  tournament: 'tournaments',
-  tournament_fee: 'tournaments',
-  tournament_fee_tier: 'tournaments',
-  club_fee: 'fees',
-  announcement: 'announcements',
-};
-
-const CORE_BUCKETS = ['players', 'matches', 'disputes', 'sessions', 'settings'];
-const EXTRA_BUCKETS = ['seasons', 'tournaments', 'fees', 'announcements', 'other'];
-
-const bucketOf = (log: AuditLogRow) => TARGET_BUCKETS[log.target_type ?? ''] ?? 'other';
-
-type SortMode = 'newest' | 'oldest' | 'operator_asc' | 'operator_desc';
-
-const SORT_OPTIONS: { value: SortMode; label: string }[] = [
+const SORT_OPTIONS: { value: SortOrder; label: string }[] = [
   { value: 'newest', label: 'Newest first' },
   { value: 'oldest', label: 'Oldest first' },
-  { value: 'operator_asc', label: 'Operator A–Z' },
-  { value: 'operator_desc', label: 'Operator Z–A' },
 ];
 
-export function AuditList({ logs }: { logs: AuditLogRow[] }) {
+const COLUMNS = ['When', 'Action', 'Subject', 'Officer', 'Reason', 'Ref'];
+
+const th =
+  'px-4 py-3 text-left font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]';
+
+/** `session_attendance` → `Session attendance`. The raw value, made readable. */
+function subjectLabel(targetType: string | null): string {
+  if (!targetType) return 'System';
+  const words = targetType.replace(/_/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
+ * The reason, in full, wherever it appears.
+ *
+ * Capped in WIDTH and left to wrap — never `truncate`, never `line-clamp`. Every
+ * privileged action on this console makes an officer type this sentence, and a
+ * screen that then shows the first forty characters of it has thrown away the
+ * only thing the requirement was for. A four-line row is the correct rendering.
+ */
+function Reason({ reason }: { reason: string | null }) {
+  if (!reason) {
+    return (
+      <span className="text-[var(--text-muted)]" title="No reason was recorded for this entry">
+        —
+      </span>
+    );
+  }
+  return <>{reason}</>;
+}
+
+export function AuditList({
+  logs,
+  scopeLabel,
+  controls,
+}: {
+  logs: AuditLogRow[];
+  /** What the rows are scoped to, for the footer: a season name, or the window. */
+  scopeLabel: string;
+  /** The season picker and the full-history escape, rendered by the page. */
+  controls: ReactNode;
+}) {
   const router = useRouter();
-  const [filter, setFilter] = useState('all');
-  const [sort, setSort] = useState<SortMode>('newest');
+  const [tab, setTab] = useState<string>(ALL_GROUP);
+  const [query, setQuery] = useState('');
+  const [sort, setSort] = useState<SortOrder>('newest');
+
+  // `now` drives the relative timestamps and is deliberately null on the first
+  // render. This component server-renders, and the server's clock and timezone
+  // are not the reader's: computing "Yesterday" there and "Today" in the browser
+  // is a hydration mismatch AND a wrong label on an audit log. So the first
+  // paint shows the absolute timestamp, and the relative reading arrives on
+  // mount, in the reader's own timezone.
+  const [now, setNow] = useState<Date | null>(null);
+  useEffect(() => setNow(new Date()), []);
 
   // Auto-refresh: router.refresh() re-runs the server fetch without resetting
-  // client filter state. Skipped while the tab is hidden.
+  // the tab, query or sort. Skipped while the tab is hidden. `now` is advanced
+  // on the same beat, or "Today 23:58" would still say Today well into tomorrow.
   useEffect(() => {
     const id = setInterval(() => {
+      setNow(new Date());
       if (!document.hidden) router.refresh();
     }, 30_000);
     return () => clearInterval(id);
   }, [router]);
 
-  const counts = useMemo(() => {
-    const c: Record<string, number> = { all: logs.length };
-    for (const log of logs) {
-      const bucket = bucketOf(log);
-      c[bucket] = (c[bucket] ?? 0) + 1;
-    }
-    return c;
-  }, [logs]);
+  // The filter's options come from the rows the SEASON gave us, before the
+  // search narrows them — so typing does not make tabs appear and disappear
+  // under the cursor, and the counts stay a description of the term.
+  const tabs = useMemo(() => buildTabs(logs), [logs]);
+  const activeTab = resolveTab(tabs, tab);
 
-  const buckets = [
-    'all',
-    ...CORE_BUCKETS,
-    ...EXTRA_BUCKETS.filter((b) => (counts[b] ?? 0) > 0),
-  ];
+  const rows = useMemo(
+    () => visibleLogs(logs, { tab: activeTab, query, order: sort }),
+    [logs, activeTab, query, sort]
+  );
 
-  const rows = useMemo(() => {
-    const filtered = filter === 'all' ? logs : logs.filter((log) => bucketOf(log) === filter);
-    return [...filtered].sort((a, b) => {
-      if (sort === 'operator_asc' || sort === 'operator_desc') {
-        const an = a.actor?.full_name ?? null;
-        const bn = b.actor?.full_name ?? null;
-        // Null actors ("System") always sort last, regardless of direction.
-        if (an === null && bn === null) return b.created_at.localeCompare(a.created_at);
-        if (an === null) return 1;
-        if (bn === null) return -1;
-        const cmp = an.localeCompare(bn, undefined, { sensitivity: 'base' });
-        if (cmp !== 0) return sort === 'operator_asc' ? cmp : -cmp;
-        return b.created_at.localeCompare(a.created_at);
-      }
-      return sort === 'oldest'
-        ? a.created_at.localeCompare(b.created_at)
-        : b.created_at.localeCompare(a.created_at);
-    });
-  }, [logs, filter, sort]);
+  // Absolute time is the value of record; the relative reading is a convenience
+  // laid over it. Both are always available — one drawn, one in the tooltip.
+  const exact = (iso: string) => formatDateTime(iso);
+  const when = (iso: string) => (now ? relativeWhen(iso, now) : exact(iso));
 
   return (
-    <div>
-      {/* Filter band — hairline-bounded category select + auto-refresh */}
-      <div className="flex flex-wrap items-center gap-2 border-y border-[var(--border)] py-3">
-        <select
-          aria-label="Filter audit entries by category"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          className="settings-input font-mono text-[11px] uppercase tracking-[0.12em]"
-        >
-          {buckets.map((bucket) => (
-            <option key={bucket} value={bucket}>
-              {bucket.toUpperCase()} ({counts[bucket] ?? 0})
-            </option>
-          ))}
-        </select>
-        <select
-          aria-label="Sort audit entries"
-          value={sort}
-          onChange={(e) => setSort(e.target.value as SortMode)}
-          className="settings-input ml-auto font-mono text-[11px] uppercase tracking-[0.12em]"
-        >
-          {SORT_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
-        <span className="whitespace-nowrap font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">
-          Auto-refresh · 30s
-        </span>
+    <div className="space-y-4">
+      {/* Control band. Search and scope lead; the tab strip takes the right of
+          the row on a wide screen and its own row when the club has enough
+          kinds of activity for that to crowd the search field. */}
+      <div className="flex flex-wrap items-center gap-3">
+        <SearchFilter
+          value={query}
+          onChange={setQuery}
+          label="Search the audit log by action, officer, subject or reason"
+          placeholder="Search the log"
+          resultCount={rows.length}
+          noun="entry"
+          nounPlural="entries"
+          className="w-full sm:w-auto sm:min-w-[280px] sm:max-w-[360px] sm:flex-1"
+        />
+
+        {controls}
+
+        <label className="ml-auto flex items-center gap-2">
+          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+            Sort
+          </span>
+          <select
+            aria-label="Sort audit entries"
+            value={sort}
+            onChange={(e) => setSort(e.target.value as SortOrder)}
+            className="settings-input text-xs"
+          >
+            {SORT_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="w-full min-w-0 lg:w-auto">
+          <Tabs tabs={tabs} activeTab={activeTab} onChange={setTab} />
+        </div>
       </div>
 
-      {/* Table — hairline dividers, no card chrome */}
-      <ResponsiveTable
-        cards={rows.map((log) => (
-          <TableCard
-            key={log.id}
-            title={
-              <span className="flex items-center gap-2">
-                <User className="w-3.5 h-3.5 shrink-0 text-[var(--text-muted)]" />
-                {log.actor?.full_name || <span className="italic text-[var(--text-muted)]">System</span>}
-              </span>
+      <Card padding={false} className="overflow-hidden">
+        {rows.length === 0 ? (
+          <EmptyState
+            title={query ? 'Nothing matches that search' : 'No entries in this period'}
+            description={
+              query
+                ? 'The log holds everything that happened; only this search came up empty.'
+                : 'Privileged actions are recorded here the moment they happen.'
             }
-            badges={<Badge variant={actionCategory(log.action_type)}>{log.action_type.replace(/_/g, ' ')}</Badge>}
-            fields={[
-              { label: 'Time', value: <Atomic separator=",">{formatDateTime(log.created_at)}</Atomic> },
-              {
-                label: 'Target',
-                value: (
-                  <>
-                    <span className="capitalize">{log.target_type}</span>
-                    {log.target_id && (
-                      <span className="ml-1.5 bg-[var(--border-hover)] px-1.5 py-0.5 font-mono text-xs text-[var(--text-muted)]">
-                        {String(log.target_id).slice(0, 8)}
-                      </span>
-                    )}
-                  </>
-                ),
-              },
-              { label: 'Reason', wide: true, value: log.reason || <span className="opacity-40">-</span> },
-            ]}
           />
-        ))}
-      >
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-[var(--border)]">
-              <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.1em] text-[var(--text-muted)]">Time</th>
-              <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.1em] text-[var(--text-muted)]">Actor</th>
-              <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.1em] text-[var(--text-muted)]">Action</th>
-              <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.1em] text-[var(--text-muted)]">Target</th>
-              <th className="px-4 py-3 text-left font-mono text-[10px] font-medium uppercase tracking-[0.1em] text-[var(--text-muted)]">Reason</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[var(--border)]">
-            {rows.map((log) => (
-              <tr key={log.id} className="hover:bg-white/[0.03] transition-colors">
-                <td className="px-4 py-3.5 whitespace-nowrap font-mono text-xs text-[var(--text-muted)]">
-                  {formatDateTime(log.created_at)}
-                </td>
-                <td className="px-4 py-3.5 text-sm text-[var(--text-primary)]">
-                  <div className="flex items-center gap-2">
-                    <User className="w-3.5 h-3.5 text-[var(--text-muted)]" />
-                    {log.actor?.full_name || <span className="text-[var(--text-muted)] italic">System</span>}
-                  </div>
-                </td>
-                <td className="px-4 py-3.5">
-                  <Badge variant={actionCategory(log.action_type)}>{log.action_type.replace(/_/g, ' ')}</Badge>
-                </td>
-                <td className="px-4 py-3.5 text-sm text-[var(--text-secondary)]">
-                  <span className="capitalize">{log.target_type}</span>
-                  {log.target_id && (
-                    <span className="ml-1.5 bg-[var(--border-hover)] px-1.5 py-0.5 font-mono text-xs text-[var(--text-muted)]">
-                      {String(log.target_id).slice(0, 8)}
-                    </span>
-                  )}
-                </td>
-                <td className="max-w-xs truncate px-4 py-3.5 text-sm text-[var(--text-muted)]">
-                  {log.reason || <span className="opacity-40">-</span>}
-                </td>
-              </tr>
+        ) : (
+          <ResponsiveTable
+            cards={rows.map((log) => (
+              <TableCard
+                key={log.id}
+                title={
+                  <span title={exact(log.created_at)}>
+                    <time dateTime={log.created_at} className="font-mono">
+                      {when(log.created_at)}
+                    </time>
+                  </span>
+                }
+                badges={<Badge variant={actionTone(log.action_type)}>{actionLabel(log.action_type)}</Badge>}
+                fields={[
+                  {
+                    label: 'Subject',
+                    value: (
+                      <>
+                        {subjectLabel(log.target_type)}
+                        {log.target_id && (
+                          <span className="ml-1.5 font-mono text-xs text-[var(--text-muted)]">
+                            {shortRef(log.target_id)}
+                          </span>
+                        )}
+                      </>
+                    ),
+                  },
+                  {
+                    // The phone card writes the officer out in full: there is no
+                    // column width to fight for here, and the hover that reveals
+                    // the abbreviation on a desktop does not exist on a phone.
+                    label: 'Officer',
+                    value: log.actor?.full_name ?? 'System',
+                  },
+                  // The exact timestamp gets its own field rather than a tooltip:
+                  // there is nothing to hover on a phone, and "2 days ago" alone
+                  // is not a record of when something happened.
+                  { label: 'Recorded', value: <Atomic separator=",">{exact(log.created_at)}</Atomic> },
+                  {
+                    label: 'Ref',
+                    value: (
+                      <Atomic className="font-mono text-xs text-[var(--text-muted)]">
+                        {shortRef(log.id)}
+                      </Atomic>
+                    ),
+                  },
+                  { label: 'Reason', wide: true, value: <Reason reason={log.reason} /> },
+                ]}
+              />
             ))}
-          </tbody>
-        </table>
-      </ResponsiveTable>
-      {rows.length === 0 && (
-        <p className="border-b border-[var(--border)] py-10 text-center text-sm text-[var(--text-muted)]">
-          No audit entries.
-        </p>
-      )}
+          >
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-[var(--border)]">
+                  {COLUMNS.map((col) => (
+                    <th key={col} scope="col" className={col === 'Ref' ? `${th} text-right` : th}>
+                      {col}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border)]">
+                {rows.map((log) => (
+                  <tr key={log.id} className="transition-colors hover:bg-white/[0.03]">
+                    <td className="whitespace-nowrap px-4 py-3.5 align-top">
+                      <time
+                        dateTime={log.created_at}
+                        title={exact(log.created_at)}
+                        className="font-mono text-xs text-[var(--text-secondary)]"
+                      >
+                        {when(log.created_at)}
+                      </time>
+                    </td>
+                    <td className="px-4 py-3.5 align-top">
+                      <Badge variant={actionTone(log.action_type)}>{actionLabel(log.action_type)}</Badge>
+                    </td>
+                    <td className="px-4 py-3.5 align-top text-sm text-[var(--text-secondary)]">
+                      <span className="whitespace-nowrap">{subjectLabel(log.target_type)}</span>
+                      {log.target_id && (
+                        <span
+                          className="ml-1.5 font-mono text-xs text-[var(--text-muted)]"
+                          title={log.target_id}
+                        >
+                          {shortRef(log.target_id)}
+                        </span>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3.5 align-top">
+                      {/* Abbreviated to keep the column narrow enough that Reason
+                          gets the room; the full name is one hover away, and is
+                          written out in full on the phone card. */}
+                      <span
+                        className="font-mono text-xs text-[var(--text-primary)]"
+                        title={log.actor?.full_name ?? 'Recorded by a scheduled job, not a person'}
+                      >
+                        {abbreviateActor(log.actor?.full_name)}
+                      </span>
+                    </td>
+                    <td className="max-w-[340px] px-4 py-3.5 align-top text-sm leading-snug text-[var(--text-secondary)]">
+                      <Reason reason={log.reason} />
+                    </td>
+                    <td className="px-4 py-3.5 text-right align-top" title={log.id}>
+                      <Atomic className="font-mono text-xs text-[var(--text-muted)]">
+                        {shortRef(log.id)}
+                      </Atomic>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ResponsiveTable>
+        )}
+
+        {/* The card's own footer says what is on screen and what this table is.
+            The append-only line is not decoration: audit_logs carries a SELECT
+            and an INSERT policy and nothing else (00005_rls), and TRUNCATE was
+            revoked from every application role (00072). Somebody reading a row
+            they dislike should know, without asking, that it cannot be removed. */}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border)] px-4 py-2.5">
+          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+            Showing {rows.length} of {logs.length} · {scopeLabel}
+          </span>
+          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+            Entries are append-only and cannot be deleted
+          </span>
+        </div>
+      </Card>
     </div>
   );
 }
