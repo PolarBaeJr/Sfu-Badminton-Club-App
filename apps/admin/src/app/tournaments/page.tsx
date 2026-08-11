@@ -193,7 +193,7 @@ export default async function TournamentsPage({
   const featuredEventIds = new Set(featuredEvents.map((e) => e.id));
 
   // ---- ENTRY MONEY. Both reads are inside the capability, not beside it. ----
-  let feeTiersByTournament = new Map<string, { amount_cents: number; is_default: boolean }[]>();
+  const feeTiersByTournament = new Map<string, { amount_cents: number; is_default: boolean }[]>();
   let feesDueCents = 0;
   let featuredPaid = 0;
   let featuredUnpaid = 0;
@@ -424,7 +424,7 @@ export default async function TournamentsPage({
 
       <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[2fr_1fr]">
         {/* ---------------- LEFT: every tournament in the season ------------ */}
-        <Card padding={false} className="overflow-hidden" >
+        <Card padding={false} className="overflow-hidden">
           <div
             id="all-events"
             className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4"
