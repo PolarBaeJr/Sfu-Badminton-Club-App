@@ -5,7 +5,7 @@ import {
   rungProgress,
   winShare,
   formatStreak,
-  ladderSpread,
+  ladderHistogram,
 } from '../ladder';
 
 describe('topPercentile', () => {
@@ -116,26 +116,49 @@ describe('formatStreak', () => {
   });
 });
 
-describe('ladderSpread', () => {
-  it('places each rating as an offset across the field\'s range', () => {
-    const s = ladderSpread([1400, 1300, 1200], 1);
-    expect(s.min).toBe(1200);
-    expect(s.max).toBe(1400);
-    expect(s.ticks).toEqual([1, 0.5, 0]);
-    expect(s.meAt).toBe(0.5);
+describe('ladderHistogram', () => {
+  it('counts the field into equal-width rating bands', () => {
+    const h = ladderHistogram([1400, 1300, 1250, 1200], 1, 4);
+    expect(h.min).toBe(1200);
+    expect(h.max).toBe(1400);
+    // Bands of 50: [1200,1250) [1250,1300) [1300,1350) [1350,1400]
+    expect(h.buckets).toEqual([1, 1, 1, 1]);
+    expect(h.peak).toBe(1);
+    expect(h.buckets.reduce((a, b) => a + b, 0)).toBe(4);
   });
 
-  it('centres a flat field instead of pinning everyone to one end', () => {
-    const s = ladderSpread([1200, 1200, 1200], 0);
-    expect(s.ticks).toEqual([0.5, 0.5, 0.5]);
-    expect(s.meAt).toBe(0.5);
+  it('clamps the top rating into the last band rather than off the end', () => {
+    const h = ladderHistogram([1400, 1200], 0, 4);
+    expect(h.buckets).toEqual([1, 0, 0, 1]);
+    expect(h.meBucket).toBe(3);
   });
 
-  it('has no marker when the member is not in this field', () => {
-    expect(ladderSpread([1400, 1200], -1).meAt).toBeNull();
+  it('reports the fullest band, so bars can be drawn relative to it', () => {
+    const h = ladderHistogram([1200, 1205, 1210, 1400], 0, 4);
+    expect(h.peak).toBe(3);
+    expect(h.buckets[0]).toBe(3);
   });
 
-  it('is empty for an empty field', () => {
-    expect(ladderSpread([], 0)).toEqual({ min: 0, max: 0, ticks: [], meAt: null });
+  it('puts a flat field in the middle band instead of piling it at one end', () => {
+    const h = ladderHistogram([1200, 1200, 1200], 1, 5);
+    expect(h.buckets).toEqual([0, 0, 3, 0, 0]);
+    expect(h.meBucket).toBe(2);
+  });
+
+  it('has no marked band when the member is not in this field', () => {
+    expect(ladderHistogram([1400, 1200], -1, 4).meBucket).toBeNull();
+  });
+
+  it('never loses a player', () => {
+    const values = Array.from({ length: 92 }, (_, i) => 1650 - i * 7 + (i % 5));
+    const h = ladderHistogram(values, 11, 22);
+    expect(h.buckets).toHaveLength(22);
+    expect(h.buckets.reduce((a, b) => a + b, 0)).toBe(92);
+    expect(h.meBucket).not.toBeNull();
+  });
+
+  it('is an empty set of bands for an empty field', () => {
+    const h = ladderHistogram([], 0, 3);
+    expect(h).toEqual({ min: 0, max: 0, buckets: [0, 0, 0], peak: 0, meBucket: null });
   });
 });

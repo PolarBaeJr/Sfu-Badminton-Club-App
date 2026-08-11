@@ -1551,11 +1551,13 @@ html, body { overflow-x: clip; }
 .ranks-rail > * { flex: 0 0 auto; }
 
 /* Full-bleed on the phone and thumb-height, rather than the 180px pill wedged
-   into the page header — search is how you find one person in ninety. */
-.ranks-search { width: 100%; padding: 10px 12px; }
-.ranks-search input { width: 100%; font-size: 16px; }
+   into the page header — search is how you find one person in ninety.
+   16px on the input, not 13px: iOS zooms the whole viewport when a field
+   smaller than that takes focus, and the page never zooms back out. */
+.ranks-search { flex: 1 1 190px; padding: 6px 12px; }
+.ranks-search input { width: 100%; min-width: 0; font-size: 16px; }
 @media (min-width: 981px) {
-  .ranks-search { width: 260px; }
+  .ranks-search { flex: 0 0 260px; }
   .ranks-search input { font-size: 13px; }
 }
 
@@ -1573,38 +1575,29 @@ html, body { overflow-x: clip; }
   border-radius: 999px;
 }
 
-/* The distribution strip: one hairline per player across the field's rating
-   range, the member's own in red. Plain absolutely-positioned elements rather
-   than SVG — at ~100 players a 1px rule is the whole mark, and an SVG scaled
-   with preserveAspectRatio="none" would stretch those rules unevenly. */
+/* The shape of the field: one bar per rating band, the member's band in red.
+   Flex rather than SVG — the marks are plain rectangles on a baseline, and a
+   viewBox scaled with preserveAspectRatio="none" would stretch them unevenly
+   across viewport widths. */
 .spread {
-  position: relative;
-  height: 30px;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 34px;
   margin: 2px 0 6px;
-}
-.spread::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 1px;
-  background: var(--line);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 2px;
 }
 .spread i {
-  position: absolute;
-  top: 8px;
-  bottom: 1px;
-  width: 1px;
-  margin-left: -0.5px;
+  flex: 1;
+  min-width: 0;
   background: var(--faint);
+  border-radius: 1px 1px 0 0;
 }
-.spread i.me {
-  top: 0;
-  width: 2px;
-  margin-left: -1px;
-  background: var(--red);
-}
+.spread i.me { background: var(--red); }
+/* An empty band is drawn as a hairline on the floor rather than as nothing, so
+   the bar chart keeps a readable rhythm and a gap still reads as a gap. */
+.spread i.none { background: var(--ghost); }
 .spread-axis {
   display: flex;
   justify-content: space-between;

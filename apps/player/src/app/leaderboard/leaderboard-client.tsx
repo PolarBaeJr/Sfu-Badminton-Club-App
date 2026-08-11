@@ -16,7 +16,7 @@ import {
   rungProgress,
   winShare,
   formatStreak,
-  ladderSpread,
+  ladderHistogram,
 } from '@/lib/ladder';
 
 type Ratings = {
@@ -73,6 +73,17 @@ const sortOptions: { id: SortId; label: string }[] = [
 // Records with fewer than this many games sort below established ones when
 // ranking by win rate (a 1-0 record shouldn't outrank a 20-5 one).
 const MIN_GAMES_FOR_WIN_RATE_RANK = 5;
+
+// Rating bands in the distribution bar chart. Chosen against the 360px design
+// width: 22 bands with a 2px gap gives ~12px bars in the narrow card, which is
+// wide enough to draw without the fractional-pixel moiré that a mark-per-player
+// strip produced, and fine enough that a ninety-member club still has a shape.
+const SPREAD_BANDS = 22;
+
+// The shortest bar a band with anybody in it may be drawn at, as a fraction of
+// the tallest. Without a floor, one member in a band next to a peak of thirty
+// rounds to nothing and the chart claims the band is empty.
+const MIN_BAND_HEIGHT = 0.14;
 
 /** The number this tab ranks by: ELO for a discipline, points for the tournament tab. */
 function metricOf(p: LeaderboardEntry, isDoubles: boolean, isTpts: boolean): number {
@@ -289,12 +300,11 @@ export default function LeaderboardClient({
 
   const percentile = topPercentile(meIndex, ranked.length);
 
-  // The whole field's ratings, in ladder order, for the distribution strip.
-  // Recomputed with the ladder because it is a picture OF the ladder — filter
-  // the list and the picture is of what is left, which is what a member asking
-  // "where am I among the competitive players" wants.
+  // The shape of the field, recomputed with the ladder because it is a picture
+  // OF the ladder — filter the list and the picture is of what is left, which
+  // is what a member asking "where am I among the competitive players" wants.
   const spread = useMemo(
-    () => ladderSpread(ranked.map((p) => metricOf(p, isDoubles, isTpts)), meIndex),
+    () => ladderHistogram(ranked.map((p) => metricOf(p, isDoubles, isTpts)), meIndex, SPREAD_BANDS),
     [ranked, isDoubles, isTpts, meIndex],
   );
 
@@ -384,23 +394,33 @@ export default function LeaderboardClient({
                 </div>
               )}
 
-              {/* The field itself: one hairline per player across the rating
-                  range, yours in red. It is the only picture this screen can
-                  honestly draw — get_leaderboard() returns a current rating and
-                  no history, so there is no rating-over-time line to plot. */}
-              {spread.meAt !== null && spread.max > spread.min && (
+              {/* The field itself: how many members sit in each slice of the
+                  rating range, yours in red. It is the only picture this screen
+                  can honestly draw — get_leaderboard() returns a current rating
+                  and no history, so there is no rating-over-time line to plot.
+                  Hidden when everyone is on the same rating, because a chart of
+                  one band is a rectangle that says nothing. */}
+              {spread.meBucket !== null && spread.max > spread.min && (
                 <div style={{ marginTop: 16 }}>
                   <div className="spread" aria-hidden>
-                    {ranked.map((p, i) => (
+                    {spread.buckets.map((count, i) => (
                       <i
-                        key={p.id}
-                        className={i === meIndex ? 'me' : undefined}
-                        style={{ left: `${(spread.ticks[i] ?? 0) * 100}%` }}
+                        key={i}
+                        className={
+                          count === 0 ? 'none' : i === spread.meBucket ? 'me' : undefined
+                        }
+                        style={{
+                          height:
+                            count === 0
+                              ? 1
+                              : `${Math.max(MIN_BAND_HEIGHT, count / spread.peak) * 100}%`,
+                        }}
                       />
                     ))}
                   </div>
                   <div className="spread-axis">
                     <span>{spread.min}</span>
+                    <span>THE FIELD</span>
                     <span>{spread.max}</span>
                   </div>
                 </div>

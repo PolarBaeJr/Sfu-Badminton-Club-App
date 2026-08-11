@@ -75,31 +75,61 @@ export function formatStreak(streak: number | null | undefined): StreakDisplay {
     : { label: `L${Math.abs(streak)}`, tone: 'loss' };
 }
 
-export type LadderSpread = {
+export type LadderHistogram = {
   min: number;
   max: number;
-  /** Every player's rating as a 0-1 offset across [min, max], in ladder order. */
-  ticks: number[];
-  /** The signed-in member's offset, or null when they are not in this field. */
-  meAt: number | null;
+  /** How many players fall in each equal-width rating band, lowest band first. */
+  buckets: number[];
+  /** The fullest band's count, so bars can be drawn relative to it. */
+  peak: number;
+  /** Index of the band the signed-in member is in, or null if they aren't here. */
+  meBucket: number | null;
 };
 
 /**
- * The whole field as offsets across its own rating range — the raw material for
- * the distribution strip, which is the only picture on this screen and the only
- * one the data supports.
+ * The shape of the field: how many members sit in each slice of the rating
+ * range. This is the only picture on this screen and the only one the data
+ * supports — get_leaderboard() returns a current rating per player and no
+ * history, so there is no rating-over-time series to plot.
  *
- * A flat field (everyone on the starting rating, which is a brand-new club or a
- * brand-new season) has no range to spread across, so every tick sits at the
- * midpoint rather than at an arbitrary end.
+ * BANDS RATHER THAN ONE MARK PER PLAYER. The first version of this drew a 1px
+ * rule per member. At ninety members across a 316px card those rules land on
+ * fractional pixels, most of them render sub-visible, and the survivors beat
+ * into a striped moiré — which reads as empty rating bands that are not empty.
+ * A bar per band is wide enough to be drawn honestly at 360px and answers the
+ * question the screen is asking better anyway.
+ *
+ * A flat field (a brand-new club, or the first day of a season, when everyone
+ * is on the starting rating) has no range to divide, so everyone lands in the
+ * middle band rather than being piled at an arbitrary end.
  */
-export function ladderSpread(values: number[], meIndex: number): LadderSpread {
-  if (values.length === 0) return { min: 0, max: 0, ticks: [], meAt: null };
+export function ladderHistogram(
+  values: number[],
+  meIndex: number,
+  bucketCount: number,
+): LadderHistogram {
+  const n = Math.max(1, Math.floor(bucketCount));
+  if (values.length === 0) {
+    return { min: 0, max: 0, buckets: new Array(n).fill(0), peak: 0, meBucket: null };
+  }
   const min = Math.min(...values);
   const max = Math.max(...values);
   const span = max - min;
-  const offset = (v: number) => (span <= 0 ? 0.5 : (v - min) / span);
-  const ticks = values.map(offset);
-  const meAt = meIndex >= 0 && meIndex < values.length ? (ticks[meIndex] ?? null) : null;
-  return { min, max, ticks, meAt };
+  const middle = Math.floor((n - 1) / 2);
+  // The top rating would land one past the last band on its own, so it is
+  // clamped in rather than given a band of its own that nobody else can reach.
+  const bucketOf = (v: number) =>
+    span <= 0 ? middle : Math.min(n - 1, Math.floor(((v - min) / span) * n));
+
+  const buckets = new Array<number>(n).fill(0);
+  for (const v of values) buckets[bucketOf(v)]! += 1;
+
+  const meValue = meIndex >= 0 && meIndex < values.length ? values[meIndex] : undefined;
+  return {
+    min,
+    max,
+    buckets,
+    peak: Math.max(...buckets),
+    meBucket: meValue === undefined ? null : bucketOf(meValue),
+  };
 }
