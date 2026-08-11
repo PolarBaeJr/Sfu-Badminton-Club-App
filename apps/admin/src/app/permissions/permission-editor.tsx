@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useTransition } from 'react';
+import { useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Badge,
@@ -26,6 +26,21 @@ import { EXEC_ROLE_OPTIONS, accessForLevel, type ExecRole } from '@/lib/console-
 // which only need the vocabulary do not ship it; the editor is the one screen
 // that genuinely does.
 import { CAPABILITY_GATES } from '@badminton/shared/src/utils/capability-gates';
+// Everything about the QUEUE — who has something pending, what it adds up to,
+// and the validate-everyone-then-write-everyone ordering. Pure, and tested as
+// such in lib/__tests__/permission-batch.test.ts.
+import {
+  draftOf,
+  draftSet,
+  dropPending,
+  isPermissionRole as isRole,
+  localRefusal,
+  pendingEntries,
+  saveBatch,
+  totalChanges,
+  type Draft,
+  type PendingEdits,
+} from '@/lib/permission-batch';
 import {
   effectiveCapabilities,
   resolvePermissions,
@@ -264,14 +279,6 @@ function roleOptions(level: AccessLevel) {
 
 const CONFIRM_PHRASE = 'HAND OUT PERMISSIONS';
 
-const KNOWN = new Set<string>(CAPABILITIES);
-const isKnown = (value: string): value is Capability => KNOWN.has(value);
-const isRole = (value: string | null): value is PermissionRole =>
-  (PERMISSION_ROLES as readonly string[]).includes(value ?? '');
-
-const sameSet = (a: readonly string[], b: readonly string[]) =>
-  JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
-
 // The shared name-and-email matching, the same one the roster and the pickers
 // use. An admin who learns that typing "chen" finds Chen on /players should not
 // have to relearn it here.
@@ -354,9 +361,16 @@ export function PermissionEditor({
   viewerCapabilities: Capability[];
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [role, setRole] = useState<PermissionRole | null>(null);
-  const [grants, setGrants] = useState<Capability[]>([]);
-  const [revokes, setRevokes] = useState<Capability[]>([]);
+  // EVERY PERSON'S PENDING TRIPLE, KEYED BY ID, and this is the whole of the
+  // change. It used to be three pieces of state describing whoever was selected,
+  // so picking somebody else silently threw the work away — the club owner wants
+  // to queue changes across several people and save them together, and a queue
+  // that empties when you look at the next person is not one.
+  //
+  // A KEY EXISTS ONLY FOR SOMEBODY WHO HAS BEEN TOUCHED. See PendingEdits: a
+  // draft seeded for everybody would mark anyone carrying a stored capability
+  // this build no longer knows as having a queued change nobody made.
+  const [pending, setPending] = useState<PendingEdits>({});
   const [capabilitySearch, setCapabilitySearch] = useState('');
   const [mode, setMode] = useState<FilterMode>('all');
   const [memberSearch, setMemberSearch] = useState('');
@@ -377,7 +391,29 @@ export function PermissionEditor({
   const selected = everyone.find((p) => p.id === selectedId) ?? null;
   const selectedLevel = selected?.level ?? null;
 
+  // THE QUEUE, RESOLVED. Everybody with something pending, what each edit would
+  // do to them, and the totals the save bar reports — over EVERYONE, not over
+  // whoever happens to be selected.
+  const entries = useMemo(() => pendingEntries(everyone, pending), [everyone, pending]);
+  const queuedIds = useMemo(() => new Set(entries.map((e) => e.person.id)), [entries]);
+  const queuedChanges = totalChanges(entries);
+
   const seededRole = selected && isRole(selected.role) ? selected.role : null;
+
+  // THE SELECTED PERSON'S TRIPLE — their queued edit if they have one, otherwise
+  // their row as it stands. Derived rather than stored, which is what lets the
+  // queue survive the selection moving: everything below goes on reading `role`,
+  // `grants` and `revokes` exactly as it did when they were three useStates.
+  const draft: Draft = selected
+    ? (pending[selected.id] ?? draftOf(selected))
+    : { role: null, grants: [], revokes: [] };
+  const { role, grants, revokes } = draft;
+
+  /** Queue a change for the selected person. The one write into `pending`. */
+  function setDraft(next: Draft) {
+    if (!selected) return;
+    setPending((prev) => ({ ...prev, [selected.id]: next }));
+  }
 
   // WHAT THEY HOLD RIGHT NOW, from the row as it is STORED. Computed before
   // anything else needs it because two things read it: the warning about what
@@ -413,26 +449,20 @@ export function PermissionEditor({
             : null;
   const composable = selected !== null && selectedLevel !== null && readOnlyReason === null;
 
+  // PICKING SOMEBODY RESETS THE VIEW AND NOTHING ELSE. The filter, the mode and
+  // the open areas describe how this pane is being LOOKED at and belong to the
+  // person being looked at; the console-access control is a level, saved on its
+  // own, and a reason typed for one person must not follow the admin to the
+  // next. Their pending permission edit is deliberately not touched — that is
+  // the whole point of the queue.
   function select(person: PersonRow) {
     setSelectedId(person.id);
-    setRole(isRole(person.role) ? person.role : null);
-    // Filtered to the vocabulary this build has. A stored element the code no
-    // longer knows resolves to nothing anyway — the editor must not offer to
-    // re-save it as though it meant something.
-    setGrants(person.grants.filter(isKnown));
-    setRevokes(person.revokes.filter(isKnown));
     setAccess(accessForLevel(person.level));
     setAccessReason('');
     setCapabilitySearch('');
     setMode('all');
     setExpanded([]);
   }
-
-  const dirty =
-    selected !== null &&
-    (role !== seededRole ||
-      !sameSet(grants, selected.grants) ||
-      !sameSet(revokes, selected.revokes));
 
   const base: readonly Capability[] = role === null ? [] : ROLE_DEFAULTS[role];
 
@@ -524,9 +554,7 @@ export function PermissionEditor({
     const nextRevokes = next.revokes.filter((c) => c !== capability);
     if (target === 'on' && !inBase) nextGrants.push(capability);
     if (target === 'off' && inBase) nextRevokes.push(capability);
-    setRole(next.role);
-    setGrants(nextGrants);
-    setRevokes(nextRevokes);
+    setDraft({ role: next.role, grants: nextGrants, revokes: nextRevokes });
   }
 
   function onCellClick(capability: Capability, target: Segment) {
@@ -558,9 +586,7 @@ export function PermissionEditor({
         confirmLabel: selectedLevel ? `Use ${LEVEL_ACCESS_LABELS[selectedLevel].toLowerCase()}` : 'Use their level’s access',
       });
       if (!ok) return;
-      setRole(null);
-      setGrants([]);
-      setRevokes([]);
+      setDraft({ role: null, grants: [], revokes: [] });
       return;
     }
     // Choosing Hand-picked explicitly is the same act the first segment press
@@ -569,13 +595,10 @@ export function PermissionEditor({
     // empty, so without the seed "convert this to a hand-picked set" would
     // silently take away everything the role was giving them.
     if (value === 'custom') {
-      const next = seedCustom();
-      setRole(next.role);
-      setGrants(next.grants);
-      setRevokes(next.revokes);
+      setDraft(seedCustom());
       return;
     }
-    setRole(value as PermissionRole);
+    setDraft({ role: value as PermissionRole, grants, revokes });
   }
 
   // WHAT PRESSING SAVE WOULD TAKE AWAY, worked out from the row as it is
@@ -598,8 +621,12 @@ export function PermissionEditor({
   // somebody else took away then. It keeps working across the switch to Custom
   // for the same reason — the seed changes what is on screen, never what is
   // stored, so the comparison still has both sides.
+  //
+  // Only the losses are computed here. What an edit ADDS is a per-person figure
+  // the save bar reports for everybody at once, so it is read off the queue
+  // (see `entries`) rather than worked out a second time for whoever is on
+  // screen.
   const losing = [...before].filter((capability) => !effective.has(capability));
-  const gaining = [...effective].filter((capability) => !before.has(capability));
 
   const orphanRevokes = revokes.filter((capability) => !base.includes(capability));
 
@@ -669,36 +696,194 @@ export function PermissionEditor({
         nextGrants.delete(leaf.capability);
       }
     }
-    setRole(next.role);
-    setGrants([...nextGrants]);
-    setRevokes([...nextRevokes]);
+    setDraft({ role: next.role, grants: [...nextGrants], revokes: [...nextRevokes] });
   }
 
+  /** "Alice — you do not hold players.page", for a refusal or a failure. */
+  const blame = (results: readonly { id: string; error: string }[]) =>
+    results
+      .map(({ id, error }) => `${everyone.find((p) => p.id === id)?.name ?? id} — ${error}`)
+      .join('; ');
+
+  /**
+   * SAVE THE WHOLE QUEUE, one person at a time.
+   *
+   * VALIDATED IN FULL BEFORE ANYTHING IS WRITTEN. Every refusal
+   * setPlayerPermissions would give is checked here first, for everybody, and a
+   * single one of them stops the batch dead — a half-applied batch leaves the
+   * admin not knowing what landed, which on this screen is the entire question.
+   * That is the same all-or-nothing promise the single-person save has always
+   * made, held one level up. It is a courtesy and not the boundary: the server
+   * resolves the actor's own set from the actor's own row and runs all five
+   * checks again on every call.
+   *
+   * IT IS STILL N CALLS AND NOT A TRANSACTION, and this does not pretend
+   * otherwise. Each call writes its own audit row naming its own target — the
+   * log's whole value — and revalidates, and if the third of five is refused by
+   * the server despite passing above, the first two are already written. So the
+   * rest are attempted, the toast says exactly which landed and which did not,
+   * and the failures stay queued so they can be looked at and retried.
+   */
   function save() {
-    if (!selected) return;
+    const queued = entries;
+    if (queued.length === 0) return;
     startSaving(async () => {
-      try {
-        const res = await setPlayerPermissions(selected.id, { role, grants, revokes });
-        if (!res.ok) { toast(res.error, 'error'); return; }
-        toast(
-          role === null
-            ? `${selected.name} is back to ${selectedLevel ? LEVEL_ACCESS_LABELS[selectedLevel].toLowerCase() : 'their level’s access'}`
-            : `${selected.name} now holds ${effective.size} of ${CAPABILITIES.length} capabilities`,
-          'success',
-        );
-        router.refresh();
-        setSelectedId(null);
-      } catch (err) {
-        toast(err instanceof Error ? err.message : 'Failed to save permissions', 'error');
+      const result = await saveBatch(
+        queued.map((entry) => ({ ...entry, id: entry.person.id })),
+        {
+          validate: (entry) => localRefusal(entry.person, entry.draft, { id: viewerId, held }),
+          write: async (entry) => {
+            try {
+              const res = await setPlayerPermissions(entry.person.id, entry.draft);
+              return res.ok ? { ok: true } : { ok: false, error: res.error };
+            } catch (err) {
+              return {
+                ok: false,
+                error: err instanceof Error ? err.message : 'Failed to save permissions',
+              };
+            }
+          },
+        },
+      );
+
+      if (result.refused.length > 0) {
+        toast(`Nothing was saved. ${blame(result.refused)}`, 'error');
+        return;
       }
+
+      // DROPPED ONLY IF IT IS STILL THE DRAFT THAT WAS SUBMITTED. A batch of
+      // five is five round trips, the tree stays live throughout, and an admin
+      // who touches a cell while that person's write is in flight must not have
+      // the click swallowed by the save that started before it. setDraft always
+      // allocates, so reference identity is an exact test for "untouched since
+      // this was submitted" — anything else stays queued and shows its marker.
+      setPending((prev) => {
+        const next = { ...prev };
+        for (const id of result.saved) {
+          const submitted = queued.find((entry) => entry.person.id === id)?.draft;
+          if (next[id] === submitted) delete next[id];
+        }
+        return next;
+      });
+      router.refresh();
+
+      if (result.failed.length > 0) {
+        toast(
+          `${result.saved.length} of ${queued.length} saved. Still pending: ${blame(result.failed)}`,
+          'error',
+        );
+        return;
+      }
+
+      // ONE PERSON READS EXACTLY AS IT ALWAYS DID. The single-person flow is the
+      // common one and nothing about it should feel like it grew a batch.
+      const single = queued.length === 1 ? queued[0] : null;
+      toast(
+        single
+          ? single.draft.role === null
+            ? `${single.person.name} is back to ${single.person.level ? LEVEL_ACCESS_LABELS[single.person.level].toLowerCase() : 'their level’s access'}`
+            : `${single.person.name} now holds ${draftSet(single.person, single.draft).size} of ${CAPABILITIES.length} capabilities`
+          : `${queued.length} people updated`,
+        'success',
+      );
+      setSelectedId(null);
     });
   }
+
+  /**
+   * DISCARD THE WHOLE QUEUE — every person, not just the one on screen.
+   *
+   * Confirmed once more than one person is affected. Losing one person's pending
+   * edit to a misplaced click is recoverable in a minute; losing four people's is
+   * an evening. One person keeps the old behaviour, which was a plain button.
+   */
+  async function resetAll() {
+    if (entries.length > 1) {
+      const ok = await confirm({
+        title: `Discard the changes to ${entries.length} people?`,
+        message: (
+          <>
+            Everything queued for{' '}
+            <span className="text-[var(--text-primary)] font-medium">
+              {entries.map((entry) => entry.person.name).join(', ')}
+            </span>{' '}
+            is thrown away. Nothing has been saved yet, so there is nothing to undo afterwards.
+          </>
+        ),
+        confirmLabel: 'Discard them all',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    setPending({});
+  }
+
+  // LEAVING WITH A QUEUE STILL IN IT. Two cases and two mechanisms: the browser
+  // owns reload and close, so `beforeunload` is the only thing that can speak
+  // there and it speaks in the browser's own words; in-app links are ours, so
+  // they get the console's own confirmation. Back and forward are NOT covered —
+  // App Router gives no way to hold a popstate open while a dialog resolves, and
+  // a guard that fired for three of the four ways out would be worse than one
+  // that says which it covers.
+  useEffect(() => {
+    if (entries.length === 0) return;
+    // Both, and the second is not redundant: preventDefault() is the current
+    // spec and what Chrome and current Safari read, and returnValue is what
+    // older Safari reads. Either alone is a guard that silently does nothing on
+    // half the phones in the club.
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [entries.length]);
+
+  useEffect(() => {
+    if (entries.length === 0) return;
+    const people = entries.length;
+    const intercept = (event: MouseEvent) => {
+      // A modified click opens a tab and leaves this one alone, so there is
+      // nothing to lose and nothing to ask about.
+      if (event.defaultPrevented || event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const anchor = (event.target as Element | null)?.closest?.('a[href]');
+      if (!(anchor instanceof HTMLAnchorElement)) return;
+      if (anchor.target !== '' && anchor.target !== '_self') return;
+      if (anchor.hasAttribute('download')) return;
+      const url = new URL(anchor.href, window.location.href);
+      if (url.origin !== window.location.origin) return;
+      if (url.pathname === window.location.pathname) return;
+      // Read before preventing: the anchor may be gone by the time the dialog
+      // resolves, and a href resolved afterwards would be a href of nothing.
+      const href = `${url.pathname}${url.search}`;
+      event.preventDefault();
+      event.stopPropagation();
+      void confirm({
+        title: 'Leave without saving?',
+        message: `Changes to ${people} ${people === 1 ? 'person are' : 'people are'} queued and have not been saved. Leaving throws them away.`,
+        confirmLabel: 'Leave anyway',
+        cancelLabel: 'Stay here',
+        danger: true,
+      }).then((ok) => {
+        if (ok) router.push(href);
+      });
+    };
+    document.addEventListener('click', intercept, true);
+    return () => document.removeEventListener('click', intercept, true);
+  }, [entries.length, confirm, router]);
 
   // GIVING SOMEBODY THE CONSOLE, OR TAKING IT AWAY. The selection is dropped on
   // success rather than kept: the person moves between the two lists, their
   // stored composition may have been cleared on the way, and a panel still
   // showing what was seeded from the old row would be describing a row that no
   // longer exists.
+  //
+  // THEIR QUEUED EDIT GOES WITH IT, for the same reason and with more force now
+  // that it would have outlived the selection. setConsoleAccess clears the
+  // stored triple on most moves, so a draft seeded from the old row no longer
+  // describes anything — and it was seeded from what they USED to hold, so
+  // saving it afterwards would read as a large grant nobody chose.
   function applyAccess() {
     if (!selected) return;
     startSavingAccess(async () => {
@@ -711,6 +896,7 @@ export function PermissionEditor({
             : `${selected.name} — ${EXEC_ROLE_OPTIONS.find((o) => o.value === access)?.label}`,
           'success',
         );
+        setPending((prev) => dropPending(prev, [selected.id]));
         setSelectedId(null);
         router.refresh();
       } catch (err) {
@@ -893,6 +1079,13 @@ export function PermissionEditor({
 
   const personRow = (person: PersonRow) => {
     const active = selectedId === person.id;
+    // SOMETHING QUEUED FOR THEM, SAID ON THEIR ROW. Once an edit outlives the
+    // selection, the rail is the only place it can be seen from — a queued
+    // change the admin cannot find is one they will save without meaning to.
+    // A dot rather than a second badge: `role only` / `N custom` / `all` already
+    // sit at the end of every row and are the answer to a different question, so
+    // the marker leads the name instead of competing with them.
+    const queued = queuedIds.has(person.id);
     return (
       <button
         key={person.id}
@@ -907,9 +1100,19 @@ export function PermissionEditor({
         )}
       >
         <span className="min-w-0 flex-1">
-          <span className="block truncate font-display text-[15px] font-bold uppercase tracking-[0.01em] text-[var(--ink)]">
-            {person.name}
-            {person.id === viewerId && <span className="text-[var(--mute)]"> (you)</span>}
+          <span className="flex items-center gap-1.5 font-display text-[15px] font-bold uppercase tracking-[0.01em] text-[var(--ink)]">
+            {queued && (
+              <span
+                role="img"
+                aria-label="Unsaved changes"
+                title="Unsaved changes"
+                className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-[var(--color-warning)]"
+              />
+            )}
+            <span className="truncate">
+              {person.name}
+              {person.id === viewerId && <span className="text-[var(--mute)]"> (you)</span>}
+            </span>
           </span>
           <span className="mt-0.5 block truncate text-[11px] text-[var(--mute)]">
             {describe(person)}
@@ -938,7 +1141,9 @@ export function PermissionEditor({
     <p className="px-3 py-3 text-[11px] text-[var(--mute)]">{text}</p>
   );
 
-  const changes = gaining.length + losing.length;
+  // The one queued edit, when there is exactly one. What the save bar reads to
+  // decide whether it is describing a person or a batch.
+  const only = entries.length === 1 ? entries[0] : null;
 
   return (
     <>
@@ -1194,7 +1399,13 @@ export function PermissionEditor({
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => setRevokes((prev) => prev.filter((c) => !orphanRevokes.includes(c)))}
+                            onClick={() =>
+                              setDraft({
+                                role,
+                                grants,
+                                revokes: revokes.filter((c) => !orphanRevokes.includes(c)),
+                              })
+                            }
                           >
                             Clear them
                           </Button>
@@ -1263,54 +1474,77 @@ export function PermissionEditor({
                   )}
                 </>
               )}
-
-              {/* THE SAVE BAR EXISTS ONLY WHEN THERE IS SOMETHING TO SAVE, and
-                  says what that something is. `dirty` is about the stored ROW;
-                  the two figures beside it are about the PERSON, and the two can
-                  disagree — turning a level default into a hand-picked set of
-                  exactly the same capabilities rewrites the row and changes
-                  nothing about them. That state is reachable in one click here,
-                  so it gets a sentence rather than a "0". */}
-              {composable && dirty && (
-                <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line)] bg-[var(--surface)] px-4 py-3">
-                  <div className="min-w-0">
-                    <p className={cn(MICRO, 'text-[var(--ink)]')}>
-                      {changes === 0 ? (
-                        'Nothing changes for them'
-                      ) : (
-                        <>
-                          <span className="font-mono">{changes}</span>{' '}
-                          {changes === 1 ? 'change' : 'changes'} pending
-                        </>
-                      )}
-                    </p>
-                    <p className="mt-1 text-[11px] text-[var(--mute)]">
-                      {changes === 0
-                        ? 'The stored row changes; what they can do does not.'
-                        : [
-                            gaining.length > 0 &&
-                              `${gaining.length} ${gaining.length === 1 ? 'capability' : 'capabilities'} added`,
-                            losing.length > 0 &&
-                              `${losing.length} taken away`,
-                          ]
-                            .filter(Boolean)
-                            .join(' · ')}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button variant="ghost" onClick={() => select(selected)} disabled={saving}>
-                      Reset
-                    </Button>
-                    <Button onClick={save} loading={saving}>
-                      Save
-                    </Button>
-                  </div>
-                </div>
-              )}
             </>
           )}
         </div>
       </Card>
+
+      {/* THE SAVE BAR EXISTS ONLY WHEN THERE IS SOMETHING TO SAVE, and says what
+          that something is. It now sits OUTSIDE the two panes, and that is not a
+          layout preference: a queued change survives the selection moving, so a
+          bar drawn inside the editor pane would vanish the moment the admin went
+          back to the list — on a phone, where exactly one pane is on screen at a
+          time, it would vanish for the whole of the act it exists to describe.
+          Out here it is visible from both, in both column counts.
+
+          A DIRTY PERSON AND A CHANGED PERSON ARE DIFFERENT QUESTIONS. `entries`
+          is who has something to SAVE; the figure is what those saves would do
+          to the PEOPLE, and the two can disagree — turning a level default into
+          a hand-picked set of exactly the same capabilities rewrites the row and
+          changes nothing about anybody. That state is reachable in one click, so
+          on one person it gets a sentence rather than a "0", and across several
+          it is why "0 changes across 3 people" is a state this can honestly
+          reach.
+
+          ONE PERSON READS EXACTLY AS IT DID BEFORE — same words, same figures,
+          same plain Reset. The aggregate phrasing starts at two. */}
+      {entries.length > 0 && (
+        <div className="sticky bottom-0 z-20 mt-4 flex flex-wrap items-center justify-between gap-3 border border-[var(--line)] bg-[var(--surface)] px-4 py-3">
+          <div className="min-w-0">
+            <p className={cn(MICRO, 'text-[var(--ink)]')}>
+              {only ? (
+                only.changes === 0 ? (
+                  'Nothing changes for them'
+                ) : (
+                  <>
+                    <span className="font-mono">{only.changes}</span>{' '}
+                    {only.changes === 1 ? 'change' : 'changes'} pending
+                  </>
+                )
+              ) : (
+                <>
+                  <span className="font-mono">{queuedChanges}</span>{' '}
+                  {queuedChanges === 1 ? 'change' : 'changes'} across{' '}
+                  <span className="font-mono">{entries.length}</span> people
+                </>
+              )}
+            </p>
+            <p className="mt-1 text-[11px] text-[var(--mute)]">
+              {only
+                ? only.changes === 0
+                  ? 'The stored row changes; what they can do does not.'
+                  : [
+                      only.gaining.length > 0 &&
+                        `${only.gaining.length} ${only.gaining.length === 1 ? 'capability' : 'capabilities'} added`,
+                      only.losing.length > 0 && `${only.losing.length} taken away`,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')
+                : entries
+                    .map((entry) => `${entry.person.name} (${entry.changes})`)
+                    .join(' · ')}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" onClick={() => void resetAll()} disabled={saving}>
+              Reset
+            </Button>
+            <Button onClick={save} loading={saving}>
+              {only ? 'Save' : 'Save all'}
+            </Button>
+          </div>
+        </div>
+      )}
 
       <Dialog
         open={dangerous !== null}
