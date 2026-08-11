@@ -241,12 +241,16 @@ export default async function FeedPage() {
       const sentence = describeMatch({ winners: winnerPeople, losers: loserPeople }, player.id);
       if (!sentence || !m.played_at) return null;
 
-      // The figures and the avatar belong to whoever the sentence is about: the
-      // reader on their own rows, the named winner on everyone else's. Both are
-      // public — the leaderboard already shows every member's rating.
       const mineRow = rows.find((p) => pickOne(p.player)?.id === player.id);
-      const subject = mineRow ?? winners[0];
-      const face = (subject ? toPerson(pickOne(subject.player)) : null) ?? winnerPeople[0];
+      const mine = !!mineRow;
+      const iWon = mineRow?.win_flag === true;
+
+      // The avatar and the handle belong to the OTHER person the sentence
+      // names — the opponent on the reader's own rows, the winner on everyone
+      // else's. Hanging the reader's own handle off "You beat Marcus Ng" would
+      // read as Marcus's handle, and the red spine already says whose row it
+      // is, so their own face there would be redundant as well as confusing.
+      const face = mine ? (iWon ? loserPeople[0] : winnerPeople[0]) : winnerPeople[0];
       if (!face) return null;
 
       const formatLabel = MATCH_FORMAT_LABELS[m.format as keyof typeof MATCH_FORMAT_LABELS] || m.format;
@@ -262,13 +266,23 @@ export default async function FeedPage() {
         kind: 'match',
         id: m.id,
         at: m.played_at,
-        mine: !!mineRow,
+        mine,
         sentence,
         meta,
         face,
-        delta: subject?.rating_delta ?? null,
-        rating: subject?.post_rating ?? null,
-        href: '/my-stats',
+        // ONLY the reader's own figures. An absolute rating printed beside
+        // another member's name publishes the one number hide_from_leaderboard
+        // exists to let them withhold, and this query has no way to honour that
+        // flag — get_leaderboard() is where that filtering lives, and it is not
+        // reachable from a match row. The mockup's "+14 over 817" is on a row
+        // about the reader, so nothing is lost. Everyone else's result is
+        // already fully described by the score in the meta line.
+        delta: mine ? (mineRow?.rating_delta ?? null) : null,
+        rating: mine ? (mineRow?.post_rating ?? null) : null,
+        // Another member's row goes to that member's profile; the reader's own
+        // goes to their stats. Sending everything to /my-stats meant tapping
+        // "Jordan Lee beat Priya Patel" landed you on your own numbers.
+        href: mine ? '/my-stats' : `/leaderboard/${face.id}`,
       };
     })
     .filter((i): i is RiverItem => i !== null);
