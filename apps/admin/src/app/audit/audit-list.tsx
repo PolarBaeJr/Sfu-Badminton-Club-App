@@ -133,6 +133,15 @@ export function AuditList({
   const tabs = useMemo(() => buildTabs(logs), [logs]);
   const activeTab = resolveTab(tabs, tab);
 
+  // Commit the fallback rather than only rendering it. Without this the state
+  // still holds the tab that vanished: pick Money, change to a season with no
+  // fee activity (the view correctly falls back to All), change to one that has
+  // some — and Money comes back on its own, having never been re-selected. A
+  // filter that reinstates itself is worse than one that forgets.
+  useEffect(() => {
+    if (tab !== activeTab) setTab(activeTab);
+  }, [tab, activeTab]);
+
   const rows = useMemo(
     () => visibleLogs(logs, { tab: activeTab, query, order: sort }),
     [logs, activeTab, query, sort]
@@ -313,7 +322,14 @@ export function AuditList({
             The append-only line is not decoration: audit_logs carries a SELECT
             and an INSERT policy and nothing else (00005_rls), and TRUNCATE was
             revoked from every application role (00072). Somebody reading a row
-            they dislike should know, without asking, that it cannot be removed. */}
+            they dislike should know, without asking, that it cannot be removed.
+
+            The line claims exactly that and no more, and the distinction is
+            real: merging two members runs `UPDATE audit_logs SET actor_id` in a
+            SECURITY DEFINER function (00026, 00079), which bypasses RLS. So a
+            row's ACTOR can be repointed — deliberately, so the history follows
+            the surviving member — while the row itself cannot be deleted. Do
+            not read the policy list above as proof of immutability. */}
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border)] px-4 py-2.5">
           <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
             Showing {rows.length} of {logs.length} · {scopeLabel}
