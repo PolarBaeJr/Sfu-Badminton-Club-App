@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Megaphone } from 'lucide-react';
 import { CLUB_TIMEZONE, pickOne, splitFullName } from '@badminton/shared';
 import { AnnouncementRow, PinnedNotice, type NewsPost } from './announcement-item';
+import { addressedTo, withVisibleAnnouncements } from '@/lib/announcement-visibility';
 
 interface AuthorRow {
   id: string;
@@ -112,37 +113,29 @@ export default async function AnnouncementsPage() {
 
   const supabase = await createServerSupabaseClient();
 
-  // This term's announcements, plus the evergreen ones.
-  //
-  // Without the season filter the feed was cumulative forever: after a rollover
-  // last term's "courts closed for reading week" still sat pinned above this
-  // term's, and the only way to retire it was to delete it — which throws away
-  // the record of having said it. 00085 gives every row exactly one of two
-  // shapes, so this filter has no ambiguous NULL to worry about.
-  //
-  // No active season means no season filter, deliberately. Between terms, a
-  // feed that has gone blank reads to a member as a broken app; showing
-  // everything is the gentler failure, and it is the same rule the schedule and
-  // the tournament list already follow.
+  // This term's announcements, plus the evergreen ones. The filter itself lives
+  // in lib/announcement-visibility, which documents why it has the shape it has
+  // and is what /feed and the tab badge now run too — this screen was the only
+  // one applying it, so a notice retired with its season stayed on the home
+  // screen and in the badge after it had vanished from here.
   const { data: activeSeason } = await supabase
     .from('seasons').select('id').eq('active_flag', true).maybeSingle();
 
   const now = new Date();
   const nowIso = now.toISOString();
-  let query = supabase
-    .from('announcements')
-    // Unhinted embed: `announcements` has exactly one foreign key to `players`
-    // (author_id), so PostgREST resolves it without a constraint name — the
-    // same embed /feed uses for its one notice. Only the three columns 00032
-    // grants `authenticated` are named; exec_title is not one of them and comes
-    // from get_executives() below instead.
-    .select('id, title, body, type, pinned, target_audience, created_at, author:players(id, full_name, avatar_url)')
-    .eq('status', 'published')
-    .or(`expires_at.is.null,expires_at.gt.${nowIso}`);
-
-  if (activeSeason?.id) {
-    query = query.or(`all_seasons.eq.true,season_id.eq.${activeSeason.id}`);
-  }
+  const query = withVisibleAnnouncements(
+    supabase
+      .from('announcements')
+      // Unhinted embed: `announcements` has exactly one foreign key to `players`
+      // (author_id), so PostgREST resolves it without a constraint name — the
+      // same embed /feed uses for its one notice. Only the three columns 00032
+      // grants `authenticated` are named; exec_title is not one of them and comes
+      // from get_executives() below instead.
+      .select('id, title, body, type, pinned, target_audience, created_at, author:players(id, full_name, avatar_url)')
+      .eq('status', 'published'),
+    nowIso,
+    activeSeason?.id,
+  );
 
   const [{ data: announcements }, { data: reads }, executives] = await Promise.all([
     query
@@ -170,15 +163,11 @@ export default async function AnnouncementsPage() {
     (executives ?? []).map((e) => [e.id, e.exec_title?.trim() ? e.exec_title.trim().toUpperCase() : null]),
   );
 
-  // RLS only checks status='published'; expiry + audience must be filtered here.
-  // Expiry is applied in the query above; audience is matched to the viewer's
-  // division / eligibility (player_status carries the division — 00001:18).
-  const visible = (announcements ?? []).filter(
-    (a) =>
-      a.target_audience === 'all' ||
-      a.target_audience === player.status ||
-      (a.target_audience === 'eligible_only' && player.eligibility_flag)
-  );
+  // RLS only checks status='published'. Expiry and season are applied in the
+  // query above; audience is matched here against the viewer's division /
+  // eligibility (player_status carries the division — 00001:18), because it is
+  // the one part of the rule that depends on who is asking.
+  const visible = addressedTo(announcements ?? [], player);
 
   function toPost(a: Announcement, stamp: string): NewsPost {
     const author = pickOne(a.author);
