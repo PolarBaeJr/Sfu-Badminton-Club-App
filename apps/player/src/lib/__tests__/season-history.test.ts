@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { clubDayKey } from '@/lib/feed-activity';
 import {
   formatDayKey,
   formatSeasonRange,
@@ -12,6 +13,8 @@ import {
   type HistorySeason,
   type SeasonMatchRow,
 } from '@/lib/season-history';
+
+const TZ = 'America/Vancouver';
 
 const season = (over: Partial<HistorySeason> & { id: string }): HistorySeason => ({
   name: over.id,
@@ -248,12 +251,27 @@ describe('formatDayKey', () => {
     expect(formatDayKey('2026-09-01')).toBe('1 SEP 2026');
   });
 
-  it('accepts a timestamp and takes its date part', () => {
-    expect(formatDayKey('2026-12-31T00:00:00Z')).toBe('31 DEC 2026');
+  it('is stable across ICU versions, which "short" month names are not', () => {
+    // Intl renders September as "Sep" or "Sept" depending on the runtime's ICU
+    // data, so the same date would read differently on a phone and in CI.
+    expect(formatDayKey('2027-09-02')).toBe('2 SEP 2027');
   });
 
   it('hands back anything it cannot parse rather than printing Invalid Date', () => {
     expect(formatDayKey('not-a-date')).toBe('not-a-date');
+    expect(formatDayKey('2026-13-01')).toBe('2026-13-01');
+  });
+
+  // formatDayKey takes a DAY KEY — a `YYYY-MM-DD` that is already club-local,
+  // which is what the seasons table's DATE columns are. It must NOT be handed a
+  // TIMESTAMPTZ: it would slice the UTC date off the front, and every instant
+  // after 16:00 in Vancouver carries the NEXT day's date in UTC. Callers with a
+  // timestamp go through clubDayKey first, and this is the test that says so.
+  it('takes the UTC date part of a timestamp, which is why a timestamp must not be passed to it', () => {
+    // 23:00 on 30 December in Vancouver.
+    const instant = '2026-12-31T07:00:00Z';
+    expect(formatDayKey(instant)).toBe('31 DEC 2026');
+    expect(formatDayKey(clubDayKey(instant, TZ))).toBe('30 DEC 2026');
   });
 });
 

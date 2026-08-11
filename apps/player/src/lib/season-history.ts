@@ -263,7 +263,13 @@ const MONTH_LABELS = [
 ] as const;
 
 /**
- * A DATE column as `1 SEP 2026`.
+ * A club-local day key — `YYYY-MM-DD` — as `1 SEP 2026`.
+ *
+ * A DAY KEY, which is what a Postgres DATE column already is. A TIMESTAMPTZ is
+ * NOT one and must be put through `clubDayKey` first: this takes the leading ten
+ * characters, and every instant after 16:00 in Vancouver carries the following
+ * day's date in UTC, so a timestamp handed straight in reads a day late for a
+ * whole evening. There is a test that pins exactly this.
  *
  * Two things this deliberately does not do.
  *

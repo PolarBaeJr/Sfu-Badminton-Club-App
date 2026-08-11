@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
 import { Atomic, AvatarChip, PageHeader } from '@badminton/ui';
-import { CLUB_TIMEZONE, formatDate } from '@badminton/shared';
+import { CLUB_TIMEZONE } from '@badminton/shared';
 import { clubDayKey } from '@/lib/feed-activity';
 import { buildRatingSeries, formatSigned, type RatingSourceRow } from '@/lib/stats-charts';
 import {
@@ -36,8 +36,23 @@ const OPPONENT_CHUNK = 50;
 // empty result, and there is no reason to send it one.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** `players.session_attendance.status` values that mean the member was there. */
+/** `session_attendance.status` values that mean the member was there. */
 const PRESENT_STATUSES = new Set(['checked_in', 'present']);
+
+/**
+ * A TIMESTAMPTZ as the club's own day, e.g. `18 APR 2027`.
+ *
+ * NOT `formatDate` from the shared helpers. That one is
+ * `new Date(iso).toLocaleDateString('en-US', …)` with no time zone, which means
+ * the RUNTIME's zone — UTC in the container this app is served from, and the
+ * viewer's browser after hydration. A match played at 22:00 in Vancouver is
+ * 05:00Z the next morning, so the server renders one date, the browser renders
+ * another, and the one the member is shown first is a day late. Every date on
+ * this screen is a claim about a term that is over and has to be the club's.
+ */
+function clubDate(iso: string): string {
+  return formatDayKey(clubDayKey(iso, CLUB_TIMEZONE));
+}
 
 type MatchRow = {
   id: string;
@@ -180,9 +195,15 @@ export async function PastSeasonStats({ seasonId }: { seasonId: string }) {
     };
   });
 
-  const attended = ((attendanceRes.data ?? []) as { status: string }[]).filter((a) =>
-    PRESENT_STATUSES.has(a.status)
-  ).length;
+  // `?? []` on its own would turn a failed read into the number 0, and "you
+  // turned up to 0 sessions" is a confident lie about somebody's term rather
+  // than a gap. A read that did not happen has no answer, so the card is not
+  // drawn at all.
+  const attended = attendanceRes.error
+    ? null
+    : ((attendanceRes.data ?? []) as { status: string }[]).filter((a) =>
+        PRESENT_STATUSES.has(a.status)
+      ).length;
 
   // Who each match was against. Chunked — see OPPONENT_CHUNK.
   const matchIds = matchRows.map((m) => m.id);
@@ -385,7 +406,7 @@ export async function PastSeasonStats({ seasonId }: { seasonId: string }) {
                                 time on it measures from now, which is exactly
                                 the frame the member has stepped out of. */}
                             <td className="num mono muted" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                              {m.played_at ? formatDate(m.played_at) : '—'}
+                              {m.played_at ? clubDate(m.played_at) : '—'}
                             </td>
                           </tr>
                         );
@@ -446,7 +467,11 @@ export async function PastSeasonStats({ seasonId }: { seasonId: string }) {
                 <SeasonFigure label="DOUBLES ELO" value={String(archived.doubles_elo)} />
               </div>
               <div className="mono muted" style={{ fontSize: 10, letterSpacing: '.1em', marginTop: 14 }}>
-                ARCHIVED {formatDayKey(archived.archived_at)}
+                {/* archived_at is a TIMESTAMPTZ, unlike the season's own DATE
+                    columns — a rollover run at 5pm in Vancouver is already
+                    tomorrow in UTC, so it goes through the club's clock before
+                    it is formatted. */}
+                ARCHIVED {clubDate(archived.archived_at)}
               </div>
             </div>
           ) : (
@@ -460,6 +485,7 @@ export async function PastSeasonStats({ seasonId }: { seasonId: string }) {
             </div>
           )}
 
+          {attended !== null && (
           <div className="card-base">
             <h3 className="card-title" style={{ marginBottom: 4 }}>Sessions</h3>
             <div className="card-sub" style={{ marginBottom: 18 }}>
@@ -484,6 +510,7 @@ export async function PastSeasonStats({ seasonId }: { seasonId: string }) {
               ATTENDANCE RATES ARE ONLY KEPT FOR THE CURRENT TERM
             </div>
           </div>
+          )}
         </div>
       </div>
     </div>
