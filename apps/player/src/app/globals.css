@@ -1941,3 +1941,132 @@ html, body { overflow-x: clip; }
   border-bottom: 1px solid var(--line);
   padding-bottom: 18px;
 }
+
+/* ============================================================
+   NOTIFICATIONS  (/notifications)
+   Self-contained block — nothing above depends on it.
+   Rows are a hairline-ruled river, not cards: the screen is a list of small
+   facts, and forty bordered boxes on a phone is forty boxes of chrome.
+   ============================================================ */
+
+/* The mockup's header is one row with the title and "mark all read" sharing a
+   baseline, at 390px as well as on a laptop. .page-header stacks into a column
+   below 980px, which is right for headers carrying a sub-line and a row of
+   buttons and wrong for this one — it would push the control onto its own line
+   and cost 40px of a phone viewport. */
+.notif-header {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 14px;
+  margin-bottom: 0;
+}
+@media (max-width: 980px) {
+  .notif-header {
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+  }
+}
+.notif-header .page-title { font-size: 38px; letter-spacing: -.02em; }
+.notif-header .page-eyebrow { font-size: 10px; letter-spacing: .18em; margin-bottom: 6px; }
+
+.notif-markall {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--mute);
+  background: none;
+  border: 0;
+  padding: 0 0 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.notif-markall:hover:not(:disabled) { color: var(--ink); }
+.notif-markall:disabled { opacity: .45; cursor: default; }
+
+/* One gutter value drives both the row padding and the negative margin that
+   bleeds the unread row's surface out to the page edge, so the two can never
+   drift apart. It tracks .page's own padding. */
+.notif-list { --notif-gutter: 28px; }
+@media (max-width: 980px) {
+  .notif-list { --notif-gutter: 16px; }
+}
+/* A notification is a sentence; sentences stop being readable long before
+   1200px. The phone layout is the design, and the desktop is a wider version
+   of it rather than a different one. */
+@media (min-width: 981px) {
+  .notif-list { max-width: 560px; }
+}
+
+.notif-group {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  padding: 18px 0 8px;
+}
+
+.notif-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  padding: 14px var(--notif-gutter);
+  margin-inline: calc(var(--notif-gutter) * -1);
+  border-top: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+/* Unread reads as present: a 2px red spine and a lifted surface. The left
+   padding gives back exactly what the border consumes, so the headline sits in
+   the same column on read and unread rows and the list has one left edge. */
+.notif-row.unread {
+  background: var(--surface);
+  border-left: 2px solid var(--red);
+  padding-left: calc(var(--notif-gutter) - 2px);
+}
+.notif-row.read { opacity: .72; }
+.notif-row.read:hover { opacity: 1; }
+
+.notif-body { flex: 1; min-width: 0; }
+.notif-headline { font-size: 14px; line-height: 1.35; }
+.notif-detail {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--mute);
+  margin-top: 4px;
+}
+/* The only place a notification's type is expressed as colour. Every value is
+   an existing token; there is no new tone here. */
+.notif-kind[data-tone="red"]  { color: var(--red); }
+.notif-kind[data-tone="win"]  { color: var(--win); }
+.notif-kind[data-tone="gold"] { color: var(--gold); }
+.notif-kind[data-tone="mute"] { color: var(--mute); }
+
+/* Reads as the system's secondary button (surface-2 on a hairline) at a 44px
+   thumb target, but is a span — the row around it is already the link, and a
+   button inside a link is invalid markup. */
+.notif-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: auto;
+  min-height: 44px;
+  padding: 0 14px;
+  background: var(--surface-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  font-weight: 700;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .16em;
+  white-space: nowrap;
+}
+.notif-row:hover .notif-cta { background: var(--line); }
