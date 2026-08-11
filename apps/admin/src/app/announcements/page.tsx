@@ -149,8 +149,16 @@ async function openedCounts(
   if (published.length === 0) return new Map();
 
   const PAGE = 1000;
+  // A HIGHER CEILING THAN THE TWO LOOPS ABOVE, on purpose. Those page `players`
+  // and `push_subscriptions`, which are bounded by the club's membership, so 100
+  // windows is a runaway guard there and nothing else. This table is posts ×
+  // members — the one that grows without bound, which is the whole reason this
+  // function was rewritten — and stopping at 100 windows would silently
+  // undercount past 100k receipts. That is the same bounded-list assumption,
+  // carried into the unbounded case, that the per-post count queries made.
+  const MAX_WINDOWS = 1000;
   const receipts: Array<{ announcement_id: string }> = [];
-  for (let from = 0, guard = 0; guard < 100; guard++) {
+  for (let from = 0, guard = 0; guard < MAX_WINDOWS; guard++) {
     const { data, error } = await supabase
       .from('announcement_reads')
       .select('announcement_id')
