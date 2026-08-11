@@ -6,6 +6,8 @@ import {
   winShare,
   formatStreak,
   ladderHistogram,
+  bandHeight,
+  MIN_BAND_HEIGHT,
 } from '../ladder';
 
 describe('topPercentile', () => {
@@ -113,6 +115,36 @@ describe('formatStreak', () => {
     expect(formatStreak(0)).toBeNull();
     expect(formatStreak(null)).toBeNull();
     expect(formatStreak(undefined)).toBeNull();
+  });
+});
+
+describe('bandHeight', () => {
+  it('draws an empty band as nothing', () => {
+    expect(bandHeight(0, 30)).toBe(0);
+  });
+
+  it('fills the tallest band', () => {
+    expect(bandHeight(30, 30)).toBe(1);
+  });
+
+  it('keeps a single member visible', () => {
+    expect(bandHeight(1, 30)).toBeCloseTo(MIN_BAND_HEIGHT);
+  });
+
+  it('keeps small counts apart instead of flattening them onto the floor', () => {
+    // The bug this replaces: max(0.14, count/30) made 1, 2, 3 and 4 identical.
+    const heights = [1, 2, 3, 4].map((c) => bandHeight(c, 30));
+    for (let i = 1; i < heights.length; i++) {
+      expect(heights[i]!).toBeGreaterThan(heights[i - 1]!);
+    }
+  });
+
+  it('fills every occupied band when the peak is one', () => {
+    expect(bandHeight(1, 1)).toBe(1);
+  });
+
+  it('never exceeds full height', () => {
+    expect(bandHeight(40, 30)).toBeLessThanOrEqual(1.001);
   });
 });
 

@@ -17,6 +17,7 @@ import {
   winShare,
   formatStreak,
   ladderHistogram,
+  bandHeight,
 } from '@/lib/ladder';
 
 type Ratings = {
@@ -80,11 +81,6 @@ const MIN_GAMES_FOR_WIN_RATE_RANK = 5;
 // strip produced, and fine enough that a ninety-member club still has a shape.
 const SPREAD_BANDS = 22;
 
-// The shortest bar a band with anybody in it may be drawn at, as a fraction of
-// the tallest. Without a floor, one member in a band next to a peak of thirty
-// rounds to nothing and the chart claims the band is empty.
-const MIN_BAND_HEIGHT = 0.14;
-
 /** The number this tab ranks by: ELO for a discipline, points for the tournament tab. */
 function metricOf(p: LeaderboardEntry, isDoubles: boolean, isTpts: boolean): number {
   if (isTpts) return p._tournamentPoints ?? 0;
@@ -107,7 +103,7 @@ function firstName(name: string): string {
 
 function LadderRow({
   player,
-  index,
+  rank,
   isMe,
   isDoubles,
   isTpts,
@@ -115,7 +111,8 @@ function LadderRow({
   onChallenge,
 }: {
   player: LeaderboardEntry;
-  index: number;
+  /** Position on the ladder, 1-based — not the row's index in a filtered list. */
+  rank: number;
   isMe: boolean;
   isDoubles: boolean;
   isTpts: boolean;
@@ -141,8 +138,8 @@ function LadderRow({
   return (
     <div className={'ladder-row' + (isMe ? ' me' : '')}>
       <Link href={`/leaderboard/${player.id}`} className="lr-main press">
-        <span className="lr-rank" data-medal={index < 3 ? index + 1 : undefined}>
-          {index + 1}
+        <span className="lr-rank" data-medal={rank <= 3 ? rank : undefined}>
+          {rank}
         </span>
         <AvatarChip name={player.full_name} id={player.id} src={player.avatar_url} size="sm" ring={isMe} />
         <span className="lr-id">
@@ -241,21 +238,16 @@ export default function LeaderboardClient({
     return players;
   }, [players, activeTab, isTpts]);
 
-  // Name OR handle, and the `@` is optional — a member is searchable by the
-  // thing the club calls them. NOT filterPlayerOptions, which re-ranks: this
-  // list is ordered by rating and that ordering is the whole point of a ladder.
-  // Only the matching is shared in spirit; the order stays the page's.
-  const filtered = useMemo(() => {
-    const q = normalizeSearchQuery(searchQuery);
-    if (!q) return tabFiltered;
-    return tabFiltered.filter(
-      (p) => p.full_name.toLowerCase().includes(q) || (p.handle ?? '').toLowerCase().includes(q),
-    );
-  }, [tabFiltered, searchQuery]);
-
+  // THE LADDER, ordered. Sorted BEFORE the search filter, so a rank is a
+  // position on the ladder and not a position in your search results — type
+  // "grace" and she is still #37, where numbering the filtered list would put
+  // "#1" beside her and say she leads the club.
+  //
+  // Search is order-preserving, so moving it after the sort changes no
+  // ordering: this is the same comparator over the same rows.
   const ranked = useMemo(() => {
     if (isTpts) {
-      return [...filtered].sort((a, b) => (b._tournamentPoints ?? 0) - (a._tournamentPoints ?? 0));
+      return [...tabFiltered].sort((a, b) => (b._tournamentPoints ?? 0) - (a._tournamentPoints ?? 0));
     }
     if (sortBy === 'win_rate') {
       const record = (p: LeaderboardEntry) => {
@@ -267,7 +259,7 @@ export default function LeaderboardClient({
         const tier = rate === null ? 2 : wins + losses < MIN_GAMES_FOR_WIN_RATE_RANK ? 1 : 0;
         return { rate, tier };
       };
-      return [...filtered].sort((a, b) => {
+      return [...tabFiltered].sort((a, b) => {
         const ra = record(a);
         const rb = record(b);
         if (ra.tier !== rb.tier) return ra.tier - rb.tier;
@@ -275,13 +267,31 @@ export default function LeaderboardClient({
       });
     }
     // Default: sort by ELO for the active discipline.
-    return [...filtered].sort((a, b) =>
+    return [...tabFiltered].sort((a, b) =>
       isDoubles
         ? (b.ratings?.doubles_elo ?? 0) - (a.ratings?.doubles_elo ?? 0)
         : (b.ratings?.singles_elo ?? 0) - (a.ratings?.singles_elo ?? 0)
     );
-  }, [filtered, sortBy, isDoubles, isTpts]);
+  }, [tabFiltered, sortBy, isDoubles, isTpts]);
 
+  // Name OR handle, and the `@` is optional — a member is searchable by the
+  // thing the club calls them. NOT filterPlayerOptions, which re-ranks by match
+  // quality: this list is ordered by rating and that ordering is the whole point
+  // of a ladder. Only the matching is shared in spirit; the order stays the
+  // page's, and each row carries the rank it had before the filter ran.
+  const visible = useMemo(() => {
+    const withRank = ranked.map((player, i) => ({ player, rank: i + 1 }));
+    const q = normalizeSearchQuery(searchQuery);
+    if (!q) return withRank;
+    return withRank.filter(
+      ({ player }) =>
+        player.full_name.toLowerCase().includes(q) || (player.handle ?? '').toLowerCase().includes(q),
+    );
+  }, [ranked, searchQuery]);
+
+  // Everything about YOU is measured against the whole field, never against
+  // what the search box has left on screen. Your rank does not change because
+  // you typed someone else's name.
   const meIndex = useMemo(
     () => ranked.findIndex((p) => p.id === meId),
     [ranked, meId]
@@ -300,14 +310,14 @@ export default function LeaderboardClient({
 
   const percentile = topPercentile(meIndex, ranked.length);
 
-  // The shape of the field, recomputed with the ladder because it is a picture
-  // OF the ladder — filter the list and the picture is of what is left, which
-  // is what a member asking "where am I among the competitive players" wants.
+  // The shape of the field. The TAB decides the field — "where am I among the
+  // competitive players" is a real question — but the search box does not.
   const spread = useMemo(
     () => ladderHistogram(ranked.map((p) => metricOf(p, isDoubles, isTpts)), meIndex, SPREAD_BANDS),
     [ranked, isDoubles, isTpts, meIndex],
   );
 
+  // The players to beat are the players to beat, not the top 3 of your search.
   const top3 = ranked.slice(0, 3);
   const activeLabel = tabs.find((t) => t.id === activeTab)?.label ?? '';
 
@@ -410,10 +420,7 @@ export default function LeaderboardClient({
                           count === 0 ? 'none' : i === spread.meBucket ? 'me' : undefined
                         }
                         style={{
-                          height:
-                            count === 0
-                              ? 1
-                              : `${Math.max(MIN_BAND_HEIGHT, count / spread.peak) * 100}%`,
+                          height: count === 0 ? 1 : `${bandHeight(count, spread.peak) * 100}%`,
                         }}
                       />
                     ))}
@@ -532,7 +539,7 @@ export default function LeaderboardClient({
               <div style={{ width: '100%' }}>
                 <h3 className="card-title">{activeLabel} · Full ladder</h3>
                 <div className="card-sub">
-                  Sorted by {isTpts ? 'points' : sortBy === 'win_rate' ? 'win rate' : 'ELO'} · {ranked.length} of {players.length}
+                  Sorted by {isTpts ? 'points' : sortBy === 'win_rate' ? 'win rate' : 'ELO'} · {visible.length} of {players.length}
                 </div>
                 {/* One line, so a ladder with no Challenge control reads as an
                     account state rather than a broken page. */}
@@ -545,7 +552,7 @@ export default function LeaderboardClient({
                 </div>
               </div>
             </div>
-            {ranked.length === 0 ? (
+            {visible.length === 0 ? (
               <div className="empty">
                 <div className="empty-icon"><Trophy size={20} /></div>
                 <div className="empty-title">
@@ -557,11 +564,11 @@ export default function LeaderboardClient({
               </div>
             ) : (
               <div className="ladder-list">
-                {ranked.map((p, i) => (
+                {visible.map(({ player: p, rank }) => (
                   <LadderRow
                     key={p.id}
                     player={p}
-                    index={i}
+                    rank={rank}
                     isMe={p.id === meId}
                     isDoubles={isDoubles}
                     isTpts={isTpts}

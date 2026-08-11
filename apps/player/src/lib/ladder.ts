@@ -75,6 +75,33 @@ export function formatStreak(streak: number | null | undefined): StreakDisplay {
     : { label: `L${Math.abs(streak)}`, tone: 'loss' };
 }
 
+/**
+ * The shortest a band holding anybody may be drawn, as a fraction of the
+ * tallest. One member beside a peak of thirty is 3% of the bar, which rounds to
+ * nothing and makes the chart claim the band is empty.
+ */
+export const MIN_BAND_HEIGHT = 0.14;
+
+/**
+ * How tall to draw a band, 0 to 1.
+ *
+ * NOT `max(MIN_BAND_HEIGHT, count / peak)`. Clamping keeps the smallest band
+ * visible but flattens everything under it: against a peak of thirty, bands of
+ * one, two, three and four all pin to the floor and draw identically, so the
+ * thin tail of the ladder — which is most of it — becomes a straight line. This
+ * compresses the range instead, mapping one-to-peak onto floor-to-full, so
+ * every distinct count gets a distinct height and the smallest is still visible.
+ */
+export function bandHeight(count: number, peak: number): number {
+  if (count <= 0) return 0;
+  // One member in the fullest band means every occupied band is the fullest.
+  if (peak <= 1) return 1;
+  // A count above the peak cannot happen — peak IS the maximum — but the clamp
+  // makes the return range 0..1 unconditionally, so callers can put it straight
+  // into a CSS height without re-checking.
+  return Math.min(1, MIN_BAND_HEIGHT + (1 - MIN_BAND_HEIGHT) * ((count - 1) / (peak - 1)));
+}
+
 export type LadderHistogram = {
   min: number;
   max: number;
