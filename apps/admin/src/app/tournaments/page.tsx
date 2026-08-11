@@ -1,14 +1,79 @@
 export const dynamic = 'force-dynamic';
-import { scopeToActiveSeason } from '@badminton/shared';
-import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge } from '@badminton/ui';
-import { formatDate, pickOne } from '@badminton/shared';
-import { CreateTournamentForm, TournamentMenu, type WaiverTemplateContext } from './actions';
-import type { TournamentWithEventCount } from '@/lib/tournament-types';
 import Link from 'next/link';
-import { Trophy, Users, Calendar, Zap, Archive } from 'lucide-react';
+import { scopeToActiveSeason } from '@badminton/shared';
+import { createAdminClient, requireCapability } from '@/lib/supabase-server';
+import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/permissions';
+import {
+  Card,
+  Badge,
+  Button,
+  AvatarChip,
+  EmptyState,
+  PageHeader,
+  ResponsiveTable,
+  TableCard,
+  Atomic,
+} from '@badminton/ui';
+import {
+  CreateTournamentForm,
+  TournamentRowActions,
+  type TournamentData,
+  type WaiverTemplateContext,
+} from './actions';
 import { PastSeasonNotice, resolveSeasonScope } from '@/components/season-scope';
 import { SeasonSelect } from '@/components/season-select';
+import {
+  capacityOf,
+  disciplineLine,
+  feeLabel,
+  formatDollars,
+  formatEventDate,
+  STAGE_ACTION,
+  STAGE_BADGE,
+  STAGE_LABEL,
+  tournamentStage,
+  type IndexEvent,
+  type TournamentStage,
+} from '@/lib/tournament-index';
+
+type TournamentRow = {
+  id: string;
+  name: string;
+  status: string;
+  start_date: string;
+  suspended_at: string | null;
+  season_id: string | null;
+  [key: string]: unknown;
+};
+
+type ParticipantRow = {
+  id: string;
+  event_id: string;
+  player_id: string;
+  seed_number: number | null;
+  elo_before: number | null;
+};
+
+type PairRow = {
+  id: string;
+  event_id: string;
+  player1_id: string;
+  player2_id: string;
+  pair_name: string | null;
+  seed_number: number | null;
+  combined_elo: number | null;
+};
+
+/** One line of a card or a row, in the console's micro-label type. */
+function Micro({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return (
+    <span
+      className={`font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)] ${className}`}
+    >
+      {children}
+    </span>
+  );
+}
 
 export default async function TournamentsPage({
   searchParams,
@@ -16,6 +81,35 @@ export default async function TournamentsPage({
   searchParams: Promise<{ season?: string }>;
 }) {
   const { season: seasonParam } = await searchParams;
+
+  // WHO IS LOOKING, before a single row is read. The old version of this page
+  // opened a service-role client and queried straight away, trusting the
+  // middleware to have run — every other console page that renders data now
+  // re-asks here, because a fetch that runs for the wrong viewer has already
+  // put its rows in the RSC payload by the time any JSX decides not to show
+  // them.
+  const viewer = await requireCapability('tournaments.page');
+  const level = accessLevelFor(viewer);
+  const permissions = permissionsOf(viewer);
+  const may = (capability: Capability) => permits(level, permissions, capability);
+
+  // ONE CAPABILITY PER CONTROL, and one per fetch below. None of these is a
+  // level or a blanket "is an officer" flag: the club can hand somebody the
+  // draw without the money, or the money without the draw, and this page has to
+  // be able to render either of those people.
+  const canCreate = may('tournaments.manage.create.write');
+  const canEdit = may('tournaments.manage.update.write');
+  const canArchive = may('tournaments.manage.archive.write');
+  const canDelete = may('tournaments.manage.delete.write');
+  // ENTRY MONEY IS ITS OWN QUESTION and it is not a tournament question. Entry
+  // fees live at /tournaments/<id>/fees behind `tournaments.fees.read`, which
+  // is deliberately absent from the exec baseline — an exec runs tournaments
+  // and does not see what anyone owes for them. Everything money-shaped on this
+  // index (the fees-due stat, the per-row fee, the paid/unpaid split) is that
+  // same data summarised, so it answers to that same capability and, crucially,
+  // its QUERIES are skipped rather than its markup hidden.
+  const canSeeFees = may('tournaments.fees.read');
+
   const supabase = createAdminClient();
 
   // This season's tournaments only — see scopeToActiveSeason for why an
@@ -24,156 +118,629 @@ export default async function TournamentsPage({
     .from('seasons')
     .select('id, name, start_date, end_date, active_flag')
     .order('start_date', { ascending: false });
-  const { seasons: seasonList, selected: scopedSeason, isPast } =
-    resolveSeasonScope(allSeasons, seasonParam);
+  const { seasons: seasonList, selected: scopedSeason, isPast } = resolveSeasonScope(
+    allSeasons,
+    seasonParam,
+  );
 
-  let tournaments: TournamentWithEventCount[] | null = null;
-  const { data: tournamentsWithEvents } = await scopeToActiveSeason(
-    supabase.from('tournaments').select('*, tournament_events(count)'),
+  const { data: tournamentRows } = await scopeToActiveSeason(
+    supabase.from('tournaments').select('*'),
     scopedSeason?.id,
   ).order('start_date', { ascending: false });
+  const tournaments = (tournamentRows ?? []) as TournamentRow[];
+  const tournamentIds = tournaments.map((t) => t.id);
 
-  if (tournamentsWithEvents) {
-    tournaments = tournamentsWithEvents;
-  } else {
-    const { data: fallback } = await scopeToActiveSeason(
-      supabase.from('tournaments').select('*'),
-      scopedSeason?.id,
-    ).order('start_date', { ascending: false });
-    tournaments = fallback;
+  // The events carry everything the parent row cannot say: which disciplines
+  // run, how far along the draw is, and the only capacity figure in the schema.
+  const { data: eventRows } = tournamentIds.length
+    ? await supabase
+        .from('tournament_events')
+        .select('id, tournament_id, event_type, status, draw_locked, max_participants')
+        .in('tournament_id', tournamentIds)
+    : { data: [] };
+  const events = (eventRows ?? []) as IndexEvent[];
+  const eventsByTournament = new Map<string, IndexEvent[]>();
+  for (const e of events) {
+    const list = eventsByTournament.get(e.tournament_id) ?? [];
+    list.push(e);
+    eventsByTournament.set(e.tournament_id, list);
+  }
+  const eventIds = events.map((e) => e.id);
+  const tournamentOfEvent = new Map(events.map((e) => [e.id, e.tournament_id]));
+
+  // THE FIELD. A doubles entry is a pair row and a singles entry is a
+  // participant row, and one pair is ONE entry — that is the unit
+  // max_participants is compared against when a registration is refused, so it
+  // has to be the unit counted here too or the count and the cap disagree.
+  // Withdrawn entries are out of both, exactly as the fee roster has them.
+  const [{ data: participantData }, { data: pairData }] = eventIds.length
+    ? await Promise.all([
+        supabase
+          .from('tournament_participants')
+          .select('id, event_id, player_id, seed_number, elo_before')
+          .in('event_id', eventIds)
+          .neq('status', 'withdrawn'),
+        supabase
+          .from('tournament_pairs')
+          .select('id, event_id, player1_id, player2_id, pair_name, seed_number, combined_elo')
+          .in('event_id', eventIds)
+          .neq('status', 'withdrawn'),
+      ])
+    : [{ data: [] }, { data: [] }];
+  const participants = (participantData ?? []) as ParticipantRow[];
+  const pairs = (pairData ?? []) as PairRow[];
+
+  const entriesByTournament = new Map<string, number>();
+  for (const row of [...participants, ...pairs]) {
+    const tid = tournamentOfEvent.get(row.event_id);
+    if (!tid) continue;
+    entriesByTournament.set(tid, (entriesByTournament.get(tid) ?? 0) + 1);
   }
 
-  const activeTournaments = tournaments?.filter((t) => t.status !== 'archived') || [];
-  const archivedTournaments = tournaments?.filter((t) => t.status === 'archived') || [];
+  const stageOf = new Map<string, TournamentStage>(
+    tournaments.map((t) => [t.id, tournamentStage(t, eventsByTournament.get(t.id) ?? [])]),
+  );
 
-  // Per-season event-waiver templates (00074), so "Use season template" in the
-  // create/edit dialog can fill the waiver box without a round trip. The active
-  // season is what createTournament stamps on a new tournament, so it is the
-  // season a not-yet-created tournament draws from.
-  // The ACTIVE season, deliberately not the browsed one. Creating a tournament
-  // always files it under the season the club is currently playing
-  // (requireActiveSeasonId), so the waiver template offered in that dialog must
-  // be the active season's — browsing a past term must not change what a new
-  // tournament would get.
-  const { data: waiverTemplates } = await supabase
-    .from('event_waiver_templates').select('season_id, content');
-  const waiverTemplateContext: WaiverTemplateContext = {
-    templates: waiverTemplates ?? [],
-    activeSeasonId: seasonList.find((s) => s.active_flag)?.id ?? null,
-  };
+  // THE OPEN TOURNAMENT — the one the right-hand column is about. "Open for
+  // entry" is a derived stage, not a column, so this is the same fold the badge
+  // uses. The soonest one wins when more than one is open; the rest are counted
+  // rather than hidden, because a strip that says 2 beside a card that shows 1
+  // reads as a bug.
+  const openTournaments = tournaments
+    .filter((t) => stageOf.get(t.id) === 'entries-open')
+    .sort((a, b) => a.start_date.localeCompare(b.start_date));
+  const featured = openTournaments[0] ?? null;
+  const featuredEvents = featured ? eventsByTournament.get(featured.id) ?? [] : [];
+  const featuredEventIds = new Set(featuredEvents.map((e) => e.id));
+
+  // ---- ENTRY MONEY. Both reads are inside the capability, not beside it. ----
+  let feeTiersByTournament = new Map<string, { amount_cents: number; is_default: boolean }[]>();
+  let feesDueCents = 0;
+  let featuredPaid = 0;
+  let featuredUnpaid = 0;
+  if (canSeeFees && tournamentIds.length) {
+    const [{ data: tierData }, { data: feeData }] = await Promise.all([
+      supabase
+        .from('tournament_fee_tiers')
+        .select('tournament_id, amount_cents, is_default')
+        .in('tournament_id', tournamentIds),
+      supabase
+        .from('tournament_fees')
+        .select('tournament_id, player_id, amount_cents, paid_at')
+        .in('tournament_id', tournamentIds),
+    ]);
+    const tiers = (tierData ?? []) as {
+      tournament_id: string;
+      amount_cents: number;
+      is_default: boolean;
+    }[];
+    for (const tier of tiers) {
+      const list = feeTiersByTournament.get(tier.tournament_id) ?? [];
+      list.push(tier);
+      feeTiersByTournament.set(tier.tournament_id, list);
+    }
+    const fees = (feeData ?? []) as {
+      tournament_id: string;
+      player_id: string;
+      amount_cents: number | null;
+      paid_at: string | null;
+    }[];
+    const feeByKey = new Map(fees.map((f) => [`${f.tournament_id}:${f.player_id}`, f]));
+
+    // Who actually owes. THE SAME TWO EXEMPTIONS the fee roster applies
+    // (`is_exec`, `fee_exempt`) — a headline that counted the exec who ran the
+    // draw as an unpaid entrant would contradict the page it links to.
+    const entrantIds = new Set<string>();
+    for (const p of participants) entrantIds.add(p.player_id);
+    for (const p of pairs) {
+      entrantIds.add(p.player1_id);
+      entrantIds.add(p.player2_id);
+    }
+    const { data: payerData } = entrantIds.size
+      ? await supabase
+          .from('players')
+          .select('id, is_exec, fee_exempt')
+          .in('id', Array.from(entrantIds))
+      : { data: [] };
+    const liable = new Set(
+      ((payerData ?? []) as { id: string; is_exec: boolean; fee_exempt: boolean }[])
+        .filter((p) => !p.is_exec && !p.fee_exempt)
+        .map((p) => p.id),
+    );
+
+    // Per tournament, the distinct liable players entered in any of its events.
+    const payersByTournament = new Map<string, Set<string>>();
+    const addPayer = (eventId: string, playerId: string) => {
+      const tid = tournamentOfEvent.get(eventId);
+      if (!tid || !liable.has(playerId)) return;
+      const set = payersByTournament.get(tid) ?? new Set<string>();
+      set.add(playerId);
+      payersByTournament.set(tid, set);
+    };
+    for (const p of participants) addPayer(p.event_id, p.player_id);
+    for (const p of pairs) {
+      addPayer(p.event_id, p.player1_id);
+      addPayer(p.event_id, p.player2_id);
+    }
+
+    for (const [tid, payers] of payersByTournament) {
+      const defaultTier =
+        feeTiersByTournament.get(tid)?.find((t) => t.is_default) ??
+        feeTiersByTournament.get(tid)?.[0] ??
+        null;
+      for (const playerId of payers) {
+        const fee = feeByKey.get(`${tid}:${playerId}`);
+        // What a player owes is their own fee row when one exists, otherwise
+        // the tournament's default tier. No tier and no row means nobody has
+        // said this tournament costs anything — that is not a debt of $0, it is
+        // an absence, and it contributes nothing either way.
+        const owed = fee?.amount_cents ?? defaultTier?.amount_cents ?? null;
+        const paid = Boolean(fee?.paid_at);
+        if (featured && tid === featured.id) {
+          if (paid) featuredPaid += 1;
+          else featuredUnpaid += 1;
+        }
+        if (!paid && owed != null) feesDueCents += owed;
+      }
+    }
+  }
+
+  // ---- TOP SEEDS for the open tournament ----------------------------------
+  // Names only for the field that is actually rendered.
+  type Entrant = { key: string; name: string; avatarId: string; seed: number | null; rating: number | null };
+  let topEntrants: Entrant[] = [];
+  let anySeeded = false;
+  if (featured && featuredEventIds.size) {
+    const featuredParticipants = participants.filter((p) => featuredEventIds.has(p.event_id));
+    const featuredPairs = pairs.filter((p) => featuredEventIds.has(p.event_id));
+    const nameIds = new Set<string>();
+    for (const p of featuredParticipants) nameIds.add(p.player_id);
+    for (const p of featuredPairs) {
+      nameIds.add(p.player1_id);
+      nameIds.add(p.player2_id);
+    }
+    const { data: playerData } = nameIds.size
+      ? await supabase.from('players').select('id, full_name, avatar_url').in('id', Array.from(nameIds))
+      : { data: [] };
+    const players = new Map(
+      ((playerData ?? []) as { id: string; full_name: string; avatar_url: string | null }[]).map(
+        (p) => [p.id, p],
+      ),
+    );
+
+    const all: Entrant[] = [
+      ...featuredParticipants.map((p) => ({
+        key: p.id,
+        name: players.get(p.player_id)?.full_name ?? 'Unknown player',
+        avatarId: p.player_id,
+        seed: p.seed_number,
+        rating: p.elo_before,
+      })),
+      ...featuredPairs.map((p) => ({
+        key: p.id,
+        name:
+          p.pair_name ??
+          `${players.get(p.player1_id)?.full_name ?? '?'} / ${players.get(p.player2_id)?.full_name ?? '?'}`,
+        avatarId: p.player1_id,
+        seed: p.seed_number,
+        rating: p.combined_elo,
+      })),
+    ];
+    anySeeded = all.some((e) => e.seed != null);
+    // SEEDS ONLY EXIST ONCE SOMEBODY MAKES THEM. `seed_number` is written by the
+    // seeding actions and by bracket generation's auto-seed, so before the draw
+    // every entrant's seed is null. Rather than show four blanks, the list falls
+    // back to the rating each entrant was entered with — which is precisely the
+    // order the auto-seed would produce — and the card says which of the two it
+    // is showing.
+    all.sort((a, b) => {
+      if (a.seed != null && b.seed != null) return a.seed - b.seed;
+      if (a.seed != null) return -1;
+      if (b.seed != null) return 1;
+      return (b.rating ?? 0) - (a.rating ?? 0);
+    });
+    topEntrants = all.slice(0, 4);
+  }
+
+  // The waiver-template read exists only to pre-fill the create/edit dialog, so
+  // it runs only for somebody who can open one. The ACTIVE season's template
+  // deliberately, not the browsed one: createTournament files a new tournament
+  // under the season the club is currently playing, so browsing a past term
+  // must not change what a new tournament would get.
+  let waiverTemplateContext: WaiverTemplateContext = { templates: [], activeSeasonId: null };
+  if (canCreate || canEdit) {
+    const { data: waiverTemplates } = await supabase
+      .from('event_waiver_templates')
+      .select('season_id, content');
+    waiverTemplateContext = {
+      templates: (waiverTemplates ?? []) as { season_id: string; content: string }[],
+      activeSeasonId: seasonList.find((s) => s.active_flag)?.id ?? null,
+    };
+  }
+
+  // ---- The four stat cells -------------------------------------------------
+  const openCount = openTournaments.length;
+  const entriesIn = [...entriesByTournament.values()].reduce((a, b) => a + b, 0);
+  // SEASON, not calendar year. The mockup said "run this year", but this page
+  // is scoped by the season selector directly above the strip — a year count
+  // beside a season filter would disagree with every other number on the page.
+  const runThisSeason = tournaments.filter((t) => {
+    const stage = stageOf.get(t.id);
+    return stage === 'finished' || stage === 'archived';
+  }).length;
+
+  const featuredEntries = featured ? entriesByTournament.get(featured.id) ?? 0 : 0;
+  const featuredCapacity = capacityOf(featuredEvents);
+
+  const eyebrow = `EVENTS · ${(scopedSeason?.name ?? 'ALL SEASONS').toUpperCase()}`;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-      {/* Page Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <div style={{
-            width: '2.5rem',
-            height: '2.5rem',
-            borderRadius: '0.75rem',
-            background: 'var(--color-accent)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}>
-            <Trophy size={20} style={{ color: 'white' }} />
-          </div>
-          <div>
-            <h1 style={{ fontSize: '1.875rem', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>TOURNAMENTS</h1>
-            <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginTop: '0.125rem' }}>Manage brackets, participants, and results</p>
-          </div>
-        </div>
-        <CreateTournamentForm waiverTemplates={waiverTemplateContext} />
-      </div>
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        eyebrow={eyebrow}
+        title="Tournaments"
+        sub="Entries, seeding and the draw on the day."
+        watermark="T"
+        actions={canCreate ? <CreateTournamentForm waiverTemplates={waiverTemplateContext} /> : undefined}
+      />
 
       <div className="space-y-2">
         <SeasonSelect seasons={seasonList} selected={scopedSeason} basePath="/tournaments" />
         {isPast && scopedSeason && <PastSeasonNotice season={scopedSeason} />}
       </div>
 
-      {/* Active Tournaments */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-        {activeTournaments.map((t) => (
-          <TournamentCard key={t.id} t={t} waiverTemplates={waiverTemplateContext} />
-        ))}
-        {activeTournaments.length === 0 && (
-          <Card>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem 1rem', gap: '0.75rem' }}>
-              <Trophy size={32} style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
-              <p style={{ color: 'var(--text-muted)', textAlign: 'center', fontSize: '0.9375rem' }}>No tournaments yet. Create one to get started.</p>
-            </div>
-          </Card>
+      {/* Stat strip — bare pairs, hairline above, below and between. Each cell
+          is a link to the thing it counts. */}
+      <div className="stat-strip">
+        <Link href="#entries" className="block no-underline">
+          <StatCell label="Open for entry" value={String(openCount)} />
+        </Link>
+        <Link href="#all-events" className="block no-underline">
+          <StatCell label="Entries in" value={String(entriesIn)} />
+        </Link>
+        {canSeeFees ? (
+          <Link
+            href={featured ? `/tournaments/${featured.id}/fees` : '#all-events'}
+            className="block no-underline"
+          >
+            <StatCell
+              label="Entry fees due"
+              value={<Atomic>{formatDollars(feesDueCents)}</Atomic>}
+              money
+              tone="var(--color-warning)"
+            />
+          </Link>
+        ) : (
+          // Withheld, not empty: a fourth cell that simply vanished would leave
+          // a viewer counting three and wondering what broke.
+          <div>
+            <StatCell label="Entry fees due" value="—" />
+            <Micro className="mt-1 block">Not shown to you</Micro>
+          </div>
         )}
+        <Link href="#all-events" className="block no-underline">
+          <StatCell label="Run this season" value={String(runThisSeason)} />
+        </Link>
       </div>
 
-      {/* Archived Tournaments */}
-      {archivedTournaments.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Archive size={16} style={{ color: 'var(--text-muted)' }} />
-            <h2 style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Archived ({archivedTournaments.length})
+      <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[2fr_1fr]">
+        {/* ---------------- LEFT: every tournament in the season ------------ */}
+        <Card padding={false} className="overflow-hidden" >
+          <div
+            id="all-events"
+            className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4"
+          >
+            <h2 className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-primary)]">
+              All events
             </h2>
+            <Micro>Newest first</Micro>
           </div>
-          {archivedTournaments.map((t) => (
-            <TournamentCard key={t.id} t={t} waiverTemplates={waiverTemplateContext} />
-          ))}
+
+          {tournaments.length === 0 ? (
+            <EmptyState
+              title="No tournaments this season"
+              description={
+                canCreate
+                  ? 'Create one and it will be filed under the active season.'
+                  : 'Nothing has been scheduled for the season you are browsing.'
+              }
+            />
+          ) : (
+            <ResponsiveTable
+              cards={tournaments.map((t) => {
+                const evts = eventsByTournament.get(t.id) ?? [];
+                const stage = stageOf.get(t.id)!;
+                const entries = entriesByTournament.get(t.id) ?? 0;
+                const capacity = capacityOf(evts);
+                const fee = canSeeFees ? feeLabel(feeTiersByTournament.get(t.id) ?? []) : null;
+                return (
+                  <TableCard
+                    key={t.id}
+                    title={
+                      <Link href={`/tournaments/${t.id}`} className="no-underline text-[var(--text-primary)]">
+                        {t.name}
+                      </Link>
+                    }
+                    value={
+                      <Atomic>{capacity != null ? `${entries}/${capacity}` : String(entries)}</Atomic>
+                    }
+                    badges={
+                      <Badge variant={STAGE_BADGE[stage]}>
+                        <span className="sr-only">Status: </span>
+                        {STAGE_LABEL[stage]}
+                      </Badge>
+                    }
+                    fields={[
+                      { label: 'Date', value: <Atomic>{formatEventDate(t.start_date)}</Atomic> },
+                      { label: 'Events', value: disciplineLine(evts) || 'None yet' },
+                      ...(fee ? [{ label: 'Entry fee', value: <Atomic>{fee}</Atomic> }] : []),
+                    ]}
+                    actions={
+                      <>
+                        <Link href={`/tournaments/${t.id}`} className="no-underline">
+                          <Button variant="secondary" size="sm" className="min-h-[44px]">
+                            {STAGE_ACTION[stage]}
+                          </Button>
+                        </Link>
+                        <TournamentRowActions
+                          tournament={t as unknown as TournamentData}
+                          waiverTemplates={waiverTemplateContext}
+                          canEdit={canEdit}
+                          canArchive={canArchive}
+                          canDelete={canDelete}
+                        />
+                      </>
+                    }
+                  />
+                );
+              })}
+            >
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-[var(--border)]">
+                    <Th>Event</Th>
+                    <Th>Status</Th>
+                    <Th>Date</Th>
+                    <Th align="right">Entries</Th>
+                    <Th align="right">Action</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tournaments.map((t) => {
+                    const evts = eventsByTournament.get(t.id) ?? [];
+                    const stage = stageOf.get(t.id)!;
+                    const entries = entriesByTournament.get(t.id) ?? 0;
+                    const capacity = capacityOf(evts);
+                    const fee = canSeeFees ? feeLabel(feeTiersByTournament.get(t.id) ?? []) : null;
+                    const disciplines = disciplineLine(evts);
+                    return (
+                      <tr key={t.id} className="border-t border-[var(--border)] first:border-t-0">
+                        <td className="px-5 py-3.5 align-middle">
+                          <Link
+                            href={`/tournaments/${t.id}`}
+                            className="block text-sm text-[var(--text-primary)] no-underline hover:text-[var(--color-accent)]"
+                          >
+                            {t.name}
+                          </Link>
+                          <Micro className="mt-0.5 block">
+                            {[disciplines || 'NO EVENTS YET', fee].filter(Boolean).join(' · ')}
+                          </Micro>
+                        </td>
+                        <td className="px-5 py-3.5 align-middle">
+                          <Badge variant={STAGE_BADGE[stage]}>
+                            <span className="sr-only">Status: </span>
+                            {STAGE_LABEL[stage]}
+                          </Badge>
+                        </td>
+                        <td className="px-5 py-3.5 align-middle font-mono text-xs text-[var(--text-secondary)]">
+                          <Atomic>{formatEventDate(t.start_date)}</Atomic>
+                        </td>
+                        <td className="px-5 py-3.5 text-right align-middle font-mono text-sm text-[var(--text-primary)]">
+                          <Atomic>
+                            {capacity != null ? `${entries}/${capacity}` : String(entries)}
+                          </Atomic>
+                        </td>
+                        <td className="px-5 py-3.5 align-middle">
+                          <div className="flex items-center justify-end gap-2">
+                            <TournamentRowActions
+                              tournament={t as unknown as TournamentData}
+                              waiverTemplates={waiverTemplateContext}
+                              canEdit={canEdit}
+                              canArchive={canArchive}
+                              canDelete={canDelete}
+                            />
+                            <Link href={`/tournaments/${t.id}`} className="no-underline">
+                              <Button variant="secondary" size="sm" className="min-h-[44px]">
+                                {STAGE_ACTION[stage]}
+                              </Button>
+                            </Link>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </ResponsiveTable>
+          )}
+
+          {/* Seeding note. The mockup's version claimed the rating is taken when
+              the draw is set; it is not. `elo_before` is stamped on the
+              participant row at registration (tournament-actions/participants.ts)
+              and `combined_elo` on the pair when it is formed, and both the
+              auto-seed and the manual "seed by rating" action sort by those
+              stored values — so a rating that moves between entry and draw day
+              does not move the seeding. The other half is the pool case, where
+              the field and its order come from the pool standings instead. */}
+          <div className="border-t border-[var(--border)] px-5 py-3">
+            <Micro>
+              Seeding uses each entrant&rsquo;s rating as recorded when they entered · a pool-fed
+              event seeds from the pool standings instead
+            </Micro>
+          </div>
+        </Card>
+
+        {/* ---------------- RIGHT: the open tournament ---------------------- */}
+        <div className="flex flex-col gap-5">
+          <Card>
+            <span id="entries" className="block scroll-mt-24" />
+            <h2 className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-primary)]">
+              {featured ? `${featured.name} · Entries` : 'Entries'}
+            </h2>
+
+            {!featured ? (
+              <EmptyState
+                title="Nothing is open for entry"
+                description="A tournament appears here once one of its events is taking registrations."
+              />
+            ) : (
+              <>
+                <div className="mt-4 flex items-baseline gap-3">
+                  <span className="font-mono text-[40px] font-bold leading-none tracking-[-0.03em] text-[var(--text-primary)]">
+                    {featuredEntries}
+                  </span>
+                  <Micro>
+                    {[
+                      featuredCapacity != null ? `of ${featuredCapacity}` : null,
+                      `starts ${formatEventDate(featured.start_date)}`,
+                      openTournaments.length > 1 ? `+${openTournaments.length - 1} more open` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </Micro>
+                </div>
+
+                {/* The bar needs a denominator to mean anything, and a
+                    denominator only exists when every event of this tournament
+                    carries a max_participants. Uncapped events get the count
+                    and nothing else — an invented 100% bar would be a claim the
+                    schema cannot make. */}
+                {featuredCapacity != null && featuredCapacity > 0 && (
+                  <>
+                    <div className="mt-4 flex h-2.5 w-full overflow-hidden bg-[var(--bg-elevated)]">
+                      <div
+                        className="h-full bg-[var(--color-accent)]"
+                        style={{
+                          width: `${Math.min(100, (featuredEntries / featuredCapacity) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                    <div className="mt-1.5 flex items-center justify-between">
+                      <Micro>Entered</Micro>
+                      <Micro>Open</Micro>
+                    </div>
+                  </>
+                )}
+
+                <div className="mt-4 border-t border-[var(--border)] pt-4">
+                  {canSeeFees ? (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Micro className="block">Paid</Micro>
+                        <p className="mt-1 font-mono text-base text-[var(--text-primary)]">
+                          <Atomic>{String(featuredPaid)}</Atomic>
+                        </p>
+                      </div>
+                      <div>
+                        <Micro className="block">Unpaid</Micro>
+                        <p className="mt-1 font-mono text-base text-[var(--color-warning)]">
+                          <Atomic>{String(featuredUnpaid)}</Atomic>
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-[var(--text-muted)]">
+                      Entry fees are not shown to you.
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
+          </Card>
+
+          {featured && (
+            <Card>
+              <h2 className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-primary)]">
+                {anySeeded ? 'Top seeds' : 'Leading entrants'}
+              </h2>
+              {topEntrants.length === 0 ? (
+                <EmptyState title="No entrants yet" description="Nobody has been added to this tournament." />
+              ) : (
+                <>
+                  <ul className="mt-3 flex flex-col gap-3">
+                    {topEntrants.map((e, i) => (
+                      <li key={e.key} className="flex items-center gap-3">
+                        {/* No medal tones: --gold/--silver/--bronze do not exist
+                            in this app's tokens and the guidelines forbid new
+                            colour values, so every rank is muted. */}
+                        <span className="w-[22px] shrink-0 text-center font-mono text-xs text-[var(--text-muted)]">
+                          {e.seed ?? i + 1}
+                        </span>
+                        <AvatarChip name={e.name} id={e.avatarId} size="sm" />
+                        <span className="min-w-0 flex-1 truncate text-sm text-[var(--text-primary)]">
+                          {e.name}
+                        </span>
+                        <span className="shrink-0 font-mono text-[13px] text-[var(--text-secondary)]">
+                          <Atomic>{e.rating != null ? String(e.rating) : '—'}</Atomic>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-4 border-t border-[var(--border)] pt-3">
+                    <Micro>
+                      {anySeeded
+                        ? 'Rating as recorded when the entrant was added'
+                        : 'Seeds are set when the draw is generated · ordered by rating at entry'}
+                    </Micro>
+                  </div>
+                </>
+              )}
+            </Card>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
 
-function TournamentCard({
-  t,
-  waiverTemplates,
+/** A stat-strip cell. Mono throughout: every one of these is a compared number. */
+function StatCell({
+  label,
+  value,
+  money,
+  tone,
 }: {
-  t: TournamentWithEventCount;
-  waiverTemplates: WaiverTemplateContext;
+  label: string;
+  value: React.ReactNode;
+  money?: boolean;
+  tone?: string;
 }) {
-  const eventCount = pickOne(t.tournament_events)?.count ?? 0;
-
   return (
-    <Link href={`/tournaments/${t.id}`} style={{ textDecoration: 'none' }}>
-      <Card>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <h3 style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: '1.05rem' }}>{t.name}</h3>
-              <Badge variant={
-                t.status === 'active' ? 'success' :
-                t.status === 'archived' ? 'neutral' :
-                t.status === 'completed' ? 'neutral' :
-                'warning'
-              }>
-                <span className="sr-only">Status: </span>{t.status}
-              </Badge>
-              {t.suspended_at && (
-                <Badge variant="danger">
-                  <span className="sr-only">Status: </span>suspended
-                </Badge>
-              )}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-                <Calendar size={14} style={{ opacity: 0.7 }} />{formatDate(t.start_date)}
-              </span>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-                <Users size={14} style={{ opacity: 0.7 }} />{eventCount} events
-              </span>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-                <Zap size={14} style={{ opacity: 0.7 }} />{t.event_multiplier}x multiplier
-              </span>
-              <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', padding: '0.125rem 0.5rem', borderRadius: '9999px', border: '1px solid var(--border)', background: 'var(--bg-card)' }}>{t.format}</span>
-              <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', padding: '0.125rem 0.5rem', borderRadius: '9999px', border: '1px solid var(--border)', background: 'var(--bg-card)' }}>{t.scope}</span>
-              <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', padding: '0.125rem 0.5rem', borderRadius: '9999px', border: '1px solid var(--border)', background: 'var(--bg-card)' }}>Bracket: {t.bracket_size}</span>
-            </div>
-          </div>
-          <div style={{ flexShrink: 0 }}>
-            <TournamentMenu tournament={t} waiverTemplates={waiverTemplates} />
-          </div>
-        </div>
-      </Card>
-    </Link>
+    <>
+      <span
+        className="stat-label block"
+        style={{ fontSize: 9, letterSpacing: '0.16em' }}
+      >
+        {label}
+      </span>
+      <span
+        className={`stat-value block${money ? ' is-money' : ''}`}
+        style={{ fontFamily: 'var(--mono)', fontSize: 32, color: tone }}
+      >
+        {value}
+      </span>
+    </>
+  );
+}
+
+function Th({ children, align = 'left' }: { children: React.ReactNode; align?: 'left' | 'right' }) {
+  return (
+    <th
+      className={`px-5 py-2.5 font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)] ${
+        align === 'right' ? 'text-right' : 'text-left'
+      }`}
+    >
+      {children}
+    </th>
   );
 }

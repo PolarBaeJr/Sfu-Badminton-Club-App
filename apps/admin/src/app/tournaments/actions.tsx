@@ -8,7 +8,7 @@ import { createTournament, updateTournament, archiveTournament, deleteTournament
 import { useToast } from '@/components/toast-provider';
 import { MoreVertical } from 'lucide-react';
 
-interface TournamentData {
+export interface TournamentData {
   id: string;
   name: string;
   scope: string;
@@ -258,12 +258,30 @@ export function CreateTournamentForm({ waiverTemplates }: { waiverTemplates: Wai
   );
 }
 
-export function TournamentMenu({
+/**
+ * The row-action slot on the /tournaments index: an explicit Edit button, then
+ * an overflow for the two actions that are not reversible from the row.
+ *
+ * EVERY CONTROL IS ASKED FOR SEPARATELY. This used to be one dropdown that
+ * offered Edit, Archive and Delete to whoever the section let in — three
+ * capabilities behind no check at all. The server actions each re-check their
+ * own (`tournaments.manage.update.write`, `.archive.write`, `.delete.write`),
+ * so an ungated menu only ever produced a control that failed on click; now the
+ * three flags come down per capability and the whole component renders nothing
+ * when a viewer holds none of them.
+ */
+export function TournamentRowActions({
   tournament,
   waiverTemplates,
+  canEdit,
+  canArchive,
+  canDelete,
 }: {
   tournament: TournamentData;
   waiverTemplates: WaiverTemplateContext;
+  canEdit: boolean;
+  canArchive: boolean;
+  canDelete: boolean;
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -294,23 +312,44 @@ export function TournamentMenu({
     setLoading(false);
   }
 
+  // Archiving an already-archived tournament is a no-op, so the item is only
+  // offered where it does something — the same rule the old menu used.
+  const overflow = [
+    ...(canArchive && tournament.status !== 'archived'
+      ? [{ label: 'Archive', onClick: handleArchive }]
+      : []),
+    ...(canDelete ? [{ label: 'Delete', onClick: () => setConfirmDelete(true), danger: true }] : []),
+  ];
+
+  if (!canEdit && overflow.length === 0) return null;
+
   return (
-    <div onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
-      <Dropdown
-        trigger={
-          <button
-            aria-label="Tournament menu"
-            className="p-1.5 rounded-lg hover:bg-[var(--border-hover)] transition-colors text-[var(--text-muted)] hover:text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
-          >
-            <MoreVertical className="w-4 h-4" />
-          </button>
-        }
-        items={[
-          { label: 'Edit', onClick: () => setEditOpen(true) },
-          ...(tournament.status !== 'archived' ? [{ label: 'Archive', onClick: handleArchive }] : []),
-          { label: 'Delete', onClick: () => setConfirmDelete(true), danger: true },
-        ]}
-      />
+    <div className="flex items-center gap-2">
+      {canEdit && (
+        // 44px floor: this sits in a row-action slot an officer taps from a
+        // phone at the door.
+        <Button
+          variant="ghost"
+          size="sm"
+          className="min-h-[44px]"
+          onClick={() => setEditOpen(true)}
+        >
+          Edit
+        </Button>
+      )}
+      {overflow.length > 0 && (
+        <Dropdown
+          trigger={
+            <button
+              aria-label={`More actions for ${tournament.name}`}
+              className="inline-flex h-11 w-11 items-center justify-center text-[var(--text-muted)] transition-colors hover:bg-[var(--border-hover)] hover:text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+            >
+              <MoreVertical className="w-4 h-4" />
+            </button>
+          }
+          items={overflow}
+        />
+      )}
 
       <TournamentFormDialog
         open={editOpen}
@@ -319,7 +358,7 @@ export function TournamentMenu({
         waiverTemplates={waiverTemplates}
       />
 
-      <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} title="Delete Tournament">
+      <Dialog open={confirmDelete} onClose={() => setConfirmDelete(false)} title={`Delete ${tournament.name}`}>
         <div className="space-y-4">
           <p className="text-sm text-[var(--text-secondary)]">
             Are you sure you want to permanently delete <strong>{tournament.name}</strong>? This will also remove all participants and events. This action cannot be undone.

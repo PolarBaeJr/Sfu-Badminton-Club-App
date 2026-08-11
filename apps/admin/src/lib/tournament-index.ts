@@ -1,4 +1,4 @@
-import { isDoublesEvent } from '@badminton/shared';
+import { isDoublesEvent, type TournamentEventType } from '@badminton/shared';
 
 // THE /tournaments INDEX, derived rather than stored.
 //
@@ -12,7 +12,7 @@ import { isDoublesEvent } from '@badminton/shared';
 export type IndexEvent = {
   id: string;
   tournament_id: string;
-  event_type: string;
+  event_type: TournamentEventType;
   status: string;
   draw_locked: boolean | null;
   max_participants: number | null;
