@@ -1,7 +1,16 @@
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { notFound } from 'next/navigation';
-import { TOURNAMENT_EVENT_TYPE_LABELS, isDoublesEvent } from '@badminton/shared';
+import {
+  TOURNAMENT_EVENT_TYPE_LABELS,
+  isDoublesEvent,
+  resolveEventWaiverText,
+  eventWaiverStatus,
+  type AcceptedEventWaiver,
+  type EventWaiverStatus,
+} from '@badminton/shared';
+// By SUBPATH — node:crypto, server only.
+import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { EventControlCenter } from './components/EventControlCenter';
@@ -90,6 +99,7 @@ export default async function EventPage({
     { data: matches },
     bonusSettings,
     { data: allPlayers },
+    { data: waiverAcceptances },
   ] = await Promise.all([
     canEditEvent
       ? supabase
@@ -138,10 +148,48 @@ export default async function EventPage({
           .not('status', 'in', '("suspended","pending_approval")')
           .order('full_name')
       : Promise.resolve({ data: [] as PlayerSummary[] }),
+    // WHO HAS SIGNED THE EVENT WAIVER — its own capability, its own fetch,
+    // skipped outright rather than hidden for a viewer who does not hold it.
+    // Same discipline as `allPlayers` above: this crosses to the browser as a
+    // prop on a client component, so trimming the JSX would leave it in the
+    // payload.
+    //
+    // A DISPLAY read, not the enforcement one. Check-in reads the same rows for
+    // itself, without asking this capability, because gating a refusal on a
+    // viewing permission would mean the narrower somebody's access the more the
+    // rule relaxes.
+    may('tournaments.draw.waivers.read')
+      ? supabase
+          .from('event_waiver_acceptances')
+          .select('player_id, waiver_hash, accepted_at')
+          .eq('tournament_id', tournamentId)
+      : Promise.resolve({ data: null as AcceptedEventWaiver[] | null }),
   ]);
 
   const pairs: PairWithPlayers[] = (pairRows ?? []) as PairWithPlayers[];
   const participants: ParticipantWithPlayer[] = (participantRows ?? []) as ParticipantWithPlayer[];
+
+  // The waiver state each row shows, resolved on the server. It has to be:
+  // eventWaiverHash uses node:crypto, so a client component could not compute
+  // the comparison even if it were handed the text.
+  //
+  // `null` means "do not show a waiver column at all" and covers two different
+  // situations on purpose — this tournament has no waiver, or this viewer may
+  // not see who signed. Neither should render an empty column implying nobody
+  // has signed.
+  const waiverText = resolveEventWaiverText(tournament);
+  const waiverStates: Record<string, EventWaiverStatus> | null =
+    waiverText && waiverAcceptances
+      ? Object.fromEntries(
+          (doubles
+            ? pairs.flatMap((p) => [p.player1_id, p.player2_id])
+            : participants.map((p) => p.player_id)
+          ).map((playerId) => [
+            playerId,
+            eventWaiverStatus(playerId, eventWaiverHash(waiverText), waiverAcceptances),
+          ]),
+        )
+      : null;
 
   return (
     <div className="space-y-6">
@@ -163,6 +211,7 @@ export default async function EventPage({
         siblingEvents={siblingEvents ?? []}
         isDoubles={doubles}
         bonusSettings={bonusSettings}
+        waiverStates={waiverStates}
       />
     </div>
   );

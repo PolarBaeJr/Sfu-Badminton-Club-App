@@ -20,6 +20,8 @@ import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil, UserMinus } from 'lucide-react';
 import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';
+import type { EventWaiverStatus } from '@badminton/shared';
+import { WaiverState } from './WaiverState';
 
 interface Props {
   event: TournamentEventRow;
@@ -27,6 +29,8 @@ interface Props {
   pairs: PairWithPlayers[];
   allPlayers: Array<{ id: string; full_name: string; avatar_url?: string | null }>;
   isDoubles: boolean;
+  // null = draw no waiver column. See WaiverState.
+  waiverStates: Record<string, EventWaiverStatus> | null;
 }
 
 // Raw enum values ("checked_in") leaked straight into the table. Underscores
@@ -150,7 +154,7 @@ function SeedCell({
   );
 }
 
-export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoubles }: Props) {
+export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoubles, waiverStates }: Props) {
   const [addOpen, setAddOpen] = useState(false);
   // Doubles adds a PAIR — two named people, one entry — so it keeps two
   // single-select fields. Singles adds any number of individuals at once.
@@ -413,6 +417,12 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3">
                 {isDoubles ? 'Pair' : 'Player'}
               </th>
+              {/* Only when there is something to say. A blank column headed
+                  "Event waiver" on a tournament that has none reads as a
+                  requirement nobody has met. */}
+              {waiverStates && (
+                <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-56">Event waiver</th>
+              )}
               <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-24">Elo</th>
               <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-28">Status</th>
               {showActions && (
@@ -439,6 +449,11 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                       {pair.pair_name ?? `${pair.player1?.full_name} / ${pair.player2?.full_name}`}
                     </span>
                   </td>
+                  {waiverStates && (
+                    <td className="px-4 py-3">
+                      <WaiverState states={waiverStates} playerIds={[pair.player1_id, pair.player2_id]} />
+                    </td>
+                  )}
                   <td className="px-4 py-3">
                     <span className="text-sm font-mono text-[var(--text-muted)]">{pair.combined_elo ?? '-'}</span>
                   </td>
@@ -477,6 +492,11 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                         <span className="text-sm font-medium text-[var(--text-primary)]">{player?.full_name ?? 'Unknown'}</span>
                       </div>
                     </td>
+                    {waiverStates && (
+                      <td className="px-4 py-3">
+                        <WaiverState states={waiverStates} playerIds={[p.player_id]} />
+                      </td>
+                    )}
                     <td className="px-4 py-3">
                       <span className="text-sm font-mono text-[var(--text-muted)]">{elo}</span>
                     </td>

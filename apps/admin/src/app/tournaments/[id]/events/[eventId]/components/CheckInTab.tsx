@@ -13,15 +13,26 @@ import { useToast } from '@/components/toast-provider';
 import { CheckCircle, XCircle, Clock, Users, UserCheck } from 'lucide-react';
 import { getName } from './entry-name';
 import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';
+import type { EventWaiverStatus } from '@badminton/shared';
+import { WaiverState, blocksCheckIn } from './WaiverState';
 
 interface Props {
   event: TournamentEventRow;
   participants: ParticipantWithPlayer[];
   pairs: PairWithPlayers[];
   isDoubles: boolean;
+  // null = draw no waiver state at all. See WaiverState.
+  waiverStates: Record<string, EventWaiverStatus> | null;
 }
 
-export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
+/** Whose signature this entry needs — one person, or both halves of a pair. */
+function entryPlayerIds(entry: ParticipantWithPlayer | PairWithPlayers, isDoubles: boolean): string[] {
+  return isDoubles
+    ? [(entry as PairWithPlayers).player1_id, (entry as PairWithPlayers).player2_id]
+    : [(entry as ParticipantWithPlayer).player_id];
+}
+
+export function CheckInTab({ event, participants, pairs, isDoubles, waiverStates }: Props) {
   const [loading, setLoading] = useState<string | null>(null);
   const [bulkLoading, setBulkLoading] = useState(false);
   const { toast } = useToast();
@@ -35,6 +46,11 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
   const notCheckedIn = entries.filter(e => e.status === 'registered');
   const noShows = entries.filter(e => e.status === 'no_show');
   const progress = entries.length > 0 ? (checkedIn.length / entries.length) * 100 : 0;
+  // THE NUMBER THE DESK NEEDS BEFORE THE QUEUE FORMS. Check-in refuses an
+  // entrant with no current event-waiver acceptance, so this is the count of
+  // presses that are going to fail — surfaced up front rather than discovered
+  // one refusal at a time.
+  const waiverBlocked = notCheckedIn.filter(e => blocksCheckIn(waiverStates, entryPlayerIds(e, isDoubles)));
 
   async function handleCheckIn(id: string) {
     setLoading(id);
@@ -140,6 +156,15 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
           <span>{notCheckedIn.length} waiting</span>
           {noShows.length > 0 && <span className="text-[var(--color-warning)]"><span className="sr-only">Warning: </span>{noShows.length} no-shows</span>}
         </div>
+        {waiverBlocked.length > 0 && (
+          <p className="mt-3 text-xs text-[var(--color-warning)]" role="status">
+            <span className="sr-only">Warning: </span>
+            {waiverBlocked.length} {waiverBlocked.length === 1 ? 'entry has' : 'entries have'} not accepted the
+            event waiver and cannot be checked in. They must accept it themselves, signed in as themselves,
+            from this tournament in the club app — nobody can do it for them.
+            {' '}&ldquo;Check In All Present&rdquo; will take everyone else and tell you who it skipped.
+          </p>
+        )}
       </div>
 
       {/* Two columns: Not checked in | Checked in */}
@@ -156,6 +181,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
                 key={entry.id}
                 entry={entry}
                 isDoubles={isDoubles}
+                waiverStates={waiverStates}
                 actions={canCheckIn ? (
                   <div className="flex gap-1.5">
                     <Button
@@ -198,6 +224,7 @@ export function CheckInTab({ event, participants, pairs, isDoubles }: Props) {
                 key={entry.id}
                 entry={entry}
                 isDoubles={isDoubles}
+                waiverStates={waiverStates}
                 checked
                 actions={
                   entry.checked_in_at && (
@@ -236,12 +263,14 @@ function EntryCard({
   checked,
   dimmed,
   actions,
+  waiverStates,
 }: {
   entry: ParticipantWithPlayer | PairWithPlayers;
   isDoubles: boolean;
   checked?: boolean;
   dimmed?: boolean;
   actions?: React.ReactNode;
+  waiverStates?: Record<string, EventWaiverStatus> | null;
 }) {
   const name = getName(entry, isDoubles);
 
@@ -260,7 +289,12 @@ function EntryCard({
           <span className="text-xs font-mono text-[var(--text-muted)] w-6 text-center">#{entry.seed_number}</span>
         )}
         {!isDoubles && <AvatarChip name={name} src={(entry as ParticipantWithPlayer).player?.avatar_url} size="sm" id={(entry as ParticipantWithPlayer).player?.id} />}
-        <span className="text-sm font-medium text-[var(--text-primary)]">{name}</span>
+        <span className="min-w-0">
+          <span className="block text-sm font-medium text-[var(--text-primary)]">{name}</span>
+          {/* Under the name, the way /legal puts the signature line under a
+              member's. On a pair this names the half that is holding it up. */}
+          <WaiverState states={waiverStates ?? null} playerIds={entryPlayerIds(entry, isDoubles)} />
+        </span>
       </div>
       {actions}
     </div>

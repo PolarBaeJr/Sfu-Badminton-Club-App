@@ -7,7 +7,12 @@ import {
   TOURNAMENT_EVENT_STATUS_LABELS,
   TOURNAMENT_EVENT_STATUS_COLORS,
 } from '@badminton/shared';
-import type { TournamentEventType, TournamentEventStatus, TournamentBonusSettings } from '@badminton/shared';
+import type {
+  TournamentEventType,
+  TournamentEventStatus,
+  TournamentBonusSettings,
+  EventWaiverStatus,
+} from '@badminton/shared';
 import { Trophy, Users, CheckCircle, BarChart3, Settings, Swords, ListOrdered, Pause } from 'lucide-react';
 import type {
   TournamentRow,
@@ -41,9 +46,16 @@ interface Props {
   // Resolved from platform_settings on the server — client components cannot
   // read the table, so the Results tab gets it as a prop.
   bonusSettings: TournamentBonusSettings;
+  // Event-waiver state per player id, resolved on the server because the
+  // comparison needs a SHA-256 of the tournament's text and node:crypto cannot
+  // run here. `null` means DO NOT SHOW THE COLUMN — either this tournament has
+  // no waiver, or this viewer does not hold tournaments.draw.waivers.read. An
+  // empty map would read as "nobody has signed", which is a different and much
+  // more alarming claim.
+  waiverStates: Record<string, EventWaiverStatus> | null;
 }
 
-export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings }: Props) {
+export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, waiverStates }: Props) {
   const status = event.status as TournamentEventStatus;
   const eventType = event.event_type as TournamentEventType;
   const format = event.format;
@@ -142,6 +154,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             pairs={pairs}
             allPlayers={allPlayers}
             isDoubles={isDoubles}
+            waiverStates={waiverStates}
           />
         )}
         {activeTab === 'checkin' && (
@@ -150,6 +163,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             participants={participants}
             pairs={pairs}
             isDoubles={isDoubles}
+            waiverStates={waiverStates}
           />
         )}
         {activeTab === 'bracket' && format === 'round_robin' && (
