@@ -52,6 +52,7 @@ import {
   type AccessLevel,
   type Area,
   type Capability,
+  type CustomBaseline,
   type PermissionRole,
 } from '@/lib/permissions';
 
@@ -72,6 +73,12 @@ export interface PersonRow {
   role: string | null;
   grants: string[];
   revokes: string[];
+  /**
+   * Which custom baseline these grants were copied from, or null for a set
+   * somebody picked by hand. PROVENANCE, never authority: the resolver does not
+   * know the table exists, and clearing this takes nothing away.
+   */
+  baselineId: string | null;
 }
 
 // Words for the machine-readable path segments. The area and group keys are
@@ -268,12 +275,27 @@ const BASELINE_PHRASE: Record<AccessLevel, string> = {
   trainer: 'opening the roster, reading it, and writing varsity notes',
 };
 
+// A CUSTOM BASELINE IS CHOSEN LIKE A ROLE AND STORED LIKE A HAND-PICKED SET.
+// The select value carries the id because <Select> deals in strings, and the
+// prefix keeps it out of the way of the five real role values — a baseline
+// called "custom" must not read back as the role.
+const BASELINE_PREFIX = 'baseline:';
+
 // Built per row for the same reason: the first option names the person's own
 // level, so it cannot be a module constant any more.
-function roleOptions(level: AccessLevel) {
+//
+// THE CLUB'S OWN BASELINES SIT BELOW THE SHIPPED ONES, in the order the manager
+// lists them. They are a different KIND of thing — rows somebody wrote, not
+// names in the code — so they are grouped under their own heading rather than
+// mixed into the five, and picking one says which it was.
+function roleOptions(level: AccessLevel, baselines: readonly CustomBaseline[]) {
   return [
     { value: LEVEL_DEFAULT_OPTION, label: LEVEL_ACCESS_LABELS[level] },
     ...PERMISSION_ROLES.map((role) => ({ value: role, label: PERMISSION_ROLE_LABELS[role] })),
+    ...baselines.map((baseline) => ({
+      value: `${BASELINE_PREFIX}${baseline.id}`,
+      label: `Baseline — ${baseline.name}`,
+    })),
   ];
 }
 
@@ -353,12 +375,15 @@ export function PermissionEditor({
   viewerId,
   viewerIsAdmin,
   viewerCapabilities,
+  baselines,
 }: {
   holders: PersonRow[];
   others: PersonRow[];
   viewerId: string;
   viewerIsAdmin: boolean;
   viewerCapabilities: Capability[];
+  /** The club's own baselines, offered beside the four VP jobs. */
+  baselines: CustomBaseline[];
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // EVERY PERSON'S PENDING TRIPLE, KEYED BY ID, and this is the whole of the
@@ -387,6 +412,10 @@ export function PermissionEditor({
   const router = useRouter();
 
   const held = useMemo(() => new Set(viewerCapabilities), [viewerCapabilities]);
+  const baselineNames = useMemo(
+    () => new Map(baselines.map((baseline) => [baseline.id, baseline.name])),
+    [baselines],
+  );
   const everyone = useMemo(() => [...holders, ...others], [holders, others]);
   const selected = everyone.find((p) => p.id === selectedId) ?? null;
   const selectedLevel = selected?.level ?? null;
@@ -406,8 +435,10 @@ export function PermissionEditor({
   // `grants` and `revokes` exactly as it did when they were three useStates.
   const draft: Draft = selected
     ? (pending[selected.id] ?? draftOf(selected))
-    : { role: null, grants: [], revokes: [] };
+    : { role: null, grants: [], revokes: [], baselineId: null };
   const { role, grants, revokes } = draft;
+  const baselineId = draft.baselineId ?? null;
+  const fromBaseline = baselines.find((b) => b.id === baselineId) ?? null;
 
   /** Queue a change for the selected person. The one write into `pending`. */
   function setDraft(next: Draft) {
@@ -526,12 +557,15 @@ export function PermissionEditor({
    * not have and put them inside the blast radius of any later change to what
    * that job means.
    */
-  function seedCustom(): { role: PermissionRole; grants: Capability[]; revokes: Capability[] } {
-    return { role: 'custom', grants: [...effective], revokes: [] };
+  // A draft that definitely has a role — what every cell click writes through.
+  type Composed = Draft & { role: PermissionRole; baselineId: string | null };
+
+  function seedCustom(): Composed {
+    return { role: 'custom', grants: [...effective], revokes: [], baselineId: null };
   }
 
-  function asCustom(): { role: PermissionRole; grants: Capability[]; revokes: Capability[] } {
-    if (role !== null) return { role, grants, revokes };
+  function asCustom(): Composed {
+    if (role !== null) return { role, grants, revokes, baselineId };
     return seedCustom();
   }
 
@@ -554,7 +588,13 @@ export function PermissionEditor({
     const nextRevokes = next.revokes.filter((c) => c !== capability);
     if (target === 'on' && !inBase) nextGrants.push(capability);
     if (target === 'off' && inBase) nextRevokes.push(capability);
-    setDraft({ role: next.role, grants: nextGrants, revokes: nextRevokes });
+    // THE BASELINE LABEL GOES THE MOMENT A CELL MOVES, and every capability
+    // stays. A row that said "Socials VP" while holding Socials VP plus one
+    // would be re-copied over by the next edit to that baseline — a tick taken
+    // away by somebody else's change to something else. setPlayerPermissions
+    // clears it server-side for the same reason; this is what makes the screen
+    // agree with the write.
+    setDraft({ role: next.role, grants: nextGrants, revokes: nextRevokes, baselineId: null });
   }
 
   function onCellClick(capability: Capability, target: Segment) {
@@ -586,7 +626,28 @@ export function PermissionEditor({
         confirmLabel: selectedLevel ? `Use ${LEVEL_ACCESS_LABELS[selectedLevel].toLowerCase()}` : 'Use their level’s access',
       });
       if (!ok) return;
-      setDraft({ role: null, grants: [], revokes: [] });
+      setDraft({ role: null, grants: [], revokes: [], baselineId: null });
+      return;
+    }
+
+    // A CUSTOM BASELINE IS COPIED IN, not pointed at. What lands in the draft is
+    // the baseline's own capabilities as a hand-picked set — which is exactly
+    // what will be stored — plus the label saying where they came from, so this
+    // person follows the baseline the next time it is edited.
+    //
+    // No confirmation, unlike going back to a level default: the tree below
+    // redraws to show precisely what they would hold, `losing` names anything it
+    // takes away, and nothing is written until Save.
+    if (value.startsWith(BASELINE_PREFIX)) {
+      const id = value.slice(BASELINE_PREFIX.length);
+      const baseline = baselines.find((b) => b.id === id);
+      if (!baseline) return;
+      setDraft({
+        role: 'custom',
+        grants: [...baseline.capabilities],
+        revokes: [],
+        baselineId: baseline.id,
+      });
       return;
     }
     // Choosing Hand-picked explicitly is the same act the first segment press
@@ -598,7 +659,10 @@ export function PermissionEditor({
       setDraft(seedCustom());
       return;
     }
-    setDraft({ role: value as PermissionRole, grants, revokes });
+    // A named VP job, whose defaults live in code. The label goes with the
+    // move — the grants are about to sit on top of a base the baseline knows
+    // nothing about, so it would be describing part of the set.
+    setDraft({ role: value as PermissionRole, grants, revokes, baselineId: null });
   }
 
   // WHAT PRESSING SAVE WOULD TAKE AWAY, worked out from the row as it is
@@ -696,7 +760,8 @@ export function PermissionEditor({
         nextGrants.delete(leaf.capability);
       }
     }
-    setDraft({ role: next.role, grants: [...nextGrants], revokes: [...nextRevokes] });
+    // Same rule as a single cell: the set is no longer what the baseline says.
+    setDraft({ role: next.role, grants: [...nextGrants], revokes: [...nextRevokes], baselineId: null });
   }
 
   /** "Alice — you do not hold players.page", for a refusal or a failure. */
@@ -1115,7 +1180,7 @@ export function PermissionEditor({
             </span>
           </span>
           <span className="mt-0.5 block truncate text-[11px] text-[var(--mute)]">
-            {describe(person)}
+            {describe(person, baselineNames)}
           </span>
         </span>
         {personBadge(person)}
@@ -1253,8 +1318,16 @@ export function PermissionEditor({
                       <div className="w-[200px]">
                         <Select
                           label="Starts from"
-                          options={roleOptions(selectedLevel)}
-                          value={role ?? LEVEL_DEFAULT_OPTION}
+                          options={roleOptions(selectedLevel, baselines)}
+                          // A baseline holder reads back as their baseline, not
+                          // as "Hand-picked": the label is the whole reason the
+                          // column exists, and a select that forgot it the
+                          // moment the page reloaded would be one.
+                          value={
+                            fromBaseline
+                              ? `${BASELINE_PREFIX}${fromBaseline.id}`
+                              : (role ?? LEVEL_DEFAULT_OPTION)
+                          }
                           onChange={(e) => void changeRole(e.target.value)}
                         />
                       </div>
@@ -1275,7 +1348,9 @@ export function PermissionEditor({
                   <p className="mt-3 text-[11px] leading-relaxed text-[var(--mute)]">
                     {role === null
                       ? `${LEVEL_ACCESS_LABELS[selectedLevel]} — ${BASELINE_PHRASE[selectedLevel]}. Nothing is stored; move anything below off Inherit and they become a hand-picked set starting from exactly this.`
-                      : role === 'custom'
+                      : fromBaseline
+                        ? `${fromBaseline.name} — ${fromBaseline.capabilities.length} ${fromBaseline.capabilities.length === 1 ? 'capability' : 'capabilities'} copied from the baseline. Editing the baseline changes them with it; changing anything below makes this a hand-picked set of their own and it stops following.`
+                        : role === 'custom'
                         ? `Hand-picked — ${grants.length} ${grants.length === 1 ? 'capability' : 'capabilities'} chosen one at a time, starting from no job at all.`
                         : grants.length === 0 && revokes.length === 0
                           ? `${PERMISSION_ROLE_LABELS[role]}, unadjusted.`
@@ -1592,19 +1667,29 @@ export function PermissionEditor({
  * The title leads it where there is one, because "Treasurer · Finance" is how
  * the club refers to the person and "Finance" alone is how the code does.
  */
-function describe(person: PersonRow): string {
+function describe(person: PersonRow, baselineNames: ReadonlyMap<string, string>): string {
   const parts: string[] = [];
   if (person.title) parts.push(person.title);
-  parts.push(accessSummary(person));
+  parts.push(accessSummary(person, baselineNames));
   if (person.level !== null && !person.canSignIn) parts.push('cannot sign in');
   return parts.join(' · ');
 }
 
-function accessSummary(person: PersonRow): string {
+function accessSummary(person: PersonRow, baselineNames: ReadonlyMap<string, string>): string {
   if (person.level === null) return 'No console access';
   // Still answered from the level, and still correctly: an admin's stored role
   // is never consulted, so there is nothing else it could say.
   if (person.level === 'admin') return 'Admin';
   if (!isRole(person.role)) return LEVEL_ACCESS_LABELS[person.level];
+  // THE BASELINE'S NAME BEATS 'Hand-picked', because that is what the club
+  // called it. A baseline holder IS stored as a hand-picked set — that is the
+  // whole mechanism — so without this the one screen that knows their job would
+  // be the one screen that will not say it.
+  //
+  // Falls back when the map has no entry: a baseline deleted while the page was
+  // open should read as the hand-picked set the row genuinely is, never as a
+  // blank.
+  const name = person.baselineId === null ? undefined : baselineNames.get(person.baselineId);
+  if (name) return name;
   return PERMISSION_ROLE_LABELS[person.role];
 }

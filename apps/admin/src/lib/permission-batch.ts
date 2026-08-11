@@ -35,6 +35,13 @@ export type BatchPerson = {
   role: string | null;
   grants: string[];
   revokes: string[];
+  /**
+   * Which custom baseline (00093) the stored grants were copied from, or null.
+   * PROVENANCE ONLY — nothing here resolves through it, and it changes nobody's
+   * capabilities. It is in the batch because it is part of the ROW, and isDirty
+   * asks whether the row would change.
+   */
+  baselineId?: string | null;
 };
 
 /** The stored triple as the editor would write it — one person's pending edit. */
@@ -42,6 +49,16 @@ export type Draft = {
   role: PermissionRole | null;
   grants: Capability[];
   revokes: Capability[];
+  /**
+   * Set only while the draft is still exactly what a baseline says. Every hand
+   * edit clears it — see setCell and setAll in the editor — so a row can never
+   * claim a baseline whose contents it no longer matches.
+   *
+   * OPTIONAL, and absent means null. Every Draft written before baselines
+   * existed still type-checks and still means "hand-picked", which is what it
+   * always meant.
+   */
+  baselineId?: string | null;
 };
 
 /**
@@ -83,10 +100,15 @@ export const isPermissionRole = (value: string | null): value is PermissionRole 
  * something.
  */
 export function draftOf(person: BatchPerson): Draft {
+  const role = isPermissionRole(person.role) ? person.role : null;
   return {
-    role: isPermissionRole(person.role) ? person.role : null,
+    role,
     grants: person.grants.filter(isKnownCapability),
     revokes: person.revokes.filter(isKnownCapability),
+    // Read through the seeded role for the same reason the deltas are read
+    // through the vocabulary: the label only means anything on a hand-picked
+    // row, so a build that does not recognise the role must not carry it.
+    baselineId: role === 'custom' ? (person.baselineId ?? null) : null,
   };
 }
 
@@ -122,10 +144,16 @@ export function draftSet(person: BatchPerson, draft: Draft): ReadonlySet<Capabil
  * and the counts below are the separate question "does it do anything".
  */
 export function isDirty(person: BatchPerson, draft: Draft): boolean {
+  const stored = draftOf(person);
   return (
-    draft.role !== draftOf(person).role ||
+    draft.role !== stored.role ||
     !sameSet(draft.grants, person.grants) ||
-    !sameSet(draft.revokes, person.revokes)
+    !sameSet(draft.revokes, person.revokes) ||
+    // The LABEL alone is a change worth saving even when the capabilities are
+    // identical: a hand-picked set that happens to match a baseline and a set
+    // that came FROM it behave differently the next time that baseline is
+    // edited, and only the second one follows it.
+    (draft.baselineId ?? null) !== (stored.baselineId ?? null)
   );
 }
 
@@ -173,12 +201,16 @@ export function dropPending(pending: PendingEdits, ids: readonly string[]): Pend
  * instead would refuse batches the server would have accepted.
  */
 export function normalise(draft: Draft): Draft {
-  if (draft.role === null) return { role: null, grants: [], revokes: [] };
+  if (draft.role === null) return { role: null, grants: [], revokes: [], baselineId: null };
   const roleBase = ROLE_DEFAULTS[draft.role] as readonly Capability[];
   return {
     role: draft.role,
     grants: [...new Set(draft.grants)].sort().filter((capability) => !roleBase.includes(capability)),
     revokes: [...new Set(draft.revokes)].sort(),
+    // A label survives only on 'custom', matching the CHECK in 00093 and the
+    // refusal in setPlayerPermissions. Any other role has defaults beneath the
+    // grants, so a label would be describing part of the set.
+    baselineId: draft.role === 'custom' ? (draft.baselineId ?? null) : null,
   };
 }
 

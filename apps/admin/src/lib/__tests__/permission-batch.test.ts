@@ -147,6 +147,9 @@ describe('what would be stored', () => {
       role: null,
       grants: [],
       revokes: [],
+      // A baseline label is a claim about where the grants came from, so it
+      // goes with them: there is nothing left for it to describe.
+      baselineId: null,
     });
   });
 
@@ -156,7 +159,73 @@ describe('what would be stored', () => {
   it('drops a grant the role already gives, and de-duplicates the rest', () => {
     expect(
       normalise(draft({ role: 'finance', grants: ['fees.page', 'players.page', 'players.page'] })),
-    ).toEqual({ role: 'finance', grants: ['players.page'], revokes: [] });
+    ).toEqual({ role: 'finance', grants: ['players.page'], revokes: [], baselineId: null });
+  });
+
+  // A LABEL SURVIVES ONLY ON 'custom', matching the CHECK in 00093 and the
+  // refusal in setPlayerPermissions. Any other role has defaults beneath the
+  // grants, so the label would be describing part of the set.
+  it('keeps the baseline label on a hand-picked set and nowhere else', () => {
+    const chosen: Capability[] = ['announcements.page', 'announcements.create.write'];
+    expect(normalise(draft({ role: 'custom', grants: chosen, baselineId: 'b1' })).baselineId)
+      .toBe('b1');
+    expect(normalise(draft({ role: 'external', grants: chosen, baselineId: 'b1' })).baselineId)
+      .toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CUSTOM BASELINES — the provenance label, which changes nobody's capabilities
+// ---------------------------------------------------------------------------
+describe('where a hand-picked set came from', () => {
+  const chosen: Capability[] = ['announcements.page', 'announcements.create.write'];
+  const holder = exec({ role: 'custom', grants: chosen, baselineId: 'b1' });
+
+  it('reads the label back off the row', () => {
+    expect(draftOf(holder).baselineId).toBe('b1');
+  });
+
+  // Read through the SEEDED role, like everything else in draftOf: a label on a
+  // row whose role this build does not recognise describes nothing.
+  it('ignores a label on a row with any other role', () => {
+    expect(draftOf(exec({ role: 'finance', baselineId: 'b1' })).baselineId).toBeNull();
+    expect(draftOf(exec({ role: 'treasurer', baselineId: 'b1' })).baselineId).toBeNull();
+  });
+
+  // THE LABEL ALONE IS A CHANGE WORTH SAVING. A hand-picked set that happens to
+  // match a baseline and a set that came FROM one behave differently the next
+  // time that baseline is edited, and only the second follows it.
+  it('is dirty when only the label moves', () => {
+    expect(isDirty(holder, draftOf(holder))).toBe(false);
+    expect(isDirty(holder, { ...draftOf(holder), baselineId: null })).toBe(true);
+    expect(isDirty(exec({ role: 'custom', grants: chosen }), {
+      role: 'custom', grants: chosen, revokes: [], baselineId: 'b1',
+    })).toBe(true);
+  });
+
+  // ...and it changes nothing about the PERSON, which is why dropping it is
+  // safe. pendingEntries counts what an edit does to somebody, and a label
+  // change does nothing at all.
+  it('changes nobody when it moves', () => {
+    const entries = pendingEntries([holder], {
+      [holder.id]: { ...draftOf(holder), baselineId: null },
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.changes).toBe(0);
+    expect(totalChanges(entries)).toBe(0);
+  });
+
+  // Closure is measured on the capabilities, never on the label — a baseline
+  // handing out something the actor lacks is refused exactly as a hand-picked
+  // set of the same capabilities would be.
+  it('is refused on the capabilities, not on where they came from', () => {
+    const treasurer = { id: 'tess', held: new Set<Capability>(FINANCE) };
+    expect(localRefusal(exec({ id: 'ben' }), {
+      role: 'custom', grants: chosen, revokes: [], baselineId: 'b1',
+    }, treasurer)).toMatch(/announcements/);
+    expect(localRefusal(exec({ id: 'ben' }), {
+      role: 'custom', grants: chosen, revokes: [], baselineId: 'b1',
+    }, admin)).toBeNull();
   });
 });
 

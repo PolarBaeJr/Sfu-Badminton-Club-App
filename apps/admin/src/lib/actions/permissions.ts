@@ -29,6 +29,32 @@ export type PermissionsPayload = {
   role: PermissionRole | null;
   grants: string[];
   revokes: string[];
+  /**
+   * Which custom baseline (00093) these grants were COPIED from, or null/absent
+   * for a hand-picked set.
+   *
+   * WHEN IT IS SET, IT IS THE SOURCE OF TRUTH AND THE OTHER THREE ARE CHECKED
+   * AGAINST IT. The action loads the baseline and uses its capabilities, so the
+   * stored label can never describe a set the baseline does not say. A caller
+   * that sends a role, grants or revokes disagreeing with it is refused loudly
+   * rather than quietly overruled — a silent overrule is the editor showing one
+   * diff and the database taking another.
+   *
+   * WHEN IT IS ABSENT, THE LABEL IS CLEARED, and that is the important default.
+   * Every ordinary edit through the two-pane editor goes through here without
+   * this field, so ticking one extra capability for a baseline holder drops the
+   * label and keeps every capability. Without that, the row would say "Socials
+   * VP" while holding Socials VP plus one — and the next edit to that baseline
+   * would propagate over the extra tick and take it away, a narrowing produced
+   * by somebody else's edit to something else.
+   */
+  baselineId?: string | null;
+  /**
+   * Why, for the audit row. Optional because the two-pane editor saves a batch
+   * of people at once and the club has never typed one there; supplied by
+   * baseline propagation, where the reason belongs to the edit that caused it.
+   */
+  reason?: string;
 };
 
 /**
@@ -167,13 +193,61 @@ async function setPlayerPermissionsImpl(playerId: string, next: PermissionsPaylo
     );
   }
 
+  // A CUSTOM BASELINE (00093) IS A COPY, AND THIS IS WHERE IT IS COPIED.
+  //
+  // The capabilities are read from the baseline row, never from the payload, so
+  // permission_baseline_id can never name a baseline that says something other
+  // than what the person holds. The payload is checked against it rather than
+  // ignored: a disagreement means the client drew a diff the server would not
+  // have written, and silently writing the other one is how an admin comes to
+  // believe they granted something they did not.
+  //
+  // THE FIVE CLOSURE CHECKS BELOW STILL RUN, unchanged and on these values. A
+  // baseline is bounded at authoring time by the author's own set, but the
+  // person ASSIGNING it may be someone else with less — so "this baseline was
+  // legal to write" is not "this actor may hand it to this person", and nothing
+  // here is allowed to skip the question.
+  const baselineId = next.baselineId ?? null;
+  let fromBaseline: Capability[] | null = null;
+  if (baselineId !== null) {
+    const { data: baselineRow } = await adminClient
+      .from('permission_baselines')
+      .select('id, capabilities')
+      .eq('id', baselineId)
+      .maybeSingle();
+    if (!baselineRow) throw new ExpectedError('That baseline no longer exists.');
+    fromBaseline = [
+      ...new Set((baselineRow.capabilities as string[]).filter(isCapability)),
+    ].sort();
+
+    // 'custom' is the EMPTY base, which is the only base under which the stored
+    // grants are the whole of what the person holds. Any other role has defaults
+    // beneath them, and a label claiming the set came from a baseline would be
+    // describing part of it.
+    if (next.role !== 'custom') {
+      throw new ExpectedError('A baseline is stored as a hand-picked set. Pick "Hand-picked".');
+    }
+    // Element by element rather than through a joined string: a delimiter is a
+    // character that could appear in a capability, and this comparison is what
+    // stops a stored label describing a set the baseline does not say.
+    const asked = [...new Set(next.grants)].sort();
+    const sameAsBaseline =
+      asked.length === fromBaseline.length
+      && asked.every((capability, index) => capability === fromBaseline![index]);
+    if (!sameAsBaseline || next.revokes.length > 0) {
+      throw new ExpectedError(
+        'That does not match what the baseline says. Reload the page and try again.',
+      );
+    }
+  }
+
   // NO DELTAS WITHOUT A ROLE, cleared here rather than refused. Going back to
   // unrestricted is the safe direction and should not be a two-step act — but
   // the arrays cannot be left behind, or a revoke would sit dormant and wake up
   // the day somebody picks a role again. The database CHECK says the same
   // thing; this is what stops an admin ever meeting it.
   const role = next.role;
-  const grants = role === null ? [] : cleanDelta(next.grants, 'grant');
+  const grants = role === null ? [] : cleanDelta(fromBaseline ?? next.grants, 'grant');
   const revokes = role === null ? [] : cleanDelta(next.revokes, 'revoke');
 
   const bothWays = grants.filter((capability) => revokes.includes(capability));
@@ -268,12 +342,18 @@ async function setPlayerPermissionsImpl(playerId: string, next: PermissionsPaylo
     permission_revokes: target.permission_revokes ?? [],
   };
 
+  // THE LABEL IS WRITTEN ON EVERY SAVE, and to null unless this one came from a
+  // baseline. That is what keeps it honest: an ordinary edit through the editor
+  // carries no baselineId, so ticking one extra capability for a baseline holder
+  // drops the label in the same write that stores the tick. The person keeps
+  // everything they had; only the claim about where it came from goes.
   const { error } = await adminClient
     .from('players')
     .update({
       permission_role: role,
       permission_grants: storedGrants,
       permission_revokes: revokes,
+      permission_baseline_id: role === null ? null : baselineId,
     })
     .eq('id', playerId);
   if (error) throw new Error(error.message);
@@ -297,8 +377,14 @@ async function setPlayerPermissionsImpl(playerId: string, next: PermissionsPaylo
         permission_role: role,
         permission_grants: storedGrants,
         permission_revokes: revokes,
+        permission_baseline_id: role === null ? null : baselineId,
         effective: [...after].sort(),
       },
+      // Absent for an ordinary editor save, which has never asked for one.
+      // Baseline propagation supplies the reason typed on the edit that caused
+      // it, so a member's own audit trail says why their access moved without
+      // needing the baseline's row to be found first.
+      ...(next.reason ? { reason: next.reason } : {}),
     },
     { playerId },
   );

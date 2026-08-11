@@ -700,6 +700,136 @@ export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {
 export const EDITOR_OFFERABLE: readonly Capability[] = EXEC_BASELINE;
 
 // ---------------------------------------------------------------------------
+// CUSTOM BASELINES — the ones the club writes for itself
+// ---------------------------------------------------------------------------
+// ROLE_DEFAULTS is four VP jobs in a compile-time constant, so a fifth is a
+// deploy, and the club owner asked for more: "I should be able to create new
+// baselines, since we will have others."
+//
+// A CUSTOM BASELINE IS A NAMED CAPABILITY SET IN THE DATABASE
+// (permission_baselines, 00093) THAT IS COPIED ONTO A ROW, NOT RESOLVED
+// THROUGH. Assigning one writes permission_role = 'custom' — the empty base —
+// and its capabilities into permission_grants. resolvePermissions() is
+// untouched by this feature and does not know the table exists.
+//
+// THAT IS THE ANSWER TO THE CRUX, and the crux is real: the resolver is pure
+// and synchronous and is reached from 22 places in the admin app. Passing the
+// baseline in as a fourth argument would mean finding all 22, and a call site
+// that forgot would resolve a person's entire base to nothing — safe, but
+// silently so, in twenty-two places, including the edge middleware where the
+// lookup would also become a per-request round trip.
+//
+// WHAT IS GIVEN UP: a baseline is a TEMPLATE PLUS EXPLICIT PROPAGATION rather
+// than a live reference. Editing one re-copies to every holder inside the same
+// action, each write closure-checked and audited — which is more traceable than
+// ROLE_DEFAULTS, where changing what 'finance' means leaves no row anywhere.
+//
+// NOTHING BELOW IS A SECOND RESOLVER. These are the rules a stored set must
+// satisfy to be worth storing, and every one of them is a rule the assignment
+// path already enforces per person; they are here so a baseline is refused when
+// it is WRITTEN rather than silently doing nothing when it is USED.
+
+/** A named capability set as the console reads it back. */
+export type CustomBaseline = {
+  id: string;
+  name: string;
+  capabilities: readonly Capability[];
+};
+
+/** Matches the length CHECK on permission_baselines.name. */
+export const BASELINE_NAME_MAX = 40;
+
+/**
+ * Why this cannot be a baseline name, or null.
+ *
+ * Uniqueness is NOT here: it is a question about the other rows, answered by
+ * permission_baselines_name_key and reported by the action that met it.
+ */
+export function baselineNameRefusal(name: string): string | null {
+  const trimmed = name.trim();
+  if (trimmed === '') return 'A baseline needs a name.';
+  if (trimmed.length > BASELINE_NAME_MAX) {
+    return `A baseline name is at most ${BASELINE_NAME_MAX} characters.`;
+  }
+  return null;
+}
+
+/**
+ * Why these capabilities cannot be a baseline, or null. Four rules, in the same
+ * order setPlayerPermissions applies its equivalents.
+ *
+ * `held` IS THE AUTHOR'S OWN RESOLVED SET, and passing it in is what makes this
+ * usable on both sides of the boundary without being the boundary. The server
+ * action derives it from the actor's row through effectiveCapabilities(), which
+ * is the single source of truth for grant closure; the editor passes the copy
+ * the server already sent it, to refuse early. A caller who passed something
+ * else would be checking a number it chose — which is exactly why the server
+ * never takes this from the client.
+ */
+export function baselineCapabilityRefusal(
+  capabilities: readonly string[],
+  held: ReadonlySet<Capability>,
+): string | null {
+  const unknown = capabilities.filter((capability) => !isCapability(capability));
+  if (unknown.length > 0) {
+    return `Not something this console knows about: ${unknown.join(', ')}`;
+  }
+  const wanted = [...new Set(capabilities as readonly Capability[])];
+  if (wanted.length === 0) {
+    return 'A baseline needs at least one capability, or it is a name that does nothing.';
+  }
+
+  // GRANT CLOSURE, at authoring time. Without this an officer with a narrow
+  // permissions.write could WRITE DOWN a baseline naming capabilities they do
+  // not hold. Assigning it would be refused — setPlayerPermissions checks the
+  // actor's set again, per person — so it is not an escalation; it is a saved,
+  // named, unassignable thing, and the person who saved it has no way to tell
+  // why. Refuse it where it is authored, in the same words.
+  const cannotHold = wanted.filter((capability) => !held.has(capability));
+  if (cannotHold.length > 0) {
+    return `You cannot put ${cannotHold.join(', ')} in a baseline because you do not hold ${cannotHold.length === 1 ? 'it' : 'them'}.`;
+  }
+
+  // THE SAME CEILING THE EDITOR HAS. Closure cannot bound an admin, who holds
+  // everything by level, so without this an admin could author a baseline
+  // containing permissions.write — and then meet check 5 of
+  // setPlayerPermissions every time they tried to assign it.
+  const offerable = new Set<Capability>(EDITOR_OFFERABLE);
+  const notOfferable = wanted.filter((capability) => !offerable.has(capability));
+  if (notOfferable.length > 0) {
+    return `${notOfferable.join(', ')} cannot be handed out yet — ${notOfferable.length === 1 ? 'it is' : 'they are'} admin-only.`;
+  }
+
+  // THE RESOLVER'S ONE STRUCTURAL INVARIANT, applied to the stored array.
+  //
+  // Expressible here, unlike on a player row, because a baseline has no revokes
+  // and no base underneath it: the array IS the resolved set. Without this a
+  // baseline of ['fees.expenses.add.write'] saves, assigns, audits — and
+  // resolves to nothing at all, because the resolver prunes every capability
+  // whose area page is absent.
+  //
+  // REFUSED RATHER THAN REPAIRED. Adding the missing page for the author would
+  // be resolve-time implication by another name: a capability arriving in a set
+  // somebody reviewed, without them reviewing it.
+  const present = new Set(wanted);
+  const missingPages = [
+    ...new Set(wanted.map(pageOf).filter((page) => !present.has(page))),
+  ];
+  if (missingPages.length > 0) {
+    return `Add ${missingPages.join(', ')} — nothing in an area applies without that area's page.`;
+  }
+
+  return null;
+}
+
+/** The array as it would be STORED: de-duplicated and sorted. */
+export function normaliseBaselineCapabilities(
+  capabilities: readonly Capability[],
+): Capability[] {
+  return [...new Set(capabilities)].sort();
+}
+
+// ---------------------------------------------------------------------------
 // PERMISSIONS
 // ---------------------------------------------------------------------------
 // A TAGGED UNION so "unrestricted" can never be mistaken for "empty". The two

@@ -3,6 +3,7 @@ import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import {
   accessLevelFor,
   effectiveCapabilities,
+  isCapability,
   isInGoodStanding,
   permissionsOf,
   type AccessLevel,
@@ -10,6 +11,7 @@ import {
 import { isAdminActor } from '@/lib/player-field-access';
 import { PageHeader } from '@badminton/ui';
 import { PermissionEditor, type PersonRow } from './permission-editor';
+import { BaselineManager, type BaselineRow } from './baseline-manager';
 
 // WHO HOLDS CONSOLE ACCESS, AND WHAT THEY CAN DO WITH IT.
 //
@@ -62,7 +64,7 @@ export default async function PermissionsPage() {
   const { data: people } = await adminClient
     .from('players')
     .select(
-      'id, full_name, email, exec_title, role, is_exec, is_trainer, is_banned, status, active_flag, permission_role, permission_grants, permission_revokes',
+      'id, full_name, email, exec_title, role, is_exec, is_trainer, is_banned, status, active_flag, permission_role, permission_grants, permission_revokes, permission_baseline_id',
     )
     .or('role.eq.admin,is_exec.eq.true,is_trainer.eq.true')
     .order('full_name');
@@ -87,6 +89,7 @@ export default async function PermissionsPage() {
       role: (person.permission_role as string | null) ?? null,
       grants: (person.permission_grants as string[] | null) ?? [],
       revokes: (person.permission_revokes as string[] | null) ?? [],
+      baselineId: (person.permission_baseline_id as string | null) ?? null,
     }));
 
   // Everyone else, and ONLY FOR AN ADMIN. Giving somebody the console is a
@@ -130,7 +133,34 @@ export default async function PermissionsPage() {
       role: null,
       grants: [],
       revokes: [],
+      baselineId: null,
     }));
+
+  // THE CLUB'S OWN BASELINES. Read here rather than in the editor because the
+  // editor is a client component and this is one query the page already has a
+  // service-role client open for.
+  //
+  // FILTERED THROUGH THIS BUILD'S VOCABULARY on the way in, exactly as a stored
+  // delta is: a string the code no longer knows resolves to nothing, and a
+  // baseline offering one would promise a capability the app cannot deliver.
+  // Every reader here — the picker, the summary line, the manager — then sees
+  // the same list.
+  //
+  // A count of holders per baseline, from the rows already fetched above rather
+  // than from a second query. It is what the manager needs to say how many
+  // people an edit would reach and why a deletion is refused, and the holders
+  // are by definition people with a level, who are already all here.
+  const { data: baselineRows } = await adminClient
+    .from('permission_baselines')
+    .select('id, name, capabilities, created_at, updated_at')
+    .order('name');
+
+  const baselines: BaselineRow[] = (baselineRows ?? []).map((row) => ({
+    id: row.id as string,
+    name: row.name as string,
+    capabilities: ((row.capabilities as string[] | null) ?? []).filter(isCapability),
+    holders: holders.filter((person) => person.baselineId === row.id).length,
+  }));
 
   return (
     <div>
@@ -156,7 +186,19 @@ export default async function PermissionsPage() {
         // own row and refuses anything outside it, so this is a courtesy, not
         // the boundary.
         viewerCapabilities={[...viewerSet]}
+        baselines={baselines.map(({ id, name, capabilities }) => ({ id, name, capabilities }))}
       />
+
+      {/* THE BASELINES THEMSELVES, below the editor rather than beside it. They
+          are a different question — what the club's jobs ARE, not who holds one
+          — and the two-pane editor is already a rail beside a tree on a laptop
+          and a full screen on a phone. A third pane would have nowhere to go. */}
+      <div className="mt-6">
+        <BaselineManager
+          baselines={baselines}
+          viewerCapabilities={[...viewerSet]}
+        />
+      </div>
     </div>
   );
 }

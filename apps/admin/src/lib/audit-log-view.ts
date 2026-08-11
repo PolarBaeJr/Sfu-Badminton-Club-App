@@ -117,7 +117,11 @@ export type AuditGroupId =
  * are not categories of anything.
  */
 const GROUPS: { id: AuditGroupId; label: string; words: string[] }[] = [
-  { id: 'members',     label: 'Members',     words: ['player', 'players', 'account', 'varsity', 'reliability', 'suspend', 'passkey'] },
+  // `permission` and `baseline` are here so the custom baselines (00093) file
+  // beside `player_permissions_changed`, which already lands here on the word
+  // `player`. Without them a baseline being created, edited or deleted would sit
+  // in Other, one tab away from the per-person rows that same edit wrote.
+  { id: 'members',     label: 'Members',     words: ['player', 'players', 'account', 'varsity', 'reliability', 'suspend', 'passkey', 'permission', 'permissions', 'baseline'] },
   { id: 'matches',     label: 'Matches',     words: ['match', 'challenge', 'walkover', 'dispute'] },
   { id: 'money',       label: 'Money',       words: ['fee', 'fees', 'payment', 'expense', 'income', 'reimbursed'] },
   { id: 'sessions',    label: 'Sessions',    words: ['session'] },
