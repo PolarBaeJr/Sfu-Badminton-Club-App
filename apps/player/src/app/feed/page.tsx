@@ -1,16 +1,34 @@
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
-import { MATCH_FORMAT_LABELS, formatRelativeTime, getWinRate, pickOne, unwrap, getAccountStanding } from '@badminton/shared';
+import {
+  CLUB_TIMEZONE,
+  MATCH_FORMAT_LABELS,
+  formatRelativeTime,
+  formatTime,
+  getAccountStanding,
+  pickOne,
+} from '@badminton/shared';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { Plus, ChevronRight, Crosshair } from 'lucide-react';
+import { ChevronRight, QrCode } from 'lucide-react';
 import { PageHeader, AvatarChip } from '@badminton/ui';
 import { PasskeyNudge } from '@/components/passkey-nudge';
+import {
+  attendanceStreak,
+  clubDayKey,
+  describeMatch,
+  groupByDay,
+  seasonWeek,
+  sessionDayLabel,
+  type RiverPerson,
+} from '@/lib/feed-activity';
 
-type Person = { id: string; full_name: string | null; avatar_url?: string | null };
-type ParticipantRow = {
+type PlayerEmbed = { id: string; full_name: string | null; handle: string | null; avatar_url: string | null };
+type MatchParticipantRow = {
   team_side: 'a' | 'b';
   win_flag: boolean | null;
-  player: Person | Person[] | null;
+  rating_delta: number | null;
+  post_rating: number | null;
+  player: PlayerEmbed | PlayerEmbed[] | null;
 };
 type MatchRow = {
   id: string;
@@ -18,442 +36,490 @@ type MatchRow = {
   match_type: string;
   format: string;
   score_summary: string | null;
-  result_status: string;
-  match_participants: ParticipantRow[] | null;
+  match_participants: MatchParticipantRow[] | null;
+};
+type SessionRow = {
+  id: string;
+  name: string | null;
+  date: string;
+  location: string;
+  start_time: string | null;
+  end_time: string | null;
+};
+type AnnouncementRow = {
+  id: string;
+  title: string;
+  body: string;
+  created_at: string;
+  target_audience: 'all' | 'competitive' | 'recreational' | 'eligible_only';
+  author: { full_name: string | null } | { full_name: string | null }[] | null;
 };
 
+/** A row in the river. Both kinds carry `at`, which is the only field the day
+ *  grouping needs to know about. */
+type RiverItem =
+  | {
+      kind: 'match';
+      id: string;
+      at: string;
+      mine: boolean;
+      sentence: string;
+      meta: string;
+      face: RiverPerson;
+      delta: number | null;
+      rating: number | null;
+      href: string;
+    }
+  | {
+      kind: 'challenge';
+      id: string;
+      at: string;
+      mine: true;
+      sentence: string;
+      meta: string;
+      face: RiverPerson;
+      href: string;
+    };
+
+function toPerson(raw: PlayerEmbed | null): RiverPerson | null {
+  if (!raw) return null;
+  return {
+    id: raw.id,
+    name: raw.full_name ?? 'Someone',
+    handle: raw.handle ?? null,
+    avatarUrl: raw.avatar_url ?? null,
+  };
+}
+
+/** A name with the handle 00092 gave the member beside it — beside, never
+ *  instead of, and nothing at all when they have not chosen one. */
+function Handle({ handle }: { handle: string | null }) {
+  if (!handle) return null;
+  return (
+    <span className="mono muted" style={{ fontSize: 11, marginLeft: 6 }}>
+      @{handle}
+    </span>
+  );
+}
 
 export default async function FeedPage() {
   const player = await getCurrentPlayer();
   if (!player) redirect('/login');
 
   const supabase = await createServerSupabaseClient();
-  const r = pickOne(player.ratings);
+  const now = new Date();
+  const todayKey = clubDayKey(now.toISOString(), CLUB_TIMEZONE);
+  const nowIso = now.toISOString();
+
+  // The active season scopes the header eyebrow, the schedule and the notice,
+  // exactly as /sessions and /announcements already scope themselves. Fetched
+  // first because three of the queries below need its id.
+  const { data: activeSeason } = await supabase
+    .from('seasons')
+    .select('id, name, start_date')
+    .eq('active_flag', true)
+    .maybeSingle();
+
+  const inActiveSeason = <T extends { or: (f: string) => T }>(q: T): T =>
+    activeSeason ? q.or(`season_id.eq.${activeSeason.id},season_id.is.null`) : q;
 
   const [
+    nextSessionRes,
+    pastSessionsRes,
+    myAttendanceRes,
+    announcementsRes,
+    recentMatchesRes,
     pendingChallengesRes,
-    matchParticipationsRes,
-    topRatingsRes,
   ] = await Promise.all([
+    // The one session a member turning up tonight needs. Same track filter the
+    // schedule uses — a session aimed at the other division is not "next" for
+    // this member.
+    inActiveSeason(
+      supabase
+        .from('sessions')
+        .select('id, name, date, location, start_time, end_time')
+        .eq('status', 'open')
+        .in('track', [player.status, 'all'])
+        .gte('date', todayKey),
+    )
+      .order('date', { ascending: true })
+      .limit(1),
+    // The sessions the streak counts down through: already happened, and ones
+    // this member was eligible for. Being ineligible for a session is not the
+    // same as not turning up to it, so the track filter is what keeps the
+    // streak honest.
+    inActiveSeason(
+      supabase
+        .from('sessions')
+        .select('id, date')
+        .in('track', [player.status, 'all'])
+        .lt('date', todayKey),
+    )
+      .order('date', { ascending: false })
+      .limit(20),
+    supabase
+      .from('session_attendance')
+      .select('session_id, status')
+      .eq('player_id', player.id)
+      .in('status', ['checked_in', 'present']),
+    // Three rather than one, because target_audience cannot be filtered in the
+    // query (it is matched against the viewer's own division below) and the
+    // newest row might not be for them.
+    supabase
+      .from('announcements')
+      // Unhinted embed: `announcements` has exactly one foreign key to
+      // `players` (author_id), so PostgREST resolves it without a constraint
+      // name — and a constraint name guessed from the schema would only fail at
+      // runtime if it were wrong.
+      .select('id, title, body, created_at, target_audience, author:players(full_name)')
+      .eq('status', 'published')
+      .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
+      .order('pinned', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(3),
+    // The river's own query, run against `matches` rather than against this
+    // member's `match_participants`, for two reasons: the feed shows the CLUB's
+    // results and not only the member's own, and a top-level query is the only
+    // one PostgREST will order by played_at — ordering by an embedded to-one
+    // relation is silently a no-op.
+    supabase
+      .from('matches')
+      .select(`
+        id, played_at, match_type, format, score_summary,
+        match_participants(team_side, win_flag, rating_delta, post_rating,
+          player:players(id, full_name, handle, avatar_url))
+      `)
+      .eq('result_status', 'confirmed')
+      .not('played_at', 'is', null)
+      .order('played_at', { ascending: false })
+      .limit(15),
     supabase
       .from('challenge_participants')
-      .select('*, challenge:challenges(*, creator:players!challenges_created_by_fkey(id, full_name, avatar_url))')
+      .select('id, created_at, challenge:challenges(id, type, format, created_at, creator:players!challenges_created_by_fkey(id, full_name, handle, avatar_url))')
       .eq('player_id', player.id)
       .eq('confirmation_status', 'pending')
       .limit(5),
-    supabase
-      .from('match_participants')
-      .select(`
-        match:matches(
-          id, score_summary, played_at, match_type, format, result_status,
-          match_participants(team_side, win_flag, player:players(id, full_name, avatar_url))
-        )
-      `)
-      .eq('player_id', player.id)
-      .limit(60),
-    // Use the same source as /leaderboard rather than querying `ratings`
-    // directly. The old query had no status filter, so unapproved signups showed
-    // on the feed's ladder while being correctly absent from the leaderboard
-    // itself. get_leaderboard() already enforces active_flag, excludes
-    // pending_approval/suspended, and honours hide_from_leaderboard — reusing it
-    // means the two views cannot drift apart again.
-    supabase.rpc('get_leaderboard'),
   ]);
 
-  const pendingChallenges = unwrap(pendingChallengesRes);
-  const matchParticipations = unwrap(matchParticipationsRes);
-  const topRatings = unwrap(topRatingsRes);
+  const nextSession = (nextSessionRes.data ?? [])[0] as SessionRow | undefined;
+  const pastSessions = (pastSessionsRes.data ?? []) as { id: string }[];
+  const attendedIds = new Set((myAttendanceRes.data ?? []).map((r) => r.session_id as string));
+  const streak = attendanceStreak(pastSessions, attendedIds);
 
-  const singlesWinRate = r ? getWinRate(r.singles_wins, r.singles_losses) : '—';
-  const singlesStreak = (r as Record<string, unknown> | null | undefined)?.current_singles_streak as number | undefined;
-  const streakLabel =
-    typeof singlesStreak === 'number' && singlesStreak !== 0
-      ? `${singlesStreak > 0 ? 'W' : 'L'}${Math.abs(singlesStreak)}`
-      : '—';
+  // Going is an RSVP, not a check-in: it is what the member is asking when they
+  // look at tonight's session, and it is the number /sessions already shows.
+  const { count: goingCount } = nextSession
+    ? await supabase
+        .from('session_rsvp')
+        .select('session_id', { count: 'exact', head: true })
+        .eq('session_id', nextSession.id)
+        .eq('intent', 'going')
+    : { count: null };
 
-  const recentMatches: MatchRow[] = (matchParticipations || [])
-    .map((mp) => {
-      const m = mp.match as unknown as MatchRow | null;
-      return m;
-    })
-    .filter((m): m is MatchRow => Boolean(m))
-    // match_participants has no timestamp, so ordering by the embedded match
-    // (a to-one relation) is a no-op in PostgREST. Sort by the match's
-    // played_at here (ISO strings sort chronologically) and cap to the count.
-    .sort((a, b) => (b.played_at ?? '').localeCompare(a.played_at ?? ''))
-    .slice(0, 5);
+  // RLS only checks status='published'; expiry is filtered in the query and
+  // audience has to be matched here, the same way /announcements does it.
+  const notice = ((announcementsRes.data ?? []) as unknown as AnnouncementRow[]).find(
+    (a) =>
+      a.target_audience === 'all' ||
+      a.target_audience === player.status ||
+      (a.target_audience === 'eligible_only' && player.eligibility_flag),
+  );
+  const noticeAuthor = pickOne(notice?.author ?? null);
 
-  // get_leaderboard() returns rows already filtered and sorted; it exposes
-  // full_name as `name`. It used to be COALESCE(display_name, full_name), so
-  // this widget showed nicknames until 00092 retired them.
-  // get_leaderboard() has no ORDER BY — the leaderboard page sorts per tab in
-  // memory — so this must sort explicitly. Ranking by rating is the whole point
-  // of the widget; without it the list came out in arbitrary table order.
-  const top = ((topRatings ?? []) as { id: string; name: string; avatar_url: string | null; singles_elo: number }[])
-    .slice()
-    .sort((a, b) => (b.singles_elo ?? 0) - (a.singles_elo ?? 0))
-    .map((row) => ({
-      person: { id: row.id, full_name: row.name, avatar_url: row.avatar_url } as Person,
-      elo: row.singles_elo,
-    }))
-    .slice(0, 5);
-
-  // Every challenge/session/tournament action is rejected server-side by
-  // requirePlayer() until an account is in good standing, so the CTAs that
-  // lead there are hidden rather than left to fail on click. This used to test
-  // status alone, which let a BANNED account (is_banned is its own column and
-  // is never mirrored into status) keep every CTA — getAccountStanding is the
-  // same three checks requirePlayer makes, in one place.
   const standing = getAccountStanding(player);
   const isApproved = standing.ok;
-  const firstName = player.full_name.split(' ')[0];
 
-  const subBits: string[] = [];
-  if (pendingChallenges && pendingChallenges.length > 0) {
-    subBits.push(`${pendingChallenges.length} ${pendingChallenges.length === 1 ? 'challenge needs' : 'challenges need'} your response`);
-  }
-  if (recentMatches.length > 0 && r) {
-    subBits.push(`Singles ELO ${r.singles_elo} · ${singlesWinRate} win rate`);
-  } else if (isApproved) {
-    subBits.push('Issue your first challenge to start climbing.');
-  } else {
-    // Don't tell someone to do the one thing the server will refuse.
-    subBits.push(
-      standing.block === 'pending_approval'
-        ? 'Your account is waiting on approval.'
-        : 'Your account is suspended.',
-    );
-  }
-  const subLine = subBits.join(' · ');
+  // ---- the river -------------------------------------------------------
+  const matchItems: RiverItem[] = ((recentMatchesRes.data ?? []) as unknown as MatchRow[])
+    .map((m): RiverItem | null => {
+      const rows = m.match_participants ?? [];
+      const winners = rows.filter((p) => p.win_flag === true);
+      const losers = rows.filter((p) => p.win_flag === false);
+      const winnerPeople = winners.map((p) => toPerson(pickOne(p.player))).filter((p): p is RiverPerson => !!p);
+      const loserPeople = losers.map((p) => toPerson(pickOne(p.player))).filter((p): p is RiverPerson => !!p);
+
+      const sentence = describeMatch({ winners: winnerPeople, losers: loserPeople }, player.id);
+      if (!sentence || !m.played_at) return null;
+
+      const mineRow = rows.find((p) => pickOne(p.player)?.id === player.id);
+      const mine = !!mineRow;
+      const iWon = mineRow?.win_flag === true;
+
+      // The avatar and the handle belong to the OTHER person the sentence
+      // names — the opponent on the reader's own rows, the winner on everyone
+      // else's. Hanging the reader's own handle off "You beat Marcus Ng" would
+      // read as Marcus's handle, and the red spine already says whose row it
+      // is, so their own face there would be redundant as well as confusing.
+      const face = mine ? (iWon ? loserPeople[0] : winnerPeople[0]) : winnerPeople[0];
+      if (!face) return null;
+
+      const formatLabel = MATCH_FORMAT_LABELS[m.format as keyof typeof MATCH_FORMAT_LABELS] || m.format;
+      const meta = [
+        m.match_type === 'doubles' ? 'Doubles' : 'Singles',
+        m.score_summary || formatLabel,
+        formatRelativeTime(m.played_at),
+      ]
+        .filter(Boolean)
+        .join(' · ');
+
+      return {
+        kind: 'match',
+        id: m.id,
+        at: m.played_at,
+        mine,
+        sentence,
+        meta,
+        face,
+        // ONLY the reader's own figures. An absolute rating printed beside
+        // another member's name publishes the one number hide_from_leaderboard
+        // exists to let them withhold, and this query has no way to honour that
+        // flag — get_leaderboard() is where that filtering lives, and it is not
+        // reachable from a match row. The mockup's "+14 over 817" is on a row
+        // about the reader, so nothing is lost. Everyone else's result is
+        // already fully described by the score in the meta line.
+        delta: mine ? (mineRow?.rating_delta ?? null) : null,
+        rating: mine ? (mineRow?.post_rating ?? null) : null,
+        // Another member's row goes to that member's profile; the reader's own
+        // goes to their stats. Sending everything to /my-stats meant tapping
+        // "Jordan Lee beat Priya Patel" landed you on your own numbers.
+        href: mine ? '/my-stats' : `/leaderboard/${face.id}`,
+      };
+    })
+    .filter((i): i is RiverItem => i !== null);
+
+  const challengeItems: RiverItem[] = (pendingChallengesRes.data ?? [])
+    .map((pc): RiverItem | null => {
+      const c = pickOne(pc.challenge as unknown as Record<string, unknown> | null) as Record<string, unknown> | null;
+      if (!c) return null;
+      const creator = toPerson(pickOne(c.creator as PlayerEmbed | PlayerEmbed[] | null));
+      if (!creator) return null;
+      const at = (c.created_at as string) ?? (pc.created_at as string);
+      if (!at) return null;
+      return {
+        kind: 'challenge',
+        id: pc.id as string,
+        at,
+        mine: true,
+        sentence: `${creator.name} wants to play you`,
+        meta: ['Challenge', MATCH_FORMAT_LABELS[(c.format as string) as keyof typeof MATCH_FORMAT_LABELS] || (c.format as string)]
+          .filter(Boolean)
+          .join(' · '),
+        face: creator,
+        href: `/challenges/${c.id as string}`,
+      };
+    })
+    .filter((i): i is RiverItem => i !== null);
+
+  const sections = groupByDay<RiverItem>([...matchItems, ...challengeItems], now, CLUB_TIMEZONE);
+  const week = activeSeason?.start_date ? seasonWeek(activeSeason.start_date, now, CLUB_TIMEZONE) : null;
+  const eyebrow = [activeSeason?.name, week ? `Week ${week}` : null].filter(Boolean).join(' · ') || 'The club';
+
+  const sessionWhen = nextSession ? sessionDayLabel(nextSession.date, todayKey) : null;
+  const sessionHours =
+    nextSession?.start_time && nextSession?.end_time
+      ? `${formatTime(nextSession.start_time)} – ${formatTime(nextSession.end_time)}`
+      : nextSession?.start_time
+        ? `From ${formatTime(nextSession.start_time)}`
+        : null;
 
   return (
     <div data-screen-label="Feed">
       <PageHeader
-        title={`Welcome back, ${firstName}.`}
-        sub={subLine}
+        eyebrow={eyebrow.toUpperCase()}
+        title="Feed"
         actions={
-          // "Browse" duplicated the Leaderboard nav item, so it only added
-          // clutter. Issue Challenge is the one action worth surfacing here,
-          // and only once the account can actually use it.
-          isApproved ? (
-            <Link href="/challenges/new" className="btn btn-primary-cta">
-              <Plus size={14} /> Issue Challenge
-            </Link>
-          ) : undefined
+          <AvatarChip name={player.full_name} id={player.id} src={player.avatar_url} size="md" ring />
         }
+        className="feed-header"
       />
 
       {/* Renders nothing unless this account has no passkey yet and the device
-          supports them, so it self-retires once everyone is enrolled. */}
+          supports them, so it self-retires once everyone is enrolled. Kept
+          although the mockup omits it: it is the only route by which members
+          who predate passkeys are ever asked. */}
       <PasskeyNudge />
 
-      {/* Hiding the gated features without saying why leaves a new member
-          staring at a half-empty app wondering what they did wrong. Say it
-          plainly, and point at the one thing they can still do. */}
+      {/* Also kept against the mockup. Hiding the gated features without saying
+          why leaves a member staring at a half-empty app wondering what they
+          did wrong — and it is what stops a suspended account being offered a
+          control requirePlayer() is certain to refuse. */}
       {!isApproved && (
-        <div
-          className="card-base"
-          style={{ marginBottom: 16, borderLeft: '3px solid var(--gold, #E0A800)' }}
-        >
+        <div className="card-base" style={{ marginBottom: 20, borderLeft: '3px solid var(--gold)' }}>
           <h3 className="card-title" style={{ marginBottom: 6 }}>
             {standing.block === 'pending_approval' ? 'Waiting on approval' : 'Account suspended'}
           </h3>
           <p className="muted" style={{ fontSize: 14, lineHeight: 1.55, margin: 0 }}>
-            {standing.detail} You can still browse the leaderboard to see where everyone stands.
+            {standing.detail} You can still read the feed and the leaderboard.
           </p>
-        </div>
-      )}
-
-      {r && (
-        <div className="hero-banner reveal reveal-1" style={{ marginBottom: 24 }}>
-          <div style={{ position: 'relative', zIndex: 2 }}>
-            <h2>
-              {r.singles_provisional
-                ? `Play ${Math.max(0, 8 - (r.singles_matches_played ?? 0))} more singles to lock in your rank.`
-                : `Singles ELO ${r.singles_elo}. ${singlesWinRate} win rate over ${(r.singles_wins ?? 0) + (r.singles_losses ?? 0)} matches.`}
-            </h2>
-
-            {(() => {
-              const singlesPlayed = (r.singles_wins ?? 0) + (r.singles_losses ?? 0);
-              const doublesPlayed = (r.doubles_wins ?? 0) + (r.doubles_losses ?? 0);
-              const singlesLeft = Math.max(0, 8 - singlesPlayed);
-              const doublesLeft = Math.max(0, 8 - doublesPlayed);
-
-              const StatusRow = ({
-                label,
-                provisional,
-                left,
-              }: { label: string; provisional: boolean; left: number }) => (
-                <div
-                  className="row hero-meta"
-                  style={{
-                    gap: 12,
-                    fontSize: 13,
-                    fontFamily: 'var(--mono)',
-                    letterSpacing: '.02em',
-                  }}
-                >
-                  <span
-                    className="hero-meta-dim"
-                    style={{
-                      width: 64,
-                      fontSize: 11,
-                      letterSpacing: '.12em',
-                      textTransform: 'uppercase',
-                    }}
-                  >
-                    {label}
-                  </span>
-                  <span
-                    style={{
-                      padding: '2px 8px',
-                      borderRadius: 4,
-                      background: provisional
-                        ? 'color-mix(in oklab, var(--gold) 25%, transparent)'
-                        : 'color-mix(in oklab, var(--win) 22%, transparent)',
-                      color: provisional ? 'var(--gold)' : 'var(--win)',
-                      fontSize: 11,
-                      fontWeight: 500,
-                    }}
-                  >
-                    {provisional ? 'PROVISIONAL' : 'ESTABLISHED'}
-                  </span>
-                  {provisional && (
-                    <span className="hero-meta-dim">
-                      {left} match{left === 1 ? '' : 'es'} to lock in
-                    </span>
-                  )}
-                </div>
-              );
-
-              return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20, maxWidth: '46ch' }}>
-                  <StatusRow label="Singles" provisional={!!r.singles_provisional} left={singlesLeft} />
-                  <StatusRow label="Doubles" provisional={!!r.doubles_provisional} left={doublesLeft} />
-                </div>
-              );
-            })()}
-
-            <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
-              {isApproved && (
-                <Link href="/challenges/new" className="btn btn-primary">
-                  <Crosshair size={14} /> Find an opponent
-                </Link>
-              )}
-              <Link href="/leaderboard" className="btn btn-ghost-inverse">
-                See leaderboard
-              </Link>
-            </div>
-          </div>
-          <div className="hero-stats">
-            <div className="stat">
-              <div className="stat-label">Singles ELO</div>
-              <div className="stat-value">{r.singles_elo}</div>
-            </div>
-            <div className="stat">
-              <div className="stat-label">Doubles ELO</div>
-              <div className="stat-value">{r.doubles_elo}</div>
-            </div>
-            <div className="stat">
-              <div className="stat-label">Win Rate</div>
-              <div className="stat-value">{singlesWinRate}</div>
-            </div>
-            <div className="stat">
-              <div className="stat-label">Streak</div>
-              <div className="stat-value">{streakLabel}</div>
-            </div>
-          </div>
         </div>
       )}
 
       <div className="grid grid-12">
         <div style={{ gridColumn: 'span 8' }} className="feed-col">
-          {pendingChallenges && pendingChallenges.length > 0 && (
-            <div className="card-base reveal reveal-2">
-              <div className="card-head">
-                <div>
-                  <h3 className="card-title">Pending challenges</h3>
-                  <div className="card-sub">Respond to keep your reliability up.</div>
-                </div>
-                <span className="tag tag-red">{pendingChallenges.length} waiting</span>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {pendingChallenges.map((pc) => {
-                  const c = pc.challenge as Record<string, unknown> | null;
-                  if (!c) return null;
-                  const creator = c.creator as Record<string, unknown> | null;
-                  const creatorName = (creator?.full_name as string) || 'Someone';
-                  return (
-                    <Link
-                      key={pc.id}
-                      href={`/challenges/${c.id}`}
-                      className="list-row press"
-                    >
-                      <AvatarChip name={creatorName} id={(creator?.id as string) ?? creatorName} src={creator?.avatar_url as string | null | undefined} size="sm" />
-                      <div style={{ flex: 1 }}>
-                        <div className="row-title">{creatorName} challenged you</div>
-                        <div className="row-sub">
-                          {(c.type as string) || ''} · {MATCH_FORMAT_LABELS[(c.format as string) as keyof typeof MATCH_FORMAT_LABELS] || (c.format as string)}
-                        </div>
-                      </div>
-                      <span className="tag">Respond</span>
-                      <ChevronRight size={16} className="text-[var(--mute)]" />
-                    </Link>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          <div className="card-head" style={{ marginBottom: 0 }}>
-            <div>
-              <h3 className="card-title card-title-lg">Recent matches</h3>
-              <div className="card-sub">Your latest results.</div>
-            </div>
-            <Link href="/my-stats" className="btn btn-ghost btn-sm">
-              All stats <ChevronRight size={12} />
-            </Link>
-          </div>
-
-          {recentMatches.length === 0 ? (
+          {/* THE RIVER ------------------------------------------------ */}
+          {sections.length === 0 ? (
             <div className="card-base">
-              <div className="empty">No matches yet. Issue a challenge to get rolling.</div>
+              <div className="empty">
+                <div className="empty-title">Nothing has happened yet</div>
+                <div className="empty-hint">
+                  Results and challenges land here as the club plays. Issue a challenge to
+                  put the first one on the board.
+                </div>
+                {isApproved && (
+                  <Link href="/challenges/new" className="btn btn-ghost">
+                    Issue a challenge <ChevronRight size={12} />
+                  </Link>
+                )}
+              </div>
             </div>
           ) : (
-            recentMatches.map((m) => {
-              const participants = m.match_participants ?? [];
-              const me = participants.find((p) => {
-                const person = pickOne(p.player);
-                return person?.id === player.id;
-              });
-              const opponents = participants.filter((p) => {
-                const person = pickOne(p.player);
-                return person?.id !== player.id && p.team_side !== me?.team_side;
-              });
-              const partner = participants.find((p) => {
-                const person = pickOne(p.player);
-                return person?.id !== player.id && p.team_side === me?.team_side;
-              });
-              const opponent = pickOne(opponents[0]?.player ?? null);
-              const opponentPartner = pickOne(opponents[1]?.player ?? null);
-              const partnerPerson = pickOne(partner?.player ?? null);
-
-              const formatLabel = MATCH_FORMAT_LABELS[m.format as keyof typeof MATCH_FORMAT_LABELS] || m.format;
-              const isWin = me?.win_flag === true;
-              const isLoss = me?.win_flag === false;
-
-              const games = (m.score_summary || '')
-                .split(',')
-                .map((g) => g.trim())
-                .filter(Boolean)
-                .map((g) => g.split('-').map((s) => Number(s)));
-              const myTotal = games.reduce((s, g) => s + ((me?.team_side === 'a' ? g[0] : g[1]) || 0), 0);
-              const oppTotal = games.reduce((s, g) => s + ((me?.team_side === 'a' ? g[1] : g[0]) || 0), 0);
-
-              return (
-                <div
-                  key={m.id}
-                  className="card-base reveal reveal-3"
-                  style={{
-                    borderLeft: `3px solid ${isWin ? 'var(--win)' : isLoss ? 'var(--loss)' : 'var(--line)'}`,
-                  }}
-                >
-                  <div className="row" style={{ marginBottom: 14, fontSize: 12 }}>
-                    <span className="tag tag-red">{formatLabel}</span>
-                    <span className="mono muted">
-                      {m.played_at ? formatRelativeTime(m.played_at) : ''}
-                    </span>
-                    <div className="right mono" style={{ color: isWin ? 'var(--win)' : isLoss ? 'var(--loss)' : 'var(--mute)' }}>
-                      {isWin ? 'WIN' : isLoss ? 'LOSS' : 'PENDING'}
-                    </div>
-                  </div>
-                  <div className="feed-match">
-                    <div className="side">
-                      <AvatarChip name={player.full_name} id={player.id} src={player.avatar_url} size="md" />
-                      <div>
-                        <div style={{ fontWeight: 600, fontSize: 15 }}>You</div>
-                        {partnerPerson && (
-                          <div className="mono muted" style={{ fontSize: 11, marginTop: 2 }}>
-                            + {partnerPerson.full_name}
-                          </div>
-                        )}
+            <div>
+              {sections.map((section) => (
+                <div key={section.key}>
+                  <div className="river-day">{section.label}</div>
+                  {section.items.map((item) => (
+                    <Link
+                      key={`${item.kind}-${item.id}`}
+                      href={item.href}
+                      className={`river-row press${item.mine ? ' mine' : ''}`}
+                    >
+                      <AvatarChip
+                        name={item.face.name}
+                        id={item.face.id}
+                        src={item.face.avatarUrl}
+                        size="sm"
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="river-sentence">
+                          {item.sentence}
+                          <Handle handle={item.face.handle} />
+                        </div>
+                        <div className="river-meta">{item.meta}</div>
                       </div>
-                    </div>
-                    <div style={{ textAlign: 'center' }}>
-                      <div className="score">
-                        <span style={{ opacity: isWin ? 1 : 0.4 }}>{myTotal}</span>
-                        <span className="muted" style={{ margin: '0 8px', fontWeight: 400 }}>:</span>
-                        <span style={{ opacity: !isWin ? 1 : 0.4 }}>{oppTotal}</span>
-                      </div>
-                      {games.length > 0 && (
-                        <div className="score-mini">
-                          {games.map(([a, b], i) => {
-                            const mine = me?.team_side === 'a' ? a : b;
-                            const theirs = me?.team_side === 'a' ? b : a;
-                            return <span key={i}>{mine}–{theirs}</span>;
-                          })}
+                      {item.kind === 'challenge' ? (
+                        <span className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }}>
+                          Reply
+                        </span>
+                      ) : (
+                        <div className="river-value">
+                          {typeof item.delta === 'number' && (
+                            <div
+                              className="river-delta"
+                              style={{ color: item.delta >= 0 ? 'var(--win)' : 'var(--loss)' }}
+                            >
+                              {item.delta >= 0 ? '+' : ''}
+                              {item.delta}
+                            </div>
+                          )}
+                          {typeof item.rating === 'number' && (
+                            <div className="river-rating">{item.rating}</div>
+                          )}
                         </div>
                       )}
-                    </div>
-                    <div className="side right">
-                      <AvatarChip name={opponent?.full_name ?? '?'} id={opponent?.id ?? ''} src={opponent?.avatar_url} size="md" />
-                      <div>
-                        <div style={{ fontWeight: 600, fontSize: 15 }}>
-                          {opponent?.full_name ?? 'Opponent'}
-                        </div>
-                        {opponentPartner && (
-                          <div className="mono muted" style={{ fontSize: 11, marginTop: 2 }}>
-                            + {opponentPartner.full_name}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
+                    </Link>
+                  ))}
                 </div>
-              );
-            })
+              ))}
+              <div className="river-end">
+                {week ? `End of week ${week}` : 'End of the feed'}
+              </div>
+            </div>
           )}
         </div>
 
         <div style={{ gridColumn: 'span 4' }} className="feed-col">
+          {/* NEXT SESSION --------------------------------------------- */}
           <div className="card-base">
-            <div className="card-head">
-              <h3 className="card-title">Top of the ladder</h3>
-              <span className="tag">Open S.</span>
-            </div>
-            {top.length === 0 ? (
-              <div className="empty" style={{ padding: 24 }}>No leaderboard data yet.</div>
+            <div className="stat-label">Next session</div>
+            {nextSession ? (
+              <>
+                <div
+                  style={{
+                    fontFamily: 'var(--display)',
+                    fontSize: 30,
+                    fontWeight: 700,
+                    letterSpacing: '-.02em',
+                    lineHeight: 1.05,
+                    margin: '8px 0 6px',
+                  }}
+                >
+                  {sessionWhen} · {nextSession.location}
+                </div>
+                <div className="mono muted" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '.06em' }}>
+                  {/* The mockup also printed "COURTS 1–6". There is no court
+                      column on `sessions`, so it is left out rather than
+                      guessed at. The session's own name is shown instead when
+                      it has one. */}
+                  {[sessionHours, nextSession.name].filter(Boolean).join(' · ') || 'Time to be confirmed'}
+                </div>
+                <div className="session-stats">
+                  {/* "Spots left" is drawn in the mockup and is NOT built:
+                      `sessions` has no capacity column and there is no waitlist
+                      table, so any number here would be invented. */}
+                  <div className="stat">
+                    <div className="stat-label">Going</div>
+                    <div className="stat-value mono" style={{ fontSize: 24 }}>{goingCount ?? 0}</div>
+                  </div>
+                  <div className="stat">
+                    <div className="stat-label">Your streak</div>
+                    <div className="stat-value mono" style={{ fontSize: 24 }}>{streak}</div>
+                  </div>
+                </div>
+              </>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {top.map((row, i) => (
-                  <Link
-                    key={row.person.id}
-                    href={`/leaderboard`}
-                    className="row press"
-                    style={{ padding: '10px 8px', borderRadius: 8, width: '100%', textAlign: 'left' }}
-                  >
-                    <div
-                      className="mono"
-                      style={{ width: 26, color: i < 3 ? 'var(--red)' : 'var(--mute)', fontSize: 13, fontWeight: 600 }}
-                    >
-                      #{i + 1}
-                    </div>
-                    <AvatarChip name={row.person.full_name ?? '?'} id={row.person.id} src={row.person.avatar_url} size="sm" />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 600, fontSize: 13 }}>{row.person.full_name}</div>
-                    </div>
-                    <div className="mono" style={{ fontSize: 14, fontWeight: 600 }}>{row.elo}</div>
-                  </Link>
-                ))}
+              <div className="muted" style={{ fontSize: 13, marginTop: 8, lineHeight: 1.5 }}>
+                Nothing on the schedule yet. The exec posts sessions a week or two ahead —
+                check back, or look at what has already been played.
               </div>
             )}
-            <div className="sep" />
-            <Link href="/leaderboard" className="btn btn-ghost" style={{ width: '100%', justifyContent: 'center' }}>
-              View full leaderboard <ChevronRight size={12} />
-            </Link>
           </div>
+
+          {/* CLUB NOTICE ---------------------------------------------- */}
+          {notice && (
+            <Link href="/announcements" className="card-base press" style={{ display: 'block' }}>
+              <div className="stat-label">Club notice</div>
+              <h3 className="card-title" style={{ margin: '8px 0 6px' }}>
+                {notice.title}
+              </h3>
+              <p style={{ fontSize: 15, lineHeight: 1.45, margin: 0 }}>{notice.body}</p>
+              <div
+                className="mono muted"
+                style={{ fontSize: 10, letterSpacing: '.1em', textTransform: 'uppercase', marginTop: 12 }}
+              >
+                {/* The mockup reads "POSTED BY EXEC". The author's own name is
+                    both real and more useful, and it is what the notice is
+                    signed with everywhere else in the app. */}
+                {noticeAuthor?.full_name
+                  ? `Posted by ${noticeAuthor.full_name}`
+                  : 'Posted by the club'}{' '}
+                · {formatRelativeTime(notice.created_at)}
+              </div>
+            </Link>
+          )}
+
         </div>
       </div>
+
+      {/* THE one primary action, and the last element in the document.
+          A direct child of the page root rather than of a grid column, because
+          `position: sticky` only pins while its CONTAINING BLOCK is on screen —
+          nested in the sidebar it would appear only once you had scrolled past
+          the whole river, which is the opposite of the point.
+          Hidden outright for an account checkInToSession() would refuse.
+          It goes to the schedule, not to a scanner: /checkin/[token] is the
+          DESTINATION of a QR scan and the app has no session-scanning screen to
+          send anyone to, so "Scan to check in" as drawn has nowhere to go. */}
+      {isApproved && nextSession && (
+        <div className="feed-checkin-bar">
+          <Link
+            href={`/sessions#session-${nextSession.id}`}
+            className="btn btn-primary btn-lg press"
+            style={{ width: '100%', justifyContent: 'center', minHeight: 48 }}
+          >
+            <QrCode size={16} /> Check in
+          </Link>
+        </div>
+      )}
     </div>
   );
 }
