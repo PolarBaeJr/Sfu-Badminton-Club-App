@@ -73,19 +73,28 @@ function clubYear(now: Date) {
 
 /** '2 DAYS AGO'. Only the pinned notice uses this: a pinned post is on screen
  *  because it is still current, so how long it has been current is the useful
- *  fact. Everything else is dated. */
+ *  fact. Everything else is dated.
+ *
+ *  Every unit pluralises through the same helper rather than each branch
+ *  deciding for itself. The branches this reaches are not all common — an
+ *  evergreen (all_seasons, 00085) pinned notice never retires, so the year
+ *  branch really does render — and a "1 YEARS AGO" hiding in the one branch
+ *  nobody exercises is exactly the kind of thing that ships. */
+function ago(count: number, unit: string) {
+  return `${count} ${unit}${count === 1 ? '' : 'S'} AGO`;
+}
+
 function relativeAge(iso: string, now: Date) {
   const minutes = Math.max(0, Math.round((now.getTime() - new Date(iso).getTime()) / 60000));
   if (minutes < 60) return 'JUST NOW';
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} HOUR${hours === 1 ? '' : 'S'} AGO`;
+  if (hours < 24) return ago(hours, 'HOUR');
   const days = Math.floor(hours / 24);
-  if (days < 7) return `${days} DAY${days === 1 ? '' : 'S'} AGO`;
-  const weeks = Math.floor(days / 7);
-  if (days < 60) return `${weeks} WEEK${weeks === 1 ? '' : 'S'} AGO`;
+  if (days < 7) return ago(days, 'DAY');
+  if (days < 60) return ago(Math.floor(days / 7), 'WEEK');
   const months = Math.floor(days / 30);
-  if (months < 24) return `${months} MONTHS AGO`;
-  return `${Math.floor(days / 365)} YEARS AGO`;
+  if (months < 24) return ago(months, 'MONTH');
+  return ago(Math.floor(days / 365), 'YEAR');
 }
 
 /** 'Priya Raman' → 'P. RAMAN'. A byline under a row is a signature, not an
