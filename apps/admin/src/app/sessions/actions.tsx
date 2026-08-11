@@ -493,6 +493,12 @@ export function SessionCardMenu({ session, can }: SessionCardMenuProps) {
   // reason field, and packages/ui is out of scope here).
   const [reasonFor, setReasonFor] = useState<'archive' | 'delete' | null>(null);
   const [reason, setReason] = useState('');
+  // Editing is audited too, so it takes one as well — but in its own form
+  // rather than through the dialog above, because the edit already HAS a form
+  // and routing it through a second confirmation step would put a dialog in
+  // front of a dialog. Separate state so a half-typed archive reason cannot
+  // leak into a save.
+  const [editReason, setEditReason] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const confirm = useConfirm();
@@ -513,16 +519,27 @@ export function SessionCardMenu({ session, can }: SessionCardMenuProps) {
 
   async function handleUpdate(e: React.FormEvent) {
     e.preventDefault();
+    // Mirrors the server's floor (REASON_MIN in lib/actions/sessions.ts), the
+    // same way handleReasonedAction does, so the refusal arrives before the
+    // round trip rather than as a thrown error afterwards.
+    if (editReason.trim().length < 5) { toast('A reason of at least 5 characters is required', 'error'); return; }
     setLoading(true);
     try {
-      const res = await updateSession(session.id, { name, date, time: time || undefined, end_time: endTime || undefined, location, notes: notes || undefined, track });
+      const res = await updateSession(session.id, { name, date, time: time || undefined, end_time: endTime || undefined, location, notes: notes || undefined, track }, editReason);
       if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
       toast('Session updated', 'success');
-      setEditOpen(false);
+      closeEdit();
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
     setLoading(false);
+  }
+
+  // The reason is cleared on the way out, so reopening Edit does not offer the
+  // last edit's sentence as the explanation for this one.
+  function closeEdit() {
+    setEditOpen(false);
+    setEditReason('');
   }
 
   async function handleSendReminders() {
@@ -623,7 +640,7 @@ export function SessionCardMenu({ session, can }: SessionCardMenuProps) {
         )}
       </div>
 
-      <Dialog open={editOpen} onClose={() => setEditOpen(false)} title="Edit Session">
+      <Dialog open={editOpen} onClose={closeEdit} title="Edit Session">
         <form onSubmit={handleUpdate} className="space-y-4">
           <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required placeholder="e.g. Tuesday Practice" />
           <DatePicker label="Date" value={date} onChange={setDate} required />
@@ -634,9 +651,19 @@ export function SessionCardMenu({ session, can }: SessionCardMenuProps) {
           <LocationField value={location} onChange={setLocation} />
           <Select label="Track" options={TRACK_OPTIONS} value={track} onChange={(e) => setTrack(e.target.value as SessionGroupInput)} />
           <Input label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Any additional info..." />
+          {/* Last, under the fields it explains, and worded so it is clear the
+              sentence is about the change rather than about the session. Members
+              are told when a session moves; the audit row is where the exec who
+              moved it says why. */}
+          <Textarea
+            label="Reason (required)"
+            value={editReason}
+            onChange={(e) => setEditReason(e.target.value)}
+            placeholder="e.g. Gym double-booked, moved to Court 3"
+          />
           <div className="flex items-center justify-between pt-2">
-            <Button variant="ghost" onClick={() => setEditOpen(false)} type="button">Cancel</Button>
-            <Button type="submit" loading={loading}>Save Changes</Button>
+            <Button variant="ghost" onClick={closeEdit} type="button">Cancel</Button>
+            <Button type="submit" loading={loading} disabled={editReason.trim().length < 5}>Save Changes</Button>
           </div>
         </form>
       </Dialog>
