@@ -110,13 +110,22 @@ export default async function AccountsPage() {
   // or six rows, and there is no bulk lookup by id. A null is a real state here
   // and renders as "Never", which is exactly what last_active_at could not
   // express.
-  const signIns = new Map<string, string | null>();
+  //
+  // THREE OUTCOMES, NOT TWO. A failed lookup must not read as `null`: "Never
+  // signed in" is a claim about the officer, and a GoTrue error is a claim
+  // about the request. Collapsing them would put the strongest possible
+  // statement — this person has never once signed in — on the screen precisely
+  // when the app has no idea.
+  const signIns = new Map<string, string | null | 'unknown'>();
   await Promise.all(
     officers.map(async ({ person }) => {
       const userId = person.user_id as string | null;
       if (!userId) return;
-      const { data } = await adminClient.auth.admin.getUserById(userId);
-      signIns.set(person.id as string, data?.user?.last_sign_in_at ?? null);
+      const { data, error } = await adminClient.auth.admin.getUserById(userId);
+      signIns.set(
+        person.id as string,
+        error || !data?.user ? 'unknown' : (data.user.last_sign_in_at ?? null),
+      );
     }),
   );
 
@@ -588,9 +597,14 @@ function RoleBadges({
   );
 }
 
-/** GoTrue's timestamp, or the state last_active_at could never express. */
-function signInLabel(value: string | null | undefined): string {
+/** GoTrue's timestamp, or one of the three things its absence can mean. */
+function signInLabel(value: string | null | undefined | 'unknown'): string {
+  // No auth user to ask about: a player row created by an officer that nobody
+  // has ever signed into.
   if (value === undefined) return 'No account';
+  if (value === 'unknown') return 'Unknown';
+  // The state last_active_at could never express, because it is NOT NULL
+  // DEFAULT NOW().
   if (value === null) return 'Never';
   return formatRelativeTime(value);
 }
