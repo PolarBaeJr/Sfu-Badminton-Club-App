@@ -149,38 +149,37 @@ export default async function FeesPage({
   // The rows were always there and correctly stamped; nothing could name a
   // different season.
   //
-  // THE FEE COLUMNS ARE PART OF THE CLUB-FEE LEDGER and are asked for with it.
-  // What the club charges is the price list behind the roster below, and it is
-  // read in exactly two places, both of which need fees.clubfees.read. Trimming
-  // the column list rather than the JSX is the rule this whole page follows: a
-  // value that reaches the server component reaches the RSC payload whether or
-  // not it is drawn — and this list is handed straight to SeasonSelect, a client
-  // component, so every column on it crosses to the browser for certain. When
-  // the per-season scope was added these two columns came with it unconditioned,
-  // which quietly shipped the club's pricing for every season the club has ever
-  // run to anybody holding nothing but fees.expenses.read.
-  // Two whole queries rather than one with a conditional column list, and the
-  // duplication is forced: supabase-js parses the select string at COMPILE time
-  // to type the rows, and it can only do that for a single string literal.
-  // Handed `showClubFees ? 'a, b, …' : 'a, …'` it receives a UNION of two
-  // literals, fails to parse it as either, and types the whole result as a
-  // ParserError. So each branch gets its own literal.
-  const { data: allSeasons } = showClubFees
-    ? await supabase
-        .from('seasons')
-        .select('id, name, start_date, end_date, active_flag, competitive_fee_cents, recreational_fee_cents')
-        .order('start_date', { ascending: false })
-    : await supabase
-        .from('seasons')
-        .select('id, name, start_date, end_date, active_flag')
-        .order('start_date', { ascending: false });
+  // THE PRICE LIST IS NOT A SECRET, and this used to gate it as though it were.
+  //
+  // `get_active_season()` returns competitive_fee_cents and recreational_fee_cents
+  // and is `GRANT EXECUTE ... TO anon` (00003_functions.sql:91-98, verified live).
+  // So what the club charges is readable by a stranger with no account, and
+  // withholding it from an exec inside the console protected nothing while making
+  // /fees and /seasons disagree about who owns the same two columns — /seasons has
+  // always selected them under seasons.page alone.
+  //
+  // The line that matters is a different one: what the club CHARGES is public,
+  // and WHO HAS PAID is not. That second half is still gated — the roster below,
+  // the payer options and every ledger read each ask for their own capability.
+  // Only the price list moved.
+  //
+  // The rest of this page's rule still stands and is why the columns were split
+  // out in the first place: a value that reaches the server component reaches the
+  // RSC payload whether or not it is drawn, and this list is handed straight to
+  // SeasonSelect, a client component, so every column on it crosses to the
+  // browser for certain. That argument is decisive for member data. It just does
+  // not apply to a figure the club publishes to anonymous visitors.
+  const { data: allSeasons } = await supabase
+    .from('seasons')
+    .select('id, name, start_date, end_date, active_flag, competitive_fee_cents, recreational_fee_cents')
+    .order('start_date', { ascending: false });
   const { seasons: seasonList, selected: scopedSeason, isPast } =
     resolveSeasonScope(allSeasons, params.season);
-  // The select above is conditional and this cast is not, so the invariant is
-  // written down instead: the two fee columns are selected exactly when
-  // showClubFees is true, and both places that dereference them — feeForStatus
-  // and the header sub-line — are behind that same flag. A third reader would
-  // have to add itself to that list or read undefined.
+  // The select above is now unconditional, so this cast is honest without a
+  // caveat: every column named in `Season` is fetched on every path, and a new
+  // reader of the fee columns cannot read undefined. (This note used to record
+  // the opposite invariant — that the two fee columns existed only when
+  // showClubFees was true — which is what made adding a third reader risky.)
   const season = scopedSeason as Season | null;
 
   if (!season) {
