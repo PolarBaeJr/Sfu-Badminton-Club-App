@@ -1,5 +1,5 @@
 import { createServerSupabaseClient, getCurrentPlayer, getActiveSeason } from '@/lib/supabase-server';
-import { getWinRate, getOverallRecord, getStreakDisplay, getPointDifferential, formatDate, TOURNAMENT_EVENT_TYPE_LABELS } from '@badminton/shared';
+import { getWinRate, getOverallRecord, getStreakDisplay, getPointDifferential, formatDate, clubToday, TOURNAMENT_EVENT_TYPE_LABELS } from '@badminton/shared';
 import { redirect } from 'next/navigation';
 import { AvatarChip, PageHeader } from '@badminton/ui';
 import { buildRatingSeries, buildFormFlags, deriveAttendance, type RatingSourceRow, type FormSourceRow } from '@/lib/stats-charts';
@@ -22,10 +22,13 @@ export default async function MyStatsPage() {
   const activeSeason = await getActiveSeason();
   const r = Array.isArray(player.ratings) ? player.ratings[0] : player.ratings;
 
-  // sessions.date is a DATE, so the cutoff has to be a date too — an ISO
-  // timestamp would compare as text against `YYYY-MM-DD` and quietly exclude
-  // today's session.
-  const today = new Date().toISOString().slice(0, 10);
+  // The club's today, not UTC's. `toISOString().slice(0, 10)` is already
+  // tomorrow in Vancouver from about 5pm, so from dinner onwards it would pull
+  // TOMORROW's session into the attendance denominator — a session nobody has
+  // attended yet, which drops every member's rate and breaks their streak every
+  // single evening. clubToday() formats in America/Vancouver as YYYY-MM-DD,
+  // which is the shape the DATE column compares against.
+  const today = clubToday();
 
   const [reliabilityRes, matchRowsRes, h2hRes, partnersRes, walkoverEventsRes, tournamentNoShowsRes, seasonsRes, attendanceRes, sessionsRes] = await Promise.all([
     supabase
@@ -39,10 +42,10 @@ export default async function MyStatsPage() {
     // takes an arbitrary N rows and calls them recent — correct for a member
     // with fifty matches, silently wrong for one with three hundred.
     //
-    // `!inner` plus the filter on the embedded resource does both jobs: it
-    // drops matches this player was not in, and it narrows the embedded array
-    // to their own participant row, so the row read below is always theirs and
-    // never an opponent's.
+    // `!inner` plus the filter on the embedded resource drops matches this
+    // player was not in. It is also supposed to narrow the embedded array to
+    // their own participant row — but ownParticipant() below does not rely on
+    // that, and `player_id` is in the select so it does not have to.
     supabase
       .from('matches')
       .select('id, played_at, match_type, format, rated_flag, completed_flag, result_status, score_summary, participants:match_participants!inner(id, player_id, win_flag, rating_delta, post_rating, team_side)')
@@ -110,17 +113,26 @@ export default async function MyStatsPage() {
   const attendanceRecords = (attendanceRes.data ?? []) as { session_id: string; status: string }[];
   const sessions = (sessionsRes.data ?? []) as { id: string; date: string; track: string }[];
 
-  // The embed is filtered to this player by the query above, so the first
-  // element is their own participant row.
+  // Matched on player_id rather than taken as `rows[0]`.
+  //
+  // The filter on the embedded resource is SUPPOSED to narrow the array to this
+  // player as well as dropping matches they were not in, which would make the
+  // first element theirs. If that is ever not true — a PostgREST version that
+  // only filters the parent, a doubles match where the join comes back in a
+  // different order — `rows[0]` is an OPPONENT, and the page renders their
+  // win_flag and rating_delta as the member's own. Every chart on this page
+  // would be plausibly wrong and nothing would fail. `player_id` is selected
+  // precisely so the answer does not depend on that behaviour.
   const ownParticipant = (m: { participants: unknown }) => {
     const raw = m.participants;
     const rows = (Array.isArray(raw) ? raw : raw ? [raw] : []) as {
+      player_id: string;
       win_flag: boolean | null;
       rating_delta: number | null;
       post_rating: number | null;
       team_side: string | null;
     }[];
-    return rows[0] ?? null;
+    return rows.find((p) => p.player_id === player.id) ?? null;
   };
 
   // One reshape feeding both chart builders, so the rating line and the form
@@ -164,6 +176,12 @@ export default async function MyStatsPage() {
     : null;
   const priorRatings = priorRatingsRes?.data as { singles_elo: number; doubles_elo: number } | null | undefined;
 
+  // Eligibility is judged against the member's CURRENT status, because a
+  // status is a column and not a history — there is no record of what somebody
+  // was in October. A member who moved from recreational to competitive
+  // mid-season therefore has the season's earlier competitive sessions counted
+  // against them. Naming it rather than approximating it: the alternative is a
+  // guess about a past that is not stored.
   const attendance = deriveAttendance(sessions, attendanceRecords, player.status as string | null);
 
   // Reliability card is only rendered when something is on record — players
