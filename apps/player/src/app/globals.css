@@ -2179,7 +2179,13 @@ html, body { overflow-x: clip; }
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  width: 100%;
+  /* The bleed has to be paid for in WIDTH as well as margin. `width: 100%` plus
+     a negative inline margin shifts the box left without widening it, so on a
+     phone the surface and its hairline stopped one gutter short of the right
+     edge while the unread spine reached the left bezel — a row visibly 32px
+     narrow on one side only. The 100% is here for the <button> row variant,
+     which does not stretch on its own, so it is widened rather than dropped. */
+  width: calc(100% + var(--notif-gutter) * 2);
   text-align: left;
   padding: 14px var(--notif-gutter);
   margin-inline: calc(var(--notif-gutter) * -1);
@@ -2446,7 +2452,9 @@ html, body { overflow-x: clip; }
      which is the reported bug at 60% scale. Zero the bleed so the spine sits
      on the column's left edge. The gutter stays POSITIVE: .notif-row.unread's
      padding-left is calc(var(--notif-gutter) - 2px) and must not go negative. */
-  .notif-row { margin-inline: 0; }
+  /* Bleed zeroed, so the width compensation for it goes too — leaving the
+     widened value here would push the row a gutter past its own column. */
+  .notif-row { margin-inline: 0; width: 100%; }
   /* Follows the row's padding so the group label and the headlines beneath it
      share one left edge instead of stepping. */
   .notif-group { padding-left: var(--notif-gutter); }
