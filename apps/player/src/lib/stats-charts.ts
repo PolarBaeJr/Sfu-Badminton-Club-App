@@ -330,6 +330,30 @@ export function buildFormFlags(
     .map((row) => row.win_flag);
 }
 
+/**
+ * Every discipline's `win_flag`s in one series, oldest first.
+ *
+ * The rating line is per-discipline because a singles rating and a doubles
+ * rating are different numbers on different scales. Form is not: "am I winning
+ * lately" is one question, and a member who played four doubles and two singles
+ * this fortnight has one recent form, not two half-empty strips. It is also
+ * what lets the form card stand on its own in the side rail without borrowing
+ * the rating card's discipline switch.
+ *
+ * Same two guards as `buildFormFlags` — a confirmed result and a date — for the
+ * same reasons.
+ */
+export function buildOverallFormFlags(rows: readonly FormSourceRow[]): (boolean | null)[] {
+  return rows
+    .filter((row) => {
+      const m = row.match;
+      if (!m) return false;
+      return m.result_status === 'confirmed' && m.played_at !== null;
+    })
+    .sort((a, b) => (a.match!.played_at as string).localeCompare(b.match!.played_at as string))
+    .map((row) => row.win_flag);
+}
+
 export type FormResult = 'W' | 'L';
 
 export interface FormSummary {
@@ -484,6 +508,83 @@ export function deriveAttendance(
     ratePct: cells.length === 0 ? 0 : Math.round((attended / cells.length) * 100),
     currentStreak,
     bestStreak,
+  };
+}
+
+/** MON…SUN, indexed the way `deriveSessionCadence` counts days. */
+const WEEKDAY_LABELS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'] as const;
+
+export interface SessionCadence {
+  /** Sessions in a typical week — the size of `weekdays`. */
+  perWeek: number;
+  /** `['MON', 'WED', 'SAT']`, in week order. */
+  weekdays: string[];
+}
+
+/**
+ * The club's session rhythm — "3 sessions a week · Mon / Wed / Sat" — or null
+ * when there isn't one.
+ *
+ * Null is the important half. The line is a claim about the schedule, and a
+ * term whose sessions moved around, or one that has only run twice, has no
+ * rhythm to state; printing an average anyway invents a timetable the club does
+ * not keep. So: at least `minWeeks` distinct weeks of sessions, and the SAME
+ * set of weekdays in at least two thirds of them. Anything looser and a term
+ * with one rescheduled Friday reads as a four-day-a-week club.
+ *
+ * Dates are `sessions.date`, a DATE column, and are split rather than passed to
+ * `new Date(iso)` — that parses as UTC midnight and lands on the previous
+ * evening anywhere west of Greenwich, which would file every Monday session
+ * under Sunday and produce a completely fictional cadence.
+ */
+export function deriveSessionCadence(
+  dates: readonly string[],
+  options: { minWeeks?: number } = {}
+): SessionCadence | null {
+  const minWeeks = options.minWeeks ?? 3;
+
+  // week key -> the weekday indices seen in that week
+  const weeks = new Map<string, Set<number>>();
+  for (const date of dates) {
+    const parts = date.split('-');
+    const y = Number(parts[0]);
+    const m = Number(parts[1]);
+    const d = Number(parts[2]);
+    if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) continue;
+    const local = new Date(y, m - 1, d);
+    if (Number.isNaN(local.getTime())) continue;
+    // getDay() is 0=Sunday; shift so Monday is 0 and a week reads Mon→Sun.
+    const weekday = (local.getDay() + 6) % 7;
+    // The Monday of that week, as a stable key.
+    const monday = new Date(y, m - 1, d - weekday);
+    const key = `${monday.getFullYear()}-${monday.getMonth()}-${monday.getDate()}`;
+    const bucket = weeks.get(key);
+    if (bucket) bucket.add(weekday);
+    else weeks.set(key, new Set([weekday]));
+  }
+
+  if (weeks.size < minWeeks) return null;
+
+  // The modal weekday pattern, and how many weeks match it exactly.
+  const tally = new Map<string, { days: number[]; count: number }>();
+  for (const days of weeks.values()) {
+    const sorted = [...days].sort((a, b) => a - b);
+    const signature = sorted.join(',');
+    const seen = tally.get(signature);
+    if (seen) seen.count += 1;
+    else tally.set(signature, { days: sorted, count: 1 });
+  }
+
+  let modal: { days: number[]; count: number } | null = null;
+  for (const entry of tally.values()) {
+    if (!modal || entry.count > modal.count) modal = entry;
+  }
+  if (!modal) return null;
+  if (modal.count * 3 < weeks.size * 2) return null;
+
+  return {
+    perWeek: modal.days.length,
+    weekdays: modal.days.map((i) => WEEKDAY_LABELS[i] as string),
   };
 }
 

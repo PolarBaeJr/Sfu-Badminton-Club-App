@@ -7,8 +7,10 @@ import {
   buildRatingAreaPath,
   summarizeRatingSeries,
   seasonBoundaryX,
+  buildOverallFormFlags,
   deriveForm,
   deriveAttendance,
+  deriveSessionCadence,
   formatSigned,
   type ChartBox,
   type RatingSourceRow,
@@ -237,6 +239,72 @@ describe('buildFormFlags', () => {
 
   it('drops a row with no embedded match', () => {
     expect(buildFormFlags([{ win_flag: true, match: null }], 'singles')).toEqual([]);
+  });
+});
+
+describe('buildOverallFormFlags', () => {
+  const rows = [
+    { win_flag: true, match: { played_at: '2026-01-03T00:00:00Z', match_type: 'singles', result_status: 'confirmed' } },
+    { win_flag: false, match: { played_at: '2026-01-01T00:00:00Z', match_type: 'singles', result_status: 'confirmed' } },
+    { win_flag: true, match: { played_at: '2026-01-02T00:00:00Z', match_type: 'doubles', result_status: 'confirmed' } },
+    { win_flag: true, match: { played_at: '2026-01-04T00:00:00Z', match_type: 'singles', result_status: 'disputed' } },
+    { win_flag: true, match: null },
+  ];
+
+  it('merges both disciplines into one series, oldest first', () => {
+    expect(buildOverallFormFlags(rows)).toEqual([false, true, true]);
+  });
+
+  it('still drops an unconfirmed result', () => {
+    expect(buildOverallFormFlags(rows)).toHaveLength(3);
+  });
+
+  it('drops a row with no embedded match or no date', () => {
+    expect(buildOverallFormFlags([{ win_flag: true, match: null }])).toEqual([]);
+    expect(
+      buildOverallFormFlags([
+        { win_flag: true, match: { played_at: null, match_type: 'singles', result_status: 'confirmed' } },
+      ])
+    ).toEqual([]);
+  });
+});
+
+describe('deriveSessionCadence', () => {
+  // Mondays, Wednesdays and Saturdays of four consecutive weeks in Jan 2026.
+  const monWedSat = [
+    '2026-01-05', '2026-01-07', '2026-01-10',
+    '2026-01-12', '2026-01-14', '2026-01-17',
+    '2026-01-19', '2026-01-21', '2026-01-24',
+    '2026-01-26', '2026-01-28', '2026-01-31',
+  ];
+
+  it('reads a steady three-a-week term', () => {
+    expect(deriveSessionCadence(monWedSat)).toEqual({ perWeek: 3, weekdays: ['MON', 'WED', 'SAT'] });
+  });
+
+  it('is null with too few weeks to call it a rhythm', () => {
+    expect(deriveSessionCadence(monWedSat.slice(0, 6))).toBeNull();
+    expect(deriveSessionCadence([])).toBeNull();
+  });
+
+  it('tolerates one odd week but not a term with no pattern', () => {
+    // Week 3 gains a Friday; three of the four weeks still agree.
+    const oneOddWeek = [...monWedSat, '2026-01-23'];
+    expect(deriveSessionCadence(oneOddWeek)?.weekdays).toEqual(['MON', 'WED', 'SAT']);
+
+    // Every week different: no cadence to state.
+    const scattered = ['2026-01-05', '2026-01-13', '2026-01-22', '2026-01-30'];
+    expect(deriveSessionCadence(scattered)).toBeNull();
+  });
+
+  it('files a Monday session under Monday rather than the Sunday before it', () => {
+    // The UTC-parsing bug this guards against would report SUN, not MON.
+    const mondays = ['2026-01-05', '2026-01-12', '2026-01-19'];
+    expect(deriveSessionCadence(mondays)).toEqual({ perWeek: 1, weekdays: ['MON'] });
+  });
+
+  it('ignores an unparseable date instead of inventing a weekday for it', () => {
+    expect(deriveSessionCadence([...monWedSat, 'not-a-date'])?.perWeek).toBe(3);
   });
 });
 

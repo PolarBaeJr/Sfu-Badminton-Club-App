@@ -1,10 +1,11 @@
 import { createServerSupabaseClient, getCurrentPlayer, getActiveSeason } from '@/lib/supabase-server';
-import { getWinRate, getOverallRecord, getStreakDisplay, getPointDifferential, formatDate, clubToday, TOURNAMENT_EVENT_TYPE_LABELS } from '@badminton/shared';
+import { getWinRate, getOverallRecord, getStreakDisplay, getPointDifferential, formatDate, formatRelativeTime, clubToday, TOURNAMENT_EVENT_TYPE_LABELS } from '@badminton/shared';
 import { redirect } from 'next/navigation';
-import { AvatarChip, PageHeader } from '@badminton/ui';
-import { buildRatingSeries, buildFormFlags, deriveAttendance, type RatingSourceRow, type FormSourceRow } from '@/lib/stats-charts';
+import { Atomic, AvatarChip, PageHeader } from '@badminton/ui';
+import { buildRatingSeries, buildOverallFormFlags, deriveAttendance, deriveSessionCadence, type RatingSourceRow, type FormSourceRow } from '@/lib/stats-charts';
 import { formatMemberIdentifier } from '@/lib/member-identifier';
 import { RatingCard } from '@/components/my-stats/rating-card';
+import { FormCard } from '@/components/my-stats/form-card';
 import { AttendanceGrid } from '@/components/my-stats/attendance-grid';
 
 // The rating line, the form strip and the history table all read one window of
@@ -13,6 +14,35 @@ import { AttendanceGrid } from '@/components/my-stats/attendance-grid';
 // somebody four years in does not pull their whole career over the wire to draw
 // forty points.
 const MATCH_WINDOW = 200;
+
+// How many of those get a row in the table. The table is a recent-results
+// panel, not an archive.
+const HISTORY_ROWS = 20;
+
+// The wide layout is two columns; the phone is one. Both are laid out by the
+// SAME markup — .me-col-* is `display: contents` under 1024px, which dissolves
+// the two column wrappers so every card becomes a direct child of one flexbox
+// and these numbers decide the phone's reading order. Above 1024px the wrappers
+// become real columns and the same numbers order each column independently,
+// which is why they ascend within a column as well as across the page.
+//
+// Read on a phone: the chart, then the form it produced, then attendance, then
+// the tables that back all three up. That is the order the page had before it
+// gained a second column, and it is the order it has to keep — this app is used
+// standing up in a gym, and the desktop is the variant.
+const ORDER = {
+  rating: 1,
+  form: 2,
+  attendance: 3,
+  matches: 4,
+  headToHead: 5,
+  divisionMix: 6,
+  partners: 7,
+  reliability: 8,
+} as const;
+
+/** A row of get_leaderboard(), narrowed to what a ladder position needs. */
+type LadderRow = { id: string; singles_elo: number | null };
 
 export default async function MyStatsPage() {
   const player = await getCurrentPlayer();
@@ -30,7 +60,7 @@ export default async function MyStatsPage() {
   // which is the shape the DATE column compares against.
   const today = clubToday();
 
-  const [reliabilityRes, matchRowsRes, h2hRes, partnersRes, walkoverEventsRes, tournamentNoShowsRes, seasonsRes, attendanceRes, sessionsRes] = await Promise.all([
+  const [reliabilityRes, matchRowsRes, h2hRes, partnersRes, walkoverEventsRes, tournamentNoShowsRes, seasonsRes, attendanceRes, sessionsRes, ladderRes] = await Promise.all([
     supabase
       .from('reliability_metrics')
       .select('no_shows, late_cancellations, early_withdrawals, walkovers_received, matches_completed, walkover_flag')
@@ -101,6 +131,18 @@ export default async function MyStatsPage() {
           .lte('date', today)
           .order('date', { ascending: true })
       : Promise.resolve({ data: [] as { id: string; date: string; track: string }[] }),
+    // The member's ladder position, for the third readout in the header.
+    //
+    // The same anon-safe RPC /leaderboard reads, over the same field that
+    // page's opening tab ranks (Open Singles, by ELO) — but positioned by
+    // RANK() rather than by list index; see where it is counted below.
+    //
+    // The member simply not appearing in these rows is a real answer and not a
+    // zero: get_leaderboard INNER JOINs ratings and excludes pending,
+    // suspended, deactivated and hidden members, all of whom have no ladder
+    // position at all. 00053 already makes that case fail open rather than
+    // read as last place, and so does this.
+    supabase.rpc('get_leaderboard'),
   ]);
 
   const reliability = reliabilityRes.data;
@@ -112,6 +154,27 @@ export default async function MyStatsPage() {
   const seasons = (seasonsRes.data ?? []) as { id: string; name: string; start_date: string }[];
   const attendanceRecords = (attendanceRes.data ?? []) as { session_id: string; status: string }[];
   const sessions = (sessionsRes.data ?? []) as { id: string; date: string; track: string }[];
+
+  // 1-based, or null when the member is not on the ladder. Never 0 and never a
+  // fallback to last place — see the query.
+  //
+  // Counted, not indexed. get_leaderboard() has no ORDER BY, so sorting its
+  // rows and taking a position is ROW_NUMBER over an arbitrary order: a
+  // brand-new member sits at the default rating alongside everyone else who
+  // has not played, and their "rank" would then be a different number on every
+  // refresh depending on how Postgres happened to return that tied block.
+  // Counting how many members are strictly ABOVE them is RANK() — the same
+  // definition 00053 uses for ladder position, for the same reason it gives:
+  // "three of the club's players sit on 400 and ROW_NUMBER would invent an
+  // ordering between them". Tied members therefore share a position here, and
+  // this number can differ by a place or two from the one /leaderboard prints
+  // beside a tied row, which numbers its list.
+  const ladder = (ladderRes.data ?? []) as LadderRow[];
+  const myLadderElo: number | null = r ? r.singles_elo : null;
+  const ladderPosition =
+    myLadderElo !== null && ladder.some((row) => row.id === player.id)
+      ? 1 + ladder.filter((row) => (row.singles_elo ?? 0) > myLadderElo).length
+      : null;
 
   // Matched on player_id rather than taken as `rows[0]`.
   //
@@ -184,6 +247,12 @@ export default async function MyStatsPage() {
   // guess about a past that is not stored.
   const attendance = deriveAttendance(sessions, attendanceRecords, player.status as string | null);
 
+  // Derived from the sessions this member was ELIGIBLE for, not from every
+  // session in the term: the footer sits under their grid and has to describe
+  // the same set of squares. Returns null unless the term genuinely runs to a
+  // timetable, in which case the line is simply not printed.
+  const cadence = deriveSessionCadence(attendance.cells.map((c) => c.date));
+
   // Reliability card is only rendered when something is on record — players
   // with a clean history never see it.
   const hasReliabilityRecord =
@@ -226,7 +295,58 @@ export default async function MyStatsPage() {
 
   // Already newest-first from the query, so the table is a slice rather than
   // another sort.
-  const recentMatches = matchRows.slice(0, 20);
+  const recentMatches = matchRows.slice(0, HISTORY_ROWS);
+
+  // Who each of those was against.
+  //
+  // The main query filters the embedded participants down to this member, which
+  // is what makes ORDER BY played_at honest — so it cannot also carry the other
+  // side. One extra read, scoped to the twenty match ids the table actually
+  // draws, rather than widening the 200-row window to pull every participant of
+  // every match a member has ever played.
+  //
+  // Opponents are picked by TEAM SIDE, not by "everyone who is not me": in
+  // doubles the other two rows are opponents but the third is a PARTNER, and
+  // naming a partner as the person you beat is a wrong answer that looks
+  // completely plausible. Where NO row on the match carries a team_side (older
+  // data) it falls back to every other participant — which in doubles can still
+  // put a partner in the lead slot, so it is a legacy path and not a safe one;
+  // it is preferred only to showing an em dash for every historic match.
+  const historyIds = recentMatches.map((m) => m.id as string);
+  const opponentRowsRes = historyIds.length
+    ? await supabase
+        .from('match_participants')
+        .select('match_id, player_id, team_side, player:players(id, full_name, avatar_url)')
+        .in('match_id', historyIds)
+    : null;
+  type OpponentRow = {
+    match_id: string;
+    player_id: string;
+    team_side: string | null;
+    player: unknown;
+  };
+  type OtherPlayer = { id: string; full_name: string; avatar_url?: string | null; team_side: string | null };
+  const othersByMatch = new Map<string, OtherPlayer[]>();
+  for (const row of (opponentRowsRes?.data ?? []) as OpponentRow[]) {
+    if (row.player_id === player.id) continue;
+    const raw = row.player;
+    const p = (Array.isArray(raw) ? raw[0] : raw) as { id: string; full_name: string; avatar_url?: string | null } | null;
+    if (!p) continue;
+    const entry: OtherPlayer = { ...p, team_side: row.team_side };
+    const list = othersByMatch.get(row.match_id);
+    if (list) list.push(entry);
+    else othersByMatch.set(row.match_id, [entry]);
+  }
+  const opponentsOf = (matchId: string, myTeamSide: string | null): OtherPlayer[] => {
+    const others = othersByMatch.get(matchId) ?? [];
+    if (!myTeamSide) return others;
+    // Only the rows that KNOW they are on the other side. A null team_side on
+    // the other row is unclassifiable, and dropping it is the safe direction:
+    // an unnamed opponent is a gap, a partner named as an opponent is a lie.
+    const known = others.filter((o) => o.team_side !== null);
+    if (known.length === 0) return others;
+    return known.filter((o) => o.team_side !== myTeamSide);
+  };
 
   return (
     <div data-screen-label="My Stats">
@@ -246,9 +366,9 @@ export default async function MyStatsPage() {
             <AvatarChip name={player.full_name} id={player.id} src={player.avatar_url} size="xl" ring />
             <div style={{ minWidth: 0 }}>
               <div
+                className="me-id-name"
                 style={{
                   fontFamily: 'var(--display)',
-                  fontSize: 'clamp(24px, 4vw, 32px)',
                   fontWeight: 700,
                   letterSpacing: '-.02em',
                   lineHeight: 1,
@@ -280,36 +400,41 @@ export default async function MyStatsPage() {
             </div>
           </div>
 
-          {r && (
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(2, 1fr)',
-                gap: 20,
-                borderLeft: '1px solid var(--line)',
-                paddingLeft: 32,
-              }}
-            >
-              {/* The K factor used to be quoted on these two lines. It is a
-                  platform-wide setting rather than this member's, and printing
-                  it beside their own rating read as a number chosen for them
-                  personally. Provisional stays: that one IS about them. */}
-              <div className="stat">
-                <div className="stat-label">SINGLES ELO</div>
-                <div className="stat-value">{r.singles_elo}</div>
-                <div className="mono muted" style={{ fontSize: 11 }}>
-                  {r.singles_provisional ? 'Provisional · ' : ''}{getWinRate(r.singles_wins, r.singles_losses)}
-                </div>
+          {/* Three readouts, hairline-separated, pushed to the far end of the
+              header. Rendered whether or not a ratings row exists — a member
+              awaiting approval has none (00004 writes it when their status
+              changes), and dropping the block for them leaves the widest part
+              of the header empty on exactly the account that already looks
+              emptiest. Missing values read as an em dash. */}
+          <div className="me-readouts">
+            <div className="stat">
+              <div className="stat-label">RANK</div>
+              <div className="stat-value" title="Your position on the open singles ladder">
+                {ladderPosition === null ? '—' : `#${ladderPosition}`}
               </div>
-              <div className="stat">
-                <div className="stat-label">DOUBLES ELO</div>
-                <div className="stat-value">{r.doubles_elo}</div>
-                <div className="mono muted" style={{ fontSize: 11 }}>
-                  {r.doubles_provisional ? 'Provisional · ' : ''}{getWinRate(r.doubles_wins, r.doubles_losses)}
-                </div>
+              <div className="mono muted" style={{ fontSize: 11 }}>
+                {ladderPosition === null ? 'Not on the ladder' : `of ${ladder.length}`}
               </div>
             </div>
-          )}
+            {/* The K factor used to be quoted on these two lines. It is a
+                platform-wide setting rather than this member's, and printing
+                it beside their own rating read as a number chosen for them
+                personally. Provisional stays: that one IS about them. */}
+            <div className="stat">
+              <div className="stat-label">SINGLES</div>
+              <div className="stat-value">{r ? r.singles_elo : '—'}</div>
+              <div className="mono muted" style={{ fontSize: 11 }}>
+                {r ? `${r.singles_provisional ? 'Provisional · ' : ''}${getWinRate(r.singles_wins, r.singles_losses)}` : 'Unrated'}
+              </div>
+            </div>
+            <div className="stat">
+              <div className="stat-label">DOUBLES</div>
+              <div className="stat-value">{r ? r.doubles_elo : '—'}</div>
+              <div className="mono muted" style={{ fontSize: 11 }}>
+                {r ? `${r.doubles_provisional ? 'Provisional · ' : ''}${getWinRate(r.doubles_wins, r.doubles_losses)}` : 'Unrated'}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -364,67 +489,88 @@ export default async function MyStatsPage() {
         </div>
       )}
 
-      <div className="grid grid-12">
-        {/* The 980px rule collapses grid-12 to one column, so the order in this
-            first column IS the phone order: charts, then the tables that back
-            them up. The wide layout is the same content with the reference
-            panels moved into the right rail. */}
-        <div style={{ gridColumn: 'span 8' }} className="feed-col">
-          {r && (
-            <RatingCard
-              singles={{
-                elo: r.singles_elo,
-                provisional: r.singles_provisional === true,
-                wins: r.singles_wins ?? 0,
-                losses: r.singles_losses ?? 0,
-                points: buildRatingSeries(ratingRows, 'singles'),
-                winFlags: buildFormFlags(formRows, 'singles'),
-                priorRating: priorRatings?.singles_elo ?? null,
-              }}
-              doubles={{
-                elo: r.doubles_elo,
-                provisional: r.doubles_provisional === true,
-                wins: r.doubles_wins ?? 0,
-                losses: r.doubles_losses ?? 0,
-                points: buildRatingSeries(ratingRows, 'doubles'),
-                winFlags: buildFormFlags(formRows, 'doubles'),
-                priorRating: priorRatings?.doubles_elo ?? null,
-              }}
-              priorSeasonName={priorSeason?.name ?? null}
-              seasonStart={activeSeasonRow?.start_date ?? null}
-            />
-          )}
-
-          <div className="card-base">
-            <div className="card-head">
-              <h3 className="card-title">Attendance</h3>
-              {activeSeason && <span className="tag">{activeSeason.name}</span>}
-            </div>
-            <div className="card-sub" style={{ marginBottom: 18 }}>
-              One square per session you could attend — filled when you were there
-            </div>
-            <AttendanceGrid summary={attendance} seasonName={activeSeason?.name ?? null} />
+      {/* Two columns on a wide screen, one on a phone, from one set of markup.
+          .me-col-* dissolves under 1024px (display: contents) so every card
+          below becomes a direct child of .me-layout's flexbox and ORDER decides
+          the reading order; above it the wrappers are the columns. Nothing here
+          is duplicated per breakpoint — see ORDER and globals.css. */}
+      <div className="me-layout">
+        <div className="me-col-main">
+          <div style={{ order: ORDER.rating }}>
+            {r ? (
+              <RatingCard
+                singles={{
+                  elo: r.singles_elo,
+                  provisional: r.singles_provisional === true,
+                  wins: r.singles_wins ?? 0,
+                  losses: r.singles_losses ?? 0,
+                  points: buildRatingSeries(ratingRows, 'singles'),
+                  priorRating: priorRatings?.singles_elo ?? null,
+                }}
+                doubles={{
+                  elo: r.doubles_elo,
+                  provisional: r.doubles_provisional === true,
+                  wins: r.doubles_wins ?? 0,
+                  losses: r.doubles_losses ?? 0,
+                  points: buildRatingSeries(ratingRows, 'doubles'),
+                  priorRating: priorRatings?.doubles_elo ?? null,
+                }}
+                priorSeasonName={priorSeason?.name ?? null}
+                seasonStart={activeSeasonRow?.start_date ?? null}
+              />
+            ) : (
+              // No ratings row at all — 00004 writes one when a member is
+              // approved, so this is the pending account. The card stays and
+              // says why rather than vanishing, which would leave the wide
+              // layout's main column empty beside a populated rail.
+              <div className="card-base">
+                <div className="card-head">
+                  <h3 className="card-title">Rating over time</h3>
+                </div>
+                <div className="empty" style={{ padding: '32px 20px' }}>
+                  <div className="empty-title">Your rating starts at approval</div>
+                  <div className="empty-hint">
+                    An exec has to approve your membership before you can be rated. Your
+                    chart begins with your first confirmed match after that.
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
-          <div className="card-base" style={{ padding: 0, overflow: 'hidden' }}>
+          <div className="card-base" style={{ padding: 0, overflow: 'hidden', order: ORDER.matches }}>
             <div
               className="card-head"
               style={{ padding: '20px 20px 14px', borderBottom: '1px solid var(--line)', marginBottom: 0 }}
             >
-              <h3 className="card-title">Match history</h3>
+              <h3 className="card-title">Recent matches</h3>
+              {recentMatches.length > 0 && (
+                <span className="tag">
+                  {recentMatches.length === matchRows.length
+                    ? `${recentMatches.length} played`
+                    : `LAST ${recentMatches.length}`}
+                </span>
+              )}
             </div>
             {recentMatches.length === 0 ? (
-              <div className="empty">No matches yet. Issue a challenge to get started.</div>
+              <div className="empty" style={{ padding: '32px 20px' }}>
+                <div className="empty-title">No matches yet</div>
+                <div className="empty-hint">
+                  Issue a challenge, or turn up to a session and play one. Every confirmed
+                  result lands here with the rating it moved.
+                </div>
+              </div>
             ) : (
               <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
                 <table className="data-table" style={{ minWidth: 640 }}>
                   <thead>
                     <tr>
-                      <th>Date</th>
+                      <th>Opponent</th>
                       <th>Format</th>
                       <th className="num" style={{ textAlign: 'right' }}>Score</th>
                       <th>Result</th>
-                      <th className="num" style={{ textAlign: 'right' }}>ELO Δ</th>
+                      <th className="num" style={{ textAlign: 'right' }}>Swing</th>
+                      <th className="num" style={{ textAlign: 'right' }}>When</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -435,16 +581,38 @@ export default async function MyStatsPage() {
                       const isLoss = p.win_flag === false;
                       const delta = p.rating_delta;
                       const deltaStr = typeof delta === 'number' ? `${delta >= 0 ? '+' : ''}${delta}` : '—';
+                      const opponents = opponentsOf(m.id as string, p.team_side);
+                      const lead = opponents[0] ?? null;
                       return (
                         <tr key={m.id as string}>
-                          <td className="mono muted">
-                            {m.played_at ? formatDate(m.played_at as string) : '—'}
+                          <td>
+                            {lead ? (
+                              <span className="row" style={{ gap: 8 }}>
+                                <AvatarChip name={lead.full_name} id={lead.id} src={lead.avatar_url} size="sm" />
+                                <span style={{ minWidth: 0 }}>
+                                  {lead.full_name}
+                                  {opponents.length > 1 && (
+                                    <span className="mono muted" style={{ fontSize: 11, marginLeft: 6 }}>
+                                      +{opponents.length - 1}
+                                    </span>
+                                  )}
+                                </span>
+                              </span>
+                            ) : (
+                              <span className="mono muted">—</span>
+                            )}
                           </td>
                           <td>
                             <span className="tag">{(m.match_type as string)?.toUpperCase()}</span>
                           </td>
+                          {/* Atomic keeps `21-17, 21-19` from breaking after a
+                              hyphen, which reads as a different scoreline. */}
                           <td className="num" style={{ textAlign: 'right' }}>
-                            {(m.score_summary as string) || '—'}
+                            {m.score_summary ? (
+                              <Atomic separator=",">{m.score_summary as string}</Atomic>
+                            ) : (
+                              '—'
+                            )}
                           </td>
                           <td>
                             {isWin ? (
@@ -465,6 +633,9 @@ export default async function MyStatsPage() {
                           >
                             {deltaStr}
                           </td>
+                          <td className="num mono muted" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            {m.played_at ? formatRelativeTime(m.played_at as string) : '—'}
+                          </td>
                         </tr>
                       );
                     })}
@@ -475,7 +646,7 @@ export default async function MyStatsPage() {
           </div>
 
           {h2h.length > 0 && (
-            <div className="card-base">
+            <div className="card-base" style={{ order: ORDER.headToHead }}>
               <div className="card-head">
                 <h3 className="card-title">Head-to-head</h3>
                 <span className="tag">{h2h.length} opponents</span>
@@ -508,9 +679,33 @@ export default async function MyStatsPage() {
           )}
         </div>
 
-        <div style={{ gridColumn: 'span 4' }} className="feed-col">
+        <div className="me-col-side">
+          {/* The two cards the rail exists for. Both render unconditionally —
+              a rail that appears only once a member has a history is a rail
+              that is missing on the account with the most empty space, which is
+              the whole complaint this layout answers. Each says what it will
+              show and how to make it show something. */}
+          <div style={{ order: ORDER.form }}>
+            <FormCard winFlags={buildOverallFormFlags(formRows)} />
+          </div>
+
+          <div className="card-base" style={{ order: ORDER.attendance }}>
+            <div className="card-head">
+              <h3 className="card-title">Attendance</h3>
+              {activeSeason && <span className="tag">{activeSeason.name}</span>}
+            </div>
+            <div className="card-sub" style={{ marginBottom: 18 }}>
+              One square per session you could attend — filled when you were there
+            </div>
+            <AttendanceGrid
+              summary={attendance}
+              seasonName={activeSeason?.name ?? null}
+              cadence={cadence}
+            />
+          </div>
+
           {totalPlayed > 0 && (
-            <div className="card-base">
+            <div className="card-base" style={{ order: ORDER.divisionMix }}>
               <h3 className="card-title" style={{ marginBottom: 4 }}>Division mix</h3>
               <div className="card-sub" style={{ marginBottom: 18 }}>How you split your time</div>
               {[
@@ -533,7 +728,7 @@ export default async function MyStatsPage() {
           )}
 
           {partners.length > 0 && (
-            <div className="card-base">
+            <div className="card-base" style={{ order: ORDER.partners }}>
               <div className="card-head">
                 <h3 className="card-title">Best partners</h3>
                 <span className="tag tag-gold">DOUBLES</span>
@@ -561,7 +756,7 @@ export default async function MyStatsPage() {
           )}
 
           {hasReliabilityRecord && (
-            <div className="card-base">
+            <div className="card-base" style={{ order: ORDER.reliability }}>
               <h3 className="card-title" style={{ marginBottom: 4 }}>Reliability</h3>
               <div className="card-sub" style={{ marginBottom: 18 }}>No-shows and withdrawals on record</div>
               {reliability?.walkover_flag && (
