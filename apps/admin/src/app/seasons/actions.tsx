@@ -245,7 +245,15 @@ export function SeasonFeesPanel({
     );
   }
 
-  return <SeasonFeesForm season={season} />;
+  // Keyed on the amounts, so a fee changed elsewhere (the row dialog, another
+  // officer's tab) re-mounts the form rather than leaving the boxes holding the
+  // values they had when this component first rendered.
+  return (
+    <SeasonFeesForm
+      key={`${season.id}:${season.competitive_fee_cents}:${season.recreational_fee_cents}`}
+      season={season}
+    />
+  );
 }
 
 function SeasonFeesForm({
