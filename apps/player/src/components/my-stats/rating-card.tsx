@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { getWinRate } from '@badminton/shared';
 import type { RatingPoint } from '@/lib/stats-charts';
 import { RatingChart } from './rating-chart';
-import { FormStrip } from './form-strip';
 
 export type Discipline = 'singles' | 'doubles';
 
@@ -14,8 +13,6 @@ export interface DisciplineStats {
   wins: number;
   losses: number;
   points: RatingPoint[];
-  /** Oldest first, so the form strip reads left to right. */
-  winFlags: (boolean | null)[];
   /** Final rating in the previous season, when one was archived. */
   priorRating: number | null;
 }
@@ -36,6 +33,13 @@ export interface RatingCardProps {
  * Client-side because the switch is, and only because of that — everything it
  * draws is computed on the server and handed down as props, so flipping the tab
  * costs no request.
+ *
+ * The recent-form strip used to hang off the bottom of this card. It moved into
+ * a card of its own (FormCard) so the wide layout has something to put in the
+ * side rail, and it went from per-discipline to overall on the way: a rail card
+ * with no switch of its own cannot borrow this one's, and "am I winning lately"
+ * is one question whichever discipline the member happened to play. On a phone
+ * the two cards are still adjacent, in this order.
  */
 export function RatingCard({ singles, doubles, priorSeasonName, seasonStart }: RatingCardProps) {
   // Doubles is the default when the member has never played a rated singles
@@ -69,10 +73,12 @@ export function RatingCard({ singles, doubles, priorSeasonName, seasonStart }: R
       </div>
 
       <div className="row" style={{ gap: 14, alignItems: 'baseline', marginBottom: 16 }}>
+        {/* The figure grows with the card rather than staying phone-sized in a
+            column two and a half times as wide — see .me-rating-figure. */}
         <div
+          className="me-rating-figure"
           style={{
             fontFamily: 'var(--display)',
-            fontSize: 40,
             fontWeight: 700,
             lineHeight: 1,
             letterSpacing: '-.02em',
@@ -95,13 +101,6 @@ export function RatingCard({ singles, doubles, priorSeasonName, seasonStart }: R
         provisional={active.provisional}
         label={label}
       />
-
-      <div style={{ marginTop: 20, borderTop: '1px solid var(--line)', paddingTop: 16 }}>
-        <div className="stat-label" style={{ marginBottom: 8 }}>
-          RECENT FORM
-        </div>
-        <FormStrip winFlags={active.winFlags} label={label} />
-      </div>
     </div>
   );
 }

@@ -2538,3 +2538,162 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
   line-height: 1.5;
   color: var(--mute);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   /MY-STATS — THE WIDE LAYOUT
+   ───────────────────────────────────────────────────────────
+   Everything in this block is `me-` prefixed and used by that one screen.
+   Nothing above is touched.
+
+   The screen was built phone-first and never got a wide variant, so on a
+   laptop it ran as one column with the right half of the viewport empty. The
+   fix is a 1.6fr / 1fr grid — but the phone is the design width for this app
+   (members read it standing in a gym), so the phone layout is the DEFAULT here
+   and the second column is what the media query adds. Never the reverse.
+
+   The two column wrappers are `display: contents` below the breakpoint. That
+   dissolves them, so every card becomes a direct child of one flexbox and the
+   `order` each card carries decides the phone's reading order independently of
+   which column it sits in on a desktop. One set of markup, two layouts, no
+   card rendered twice. See ORDER in my-stats/page.tsx.
+   ═══════════════════════════════════════════════════════════ */
+
+.me-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.me-col-main,
+.me-col-side {
+  display: contents;
+}
+/* The tighter phone gap this screen had when it was a .grid — that rule keys
+   off .grid, which .me-layout is not, so it has to be restated here or every
+   card on a phone gains 6px it never used to have. */
+@media (max-width: 980px) {
+  .me-layout { gap: 14px; }
+}
+
+@media (min-width: 1024px) {
+  .me-layout {
+    display: grid;
+    /* 1.6fr is what makes the rating line a chart rather than a sparkline while
+       still leaving the rail wide enough for a ten-cell form strip. */
+    grid-template-columns: 1.6fr 1fr;
+    gap: 20px;
+    /* Without this the shorter column stretches to match the taller one and
+       its last card grows a hundred pixels of empty padding. */
+    align-items: start;
+  }
+  .me-col-main,
+  .me-col-side {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+}
+
+/* The identity header's three readouts: RANK, SINGLES, DOUBLES.
+   Stacked under the name on a phone, with a hairline above them so they read
+   as a group rather than as three loose numbers. */
+.me-readouts {
+  display: flex;
+  align-items: flex-start;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.me-readouts > .stat {
+  flex: 1 1 0;
+  min-width: 0;
+  padding-right: 16px;
+  border-right: 1px solid var(--line);
+}
+.me-readouts > .stat:last-child {
+  padding-right: 0;
+  border-right: 0;
+}
+
+/* 981px, not 1024px, because that is where .grid-2 stops collapsing — the
+   header sits in one and the readouts have to change shape in the same frame
+   the header does, or they spend 44px sitting in a column they no longer own. */
+@media (min-width: 981px) {
+  .me-readouts {
+    justify-content: flex-end;
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+  }
+  .me-readouts > .stat {
+    flex: 0 0 auto;
+    min-width: 96px;
+    text-align: right;
+    padding-right: 24px;
+  }
+}
+@media (min-width: 1024px) {
+  /* Read at arm's length across a desk rather than at phone distance. */
+  .me-readouts > .stat > .stat-value { font-size: 34px; }
+}
+
+/* The member's name. Held at the phone size until there is genuinely a desktop
+   to fill, rather than driven by a vw unit that would grow it through every
+   size in between. */
+.me-id-name {
+  font-size: clamp(24px, 4vw, 32px);
+}
+@media (min-width: 1024px) {
+  .me-id-name { font-size: 44px; }
+}
+
+/* The rating line. Height is set HERE and not by the viewBox's aspect ratio —
+   the SVG is drawn with preserveAspectRatio="none" precisely so that this
+   declaration is the one that decides, and so a chart in a column two and a
+   half times wider does not become two and a half times taller. Every figure,
+   dot and rule on it is HTML at a fixed pixel size, so stretching the box
+   distorts nothing. See my-stats/rating-chart.tsx. */
+.me-chart-svg {
+  display: block;
+  width: 100%;
+  height: 132px;
+}
+@media (min-width: 640px) { .me-chart-svg { height: 180px; } }
+@media (min-width: 1024px) { .me-chart-svg { height: 240px; } }
+
+.me-rating-figure { font-size: 40px; }
+@media (min-width: 1024px) { .me-rating-figure { font-size: 56px; } }
+
+/* The headline figure on the two rail cards — the form record and the
+   attendance streak. Mono, because it is a number the member is counting. */
+.me-form-figure {
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.02em;
+}
+@media (min-width: 1024px) { .me-form-figure { font-size: 36px; } }
+
+/* One cell of the recent-form run. A wash plus a 2px underline rather than a
+   solid block: ten saturated squares in a row read as a warning strip, and the
+   member's losses are not a warning. Every tone is an existing token. */
+.me-form-cell {
+  width: 22px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 600;
+}
+.me-form-cell[data-result="W"] {
+  background: var(--win-wash);
+  border-bottom: 2px solid var(--win);
+  color: var(--win);
+}
+.me-form-cell[data-result="L"] {
+  background: var(--red-wash);
+  border-bottom: 2px solid var(--loss);
+  color: var(--ink-2);
+}
+@media (min-width: 1024px) {
+  .me-form-cell { width: 28px; height: 36px; }
+}

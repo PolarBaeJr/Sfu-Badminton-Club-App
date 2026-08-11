@@ -1,9 +1,16 @@
-import type { AttendanceSummary } from '@/lib/stats-charts';
+import type { AttendanceSummary, SessionCadence } from '@/lib/stats-charts';
 
 export interface AttendanceGridProps {
   summary: AttendanceSummary;
   /** Named so the empty state can say which season had no sessions. */
   seasonName: string | null;
+  /**
+   * The club's timetable, when it has one. Null is the normal case for a term
+   * that has only run twice or whose nights move — `deriveSessionCadence`
+   * refuses to average a schedule into existence, and the footer is simply
+   * omitted rather than printed as a guess.
+   */
+  cadence?: SessionCadence | null;
 }
 
 /**
@@ -16,18 +23,33 @@ export interface AttendanceGridProps {
  * they are drawn as outlined cells rather than omitted, because a grid of only
  * the sessions somebody attended is a chart that always reads 100%.
  */
-export function AttendanceGrid({ summary, seasonName }: AttendanceGridProps) {
+export function AttendanceGrid({ summary, seasonName, cadence = null }: AttendanceGridProps) {
   if (summary.total === 0) {
     return (
-      <div className="mono muted" style={{ fontSize: 12 }}>
-        No sessions have been held{seasonName ? ` in ${seasonName}` : ''} that you could
-        attend yet. Your grid fills in one square per session.
+      <div className="empty" style={{ padding: '28px 20px' }}>
+        <div className="empty-title">No sessions yet</div>
+        <div className="empty-hint">
+          No sessions have been held{seasonName ? ` in ${seasonName}` : ''} that you could
+          attend. Your grid fills in one square per session, filled when you were there.
+        </div>
       </div>
     );
   }
 
   return (
     <div>
+      {/* The number first, then what it counts. The streak is the figure a
+          member is actually keeping track of; the record beside it is what
+          stops the streak reading as the whole story. */}
+      <div className="row" style={{ gap: 12, alignItems: 'baseline', marginBottom: 16 }}>
+        <div className="mono me-form-figure" style={{ color: summary.currentStreak > 0 ? 'var(--red)' : undefined }}>
+          {summary.currentStreak}
+        </div>
+        <div className="mono muted" style={{ fontSize: 10, letterSpacing: '.16em' }}>
+          SESSION STREAK · {summary.attended} OF {summary.total} TURNED UP
+        </div>
+      </div>
+
       <div className="row" style={{ gap: 3, flexWrap: 'wrap', alignItems: 'flex-start' }}>
         {summary.cells.map((cell) => (
           <span
@@ -52,15 +74,20 @@ export function AttendanceGrid({ summary, seasonName }: AttendanceGridProps) {
         className="row"
         style={{ gap: 0, marginTop: 14, borderTop: '1px solid var(--line)', paddingTop: 12 }}
       >
-        <Figure label="ATTENDED" value={`${summary.attended}/${summary.total}`} />
         <Figure label="RATE" value={`${summary.ratePct}%`} />
-        <Figure
-          label="STREAK"
-          value={String(summary.currentStreak)}
-          tone={summary.currentStreak > 0 ? 'var(--red)' : undefined}
-        />
-        <Figure label="BEST" value={String(summary.bestStreak)} />
+        <Figure label="BEST STREAK" value={String(summary.bestStreak)} />
+        <Figure label="SESSIONS" value={String(summary.total)} />
       </div>
+
+      {cadence && (
+        <div
+          className="mono muted"
+          style={{ fontSize: 10, letterSpacing: '.08em', marginTop: 12 }}
+        >
+          {cadence.perWeek} {cadence.perWeek === 1 ? 'SESSION' : 'SESSIONS'} A WEEK ·{' '}
+          {cadence.weekdays.join(' / ')}
+        </div>
+      )}
     </div>
   );
 }

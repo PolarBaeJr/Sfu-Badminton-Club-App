@@ -92,46 +92,26 @@ export function RatingChart({
     <div>
       <div style={{ position: 'relative', width: '100%' }}>
         <svg
+          className="me-chart-svg"
           viewBox={`0 0 ${BOX.width} ${BOX.height}`}
-          style={{ display: 'block', width: '100%', height: 'auto' }}
+          preserveAspectRatio="none"
           role="img"
           aria-label={`${label} rating over the last ${windowed.length} matches. Currently ${summary.current}, peak ${summary.peak}, low ${summary.low}.`}
         >
-          {/* The aspect ratio is preserved rather than stretched, so a wide card
-              gets a taller chart instead of one whose markers are ovals: with
-              preserveAspectRatio="none" the peak dot is squashed by exactly the
-              factor the card is wider than 320, and at desktop widths that is a
-              visibly elliptical blob sitting on the one point the eye goes to.
-              Uniform scaling would also thicken every stroke, so each stroked
-              element carries non-scaling-stroke and stays the width written
-              here at any size. */}
-
-          {priorRating !== null && (
-            <line
-              x1={0}
-              x2={BOX.width}
-              y1={scale.y(priorRating)}
-              y2={scale.y(priorRating)}
-              stroke="var(--mute)"
-              strokeWidth={1}
-              strokeDasharray="3 3"
-              vectorEffect="non-scaling-stroke"
-            />
-          )}
-
-          {boundaryX !== null && (
-            <line
-              x1={boundaryX}
-              x2={boundaryX}
-              y1={0}
-              y2={BOX.height}
-              stroke="var(--line-2)"
-              strokeWidth={1}
-              strokeDasharray="2 4"
-              vectorEffect="non-scaling-stroke"
-            />
-          )}
-
+          {/* preserveAspectRatio="none" and a HEIGHT SET IN CSS, not by the
+              aspect ratio. On a phone the two are the same thing; in the wide
+              layout's 1.6fr column they are not — a preserved ratio there makes
+              the chart as tall as it is wide, which is a 430px rating line on a
+              screen whose whole complaint was wasted space. The alternative
+              ("meet" inside a fixed 240px box) letterboxes the drawing, and
+              every figure on this chart is an HTML element positioned at
+              y / BOX.height — the moment the drawing stops filling the box those
+              labels come off the line they describe.
+              Stretching costs nothing here BECAUSE of that split: the only
+              things inside the viewBox are two paths, and the stroked one
+              carries non-scaling-stroke. Every dot, rule and figure is HTML at a
+              fixed pixel size, so nothing turns into an ellipse and no dash
+              pitch grows with the container. */}
           <path d={buildRatingAreaPath(windowed, scale)} fill="var(--red)" opacity={0.07} />
           <path
             d={buildRatingPath(windowed, scale)}
@@ -142,23 +122,64 @@ export function RatingChart({
             strokeLinecap="round"
             vectorEffect="non-scaling-stroke"
           />
-
-          {/* Individual matches are only dotted when they are far enough apart
-              to be told from each other; past that the dots merge into a band
-              along the line and add nothing. */}
-          {windowed.length <= 24 &&
-            windowed.map((p, i) => (
-              <circle
-                key={`${p.at}-${i}`}
-                cx={scale.x(i)}
-                cy={scale.y(p.rating)}
-                r={1.6}
-                fill="var(--red)"
-                opacity={0.55}
-              />
-            ))}
-
         </svg>
+
+        {/* The prior-season rule and the season divider are HTML for the same
+            reason the figures are. non-scaling-stroke fixes a stroke's WIDTH and
+            not its dash pitch, so an SVG `3 3` dash on the horizontal rule would
+            render at roughly 3.6x the intended pitch across a wide card — a
+            dashed line that turns into a dotted one at one size and a chain of
+            bars at another. A CSS border keeps both at the pitch written here. */}
+        {priorRating !== null && (
+          <span
+            aria-hidden
+            style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              top: pctY(scale.y(priorRating)),
+              borderTop: '1px dashed var(--mute)',
+              pointerEvents: 'none',
+            }}
+          />
+        )}
+
+        {boundaryX !== null && (
+          <span
+            aria-hidden
+            style={{
+              position: 'absolute',
+              left: pctX(boundaryX),
+              top: 0,
+              bottom: 0,
+              borderLeft: '1px dashed var(--line-2)',
+              pointerEvents: 'none',
+            }}
+          />
+        )}
+
+        {/* Individual matches are only dotted when they are far enough apart to
+            be told from each other; past that the dots merge into a band along
+            the line and add nothing. */}
+        {windowed.length <= 24 &&
+          windowed.map((p, i) => (
+            <span
+              key={`${p.at}-${i}`}
+              aria-hidden
+              style={{
+                position: 'absolute',
+                left: pctX(scale.x(i)),
+                top: pctY(scale.y(p.rating)),
+                transform: 'translate(-50%, -50%)',
+                width: 3,
+                height: 3,
+                borderRadius: '50%',
+                background: 'var(--red)',
+                opacity: 0.55,
+                pointerEvents: 'none',
+              }}
+            />
+          ))}
 
         {/* The three markers that carry meaning are HTML, not SVG, for the same
             reason the figures are: a `<circle r="3">` is 6px on a phone and
