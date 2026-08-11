@@ -93,15 +93,18 @@ export function RatingChart({
       <div style={{ position: 'relative', width: '100%' }}>
         <svg
           viewBox={`0 0 ${BOX.width} ${BOX.height}`}
-          preserveAspectRatio="none"
-          style={{ display: 'block', width: '100%', height: 120 }}
+          style={{ display: 'block', width: '100%', height: 'auto' }}
           role="img"
           aria-label={`${label} rating over the last ${windowed.length} matches. Currently ${summary.current}, peak ${summary.peak}, low ${summary.low}.`}
         >
-          {/* preserveAspectRatio="none" stretches the box to the card, which
-              would also stretch the stroke into an uneven ribbon — every
-              stroked element carries non-scaling-stroke so its width stays the
-              value written here no matter how far the box is pulled. */}
+          {/* The aspect ratio is preserved rather than stretched, so a wide card
+              gets a taller chart instead of one whose markers are ovals: with
+              preserveAspectRatio="none" the peak dot is squashed by exactly the
+              factor the card is wider than 320, and at desktop widths that is a
+              visibly elliptical blob sitting on the one point the eye goes to.
+              Uniform scaling would also thicken every stroke, so each stroked
+              element carries non-scaling-stroke and stays the width written
+              here at any size. */}
 
           {priorRating !== null && (
             <line
@@ -155,33 +158,31 @@ export function RatingChart({
               />
             ))}
 
-          <circle
-            cx={scale.x(summary.peakIndex)}
-            cy={scale.y(peakPoint.rating)}
-            r={3}
-            fill="var(--surface)"
-            stroke="var(--red)"
-            strokeWidth={1.5}
-            vectorEffect="non-scaling-stroke"
-          />
-          {showLow && (
-            <circle
-              cx={scale.x(summary.lowIndex)}
-              cy={scale.y(lowPoint.rating)}
-              r={3}
-              fill="var(--surface)"
-              stroke="var(--mute)"
-              strokeWidth={1.5}
-              vectorEffect="non-scaling-stroke"
-            />
-          )}
-          <circle
-            cx={scale.x(lastIndex)}
-            cy={scale.y(summary.current)}
-            r={3.5}
-            fill="var(--red)"
-          />
         </svg>
+
+        {/* The three markers that carry meaning are HTML, not SVG, for the same
+            reason the figures are: a `<circle r="3">` is 6px on a phone and
+            12px on a wide card, and a dot that grows with the container stops
+            being a marker and becomes a blob. The per-match dots above are left
+            in the SVG because their whole job is to scale with the line. */}
+        <Marker
+          left={pctX(scale.x(summary.peakIndex))}
+          top={pctY(scale.y(peakPoint.rating))}
+          border="var(--red)"
+        />
+        {showLow && (
+          <Marker
+            left={pctX(scale.x(summary.lowIndex))}
+            top={pctY(scale.y(lowPoint.rating))}
+            border="var(--mute)"
+          />
+        )}
+        <Marker
+          left={pctX(scale.x(lastIndex))}
+          top={pctY(scale.y(summary.current))}
+          border="var(--red)"
+          fill="var(--red)"
+        />
 
         {/* The figures, in HTML at a fixed size. translate(-50%, …) centres each
             on its marker; the peak sits above its dot and the low below, so
@@ -286,6 +287,37 @@ export function RatingChart({
         </div>
       )}
     </div>
+  );
+}
+
+/** A fixed-size dot centred on a point of the line. */
+function Marker({
+  left,
+  top,
+  border,
+  fill,
+}: {
+  left: string;
+  top: string;
+  border: string;
+  fill?: string;
+}) {
+  return (
+    <span
+      aria-hidden
+      style={{
+        position: 'absolute',
+        left,
+        top,
+        transform: 'translate(-50%, -50%)',
+        width: 7,
+        height: 7,
+        borderRadius: '50%',
+        border: `1.5px solid ${border}`,
+        background: fill ?? 'var(--surface)',
+        pointerEvents: 'none',
+      }}
+    />
   );
 }
 
