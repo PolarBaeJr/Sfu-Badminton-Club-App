@@ -438,6 +438,30 @@ describe('editing a baseline', () => {
     expect(result.ok === false && result.error).toMatch(/Say why/);
   });
 
+  // THE FLOOR HERE HAS TO BE THE ONE setPlayerPermissions USES, and it was
+  // merely "non-empty". A two-character reason would clear it, the baseline
+  // row and its audit row would be written, and then every propagation would be
+  // refused by the shared floor — leaving "3 of 3 holders could not be updated,
+  // save again to retry" and a retry that fails identically forever. Refused up
+  // front, nothing is written and the retry is a longer sentence.
+  it('refuses a reason below the floor its propagation measures against', async () => {
+    const id = await seedBaseline('Socials VP', SOCIALS);
+    await setPlayerPermissions(EXEC_A, {
+      role: 'custom', grants: SOCIALS, revokes: [], baselineId: id,
+    });
+    const before = audits().length;
+
+    const wider: Capability[] = [...SOCIALS, 'announcements.delete.write'];
+    const result = await updatePermissionBaseline(id, 'Socials VP', wider, 'ok');
+
+    expect(result.ok).toBe(false);
+    // The baseline itself is untouched, which is the half a non-empty floor
+    // would already have written.
+    expect(baselines()[0]!.capabilities).toEqual([...SOCIALS].sort());
+    expect(rowFor(EXEC_A).permission_grants).toEqual([...SOCIALS].sort());
+    expect(audits()).toHaveLength(before);
+  });
+
   // ONE UNREACHABLE HOLDER REFUSES THE WHOLE EDIT — the promise saveBatch makes
   // for a batch somebody chose, held here for a batch nobody did.
   it('writes nothing at all when one holder is out of reach', async () => {

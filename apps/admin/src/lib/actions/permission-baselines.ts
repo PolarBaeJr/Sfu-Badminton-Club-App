@@ -7,6 +7,7 @@ import { requireCapability } from './_shared';
 import { logAdminAudit } from '../audit';
 import { runAction, type ActionResult } from '../action-result';
 import { setPlayerPermissions } from './permissions';
+import { REASON_MIN } from '../audit-reason';
 import {
   accessLevelFor,
   baselineCapabilityRefusal,
@@ -225,8 +226,18 @@ async function updateImpl(
 ): Promise<{ propagated: number }> {
   const { actor, held, adminClient } = await actorContext();
 
-  if (reason.trim() === '') {
-    throw new ExpectedError('Say why this baseline is changing — it changes what people can do.');
+  // THE SHARED FLOOR, WHERE THIS USED TO BE "NON-EMPTY", and the difference is
+  // not cosmetic. This reason is forwarded verbatim into setPlayerPermissions
+  // for every holder, and that action measures against REASON_MIN — so "ok"
+  // would write the baseline row and its audit row, then be refused by all N
+  // propagations, leaving the admin on "the baseline was saved, but 3 of 3
+  // holders could not be updated. Save again to retry" with a retry that fails
+  // identically forever. Refused up here, nothing is written at all.
+  const why = reason.trim();
+  if (why.length < REASON_MIN) {
+    throw new ExpectedError(
+      `Say why this baseline is changing — it changes what people can do. At least ${REASON_MIN} characters.`,
+    );
   }
 
   const nameRefusal = baselineNameRefusal(name);
@@ -299,7 +310,7 @@ async function updateImpl(
       target_id: id,
       old_value: { name: before.name, capabilities: before.capabilities },
       new_value: { name: trimmed, capabilities: stored, holders: holders.length },
-      reason,
+      reason: why,
     },
     { baselineId: id },
   );
@@ -315,7 +326,8 @@ async function updateImpl(
       grants: stored,
       revokes: [],
       baselineId: id,
-      reason,
+      // The TRIMMED text, and the same one on the baseline's own row above.
+      reason: why,
     });
     if (!result.ok) failures.push(`${nameOfPerson(holder)}: ${result.error}`);
   }

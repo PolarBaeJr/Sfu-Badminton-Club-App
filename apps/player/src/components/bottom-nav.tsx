@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@badminton/ui';
 import { createClient } from '@/lib/supabase-browser';
 import {
@@ -107,17 +107,28 @@ export function BottomNav({
     );
   }, [supabase]);
 
-  // RE-READ ON EVERY NAVIGATION, and this is the half that works today.
+  // RE-READ ON LEAVING /announcements, and this is the half that works today.
   //
   // The nav lives in the layout and never remounts, so the count was read once
   // per full page load and after that only when somebody PUBLISHED. A member
   // who read every post kept the badge until the next announcement went out:
   // the read rows are written by their own device, and nothing told the nav.
   //
-  // Posts are marked read as they scroll into view on /announcements, so
-  // leaving that screen is exactly the moment the answer has changed. Needs no
-  // realtime and no migration, which is why it is here as well as below.
+  // Posts are marked read as they scroll into view on /announcements — that is
+  // the only screen in the app that writes a read row — so leaving it is
+  // exactly the moment the answer has changed, and the only moment a
+  // navigation can tell. Refetching on EVERY route change would be five
+  // queries per tab tap on a phone for an answer that had not moved.
+  //
+  // Needs no realtime and no migration, which is why it is here as well as
+  // below.
+  const previousPath = useRef(pathname);
   useEffect(() => {
+    const left = previousPath.current;
+    previousPath.current = pathname;
+    // The first run is the mount, where `left === pathname` and the count has
+    // to be read whatever the route is.
+    if (left !== pathname && !left.startsWith('/announcements')) return;
     void checkUnread();
   }, [checkUnread, pathname]);
 

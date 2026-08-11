@@ -24,7 +24,10 @@ const MIGRATIONS = join(__dirname, '../../../../../supabase/migrations');
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = join(dir, entry.name);
-    if (entry.isDirectory()) return sourceFiles(full);
+    // Tests are not the app, and this file itself contains the literal the
+    // scan below looks for — left in, the guard would eventually be checking
+    // its own fixtures.
+    if (entry.isDirectory()) return entry.name === '__tests__' ? [] : sourceFiles(full);
     return /\.tsx?$/.test(entry.name) ? [full] : [];
   });
 }

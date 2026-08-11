@@ -15,6 +15,8 @@ import {
   cn,
 } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
+// The console's shared floor for a typed reason. Imported, never copied.
+import { REASON_MIN } from '@/lib/audit-reason';
 import {
   createPermissionBaseline,
   deletePermissionBaseline,
@@ -399,7 +401,12 @@ export function BaselineManager({
               disabled={
                 saving
                 || refusal !== null
-                || (editing !== null && editing !== 'new' && reason.trim() === '')
+                // REASON_MIN, where this was merely non-empty. The server
+                // forwards this text into every holder's own audit row through
+                // setPlayerPermissions, which measures against the shared
+                // floor — a one-character reason would save the baseline and
+                // then fail every propagation.
+                || (editing !== null && editing !== 'new' && reason.trim().length < REASON_MIN)
               }
               onClick={save}
             >
