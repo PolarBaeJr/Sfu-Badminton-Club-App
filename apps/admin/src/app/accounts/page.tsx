@@ -214,7 +214,10 @@ export default async function AccountsPage() {
         <div className="flex min-w-0 flex-col gap-5">
           {showOfficers ? (
             <>
-              <Card id="officers" className="scroll-mt-32 rounded-none p-0">
+              {/* The anchor lives on a wrapper because Card takes no id, and
+                  packages/ui is not this change's to edit. */}
+              <section id="officers" className="scroll-mt-32">
+              <Card className="rounded-none p-0">
                 <CardHeading
                   title="Officers"
                   sub="Everyone who can open this console."
@@ -314,6 +317,7 @@ export default async function AccountsPage() {
                   </ResponsiveTable>
                 )}
               </Card>
+              </section>
 
               {/* WHAT ROLES CAN DO — READ-ONLY, AND EVERY WORD OF IT DERIVED.
                   The mockup drew five selects mapping jobs like "Suspend or ban"
@@ -326,7 +330,8 @@ export default async function AccountsPage() {
                   text comes out of ROLE_DEFAULTS and CAPABILITY_GATES rather
                   than out of a sentence somebody typed, and the one control on
                   it is a link to the screen that really does this. */}
-              <Card id="roles" className="scroll-mt-32 rounded-none">
+              <section id="roles" className="scroll-mt-32">
+              <Card className="rounded-none">
                 <CardHeading
                   title="What roles can do"
                   sub={
@@ -371,6 +376,7 @@ export default async function AccountsPage() {
                   })}
                 </dl>
               </Card>
+              </section>
             </>
           ) : (
             // WITHHELD, NOT EMPTY. A blank panel reads as broken; this says who
@@ -384,15 +390,17 @@ export default async function AccountsPage() {
           )}
 
           {showPlatformSettings && (
-            <Card id="account-rules" className="scroll-mt-32 rounded-none">
-              <CardHeading
-                title="Account rules"
-                sub="What a member's account may do — challenges, match caps, no-shows, inactivity, check-in."
-              />
-              <div className="mt-4">
-                <PlatformSettingsForm settings={settingsForSection(settings ?? [], 'accounts')} />
-              </div>
-            </Card>
+            <section id="account-rules" className="scroll-mt-32">
+              <Card className="rounded-none">
+                <CardHeading
+                  title="Account rules"
+                  sub="What a member's account may do — challenges, match caps, no-shows, inactivity, check-in."
+                />
+                <div className="mt-4">
+                  <PlatformSettingsForm settings={settingsForSection(settings ?? [], 'accounts')} />
+                </div>
+              </Card>
+            </section>
           )}
         </div>
 
