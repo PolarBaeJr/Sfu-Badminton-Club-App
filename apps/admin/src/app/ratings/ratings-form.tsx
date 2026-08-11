@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button, Input, Switch, Textarea } from '@badminton/ui';
 // Deep import, NOT the '@badminton/shared' barrel — the barrel re-exports the
 // mail sender, which drags `resend` and a Supabase client behind it. This is a
@@ -147,7 +147,9 @@ function SectionRail({ sections, active }: { sections: RatingsSectionDef[]; acti
           href={`#${s.id}`}
           // -ml-px pulls the 2px active border over the rail's hairline rather
           // than sitting beside it.
-          className={`-ml-px ${MONO_LABEL} ${s.id === active ? 'active !text-[var(--ink)]' : ''}`}
+          className={`-ml-px font-mono text-[10px] uppercase tracking-[.14em] ${
+            s.id === active ? 'active text-[var(--ink)]' : 'text-[var(--mute)]'
+          }`}
           aria-current={s.id === active ? 'true' : undefined}
         >
           {s.label}
@@ -207,7 +209,6 @@ export function RatingsForm({
   );
 
   const sectionIds = useMemo(() => railSections.map((s) => s.id), [railSections]);
-  const containerRef = useRef<HTMLDivElement>(null);
 
   // Scroll-spy for the rail. rootMargin pins the "current" line near the top of
   // the viewport so a section counts as active once its heading reaches it,
@@ -368,7 +369,7 @@ export function RatingsForm({
   }
 
   return (
-    <div ref={containerRef}>
+    <div>
       <div className="grid items-start gap-6 pb-[120px] md:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-[220px_minmax(0,1fr)_300px]">
         <SectionRail sections={railSections} active={active} />
 
@@ -383,7 +384,7 @@ export function RatingsForm({
             <section
               key={section.id}
               id={section.id}
-              className="scroll-mt-24 border border-[var(--line)] bg-[var(--surface)]"
+              className="scroll-mt-32 border border-[var(--line)] bg-[var(--surface)]"
             >
               <h2 className={`${MONO_LABEL} px-4 pt-4 pb-3`}>{section.label}</h2>
               {section.reference ? (
@@ -399,7 +400,7 @@ export function RatingsForm({
           {(leftovers.fields.length > 0 || leftovers.rawKeys.length > 0) && (
             <section
               id="other"
-              className="scroll-mt-24 border border-[var(--line)] bg-[var(--surface)]"
+              className="scroll-mt-32 border border-[var(--line)] bg-[var(--surface)]"
             >
               <h2 className={`${MONO_LABEL} px-4 pt-4 pb-3`}>Other settings</h2>
               {/* A key or field added by a later migration that nobody wired

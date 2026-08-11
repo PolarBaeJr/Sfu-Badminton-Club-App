@@ -61,11 +61,15 @@ export default async function RatingsPage() {
     : { data: null };
   const settings = settingsForSection((allSettings ?? []) as PlatformSetting[], 'ratings');
 
-  const ladder = await loadLadder(db, canReadRoster);
-  const lastRewrite = await loadLastRewrite(db, canReadSeasons);
+  // Every read below feeds the right-hand column, which is only drawn for a
+  // platform.page holder — so the reads do not happen without it either. A
+  // query that runs for output nobody renders still ships its rows into the RSC
+  // payload; that is the leak, not the render.
+  const ladder = await loadLadder(db, canReadSettings && canReadRoster);
+  const lastRewrite = await loadLastRewrite(db, canReadSettings && canReadSeasons);
   const lastChange = await loadLastChange(db, settings, {
-    canReadAudit,
-    canReadRoster,
+    canReadAudit: canReadSettings && canReadAudit,
+    canReadRoster: canReadSettings && canReadRoster,
   });
 
   return (
