@@ -227,8 +227,14 @@ async function setPlayerPermissionsImpl(playerId: string, next: PermissionsPaylo
     if (next.role !== 'custom') {
       throw new ExpectedError('A baseline is stored as a hand-picked set. Pick "Hand-picked".');
     }
+    // Element by element rather than through a joined string: a delimiter is a
+    // character that could appear in a capability, and this comparison is what
+    // stops a stored label describing a set the baseline does not say.
     const asked = [...new Set(next.grants)].sort();
-    if (asked.join(' ') !== fromBaseline.join(' ') || next.revokes.length > 0) {
+    const sameAsBaseline =
+      asked.length === fromBaseline.length
+      && asked.every((capability, index) => capability === fromBaseline![index]);
+    if (!sameAsBaseline || next.revokes.length > 0) {
       throw new ExpectedError(
         'That does not match what the baseline says. Reload the page and try again.',
       );
