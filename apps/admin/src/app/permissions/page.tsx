@@ -3,10 +3,12 @@ import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import {
   accessLevelFor,
   effectiveCapabilities,
+  isInGoodStanding,
   permissionsOf,
   type AccessLevel,
 } from '@/lib/permissions';
-import { EmptyState, PageHeader } from '@badminton/ui';
+import { isAdminActor } from '@/lib/player-field-access';
+import { PageHeader } from '@badminton/ui';
 import { PermissionEditor, type PersonRow } from './permission-editor';
 
 // WHO HOLDS CONSOLE ACCESS, AND WHAT THEY CAN DO WITH IT.
@@ -23,26 +25,44 @@ import { PermissionEditor, type PersonRow } from './permission-editor';
 // an exec and handing over the whole exec baseline. The resolver never cared
 // about levels, so composing one takes the same path composing an exec does.
 //
-// ADMINS STAY READ-ONLY, and for a different reason that has not changed: an
-// admin is a superuser by LEVEL, permits() short-circuits before any stored set
-// is consulted, so a role on an admin's row would look like a narrowing and
-// would not be one.
+// ADMINS STAY READ-ONLY FOR THEIR CAPABILITIES, and for a different reason that
+// has not changed: an admin is a superuser by LEVEL, permits() short-circuits
+// before any stored set is consulted, so a role on an admin's row would look
+// like a narrowing and would not be one. Their console ACCESS is still editable
+// — that is a level, not a capability.
 //
-// Listing an admin anyway is the point: this page answers "who can get into the
-// console", and a page that silently omitted the level it cannot edit would
-// answer a narrower question than its title claims.
+// AND NOW EVERY OTHER MEMBER TOO, because the page's own subtitle promises to
+// answer "who can open this console" and it could only ever answer the second
+// half. Giving somebody the console was a control on the /players Edit dialog,
+// three tabs away from the screen that describes what having it means.
+//
+// TWO QUERIES, AND THE SHAPES ARE DELIBERATELY DIFFERENT. The people who hold a
+// level are few and each of them needs the whole permission triple. The rest are
+// a hundred rows on staging and none of them has anything to resolve — they have
+// no level, so no gate is ever reached and no stored set is ever consulted — so
+// they travel as a name, an email and whether they can sign in, which is
+// everything the search box and the console-access control read. Fetching the
+// full row for all of them would put four unread columns per member into the RSC
+// payload to render a list that starts out hidden.
 export default async function PermissionsPage() {
   const viewer = await requireCapability('permissions.page');
   const viewerSet = effectiveCapabilities(accessLevelFor(viewer), permissionsOf(viewer));
+  const adminClient = createAdminClient();
 
   // All three permission columns, together. Selecting permission_role without
   // both delta columns makes permissionsOf() throw — deliberately, because the
   // alternative is a narrowed SELECT quietly turning a stored revoke into
   // nothing.
-  const { data: people } = await createAdminClient()
+  //
+  // The standing columns are here for what the page SAYS, not for what it
+  // allows: accessLevelFor ignores standing, but isInGoodStanding does not, so a
+  // banned or deactivated executive holds the level and still cannot get through
+  // the front door. Offering to compose them without saying so would be a screen
+  // describing access that nobody has.
+  const { data: people } = await adminClient
     .from('players')
     .select(
-      'id, full_name, email, exec_title, role, is_exec, is_trainer, permission_role, permission_grants, permission_revokes',
+      'id, full_name, email, exec_title, role, is_exec, is_trainer, is_banned, status, active_flag, permission_role, permission_grants, permission_revokes',
     )
     .or('role.eq.admin,is_exec.eq.true,is_trainer.eq.true')
     .order('full_name');
@@ -51,8 +71,8 @@ export default async function PermissionsPage() {
   // page cannot develop its own idea of what makes somebody an exec. A row that
   // resolves to no level is dropped: the filter above should make that
   // impossible, and if it ever stops being impossible, listing somebody with no
-  // level on the permissions page is the wrong way to find out.
-  const rows: PersonRow[] = (people ?? [])
+  // level among the console holders is the wrong way to find out.
+  const holders: PersonRow[] = (people ?? [])
     .map((person) => ({ person, level: accessLevelFor(person) }))
     .filter((entry): entry is { person: typeof entry.person; level: AccessLevel } =>
       entry.level !== null,
@@ -60,11 +80,56 @@ export default async function PermissionsPage() {
     .map(({ person, level }) => ({
       id: person.id as string,
       name: (person.full_name as string | null) ?? (person.email as string | null) ?? 'Unnamed',
+      email: (person.email as string | null) ?? null,
       title: (person.exec_title as string | null) ?? null,
       level,
+      canSignIn: isInGoodStanding(person),
       role: (person.permission_role as string | null) ?? null,
       grants: (person.permission_grants as string[] | null) ?? [],
       revokes: (person.permission_revokes as string[] | null) ?? [],
+    }));
+
+  // Everyone else, and ONLY FOR AN ADMIN. Giving somebody the console is a
+  // level, and levels are handed out by admins alone — so for anybody else this
+  // is a hundred rows they could look at and do nothing with, fetched on every
+  // request. Not a security decision (setConsoleAccess refuses them regardless);
+  // a decision about what is worth sending.
+  //
+  // Excluded by id rather than by re-stating the level filter with the sense
+  // flipped: two filters that have to be exact opposites of each other are one
+  // edit away from listing somebody twice, and a duplicated row on a permissions
+  // page is a person an admin thinks they have two answers for.
+  //
+  // Excluded HERE rather than in the query, and that is the point of the extra
+  // few rows. A `.not('id', 'in', …)` that PostgREST refused would come back as
+  // `data: null` with the error unread, which renders as a search box that finds
+  // nobody — no error, no empty state, nothing to notice. A Set the code owns
+  // cannot fail that way.
+  const viewerIsAdmin = isAdminActor(viewer);
+  const holderIds = new Set(holders.map((person) => person.id));
+  const { data: members } = viewerIsAdmin
+    ? await adminClient
+        .from('players')
+        .select('id, full_name, email, is_banned, status, active_flag')
+        .order('full_name')
+    : { data: [] };
+
+  // No level, so no permission columns and nothing to resolve. Written out as
+  // the empty composition rather than left off the type: the editor asks one
+  // question of every row it lists, and a second row shape would be a second
+  // path through it for no gain.
+  const others: PersonRow[] = (members ?? [])
+    .filter((person) => !holderIds.has(person.id as string))
+    .map((person) => ({
+      id: person.id as string,
+      name: (person.full_name as string | null) ?? (person.email as string | null) ?? 'Unnamed',
+      email: (person.email as string | null) ?? null,
+      title: null,
+      level: null,
+      canSignIn: isInGoodStanding(person),
+      role: null,
+      grants: [],
+      revokes: [],
     }));
 
   return (
@@ -75,24 +140,23 @@ export default async function PermissionsPage() {
         watermark="P"
       />
 
-      {rows.length === 0 ? (
-        <EmptyState
-          title="Nobody has console access"
-          description="No admin, executive or varsity trainer is on the roster."
-        />
-      ) : (
-        <PermissionEditor
-          people={rows}
-          viewerId={viewer.id as string}
-          // The actor's own set, resolved on the SERVER through the same path
-          // the gates use, and sent as a plain array because a Set does not
-          // cross this boundary. It only decides what the editor DISABLES:
-          // setPlayerPermissions resolves the same set again from the actor's
-          // own row and refuses anything outside it, so this is a courtesy, not
-          // the boundary.
-          viewerCapabilities={[...viewerSet]}
-        />
-      )}
+      <PermissionEditor
+        holders={holders}
+        others={others}
+        viewerId={viewer.id as string}
+        // Console access is a LEVEL, and levels are handed out by admins alone —
+        // the hard floor in player-field-access.ts, which no capability reaches.
+        // setConsoleAccess checks this again from the actor's own row; this only
+        // decides whether the control is drawn.
+        viewerIsAdmin={viewerIsAdmin}
+        // The actor's own set, resolved on the SERVER through the same path
+        // the gates use, and sent as a plain array because a Set does not
+        // cross this boundary. It only decides what the editor DISABLES:
+        // setPlayerPermissions resolves the same set again from the actor's
+        // own row and refuses anything outside it, so this is a courtesy, not
+        // the boundary.
+        viewerCapabilities={[...viewerSet]}
+      />
     </div>
   );
 }

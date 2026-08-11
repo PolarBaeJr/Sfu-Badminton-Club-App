@@ -306,8 +306,17 @@ describe('baselines', () => {
     for (const capability of TRAINER_BASELINE) expect(exec.has(capability)).toBe(true);
   });
 
-  it('lists exactly the four VP jobs', () => {
-    expect([...PERMISSION_ROLES]).toEqual(['finance', 'tournaments', 'internal', 'external']);
+  // The four VP jobs, and `custom` — which is not a fifth job but the empty
+  // base, the only way the storage can express a hand-picked set. Pinned in
+  // order, because that order is the order the editor offers them in.
+  it('lists exactly the four VP jobs, and the hand-picked base', () => {
+    expect([...PERMISSION_ROLES]).toEqual([
+      'finance',
+      'tournaments',
+      'internal',
+      'external',
+      'custom',
+    ]);
   });
 });
 
@@ -390,6 +399,11 @@ describe('ROLE_DEFAULTS', () => {
   //
   // If a future capability genuinely belongs to two jobs, THIS half is the one
   // to relax. The subset assertion above is not.
+  //
+  // `custom` contributes nothing to either side, which is the arithmetic reason
+  // an empty base was the right shape for it: a hand-picked set had to be
+  // storable without claiming a slice of the partition that some VP job already
+  // owns.
   it('partitions the exec baseline exactly, as the four portfolios did', () => {
     const fromRoles = PERMISSION_ROLES.flatMap((role) => [...ROLE_DEFAULTS[role]]);
     expect(new Set(fromRoles).size, 'two roles claim the same capability').toBe(fromRoles.length);
