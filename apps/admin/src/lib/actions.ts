@@ -19,6 +19,8 @@
 //   - varsity.ts       — varsity notes
 //   - reliability.ts   — adjustReliability (manual reliability-counter edits)
 //   - permissions.ts   — setPlayerPermissions + setConsoleAccess (/permissions)
+//   - permission-baselines.ts — the club's own named capability sets, created,
+//                        edited (with propagation to every holder) and deleted
 //   - settings.ts      — updateLegalDocument (waiver / code of conduct),
 //                        updateEventWaiverTemplate (per-season event waiver),
 //                        updatePlatformSettings (/ratings + /accounts)
@@ -49,6 +51,11 @@ export {
 
 export { setPlayerPermissions, setConsoleAccess } from './actions/permissions';
 export type { PermissionsPayload } from './actions/permissions';
+export {
+  createPermissionBaseline,
+  updatePermissionBaseline,
+  deletePermissionBaseline,
+} from './actions/permission-baselines';
 
 export {
   confirmWalkover,
