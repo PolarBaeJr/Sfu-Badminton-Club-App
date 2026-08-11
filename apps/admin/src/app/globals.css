@@ -224,17 +224,22 @@ input, textarea, select, button, a {
 }
 
 /* Loading placeholder bar. The player app shimmers a gradient across these;
-   gradients are ruled out here, so the pulse walks the surface steps instead
-   (--surface-2 over a --surface card, briefly to --surface-3). Same signal,
-   no new colour and nothing that is not already a flat fill. */
+   gradients are ruled out here, so it pulses between two flat fills instead.
+
+   The fills are the hairline overlays rather than a surface step, because a
+   surface step does not survive the light theme: --surface-2 resolves to
+   --bg-elevated, which is #fff there — the same value as the --surface card
+   underneath it, so the bar would be invisible on every light-theme console.
+   --line and --line-2 are alpha neutrals, so they read against #111 and #fff
+   alike, and they are the tone this console already draws its edges in. */
 .skeleton {
-  background: var(--surface-2);
+  background: var(--line);
   border-radius: 0;
   animation: admin-skeleton-pulse 1.6s ease-in-out infinite;
 }
 @keyframes admin-skeleton-pulse {
-  0%, 100% { background-color: var(--surface-2); }
-  50%      { background-color: var(--surface-3); }
+  0%, 100% { background-color: var(--line); }
+  50%      { background-color: var(--line-2); }
 }
 @media (prefers-reduced-motion: reduce) {
   .skeleton { animation: none; }
