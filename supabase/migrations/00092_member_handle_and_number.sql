@@ -20,6 +20,33 @@
 -- member calls an RPC that does not exist yet, and the leaderboard reads a
 -- column get_leaderboard() does not return yet.
 --
+-- HOW TO APPLY IT — the same one command whether or not the database has seen
+-- an earlier version of this file. Back the database up first; the RUNBOOK's
+-- step 2 is not optional here, because section 7b drops a column.
+--
+--   cat supabase/migrations/00092_member_handle_and_number.sql \
+--     | ssh <pi-host> "docker exec -i supabase-db psql -U postgres -d postgres \
+--                        -v ON_ERROR_STOP=1 --single-transaction"
+--
+-- --single-transaction is worth the flag on this one. The file drops a column
+-- and rebuilds a security-definer guard; a half-applied run would leave the
+-- guard replaced but the column still there, or worse. All or nothing.
+--
+-- AFTERWARDS, three reads that say whether it did what it says (none of them
+-- writes anything):
+--
+--   SELECT count(*) AS members, count(member_code) AS coded,
+--          count(DISTINCT member_code) AS distinct_codes,
+--          count(handle) AS handled
+--     FROM players WHERE status <> 'pending_approval';
+--
+--   -- Nobody should be on the fallback tier. Section 5b explains why.
+--   SELECT count(*) FROM players WHERE handle LIKE 'member\_%';
+--
+--   -- The sequential shape should be entirely gone.
+--   SELECT column_name FROM information_schema.columns
+--    WHERE table_name = 'players' AND column_name LIKE 'member%';
+--
 -- players.display_name IS DELIBERATELY KEPT, and kept populated. Nothing writes
 -- to it any more and nothing displays it, but it is what every handle below was
 -- DERIVED from — and a derivation over free text is a judgement call, not a
@@ -730,6 +757,47 @@ GRANT EXECUTE ON FUNCTION public.get_leaderboard() TO authenticated, anon, servi
 -- schema is stale until it is told otherwise — without this the handle write,
 -- the assignment RPC and the leaderboard all fail until the next restart.
 NOTIFY pgrst, 'reload schema';
+
+-- ============================================================
+-- OPTIONAL, DESTRUCTIVE, AND DELIBERATELY NOT RUN BY THIS FILE
+-- Re-deriving the handles staging already assigned
+-- ============================================================
+-- Section 5b is WHERE handle IS NULL, so re-running this migration leaves every
+-- handle staging already has exactly where it is. That is the correct default
+-- and it is what protects a public identity from moving under somebody.
+--
+-- But it means staging ends up with NEW codes and OLD-SCHEME handles: any
+-- handle that landed on the tiebreak tier reads `matthew_6` (the old member
+-- number) where a fresh database would now produce `matthew_2`. Harmless — but
+-- if the point of staging is to preview what production will get, the preview
+-- is wrong in exactly those rows.
+--
+-- SO THIS IS AN OPT-IN. Run it ONLY on staging, ONLY if you want the preview to
+-- match, and never on production once real members have seen their handles.
+-- Nulling a handle and re-deriving it CHANGES A PUBLIC NAME.
+--
+-- Find out whether it would change anything at all first — on a club with no
+-- name collisions the answer is "nothing", and then there is nothing to do:
+--
+--   SELECT id, full_name, handle FROM players
+--    WHERE handle ~ '_[0-9]+$' OR handle LIKE 'member\_%'
+--    ORDER BY handle;
+--
+-- If that returns rows and you want them re-derived, run the two statements
+-- below TOGETHER, in one transaction, and then re-run this whole file so
+-- section 5b fills them back in:
+--
+--   BEGIN;
+--     UPDATE players
+--        SET handle = NULL
+--      WHERE handle ~ '_[0-9]+$' OR handle LIKE 'member\_%';
+--   COMMIT;
+--
+--   -- then: cat supabase/migrations/00092_member_handle_and_number.sql | psql …
+--
+-- Only the collided handles are nulled, not all of them: a member whose handle
+-- came straight off their name derives to the same string either way, so
+-- nulling it would be churn with a window in which they have no handle at all.
 
 -- ============================================================
 -- If either unique index above failed, these show what it found
