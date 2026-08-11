@@ -1,8 +1,15 @@
-import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getCurrentPlayer, getExecutives } from '@/lib/supabase-server';
 import { redirect } from 'next/navigation';
+import Link from 'next/link';
 import { Megaphone } from 'lucide-react';
-import { PageHeader } from '@badminton/ui';
-import { AnnouncementItem } from './announcement-item';
+import { CLUB_TIMEZONE, pickOne, splitFullName } from '@badminton/shared';
+import { AnnouncementRow, PinnedNotice, type NewsPost } from './announcement-item';
+
+interface AuthorRow {
+  id: string;
+  full_name: string | null;
+  avatar_url: string | null;
+}
 
 interface Announcement {
   id: string;
@@ -10,17 +17,84 @@ interface Announcement {
   body: string;
   type: 'info' | 'warning' | 'urgent' | 'event';
   pinned: boolean;
-  status: 'draft' | 'published';
   target_audience: 'all' | 'competitive' | 'recreational' | 'eligible_only';
-  expires_at: string | null;
   created_at: string;
+  author: AuthorRow | AuthorRow[] | null;
 }
 
 interface AnnouncementRead {
-  id: string;
   announcement_id: string;
-  player_id: string;
-  read_at: string;
+}
+
+/** The four values `announcement_type` actually has (00001_schema.sql:595),
+ *  each mapped to a Badge tone. The lookup is total by construction, and
+ *  CATEGORY_TONE falls back to neutral anyway: a type this list has not heard
+ *  of is a category we cannot colour, not a post to hide, and the old screen
+ *  indexed a Record directly and rendered a class of `undefined` for anything
+ *  unexpected. */
+const CATEGORY_TONE: Record<string, NewsPost['tone']> = {
+  info: 'neutral',
+  event: 'neutral',
+  warning: 'warning',
+  urgent: 'danger',
+};
+
+/** '18 JAN'. Formatted here, on the server, in the club's timezone — a post
+ *  published at 9pm Pacific must not read as the next day to a member who
+ *  opened the app on a phone still set to Toronto. */
+function dayStamp(iso: string) {
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    timeZone: CLUB_TIMEZONE,
+  })
+    .format(new Date(iso))
+    .toUpperCase();
+}
+
+/** 'JANUARY', or 'JANUARY 2024' when the month is not in the current club
+ *  year. Evergreen posts (all_seasons, 00085) never retire, so a two-year-old
+ *  notice can sit under the same month name as this term's and two bare
+ *  'JANUARY' headers would be indistinguishable. */
+function monthLabel(iso: string, currentYear: string) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: CLUB_TIMEZONE,
+  }).formatToParts(new Date(iso));
+  const month = parts.find((p) => p.type === 'month')?.value ?? '';
+  const year = parts.find((p) => p.type === 'year')?.value ?? '';
+  return (year === currentYear ? month : `${month} ${year}`).toUpperCase();
+}
+
+function clubYear(now: Date) {
+  return new Intl.DateTimeFormat('en-GB', { year: 'numeric', timeZone: CLUB_TIMEZONE }).format(now);
+}
+
+/** '2 DAYS AGO'. Only the pinned notice uses this: a pinned post is on screen
+ *  because it is still current, so how long it has been current is the useful
+ *  fact. Everything else is dated. */
+function relativeAge(iso: string, now: Date) {
+  const minutes = Math.max(0, Math.round((now.getTime() - new Date(iso).getTime()) / 60000));
+  if (minutes < 60) return 'JUST NOW';
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} HOUR${hours === 1 ? '' : 'S'} AGO`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} DAY${days === 1 ? '' : 'S'} AGO`;
+  const weeks = Math.floor(days / 7);
+  if (days < 60) return `${weeks} WEEK${weeks === 1 ? '' : 'S'} AGO`;
+  const months = Math.floor(days / 30);
+  if (months < 24) return `${months} MONTHS AGO`;
+  return `${Math.floor(days / 365)} YEARS AGO`;
+}
+
+/** 'Priya Raman' → 'P. RAMAN'. A byline under a row is a signature, not an
+ *  introduction — the avatar beside it is what members actually recognise. A
+ *  mononym keeps its whole self ('CHER'), because 'C.' signs nothing. */
+function abbreviateName(full: string) {
+  const { first_name, last_name } = splitFullName(full);
+  if (!last_name) return first_name.toUpperCase();
+  return `${first_name.charAt(0).toUpperCase()}. ${last_name.toUpperCase()}`;
 }
 
 export default async function AnnouncementsPage() {
@@ -44,10 +118,16 @@ export default async function AnnouncementsPage() {
   const { data: activeSeason } = await supabase
     .from('seasons').select('id').eq('active_flag', true).maybeSingle();
 
-  const nowIso = new Date().toISOString();
+  const now = new Date();
+  const nowIso = now.toISOString();
   let query = supabase
     .from('announcements')
-    .select('*')
+    // Unhinted embed: `announcements` has exactly one foreign key to `players`
+    // (author_id), so PostgREST resolves it without a constraint name — the
+    // same embed /feed uses for its one notice. Only the three columns 00032
+    // grants `authenticated` are named; exec_title is not one of them and comes
+    // from get_executives() below instead.
+    .select('id, title, body, type, pinned, target_audience, created_at, author:players(id, full_name, avatar_url)')
     .eq('status', 'published')
     .or(`expires_at.is.null,expires_at.gt.${nowIso}`);
 
@@ -55,83 +135,111 @@ export default async function AnnouncementsPage() {
     query = query.or(`all_seasons.eq.true,season_id.eq.${activeSeason.id}`);
   }
 
-  const { data: announcements } = await query
-    .order('pinned', { ascending: false })
-    .order('created_at', { ascending: false })
-    .returns<Announcement[]>();
-
-  const { data: reads } = await supabase
-    .from('announcement_reads')
-    .select('*')
-    .eq('player_id', player.id)
-    .returns<AnnouncementRead[]>();
+  const [{ data: announcements }, { data: reads }, executives] = await Promise.all([
+    query
+      .order('pinned', { ascending: false })
+      .order('created_at', { ascending: false })
+      .returns<Announcement[]>(),
+    supabase
+      .from('announcement_reads')
+      .select('announcement_id')
+      .eq('player_id', player.id)
+      .returns<AnnouncementRead[]>(),
+    // The byline's role. exec_title is withheld from `authenticated` by 00032's
+    // column grants, so it cannot be read off the embed above; get_executives()
+    // is the definer-rights function that already publishes exactly this field
+    // to the /exec page, and it is granted to anon and authenticated. Escaping
+    // to the service role for a decorative label would be the wrong trade.
+    //
+    // An author who is not on the exec (an admin, or an exec who has since
+    // stepped down) simply has no row here and their byline is the name alone.
+    getExecutives(),
+  ]);
 
   const readSet = new Set((reads ?? []).map((r) => r.announcement_id));
+  const titleById = new Map(
+    (executives ?? []).map((e) => [e.id, e.exec_title?.trim() ? e.exec_title.trim().toUpperCase() : null]),
+  );
+
   // RLS only checks status='published'; expiry + audience must be filtered here.
   // Expiry is applied in the query above; audience is matched to the viewer's
-  // division / eligibility.
-  const all = (announcements ?? []).filter(
+  // division / eligibility (player_status carries the division — 00001:18).
+  const visible = (announcements ?? []).filter(
     (a) =>
       a.target_audience === 'all' ||
       a.target_audience === player.status ||
       (a.target_audience === 'eligible_only' && player.eligibility_flag)
   );
-  const pinned = all.filter((a) => a.pinned);
-  const regular = all.filter((a) => !a.pinned);
+
+  function toPost(a: Announcement, stamp: string): NewsPost {
+    const author = pickOne(a.author);
+    const name = author?.full_name?.trim() || '';
+    return {
+      id: a.id,
+      title: a.title,
+      body: a.body,
+      category: (a.type ?? '').toUpperCase() || 'NEWS',
+      tone: CATEGORY_TONE[a.type] ?? 'neutral',
+      stamp,
+      author:
+        author && name
+          ? {
+              id: author.id,
+              name,
+              shortName: abbreviateName(name),
+              role: titleById.get(author.id) ?? null,
+              avatarUrl: author.avatar_url,
+            }
+          : null,
+    };
+  }
+
+  const pinned = visible.filter((a) => a.pinned).map((a) => toPost(a, relativeAge(a.created_at, now)));
+
+  // Grouped by month, in the order the query already sorted them (newest
+  // first), so the groups need no second sort of their own.
+  const year = clubYear(now);
+  const months: { label: string; posts: NewsPost[] }[] = [];
+  for (const a of visible.filter((x) => !x.pinned)) {
+    const label = monthLabel(a.created_at, year);
+    let group = months[months.length - 1];
+    if (!group || group.label !== label) {
+      group = { label, posts: [] };
+      months.push(group);
+    }
+    group.posts.push(toPost(a, dayStamp(a.created_at)));
+  }
 
   return (
-    <div data-screen-label="News">
-      <PageHeader
-        title="News"
-        sub="Updates from the executive team. Sessions, tournaments, policy changes — keep an eye on pinned posts at the top."
-      />
+    <div data-screen-label="News" className="news">
+      <header className="news-head">
+        <Link href="/feed" className="news-back">← FEED</Link>
+        <h1 className="news-title">News<span className="dot">.</span></h1>
+        <p className="news-sub">Everything the exec has posted this term.</p>
+      </header>
 
-      {all.length === 0 ? (
-        <div className="card-base">
+      {visible.length === 0 ? (
+        <div className="card-base" style={{ marginTop: 20 }}>
           <div className="empty">
             <Megaphone size={40} className="text-[var(--mute)]" style={{ display: 'block', margin: '0 auto 12px' }} />
             No announcements yet. Check back soon.
           </div>
         </div>
       ) : (
-        <div className="grid grid-12">
-          <div style={{ gridColumn: 'span 8' }} className="feed-col">
-            {pinned.length > 0 && (
-              <div className="card-base">
-                <div className="card-head">
-                  <h3 className="card-title">Pinned</h3>
-                  <span className="tag tag-gold">{pinned.length}</span>
-                </div>
-                {pinned.map((a) => (
-                  <AnnouncementItem key={a.id} announcement={a} isRead={readSet.has(a.id)} />
-                ))}
-              </div>
-            )}
-            <div className="card-base">
-              <div className="card-head">
-                <h3 className="card-title">All updates</h3>
-                {regular.length > 0 && <span className="tag">{regular.length}</span>}
-              </div>
-              {regular.length === 0 ? (
-                <div className="empty" style={{ padding: 24 }}>Nothing else fresh today.</div>
-              ) : (
-                regular.map((a) => (
-                  <AnnouncementItem key={a.id} announcement={a} isRead={readSet.has(a.id)} />
-                ))
-              )}
-            </div>
-          </div>
-          <div style={{ gridColumn: 'span 4' }} className="feed-col">
-            <div className="card-base">
-              <div className="card-head">
-                <h3 className="card-title">About these</h3>
-              </div>
-              <div className="page-sub" style={{ marginTop: 0, fontSize: 13 }}>
-                Announcements expire after their expiry date and are filtered to your division. Newest first; pinned posts stay on top until removed.
-              </div>
-            </div>
-          </div>
-        </div>
+        <>
+          {pinned.map((post) => (
+            <PinnedNotice key={post.id} post={post} isRead={readSet.has(post.id)} />
+          ))}
+
+          {months.map((group) => (
+            <section key={group.label}>
+              <h2 className="news-month">{group.label}</h2>
+              {group.posts.map((post) => (
+                <AnnouncementRow key={post.id} post={post} isRead={readSet.has(post.id)} />
+              ))}
+            </section>
+          ))}
+        </>
       )}
     </div>
   );

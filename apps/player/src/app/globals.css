@@ -1941,3 +1941,171 @@ html, body { overflow-x: clip; }
   border-bottom: 1px solid var(--line);
   padding-bottom: 18px;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   NEWS (/announcements)
+   The screen used to be two cards in a 12-column grid — a "Pinned"
+   card, an "All updates" card, and a side panel explaining the
+   rules of the screen to a member standing in a gym. What a term's
+   notices actually are is a dated list, so that is what they are
+   now: one card for the pinned notice, because it is the thing the
+   exec wants read first, and hairline-ruled rows for everything
+   else, grouped by the month they were posted. Same shape as the
+   feed's river (.river-*) above, for the same reason.
+   Nothing here truncates: this is the screen you come to in order
+   to read the whole thing.
+   ═══════════════════════════════════════════════════════════ */
+
+/* Phone-first: full width of .page, capped on a desktop so the 15px body
+   copy keeps a readable measure instead of running the width of a monitor. */
+.news { max-width: 620px; margin-inline: auto; }
+
+/* --- the header block --------------------------------------- */
+.news-head {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 14px;
+}
+.news-back {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--mute);
+  text-decoration: none;
+}
+@media (hover: hover) { .news-back:hover { color: var(--ink); } }
+.news-title {
+  font-family: var(--display);
+  font-size: 38px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.02em;
+  margin: 10px 0 0;
+}
+.news-title .dot { color: var(--red); }
+.news-sub {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink-2);
+  margin: 8px 0 0;
+}
+
+/* --- shared bits -------------------------------------------- */
+/* The date on a row and the age on the pinned notice sit in the same place and
+   read as the same thing, so they are one class. */
+.news-stamp {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .12em;
+  color: var(--mute);
+  white-space: nowrap;
+}
+/* pre-wrap because the body is plain text typed into a textarea in the console
+   — the paragraph breaks the author put in are the only structure it has.
+   anywhere, because a pasted URL is otherwise wider than a phone. */
+.news-body {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* --- the pinned notice -------------------------------------- */
+/* The only card on the screen. The red spine is what makes it read as pinned
+   at a glance, without the row of tags the old version needed to say so. */
+.news-pin {
+  border-left: 2px solid var(--red);
+  margin-top: 20px;
+  padding: 18px;
+}
+.news-pin + .news-pin { margin-top: 12px; }
+.news-pin-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.news-pin-flag {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .16em;
+  color: var(--red);
+}
+.news-pin-title {
+  font-family: var(--display);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -.01em;
+  margin: 10px 0 0;
+}
+.news-pin-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  padding-top: 12px;
+}
+.news-pin-name { font-size: 13px; color: var(--ink); line-height: 1.2; }
+.news-pin-role {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--mute);
+  margin-top: 3px;
+}
+
+/* --- the month groups --------------------------------------- */
+.news-month {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin: 0;
+  padding: 22px 0 8px;
+}
+.news-row {
+  display: block;
+  border-top: 1px solid var(--line);
+  padding: 14px 0 18px;
+}
+.news-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+/* Badge (packages/ui) sets text-xs on its own; this class is emitted after the
+   @tailwind utilities position at the top of this file, so it wins on order
+   without needing !important. Mono to match every other small label here. */
+.news-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .12em;
+}
+.news-headline {
+  font-family: var(--display);
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -.01em;
+  margin: 10px 0 0;
+}
+.news-byline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .1em;
+  color: var(--mute);
+}
