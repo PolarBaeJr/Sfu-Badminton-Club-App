@@ -23,6 +23,8 @@ import {
   assertEventWaiverSigned,
   loadTournamentWaiverContext,
   pairWaiverMembers,
+  unsignedAmong,
+  notifyEventWaiverRequired,
   forfeitOpenMatchesForEntry,
   FORFEIT_REASON,
   type DrawExitStatus,
@@ -110,6 +112,14 @@ export async function addParticipantToEvent(eventId: string, playerId: string) {
     performed_by: admin.id,
     details: { player_id: playerId },
   });
+
+  // BEING ADDED PUSHES THE SIGNATURE AT THEM. Adding still succeeds — the
+  // walk-up on the day is exactly why it must — but somebody an exec put on the
+  // sheet was never asked for the event waiver, and this is where they are.
+  // After the insert and after the audit row, because none of those may be lost
+  // to a notification failure.
+  const { unsigned, tournamentName } = await unsignedAmong(adminClient, event.tournament_id, [playerId]);
+  await notifyEventWaiverRequired(adminClient, event.tournament_id, tournamentName, unsigned);
 
   revalidateEventPaths(event.tournament_id, eventId);
   return data;
@@ -324,6 +334,12 @@ export async function addParticipantsToEvent(eventId: string, playerIds: string[
     );
     if (auditError) Sentry.captureException(auditError);
   }
+
+  // One read and ONE insert for the whole batch, not sixty of each — the same
+  // reason this action exists at all. Only the entrants who actually landed and
+  // who do not already have a current acceptance are told.
+  const { unsigned, tournamentName } = await unsignedAmong(adminClient, event.tournament_id, added);
+  await notifyEventWaiverRequired(adminClient, event.tournament_id, tournamentName, unsigned);
 
   revalidateEventPaths(event.tournament_id, eventId);
   return { added, failures };
@@ -646,6 +662,16 @@ export async function addPairToEvent(eventId: string, player1Id: string, player2
     performed_by: admin.id,
     details: { player1_id: player1Id, player2_id: player2Id },
   });
+
+  // BOTH HALVES ARE TOLD, and each is asked for their own signature — because
+  // the pair cannot be checked in until both have one. A pair is the population
+  // this feature was built for: the player app's registration dialog returns
+  // early for doubles and never shows the waiver at all, so before this change
+  // NO doubles entrant had ever been asked, in any tournament.
+  const { unsigned, tournamentName } = await unsignedAmong(
+    adminClient, event.tournament_id, [player1Id, player2Id],
+  );
+  await notifyEventWaiverRequired(adminClient, event.tournament_id, tournamentName, unsigned);
 
   revalidateEventPaths(event.tournament_id, eventId);
   return data;

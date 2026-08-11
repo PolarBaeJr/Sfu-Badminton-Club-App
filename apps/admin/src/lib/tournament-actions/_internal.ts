@@ -26,6 +26,10 @@ import {
 // By SUBPATH, never through the barrel — eventWaiverHash uses node:crypto and
 // the barrel is imported by client components in both apps.
 import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
+// Aliased because this module already exports a leaner notifyPlayers of its
+// own (positional, tournament types, no push). The waiver nudge wants the push
+// channel and the category preference, so it uses the general-purpose one.
+import { notifyPlayers as notifyPlayersWithPush } from '../notify';
 import type {
   TournamentEventType,
   TournamentMatchFormat,
@@ -276,6 +280,101 @@ export function pairWaiverMembers(pair: {
     { id: pair.player1_id, name: name(pair.player1, pair.player1_id) },
     { id: pair.player2_id, name: name(pair.player2, pair.player2_id) },
   ];
+}
+
+/**
+ * PUSH THE SIGNATURE AT THE MEMBER, the moment an exec adds them.
+ *
+ * Being added must ACTIVELY ask for the signature, not wait to be noticed at
+ * the door. Three things carry that, and the notification is only one of them:
+ *
+ *   1. this notification (and a push, for anyone who opted into tournaments),
+ *   2. a blocking panel on the tournament page, which a member who never opens
+ *      a notification still cannot miss, and
+ *   3. check-in, which refuses regardless of whether either was read.
+ *
+ * Layer 3 is the one that is load-bearing. 1 and 2 exist so that nobody has to
+ * find out at the door.
+ *
+ * TYPE `general`, DELIBERATELY. Eight of the twenty-one notification_type
+ * values have no producer anywhere and are dead letters; `general` has three
+ * live producers and metadata-driven routing, and `tournament_id` in its
+ * metadata is exactly the key notificationAction() reads to send the tap to
+ * /tournaments/<id> — which is where the panel that takes the signature lives.
+ * A new enum value would need an ALTER TYPE, a TYPES entry and a routing branch
+ * to arrive at the same page.
+ *
+ * Best-effort by construction: notifyPlayers reports to Sentry and never
+ * throws, because the member IS added and an action that reported failure would
+ * send the exec looking for a person already on the sheet.
+ */
+export async function notifyEventWaiverRequired(
+  adminClient: ReturnType<typeof createAdminClient>,
+  tournamentId: string,
+  tournamentName: string,
+  playerIds: string[],
+): Promise<void> {
+  if (playerIds.length === 0) return;
+  const body =
+    `You have been entered in ${tournamentName}, which has an event waiver. ` +
+    'Read and accept it before you turn up — you cannot be checked in until you do.';
+  await notifyPlayersWithPush(
+    adminClient,
+    playerIds,
+    {
+      type: 'general',
+      title: 'Event waiver needed',
+      body,
+      metadata: { tournament_id: tournamentId, kind: 'event_waiver_required' },
+    },
+    { title: 'Event waiver needed', body, url: `/tournaments/${tournamentId}` },
+    'tournaments',
+  );
+}
+
+/**
+ * Who among a freshly added group still owes a signature, and the tournament's
+ * name for the message. Returns an empty list when the tournament has no waiver
+ * — the common case, and one read rather than a notification nobody needs.
+ *
+ * Swallows its own failures. Every caller runs this AFTER the entrant is
+ * committed, so a failure here must cost a notification, never the add.
+ */
+export async function unsignedAmong(
+  adminClient: ReturnType<typeof createAdminClient>,
+  tournamentId: string,
+  playerIds: string[],
+): Promise<{ unsigned: string[]; tournamentName: string }> {
+  if (playerIds.length === 0) return { unsigned: [], tournamentName: '' };
+  try {
+    const { data: tournament } = await adminClient
+      .from('tournaments')
+      .select('name, waiver_text')
+      .eq('id', tournamentId)
+      .maybeSingle();
+    const text = resolveEventWaiverText(tournament);
+    if (!text) return { unsigned: [], tournamentName: '' };
+
+    const requiredHash = eventWaiverHash(text);
+    const { data: acceptances } = await adminClient
+      .from('event_waiver_acceptances')
+      .select('player_id, waiver_hash, accepted_at')
+      .eq('tournament_id', tournamentId)
+      .in('player_id', playerIds);
+
+    const { blocked } = screenForEventWaiver(
+      playerIds.map((id) => ({ id, members: [{ id, name: id }] })),
+      requiredHash,
+      (acceptances ?? []) as AcceptedEventWaiver[],
+    );
+    return {
+      unsigned: blocked.map((entry) => entry.id),
+      tournamentName: (tournament?.name as string) ?? 'a tournament',
+    };
+  } catch (err) {
+    Sentry.captureException(err);
+    return { unsigned: [], tournamentName: '' };
+  }
 }
 
 // Map tournament match format to the shared elo engine's MatchFormat
