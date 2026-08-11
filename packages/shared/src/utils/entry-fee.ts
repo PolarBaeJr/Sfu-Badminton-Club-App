@@ -51,6 +51,26 @@ export async function ensureEntryFees(
   tournamentId: string,
   playerIds: readonly string[],
 ): Promise<EntryFeeResult[]> {
+  // THE "NEVER THROWS" ABOVE, ENFORCED BY CODE RATHER THAN BY THE COMMENT.
+  //
+  // The body checks `.error` on every query, but a client-level failure — the
+  // socket dropping, a fetch rejecting — rejects the promise instead, and that
+  // rejection would propagate out of a registration that has ALREADY written
+  // the participant row. The member would be entered and told they were not.
+  // The whole contract of this function is that it cannot do that, so the
+  // guarantee lives here.
+  try {
+    return await ensureEntryFeesImpl(supabase, tournamentId, playerIds);
+  } catch {
+    return [];
+  }
+}
+
+async function ensureEntryFeesImpl(
+  supabase: SupabaseClient,
+  tournamentId: string,
+  playerIds: readonly string[],
+): Promise<EntryFeeResult[]> {
   const unique = [...new Set(playerIds)].filter(Boolean);
   if (unique.length === 0) return [];
 

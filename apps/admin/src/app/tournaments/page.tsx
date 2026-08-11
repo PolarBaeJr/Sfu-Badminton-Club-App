@@ -255,6 +255,10 @@ export default async function TournamentsPage({
       entrantIds.add(p.player1_id);
       entrantIds.add(p.player2_id);
     }
+    // Fee-row holders are asked about too, not only live entrants — otherwise
+    // a withdrawn member would never appear in `liable` and the loop below
+    // would drop their outstanding fee on the "not liable" branch.
+    for (const fee of fees) entrantIds.add(fee.player_id);
     const { data: payerData } = entrantIds.size
       ? await supabase
           .from('players')
@@ -280,6 +284,20 @@ export default async function TournamentsPage({
     for (const p of pairs) {
       addPayer(p.event_id, p.player1_id);
       addPayer(p.event_id, p.player2_id);
+    }
+
+    // AND EVERYONE WITH A FEE ROW, entered or not. participants/pairs above
+    // exclude withdrawn entries, and a withdrawal does not cancel the fee — the
+    // member's own /fees screen reads the ledger and still shows it. Counting
+    // only live entrants would make this headline quietly smaller than the money
+    // the club is actually owed, and smaller than the tournament's own fee page.
+    // Not routed through addPayer: that keys off an event id, and a fee row
+    // names the tournament directly.
+    for (const fee of fees) {
+      if (!liable.has(fee.player_id)) continue;
+      const set = payersByTournament.get(fee.tournament_id) ?? new Set<string>();
+      set.add(fee.player_id);
+      payersByTournament.set(fee.tournament_id, set);
     }
 
     for (const [tid, payers] of payersByTournament) {

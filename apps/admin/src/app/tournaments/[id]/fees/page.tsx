@@ -1,6 +1,7 @@
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { Card, Badge, AvatarChip, PageHeader, ResponsiveTable, TableCard } from '@badminton/ui';
 import { unwrap } from '@badminton/shared';
+import { isWaivedFee } from '@/lib/fee-status';
 import type { TournamentFeeTier, ClubFee, Player } from '@badminton/shared';
 import { notFound } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
@@ -68,17 +69,7 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
     }
   }
 
-  const players = playerIds.size > 0
-    ? (unwrap(
-        await supabase
-          .from('players')
-          .select('id, full_name, email, avatar_url')
-          .in('id', Array.from(playerIds))
-          .eq('is_exec', false)
-          .eq('fee_exempt', false)
-          .order('full_name')
-      ) as Pick<Player, 'id' | 'full_name' | 'email' | 'avatar_url'>[])
-    : [];
+  const liveEntrants = new Set(playerIds);
 
   // Entry fees off the club's one ledger (00094), which is also where the
   // /fees page and the member's own screen read them — so "who has paid for
@@ -94,8 +85,48 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
   ) as Pick<ClubFee, 'player_id' | 'tier_id' | 'amount_cents' | 'paid_at' | 'method'>[];
   const feeByPlayer = new Map(fees.map((f) => [f.player_id, f]));
 
-  const paidCount = players.filter((p) => feeByPlayer.get(p.id)?.paid_at).length;
-  const outstandingCount = players.length - paidCount;
+  // WHO IS ON THIS PAGE: everyone currently entered, PLUS everyone who has a
+  // fee row for this tournament whether or not they still are.
+  //
+  // The second half is not tidiness. Self-withdrawal is allowed right up until
+  // the draw is published, and a withdrawal does not cancel the fee — an entry
+  // that was made is a fact, and a ledger that deletes its own rows when
+  // somebody changes their mind cannot be reconciled. The member's own /fees
+  // screen reads the ledger and shows it, so a row this page hid would be money
+  // one side could see and the other side could not settle. The exemptions are
+  // applied the same way and for the same reason: an entrant promoted to exec
+  // after entering keeps the fee they already owe.
+  for (const fee of fees) playerIds.add(fee.player_id as string);
+
+  const roster = playerIds.size > 0
+    ? (unwrap(
+        await supabase
+          .from('players')
+          .select('id, full_name, email, avatar_url, is_exec, fee_exempt')
+          .in('id', Array.from(playerIds))
+          .order('full_name')
+      ) as (Pick<Player, 'id' | 'full_name' | 'email' | 'avatar_url'> & {
+        is_exec: boolean; fee_exempt: boolean;
+      })[])
+    : [];
+  const players = roster.filter(
+    (p) => feeByPlayer.has(p.id) || (!p.is_exec && !p.fee_exempt),
+  );
+
+  // WAIVED IS NOT PAID, and this page was the last fee surface in the app that
+  // said otherwise — a waiver is stored as a paid row with amount_cents 0 and
+  // method 'waived' (fee-status.ts), so `Boolean(paid_at)` rendered a green
+  // "Paid · $0.00" for a fee the club deliberately wrote off. /admin/fees and
+  // the member's own screen have both read it correctly for a while; this now
+  // agrees with them.
+  const stateOf = (fee?: { paid_at: string | null; method: string | null }) => {
+    const waived = isWaivedFee(fee);
+    return { waived, paid: Boolean(fee?.paid_at) && !waived };
+  };
+
+  const paidCount = players.filter((p) => stateOf(feeByPlayer.get(p.id)).paid).length;
+  const waivedCount = players.filter((p) => stateOf(feeByPlayer.get(p.id)).waived).length;
+  const outstandingCount = players.length - paidCount - waivedCount;
 
   return (
     <div className="space-y-6">
@@ -109,15 +140,29 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
       <TournamentFeeActions mode="tiers" tournamentId={id} tiers={tiers} />
 
       {/* Summary */}
-      <div className="grid grid-cols-2 gap-4">
+      {/* Paid + Waived + Outstanding = the rows in the table below, by
+          construction — Outstanding is the remainder rather than its own test,
+          the same shape /admin/fees uses. Waived appears only when the club has
+          actually waived somebody. */}
+      <div className={`grid gap-4 ${waivedCount > 0 ? 'grid-cols-3' : 'grid-cols-2'}`}>
         <Card>
           <p className="text-xs text-[var(--text-muted)] uppercase">Paid</p>
           <p className="text-2xl font-bold font-mono text-[var(--color-success)]">{paidCount}</p>
         </Card>
         <Card>
           <p className="text-xs text-[var(--text-muted)] uppercase">Outstanding</p>
-          <p className="text-2xl font-bold font-mono text-[var(--color-warning)]">{outstandingCount}</p>
+          {/* Amber only when there is something to act on. A permanently amber
+              zero trains people to ignore the colour that matters. */}
+          <p className={`text-2xl font-bold font-mono ${outstandingCount > 0 ? 'text-[var(--color-warning)]' : ''}`}>
+            {outstandingCount}
+          </p>
         </Card>
+        {waivedCount > 0 && (
+          <Card>
+            <p className="text-xs text-[var(--text-muted)] uppercase">Waived</p>
+            <p className="text-2xl font-bold font-mono">{waivedCount}</p>
+          </Card>
+        )}
       </div>
 
       {/* Fee Table */}
@@ -125,15 +170,26 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
         <ResponsiveTable
           cards={players.map((player) => {
             const fee = feeByPlayer.get(player.id);
-            const paid = Boolean(fee?.paid_at);
+            const { paid, waived } = stateOf(fee);
             const tier = fee?.tier_id ? tierById.get(fee.tier_id) : null;
             const owedCents = fee?.amount_cents ?? defaultTier?.amount_cents ?? null;
             return (
               <TableCard
                 key={player.id}
-                title={personTitle(player.full_name, player.email ?? '', player.avatar_url, player.id)}
+                title={personTitle(
+                  player.full_name,
+                  // Says WHY somebody with no live entry is on the list, rather
+                  // than leaving an exec to wonder.
+                  liveEntrants.has(player.id) ? player.email ?? '' : 'Withdrawn · fee still on the books',
+                  player.avatar_url,
+                  player.id,
+                )}
                 value={owedCents != null ? `$${(owedCents / 100).toFixed(2)}` : '-'}
-                badges={<Badge variant={paid ? 'success' : 'warning'}>{paid ? 'Paid' : 'Unpaid'}</Badge>}
+                badges={
+                  <Badge variant={paid ? 'success' : waived ? 'neutral' : 'warning'}>
+                    {paid ? 'Paid' : waived ? 'Waived' : 'Unpaid'}
+                  </Badge>
+                }
                 fields={[
                   { label: 'Tier', value: tier?.name ?? defaultTier?.name ?? '-' },
                   { label: 'Method', value: (paid && fee?.method) || '-' },
@@ -166,7 +222,7 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
             <tbody className="divide-y divide-[var(--border)]">
               {players.map((player) => {
                 const fee = feeByPlayer.get(player.id);
-                const paid = Boolean(fee?.paid_at);
+                const { paid, waived } = stateOf(fee);
                 const tier = fee?.tier_id ? tierById.get(fee.tier_id) : null;
                 const owedCents = fee?.amount_cents ?? defaultTier?.amount_cents ?? null;
                 return (
@@ -176,12 +232,16 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
                         <AvatarChip name={player.full_name} src={player.avatar_url} size="sm" id={player.id} />
                         <div>
                           <p className="text-sm font-medium text-[var(--text-primary)]">{player.full_name}</p>
-                          <p className="text-xs text-[var(--text-muted)]">{player.email}</p>
+                          <p className="text-xs text-[var(--text-muted)]">
+                            {liveEntrants.has(player.id) ? player.email : 'Withdrawn · fee still on the books'}
+                          </p>
                         </div>
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <Badge variant={paid ? 'success' : 'warning'}>{paid ? 'Paid' : 'Unpaid'}</Badge>
+                      <Badge variant={paid ? 'success' : waived ? 'neutral' : 'warning'}>
+                        {paid ? 'Paid' : waived ? 'Waived' : 'Unpaid'}
+                      </Badge>
                     </td>
                     <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">
                       {tier?.name ?? defaultTier?.name ?? '-'}
