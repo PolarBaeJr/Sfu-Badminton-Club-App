@@ -24,11 +24,19 @@ import { unwrap } from '@badminton/shared';
  * three weeks before the season it was for began. It now carries the season it
  * was recorded under, so the gap between terms cannot swallow a payment.
  *
- * other_income (donations, grants, socials) is folded into totalCents rather
- * than being returned by a separate helper. Both /fees and /dashboard already
- * read totalCents, so adding a ledger here reaches both callers at once; a
- * sibling helper that only one page remembered to call is precisely how the
- * figure came to be wrong the first time.
+ * EVERY LEDGER IS FOLDED INTO totalCents HERE, and a caller wanting "income"
+ * reads that field rather than adding ledgers up itself. other_income
+ * (donations, grants, socials) was added to this function for that reason and
+ * reached both /fees and /dashboard at once: a total assembled out of parts by
+ * a page that only remembered some of them is precisely how the figure came to
+ * be wrong the first time.
+ *
+ * The per-ledger helpers below are NOT that. They exist because seeing a ledger
+ * is a per-ledger permission — fees.clubfees.read and fees.otherincome.read are
+ * separate capabilities — so a caller allowed one figure can fetch that one
+ * without reading books it may not see. This function calls them, so each sum
+ * still has one implementation and the total still has one assembly point;
+ * what is forbidden is a second piece of arithmetic, not a second entry point.
  *
  * Only rows with paid_at set count, in EVERY ledger — one rule, not one per
  * table. An unpaid or waived row is a liability, not income.
@@ -67,16 +75,50 @@ const sum = (result: { data: { amount_cents: number | null }[] | null; error: un
   unwrap(result as { data: { amount_cents: number | null }[] | null; error: { message: string } | null })
     .reduce((acc, r) => acc + (r.amount_cents ?? 0), 0);
 
-export async function getSeasonIncome(
+/**
+ * ONE LEDGER, ON ITS OWN — club fees, and nothing else.
+ *
+ * For the caller who may see this ledger and no other. Drawing the figure out
+ * of getSeasonIncome instead would read the club's tournament money and
+ * reinstatements on their behalf, which is the leak the fetch gating on /fees
+ * and /dashboard exists to prevent. See the note on the interface above.
+ */
+export async function getClubFeeIncome(
   supabase: SupabaseClient,
   season: SeasonWindow,
-): Promise<SeasonIncome> {
-  const [club, tournament, reinstatement, other] = await Promise.all([
-    supabase
+): Promise<number> {
+  return sum(
+    await supabase
       .from('club_fees')
       .select('amount_cents')
       .eq('season_id', season.id)
       .not('paid_at', 'is', null),
+  );
+}
+
+/**
+ * The other-income ledger on its own — donations, grants, socials (00073).
+ * Same reason as getClubFeeIncome above, and the same paid_at rule.
+ */
+export async function getOtherIncome(
+  supabase: SupabaseClient,
+  season: SeasonWindow,
+): Promise<number> {
+  return sum(
+    await supabase
+      .from('other_income')
+      .select('amount_cents')
+      .eq('season_id', season.id)
+      .not('paid_at', 'is', null),
+  );
+}
+
+export async function getSeasonIncome(
+  supabase: SupabaseClient,
+  season: SeasonWindow,
+): Promise<SeasonIncome> {
+  const [clubCents, tournament, reinstatement, otherCents] = await Promise.all([
+    getClubFeeIncome(supabase, season),
 
     // Inner join: a fee whose tournament is not in this season must not count.
     supabase
@@ -94,17 +136,11 @@ export async function getSeasonIncome(
     // 00073. season_id is NOT NULL here, so unlike reinstatements there is no
     // "attached to no season" row to worry about — but the paid_at rule is the
     // same, so a row recorded before the money actually arrived stays out.
-    supabase
-      .from('other_income')
-      .select('amount_cents')
-      .eq('season_id', season.id)
-      .not('paid_at', 'is', null),
+    getOtherIncome(supabase, season),
   ]);
 
-  const clubCents = sum(club);
   const tournamentCents = sum(tournament);
   const reinstatementCents = sum(reinstatement);
-  const otherCents = sum(other);
 
   return {
     clubCents,

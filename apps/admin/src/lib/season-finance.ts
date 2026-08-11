@@ -78,18 +78,30 @@ interface ExpenseRow {
   category: string | null;
 }
 
-export async function getSeasonFinances(
+/** Money out, with no ledger of money IN read at all. */
+export type SeasonExpenses = Pick<SeasonFinances, 'expenseCents' | 'expensesByCategory'>;
+
+/**
+ * The expense half on its own.
+ *
+ * Split out because seeing what the club has SPENT (fees.expenses.read) and
+ * seeing what it has TAKEN IN are different permissions — the dashboard draws
+ * an expense total for somebody who may see no income ledger and no net
+ * position, and calling getSeasonFinances for that figure would read the club's
+ * fees, tournament money and reinstatements for a person shown none of them.
+ *
+ * getSeasonFinances calls this, exactly as it calls getSeasonIncome, so there
+ * is still one implementation of the sum and one place net is computed.
+ */
+export async function getSeasonExpenses(
   supabase: SupabaseClient,
   season: SeasonWindow,
-): Promise<SeasonFinances> {
-  const [income, expenses] = await Promise.all([
-    getSeasonIncome(supabase, season),
-    supabase
-      .from('club_expenses')
-      .select('amount_cents, category')
-      .eq('season_id', season.id)
-      .not('paid_at', 'is', null),
-  ]);
+): Promise<SeasonExpenses> {
+  const expenses = await supabase
+    .from('club_expenses')
+    .select('amount_cents, category')
+    .eq('season_id', season.id)
+    .not('paid_at', 'is', null);
 
   // unwrap, NOT `data ?? []`. A failed expense query read as an empty ledger
   // would make netCents equal income exactly — the club would be reported as
@@ -118,10 +130,21 @@ export async function getSeasonFinances(
     .map(([category, cents]) => ({ category, cents }))
     .sort((a, b) => b.cents - a.cents);
 
+  return { expenseCents, expensesByCategory };
+}
+
+export async function getSeasonFinances(
+  supabase: SupabaseClient,
+  season: SeasonWindow,
+): Promise<SeasonFinances> {
+  const [income, expenses] = await Promise.all([
+    getSeasonIncome(supabase, season),
+    getSeasonExpenses(supabase, season),
+  ]);
+
   return {
     income,
-    expenseCents,
-    expensesByCategory,
-    netCents: income.totalCents - expenseCents,
+    ...expenses,
+    netCents: income.totalCents - expenses.expenseCents,
   };
 }

@@ -14,7 +14,7 @@ import {
   Megaphone,
   ShieldCheck,
 } from 'lucide-react';
-import type { Area } from '../lib/permissions';
+import { canAccess, type AccessLevel, type Area, type Permissions } from '../lib/permissions';
 
 // THE CONSOLE'S NAVIGATION, as data.
 //
@@ -86,3 +86,21 @@ export const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
     ],
   },
 ];
+
+/**
+ * Every door this person can actually open, flattened out of the two rows.
+ *
+ * Derived rather than listed, through the same canAccess() the sidebar and the
+ * middleware use, so a section added to NAV_SECTIONS later appears here with no
+ * second list to remember. The dashboard uses it to tell somebody narrowed by
+ * permissions where they CAN go, instead of leaving them on a page whose every
+ * panel belongs to a capability they do not hold.
+ */
+export function openableSections(
+  level: AccessLevel | null,
+  permissions: Permissions,
+): NavItem[] {
+  return NAV_SECTIONS.flatMap((section) => section.items).filter((item) =>
+    canAccess(level, permissions, item.href),
+  );
+}

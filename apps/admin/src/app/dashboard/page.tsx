@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
 import { accessLevelFor, atLeast, canAccess, permissionsOf, permits } from '@/lib/permissions';
-import { Badge, AvatarChip, PageHeader } from '@badminton/ui';
+import { Badge, AvatarChip, Card, EmptyState, PageHeader } from '@badminton/ui';
 import { PLAYER_STATUS_LABELS } from '@badminton/shared';
 import Link from 'next/link';
 import {
@@ -12,7 +12,12 @@ import {
   Trophy,
 } from 'lucide-react';
 import { PlayerActions } from '../players/player-actions';
+import { openableSections } from '@/components/nav-sections';
 import { getSeasonFinances } from '@/lib/season-finance';
+import { getDashboardFinances } from '@/lib/dashboard-finance';
+
+/** Money, formatted the way the finance cards on /fees format it. */
+const money = (cents: number) => `$${(Math.abs(cents) / 100).toFixed(2)}`;
 
 // Only needed to give the "trainer sees no matches" branch of the fetch below a
 // type to agree with — the admin client carries no generated Database type, so
@@ -72,6 +77,19 @@ export default async function DashboardPage() {
   // the fetch, and the page-versus-read split makes that a wider leak rather
   // than a narrower one. Ask for the capability the DATA needs.
   const showFinances = permits(level, permissions, 'fees.netposition.read');
+  // The ledgers underneath it, one capability each, for the narrowed landing
+  // below. Same rule as showFinances and for the same reason: ask for the
+  // capability the DATA needs. fees.netposition.read buys the club's whole
+  // position; these three each buy one ledger, and somebody may hold one and
+  // none of the others — the Finance role is exactly that person. Each gates its
+  // own FETCH inside getDashboardFinances(), which is where that mapping can be
+  // tested.
+  const showExpenses = permits(level, permissions, 'fees.expenses.read');
+  const showClubFees = permits(level, permissions, 'fees.clubfees.read');
+  const showOtherIncome = permits(level, permissions, 'fees.otherincome.read');
+  // An affordance rather than data: it opens /fees, where the form lives and the
+  // action re-checks. Nothing is fetched for it.
+  const canAddExpense = permits(level, permissions, 'fees.expenses.add.write');
   // Sections that used to be unconditional. A varsity trainer reaches the
   // dashboard (it is where sign-in lands) but has no business in matches or
   // tournaments, and both links bounce them to /unauthorized.
@@ -83,6 +101,39 @@ export default async function DashboardPage() {
   // this gates a FETCH, so anyone who kept the panel without it would be handed
   // the pending-approval list and a dialog whose every Save throws.
   const canApprove = permits(level, permissions, 'players.approve.write');
+
+  // DOES ANY PANEL ON THIS PAGE RENDER AT ALL?
+  //
+  // Somebody narrowed to the Finance role holds fees.page, fees.expenses.read
+  // and fees.expenses.add.write, and not one flag above asks for any of them:
+  // she signed in, landed here because this is where sign-in lands, and got a
+  // header and nothing else. Being narrowed looked identical to the app being
+  // broken.
+  //
+  // EVERYTHING BELOW THIS FLAG RENDERS ONLY WHEN IT IS FALSE, deliberately.
+  // An unrestricted exec holds fees.expenses.read — it is in EXEC_BASELINE —
+  // so a tile gated on the capability alone would appear for every exec and
+  // admin in the club, and this page has to keep looking exactly as it does
+  // today for anybody nobody narrowed. There is no capability that separates
+  // the Finance role from an ordinary exec inside the fees area (the role IS
+  // that subset of the baseline), so the second condition can only be "no panel
+  // of the old dashboard is yours". It is a pure function of level and
+  // permissions, decided before the first query, and no unrestricted level can
+  // reach it: a trainer holds players.read, an exec holds seven of these, an
+  // admin holds all of them.
+  //
+  // The price, named out loud: a narrowed person who holds both matches.page
+  // and fees.expenses.read gets the Recent Matches panel and no expense tile.
+  const hasTiles = canReadRoster || canApprove || showDisputes || showWalkovers
+    || showMatches || showTournaments || showChallenges || showFinances;
+
+  // Where such a person CAN go. Derived from the nav list through the same
+  // canAccess() the sidebar and the middleware use, so a section added later
+  // signposts itself with no list here to keep. /dashboard is dropped because
+  // it is this page.
+  const openSections = hasTiles
+    ? []
+    : openableSections(level, permissions).filter((item) => item.href !== '/dashboard');
 
   // Gate the FETCHES, not just the tiles: a hidden card whose query still ran
   // would ship admin-only counts into the RSC payload for anyone with devtools.
@@ -159,6 +210,19 @@ export default async function DashboardPage() {
       seasonNetCents = finances.netCents;
     }
   }
+
+  // The narrowed landing's own figures: one query per ledger this person may
+  // read and none at all for the ledgers they may not, decided inside
+  // getDashboardFinances. Nothing is fetched when the ordinary dashboard
+  // rendered — an exec holds fees.expenses.read, and asking for the total on
+  // every load would be a query nobody is shown the answer to.
+  const ledgers = hasTiles
+    ? null
+    : await getDashboardFinances(supabase, {
+        expenses: showExpenses,
+        clubFees: showClubFees,
+        otherIncome: showOtherIncome,
+      });
 
   return (
     <div className="space-y-8">
@@ -397,6 +461,85 @@ export default async function DashboardPage() {
             )}
           </div>
         </div>
+      </div>
+      )}
+
+      {/* THE NARROWED LANDING. Everything above belongs to a capability this
+          person does not hold, so rather than a header over an empty page they
+          get the money they may see, the one thing they may file, and a list of
+          the doors that will actually open. */}
+      {!hasTiles && (
+      <div className="space-y-6">
+        {/* Each figure is present only because its own read was held and its
+            own query ran; a null here means nothing was fetched, not that a
+            card was hidden. */}
+        {ledgers && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {ledgers.expenseCents !== null && (
+              <Card>
+                <p className="text-xs text-[var(--text-muted)] uppercase">{ledgers.season.name} · Expenses</p>
+                <p className="text-2xl font-bold font-mono text-[var(--color-danger)]">-{money(ledgers.expenseCents)}</p>
+                <p className="text-xs text-[var(--text-muted)] mt-1">Money the club has spent this season</p>
+              </Card>
+            )}
+            {ledgers.clubFeeCents !== null && (
+              <Card>
+                <p className="text-xs text-[var(--text-muted)] uppercase">{ledgers.season.name} · Club fees</p>
+                <p className="text-2xl font-bold font-mono text-[var(--color-success)]">{money(ledgers.clubFeeCents)}</p>
+                <p className="text-xs text-[var(--text-muted)] mt-1">Season dues collected</p>
+              </Card>
+            )}
+            {ledgers.otherIncomeCents !== null && (
+              <Card>
+                <p className="text-xs text-[var(--text-muted)] uppercase">{ledgers.season.name} · Other income</p>
+                <p className="text-2xl font-bold font-mono text-[var(--color-success)]">{money(ledgers.otherIncomeCents)}</p>
+                <p className="text-xs text-[var(--text-muted)] mt-1">Donations, grants and socials</p>
+              </Card>
+            )}
+          </div>
+        )}
+
+        {/* Offered on the write alone, with no season and no ledger behind it:
+            somebody may be able to file an expense and to see none, which is
+            the state /fees was reshaped to support. */}
+        {canAddExpense && (
+          <Link href="/fees?tab=expenses" className="group block">
+            <Card className="hover:border-[var(--border-hover)] transition-colors flex items-center justify-between gap-4 flex-wrap">
+              <div>
+                <p className="text-sm font-medium text-[var(--text-primary)]">Paid for something out of pocket?</p>
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                  File it against the season so the club has a record of the spend and can pay you back.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 text-sm text-[var(--text-muted)]">
+                Add an expense <ArrowUpRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+            </Card>
+          </Link>
+        )}
+
+        {openSections.length > 0 && (
+          <Card>
+            <EmptyState
+              title="Nothing here needs you"
+              description="Your console access covers part of the club's work. These are the sections you can open."
+              action={
+                <div className="flex flex-wrap justify-center gap-2">
+                  {openSections.map(({ href, label, icon: Icon }) => (
+                    <Link
+                      key={href}
+                      href={href}
+                      className="inline-flex items-center gap-2 px-3 min-h-[44px] rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] text-sm text-[var(--text-secondary)] hover:border-[var(--border-hover)] hover:text-[var(--text-primary)] transition-colors"
+                    >
+                      <Icon className="w-4 h-4" />
+                      {label}
+                    </Link>
+                  ))}
+                </div>
+              }
+            />
+          </Card>
+        )}
       </div>
       )}
     </div>
