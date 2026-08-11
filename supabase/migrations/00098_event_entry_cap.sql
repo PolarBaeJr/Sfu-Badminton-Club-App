@@ -78,9 +78,16 @@ COMMENT ON COLUMN public.tournaments.max_events_per_player IS
 -- THE TABLE ITSELF IS DELIBERATELY NOT DROPPED. It is empty on staging, but
 -- staging is a synthetic reload and production carries real tournament history
 -- from before the event system. Dropping it would be dropping that history on
--- the strength of a count taken somewhere else. Only removing the rest of the
--- fallback (removeTournamentParticipant still DELETEs from it) would make
--- "nothing touches this table" true, and that is a separate decision.
+-- the strength of a count taken somewhere else.
+--
+-- THE SEPARATE DECISION THIS PARAGRAPH LEFT OPEN HAS SINCE BEEN TAKEN. It said
+-- only removing the last of the fallback -- removeTournamentParticipant, which
+-- still DELETEd from this table -- would make "nothing touches this table"
+-- true. That action has now been deleted too, in the change that also deleted
+-- the participants dialog which was its only caller. So the sentence is now
+-- simply true: no application code reads or writes this table. It is reachable
+-- only through merge_players(), which rewrites its player_id and partner_id
+-- (00026, then 00079 and 00095) and which is the reason the rows must survive.
 COMMENT ON TABLE public.legacy_tournament_participants IS
   'Pre-event-system participant table, originally named tournament_participants and renamed when the event-based system (tournament_events / tournament_participants / tournament_pairs) replaced it. RETAINED FOR HISTORY ONLY: as of 00098 nothing in either app inserts into it. Retained rather than dropped because production may hold real pre-event-system tournament history; check before removing.';
 

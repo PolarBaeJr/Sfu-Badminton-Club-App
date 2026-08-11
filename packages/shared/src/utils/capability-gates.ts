@@ -288,9 +288,12 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   },
   'tournaments.draw.participants.remove.write': {
     label: 'Remove a participant', area: 'tournaments', group: 'draw', mode: 'write',
+    // ONE SITE AGAIN. This used to merge the event-level removal with a
+    // tournament-level one in actions/tournaments.ts, which DELETEd from
+    // legacy_tournament_participants. That action was deleted along with the
+    // dialog that was its only caller, so there is no second scope left to
+    // argue about and the `merged` prose went with it.
     gate: 'tournament-actions/participants.ts removeParticipantFromEvent',
-    also: ['actions/tournaments.ts removeTournamentParticipant'],
-    merged: 'The tournament-level and event-level removals are the same act at two scopes.',
   },
   'tournaments.draw.checkin.token.write': {
     label: 'Tournament check-in token', area: 'tournaments', group: 'draw', mode: 'write',

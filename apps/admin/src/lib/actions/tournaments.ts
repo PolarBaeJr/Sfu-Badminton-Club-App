@@ -361,25 +361,3 @@ export async function deleteTournament(tournamentId: string) {
 
   revalidatePath('/tournaments');
 }
-
-export async function removeTournamentParticipant(participantId: string, tournamentId: string) {
-  const admin = await requireCapability('tournaments.draw.participants.remove.write');
-  const adminClient = createAdminClient();
-
-  // Try new table name first, fall back to old if migration hasn't run
-  const { error: err1 } = await adminClient.from('legacy_tournament_participants').delete().eq('id', participantId);
-  if (err1) {
-    const { error: err2 } = await adminClient.from('tournament_participants').delete().eq('id', participantId);
-    if (err2) throw new Error(err2.message);
-  }
-
-  await logAdminAudit(adminClient, {
-    actor_id: admin.id,
-    action_type: 'tournament_participant_removed',
-    target_type: 'tournament',
-    target_id: tournamentId,
-    new_value: { participant_id: participantId },
-  }, { tournamentId });
-
-  revalidatePath(`/tournaments/${tournamentId}`);
-}

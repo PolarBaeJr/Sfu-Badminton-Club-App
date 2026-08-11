@@ -71,7 +71,6 @@ export {
   resumeTournament,
   archiveTournament,
   deleteTournament,
-  removeTournamentParticipant,
 } from './actions/tournaments';
 
 export {

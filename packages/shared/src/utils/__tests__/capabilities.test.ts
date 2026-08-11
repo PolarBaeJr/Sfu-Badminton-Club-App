@@ -148,16 +148,24 @@ describe('CAPABILITY_GATES', () => {
   // it is a real check rather than documentation: deleting a gate without
   // deleting its capability leaves the editor offering a tick box nothing
   // reads, and that is what this fails on.
-  it('names 134 distinct enforcement points, none of them claimed twice', () => {
+  //
+  // 134 BECAME 133 when the dead legacy removal was deleted. That is the count
+  // moving in the direction this assertion WANTS: a call site went away and its
+  // `also` entry went with it, so the map still names only places that exist.
+  // The failure it guards against is the opposite one — a site disappearing
+  // while the entry claiming it stays. `tournaments.draw.participants.remove.write`
+  // itself survives, still gated on removeParticipantFromEvent, and no
+  // capability was added or removed: CAPABILITIES is still 118 above.
+  it('names 133 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(134);
-    expect(new Set(sites).size).toBe(134);
-    expect(ENFORCEMENT_POINTS).toBe(134);
+    expect(sites.length).toBe(133);
+    expect(new Set(sites).size).toBe(133);
+    expect(ENFORCEMENT_POINTS).toBe(133);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be

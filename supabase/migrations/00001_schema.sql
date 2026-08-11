@@ -343,12 +343,14 @@ CREATE INDEX idx_event_feedback_tournament ON event_feedback(tournament_id);
 -- tournament_participants table, so the two names are not two spellings of
 -- one thing).
 --
--- RETAINED FOR HISTORY ONLY. As of 00098 nothing inserts into it. The action
--- that did (addTournamentParticipant) was reached from one dialog that nothing
--- imported and nothing rendered, and it was also a way into a tournament that
--- went round the event waiver 00097 requires, so it was deleted along with the
--- dialog. One vestige is left: removeTournamentParticipant still DELETEs from
--- here, and it too is unreachable from any rendered screen.
+-- RETAINED FOR HISTORY ONLY. NO APPLICATION CODE TOUCHES IT AT ALL — not a
+-- read, not a write. The action that inserted (addTournamentParticipant) was
+-- reached from one dialog that nothing imported and nothing rendered, and it
+-- was also a way into a tournament that went round the event waiver 00097
+-- requires, so it was deleted along with the dialog. The matching
+-- removeTournamentParticipant, which DELETEd from here, was deleted straight
+-- after: it was the same dialog's only other caller, so with the dialog gone it
+-- had none. Only merge_players() still names this table.
 --
 -- NO FILE PATH HERE ON PURPOSE. This comment used to name one, it named a
 -- barrel re-export rather than the module doing the writing, and that writer
