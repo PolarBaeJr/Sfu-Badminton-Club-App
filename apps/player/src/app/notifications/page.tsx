@@ -10,9 +10,13 @@ import {
   notificationHeadline,
   notificationLabel,
   notificationTone,
+  summariseByKind,
   unreadEyebrow,
   type NotificationMetadata,
 } from '@/lib/notification-rows';
+
+/** The list query's cap. Named because the aside has to say when it bit. */
+const LIST_LIMIT = 50;
 
 type NotificationRecord = {
   id: string;
@@ -43,7 +47,7 @@ export default async function NotificationsPage() {
       .select('id, type, title, body, read_flag, metadata, created_at')
       .eq('player_id', player.id)
       .order('created_at', { ascending: false })
-      .limit(50),
+      .limit(LIST_LIMIT),
     supabase
       .from('notifications')
       .select('*', { count: 'exact', head: true })
@@ -100,8 +104,19 @@ export default async function NotificationsPage() {
 
   const sections = groupNotificationsByAge(rows, new Date(), CLUB_TIMEZONE);
 
+  // The aside's two breakdowns. Both are counted off `rows` — the notifications
+  // actually rendered below — and off nothing else. There is no actor column
+  // and no number in `metadata` (see notification-rows.ts), so a summary of who
+  // or how much is not derivable and is not attempted; what IS derivable is how
+  // many of each kind and each age are on the screen.
+  const kinds = summariseByKind(rows);
+  const listIsCapped = all.length >= LIST_LIMIT;
+
   return (
-    <div data-screen-label="Notifications">
+    // One container around the header AND the body. That is the whole fix: the
+    // two used to size independently, so on a wide display the title ran the
+    // full viewport while the river was capped and pinned to the left of it.
+    <div data-screen-label="Notifications" className="notif-screen">
       <PageHeader
         eyebrow={unreadEyebrow(unreadCount)}
         title="Notifications"
@@ -117,32 +132,77 @@ export default async function NotificationsPage() {
           </div>
         </div>
       ) : (
-        <div className="notif-list">
-          {sections.map((section) => (
-            <div key={section.key}>
-              <div className="notif-group">{section.label}</div>
-              {section.items.map((row) => (
-                <NotificationRow key={row.id} id={row.id} isRead={row.isRead} href={row.action?.href ?? null}>
-                  <div className="notif-body">
-                    <div className="notif-headline">{row.headline}</div>
-                    <div className="notif-detail">
-                      <span className="notif-kind" data-tone={row.tone}>
-                        {row.kind}
-                      </span>
-                      {' · '}
-                      {row.when}
+        <div className="notif-wide">
+          <div className="notif-list">
+            {sections.map((section) => (
+              <div key={section.key} id={`notif-${section.key}`} className="notif-section">
+                <div className="notif-group">{section.label}</div>
+                {section.items.map((row) => (
+                  <NotificationRow key={row.id} id={row.id} isRead={row.isRead} href={row.action?.href ?? null}>
+                    <div className="notif-body">
+                      <div className="notif-headline">{row.headline}</div>
+                      <div className="notif-detail">
+                        <span className="notif-kind" data-tone={row.tone}>
+                          {row.kind}
+                        </span>
+                        {' · '}
+                        {row.when}
+                      </div>
                     </div>
-                  </div>
-                  {/* A span, not a <Button>: the whole row is already the click
-                      target, and a button inside a button (or inside a link) is
-                      invalid markup that React complains about on hydration.
-                      Rows with nowhere to go get nothing here rather than a
-                      control that does not work. */}
-                  {row.action && <span className="notif-cta">{row.action.label}</span>}
-                </NotificationRow>
+                    {/* A span, not a <Button>: the whole row is already the click
+                        target, and a button inside a button (or inside a link) is
+                        invalid markup that React complains about on hydration.
+                        Rows with nowhere to go get nothing here rather than a
+                        control that does not work. */}
+                    {row.action && <span className="notif-cta">{row.action.label}</span>}
+                  </NotificationRow>
+                ))}
+              </div>
+            ))}
+          </div>
+
+          {/* The supporting column. It indexes the river rather than decorating
+              it: every figure here is a count of rows that are on this screen,
+              and the jump links go to the section headings beside it. It is
+              display:none below 1101px — on a phone it would sit underneath
+              fifty rows, indexing a list the member has already scrolled past. */}
+          <aside className="notif-aside" aria-label="What is in this list">
+            <div className="notif-aside-head">By age</div>
+            <ul className="notif-index">
+              {sections.map((section) => (
+                <li key={section.key}>
+                  <a className="notif-index-row" href={`#notif-${section.key}`}>
+                    <span className="notif-index-label">{section.label}</span>
+                    <span className="notif-index-count">{section.items.length}</span>
+                  </a>
+                </li>
               ))}
-            </div>
-          ))}
+            </ul>
+
+            <div className="notif-aside-head">By kind</div>
+            <ul className="notif-index">
+              {kinds.map((kind) => (
+                <li key={kind.kind} className="notif-index-row">
+                  <span className="notif-index-label">
+                    <i className="notif-dot" data-tone={kind.tone} aria-hidden />
+                    {kind.kind}
+                  </span>
+                  <span className="notif-index-count">{kind.count}</span>
+                </li>
+              ))}
+            </ul>
+
+            {/* Says what the numbers above are OVER. They count the rows on
+                screen; the unread figure in the header is an exact COUNT over
+                every notification the member has. Without this line the two
+                disagree and neither looks trustworthy. */}
+            <p className="notif-aside-note">
+              {listIsCapped
+                ? `Counted over the ${LIST_LIMIT} most recent notifications, which is everything shown here.`
+                : `Counted over all ${rows.length} notification${rows.length === 1 ? '' : 's'} shown here.`}{' '}
+              The unread figure above counts every one you have.
+            </p>
+          </aside>
         </div>
       )}
     </div>

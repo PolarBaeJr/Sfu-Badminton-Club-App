@@ -256,3 +256,46 @@ export function unreadEyebrow(unreadCount: number): string {
   if (unreadCount <= 0) return 'ALL CAUGHT UP';
   return `${unreadCount} UNREAD`;
 }
+
+export interface NotificationKindCount {
+  /** The micro-caps label, i.e. whatever notificationLabel() returned. */
+  kind: string;
+  /**
+   * 'mute' when the rows behind this label do not agree on a tone.
+   *
+   * A label covers several types — "Challenge" is challenge_received (red),
+   * challenge_accepted (win) and three mute ones — so painting a mixed group
+   * with whichever tone happened to arrive first would be a claim about the
+   * group that the rows do not make.
+   */
+  tone: NotificationTone;
+  count: number;
+}
+
+/**
+ * How many of each kind are on screen, commonest first.
+ *
+ * Deliberately counts the rows it is handed and nothing else: the caller's list
+ * is capped at 50, so this is a summary OF THE LIST and never of the table. Any
+ * surface showing it has to say so, or it reads as an all-time total.
+ *
+ * Ties break alphabetically so the order is stable between renders rather than
+ * dependent on which notification happened to arrive first.
+ */
+export function summariseByKind(rows: Array<{ kind: string; tone: NotificationTone }>): NotificationKindCount[] {
+  const seen = new Map<string, { tone: NotificationTone; mixed: boolean; count: number }>();
+
+  for (const row of rows) {
+    const entry = seen.get(row.kind);
+    if (!entry) {
+      seen.set(row.kind, { tone: row.tone, mixed: false, count: 1 });
+      continue;
+    }
+    entry.count += 1;
+    if (entry.tone !== row.tone) entry.mixed = true;
+  }
+
+  return [...seen.entries()]
+    .map(([kind, entry]) => ({ kind, tone: entry.mixed ? ('mute' as const) : entry.tone, count: entry.count }))
+    .sort((a, b) => b.count - a.count || a.kind.localeCompare(b.kind));
+}
