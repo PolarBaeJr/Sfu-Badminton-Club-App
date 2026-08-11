@@ -18,24 +18,28 @@ import { MIN_REASON_LENGTH } from '../legal-reason';
 // Platform configuration. Admin-only, and this is the boundary that matters:
 // /ratings and /accounts merely decide who is shown the form.
 //
-// THE REASON IS OPTIONAL IN THE SIGNATURE AND MANDATORY WHERE IT IS OFFERED.
-// /ratings types one and always passes it; /accounts' generic form has no
-// reason box yet and would break on a required parameter. So an omitted reason
-// keeps the old auto-generated text, and a supplied one must be real — a caller
-// that offers the box cannot get away with sending "." or "". The disabled Save
-// button is the UI half of that rule; this is the half that is a boundary.
+// THE REASON IS REQUIRED, AND IT USED NOT TO BE. It arrived as an OPTIONAL
+// parameter when /ratings was rebuilt, because /ratings had a reason box and
+// /accounts' generic form did not — so the same audited action was reasoned
+// from one screen and auto-captioned from the other, and which you got depended
+// on which page you happened to open. PlatformSettingsForm now collects one
+// too, so both call sites pass one and the parameter can say so.
+//
+// Enforced HERE and not only on the two Save buttons: a stale tab or a direct
+// call to the server action reaches this write, and a floor that lives in the
+// client is not a floor. REASON_MIN is imported, never redeclared.
 export async function updatePlatformSettings(
   updates: { key: string; value: Record<string, unknown> }[],
-  reason?: string
+  reason: string
 ) {
-  let why: string | null = null;
-  if (reason !== undefined) {
-    why = reason.trim();
-    if (why.length < REASON_MIN) {
-      throw new ExpectedError(
-        `Changing the rating settings needs a reason of at least ${REASON_MIN} characters.`
-      );
-    }
+  const why = (reason ?? '').trim();
+  if (why.length < REASON_MIN) {
+    // Named for the thing being changed rather than for one of the two screens
+    // — this used to say "the rating settings", which was wrong the moment
+    // /accounts could reach it.
+    throw new ExpectedError(
+      `Changing a platform setting needs a reason of at least ${REASON_MIN} characters.`
+    );
   }
 
   const admin = await requireCapability('platform.settings.write');
@@ -73,10 +77,12 @@ export async function updatePlatformSettings(
       // Key FIRST. With target_id null this is the only place it appears, and
       // the /audit table truncates the reason cell at max-w-xs — "Platform
       // setting "repeat_opponent_caps" updated" is cut before the key ends.
-      // The prefix survives when an officer typed their own reason, because
-      // /ratings reads these rows back by it to find the last change to a
-      // rating key.
-      reason: why ? `${update.key} — ${why}` : `${update.key} — platform setting updated`,
+      // The prefix is not decoration: /ratings reads these rows back by it to
+      // find the last change to a rating key.
+      //
+      // No fallback caption any more. There used to be one for the reasonless
+      // /accounts path, and with the reason required there is no such path.
+      reason: `${update.key} — ${why}`,
     });
   }
 
