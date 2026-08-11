@@ -1,20 +1,25 @@
 'use client';
 
-import { Fragment, useId, useMemo, useState, type ReactNode } from 'react';
-import { Search, X } from 'lucide-react';
-import { Card, filterPlayerOptions } from '@badminton/ui';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
+import { Card, ResponsiveTable, SearchFilter, filterPlayerOptions } from '@badminton/ui';
 
 export interface RosterRow {
   id: string;
   /** Ranked prefix > word-prefix > substring, exactly as the challenge picker does. */
   name: string;
+  /** The chosen username. Ranked LIKE the name, not as a meta fallback, so
+   *  `@kiera` and `kiera` both land on Kiera rather than under everyone whose
+   *  name merely contains the letters. Null until a member picks one. */
+  handle?: string | null;
   /** Email. Searched but not ranked, so two people with the same name can still
    *  be told apart by typing the address. */
   meta?: string | null;
-  /** The row itself, rendered on the SERVER. Elo, waiver maths and the action
+  /** The `<tr>`, rendered on the SERVER. Elo, waiver maths and the action
    *  buttons all stay server-decided; the only thing the client owns is which
    *  of these already-rendered rows are mounted. */
   row: ReactNode;
+  /** The `<TableCard>` shown below `md`. Server-rendered for the same reason. */
+  card: ReactNode;
 }
 
 interface Props {
@@ -22,8 +27,30 @@ interface Props {
    *  place — this component only filters, it does not know the columns. */
   head: ReactNode;
   rows: RosterRow[];
+  /** The tab links, rendered on the server so each is a real URL. They sit in
+   *  the control row beside the search rather than in a strip of their own:
+   *  narrowing by tab and narrowing by name are the same gesture, and the
+   *  roster reads as one instrument when they are side by side. */
+  tabs: ReactNode;
+  /**
+   * How many members this tab HAS, which is not how many were fetched.
+   *
+   * The denominator has to be the tab's own count, not `rows.length`: the list
+   * query is capped at 500 and the count query is not, so a tab past 500 would
+   * otherwise print "showing 500 of 500" and claim a completeness it does not
+   * have. With the real total it reads "showing 500 of 620", which says the
+   * opposite and is the only warning anyone gets that the cap is in play.
+   */
+  total: number;
   /** Seed from ?search= so a link to a search still lands on one. */
   initialQuery?: string;
+  /**
+   * The standing line under the table, right-hand side. Passed in rather than
+   * hard-coded because it is only true of somebody who can reach those actions
+   * — telling a trainer that suspensions take a typed reason is describing a
+   * button they will never see.
+   */
+  note?: string;
 }
 
 /**
@@ -32,80 +59,80 @@ interface Props {
  * NOT PlayerPicker itself, deliberately. That control is a combobox: it
  * collapses to ONE chosen player and hides the rest, which is right for "who
  * are you challenging" and wrong for "show me everyone called Chen" — an admin
- * searching the roster wants the matching rows, plural, with their Elo and
- * waiver state still visible. What is shared is the part that matters: the
- * matching itself (filterPlayerOptions, lifted out of PlayerPicker) and the
- * field's appearance, so it reads as the same search in both apps. The avatars
- * PlayerPicker shows beside each result are already in the table rows here.
+ * searching the roster wants the matching rows, plural, with their rating and
+ * standing still visible. What is shared is the part that matters: the matching
+ * (filterPlayerOptions) and the field itself (SearchFilter), so it reads as the
+ * same search in both apps.
+ *
+ * filterPlayerOptions, NOT filterRowsByPlayers — which is why this is not the
+ * SearchableTable that /challenges and /matches share. Those rows are about two
+ * sides and are searched by a list of names; a roster row is about ONE person
+ * and carries a handle, and only filterPlayerOptions ranks a handle. Swapping to
+ * the shared table would silently stop `@kiera` finding Kiera.
  *
  * Filtering is client-side over the rows the page already fetched — no round
  * trip per keystroke, and no way for the list to disagree with its own tab
  * count. It therefore searches exactly what the table is showing, which is the
- * page's first 500 rows.
+ * page's first 500 rows — and the count line below is measured against the
+ * tab's real total, so it is also where that cap would become visible.
  */
-export function RosterTable({ head, rows, initialQuery = '' }: Props) {
+export function RosterTable({ head, rows, tabs, total, initialQuery = '', note }: Props) {
   const [query, setQuery] = useState(initialQuery);
-  const statusId = useId();
 
   const filtered = useMemo(() => filterPlayerOptions(rows, query), [rows, query]);
 
   return (
-    <Card padding={false}>
-      <div className="p-3 border-b border-[var(--border)]">
-        <div className="w-full pl-3 pr-2 min-h-[48px] flex items-center gap-2 bg-[var(--bg-surface)] border border-[var(--border)] rounded-[8px] transition-colors focus-within:ring-2 focus-within:ring-[var(--color-accent)] focus-within:border-transparent">
-          <Search aria-hidden="true" className="w-4 h-4 shrink-0 text-[var(--text-muted)]" />
-          <input
-            type="text"
-            role="searchbox"
-            autoComplete="off"
-            aria-label="Search players"
-            aria-describedby={statusId}
-            value={query}
-            placeholder="Search players…"
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape' && query) {
-                // Stop here — Escape otherwise bubbles to whatever overlay is open.
-                e.preventDefault();
-                e.stopPropagation();
-                setQuery('');
-              }
-            }}
-            className="flex-1 min-w-0 bg-transparent py-2 text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none"
-          />
-          {query && (
-            <button
-              type="button"
-              aria-label="Clear search"
-              onClick={() => setQuery('')}
-              className="shrink-0 w-7 h-7 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-        {/* Sighted users see the list shrink; screen readers get the count. */}
-        <p id={statusId} role="status" aria-live="polite" className="sr-only">
-          {query ? `${filtered.length} player${filtered.length === 1 ? '' : 's'} match` : ''}
-        </p>
+    <div className="space-y-4">
+      {/* Search left, tabs right, stacked on a phone — where a 360px field and
+          five tabs cannot share a line without one of them scrolling. */}
+      <div className="flex flex-col gap-3 md:flex-row md:items-center">
+        <SearchFilter
+          className="w-full md:max-w-[360px]"
+          value={query}
+          onChange={setQuery}
+          label="Search players by name, handle or email"
+          placeholder="Search players"
+          resultCount={filtered.length}
+          noun="player"
+        />
+        <div className="min-w-0 md:ml-auto">{tabs}</div>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead>{head}</thead>
-          <tbody className="divide-y divide-[var(--border)]">
-            {filtered.map((r) => (
-              <Fragment key={r.id}>{r.row}</Fragment>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {/* Zero padding: the table is full-bleed to the hairline, so the rows'
+          own cell padding is the only inset and the header rule meets both
+          edges. rounded-none because the shared Card is rounded-xl and this
+          screen's radius is 0 everywhere but a dialog. */}
+      <Card padding={false} className="rounded-none">
+        {filtered.length === 0 ? (
+          // Say what was searched. "No results" leaves the reader wondering
+          // whether they mistyped or the row genuinely is not there.
+          // `anywhere` because the query is arbitrary text and a long unbroken
+          // one would otherwise push the phone layout sideways.
+          <p className="py-10 px-4 text-center text-[var(--text-muted)] [overflow-wrap:anywhere]">
+            {query ? `No players match “${query}”` : 'No players found'}
+          </p>
+        ) : (
+          <ResponsiveTable cards={filtered.map((r) => <Fragment key={r.id}>{r.card}</Fragment>)}>
+            <table className="w-full border-collapse">
+              <thead>{head}</thead>
+              <tbody className="divide-y divide-[var(--border)]">
+                {filtered.map((r) => (
+                  <Fragment key={r.id}>{r.row}</Fragment>
+                ))}
+              </tbody>
+            </table>
+          </ResponsiveTable>
+        )}
+      </Card>
 
-      {filtered.length === 0 && (
-        <p className="text-center text-[var(--text-muted)] py-8">
-          {query ? `No players match “${query}”` : 'No players found'}
-        </p>
-      )}
-    </Card>
+      {/* Outside the card, in the margin voice: what you are looking at on the
+          left, what the console will hold you to on the right. */}
+      <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+        <span>
+          Showing {filtered.length} of {total}
+        </span>
+        {note && <span className="text-right">{note}</span>}
+      </div>
+    </div>
   );
 }
