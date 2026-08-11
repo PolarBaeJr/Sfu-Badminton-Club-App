@@ -24,15 +24,22 @@ import { permits, resolvePermissions, UNRESTRICTED, type AccessLevel, type Capab
 // deliberately, in the same spirit as ./capability-equivalence.test.ts: deriving
 // it from the page would make it pass by construction, and the page cannot be
 // imported anyway. A panel added there needs its capability added here.
+//
+// IT MUST BE KEPT IN STEP IN BOTH DIRECTIONS. A gate added to the page and not
+// here lets a narrowed person fall into the signpost branch AND render a panel;
+// a gate left here after its panel is deleted gives them hasTiles with nothing
+// behind it, which is the blank screen the branch exists to prevent.
 const TILE_GATES: Capability[] = [
-  'players.read',            // Active Players
-  'players.approve.write',   // Pending Approvals, and the panel under the banner
-  'disputes.page',           // Open Disputes
-  'walkovers.page',          // Pending Walkovers
-  'matches.page',            // Recent Matches
-  'tournaments.page',        // Tournaments
-  'challenges.page',         // Active Challenges
+  'players.read',            // Members + Active roster cells, and New this week
+  'players.approve.write',   // Pending approvals, the panel and the alert clause
+  'disputes.page',           // The open-disputes alert clause
+  'walkovers.page',          // The pending-walkovers alert clause
+  'matches.page',            // Matches logged, and Awaiting confirmation
+  'sessions.page',           // Sessions this week, and the Tonight card
+  'tournaments.page',        // In play · Tournaments
+  'challenges.page',         // In play · Challenges
   'fees.netposition.read',   // The net position card
+  'fees.clubfees.read',      // The Fees outstanding cell
 ];
 
 const LEVELS: AccessLevel[] = ['admin', 'exec', 'trainer'];
