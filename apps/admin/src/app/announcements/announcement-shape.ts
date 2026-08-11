@@ -89,9 +89,10 @@ export function bylineName(name: string | null | undefined): string | null {
   const trimmed = (name ?? '').trim();
   if (!trimmed) return null;
   const parts = trimmed.split(/\s+/);
-  if (parts.length === 1) return parts[0].toUpperCase();
-  const surname = parts[parts.length - 1];
-  return `${parts[0][0].toUpperCase()}. ${surname.toUpperCase()}`;
+  const first = parts[0] ?? '';
+  const surname = parts[parts.length - 1] ?? '';
+  if (parts.length === 1) return first.toUpperCase();
+  return `${first.slice(0, 1).toUpperCase()}. ${surname.toUpperCase()}`;
 }
 
 /** Short, unambiguous, and stable regardless of the reader's locale settings. */
