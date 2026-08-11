@@ -54,6 +54,17 @@ type MyEntry = {
   isDoubles: boolean;
 };
 
+// A member's entries are read newest-first and capped rather than fetched
+// whole: nothing on this screen reads the far end of a four-year history, and
+// the cap is also what bounds the headcount query below, which fans out over
+// every event still in the list. Live entries are the newest rows a member has,
+// so ordering by creation date cannot push one of them past the cap.
+const ENTRY_FETCH_CAP = 80;
+
+// How many results the rail shows. It is a summary of a record, not the record:
+// past this the column is taller than the screen and nobody reads the bottom.
+const PAST_RESULTS_SHOWN = 8;
+
 // Supabase returns a to-one embed as object-or-array depending on how it infers
 // the relationship. Every read below goes through this rather than trusting one
 // shape — the same defensive unwrap tournament-actions.ts uses.
@@ -92,6 +103,8 @@ export default async function TournamentsPage() {
             'event:tournament_events(id, event_type, status, tournament:tournaments(id, name, start_date))',
           )
           .eq('player_id', player.id)
+          .order('created_at', { ascending: false })
+          .limit(ENTRY_FETCH_CAP)
       : Promise.resolve({ data: [] as unknown[] }),
     player
       ? supabase
@@ -102,7 +115,12 @@ export default async function TournamentsPage() {
             'player2:players!tournament_pairs_player2_id_fkey(id, full_name, avatar_url), ' +
             'event:tournament_events(id, event_type, status, tournament:tournaments(id, name, start_date))',
           )
+          // player.id is players.id — a UUID read from the verified session in
+          // getCurrentPlayer, never a caller-supplied string, so interpolating
+          // it into the filter cannot carry anything but a uuid.
           .or(`player1_id.eq.${player.id},player2_id.eq.${player.id}`)
+          .order('created_at', { ascending: false })
+          .limit(ENTRY_FETCH_CAP)
       : Promise.resolve({ data: [] as unknown[] }),
   ]);
 
@@ -159,13 +177,21 @@ export default async function TournamentsPage() {
     .filter((e) => e.final_position !== null)
     .sort((a, b) => (b.event?.tournament?.start_date ?? '').localeCompare(a.event?.tournament?.start_date ?? ''));
 
+  const shownPast = pastEntries.slice(0, PAST_RESULTS_SHOWN);
+  const olderPastCount = pastEntries.length - shownPast.length;
+
   // One round trip for every headcount the screen needs: the hero's field, and
   // the field size beside each past result. Counting rows here rather than with
   // an embedded aggregate is what lets withdrawn entries be excluded — the same
   // filter the server's own capacity check applies.
+  //
+  // Scoped to the results actually RENDERED, not to every result the member
+  // has: this query fans out over every event in the list, so counting events
+  // whose row is never drawn would make a long-standing member's page do the
+  // most work for the least visible reason.
   const countedEventIds = [
     ...(hero?.tournament_events ?? []).map((e) => e.id),
-    ...pastEntries.map((e) => e.event!.id),
+    ...shownPast.map((e) => e.event!.id),
   ].filter((v, i, a) => a.indexOf(v) === i);
 
   let entryRows: EntryRow[] = [];
@@ -333,7 +359,7 @@ export default async function TournamentsPage() {
               </p>
             ) : (
               <div className="ptourn-results">
-                {pastEntries.map((entry) => {
+                {shownPast.map((entry) => {
                   const position = entry.final_position!;
                   const field = fieldSize(entry.event!.id);
                   return (
@@ -375,6 +401,13 @@ export default async function TournamentsPage() {
                     </Link>
                   );
                 })}
+                {/* Says the record is longer than the card rather than ending
+                    on an arbitrary row and implying that is all of it. */}
+                {olderPastCount > 0 && (
+                  <p className="wide-note">
+                    And {olderPastCount} earlier {olderPastCount === 1 ? 'result' : 'results'}.
+                  </p>
+                )}
               </div>
             )}
           </section>
@@ -390,15 +423,24 @@ export default async function TournamentsPage() {
               </p>
             ) : (
               <div className="ptourn-also">
-                {[...otherUpcoming, ...otherDone].map((t) => (
-                  <Link key={t.id} href={`/tournaments/${t.id}`} className="wide-item press">
-                    <div className="wide-item-title">{t.name}</div>
-                    <div className="wide-item-sub">
-                      {dayLabel(t.start_date, todayKey)} · {describeDisciplines(t.tournament_events)}
-                      {isUpcoming(t.start_date, todayKey) ? '' : ' · DONE'}
-                    </div>
-                  </Link>
-                ))}
+                {[...otherUpcoming, ...otherDone].map((t) => {
+                  const upcoming = isUpcoming(t.start_date, todayKey);
+                  return (
+                    <Link key={t.id} href={`/tournaments/${t.id}`} className="wide-item press">
+                      <div className="wide-item-title">{t.name}</div>
+                      <div className="wide-item-sub">
+                        {/* dayLabel is a weekday and a day with no year — right
+                            for something coming up, ambiguous for something that
+                            has been and gone in a season that crosses January.
+                            A finished tournament is dated by month and year. */}
+                        {upcoming ? dayLabel(t.start_date, todayKey) : resultMonth(t.start_date)}
+                        {' · '}
+                        {describeDisciplines(t.tournament_events)}
+                        {upcoming ? '' : ' · DONE'}
+                      </div>
+                    </Link>
+                  );
+                })}
               </div>
             )}
           </section>
