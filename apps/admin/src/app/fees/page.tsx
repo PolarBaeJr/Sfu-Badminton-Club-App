@@ -139,13 +139,6 @@ export default async function FeesPage({
   const pageTitle = onlyExpenses ? 'Expenses' : 'Finances';
   const pageWatermark = onlyExpenses ? 'E' : 'F';
 
-  // A tab link keeps the season you are looking at. The two selectors on this
-  // page are independent — which ledger, and which term — and a tab href built
-  // from the path alone silently reset the second one, so opening Expenses
-  // while reading a finished term snapped you back to the current season and
-  // showed you a different set of numbers under the same heading.
-  const tabHref = (id: TabId) =>
-    params.season ? `/fees?tab=${id}&season=${encodeURIComponent(params.season)}` : `/fees?tab=${id}`;
 
   const supabase = createAdminClient();
 
@@ -236,6 +229,21 @@ export default async function FeesPage({
     );
   }
 
+  // A tab link keeps the season you are looking at. The two selectors on this
+  // page are independent — which ledger, and which term — and a tab href built
+  // from the path alone silently reset the second one, so opening Expenses
+  // while reading a finished term snapped you back to the current season and
+  // showed you a different set of numbers under the same heading.
+  //
+  // Built from the RESOLVED season rather than from params.season, and following
+  // SeasonSelect's convention that the active season is the bare path. Echoing
+  // the raw parameter would carry `?season=<nonsense>` through every tab link on
+  // a page that had already fallen back to the active season and was rendering
+  // it — a URL that contradicts what is on screen, and a link somebody might
+  // send.
+  const tabHref = (id: TabId) =>
+    season.active_flag ? `/fees?tab=${id}` : `/fees?tab=${id}&season=${season.id}`;
+
   const feeForStatus = (status: string) =>
     status === 'competitive' ? season.competitive_fee_cents : season.recreational_fee_cents;
 
@@ -312,9 +320,17 @@ export default async function FeesPage({
           club has ever run, and which one you are looking at — and whether it is
           finished — was previously discoverable only from the picker below the
           fold on a phone. It is the first fact about every number on the screen,
-          so it goes above the title. */}
+          so it goes above the title.
+          Three states, not two, and "Current" is asked of active_flag rather
+          than of !isPast. isPast is derived from the END DATE, so a term the
+          club has created but not activated — or any season with no end date on
+          it — is not past, and a two-way split would have labelled it Current
+          while the season picker three inches below showed its "now" marker
+          against a different season entirely. */}
       <PageHeader
-        eyebrow={`${season.name} · ${isPast ? 'Closed' : 'Current'}`}
+        eyebrow={`${season.name} · ${
+          season.active_flag ? 'Current' : isPast ? 'Closed' : 'Not active'
+        }`}
         title={pageTitle}
         watermark={pageWatermark}
         // The fee amounts are club pricing, so the sub-line follows the
