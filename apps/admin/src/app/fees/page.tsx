@@ -6,7 +6,7 @@ import { SeasonSelect } from '@/components/season-select';
 import { Badge, Card, AvatarChip, EmptyState, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { unwrap, unwrapMaybe, formatPaymentMethod } from '@badminton/shared';
 import type { Season } from '@badminton/shared';
-import { isWaivedFee } from '@/lib/fee-status';
+import { isWaivedFee, summariseFeeCollection } from '@/lib/fee-status';
 import { getSeasonFinances } from '@/lib/season-finance';
 import { FeeActions, AddManualFee, RemoveManualFee } from './fee-actions';
 import { ReinstatementsCard } from './reinstatements-card';
@@ -292,14 +292,16 @@ export default async function FeesPage({
   // drift on what "already waived" means.
   const isWaived = isWaivedFee;
 
-  // Waived players count as neither Paid nor Outstanding.
-  const waivedPlayers = players.filter((p) => isWaived(feeByPlayer.get(p.id))).length;
-  const paidPlayers = players.filter((p) => {
-    const fee = feeByPlayer.get(p.id);
-    return fee?.paid_at && !isWaived(fee);
-  }).length;
-  const paidCount = paidPlayers + manualFees.length;
-  const outstandingCount = players.length - paidPlayers - waivedPlayers;
+  // One row per LINE OF THE TABLE BELOW — each roster player's fee (or nothing,
+  // where they have none) followed by the manual entries — so all three figures
+  // are counted over the same population with the same test. Paid used to be
+  // roster-paid plus `manualFees.length`, which took the manual half on trust
+  // rather than testing it, while Outstanding was derived from the roster
+  // alone. Waived counts as neither Paid nor Outstanding.
+  const collection = summariseFeeCollection([
+    ...players.map((p) => feeByPlayer.get(p.id)),
+    ...manualFees,
+  ]);
 
   // Everything in and everything out for this season, through the single
   // helper. Income used to be summed from club_fees only, so a recorded
@@ -455,22 +457,26 @@ export default async function FeesPage({
           outstanding — a permanently amber zero is a warning nobody can act on,
           and it trains people to ignore the colour that matters. Waived appears
           only when the club has actually waived somebody: .stat-strip lays its
-          cells out with grid-auto-flow:column, so the other two simply widen. */}
+          cells out with grid-auto-flow:column, so the other two simply widen.
+
+          All three come out of one call over one list, so they add up to the
+          number of rows in the table underneath and a reader can subtract them
+          from each other. They did not before. */}
       <div className="stat-strip">
         <div>
           <p className="stat-label">Paid</p>
-          <p className="stat-value text-[var(--color-success)]">{paidCount}</p>
+          <p className="stat-value text-[var(--color-success)]">{collection.paid}</p>
         </div>
         <div>
           <p className="stat-label">Outstanding</p>
-          <p className={`stat-value ${outstandingCount > 0 ? 'text-[var(--color-warning)]' : ''}`}>
-            {outstandingCount}
+          <p className={`stat-value ${collection.outstanding > 0 ? 'text-[var(--color-warning)]' : ''}`}>
+            {collection.outstanding}
           </p>
         </div>
-        {waivedPlayers > 0 && (
+        {collection.waived > 0 && (
           <div>
             <p className="stat-label">Waived</p>
-            <p className="stat-value">{waivedPlayers}</p>
+            <p className="stat-value">{collection.waived}</p>
           </div>
         )}
       </div>
