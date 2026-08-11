@@ -120,6 +120,37 @@ describe('summariseFees', () => {
     expect(s.receipts).toHaveLength(1);
   });
 
+  it('still charges an exempt member for a reinstatement', () => {
+    // fee_exempt / is_exec take a member out of the club-fee table and out of
+    // tournament entry fees. Nothing exempts anyone from the fee that lifts
+    // their own ban, so this must not be zeroed with the dues.
+    const s = summariseFees(
+      [line({ key: 'dues' }), line({ key: 'ban', kind: 'reinstatement', name: 'Reinstatement fee', owedCents: 2000 })],
+      { exempt: true },
+    );
+    expect(s.status).toBe('owing');
+    expect(s.totalCents).toBe(2000);
+    expect(s.outstanding.map((l) => l.key)).toEqual(['ban']);
+  });
+
+  it('reads as exempt once that reinstatement is settled', () => {
+    const s = summariseFees(
+      [
+        line({ key: 'dues' }),
+        line({
+          key: 'ban',
+          kind: 'reinstatement',
+          owedCents: 2000,
+          paid: true,
+          paidAt: '2026-02-01T20:00:00Z',
+        }),
+      ],
+      { exempt: true },
+    );
+    expect(s.status).toBe('exempt');
+    expect(s.outstanding).toEqual([]);
+  });
+
   it('counts a priceless outstanding line instead of summing it as zero', () => {
     // The failure this guards: a tournament with no fee row, no tier_id and no
     // default tier has no price anywhere. Adding it as 0 would print a total

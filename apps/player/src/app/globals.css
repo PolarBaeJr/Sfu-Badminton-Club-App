@@ -2890,7 +2890,10 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
   padding: 12px 0;
   border-top: 1px solid var(--line);
 }
-.fees-price:first-of-type { margin-top: 14px; }
+/* The gap between the card's label and the first row. Keyed off the label
+   rather than :first-of-type, which matches the first sibling of the same TAG —
+   and .fees-label is a div too, so :first-of-type would never match a row. */
+.fees-label + .fees-price { margin-top: 14px; }
 /* The viewer's own tier. A red spine is how .news-pin already says "this is the
    one that concerns you"; no new colour, and it survives at a glance where a
    weight change would not. */

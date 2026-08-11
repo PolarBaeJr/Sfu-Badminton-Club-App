@@ -252,7 +252,7 @@ export default async function FeesPage() {
 
   const summary = summariseFees(lines, { exempt });
   const badge = headlineBadge(summary);
-  const footer = outstandingFooter(exempt ? null : seasonLine, season?.end_date);
+  const footer = outstandingFooter(seasonLine, season?.end_date);
   const dateline = season ? seasonDateline(season.start_date, season.end_date) : null;
 
   return (
@@ -294,7 +294,11 @@ export default async function FeesPage() {
               </p>
             )}
 
-            {summary.status === 'exempt' && (
+            {/* Keyed off `exempt`, not off status === 'exempt'. An exempt member
+                with an unpaid reinstatement fee reads as 'owing', and the
+                sentence explaining why no dues are listed is exactly what stops
+                that figure looking like a term fee. */}
+            {exempt && (
               <p className="fees-caveat">
                 {player.is_exec ? (
                   <>

@@ -121,19 +121,25 @@ export function summariseFees(lines: FeeLine[], opts: { exempt: boolean }): Outs
     // to survive a row where it somehow is not rather than throw.
     .sort((a, b) => (b.paidAt ?? '').localeCompare(a.paidAt ?? ''));
 
-  if (opts.exempt) {
-    // Deliberately still returns receipts: an exec who paid before being made an
-    // exec has a real payment history, and hiding it would look like the record
-    // was deleted.
-    return { status: 'exempt', totalCents: 0, unknownCount: 0, outstanding: [], receipts };
-  }
+  // Exemption is from DUES, and only from dues. is_exec / fee_exempt take a
+  // member out of the club-fee table (apps/admin/src/app/fees/page.tsx filters
+  // on exactly those two columns) and out of tournament entry fees. They do not
+  // touch reinstatement_fees, which has no exemption check anywhere — a
+  // reinstatement is not a due, it is the price of lifting a ban. Zeroing one
+  // here would tell an exempt member they owe nothing while the club is still
+  // waiting to be paid.
+  const chargeable = opts.exempt ? lines.filter((l) => l.kind === 'reinstatement') : lines;
 
-  const outstanding = lines.filter((l) => !isSettled(l));
+  const outstanding = chargeable.filter((l) => !isSettled(l));
   const totalCents = outstanding.reduce((sum, l) => sum + (l.owedCents ?? 0), 0);
   const unknownCount = outstanding.filter((l) => l.owedCents == null).length;
 
   let status: FeeStatus;
   if (outstanding.length > 0) status = 'owing';
+  // Deliberately AFTER 'owing' and deliberately keeping `receipts`: an exec who
+  // paid their dues before being made an exec has a real payment history, and
+  // hiding it would look like the record had been deleted.
+  else if (opts.exempt) status = 'exempt';
   else if (lines.length > 0) status = 'all-paid';
   else status = 'nothing-due';
 
