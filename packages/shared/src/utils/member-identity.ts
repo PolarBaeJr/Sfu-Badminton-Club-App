@@ -87,6 +87,84 @@ export function isHandleTakenError(error: { code?: string | null; message?: stri
 }
 
 /**
+ * The four normalizing steps 00092 applies to a name before it can be a handle:
+ * lowercase, every run outside [a-z0-9_] to a single '_', '_' runs collapsed,
+ * leading non-letters dropped, truncated to 20, trailing '_' dropped.
+ *
+ * Returns '' when the text yields nothing usable — a blank name, punctuation
+ * only, emoji only. That is a real answer, not a failure: it is what sends a
+ * member down to the next tier.
+ */
+export function deriveHandleBase(source: string | null | undefined): string {
+  let base = (source ?? '').toLowerCase();
+  base = base.replace(/[^a-z0-9_]+/g, '_');
+  // A second collapse, for underscores that were already in the text: the pass
+  // above only collapses runs of the characters it is replacing.
+  base = base.replace(/_+/g, '_');
+  base = base.replace(/^[^a-z]+/, '');
+  base = base.slice(0, HANDLE_MAX_LENGTH);
+  return base.replace(/_+$/, '');
+}
+
+/**
+ * The handle 00092's backfill gives a member, as a function of the two names
+ * already on their row.
+ *
+ * MIRRORS THE SQL IN 00092 AND IS KEPT IN STEP WITH IT BY HAND, the same
+ * arrangement name.ts has with 00023. It exists so the ladder can be exercised
+ * against real names without a database — which is not academic: the first
+ * version of that backfill consulted display_name alone, and on staging 86 of
+ * 99 members came out as `member_0014` because their nickname was empty. That
+ * case is a one-line test here and was a full staging run there.
+ *
+ * The tiers, each checked in full — shape, reserved, taken — before it is
+ * accepted:
+ *
+ *   1. the nickname, when they gave one;
+ *   2. their full name, which is where most of a club lands. first_last rather
+ *      than the first name alone: three Biancas means two of them would be
+ *      pushed onto the number tier as `bianca_17`, which is uglier than
+ *      `bianca_chen` and says less;
+ *   3. whichever base they had, with their member number appended — unique,
+ *      because member numbers are;
+ *   4. `member_0042`, built from the number alone and therefore uncollidable.
+ *
+ * `isTaken` is the caller's, because in the database the answer is a query and
+ * here it is a set. Throws if all four are taken, rather than returning null:
+ * a member without a handle is the outcome this whole ladder exists to prevent.
+ */
+export function deriveHandle(input: {
+  displayName?: string | null;
+  fullName?: string | null;
+  memberNumber: number;
+  isTaken: (candidate: string) => boolean;
+}): string {
+  const nickBase = deriveHandleBase(input.displayName);
+  const nameBase = deriveHandleBase(input.fullName);
+  // The member's own text is preferred for the numbered form too: somebody who
+  // chose "Matthew" should become matthew_6 rather than matthew_cheng_6.
+  const tiebreak = nickBase || nameBase;
+  const suffix = `_${input.memberNumber}`;
+
+  const candidates = [
+    nickBase,
+    nameBase,
+    tiebreak
+      ? tiebreak.slice(0, HANDLE_MAX_LENGTH - suffix.length).replace(/_+$/, '') + suffix
+      : '',
+    `member_${String(input.memberNumber).padStart(4, '0')}`,
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (handleError(candidate) !== null) continue;
+    if (input.isTaken(candidate)) continue;
+    return candidate;
+  }
+  throw new Error(`Could not derive a free handle for member #${input.memberNumber}`);
+}
+
+/**
  * `#0042`. Zero-padded to four because the club is nowhere near four digits and
  * a ragged column of #7 / #412 reads as a mistake; numbers past 9999 simply get
  * longer rather than being truncated.

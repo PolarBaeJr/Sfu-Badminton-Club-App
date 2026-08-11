@@ -26,6 +26,17 @@
 -- still sitting there to work from. Dropping a column on a live database to
 -- save a few bytes is a bad trade.
 --
+-- CORRECTED IN PLACE AFTER ITS FIRST STAGING RUN, which is normally the wrong
+-- thing to do and is right here. The handle backfill derived from display_name
+-- alone; staging showed 86 of 99 members coming out as `member_0014` because
+-- their nickname was empty and their real name was never consulted. PRODUCTION
+-- HAS NEVER SEEN THIS FILE, so there is no applied history to preserve and
+-- nothing to diverge from — and shipping a knowingly-wrong backfill plus a
+-- follow-up to repair it is worse than one correct file. The backfill is
+-- WHERE handle IS NULL, so re-running it after nulling the bad handles is
+-- exactly the fix. The member NUMBERS are not re-derived and must not be: they
+-- are permanent and were assigned correctly the first time.
+--
 -- WHAT CHANGES VISIBLY: get_leaderboard() returned COALESCE(display_name,
 -- full_name) as `name`, so a member who had set a nickname was shown by it on a
 -- PUBLIC page. It now returns full_name, and the nickname is gone from the UI
@@ -167,11 +178,13 @@ REVOKE EXECUTE ON FUNCTION public.assign_member_number(UUID)
 GRANT  EXECUTE ON FUNCTION public.assign_member_number(UUID)
   TO service_role;
 
--- ---- 5b. Handles, derived from the retired nicknames --------
--- THIS IS A DATA MIGRATION WITH JUDGEMENT IN IT, not a rename. display_name is
--- free text: it has spaces, capitals and punctuation, it is very often just a
--- first name, and IT IS NOT UNIQUE — this club has two Matthews, two Graces and
--- several Biancas. So the derivation is spelled out rather than left implicit:
+-- ---- 5b. Handles, derived from the names already on the row --
+-- THIS IS A DATA MIGRATION WITH JUDGEMENT IN IT, not a rename. The source text
+-- is free text: it has spaces, capitals and punctuation, it is very often just
+-- a first name, and IT IS NOT UNIQUE — this club has two Matthews, two Graces
+-- and several Biancas. So the derivation is spelled out rather than left
+-- implicit, and it is a named function because it is applied to two different
+-- source texts:
 --
 --   1. lowercase;
 --   2. every run of anything outside [a-z0-9_] becomes a single '_', and runs
@@ -179,92 +192,141 @@ GRANT  EXECUTE ON FUNCTION public.assign_member_number(UUID)
 --   3. leading non-letters dropped, because a handle must start with a letter;
 --   4. truncated to 20, then any trailing '_' the truncation exposed is dropped.
 --
--- Then a three-tier ladder, checking the FINAL candidate for uniqueness at each
--- step rather than only the base — a display name of literally "matthew 43"
--- derives to `matthew_43`, which is exactly what tier 2 would produce for the
--- OTHER Matthew:
+-- THE full_name TIER IS THE WHOLE POINT OF THIS SECTION, and its absence is why
+-- this file was corrected rather than followed by a fixer. The first version
+-- derived from display_name alone. On staging that produced `member_0014` for
+-- 86 of 99 members — every one of them a member whose nickname was empty, which
+-- is most of the club — while their real name sat unused one column over. A
+-- backfill that hands out numeric handles to 87% of the roster is not a
+-- backfill, so full_name is consulted before the numeric fallback ever is.
 --
---   tier 1  the derived base, if it is valid, unreserved and free;
---   tier 2  the base with '_<member_number>' appended (the base truncated to
---           make room). Never collides with another tier 2, because member
---           numbers are unique;
---   tier 3  'member_0042'. Cannot collide with anything, because it is built
---           from the unique number alone. This is where an empty derivation
---           lands — a display name that was blank, or only punctuation, or only
---           emoji, strips to nothing at step 3 and has no base to tier 2 with.
+-- WHY full_name AND NOT JUST THE FIRST NAME. `umar_ueda` rather than `umar`.
+-- First names alone are prettier and collide constantly: three Biancas means
+-- two of them get pushed onto the number tier and come out as `bianca_17`,
+-- which is both uglier than `bianca_chen` AND tells a reader less. first_last
+-- is nearly always unique in a club this size, and the number tier is still
+-- there for when it is not.
 --
--- If all three are somehow taken the loop RAISES rather than leaving a member
+-- The ladder, checking the FINAL candidate for validity, reservation and
+-- uniqueness at EVERY tier rather than only the base — a display name of
+-- literally "matthew 43" derives to `matthew_43`, which is exactly what the
+-- number tier would produce for the OTHER Matthew:
+--
+--   tier 1  the nickname base. The member's own chosen text wins when they
+--           gave one.
+--   tier 2  the full-name base. This is where most of the club lands, and it
+--           is also the better answer for the second Matthew, who now gets
+--           `matthew_cheng` instead of `matthew_6`.
+--   tier 3  the nickname base if there was one, else the full-name base, with
+--           '_<member_number>' appended (truncated to make room). Never
+--           collides with another tier 3, because member numbers are unique.
+--   tier 4  'member_0042'. Cannot collide with anything, because it is built
+--           from the unique number alone. Reached only by a member with no
+--           usable text in EITHER name — blank, punctuation-only, emoji-only —
+--           which after the full_name tier should be nobody.
+--
+-- If all four are somehow taken the loop RAISES rather than leaving a member
 -- without a handle. Staging gets this first, so a loud failure is the cheap
 -- outcome and a silent NULL is the expensive one.
 --
 -- DETERMINISTIC AND RE-RUNNABLE: rows are processed in (created_at, id) — the
 -- same order the member numbers were handed out in — and only rows with
 -- handle IS NULL are touched, so running this twice produces the same handles
--- and the second run does nothing.
+-- and the second run does nothing. Re-deriving after a correction is therefore
+-- "null the handles, run this again"; the member NUMBERS are untouched by it
+-- and must stay that way, because they are permanent and already correct.
+--
+-- MIRRORED IN TYPESCRIPT. deriveHandleBase() and deriveHandle() in
+-- packages/shared/src/utils/member-identity.ts are this same ladder, kept in
+-- step by hand — the same arrangement name.ts has with 00023 — so the tiers can
+-- be exercised against real names without a database. The empty-nickname case
+-- above is exactly what that test now pins.
 --
 -- pending_approval rows are skipped, because they have no member_number to
 -- build a fallback from and are not members yet. They choose their own handle
 -- in /settings like any new member.
+
+CREATE OR REPLACE FUNCTION public.derive_handle_base(p_source TEXT)
+RETURNS TEXT
+LANGUAGE sql
+IMMUTABLE
+SET search_path TO 'public'
+AS $function$
+  SELECT regexp_replace(
+           left(
+             regexp_replace(
+               regexp_replace(
+                 regexp_replace(lower(COALESCE(p_source, '')), '[^a-z0-9_]+', '_', 'g'),
+                 '_+', '_', 'g'),
+               '^[^a-z]+', ''),
+             20),
+           '_+$', '');
+$function$;
+
 DO $$
 DECLARE
   -- Kept in step with RESERVED_HANDLES in
   -- packages/shared/src/utils/member-identity.ts by hand, the same way the
   -- shape CHECK above is. A backfill must not mint the names the app refuses.
   v_reserved TEXT[] := ARRAY['admin', 'exec', 'root', 'me', 'settings', 'api', 'support', 'sfu', 'club'];
-  v_row       RECORD;
-  v_base      TEXT;
-  v_suffix    TEXT;
-  v_candidate TEXT;
+  v_row          RECORD;
+  v_nick_base    TEXT;
+  v_name_base    TEXT;
+  v_tiebreak     TEXT;
+  v_suffix       TEXT;
+  v_candidates   TEXT[];
+  v_try          TEXT;
+  v_candidate    TEXT;
 BEGIN
   FOR v_row IN
-    SELECT id, display_name, member_number
+    SELECT id, display_name, full_name, member_number
       FROM players
      WHERE handle IS NULL
        AND member_number IS NOT NULL
      ORDER BY created_at, id
   LOOP
-    v_base := lower(COALESCE(v_row.display_name, ''));
-    v_base := regexp_replace(v_base, '[^a-z0-9_]+', '_', 'g');
-    -- A second collapse, for the underscores that were ALREADY in the text:
-    -- the pass above only collapses runs of characters it is replacing, so
-    -- "a__b" would otherwise survive as typed.
-    v_base := regexp_replace(v_base, '_+', '_', 'g');
-    v_base := regexp_replace(v_base, '^[^a-z]+', '');
-    v_base := left(v_base, 20);
-    v_base := regexp_replace(v_base, '_+$', '');
+    v_nick_base := derive_handle_base(v_row.display_name);
+    v_name_base := derive_handle_base(v_row.full_name);
+    -- The member's own text is preferred for the numbered form too: someone who
+    -- chose "Matthew" should become matthew_6 rather than matthew_cheng_6.
+    v_tiebreak  := COALESCE(NULLIF(v_nick_base, ''), v_name_base);
+    v_suffix    := '_' || v_row.member_number::text;
 
-    -- Tier 1.
+    -- NULL entries are skipped by the loop below, so a tier with no base to
+    -- work from simply does not offer a candidate.
+    v_candidates := ARRAY[
+      v_nick_base,
+      v_name_base,
+      CASE WHEN v_tiebreak <> ''
+           THEN regexp_replace(left(v_tiebreak, 20 - length(v_suffix)), '_+$', '') || v_suffix
+      END,
+      'member_' || lpad(v_row.member_number::text, 4, '0')
+    ];
+
     v_candidate := NULL;
-    IF v_base ~ '^[a-z][a-z0-9_]{2,19}$'
-       AND NOT (v_base = ANY (v_reserved))
-       AND NOT EXISTS (SELECT 1 FROM players WHERE lower(handle) = v_base) THEN
-      v_candidate := v_base;
-    END IF;
+    FOREACH v_try IN ARRAY v_candidates LOOP
+      CONTINUE WHEN v_try IS NULL;
+      CONTINUE WHEN v_try !~ '^[a-z][a-z0-9_]{2,19}$';
+      CONTINUE WHEN v_try = ANY (v_reserved);
+      CONTINUE WHEN EXISTS (SELECT 1 FROM players WHERE lower(handle) = v_try);
+      v_candidate := v_try;
+      EXIT;
+    END LOOP;
 
-    -- Tier 2. Needs a base that still starts with a letter after truncation;
-    -- an empty one has nothing to disambiguate and goes straight to tier 3.
-    IF v_candidate IS NULL AND v_base ~ '^[a-z]' THEN
-      v_suffix := '_' || v_row.member_number::text;
-      v_candidate := regexp_replace(left(v_base, 20 - length(v_suffix)), '_+$', '') || v_suffix;
-      IF v_candidate !~ '^[a-z][a-z0-9_]{2,19}$'
-         OR v_candidate = ANY (v_reserved)
-         OR EXISTS (SELECT 1 FROM players WHERE lower(handle) = v_candidate) THEN
-        v_candidate := NULL;
-      END IF;
-    END IF;
-
-    -- Tier 3.
     IF v_candidate IS NULL THEN
-      v_candidate := 'member_' || lpad(v_row.member_number::text, 4, '0');
-      IF EXISTS (SELECT 1 FROM players WHERE lower(handle) = v_candidate) THEN
-        RAISE EXCEPTION 'Could not derive a free handle for player % (member #%)', v_row.id, v_row.member_number;
-      END IF;
+      RAISE EXCEPTION 'Could not derive a free handle for player % (member #%)', v_row.id, v_row.member_number;
     END IF;
 
     UPDATE players SET handle = v_candidate WHERE id = v_row.id;
   END LOOP;
 END;
 $$;
+
+-- Dropped on the way out. It exists for the backfill above and has no second
+-- caller: handles are chosen by members from here on, and leaving a helper
+-- behind invites somebody to build on a function whose only contract is "what
+-- 00092 happened to need".
+DROP FUNCTION IF EXISTS public.derive_handle_base(TEXT);
 
 -- ---- 6. Both columns are public ----------------------------
 -- 00032 revoked blanket SELECT on players and hands out a column list instead,
