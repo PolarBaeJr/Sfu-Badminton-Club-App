@@ -49,7 +49,13 @@ function fitToContent(el: HTMLTextAreaElement) {
 export function AutoGrowTextarea({
   value,
   ...props
-}: React.TextareaHTMLAttributes<HTMLTextAreaElement> & { value: string }) {
+}: React.TextareaHTMLAttributes<HTMLTextAreaElement> & {
+  value: string;
+  /** Forwarded to Textarea, which renders the field's <label>. Every other
+   *  prop already reached it through the spread; this one was simply missing
+   *  from the type, so passing it was a compile error rather than a no-op. */
+  label?: string;
+}) {
   const ref = useRef<HTMLTextAreaElement>(null);
 
   useLayoutEffect(() => {
