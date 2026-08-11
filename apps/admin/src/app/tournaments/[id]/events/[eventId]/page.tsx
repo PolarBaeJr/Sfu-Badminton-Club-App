@@ -15,6 +15,7 @@ import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { EventControlCenter } from './components/EventControlCenter';
 import { getTournamentBonusSettings } from '@/lib/platform-settings';
+import type { DrawCapabilities } from '@/lib/participant-controls';
 import type { Capability } from '@/lib/permissions';
 import type { ParticipantWithPlayer, PairWithPlayers, PlayerSummary } from '@/lib/tournament-types';
 import type { SiblingEvent } from '../../event-format-fields';
@@ -79,6 +80,22 @@ export default async function EventPage({
   const canAddEntries = doubles
     ? may('tournaments.draw.pairs.add.write')
     : may('tournaments.draw.participants.add.write');
+  // THE SAME QUESTION ASKED FOR EVERY CONTROL ON THE PARTICIPANTS TAB, not just
+  // the one whose fetch it gates. The tab decided what to render from
+  // `event.status === 'registration'` alone, so Add / Auto-Seed / Clear Seeds
+  // were offered to anybody who could open the page and the server action
+  // refused on click. Six controls, six capabilities — the ones the actions
+  // themselves re-check. See lib/participant-controls.ts for the transcription.
+  const drawCapabilities: DrawCapabilities = {
+    add: canAddEntries,
+    remove: doubles
+      ? may('tournaments.draw.pairs.remove.write')
+      : may('tournaments.draw.participants.remove.write'),
+    seedSet: may('tournaments.draw.seed.set.write'),
+    seedAuto: may('tournaments.draw.seed.auto.write'),
+    seedClear: may('tournaments.draw.seed.clear.write'),
+    exit: may('tournaments.draw.exit.write'),
+  };
   // `siblingEvents` feeds one picker too: the "seed from" list in
   // EventSettingsDialog, which is reached from EventHeader's settings button and
   // whose save calls updateEvent. Same capability that action asks for.
@@ -211,6 +228,7 @@ export default async function EventPage({
         siblingEvents={siblingEvents ?? []}
         isDoubles={doubles}
         bonusSettings={bonusSettings}
+        drawCapabilities={drawCapabilities}
         waiverStates={waiverStates}
       />
     </div>

@@ -22,6 +22,7 @@ import type {
   PairWithPlayers,
 } from '@/lib/tournament-types';
 import type { SiblingEvent } from '../../../event-format-fields';
+import type { DrawCapabilities } from '@/lib/participant-controls';
 import { EventHeader } from './EventHeader';
 import { ParticipantsTab } from './ParticipantsTab';
 import { CheckInTab } from './CheckInTab';
@@ -46,6 +47,10 @@ interface Props {
   // Resolved from platform_settings on the server — client components cannot
   // read the table, so the Results tab gets it as a prop.
   bonusSettings: TournamentBonusSettings;
+  // What the viewer may DO on the participants tab, one flag per server action
+  // behind a control. Resolved on the server for the same reason bonusSettings
+  // is: a client component cannot ask the permission model anything.
+  drawCapabilities: DrawCapabilities;
   // Event-waiver state per player id, resolved on the server because the
   // comparison needs a SHA-256 of the tournament's text and node:crypto cannot
   // run here. `null` means DO NOT SHOW THE COLUMN — either this tournament has
@@ -55,7 +60,7 @@ interface Props {
   waiverStates: Record<string, EventWaiverStatus> | null;
 }
 
-export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, waiverStates }: Props) {
+export function EventControlCenter({ tournament, event, participants, pairs, matches, allPlayers, siblingEvents, isDoubles, bonusSettings, drawCapabilities, waiverStates }: Props) {
   const status = event.status as TournamentEventStatus;
   const eventType = event.event_type as TournamentEventType;
   const format = event.format;
@@ -154,6 +159,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             pairs={pairs}
             allPlayers={allPlayers}
             isDoubles={isDoubles}
+            capabilities={drawCapabilities}
             waiverStates={waiverStates}
           />
         )}
