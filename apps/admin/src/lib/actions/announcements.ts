@@ -123,6 +123,21 @@ export async function createAnnouncement(data: {
   return announcement;
 }
 
+/**
+ * Editing a LIVE post is audited, so it takes a typed reason.
+ *
+ * Members have already read a published announcement; changing what it says
+ * changes the club's record of what was said, and `announcement_updated` was
+ * being written with a before and an after and no explanation of why the words
+ * moved. Anyone reading the log back could see that a court closure became a
+ * different court closure and not whether that was a correction or a new
+ * decision.
+ *
+ * A DRAFT is exempt. Nothing has been said to anybody yet, so demanding prose
+ * to fix a typo before posting is friction with no record to protect. The test
+ * is the STORED status, not the status the client sends — a caller cannot
+ * excuse itself from the reason by claiming the row is a draft.
+ */
 export async function updateAnnouncement(announcementId: string, data: {
   title: string;
   body: string;
@@ -132,12 +147,19 @@ export async function updateAnnouncement(announcementId: string, data: {
   send_push: boolean;
   status: 'draft' | 'published';
   expires_at?: string;
-}) {
+}, reason?: string) {
   parseOrThrow(announcementSchema, data);
   const admin = await requireCapability('announcements.update.write');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('announcements').select('*').eq('id', announcementId).single();
+
+  const trimmedReason = (reason ?? '').trim();
+  if (old?.status === 'published' && !trimmedReason) {
+    throw new ExpectedError(
+      'This post is live and members have already read it — say why it is changing.',
+    );
+  }
 
   const { error, count } = await adminClient.from('announcements').update({
     title: data.title,
@@ -168,6 +190,8 @@ export async function updateAnnouncement(announcementId: string, data: {
     target_id: announcementId,
     old_value: old,
     new_value: data,
+    // Absent for a draft edit, which is deliberate — see the note above.
+    ...(trimmedReason ? { reason: trimmedReason } : {}),
   }, { announcementId });
 
   // Notify only on the draft→published transition — editing an already-published

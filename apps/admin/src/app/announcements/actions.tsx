@@ -250,12 +250,16 @@ export function Composer({ pushReachable }: { pushReachable: number | null }) {
       </div>
 
       {/* Both halves of this are true. A published post reaches the bell and,
-          when push is on, the phone — neither can be recalled. And every edit
-          writes an `announcement_updated` row naming the actor and the before
-          and after. The mockup's claim that an edit leaves a mark MEMBERS see
-          is not: nothing on the player side renders one. */}
+          when push is on, the phone — neither can be recalled. And editing a
+          live post writes an `announcement_updated` row carrying the actor, the
+          before, the after and the reason typed into the dialog.
+
+          The mockup's line was "editing a live post leaves an edited mark",
+          which is NOT true: nothing on the player side renders one — neither
+          announcements/page.tsx nor announcement-item.tsx reads updated_at. The
+          audit log is where the mark actually lands, so that is what it says. */}
       <p className={`${MICRO} text-[var(--text-muted)] leading-relaxed`}>
-        Posts cannot be unsent. Every edit is recorded in the audit log.
+        Posts cannot be unsent. Editing a live one is recorded, with your reason.
       </p>
     </div>
   );
@@ -291,8 +295,14 @@ export function AnnouncementRowActions({
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [reason, setReason] = useState('');
+  const [editReason, setEditReason] = useState('');
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+
+  // A live post has already been read by members, so changing it is audited and
+  // takes an explanation. A draft has been said to nobody — it is exempt, and
+  // the field is not drawn.
+  const isLive = announcement.status === 'published';
 
   const [form, setForm] = useState<AnnouncementFormData>(() => fromRow(announcement));
 
@@ -313,24 +323,32 @@ export function AnnouncementRowActions({
 
   const openEdit = () => {
     setForm(fromRow(announcement));
+    setEditReason('');
     setEditOpen(true);
   };
 
+  const editReady =
+    form.title.trim().length > 0 && form.body.trim().length > 0 && (!isLive || editReason.trim().length > 0);
+
   const handleEdit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.title.trim() || !form.body.trim()) return;
+    if (!editReady) return;
     setLoading(true);
     try {
-      await updateAnnouncement(announcement.id, {
-        title: form.title.trim(),
-        body: form.body.trim(),
-        type: form.type,
-        target_audience: form.target_audience,
-        pinned: form.pinned,
-        send_push: form.send_push,
-        status: announcement.status,
-        ...(form.expires_at ? { expires_at: form.expires_at } : {}),
-      });
+      await updateAnnouncement(
+        announcement.id,
+        {
+          title: form.title.trim(),
+          body: form.body.trim(),
+          type: form.type,
+          target_audience: form.target_audience,
+          pinned: form.pinned,
+          send_push: form.send_push,
+          status: announcement.status,
+          ...(form.expires_at ? { expires_at: form.expires_at } : {}),
+        },
+        editReason.trim(),
+      );
       toast('Announcement updated', 'success');
       setEditOpen(false);
     } catch (err) {
@@ -418,6 +436,17 @@ export function AnnouncementRowActions({
             showScope={false}
           />
 
+          {isLive && (
+            <Textarea
+              label="Reason (required)"
+              value={editReason}
+              onChange={(e) => setEditReason(e.target.value)}
+              placeholder="Members have already read this. Why is it changing?"
+              rows={3}
+              required
+            />
+          )}
+
           <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
             {/* Delete lives inside the edit dialog rather than as a second
                 control in a 480px rail. It is labelled, it names the post, and
@@ -456,7 +485,7 @@ export function AnnouncementRowActions({
                 type="submit"
                 variant="primary"
                 className="min-h-[44px]"
-                disabled={loading || !form.title.trim() || !form.body.trim()}
+                disabled={loading || !editReady}
               >
                 {loading ? 'Saving…' : 'Save changes'}
               </Button>
