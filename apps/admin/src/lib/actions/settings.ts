@@ -5,13 +5,39 @@ import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import { parseOrThrow, legalDocumentUpdateSchema, waiverDocumentSchema, eventWaiverTemplateUpdateSchema, type LegalDocumentUpdateInput, type EventWaiverTemplateUpdateInput, type WaiverDocument } from '@badminton/shared';
 import { requireCapability } from './_shared';
+import { ExpectedError } from '@badminton/shared';
+// TWO floors on purpose, and they are not the same number. Rating settings take
+// the console's ordinary REASON_MIN (5) — enough to prove somebody typed
+// something. A legal document takes MIN_REASON_LENGTH (10), because that reason
+// is quoted back to every member in the re-sign prompt and "typo" is not an
+// explanation anyone can act on. Both are imported rather than redeclared: a
+// third hardcoded number is how the first two drift apart.
+import { REASON_MIN } from '../audit-reason';
 import { MIN_REASON_LENGTH } from '../legal-reason';
 
 // Platform configuration. Admin-only, and this is the boundary that matters:
 // /ratings and /accounts merely decide who is shown the form.
+//
+// THE REASON IS OPTIONAL IN THE SIGNATURE AND MANDATORY WHERE IT IS OFFERED.
+// /ratings types one and always passes it; /accounts' generic form has no
+// reason box yet and would break on a required parameter. So an omitted reason
+// keeps the old auto-generated text, and a supplied one must be real — a caller
+// that offers the box cannot get away with sending "." or "". The disabled Save
+// button is the UI half of that rule; this is the half that is a boundary.
 export async function updatePlatformSettings(
-  updates: { key: string; value: Record<string, unknown> }[]
+  updates: { key: string; value: Record<string, unknown> }[],
+  reason?: string
 ) {
+  let why: string | null = null;
+  if (reason !== undefined) {
+    why = reason.trim();
+    if (why.length < REASON_MIN) {
+      throw new ExpectedError(
+        `Changing the rating settings needs a reason of at least ${REASON_MIN} characters.`
+      );
+    }
+  }
+
   const admin = await requireCapability('platform.settings.write');
   const adminClient = createAdminClient();
 
@@ -47,7 +73,10 @@ export async function updatePlatformSettings(
       // Key FIRST. With target_id null this is the only place it appears, and
       // the /audit table truncates the reason cell at max-w-xs — "Platform
       // setting "repeat_opponent_caps" updated" is cut before the key ends.
-      reason: `${update.key} — platform setting updated`,
+      // The prefix survives when an officer typed their own reason, because
+      // /ratings reads these rows back by it to find the last change to a
+      // rating key.
+      reason: why ? `${update.key} — ${why}` : `${update.key} — platform setting updated`,
     });
   }
 
