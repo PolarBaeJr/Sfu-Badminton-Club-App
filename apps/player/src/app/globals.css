@@ -786,6 +786,69 @@ a.list-row:hover { border-color: var(--line-2); background: var(--surface-2); }
 }
 
 /* ═══════════════════════════════════════════════════════════
+   SCHEDULE (/sessions)
+   A day is the unit a member plans in, so the schedule is a stack of days,
+   not a stack of sessions. On a wide screen the day sits in a left rail
+   beside its sessions — the same editorial split as .ann above — and on a
+   phone it collapses to one baseline-aligned line over the cards. Same
+   content, two arrangements; nothing appears or disappears with width.
+   ═══════════════════════════════════════════════════════════ */
+
+.sched-day { display: grid; grid-template-columns: 132px 1fr; gap: 24px; align-items: start; }
+.sched-day + .sched-day { margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--line); }
+.sched-day-label {
+  font-family: var(--display); font-size: 20px; font-weight: 600;
+  letter-spacing: -.01em; line-height: 1.1;
+}
+.sched-day-date {
+  font-family: var(--mono); font-size: 11px; text-transform: uppercase;
+  letter-spacing: .14em; color: var(--mute); margin-top: 5px;
+}
+/* Today is the only day whose label is worth an accent — it is the one a
+   member is deciding about right now. */
+.sched-day.is-today .sched-day-date { color: var(--red); }
+.sched-day-list { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+.session-card {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+/* The soonest session carries a spine so the eye lands on it first without a
+   second, duplicated "next up" card to keep in sync. */
+.session-card.is-next { border-left: 3px solid var(--red); }
+.sess-eyebrow {
+  font-family: var(--mono); font-size: 10px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: .16em; color: var(--red);
+  margin-bottom: 6px;
+}
+/* The time is the fact the whole card is about, so it is set larger than the
+   rest of the meta line rather than buried inside it. */
+.sess-time {
+  font-family: var(--mono); font-variant-numeric: tabular-nums;
+  font-size: 15px; color: var(--ink); margin-top: 6px;
+}
+.sess-time .to { color: var(--mute); }
+.sess-actions { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+/* Says why there is no Check In button. Withholding the button without this
+   line is what makes the screen look broken at 5pm. */
+.sess-window {
+  font-family: var(--mono); font-size: 11px; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--mute); white-space: nowrap;
+}
+
+@media (max-width: 980px) {
+  .sched-day { grid-template-columns: 1fr; gap: 10px; }
+  .sched-day + .sched-day { margin-top: 18px; padding-top: 18px; }
+  .sched-day-rail { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .sched-day-label { font-size: 17px; }
+  .sched-day-date { margin-top: 0; }
+  .session-card { padding: 16px; }
+  .sess-actions { justify-content: flex-start; }
+}
+
+/* ═══════════════════════════════════════════════════════════
    DESIGN PRIMITIVES (page-level)
    These are component classes, not utilities — they live OUTSIDE
    @layer utilities so Tailwind's purge doesn't strip them when no
