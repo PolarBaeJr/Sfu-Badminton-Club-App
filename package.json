@@ -13,6 +13,7 @@
     "build": "npx turbo run build",
     "lint": "npx turbo run lint",
     "type-check": "npx turbo run type-check",
+    "gen:types": "node scripts/gen-db-types.mjs",
     "test": "npx turbo run test"
   },
   "packageManager": "npm@10.9.3",

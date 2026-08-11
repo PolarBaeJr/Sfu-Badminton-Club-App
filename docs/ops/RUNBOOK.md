@@ -104,10 +104,24 @@ To re-seed the primary admin from scratch, see `scripts/reseed-admin.sql`.
      | ssh <pi-host> "docker exec -i supabase-db psql -U postgres -d postgres -v ON_ERROR_STOP=1"
    ```
 4. If the change touches the ELO math, update **both** the SQL and the TypeScript engine.
-5. Regenerate types if applicable, redeploy the app. "Types" means
-   `packages/shared/src/types/database.gen.ts` — its header says what the
-   command is, why it needs the production DB URL, and how far behind the file
-   currently is. Nothing enforces this step, which is how it got that far.
+5. Regenerate `packages/shared/src/types/database.gen.ts`, then redeploy:
+   ```sh
+   npm run gen:types                 # reads staging (supabase-staging-db on `pi`)
+   npm run gen:types -- --container supabase-db --label production
+   ```
+   `npm run gen:types` runs `scripts/gen-db-types.mjs`, which reads the catalogs
+   over the same ssh path as step 3 — no connection string, so no password. Point
+   it at whichever database the migration has actually reached: **default is
+   staging**, and the `--container supabase-db --label production` form is the
+   one to commit once the migration is live on prod.
+
+   The output is a pure function of the schema (no timestamps, everything
+   sorted), so a re-run against an unchanged database rewrites the file byte for
+   byte. A non-empty `git diff` after running it therefore means a real schema
+   change — which makes this the cheapest way to check whether prod and staging
+   have diverged: generate against each and diff.
+
+   Nothing enforces this step, which is how the file once got 18 tables behind.
 
 Nothing in CI or the app runs SQL — so migrations are always a deliberate manual step.
 

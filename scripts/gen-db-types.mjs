@@ -104,7 +104,7 @@ function shellQuote(s) {
 // order. SQL goes in over stdin (`psql -f -`) rather than through `-c`, so no
 // part of a query ever has to survive two layers of shell quoting.
 function runQueries(opts, queries) {
-  const sql = queries.join(`\nSELECT ${shellQuoteSql(SPLIT)};\n`);
+  const sql = `${queries.join(`;\nSELECT ${shellQuoteSql(SPLIT)};\n`)};\n`;
   const remote = [
     'docker', 'exec', '-i', shellQuote(opts.container),
     'psql',
@@ -403,7 +403,19 @@ const arr = (items, force = false) => ({ t: 'arr', items, force });
 const arrayOf = (inner) => ({ t: 'arrayOf', inner });
 
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
-const key = (k) => (IDENT.test(k) ? k : JSON.stringify(k));
+
+// Property keys. A plain string is a required property; `prop(name, true)` is
+// optional (`name?:`); `raw()` is written through untouched, which is how the
+// `[_ in never]: never` mapped-type key survives quoting.
+const prop = (name, optional = false) => ({ name, optional });
+const raw = (text) => ({ raw: text });
+
+function key(k) {
+  if (typeof k === 'string') return IDENT.test(k) ? k : JSON.stringify(k);
+  if (k.raw !== undefined) return k.raw;
+  const name = IDENT.test(k.name) ? k.name : JSON.stringify(k.name);
+  return k.optional ? `${name}?` : name;
+}
 
 function inline(node) {
   switch (node.t) {
@@ -476,13 +488,15 @@ function emit(node, indent, prefix, suffix) {
     }
 
     case 'union': {
-      // `key:` alone, then one `| member` per line. Prettier treats the `| ` as
-      // part of the member's indentation, so the member renders two columns in
-      // and its own first line gets the bar written over that indent.
+      // `key:` alone, then one `| member` per line indented two columns in.
+      // Prettier treats the `| ` itself as indentation, so a member renders at
+      // barIndent + 2 and its first line has the bar written over that indent.
+      const barIndent = indent + 2;
+      const bar = ' '.repeat(barIndent);
       const out = [pad + prefix.replace(/\s+$/, '')];
       for (const m of node.members) {
-        const lines = emit(m, indent + 2, '', '');
-        lines[0] = `${pad}| ${lines[0].slice(indent + 2)}`;
+        const lines = emit(m, barIndent + 2, '', '');
+        lines[0] = `${bar}| ${lines[0].slice(barIndent + 2)}`;
         out.push(...lines);
       }
       if (suffix) out[out.length - 1] += suffix;
@@ -505,7 +519,7 @@ function emit(node, indent, prefix, suffix) {
   }
 }
 
-const EMPTY_SECTION = obj([['[_ in never]', lit('never')]], true);
+const EMPTY_SECTION = obj([[raw('[_ in never]'), lit('never')]], true);
 
 // ---------------------------------------------------------------------------
 // Building the Database type
@@ -537,8 +551,8 @@ function buildRelation(rel, fks, tr) {
       || col.hasdefault
       || col.identity === 'a' || col.identity === 'd'
       || col.generated === 's';
-    insertEntries.push([`${col.name}${optional ? '?' : ''}`, lit(type)]);
-    updateEntries.push([`${col.name}?`, lit(type)]);
+    insertEntries.push([prop(col.name, optional), lit(type)]);
+    updateEntries.push([prop(col.name, true), lit(type)]);
   }
 
   const entries = [['Row', obj(rowEntries, true)]];
@@ -577,7 +591,9 @@ function buildFunction(fn, tr) {
 
   let argsNode;
   if (inArgs.length === 0) {
-    argsNode = obj([]);
+    // `{}` in TypeScript means "anything non-nullish", which would accept a
+    // call that passes arguments this function does not have.
+    argsNode = lit('Record<PropertyKey, never>');
   } else if (inArgs.some((a) => !a.name)) {
     // Positional-only arguments cannot be named in an object literal.
     tr.note('function with unnamed arguments', `${fn.schema}.${fn.name}`);
@@ -586,7 +602,7 @@ function buildFunction(fn, tr) {
     const entries = inArgs
       .map((a, i) => ({ a, optional: i >= firstDefaulted }))
       .sort((x, y) => byName(x.a.name, y.a.name))
-      .map(({ a, optional }) => [`${a.name}${optional ? '?' : ''}`, lit(tr.ts(a.type))]);
+      .map(({ a, optional }) => [prop(a.name, optional), lit(tr.ts(a.type))]);
     argsNode = obj(entries);
   }
 
