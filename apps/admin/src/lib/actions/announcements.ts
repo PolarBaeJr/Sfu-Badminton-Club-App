@@ -230,7 +230,36 @@ export async function deleteAnnouncement(announcementId: string, reason: string)
 
   const { data: old } = await adminClient.from('announcements').select('*').eq('id', announcementId).single();
 
-  await adminClient.from('announcement_reads').delete().eq('announcement_id', announcementId);
+  // THE BELL ROWS GO WITH THE POST.
+  //
+  // `announcement_reads` needs nothing here — its FK is ON DELETE CASCADE
+  // (00001_schema.sql:616), so the delete below takes the receipts with it. The
+  // explicit sweep that used to sit on this line was a round trip that deleted
+  // rows Postgres was about to delete anyway.
+  //
+  // `notifications` is the one that does NOT cascade. It carries no FK at all:
+  // the only link to the post is `metadata.announcement_id`, written by
+  // dispatchAnnouncementNotifications above, so nothing in the schema cleans it
+  // up and every published post left a bell row per member behind it.
+  //
+  // Deleted rather than left with a destination, and the destination is why.
+  // notificationAction() (player app, lib/notification-rows.ts:179) routes a
+  // `general` row with an announcement_id to `/announcements` — a list, so the
+  // tap is not a 404. But the row's headline is the FIRST 140 CHARACTERS OF THE
+  // POST ITSELF, and this delete is audited with a typed reason: the club is
+  // retracting what it said. Keeping the row keeps the retracted words on every
+  // member's notification screen, under a Read button leading to a list that no
+  // longer contains them. There is nothing graceful left to point at.
+  //
+  // Ahead of the announcement delete on purpose. If this fails the action fails
+  // with nothing removed and no audit row written, and the admin can retry;
+  // doing it afterwards would leave the post gone, the rows behind and the log
+  // claiming a clean delete.
+  const { error: notificationError } = await adminClient
+    .from('notifications')
+    .delete()
+    .eq('metadata->>announcement_id', announcementId);
+  if (notificationError) throw new Error(notificationError.message);
 
   const { error, count } = await adminClient
     .from('announcements')
