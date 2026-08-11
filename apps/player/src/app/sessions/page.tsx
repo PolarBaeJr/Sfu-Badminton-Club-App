@@ -19,6 +19,7 @@ import { SessionCard } from './session-card';
 import { DeepLinkScroll } from './deep-link-scroll';
 import {
   clubDateISO,
+  dayHeading,
   describeMyState,
   groupSessionsByDay,
   tallyBySession,
@@ -130,15 +131,33 @@ export default async function SessionsPage() {
   // later.
   const nextSessionId = (upcoming.find((s) => s.date >= todayISO) ?? upcoming[0])?.id as string | undefined;
 
-  // How many upcoming nights the member has already committed to. It is the
-  // one number that answers "what have I said yes to?" without opening a card.
-  const myUpcomingCount = upcoming.filter((s) => {
+  // The upcoming nights the member has already committed to. It answers "what
+  // have I said yes to?" without opening a card — as a count in the sub-line,
+  // and as the actual list in the side rail.
+  const myUpcoming = upcoming.filter((s) => {
     const state = describeMyState(myStatusBySession.get(s.id), myIntentBySession.get(s.id));
     return state === 'going' || state === 'checked_in' || state === 'attended';
-  }).length;
+  });
+  const myUpcomingCount = myUpcoming.length;
+
+  // Turnout over the closed nights this page already fetched. The figure is
+  // scoped to that window and the card says so: `closedSessions` is .limit(10),
+  // so "3 of the last 8" is exactly true while "3 sessions this season" would
+  // be a capped number pretending to be a total.
+  //
+  // 'checked_in' and 'present' are the two statuses that mean the member was
+  // actually there; 'no_show' and 'excused' are attendance rows too, and
+  // counting them would turn "you missed it" into "you turned up".
+  const closed = closedSessions ?? [];
+  const attendedIds = new Set(
+    (myAttendance ?? [])
+      .filter((r) => r.status === 'checked_in' || r.status === 'present')
+      .map((r) => r.session_id as string),
+  );
+  const attendedRecently = closed.filter((s) => attendedIds.has(s.id as string)).length;
 
   return (
-    <div data-screen-label="Schedule">
+    <div data-screen-label="Schedule" className="wide-page">
       <DeepLinkScroll />
       {/* "Capacity fills fast" was dropped from the subtitle: sessions have no
           capacity column and no waitlist, so it promised a scarcity the app
@@ -149,6 +168,7 @@ export default async function SessionsPage() {
         title="Schedule"
         sub="Open practices, drop-ins and ladder nights. RSVP so the exec knows who's coming, then check in when you arrive to claim your spot."
         actions={upcomingCount > 0 ? <SubscribeAllButton /> : undefined}
+        className="wide-head"
       />
 
       {/* A suspended member reaches this page from a notification or a saved
@@ -162,10 +182,18 @@ export default async function SessionsPage() {
         style={{ marginBottom: 20 }}
       />
 
-      {/* Phone and desktop show the same two things in the same order; the wide
-          layout only stops the schedule from stretching across a 27" monitor by
-          moving the finished nights into a side column, the 8/4 split the feed
-          already uses. Below 1100px this collapses and they stack again. */}
+      {/* The nights on the calendar down the left; everything that is about the
+          MEMBER rather than about the calendar down the right. Below 1101px the
+          rail unstacks under the schedule and the order is the phone's:
+          upcoming first, then what you have said yes to, then the rules, then
+          what has already happened.
+
+          The rail is rendered unconditionally, which is also the fix for the
+          empty season. It used to hold only the closed sessions, so a brand new
+          term left the Upcoming <section> as the only child of .sched-wide —
+          and that selector capped it at 1100px with no auto margin, i.e. a
+          narrow column pinned hard left with the right half of the monitor
+          black. There is now always something true to put beside it. */}
       <div className="sched-wide">
         <section className="reveal reveal-1">
           <div className="card-head">
@@ -252,16 +280,151 @@ export default async function SessionsPage() {
           )}
         </section>
 
-        {closedSessions && closedSessions.length > 0 && (
-          <section className="card-base reveal reveal-2">
+        <aside className="wide-rail reveal reveal-2">
+          {/* YOU'RE IN FOR ------------------------------------------- */}
+          {/* Derived entirely from data already on this page: the open sessions
+              and this member's own RSVP / attendance rows. No capacity, no
+              "spots left" and no waitlist position — none of those columns
+              exist, so none of them are claimed here.
+
+              Desktop only, like the two cards under it. On a phone this is a
+              second copy of information the session cards a thumb-flick above
+              already carry, on a screen whose rule is bigger targets and fewer
+              of them; on a laptop it is the column that was empty. Nothing is
+              taken AWAY from the phone — every card in this rail is new. */}
+          <div className="card-base wide-desktop-only">
+            <div className="wide-cap">You&apos;re in for</div>
+            {myUpcomingCount === 0 ? (
+              <p className="wide-note">
+                {upcomingCount === 0
+                  ? 'Nothing to say yes to yet. Once the exec posts a night it shows up here the moment you RSVP.'
+                  : 'You have not RSVP’d to anything yet. Going tells the exec to expect you; it is not the same as checking in on the night.'}
+              </p>
+            ) : (
+              <div style={{ marginTop: 10 }}>
+                {myUpcoming.slice(0, 5).map((s) => {
+                  const heading = dayHeading(s.date as string, todayISO);
+                  const state = describeMyState(
+                    myStatusBySession.get(s.id as string),
+                    myIntentBySession.get(s.id as string),
+                  );
+                  return (
+                    <a key={s.id as string} href={`#session-${s.id}`} className="wide-item">
+                      <div className="wide-item-title">
+                        {s.name ?? 'Practice Session'}
+                      </div>
+                      {/* The absolute date, not a bare weekday. Closing a
+                          session is a manual admin action with no cron behind
+                          it, so a night the exec forgot to close is still
+                          'open' and still sorts in here — "Tuesday" would read
+                          as the Tuesday coming. Only today and tomorrow, which
+                          cannot be stale, get a relative word. */}
+                      <div className="wide-item-sub">
+                        {heading.isToday || heading.isTomorrow ? heading.label : heading.dateLabel} ·{' '}
+                        {s.location}
+                        {state === 'checked_in' || state === 'attended' ? ' · checked in' : ''}
+                      </div>
+                    </a>
+                  );
+                })}
+                {myUpcomingCount > 5 && (
+                  <div className="wide-item-sub" style={{ marginTop: 10 }}>
+                    {/* Not "below" — the schedule is beside this list on a
+                        laptop and above it on a phone. */}
+                    +{myUpcomingCount - 5} more on the schedule
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* THE CHECK-IN WINDOW -------------------------------------- */}
+          {/* The live platform_settings row this page already fetched, not the
+              TypeScript fallback — these are the same two numbers
+              session_checkin_open() enforces, so the explanation on screen and
+              the gate on the server cannot drift apart. This card is why the
+              rail is never empty: the rules of the screen are true on a season
+              with no sessions in it at all.
+
+              Desktop only. On a phone each session card already prints its own
+              "Opens at 6:30 PM", which is the same fact about the night in
+              front of you; this is the general statement of it, and it earns
+              its place only in a column that would otherwise be black. */}
+          <div className="card-base wide-desktop-only">
+            <div className="wide-cap">Checking in</div>
+            <p className="wide-note">
+              {checkinSettings.opensMinutesBefore == null
+                ? 'Check-in is open on any session that has not finished yet — there is no opening time set.'
+                : `Check-in opens ${checkinSettings.opensMinutesBefore} minutes before a session starts.`}{' '}
+              It closes at the end time, or {checkinSettings.defaultDurationMinutes} minutes after
+              the start when a night has no end time on it.
+            </p>
+            <div className="wide-figures">
+              <div className="stat">
+                <div className="stat-label">Opens</div>
+                <div className="stat-value mono" style={{ fontSize: 22 }}>
+                  {checkinSettings.opensMinutesBefore == null
+                    ? 'Any time'
+                    : `${checkinSettings.opensMinutesBefore}m`}
+                </div>
+              </div>
+              <div className="stat">
+                <div className="stat-label">Default length</div>
+                <div className="stat-value mono" style={{ fontSize: 22 }}>
+                  {checkinSettings.defaultDurationMinutes}m
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* YOUR TURNOUT --------------------------------------------- */}
+          {/* Scoped to the closed nights this page fetched, and labelled with
+              that number, because `closedSessions` is .limit(10): "2 of the
+              last 6" is exactly true, "6 sessions this season" would be a
+              capped figure dressed up as a total. Withheld entirely before the
+              first night closes rather than shown as a zero.
+
+              NOT a streak. The feed prints one, from a different set of
+              sessions: it counts every past-dated night this member was
+              eligible for, closed or not, and closing a session is a manual
+              admin action with no cron behind it. So a night the exec forgot
+              to close is in the feed's run and cannot be in this one, and two
+              screens would confidently print two different numbers for the
+              same word. The feed owns "streak"; this card owns the window it
+              names. */}
+          {closed.length > 0 && (
+            <div className="card-base wide-desktop-only">
+              <div className="wide-cap">Your turnout</div>
+              <div className="wide-figures">
+                <div className="stat">
+                  <div className="stat-label">
+                    Of the last {closed.length} closed {closed.length === 1 ? 'night' : 'nights'}
+                  </div>
+                  <div className="stat-value mono" style={{ fontSize: 22 }}>
+                    {attendedRecently}
+                  </div>
+                </div>
+              </div>
+              {attendedRecently === 0 && (
+                <p className="wide-note">
+                  You have not been marked in at any of them. Check in on the night and it
+                  counts here.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* PAST SESSIONS -------------------------------------------- */}
+          {closed.length > 0 && (
+          <section className="card-base">
             <div className="card-head">
               <div>
                 <h2 className="card-title">Past sessions</h2>
-                <div className="card-sub">The last {closedSessions.length} nights that have closed.</div>
+                <div className="card-sub">The last {closed.length} nights that have closed.</div>
               </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {closedSessions.map((session) => {
+              {closed.map((session) => {
                 const outcome = PAST_STATE_LABEL[describeMyState(myStatusBySession.get(session.id), null)];
                 const attended = checkedInBySession[session.id] ?? 0;
                 return (
@@ -282,7 +445,8 @@ export default async function SessionsPage() {
               })}
             </div>
           </section>
-        )}
+          )}
+        </aside>
       </div>
     </div>
   );

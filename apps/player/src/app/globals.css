@@ -2237,3 +2237,152 @@ html, body { overflow-x: clip; }
   white-space: nowrap;
 }
 .notif-row:hover .notif-cta { background: var(--line); }
+
+/* ═══════════════════════════════════════════════════════════
+   WIDE LAYOUTS — /feed and /sessions on a laptop
+   ═══════════════════════════════════════════════════════════
+   Both screens were built for a phone and read as one narrow
+   strip on a 2000px monitor: a river (or a day list) down the
+   left and nothing at all to its right.
+
+   Everything in this block is ADDITIVE at >=1101px. Below that
+   floor every selector here is either inert or single-column, so
+   the phone layout these screens were designed for is untouched.
+
+   Why 1101px and not Tailwind's lg (1024px): .grid-12 above
+   already drops to six columns at <=1100px. A 1024px floor would
+   open a 1024-1100 band where two grids disagree about how many
+   columns the page has.
+   ═══════════════════════════════════════════════════════════ */
+
+/* Page gutter. .page already pays 28px on every side, and it is on
+   EVERY route via layout.tsx, so it must not be re-specified from
+   here — this only adds what is missing.
+
+   The house figure is 28px top / 32px sides / 56px bottom, and
+   only the bottom is taken. The extra 4px each side would push
+   these two screens' titles out of line with the brand mark in
+   .topbar-inner, which sits at 28px on every page: a title row
+   that does not line up with the nav above it reads as a mistake,
+   and it costs more than 4px of gutter buys. The bottom is the
+   half that was actually doing work — the last card used to end
+   28px from the fold. */
+@media (min-width: 1101px) {
+  .wide-page { padding-bottom: 28px; }
+}
+
+/* The identity/title row is ruled off from the body under it —
+   the same treatment /feed already carries via .feed-header, for
+   the screens that do not.
+
+   Gated, unlike .feed-header, which applies at every width. The
+   rule costs 18px of padding, and 18px at the top of a phone is
+   real: it is the difference between seeing tonight's session
+   without scrolling and not. On a laptop the vertical space is
+   free and the hairline is what stops the title floating over a
+   two-column body. */
+@media (min-width: 1101px) {
+  .wide-head {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 18px;
+  }
+}
+
+/* The two-column river/rail split. One column by default — which
+   is the phone, and also every viewport under the floor. */
+.wide-grid { display: grid; gap: 20px; }
+.wide-grid > * { min-width: 0; }
+/* The tighter phone gap .grid already applies at this width, kept
+   so that swapping /feed off .grid-12 changes nothing on a phone. */
+@media (max-width: 980px) { .wide-grid { gap: 14px; } }
+@media (min-width: 1101px) {
+  .wide-grid {
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+    gap: 20px;
+    /* Cards stack from the top of the rail instead of stretching
+       to the height of the river beside them. */
+    align-items: start;
+  }
+}
+
+/* The supporting column itself: cards stacked, never stretched. */
+.wide-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+.wide-rail > * { min-width: 0; }
+
+/* Section heading inside a rail card. .stat-label is the same idea
+   at .1em; this is the wider tracking the house templates use for
+   a heading as opposed to a number's label, so a card whose body
+   is prose announces itself the same way as one whose body is a
+   figure. */
+.wide-cap {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--mute);
+}
+
+/* Hairline-ruled rows inside a rail card — the compact form of a
+   list when it has 260px rather than 1200px to live in. */
+.wide-item { display: block; padding: 10px 0; border-top: 1px solid var(--line); }
+.wide-item:first-of-type { border-top: 0; padding-top: 0; }
+.wide-item-title { font-size: 14px; font-weight: 600; line-height: 1.3; }
+.wide-item-sub {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--mute);
+  margin-top: 3px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+/* Body copy in a rail card: the sentence that says what an empty
+   card MEANS, rather than leaving a heading over a void. */
+.wide-note { font-size: 13px; line-height: 1.55; color: var(--mute); margin: 8px 0 0; }
+
+/* Two figures side by side in a rail card. Same rule as
+   .session-stats, but usable outside the next-session card. */
+.wide-figures { display: flex; gap: 0; margin-top: 14px; }
+.wide-figures > * { flex: 1; padding-left: 14px; border-left: 1px solid var(--line); }
+.wide-figures > *:first-child { padding-left: 0; border-left: 0; }
+
+/* Rail cards that only earn their place once there is a column
+   for them. Everything wearing this class is EXTRA — it is the
+   answer to a laptop's empty right half, and on a phone it would
+   be a second copy of something a thumb-flick away, on a screen
+   whose whole rule is fewer, bigger things. Nothing the phone
+   already had is hidden by it.
+
+   The one exception is the check-in button, which is not extra:
+   it exists twice in the document because it cannot simply MOVE
+   into the rail. .feed-checkin-bar is `position: sticky`, and a
+   sticky element only pins while its containing block is on
+   screen — nested in the rail it would appear on a phone only
+   after you had scrolled past the entire river, which is the
+   opposite of the point. So the phone keeps its thumb-reachable
+   bar, the desktop gets the card, and exactly one is displayed.
+
+   `display: block` on the shown state, so anything using this
+   must not also set display inline — an inline style would beat
+   the `none` and leak the card onto the phone. */
+.wide-desktop-only { display: none; }
+@media (min-width: 1101px) {
+  .wide-desktop-only { display: block; }
+  /* There is no thumb to reach on a laptop, so the floating bar
+     retires in favour of the rail card above. */
+  .feed-checkin-bar { display: none; }
+}
+
+/* /sessions: with no closed sessions yet, Upcoming used to be the
+   only child of .sched-wide and picked up a 1100px cap with no
+   auto margin — a 1100px column pinned hard left with the right
+   half of the monitor black, which is exactly what a brand new
+   season looked like. The page now always renders a rail beside
+   it, so the rule can no longer match; this releases the cap for
+   any caller that still manages to. */
+.sched-wide > section:only-child { max-width: none; }

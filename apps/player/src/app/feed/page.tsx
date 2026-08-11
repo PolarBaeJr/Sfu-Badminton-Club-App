@@ -322,8 +322,32 @@ export default async function FeedPage() {
         ? `From ${formatTime(nextSession.start_time)}`
         : null;
 
+  // The reader's own aggregate record. getCurrentPlayer() already selects
+  // `ratings(*)`, so this is free — no extra round trip, and no whole-club
+  // get_leaderboard() fetch just to print one member's numbers. It is the
+  // member's OWN row, so hide_from_leaderboard does not apply: that flag
+  // governs what everyone else sees.
+  const rating = (Array.isArray(player.ratings) ? player.ratings[0] : player.ratings) as
+    | {
+        singles_elo: number | null;
+        doubles_elo: number | null;
+        singles_wins: number | null;
+        singles_losses: number | null;
+        doubles_wins: number | null;
+        doubles_losses: number | null;
+        singles_provisional: boolean | null;
+        doubles_provisional: boolean | null;
+      }
+    | null
+    | undefined;
+  const played =
+    (rating?.singles_wins ?? 0) +
+    (rating?.singles_losses ?? 0) +
+    (rating?.doubles_wins ?? 0) +
+    (rating?.doubles_losses ?? 0);
+
   return (
-    <div data-screen-label="Feed">
+    <div data-screen-label="Feed" className="wide-page">
       <PageHeader
         eyebrow={eyebrow.toUpperCase()}
         title="Feed"
@@ -354,8 +378,16 @@ export default async function FeedPage() {
         </div>
       )}
 
-      <div className="grid grid-12">
-        <div style={{ gridColumn: 'span 8' }} className="feed-col">
+      {/* River left, supporting cards right. One column until 1101px, and the
+          DOM order is unchanged, so the phone still reads exactly as before:
+          river, next session, notice, record, then the sticky check-in bar.
+
+          .wide-grid rather than the old 8/4 .grid-12 because .grid-12 halves to
+          six columns at 1100px, so "span 8" quietly meant two thirds of the
+          page on a laptop and the whole width on a tablet — two grids
+          disagreeing about how many columns the page has. */}
+      <div className="wide-grid">
+        <div className="feed-col">
           {/* THE RIVER ------------------------------------------------ */}
           {sections.length === 0 ? (
             <div className="card-base">
@@ -427,10 +459,10 @@ export default async function FeedPage() {
           )}
         </div>
 
-        <div style={{ gridColumn: 'span 4' }} className="feed-col">
+        <aside className="wide-rail">
           {/* NEXT SESSION --------------------------------------------- */}
           <div className="card-base">
-            <div className="stat-label">Next session</div>
+            <div className="wide-cap">Next session</div>
             {nextSession ? (
               <>
                 <div
@@ -474,10 +506,34 @@ export default async function FeedPage() {
             )}
           </div>
 
+          {/* CHECK IN, on a laptop ------------------------------------ */}
+          {/* The same control as the sticky bar at the foot of the document,
+              rendered a second time so the desktop can have it as a card in the
+              rail instead of a red slab floating over the river. Exactly one of
+              the two is ever displayed (.wide-desktop-only shows this one at
+              >=1101px and hides the bar at the same width), and neither holds
+              state, so there is nothing here that can disagree with itself. */}
+          {isApproved && nextSession && (
+            <div className="card-base wide-desktop-only">
+              <div className="wide-cap">Turning up?</div>
+              <p className="wide-note" style={{ marginBottom: 14 }}>
+                Check in when you arrive to claim your spot. The button opens on
+                the schedule, beside the session itself.
+              </p>
+              <Link
+                href={`/sessions#session-${nextSession.id}`}
+                className="btn btn-primary btn-lg press"
+                style={{ width: '100%', justifyContent: 'center', minHeight: 48 }}
+              >
+                <QrCode size={16} /> Check in
+              </Link>
+            </div>
+          )}
+
           {/* CLUB NOTICE ---------------------------------------------- */}
           {notice && (
             <Link href="/announcements" className="card-base press" style={{ display: 'block' }}>
-              <div className="stat-label">Club notice</div>
+              <div className="wide-cap">Club notice</div>
               <h3 className="card-title" style={{ margin: '8px 0 6px' }}>
                 {notice.title}
               </h3>
@@ -497,14 +553,68 @@ export default async function FeedPage() {
             </Link>
           )}
 
-        </div>
+          {/* YOUR RECORD ---------------------------------------------- */}
+          {/* Every figure here comes off the `ratings` row getCurrentPlayer()
+              already loads. Deliberately NOT on this card:
+              - ladder POSITION. Working it out means get_leaderboard(), which
+                fetches the whole club on a screen that does not otherwise need
+                it, and returns nothing at all for a member who has set
+                hide_from_leaderboard.
+              - anything scoped to "this week". `ratings` is a running total
+                with no history behind it, and the river above is capped at
+                fifteen rows, so a weekly count would either be a guess or a
+                second query. /my-stats is where the history lives, and this
+                card links to it.
+              Desktop only, for the same reason as the rail cards on /sessions:
+              on a phone this is a lift of the top of /my-stats, one tab away,
+              on a screen that is supposed to have one thing to do. */}
+          <Link href="/my-stats" className="card-base press wide-desktop-only">
+            <div className="wide-cap">Your record</div>
+            {played === 0 ? (
+              <p className="wide-note">
+                No rated matches yet. Your singles and doubles ratings start
+                level and move the first time a result is confirmed.
+              </p>
+            ) : (
+              <div className="wide-figures">
+                <div className="stat">
+                  <div className="stat-label">Singles</div>
+                  <div className="stat-value mono" style={{ fontSize: 24 }}>
+                    {rating?.singles_elo ?? '—'}
+                  </div>
+                  {/* "Provisional" leads the sub-line, the way /my-stats and
+                      the ladder both write it — a rating still settling means
+                      something different from one that has, and the figure
+                      above says nothing about which it is. */}
+                  <div className="wide-item-sub" style={{ marginTop: 2 }}>
+                    {rating?.singles_provisional ? 'Provisional · ' : ''}
+                    {rating?.singles_wins ?? 0}W · {rating?.singles_losses ?? 0}L
+                  </div>
+                </div>
+                <div className="stat">
+                  <div className="stat-label">Doubles</div>
+                  <div className="stat-value mono" style={{ fontSize: 24 }}>
+                    {rating?.doubles_elo ?? '—'}
+                  </div>
+                  <div className="wide-item-sub" style={{ marginTop: 2 }}>
+                    {rating?.doubles_provisional ? 'Provisional · ' : ''}
+                    {rating?.doubles_wins ?? 0}W · {rating?.doubles_losses ?? 0}L
+                  </div>
+                </div>
+              </div>
+            )}
+          </Link>
+        </aside>
       </div>
 
-      {/* THE one primary action, and the last element in the document.
+      {/* THE one primary action ON A PHONE — the desktop renders it as a card
+          in the rail above instead, and .wide-desktop-only makes sure only one
+          of the two is ever on screen.
           A direct child of the page root rather than of a grid column, because
           `position: sticky` only pins while its CONTAINING BLOCK is on screen —
           nested in the sidebar it would appear only once you had scrolled past
-          the whole river, which is the opposite of the point.
+          the whole river, which is the opposite of the point. That is also why
+          the desktop version is a separate element rather than this one moved.
           Hidden outright for an account checkInToSession() would refuse.
           It goes to the schedule, not to a scanner: /checkin/[token] is the
           DESTINATION of a QR scan and the app has no session-scanning screen to
