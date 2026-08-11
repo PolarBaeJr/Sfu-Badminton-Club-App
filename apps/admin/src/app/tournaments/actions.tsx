@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button, Dialog, Input, Select, Switch, Dropdown, Textarea, DatePicker } from '@badminton/ui';
+import { Button, Dialog, Input, Select, Switch, Dropdown, Textarea, DatePicker, useConfirm } from '@badminton/ui';
 import { MEMBERSHIP_TYPES, ALL_MEMBERSHIP_TYPES, resolveEventWaiverTemplate } from '@badminton/shared';
-import { createTournament, updateTournament, archiveTournament, deleteTournament } from '@/lib/actions';
+import { createTournament, updateTournament, eventWaiverEditImpact, archiveTournament, deleteTournament } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { MoreVertical } from 'lucide-react';
 
@@ -62,6 +62,7 @@ function TournamentFormDialog({
   );
   const { toast } = useToast();
   const router = useRouter();
+  const confirm = useConfirm();
 
   // An existing tournament offers its own season's wording; a new one offers
   // the active season's, which is the season createTournament will stamp on it.
@@ -89,6 +90,30 @@ function TournamentFormDialog({
         waiver_text: waiverText,
       };
       if (isEdit) {
+        // EDITING THE WAIVER TEXT SILENTLY UN-SIGNS EVERYONE WHO ACCEPTED THE
+        // OLD WORDING. An acceptance is pinned to a hash of the exact text
+        // (00015), so any real edit stops matching — which is correct for a
+        // signed document and invisible at the moment somebody does it. Done
+        // mid-tournament it turns a field that could check in into one that
+        // cannot, and the first symptom is a refusal at the door.
+        //
+        // So it is said out loud, with the number, before the save. Only when
+        // there is actually somebody to un-sign: a warning that fires on every
+        // typo in an unused box is a warning nobody reads.
+        const { invalidated } = await eventWaiverEditImpact(tournament.id, waiverText);
+        if (invalidated > 0) {
+          const ok = await confirm({
+            title: 'This will un-sign the event waiver',
+            message:
+              `${invalidated} ${invalidated === 1 ? 'person has' : 'people have'} already accepted the ` +
+              'current wording. Changing it means their acceptance no longer covers what they agreed to, ' +
+              'so they will have to accept the new text before they can be checked in. ' +
+              'Save anyway?',
+            confirmLabel: 'Save and un-sign',
+            danger: true,
+          });
+          if (!ok) { setLoading(false); return; }
+        }
         await updateTournament(tournament.id, data);
         toast('Tournament updated', 'success');
       } else {

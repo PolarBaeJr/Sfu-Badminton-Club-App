@@ -66,6 +66,7 @@ export {
   createTournament,
   updateTournamentStatus,
   updateTournament,
+  eventWaiverEditImpact,
   suspendTournament,
   resumeTournament,
   archiveTournament,

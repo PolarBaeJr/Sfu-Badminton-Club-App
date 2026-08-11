@@ -4,7 +4,15 @@ import { createAdminClient } from '../supabase-server';
 import { logAdminAudit } from '../audit';
 import { notifyPlayers } from '../notify';
 import { revalidatePath } from 'next/cache';
-import { parseOrThrow, tournamentCreateSchema, tournamentSuspendSchema, requireActiveSeasonId } from '@badminton/shared';
+import {
+  parseOrThrow,
+  tournamentCreateSchema,
+  tournamentSuspendSchema,
+  requireActiveSeasonId,
+  resolveEventWaiverText,
+} from '@badminton/shared';
+// By SUBPATH — node:crypto, server only.
+import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
 import { requireCapability } from './_shared';
 
 export async function createTournament(data: {
@@ -131,6 +139,19 @@ export async function updateTournament(tournamentId: string, data: {
 
   const { data: old } = await adminClient.from('tournaments').select('*').eq('id', tournamentId).single();
 
+  // EDITING THE WAIVER UN-SIGNS EVERYONE WHO SIGNED THE OLD WORDING, because an
+  // acceptance is pinned to a hash of the exact text (00015). That is correct —
+  // it is the only defensible reading of a signed document — but it is silent,
+  // and doing it mid-tournament turns a checked-in-able field into a blocked
+  // one. Recorded on the audit row so that "why did forty people stop being
+  // able to check in at 6pm" has an answer.
+  //
+  // The exec is WARNED before this point, in the dialog, using
+  // eventWaiverEditImpact below. This is the record that it happened.
+  const invalidated = await countInvalidatedAcceptances(
+    adminClient, tournamentId, old?.waiver_text as string | null | undefined, data.waiver_text,
+  );
+
   const { error } = await adminClient.from('tournaments').update({
     name: data.name,
     scope: data.scope,
@@ -155,11 +176,71 @@ export async function updateTournament(tournamentId: string, data: {
     target_type: 'tournament',
     target_id: tournamentId,
     old_value: old,
-    new_value: data,
+    new_value: invalidated > 0 ? { ...data, event_waiver_acceptances_invalidated: invalidated } : data,
   }, { tournamentId });
 
   revalidatePath('/tournaments');
   revalidatePath(`/tournaments/${tournamentId}`);
+}
+
+/**
+ * How many current acceptances a proposed change to `waiver_text` would throw
+ * away. Zero when the text is unchanged, and zero when there is no new text —
+ * clearing the box removes the requirement entirely, so nobody is left unsigned.
+ *
+ * Never throws: this is advisory, and an edit must not fail because a count
+ * could not be taken.
+ */
+async function countInvalidatedAcceptances(
+  adminClient: ReturnType<typeof createAdminClient>,
+  tournamentId: string,
+  oldText: string | null | undefined,
+  newText: string | null | undefined,
+): Promise<number> {
+  try {
+    const before = resolveEventWaiverText({ waiver_text: oldText });
+    const after = resolveEventWaiverText({ waiver_text: newText });
+    // No waiver before, or the same words after (trimmed, exactly as the hash
+    // sees them): nothing is invalidated. A whitespace-only edit is deliberately
+    // free, because eventWaiverHash trims too.
+    if (!before || before === after) return 0;
+    // Clearing it entirely is not an invalidation — there is no longer anything
+    // to be unsigned against.
+    if (!after) return 0;
+
+    const oldHash = eventWaiverHash(before);
+    const { count } = await adminClient
+      .from('event_waiver_acceptances')
+      .select('id', { count: 'exact', head: true })
+      .eq('tournament_id', tournamentId)
+      .eq('waiver_hash', oldHash);
+    return count ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * What the exec is told BEFORE they save. Read-only, and gated on the same
+ * capability that owns the edit itself — this is a preview of one action's
+ * consequence, not a second door, so it does not get a capability of its own.
+ */
+export async function eventWaiverEditImpact(
+  tournamentId: string,
+  newWaiverText: string,
+): Promise<{ invalidated: number }> {
+  await requireCapability('tournaments.manage.update.write');
+  const adminClient = createAdminClient();
+  const { data: current } = await adminClient
+    .from('tournaments')
+    .select('waiver_text')
+    .eq('id', tournamentId)
+    .maybeSingle();
+  return {
+    invalidated: await countInvalidatedAcceptances(
+      adminClient, tournamentId, current?.waiver_text as string | null | undefined, newWaiverText,
+    ),
+  };
 }
 
 export async function suspendTournament(tournamentId: string, reason: string) {
