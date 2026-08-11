@@ -27,13 +27,12 @@
 -- still sitting there to work from. Dropping a column on a live database to
 -- save a few bytes is a bad trade.
 --
--- CORRECTED IN PLACE TWICE, AFTER TWO STAGING RUNS. Editing an applied
--- migration is normally the wrong thing to do; it is right here for one reason
--- that holds for both corrections — PRODUCTION HAS NEVER SEEN THIS FILE, so
--- there is no applied history to preserve and nothing to diverge from, and
+-- CORRECTED IN PLACE TWICE. The RUNBOOK's rule is "additive and forward-only,
+-- never edit an already-applied baseline", and this file breaks it twice for
+-- the one reason that suspends it: PRODUCTION HAS NEVER SEEN THIS FILE. There
+-- is no applied production history to preserve and nothing to diverge from, so
 -- shipping something known to be wrong plus a follow-up to repair it is worse
--- than one correct file. Section 0 undoes the earlier shapes so staging can
--- re-run it from scratch and land somewhere clean.
+-- than one correct file.
 --
 --   FIRST: the handle backfill derived from display_name alone, and staging
 --   showed 86 of 99 members coming out as `member_0014` because their nickname
@@ -44,10 +43,29 @@
 --   why the code is a hash of the row's id rather than anything random, is in
 --   section 3.
 --
--- Both backfills are WHERE <column> IS NULL, so re-running after nulling the
--- column is the whole re-derivation. Nothing about a re-run is order-dependent
--- except which of two colliding rows gets the un-suffixed value, and that is
--- pinned by a fixed (created_at, id) walk.
+-- STAGING HAS APPLIED THIS FILE IN ITS SEQUENTIAL-INTEGER FORM, so unlike the
+-- first correction this one has a real database to reconcile with. Section 0
+-- and section 7b are what do it: they undo, idempotently, exactly the objects
+-- the sequential version created, so re-running this file end to end converges
+-- staging onto what the file now says. On production, and on any fresh
+-- database, every one of those statements is an IF EXISTS no-op.
+--
+-- RE-RUNNING IT IS LITERALLY RE-RUNNING IT. Nothing in this repository tracks
+-- which migrations have been applied — see the RUNBOOK: a migration is a file
+-- piped into psql by hand — so an edited file does not have to be talked past a
+-- ledger. Pipe it again and it converges.
+--
+-- HANDLES DO NOT MOVE WHEN IT IS RE-RUN, which is the property that matters
+-- most here, because a handle is public identity: a member is `@kiera` on the
+-- leaderboard and must not silently become somebody else. Section 5b is
+-- WHERE handle IS NULL, so every handle staging already assigned is left
+-- exactly where it is. Re-deriving them is a separate, deliberate act — null
+-- the column first — and it is never something a re-run does by itself.
+--
+-- The member codes are equally stable, and by construction rather than by a
+-- WHERE clause: they are a hash of the row's own id, so the same row gets the
+-- same code on every run of this file, in any database, forever. Section 3
+-- says why that ruled out random() and gen_random_uuid() outright.
 --
 -- WHAT CHANGES VISIBLY: get_leaderboard() returned COALESCE(display_name,
 -- full_name) as `name`, so a member who had set a nickname was shown by it on a
@@ -58,22 +76,30 @@
 -- discovered.
 -- ============================================================
 
--- ---- 0. Undo the earlier shapes of THIS file ---------------
--- Staging has run 00092 twice already, once with a sequential member_number and
--- once with a 5-digit one. Both are gone; the identifier is a 7-character code
--- now. These drops are what let staging re-run this file from scratch and land
--- somewhere clean, and they are all no-ops on production, which has never seen
--- any version of it.
+-- ---- 0. Undo the sequential shape of THIS file -------------
+-- Staging is running the sequential-integer version of this file. The
+-- identifier is a 7-character code now, so the objects that version created
+-- have to go. Every statement here is IF EXISTS and therefore a no-op on
+-- production and on any fresh database, neither of which has seen them.
 --
--- DROP COLUMN, not a rename: the values were sequential integers and none of
--- them survives the change, so carrying them across would only preserve the
--- numbering that was rejected.
+-- These are exactly the objects the sequential 00092 created, and nothing else.
+-- The list is short because it is real: the function, the sequence it drew
+-- from, and (in section 7b) the column and its unique index. There was never a
+-- range CHECK and never a derive_member_number(), so nothing pretends to drop
+-- them.
+--
+-- THE COLUMN IS NOT DROPPED HERE, and that is the whole reason this section is
+-- split. The guard trigger currently installed on staging has
+-- NEW.member_number in its body, and sections 4 and 5b both UPDATE players,
+-- which fires it. Dropping the column out from under a live trigger before
+-- those run is a hazard that costs two lines to remove: the column goes in
+-- section 7b, after section 7 has replaced the guard with a body that no longer
+-- names it. Do not move it back up here.
+--
+-- The function goes first and the sequence second, because the function reads
+-- the sequence.
 DROP FUNCTION IF EXISTS public.assign_member_number(UUID);
-DROP FUNCTION IF EXISTS public.derive_member_number(UUID);
 DROP SEQUENCE IF EXISTS public.player_member_number_seq;
-ALTER TABLE public.players DROP CONSTRAINT IF EXISTS players_member_number_range_check;
-DROP INDEX IF EXISTS public.players_member_number_idx;
-ALTER TABLE public.players DROP COLUMN IF EXISTS member_number;
 
 -- ---- 1. The columns ----------------------------------------
 ALTER TABLE public.players ADD COLUMN IF NOT EXISTS handle TEXT;
@@ -225,6 +251,39 @@ $function$;
 
 COMMENT ON FUNCTION public.derive_member_code(UUID) IS
   'The first free 7-character member code for this player: md5(id) folded into 30^7 over the alphabet 23456789ABCDEFGHJKMNPQRSTVWXYZ, rehashed with an attempt counter if that code is taken. Deterministic — the same row in the same database always gets the same answer, which is what makes 00092''s backfill re-runnable. Reads the table, so STABLE rather than IMMUTABLE.';
+
+-- ---- 3b. Is the TypeScript mirror still telling the truth? --
+-- deriveMemberCode() in packages/shared/src/utils/member-identity.ts is this
+-- function written again in TypeScript, kept in step BY HAND. Its test asserts
+-- the five pairs below as literals, so running this SELECT is what turns "the
+-- mirror agrees" from an assumption into a fact. THIS IS A READ. It writes
+-- nothing, and none of these UUIDs is a real player.
+--
+-- Two ways the mirror can drift while every test about length, alphabet and
+-- determinism still passes, which is why the check is a vector table and not a
+-- property: the base-30 digits are PREPENDED here (`v_code := char || v_code`),
+-- so a mirror that appends produces a perfect mirror-image code; and `/` on a
+-- BIGINT truncates here while `/` in JavaScript does not.
+--
+--   SELECT id, derive_member_code(id) FROM (VALUES
+--     ('00000000-0000-0000-0000-000000000000'::uuid),
+--     ('11111111-2222-3333-4444-555555555555'::uuid),
+--     ('a3f1c2d4-5e6b-7a8c-9d0e-1f2a3b4c5d6e'::uuid),
+--     ('ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid),
+--     ('6ba7b810-9dad-11d1-80b4-00c04fd430c8'::uuid)
+--   ) AS t(id);
+--
+-- Expected, and asserted in that test file:
+--
+--   00000000-0000-0000-0000-000000000000   BY227EV
+--   11111111-2222-3333-4444-555555555555   Y3WMYFY
+--   a3f1c2d4-5e6b-7a8c-9d0e-1f2a3b4c5d6e   32Y8FW7
+--   ffffffff-ffff-ffff-ffff-ffffffffffff   KNNHEM8
+--   6ba7b810-9dad-11d1-80b4-00c04fd430c8   ED6NARH
+--
+-- Run it on an EMPTY-ish players table, or read it as "these unless one is
+-- already taken": derive_member_code() probes the table, so a real row holding
+-- one of these codes would correctly send that id to its rehash.
 
 -- Deliberately NOT a column DEFAULT. A default fires on INSERT, which is when
 -- somebody SIGNS UP, and a signup is not yet a member — and it would also make
@@ -597,6 +656,22 @@ $function$;
 
 COMMENT ON FUNCTION public.guard_player_privileged_columns() IS
   'Blocks a member from granting themselves privilege via a direct PostgREST write to their own players row. Replaced wholesale on every change: CREATE OR REPLACE takes the whole body, so a column omitted here loses its protection silently. Dump the live definition before editing.';
+
+-- ---- 7b. The sequential column, finally dropped ------------
+-- THE SECOND HALF OF SECTION 0, and it is down here rather than up there on
+-- purpose — see the note in section 0. Only now is the guard's body free of
+-- NEW.member_number, so only now is dropping the column out from under it safe.
+-- Both statements are no-ops on production and on a fresh database.
+--
+-- DROP COLUMN, not a rename. The values were sequential integers and not one of
+-- them survives the change; carrying them across would preserve exactly the
+-- numbering the club rejected, under a name that no longer describes it.
+--
+-- The index is named explicitly even though DROP COLUMN would take it anyway,
+-- because a reader comparing this file against \d players should not have to
+-- know that rule to see that the index is gone.
+DROP INDEX IF EXISTS public.players_member_number_idx;
+ALTER TABLE public.players DROP COLUMN IF EXISTS member_number;
 
 -- ---- 8. The leaderboard carries the handle -----------------
 -- The ladder is where "searchable by @handle" is actually used, and the RPC it
