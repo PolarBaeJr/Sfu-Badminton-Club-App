@@ -288,7 +288,7 @@ export default async function FeesPage() {
       <div className="fees-grid wide-grid">
         <div className="fees-col">
           {/* ── OUTSTANDING ───────────────────────────────────────────── */}
-          <section className="card-base fees-card fees-outstanding">
+          <section className="card-base fees-outstanding">
             <div className="fees-label">Outstanding</div>
             <div className="fees-figure-row">
               <div className="fees-figure">{headlineAmount(summary)}</div>
@@ -325,7 +325,11 @@ export default async function FeesPage() {
               </p>
             )}
 
-            {summary.outstanding.length > 0 && (
+            {/* Only when the figure is a sum of more than one thing. With a
+                single outstanding line the breakdown is the headline printed
+                twice, which is what the mockup avoided by only ever having a
+                term fee to show. */}
+            {summary.outstanding.length > 1 && (
               <ul className="fees-owed">
                 {summary.outstanding.map((l) => (
                   <li key={l.key} className="fees-owed-row">
@@ -381,7 +385,7 @@ export default async function FeesPage() {
 
         <div className="fees-col">
           {/* ── WHAT THINGS COST ──────────────────────────────────────── */}
-          <section className="card-base fees-card fees-prices">
+          <section className="card-base fees-prices">
             <div className="fees-label">What things cost</div>
             {season ? (
               <>
