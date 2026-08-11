@@ -2705,3 +2705,219 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
 @media (min-width: 1024px) {
   .me-form-cell { width: 28px; height: 36px; }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   EXECUTIVES  (/exec)
+   ───────────────────────────────────────────────────────────
+   Self-contained appended block. Every selector is `exec-`
+   prefixed and used by that one screen; nothing above is
+   touched, and nothing above depends on this.
+
+   The screen was a grid of centred 220px tiles — an avatar over
+   a name over a title, with the bio squeezed underneath in the
+   remaining 170px. Five people is not a gallery, it is a short
+   list you read: who they are, what they do, in that order. So
+   it is now a ruled list, one officer per block, the bio given
+   the full measure of the column.
+
+   The phone is the design width. Everything the laptop adds is
+   inside a media query at the bottom.
+   ═══════════════════════════════════════════════════════════ */
+
+/* --exec-gutter is the padding .page is already paying on each
+   side — 16px on a phone, 28px from 981px up. Named here so the
+   officer blocks can bleed out by exactly that and pay it
+   straight back as padding: the hairlines then run bezel to
+   bezel while the text keeps the same left edge as the title
+   above it.
+
+   max-width is the measure, at EVERY width — .page carries no max-width
+   (--page-max: none), so without this the 14px bio ran the full
+   width of whatever window it was in. 640px is .news's 620px
+   nudged out to pay for the 48px avatar that sits in this
+   screen's rows and not in that one's. Inert on a phone, which
+   is why it is the base rule rather than something a media query
+   remembers to add. */
+.exec-screen {
+  --exec-gutter: 16px;
+  max-width: 640px;
+  margin-inline: auto;
+}
+
+/* The full-bleed hairlines, and the arithmetic that keeps them
+   honest. A 672px viewport minus .page's two 16px gutters is
+   exactly the 640px cap, so at and below this width the cap
+   cannot be binding and the container really is the page — the
+   bleed lands on the bezel, which is the whole point of it. One
+   pixel wider and the container starts floating in the middle of
+   the window, where a block bleeding 16px past it would end its
+   hairline in open space rather than at an edge. So the bleed
+   retires at exactly the width where it stops meaning anything.
+
+   Paid for in WIDTH as well as margin: a negative inline margin
+   with a `100%` width shifts the box left without widening it,
+   leaving the hairline one gutter short on the right — the bug
+   .notif-row documents above. */
+@media (max-width: 672px) {
+  .exec-officer {
+    width: calc(100% + var(--exec-gutter) * 2);
+    margin-inline: calc(var(--exec-gutter) * -1);
+    padding-inline: var(--exec-gutter);
+  }
+}
+
+@media (min-width: 981px) {
+  /* Matches .page's own step from 16px to 28px, so the two agree
+     about where the edge of the page is. */
+  .exec-screen { --exec-gutter: 28px; }
+}
+
+/* --- the header block --------------------------------------- */
+/* Same shape as /announcements' .news-head, deliberately: these
+   two are the club's prose screens and a member arriving from
+   one should recognise the other. .wide-head adds the rule under
+   it above 1101px.
+
+   Capped below the floor so it cannot beat .wide-head's 18px:
+   both are one class, so the later of the two would otherwise
+   win on source order alone and silently undo the rule this
+   block asked for. */
+@media (max-width: 1100px) {
+  .exec-head { padding-bottom: 14px; }
+}
+.exec-back {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--mute);
+  text-decoration: none;
+}
+@media (hover: hover) { .exec-back:hover { color: var(--ink); } }
+.exec-title {
+  font-family: var(--display);
+  font-size: 38px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.02em;
+  margin: 10px 0 0;
+}
+.exec-title .dot { color: var(--red); }
+.exec-sub {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink-2);
+  margin: 8px 0 0;
+}
+
+/* --- one officer -------------------------------------------- */
+/* Inside the capped column by default; the bleed above adds
+   itself back on a phone. 16px of vertical padding on each side
+   of the hairline is what turns a stack of rules into a rhythm
+   rather than a table. */
+.exec-officer {
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+}
+/* The header already rules itself off from the body above
+   1101px, and two hairlines 14px apart read as a mistake. */
+@media (min-width: 1101px) {
+  .exec-officer:first-child { border-top: 0; }
+}
+
+.exec-officer-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* min-width: 0 so a long single-token name wraps instead of
+   pushing the row wider than its own block. */
+.exec-officer-id { flex: 1; min-width: 0; }
+
+.exec-officer-name {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+/* Every title on the old screen was set in --red, which spent
+   the club's one accent five times over and said nothing. Red is
+   now the president and only the president — see isPresident()
+   in page.tsx, which decides this and the list order from the
+   same test. */
+.exec-officer-role {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--mute);
+  margin-top: 4px;
+}
+.exec-officer-role[data-lead="true"] { color: var(--red); }
+
+/* The avatar. `lg` is the 64px house size and this row wants 48
+   — sized on the instance from the page's own block rather than
+   by moving a shared token, the same way .me-chart-svg sets its
+   own height. Specificity beats .avatar[data-size="lg"] by the
+   extra class. pre-wrap on the bio for the same reason
+   /announcements gives: it is plain text typed into a textarea,
+   and the paragraph breaks are the only structure it has. */
+.exec-officer .avatar[data-size="lg"] {
+  width: 48px;
+  height: 48px;
+  font-size: 16px;
+  flex: 0 0 auto;
+}
+
+.exec-officer-bio {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  margin: 12px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* --- the laptop --------------------------------------------- */
+/* Two equal columns, not the house 1.6fr/1fr river-and-rail.
+   That pattern exists to put SUPPORTING material beside a main
+   column, and this screen has none to put there: the mock's
+   MEETINGS card and elections note have no source in the
+   database (see the report), so a rail here could only be filled
+   by inventing one. A symmetric list also wants symmetric
+   columns — at 1.6fr/1fr the same bio wraps to four lines on one
+   side and seven on the other, and the two officers stop looking
+   like peers.
+
+   1101px is the house floor, matching .wide-grid and
+   .notif-wide; 981-1100px gets the capped single column.
+
+   row-gap stays 0 so the two blocks in a row share one hairline
+   and the rules run straight across both columns; a gap here
+   would break each rule in half at the column gutter. */
+@media (min-width: 1101px) {
+  /* The cap opens up because there are two columns to fill now.
+     1240px is .notif-screen's figure, chosen there for the same
+     reason: two columns and a 28px gutter either side. */
+  .exec-screen { max-width: 1240px; }
+  .exec-list {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 40px;
+    row-gap: 0;
+  }
+  /* A little more air than the phone gets, because the rules are
+     now twice as long and a long rule 16px from its text reads
+     tighter than a short one at the same distance. */
+  .exec-officer { padding: 20px 0; }
+  /* :first-child only zeroes the first block; in two columns the
+     SECOND one also sits on the top row and needs the same. */
+  .exec-officer:nth-child(2) { border-top: 0; }
+  /* An odd count leaves the last row half empty, which is what a
+     five-person exec always looks like. Nothing to fix — the
+     hairline above it simply stops halfway, and a rule that ends
+     where its content ends is correct. */
+}
