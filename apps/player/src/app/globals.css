@@ -2705,3 +2705,335 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
 @media (min-width: 1024px) {
   .me-form-cell { width: 28px; height: 36px; }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   /FEES — WHAT I OWE
+   ───────────────────────────────────────────────────────────
+   Self-contained appended block. Every selector is `fees-`
+   prefixed and used by that one screen, so nothing above moves.
+
+   Phone first, and the phone IS the design: a member reads this
+   standing in a gym wondering whether they still owe the term
+   fee. One figure, big, in --mono, answers that before anything
+   else is read. The desktop is the same screen wider — the two
+   columns below are the house 1.6fr/1fr split, reusing
+   .wide-grid rather than declaring a third grid.
+
+   The one thing NOT reused is .wide-rail. It is `display: flex`
+   at every width, so under the breakpoint its cards stay
+   grouped after the main column's and the phone would read
+   Outstanding → Receipts → Prices → note. The design's phone
+   order is Outstanding → Prices → Receipts → note. So this
+   borrows /my-stats' answer instead: the two column wrappers
+   are `display: contents` below the floor, which dissolves them
+   and lets `order` on each card decide the phone's sequence
+   independently of which column it lives in on a laptop. One
+   set of markup, two layouts, nothing rendered twice.
+   ═══════════════════════════════════════════════════════════ */
+
+/* A measure on the container that holds the header AND the body, so the two
+   cannot size independently — the bug the /notifications block above documents
+   at length. 1240px is that block's figure, kept so two adjacent screens do not
+   disagree about how wide this app is. */
+@media (min-width: 981px) {
+  .fees {
+    max-width: 1240px;
+    margin-inline: auto;
+  }
+}
+
+/* --- the header block --------------------------------------- */
+.fees-head { padding-bottom: 4px; }
+
+.fees-back {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--mute);
+  text-decoration: none;
+}
+@media (hover: hover) { .fees-back:hover { color: var(--ink); } }
+
+.fees-title {
+  font-family: var(--display);
+  font-size: 38px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.02em;
+  margin: 10px 0 0;
+}
+.fees-title .dot { color: var(--red); }
+
+.fees-sub {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink-2);
+  margin: 8px 0 0;
+}
+
+/* --- the two-column body ------------------------------------ */
+.fees-grid { margin-top: 20px; }
+
+/* Dissolved below the floor so `order` on the cards inside decides the phone's
+   reading sequence. .wide-grid > * { min-width: 0 } cannot reach the cards once
+   this box is gone — selectors match the DOM, not the box tree — so the same
+   guard is restated one level down. */
+.fees-col { display: contents; }
+.fees-col > * { min-width: 0; }
+@media (min-width: 1101px) {
+  .fees-col {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+}
+
+/* The phone's order. Set on the cards themselves rather than on the wrappers,
+   because under the floor the wrappers are not boxes and have no order to set.
+   Inert at >=1101px, where each card is a flex item of its own column and the
+   only order that matters is source order within that column. */
+.fees-outstanding { order: 1; }
+.fees-prices      { order: 2; }
+.fees-section     { order: 3; }
+.fees-closing     { order: 4; }
+
+/* --- the OUTSTANDING card ----------------------------------- */
+.fees-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--mute);
+}
+
+.fees-figure-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+/* 46px in --mono, not --display: this app's rule is that numbers are the
+   content, and money in particular has to line up digit for digit against the
+   amounts in the receipt list below it. line-height .85 pulls the figure tight
+   to its label so the two read as one block. */
+.fees-figure {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 46px;
+  font-weight: 700;
+  line-height: .85;
+  letter-spacing: -.03em;
+  color: var(--ink);
+}
+
+/* The sentence that stops the figure being read as the whole answer — an
+   outstanding entry with no recorded price, or an exemption. */
+.fees-caveat {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--mute);
+  margin: 14px 0 0;
+}
+
+/* What the figure is made of. The mockup had a single term fee and needed no
+   breakdown; three ledgers feed this number, so a member who owes $55 has to be
+   able to see which two things that is. */
+.fees-owed {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+}
+.fees-owed-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.fees-owed-name {
+  font-size: 14px;
+  line-height: 1.3;
+  color: var(--ink-2);
+  min-width: 0;
+}
+.fees-owed-amount {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.fees-foot {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--mute);
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  padding-top: 12px;
+}
+
+/* --- the price list ----------------------------------------- */
+.fees-price {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+.fees-price:first-of-type { margin-top: 14px; }
+/* The viewer's own tier. A red spine is how .news-pin already says "this is the
+   one that concerns you"; no new colour, and it survives at a glance where a
+   weight change would not. */
+.fees-price[data-mine="true"] {
+  border-left: 2px solid var(--red);
+  padding-left: 12px;
+}
+.fees-price-main { min-width: 0; }
+.fees-price-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.fees-yours {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: .16em;
+  color: var(--red);
+}
+.fees-price-note {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--mute);
+  margin-top: 4px;
+}
+.fees-price-amount {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+/* The sentence under the list. Prose in a card whose body is otherwise figures,
+   so it is set as body copy rather than as another mono line. */
+.fees-note {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--mute);
+  margin: 14px 0 0;
+}
+
+/* --- receipts ----------------------------------------------- */
+/* Rows, not cards. A payment history is a list of facts, and eight surfaces
+   stacked down a phone read as eight things to decide about. */
+.fees-section-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin: 0 0 4px;
+}
+
+.fees-empty {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--mute);
+  border-top: 1px solid var(--line);
+  margin: 0;
+  padding-top: 14px;
+}
+
+.fees-receipts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.fees-receipt {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+.fees-receipt-main { min-width: 0; }
+.fees-receipt-name {
+  font-size: 15px;
+  line-height: 1.3;
+  color: var(--ink);
+}
+/* The date/method/reference line. overflow-wrap because a reference is free
+   text an exec typed and can be longer than a phone is wide; <Atomic> keeps the
+   code itself whole, and this only fires when the code alone overflows. */
+.fees-receipt-meta {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--mute);
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+.fees-receipt-side {
+  text-align: right;
+  white-space: nowrap;
+}
+.fees-receipt-amount {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  color: var(--ink);
+}
+.fees-receipt-state {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .12em;
+  color: var(--win);
+  margin-top: 4px;
+}
+/* A waived fee settled without money moving. --mute rather than --win: it is
+   not a payment, and colouring it as one would overstate what the club took. */
+.fees-receipt-state.is-waived { color: var(--mute); }
+
+/* --- the closing note --------------------------------------- */
+.fees-closing {
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.7;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--dim);
+  text-align: center;
+  margin: 8px 0 0;
+}
+/* On a laptop the note sits at the foot of the rail, where centred text under a
+   left-aligned card reads as a stray line. */
+@media (min-width: 1101px) {
+  .fees-closing { text-align: left; }
+}
+
+.fees-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+@media (hover: hover) { .fees-link:hover { color: var(--ink); } }
