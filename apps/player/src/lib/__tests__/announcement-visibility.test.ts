@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { createClient } from '@supabase/supabase-js';
 import {
   addressedTo,
   announcementExpiryFilter,
@@ -82,6 +83,49 @@ describe('withVisibleAnnouncements', () => {
   it('returns the builder so the caller can go on chaining', () => {
     const q = recorder();
     expect(withVisibleAnnouncements(q, NOW, 'season-1')).toBe(q);
+  });
+
+  it('produces two ANDed or= params on a REAL PostgREST builder', () => {
+    // The recorder above cannot prove this. It asserts what the helper ASKED
+    // for; this asserts what postgrest-js does with it. Both facts the helper
+    // depends on are library behaviour, not ours:
+    //
+    //   .or() returns `this` — so /announcements, which used to reassign
+    //   (`query = query.or(...)`), keeps its filter now that the helper returns
+    //   the builder instead;
+    //   .or() APPENDS rather than replacing — two `or=` params, which PostgREST
+    //   ANDs. One `or=` overwriting the other would drop the expiry filter and
+    //   put expired notices back on both screens.
+    //
+    // And .order()/.limit() still chain off the result, which is what /feed
+    // needs for its top-3-then-match-audience read.
+    const client = createClient('http://localhost:54321', 'anon-key-not-used');
+    const built = withVisibleAnnouncements(
+      client.from('announcements').select('id, target_audience').eq('status', 'published'),
+      NOW,
+      'season-1',
+    )
+      .order('pinned', { ascending: false })
+      .limit(3);
+
+    const url = decodeURIComponent((built as unknown as { url: URL }).url.toString());
+    expect(url).toContain('or=(expires_at.is.null,expires_at.gt.2026-08-11T00:00:00.000Z)');
+    expect(url).toContain('or=(all_seasons.eq.true,season_id.eq.season-1)');
+    expect(url).toContain('status=eq.published');
+    expect(url).toContain('order=pinned.desc');
+    expect(url).toContain('limit=3');
+  });
+
+  it('emits only the expiry or= when there is no active season', () => {
+    const client = createClient('http://localhost:54321', 'anon-key-not-used');
+    const built = withVisibleAnnouncements(
+      client.from('announcements').select('id, target_audience').eq('status', 'published'),
+      NOW,
+      null,
+    );
+    const url = decodeURIComponent((built as unknown as { url: URL }).url.toString());
+    expect(url.match(/or=\(/g)).toHaveLength(1);
+    expect(url).not.toContain('all_seasons');
   });
 });
 
