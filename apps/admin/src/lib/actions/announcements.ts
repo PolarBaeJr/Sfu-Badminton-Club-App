@@ -123,6 +123,21 @@ export async function createAnnouncement(data: {
   return announcement;
 }
 
+/**
+ * Editing a LIVE post is audited, so it takes a typed reason.
+ *
+ * Members have already read a published announcement; changing what it says
+ * changes the club's record of what was said, and `announcement_updated` was
+ * being written with a before and an after and no explanation of why the words
+ * moved. Anyone reading the log back could see that a court closure became a
+ * different court closure and not whether that was a correction or a new
+ * decision.
+ *
+ * A DRAFT is exempt. Nothing has been said to anybody yet, so demanding prose
+ * to fix a typo before posting is friction with no record to protect. The test
+ * is the STORED status, not the status the client sends — a caller cannot
+ * excuse itself from the reason by claiming the row is a draft.
+ */
 export async function updateAnnouncement(announcementId: string, data: {
   title: string;
   body: string;
@@ -132,12 +147,19 @@ export async function updateAnnouncement(announcementId: string, data: {
   send_push: boolean;
   status: 'draft' | 'published';
   expires_at?: string;
-}) {
+}, reason?: string) {
   parseOrThrow(announcementSchema, data);
   const admin = await requireCapability('announcements.update.write');
   const adminClient = createAdminClient();
 
   const { data: old } = await adminClient.from('announcements').select('*').eq('id', announcementId).single();
+
+  const trimmedReason = (reason ?? '').trim();
+  if (old?.status === 'published' && !trimmedReason) {
+    throw new ExpectedError(
+      'This post is live and members have already read it — say why it is changing.',
+    );
+  }
 
   const { error, count } = await adminClient.from('announcements').update({
     title: data.title,
@@ -168,6 +190,8 @@ export async function updateAnnouncement(announcementId: string, data: {
     target_id: announcementId,
     old_value: old,
     new_value: data,
+    // Absent for a draft edit, which is deliberate — see the note above.
+    ...(trimmedReason ? { reason: trimmedReason } : {}),
   }, { announcementId });
 
   // Notify only on the draft→published transition — editing an already-published
@@ -185,7 +209,22 @@ export async function updateAnnouncement(announcementId: string, data: {
   revalidatePath('/announcements');
 }
 
-export async function deleteAnnouncement(announcementId: string) {
+/**
+ * Deleting a post is audited, so it takes a typed reason.
+ *
+ * A published announcement is the club's record of having said something, and
+ * `announcement_deleted` was being written with no explanation at all — the
+ * audit row named the actor and the row, and nobody reading it back could tell
+ * whether the post was wrong, superseded or posted to the wrong audience. The
+ * dialog keeps its confirm disabled until this has content; checked again here
+ * because the dialog is not the boundary.
+ */
+export async function deleteAnnouncement(announcementId: string, reason: string) {
+  const trimmedReason = (reason ?? '').trim();
+  if (!trimmedReason) {
+    throw new ExpectedError('Deleting an announcement needs a reason — say why it is going.');
+  }
+
   const admin = await requireCapability('announcements.delete.write');
   const adminClient = createAdminClient();
 
@@ -211,6 +250,7 @@ export async function deleteAnnouncement(announcementId: string) {
     target_type: 'announcement',
     target_id: announcementId,
     old_value: old,
+    reason: trimmedReason,
   }, { announcementId });
 
   revalidatePath('/announcements');
