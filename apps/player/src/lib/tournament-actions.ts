@@ -9,6 +9,8 @@ import {
   isMembershipAllowed,
   membershipRefusalMessage,
   eventHasDraw,
+  loadTournamentEntryCounts,
+  isAtEntryCap,
   ExpectedError,
 } from '@badminton/shared';
 import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
@@ -42,6 +44,13 @@ function pickAllowedMemberships(embed: unknown): string[] | null {
   return Array.isArray(value) ? value : null;
 }
 
+// Same object-or-array unwrap again, for the per-member event cap (00098).
+function pickEntryCap(embed: unknown): number | null {
+  const row = Array.isArray(embed) ? embed[0] : embed;
+  const value = (row as { max_events_per_player?: number | null } | null)?.max_events_per_player;
+  return typeof value === 'number' ? value : null;
+}
+
 export async function registerForEvent(eventId: string, opts?: { eventWaiverAccepted?: boolean }): Promise<ActionResult> {
   return runAction(() => registerForEventImpl(eventId, opts));
 }
@@ -59,7 +68,7 @@ async function registerForEventImpl(eventId: string, opts?: { eventWaiverAccepte
   // surfaced as a thrown PGRST116 error.
   const [eventRes, existingRes, ratingRes] = await Promise.all([
     service.from('tournament_events')
-      .select('id, status, event_type, tournament_id, max_participants, tournament:tournaments(suspended_at, suspension_reason, waiver_text, allowed_memberships)')
+      .select('id, status, event_type, tournament_id, max_participants, tournament:tournaments(suspended_at, suspension_reason, waiver_text, allowed_memberships, max_events_per_player)')
       .eq('id', eventId).maybeSingle(),
     service.from('tournament_participants')
       .select('id').eq('event_id', eventId).eq('player_id', player.id).maybeSingle(),
@@ -103,6 +112,28 @@ async function registerForEventImpl(eventId: string, opts?: { eventWaiverAccepte
       .eq('event_id', eventId)
       .not('status', 'in', '("withdrawn","disqualified")');
     if (count && count >= event.max_participants) throw new Error('Event is full');
+  }
+
+  // THE PER-MEMBER EVENT CAP (00098). The tournament may limit how many of its
+  // events any one member takes; the capacity check above asks whether the
+  // EVENT has room, this asks whether the MEMBER has an entry left.
+  //
+  // The cap rides along on the tournament embed already being read above, so an
+  // uncapped tournament — which is every tournament that exists today — pays
+  // for nothing extra and does not reach the counting queries at all.
+  //
+  // Counted across BOTH tables, because this member may already be half of a
+  // doubles pair and that pair is not a tournament_participants row. This
+  // action only ever registers singles, but what it has to count is everything.
+  const entryCap = pickEntryCap(event.tournament);
+  if (entryCap !== null) {
+    const counts = await loadTournamentEntryCounts(service, event.tournament_id);
+    if (isAtEntryCap(counts.get(player.id) ?? 0, entryCap)) {
+      throw new ExpectedError(
+        `You are already entered in ${entryCap} ${entryCap === 1 ? 'event' : 'events'} at this tournament, which is the limit. ` +
+        'Withdraw from one to enter another.',
+      );
+    }
   }
 
   const { error: insertErr } = await service.from('tournament_participants').insert({
