@@ -40,18 +40,18 @@ async function approvePlayerImpl(playerId: string, status: 'competitive' | 'recr
   if (error) throw new Error(error.message);
 
   // Approval is the moment somebody becomes a member, so it is where the club's
-  // membership number is stamped — not at signup, which is only a request. The
-  // RPC takes the number from a sequence (so two approvals at once cannot be
-  // handed the same one) and returns the existing number untouched if this row
-  // already has one, which is what makes a re-approval harmless.
-  const { data: memberNumber, error: numberError } = await adminClient.rpc('assign_member_number', {
+  // membership code is stamped — not at signup, which is only a request. The
+  // RPC derives the code from the row's own id and retries past a collision
+  // behind the unique index, and it returns the existing code untouched if this
+  // row already has one, which is what makes a re-approval harmless.
+  const { data: memberCode, error: codeError } = await adminClient.rpc('assign_member_code', {
     p_player_id: playerId,
   });
-  // The approval itself is already committed. A member with no number reads the
+  // The approval itself is already committed. A member with no code reads the
   // app exactly as they did before this feature existed, so failing the action
   // here would undo a real decision over a cosmetic one.
-  if (numberError) {
-    Sentry.captureException(numberError, { extra: { step: 'assign-member-number', playerId } });
+  if (codeError) {
+    Sentry.captureException(codeError, { extra: { step: 'assign-member-code', playerId } });
   }
 
   await logAdminAudit(adminClient, {
@@ -60,7 +60,10 @@ async function approvePlayerImpl(playerId: string, status: 'competitive' | 'recr
     target_type: 'player',
     target_id: playerId,
     old_value: oldPlayer,
-    new_value: { status, member_number: memberNumber ?? null },
+    // The key changes with the column. Audit rows written before 00092 became a
+    // code still carry `member_number`, and that is correct — an audit entry is
+    // a record of what was written on the day, not a view that gets migrated.
+    new_value: { status, member_code: memberCode ?? null },
     reason,
   }, { playerId });
 
@@ -146,19 +149,19 @@ async function createPlayerImpl(data: {
   }
 
   // Adding somebody from the console IS the club letting them in — there is no
-  // approval step ahead of them — so the number is stamped here for the same
+  // approval step ahead of them — so the code is stamped here for the same
   // reason approvePlayer stamps it there. The exception is a row deliberately
   // created as pending_approval: that one has an approval ahead of it, and
-  // getting numbered before the decision is made would be the console
+  // getting a code before the decision is made would be the console
   // pre-empting itself.
   if ((data.status || 'recreational') !== 'pending_approval') {
-    const { error: numberError } = await adminClient.rpc('assign_member_number', {
+    const { error: codeError } = await adminClient.rpc('assign_member_code', {
       p_player_id: playerId,
     });
-    // The member exists and is on the roster; a missing number is not worth
+    // The member exists and is on the roster; a missing code is not worth
     // failing a creation that already succeeded.
-    if (numberError) {
-      Sentry.captureException(numberError, { extra: { step: 'assign-member-number', playerId } });
+    if (codeError) {
+      Sentry.captureException(codeError, { extra: { step: 'assign-member-code', playerId } });
     }
   }
 

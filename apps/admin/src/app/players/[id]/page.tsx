@@ -1,7 +1,7 @@
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { Badge, AvatarChip, EmptyState, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
-import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, TOURNAMENT_EVENT_TYPE_LABELS, MEMBERSHIP_TYPES, getWinRate, getStreakDisplay, getPointDifferential, formatMemberNumber } from '@badminton/shared';
+import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, TOURNAMENT_EVENT_TYPE_LABELS, MEMBERSHIP_TYPES, getWinRate, getStreakDisplay, getPointDifferential, formatMemberCode } from '@badminton/shared';
 import { PlayerEditForm } from './edit-form';
 import { VarsityNotes } from './varsity-notes';
 import { ReliabilityEditor } from './reliability-editor';
@@ -183,15 +183,16 @@ export default async function PlayerDetailPage({
   }
 
   // Empty for a member with neither, which is every member until they pick a
-  // handle and a pending signup who has not been numbered yet.
+  // handle and a pending signup who has not been given a code yet.
   //
-  // The number goes through the shared formatter rather than being printed as
-  // an integer, because its SHAPE is mid-change: the club owner wants a random
-  // seven-character code, and the day that lands this line must not be one of
-  // the places still rendering a padded counter.
+  // The code is labelled rather than printed bare. `@kiera · K3F9TQ2` reads as
+  // two names for the same person; `@kiera · MEMBER K3F9TQ2` says what the
+  // second one is, which matters more now that it is not a number and cannot be
+  // recognised as one.
+  const memberCode = formatMemberCode(player.member_code);
   const identity = [
     player.handle ? `@${player.handle}` : null,
-    formatMemberNumber(player.member_number),
+    memberCode ? `MEMBER ${memberCode}` : null,
   ].filter(Boolean).join(' · ');
 
   // Selected via `select('*')` but absent from the shared Player type, exactly
@@ -577,7 +578,7 @@ export default async function PlayerDetailPage({
           member: the header carries only what the page already showed without
           the read.
 
-          DELIBERATELY ONLY THE TWO FACTS THAT ARE NEW. Handle and member number
+          DELIBERATELY ONLY THE TWO FACTS THAT ARE NEW. Handle and member code
           belong to the header, which draws them without players.read because the
           member row is the one query that runs regardless — repeating them here
           would show a reader the same value twice and, worse, show it gated in
