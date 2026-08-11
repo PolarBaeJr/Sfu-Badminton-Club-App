@@ -12,6 +12,7 @@ import { FeeActions, AddManualFee, RemoveManualFee } from './fee-actions';
 import { ReinstatementsCard } from './reinstatements-card';
 import { LedgerCard } from './ledger-card';
 import { NetPositionStrip } from './net-position-strip';
+import { CardHeading } from './card-heading';
 
 // The three sections of the money page. 'fees' is the original table; the other
 // two are the ledgers the club owner asked for ("add other fees", "add another
@@ -70,9 +71,13 @@ export default async function FeesPage({
   const level = accessLevelFor(viewer);
   const permissions = permissionsOf(viewer);
   const may = (capability: Capability) => permits(level, permissions, capability);
-  // Presentation only — the page is called "Finances" when it shows more than
-  // one ledger. Every FETCH below asks for the capability its own data needs.
-  const isAdmin = level === 'admin';
+  // THE FIVE READS. Each one gates a FETCH, never a panel — see the note on
+  // '/fees' in lib/permissions.ts. The level is no longer consulted anywhere on
+  // this page: `isAdmin` used to decide the title, the header sub-line and the
+  // way out of the empty state, and each of those was really a question about a
+  // ledger, answered by proxy. A proxy that is right for the two levels shipped
+  // today is exactly what stops being right the first time somebody is handed a
+  // hand-composed role.
   const showExpenses = may('fees.expenses.read');
   const showClubFees = may('fees.clubfees.read');
   const showOtherIncome = may('fees.otherincome.read');
@@ -122,44 +127,84 @@ export default async function FeesPage({
   const requested = visibleTabs.find((t) => t.id === params.tab)?.id;
   const tab: TabId = requested ?? visibleTabs[0]?.id ?? 'expenses';
 
+  // WHAT THE PAGE IS CALLED, asked of the capabilities rather than of the level.
+  // "Finances" is only honest when there is more than one ledger to reach; the
+  // person who can reach exactly one, and it is the expense ledger, is looking
+  // at a page about spending and the heading should say so. This used to read
+  // `isAdmin`, which gave the same two answers for the two levels that existed
+  // and the wrong one for every hand-composed role in between — somebody granted
+  // the expense ledger alone was told "Finances" the moment they were not an
+  // exec, and an admin stripped back to expenses was told it too.
+  const onlyExpenses = visibleTabs.length === 1 && visibleTabs[0]?.id === 'expenses';
+  const pageTitle = onlyExpenses ? 'Expenses' : 'Finances';
+  const pageWatermark = onlyExpenses ? 'E' : 'F';
+
+
   const supabase = createAdminClient();
 
-  // The fee amounts are only ever rendered in the admin header line, so an exec
-  // does not fetch them. Trimming the column list rather than the JSX is the
-  // rule this whole page follows: a value that reaches the server component
-  // reaches the RSC payload whether or not it is drawn.
   // Every season, so a finished term's books stay reachable. This page was
   // pinned to active_flag with no override, which meant that the moment a
   // season rolled over the club's own accounts for it — dues, other income,
   // expenses, the net position — could not be opened from the console at all.
   // The rows were always there and correctly stamped; nothing could name a
   // different season.
-  const { data: allSeasons } = await supabase
-    .from('seasons')
-    .select('id, name, start_date, end_date, active_flag, competitive_fee_cents, recreational_fee_cents')
-    .order('start_date', { ascending: false });
+  //
+  // THE FEE COLUMNS ARE PART OF THE CLUB-FEE LEDGER and are asked for with it.
+  // What the club charges is the price list behind the roster below, and it is
+  // read in exactly two places, both of which need fees.clubfees.read. Trimming
+  // the column list rather than the JSX is the rule this whole page follows: a
+  // value that reaches the server component reaches the RSC payload whether or
+  // not it is drawn — and this list is handed straight to SeasonSelect, a client
+  // component, so every column on it crosses to the browser for certain. When
+  // the per-season scope was added these two columns came with it unconditioned,
+  // which quietly shipped the club's pricing for every season the club has ever
+  // run to anybody holding nothing but fees.expenses.read.
+  // Two whole queries rather than one with a conditional column list, and the
+  // duplication is forced: supabase-js parses the select string at COMPILE time
+  // to type the rows, and it can only do that for a single string literal.
+  // Handed `showClubFees ? 'a, b, …' : 'a, …'` it receives a UNION of two
+  // literals, fails to parse it as either, and types the whole result as a
+  // ParserError. So each branch gets its own literal.
+  const { data: allSeasons } = showClubFees
+    ? await supabase
+        .from('seasons')
+        .select('id, name, start_date, end_date, active_flag, competitive_fee_cents, recreational_fee_cents')
+        .order('start_date', { ascending: false })
+    : await supabase
+        .from('seasons')
+        .select('id, name, start_date, end_date, active_flag')
+        .order('start_date', { ascending: false });
   const { seasons: seasonList, selected: scopedSeason, isPast } =
     resolveSeasonScope(allSeasons, params.season);
+  // The select above is conditional and this cast is not, so the invariant is
+  // written down instead: the two fee columns are selected exactly when
+  // showClubFees is true, and both places that dereference them — feeForStatus
+  // and the header sub-line — are behind that same flag. A third reader would
+  // have to add itself to that list or read undefined.
   const season = scopedSeason as Season | null;
 
   if (!season) {
     return (
       <div className="space-y-6">
-        <PageHeader title={isAdmin ? 'Fees' : 'Expenses'} watermark={isAdmin ? 'F' : 'E'} />
+        <PageHeader eyebrow="No season" title={pageTitle} watermark={pageWatermark} />
         <Card>
           {/* No season means no net position either: other_income and
               club_expenses are season_id NOT NULL (00073), so there is nothing
               to add up and no season to add it up for. Said out loud here
               rather than leaving an admin to wonder where the tabs went. */}
+          {/* The way out is offered to whoever can actually take it. This read
+              `isAdmin`, which sent a non-admin holder of Seasons looking for a
+              link that was not there and offered an admin without it a link
+              that bounces. */}
           <EmptyState
             title="No active season"
             description={
-              isAdmin
-                ? 'Fees, other income and expenses all follow the active season. Create and activate a season to start tracking money in and out.'
-                : 'Expenses follow the active season. An admin needs to activate one before spending can be recorded.'
+              onlyExpenses
+                ? 'Expenses follow the active season. One needs to be activated before spending can be recorded.'
+                : 'Fees, other income and expenses all follow the active season. Create and activate a season to start tracking money in and out.'
             }
             action={
-              isAdmin ? (
+              may('seasons.page') ? (
                 <Link href="/seasons" className="text-[var(--color-accent)] font-medium">
                   Go to Seasons
                 </Link>
@@ -183,6 +228,21 @@ export default async function FeesPage({
       </div>
     );
   }
+
+  // A tab link keeps the season you are looking at. The two selectors on this
+  // page are independent — which ledger, and which term — and a tab href built
+  // from the path alone silently reset the second one, so opening Expenses
+  // while reading a finished term snapped you back to the current season and
+  // showed you a different set of numbers under the same heading.
+  //
+  // Built from the RESOLVED season rather than from params.season, and following
+  // SeasonSelect's convention that the active season is the bare path. Echoing
+  // the raw parameter would carry `?season=<nonsense>` through every tab link on
+  // a page that had already fallen back to the active season and was rendering
+  // it — a URL that contradicts what is on screen, and a link somebody might
+  // send.
+  const tabHref = (id: TabId) =>
+    season.active_flag ? `/fees?tab=${id}` : `/fees?tab=${id}&season=${season.id}`;
 
   const feeForStatus = (status: string) =>
     status === 'competitive' ? season.competitive_fee_cents : season.recreational_fee_cents;
@@ -256,15 +316,32 @@ export default async function FeesPage({
 
   return (
     <div className="space-y-6">
+      {/* The eyebrow carries the scope. This page can be pointed at any term the
+          club has ever run, and which one you are looking at — and whether it is
+          finished — was previously discoverable only from the picker below the
+          fold on a phone. It is the first fact about every number on the screen,
+          so it goes above the title.
+          Three states, not two, and "Current" is asked of active_flag rather
+          than of !isPast. isPast is derived from the END DATE, so a term the
+          club has created but not activated — or any season with no end date on
+          it — is not past, and a two-way split would have labelled it Current
+          while the season picker three inches below showed its "now" marker
+          against a different season entirely. */}
       <PageHeader
-        title={isAdmin ? 'Finances' : 'Expenses'}
-        watermark={isAdmin ? 'F' : 'E'}
-        // The fee amounts are club pricing, and the exec header carries only
-        // the season name — the columns behind the rest were never selected.
+        eyebrow={`${season.name} · ${
+          season.active_flag ? 'Current' : isPast ? 'Closed' : 'Not active'
+        }`}
+        title={pageTitle}
+        watermark={pageWatermark}
+        // The fee amounts are club pricing, so the sub-line follows the
+        // club-fee READ rather than the level: they are only in `season` at all
+        // when that capability asked for the columns.
         sub={
-          isAdmin
-            ? `${season.name} · Competitive $${(season.competitive_fee_cents / 100).toFixed(2)} · Recreational $${(season.recreational_fee_cents / 100).toFixed(2)}`
-            : `${season.name} · Money the club has spent`
+          showClubFees
+            ? `Competitive $${(season.competitive_fee_cents / 100).toFixed(2)} · Recreational $${(season.recreational_fee_cents / 100).toFixed(2)} per member`
+            : onlyExpenses
+              ? 'Money the club has spent this season'
+              : undefined
         }
         actions={
           showAddManualFee
@@ -286,28 +363,36 @@ export default async function FeesPage({
 
       {/* Tabs. Plain links, matching /players?tab= — the page is an async
           server component, so a client tab control would mean shipping every
-          ledger's rows to the browser to show one of them.
+          ledger's rows to the browser to show one of them. (@badminton/ui's Tabs
+          is a client component driven by onChange, so it cannot do this job.)
           Hidden entirely when there is only one tab to show: a lone "Expenses"
           pill an exec cannot navigate away from is noise, and a full strip
-          would advertise two sections that would bounce them. */}
+          would advertise two sections that would bounce them.
+
+          A hairline strip rather than pills in a card: cards here hold content,
+          and the ledger switch is chrome. Square, hairline-divided and set in
+          the console's 11px uppercase micro-label — the same type every other
+          control on the page uses — so the strip reads as a control rather than
+          as a fourth panel competing with the three below it. Rounded pills
+          inset in a rounded card was the one place this page had two radii
+          fighting each other. */}
       {visibleTabs.length > 1 && (
-      <Card padding={false}>
-        <div className="flex gap-1 p-1 overflow-x-auto">
-          {visibleTabs.map((t) => (
-            <Link
-              key={t.id}
-              href={`/fees?tab=${t.id}`}
-              className={`px-4 min-h-[44px] text-sm rounded-md transition-colors flex items-center ${
-                tab === t.id
-                  ? 'bg-[var(--color-accent)] text-white'
-                  : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-hover)]'
-              }`}
-            >
-              {t.label}
-            </Link>
-          ))}
-        </div>
-      </Card>
+      <div className="flex border border-[var(--border)] overflow-x-auto">
+        {visibleTabs.map((t) => (
+          <Link
+            key={t.id}
+            href={tabHref(t.id)}
+            aria-current={tab === t.id ? 'page' : undefined}
+            className={`px-5 min-h-[44px] whitespace-nowrap text-[11px] font-bold uppercase tracking-[0.1em] transition-colors flex items-center border-r border-[var(--border)] last:border-r-0 ${
+              tab === t.id
+                ? 'bg-[var(--color-accent)] text-white'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-hover)]'
+            }`}
+          >
+            {t.label}
+          </Link>
+        ))}
+      </div>
       )}
 
       {(showOtherIncome || incomeWrites.add) && tab === 'income' && (
@@ -363,20 +448,49 @@ export default async function FeesPage({
 
       {showFeeTable && (
       <>
-      {/* Summary */}
-      <div className="grid grid-cols-2 gap-4">
-        <Card>
-          <p className="text-xs text-[var(--text-muted)] uppercase">Paid</p>
-          <p className="text-2xl font-bold font-mono text-[var(--color-success)]">{paidCount}</p>
-        </Card>
-        <Card>
-          <p className="text-xs text-[var(--text-muted)] uppercase">Outstanding</p>
-          <p className="text-2xl font-bold font-mono text-[var(--color-warning)]">{outstandingCount}</p>
-        </Card>
+      {/* How collection is going, as the console's stat strip rather than as
+          two cards. These are counts of people, not money, so they keep the
+          shipped display face; only amounts are forced to mono.
+          Outstanding takes the warning tone only when there is something
+          outstanding — a permanently amber zero is a warning nobody can act on,
+          and it trains people to ignore the colour that matters. Waived appears
+          only when the club has actually waived somebody: .stat-strip lays its
+          cells out with grid-auto-flow:column, so the other two simply widen. */}
+      <div className="stat-strip">
+        <div>
+          <p className="stat-label">Paid</p>
+          <p className="stat-value text-[var(--color-success)]">{paidCount}</p>
+        </div>
+        <div>
+          <p className="stat-label">Outstanding</p>
+          <p className={`stat-value ${outstandingCount > 0 ? 'text-[var(--color-warning)]' : ''}`}>
+            {outstandingCount}
+          </p>
+        </div>
+        {waivedPlayers > 0 && (
+          <div>
+            <p className="stat-label">Waived</p>
+            <p className="stat-value">{waivedPlayers}</p>
+          </div>
+        )}
       </div>
 
       {/* Fee Table */}
       <Card padding={false}>
+        <CardHeading
+          title="Club fees"
+          sub={`Who owes dues for ${season.name}, and what has been collected.`}
+        />
+        {/* The empty state REPLACES the table rather than sitting under it. A
+            header row with no rows beneath it, followed by a sentence saying
+            there are none, states the same thing twice and the first statement
+            is furniture. Same shape the two ledger cards use. */}
+        {players.length === 0 && manualFees.length === 0 ? (
+          <EmptyState
+            title="Nobody owes fees yet"
+            description={`No member is due to pay for ${season.name}. Members become due when they are approved as competitive or recreational and are not fee-exempt.`}
+          />
+        ) : (
         <ResponsiveTable
           cards={[
             ...players.map((player) => {
@@ -387,7 +501,11 @@ export default async function FeesPage({
                 <TableCard
                   key={player.id}
                   title={personTitle(player.full_name, player.email, player.avatar_url, player.id)}
-                  value={paid && fee?.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}
+                  value={
+                    <Atomic>
+                      {paid && fee?.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}
+                    </Atomic>
+                  }
                   badges={
                     <Badge variant={paid ? 'success' : waived ? 'neutral' : 'warning'}>
                       {paid ? 'Paid' : waived ? 'Waived' : 'Unpaid'}
@@ -415,7 +533,7 @@ export default async function FeesPage({
               <TableCard
                 key={fee.id}
                 title={personTitle(fee.manual_name, 'Manual entry')}
-                value={fee.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}
+                value={<Atomic>{fee.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}</Atomic>}
                 badges={<Badge variant="success">Paid</Badge>}
                 fields={[
                   { label: 'Method', value: fee.method ? formatPaymentMethod(fee.method) : '-' },
@@ -458,9 +576,12 @@ export default async function FeesPage({
                       </Badge>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <span className="font-mono text-[var(--text-primary)]">
+                      {/* Atomic, like every other amount on this page: "$120.00"
+                          breaking after the "$" in a narrow Amount column is the
+                          exact bug this wrapper exists for. */}
+                      <Atomic className="font-mono text-[var(--text-primary)]">
                         {paid && fee?.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}
-                      </span>
+                      </Atomic>
                     </td>
                     <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">
                       {paid && fee?.method ? formatPaymentMethod(fee.method) : '-'}
@@ -497,9 +618,9 @@ export default async function FeesPage({
                     <Badge variant="success">Paid</Badge>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <span className="font-mono text-[var(--text-primary)]">
+                    <Atomic className="font-mono text-[var(--text-primary)]">
                       {fee.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}
-                    </span>
+                    </Atomic>
                   </td>
                   <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">
                     {fee.method ? formatPaymentMethod(fee.method) : '-'}
@@ -515,8 +636,6 @@ export default async function FeesPage({
             </tbody>
           </table>
         </ResponsiveTable>
-        {players.length === 0 && manualFees.length === 0 && (
-          <p className="text-center text-[var(--text-muted)] py-8">No players owe fees for this season</p>
         )}
       </Card>
 

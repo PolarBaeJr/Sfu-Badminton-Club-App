@@ -204,6 +204,12 @@ input, textarea, select, button, a {
   letter-spacing: -.02em; line-height: 1;
   margin-top: 4px;
 }
+/* Money in a stat cell. Counts are display type, but an amount is read digit by
+   digit against the amounts in the ledger below it, so money is mono everywhere
+   in this console. A Tailwind `font-mono` cannot do this job: `.stat-strip
+   .stat-value` is two classes deep and outbids it, so the override has to live
+   at the same depth. */
+.stat-strip .stat-value.is-money { font-family: var(--mono); letter-spacing: -.03em; }
 
 /* Danger zone — red-hairline box, red heading, row-per-action */
 .danger-zone {
