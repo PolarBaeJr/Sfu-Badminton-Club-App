@@ -195,6 +195,17 @@ const SEGMENTS: readonly { value: Segment; label: string; activeClass: string }[
   { value: 'on', label: 'On', activeClass: 'bg-[var(--win)] text-[var(--bg)]' },
 ];
 
+// UNDER A HAND-PICKED SET THERE IS NOTHING TO INHERIT. `custom`'s base is empty
+// by construction, so a row with no delta is not "whatever the job gives them" —
+// it is off, and Inherit is a segment that could never light. Left live it would
+// be the one control on this screen that does not do what it says: press it and
+// Off would fill instead. This is not a corner either — asCustom() seeds
+// `custom` on the first press for anybody sitting on their level default, which
+// is everybody on day one.
+const HAND_PICKED_SEGMENTS = SEGMENTS.map((segment) =>
+  segment.value === 'inherit' ? { ...segment, disabled: true } : segment,
+);
+
 // page has no badge. The design called for purple and the console has no purple
 // token — and adding one is the single thing ds-bundle/guidelines/admin-console
 // forbids outright ("No new colour values", "Badge — success/warning/danger/
@@ -296,7 +307,7 @@ function Segmented<T extends string>({
   className,
 }: {
   value: T;
-  options: readonly { value: T; label: string; activeClass?: string }[];
+  options: readonly { value: T; label: string; activeClass?: string; disabled?: boolean }[];
   onChange: (next: T) => void;
   disabled?: boolean;
   label: string;
@@ -311,7 +322,7 @@ function Segmented<T extends string>({
             key={option.value}
             type="button"
             aria-pressed={active}
-            disabled={disabled}
+            disabled={disabled || option.disabled}
             onClick={() => onChange(option.value)}
             className={cn(
               MICRO,
@@ -442,6 +453,14 @@ export function PermissionEditor({
     if (revokes.includes(capability)) return 'revoked';
     return base.includes(capability) ? 'role' : 'off';
   }
+
+  // WHICH SEGMENT IS FILLED. `off` is the one cell state that reads differently
+  // depending on what is behind the row: under a level default or a named job it
+  // means "nothing stored, and the base does not give it", which is Inherit;
+  // under a hand-picked set there is no base at all, so it means Off. See
+  // HAND_PICKED_SEGMENTS.
+  const segmentOf = (state: CellState): Segment =>
+    state === 'off' && role === 'custom' ? 'off' : SEGMENT_OF[state];
 
   // WHAT INHERITING WOULD GIVE THEM — the answer the `Inherit` segment stands
   // for, said out loud beside it. Off a level default that is the level's own
@@ -703,8 +722,8 @@ export function PermissionEditor({
   const segments = (leaf: Leaf, state: CellState) => (
     <Segmented
       label={leaf.label}
-      value={SEGMENT_OF[state]}
-      options={SEGMENTS}
+      value={segmentOf(state)}
+      options={role === 'custom' ? HAND_PICKED_SEGMENTS : SEGMENTS}
       disabled={!composable || !held.has(leaf.capability)}
       onChange={(target) => onCellClick(leaf.capability, target)}
     />
@@ -729,7 +748,7 @@ export function PermissionEditor({
             {isDangerous && <ShieldAlert className="w-3.5 h-3.5 flex-shrink-0 text-[var(--red)]" />}
             {leaf.label}
             {badge && <Badge variant={badge}>{leaf.mode}</Badge>}
-            {SEGMENT_OF[state] === 'inherit' && (
+            {segmentOf(state) === 'inherit' && (
               <span className="text-[11px] text-[var(--mute)]">
                 from {role === null ? 'level' : 'role'} · {inherits(leaf.capability) ? 'on' : 'off'}
               </span>
