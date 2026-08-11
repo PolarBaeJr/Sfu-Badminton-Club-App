@@ -47,11 +47,23 @@ function hhmm(time: string | null): string | null {
   return `${(h ?? '00').padStart(2, '0')}:${(m ?? '00').padStart(2, '0')}`;
 }
 
+/** Club sessions after this hour are "tonight"; anything earlier on the same
+ *  date is "today". The club runs weekday evenings, but the schema does not
+ *  stop anybody booking a Saturday morning, and calling a 10:00 session
+ *  TONIGHT on the screen an officer works the door from is exactly the kind of
+ *  wrong this page cannot afford. */
+const EVENING_HOUR = 17;
+
 /** Relative day where it helps, absolute otherwise — the mockup's rule. Past
  *  dates never go relative: "3 days ago" is not how anybody refers to a
  *  session they are looking up. */
-function dayLabel(date: string, today: string): string {
-  if (date === today) return 'Tonight';
+function dayLabel(date: string, today: string, startTime: string | null): string {
+  if (date === today) {
+    // No start time means no way to tell a morning session from an evening
+    // one, and the club's ordinary case is the evening.
+    if (!startTime) return 'Tonight';
+    return Number(startTime.slice(0, 2)) >= EVENING_HOUR ? 'Tonight' : 'Today';
+  }
   const dayMs = 86400000;
   const diff = Math.round((Date.parse(date) - Date.parse(today)) / dayMs);
   if (diff === 1) return 'Tomorrow';
@@ -420,6 +432,16 @@ export default async function SessionsPage({
   // at a time, a session with no time has no window to describe, and
   // session_checkin_open() refuses a closed session outright, so quoting a
   // window for one would describe a door the player app has already shut.
+  // "Tonight" only when everything on today's schedule is actually an evening.
+  // ONE NIGHT AT A TIME IS AN ASSUMPTION, not a constraint: `sessions` permits
+  // two rows on one date, in which case this card sums both counts and the door
+  // line below describes the first open one. That is the club's shape today and
+  // the honest reading of the mockup's single "TONIGHT" card.
+  const todayIsEvening = tonightSessions.every(
+    (s) => !s.start_time || Number((s.start_time as string).slice(0, 2)) >= EVENING_HOUR,
+  );
+  const tonightHeading = todayIsEvening ? 'Tonight · Check-in' : 'Today · Check-in';
+
   const windowSession = tonightSessions.find((s) => s.start_time && s.status === 'open');
   let doorLine: string | null = null;
   if (!windowSession && tonightSessions.some((s) => s.status !== 'open')) {
@@ -508,7 +530,7 @@ export default async function SessionsPage({
     return {
       id,
       name: (session.name as string | null) || 'Untitled session',
-      dayLabel: dayLabel(date, today),
+      dayLabel: dayLabel(date, today, session.start_time as string | null),
       timeLabel: timeLabel(session.start_time as string | null, session.end_time as string | null),
       venue: session.location as string,
       signedUp: rsvpMap[id]?.going.length ?? 0,
@@ -542,7 +564,9 @@ export default async function SessionsPage({
           there is no per-session route to link to, so these are anchors. */}
       <div className="stat-strip">
         <Stat label="This week" value={thisWeekCount} href="#upcoming" />
-        <Stat label="Checked in tonight" value={checkedInTonight} href="#tonight" />
+        {/* "Today" rather than the mockup's "TONIGHT": this counts every
+            session on today's date, and the club is free to book a morning. */}
+        <Stat label="Checked in today" value={checkedInTonight} href="#tonight" />
         <Stat label="Avg attendance" value={avgAttendance ?? '—'} href="#earlier" />
         <Stat label="No-shows · term" value={noShows} href="#earlier" />
       </div>
@@ -599,6 +623,7 @@ export default async function SessionsPage({
           <div id="tonight" className="scroll-mt-6">
             <Card padding={false}>
               <TonightCheckin
+                heading={tonightHeading}
                 sessionName={
                   tonightSessions.length
                     ? tonightSessions

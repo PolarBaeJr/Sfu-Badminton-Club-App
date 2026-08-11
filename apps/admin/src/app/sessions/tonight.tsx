@@ -20,12 +20,17 @@ import { AvatarChip, Atomic, Badge } from '@badminton/ui';
 const LABEL = 'font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]';
 
 export function TonightCheckin({
+  heading,
   sessionName,
   checkedIn,
   signedUp,
   doorLine,
 }: {
-  /** Null when the club is not playing tonight. */
+  /** "Tonight · Check-in", or "Today · Check-in" when the club is playing at a
+   *  time nobody would call tonight. The schema permits a Saturday morning
+   *  session and this card is the one an officer reads at the door. */
+  heading: string;
+  /** Null when the club is not playing today. */
   sessionName: string | null;
   checkedIn: number;
   signedUp: number;
@@ -36,13 +41,13 @@ export function TonightCheckin({
   return (
     <div>
       <div className="px-4 pt-4 pb-3">
-        <span className={LABEL}>Tonight · Check-in</span>
+        <span className={LABEL}>{heading}</span>
       </div>
 
       {sessionName === null ? (
-        // "Nothing on tonight" is a real state, not an error and not a blank.
+        // "Nothing on today" is a real state, not an error and not a blank.
         <div className="px-4 pb-4">
-          <p className="text-sm text-[var(--text-secondary)]">No session tonight.</p>
+          <p className="text-sm text-[var(--text-secondary)]">No session today.</p>
           <p className="mt-1 text-xs text-[var(--text-muted)]">
             The door feed below wakes up when a session on today&apos;s date has someone checked in.
           </p>
