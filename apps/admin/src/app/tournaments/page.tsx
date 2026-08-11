@@ -185,9 +185,24 @@ export default async function TournamentsPage({
   // uses. The soonest one wins when more than one is open; the rest are counted
   // rather than hidden, because a strip that says 2 beside a card that shows 1
   // reads as a bug.
+  //
+  // THE NEXT ONE, not the oldest one. Nothing in the schema forces an event out
+  // of `registration`, so a tournament played six weeks ago whose events were
+  // never moved on stays "open for entry" forever — and a plain ascending sort
+  // would hand that stale row the card ahead of the one actually coming up. So:
+  // upcoming first, soonest at the top; anything already past falls behind them,
+  // most recent first.
+  const today = new Date().toISOString().slice(0, 10);
   const openTournaments = tournaments
     .filter((t) => stageOf.get(t.id) === 'entries-open')
-    .sort((a, b) => a.start_date.localeCompare(b.start_date));
+    .sort((a, b) => {
+      const aUpcoming = a.start_date >= today;
+      const bUpcoming = b.start_date >= today;
+      if (aUpcoming !== bUpcoming) return aUpcoming ? -1 : 1;
+      return aUpcoming
+        ? a.start_date.localeCompare(b.start_date)
+        : b.start_date.localeCompare(a.start_date);
+    });
   const featured = openTournaments[0] ?? null;
   const featuredEvents = featured ? eventsByTournament.get(featured.id) ?? [] : [];
   const featuredEventIds = new Set(featuredEvents.map((e) => e.id));
@@ -643,6 +658,17 @@ export default async function TournamentsPage({
                     <p className="text-sm text-[var(--text-muted)]">
                       Entry fees are not shown to you.
                     </p>
+                  )}
+                  {/* THESE TWO DO NOT ADD UP TO THE COUNT ABOVE, and the label
+                      has to say so. The headline is entries — a person in both
+                      the singles and the doubles is two of them — while paid and
+                      unpaid are PEOPLE, minus the two exemptions the fee roster
+                      applies (is_exec, fee_exempt). Both figures are right; read
+                      as a breakdown of one another they would look broken. */}
+                  {canSeeFees && (
+                    <Micro className="mt-3 block">
+                      Members who owe an entry fee · officers and exempt members excluded
+                    </Micro>
                   )}
                 </div>
               </>
