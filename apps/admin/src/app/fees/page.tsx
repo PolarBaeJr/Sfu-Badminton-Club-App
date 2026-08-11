@@ -485,7 +485,11 @@ export default async function FeesPage({
                 <TableCard
                   key={player.id}
                   title={personTitle(player.full_name, player.email, player.avatar_url, player.id)}
-                  value={paid && fee?.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}
+                  value={
+                    <Atomic>
+                      {paid && fee?.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}
+                    </Atomic>
+                  }
                   badges={
                     <Badge variant={paid ? 'success' : waived ? 'neutral' : 'warning'}>
                       {paid ? 'Paid' : waived ? 'Waived' : 'Unpaid'}
@@ -513,7 +517,7 @@ export default async function FeesPage({
               <TableCard
                 key={fee.id}
                 title={personTitle(fee.manual_name, 'Manual entry')}
-                value={fee.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}
+                value={<Atomic>{fee.amount_cents != null ? `$${(fee.amount_cents / 100).toFixed(2)}` : '-'}</Atomic>}
                 badges={<Badge variant="success">Paid</Badge>}
                 fields={[
                   { label: 'Method', value: fee.method ? formatPaymentMethod(fee.method) : '-' },

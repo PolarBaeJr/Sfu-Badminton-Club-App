@@ -161,7 +161,14 @@ export async function LedgerCard({
   // unrecordable — the person who actually bought the shuttles cannot be named
   // at all. When nobody matches, offer the members instead so the expense can
   // still be entered truthfully; the flags can be fixed afterwards.
-  const payerOptions = isIncome
+  //
+  // FETCHED ONLY FOR SOMEBODY WHO IS OFFERED A CONTROL THAT USES IT. This list
+  // exists to fill the "Paid by" picker in the Add and Edit dialogs and is read
+  // nowhere else, so a viewer holding the expense READ and neither write was
+  // being handed the club's whole exec roster — names and ids — in the RSC
+  // payload behind a picker they are never shown. Same rule as every other
+  // query on this page: the guard goes on the fetch, not on the JSX.
+  const payerOptions = isIncome || !(canWrite.add || canWrite.update)
     ? []
     : await (async () => {
         const execs = unwrap(
@@ -281,7 +288,16 @@ export async function LedgerCard({
                   <p className="text-xs font-normal text-[var(--text-muted)]">{subLine(row)}</p>
                 </div>
               }
-              value={`${isIncome ? '' : '-'}${money(row.amount_cents)}`}
+              // Atomic because TableCard sets [overflow-wrap:anywhere] on the
+              // whole card, so an amount is free to break mid-token on a narrow
+              // phone. Coloured to match the desktop cell: the card form is the
+              // same row, and money in was green in one and neutral in the other.
+              value={
+                <Atomic className={isIncome ? 'text-[var(--color-success)]' : 'text-[var(--color-danger)]'}>
+                  {isIncome ? '' : '-'}
+                  {money(row.amount_cents)}
+                </Atomic>
+              }
               badges={
                 <>
                   <Badge variant={row.paid_at ? 'success' : 'warning'}>

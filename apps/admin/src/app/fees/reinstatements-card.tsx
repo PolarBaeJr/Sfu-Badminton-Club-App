@@ -115,7 +115,7 @@ export async function ReinstatementsCard({
               personById.get(fee.player_id)?.avatar_url,
               fee.player_id,
             )}
-            value={money(fee.amount_cents)}
+            value={<Atomic>{money(fee.amount_cents)}</Atomic>}
             badges={
               <Badge variant={isRecorded(fee) ? 'success' : 'warning'}>
                 {isRecorded(fee) ? 'Recorded' : 'Not recorded'}
