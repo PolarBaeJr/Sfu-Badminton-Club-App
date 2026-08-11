@@ -26,10 +26,6 @@ import {
 // By SUBPATH, never through the barrel — eventWaiverHash uses node:crypto and
 // the barrel is imported by client components in both apps.
 import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
-// Aliased because this module already exports a leaner notifyPlayers of its
-// own (positional, tournament types, no push). The waiver nudge wants the push
-// channel and the category preference, so it uses the general-purpose one.
-import { notifyPlayers as notifyPlayersWithPush } from '../notify';
 import type {
   TournamentEventType,
   TournamentMatchFormat,
@@ -318,6 +314,20 @@ export async function notifyEventWaiverRequired(
   const body =
     `You have been entered in ${tournamentName}, which has an event waiver. ` +
     'Read and accept it before you turn up — you cannot be checked in until you do.';
+
+  // IMPORTED LAZILY, and that is not an optimisation. ../notify begins with
+  // `import 'server-only'`, and this module is imported DIRECTLY by two vitest
+  // suites (tournament-recovery, tournament-write-integrity) which run outside
+  // Next's resolver and cannot resolve that package. A static import here fails
+  // both of them at load time, before a single assertion runs — so the
+  // dependency is taken at call time, where only Next ever stands.
+  //
+  // ../notify rather than this module's own leaner notifyPlayers because this
+  // is the one tournament notification where PUSH earns its place: acting on it
+  // before you set off is the difference between signing at home and being
+  // turned away at the door. It also honours the per-category opt-in, which the
+  // local helper knows nothing about.
+  const { notifyPlayers: notifyPlayersWithPush } = await import('../notify');
   await notifyPlayersWithPush(
     adminClient,
     playerIds,

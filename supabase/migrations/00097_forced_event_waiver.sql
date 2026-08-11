@@ -72,53 +72,16 @@ COMMENT ON TABLE event_waiver_acceptances IS
 -- any stored array, which is the same claim 00089 made and the same test holds
 -- it to.
 
-ALTER TABLE public.players
-  DROP CONSTRAINT IF EXISTS players_permission_vocabulary_check;
-ALTER TABLE public.players
-  ADD CONSTRAINT players_permission_vocabulary_check
+-- Dropped by name and re-added, never edited in place: staging has 00089 and
+-- 00093 recorded as applied, so an in-place edit would never re-run there and
+-- the two databases would diverge. Same reasoning 00089's own header gives.
+--
+-- The predicate is 00089's, unchanged — one array, both columns concatenated —
+-- so the only difference between that constraint and this one is the list.
+ALTER TABLE public.players DROP CONSTRAINT IF EXISTS players_permission_vocabulary_check;
+ALTER TABLE public.players ADD CONSTRAINT players_permission_vocabulary_check
   CHECK (
-    permission_grants <@ ARRAY[
-    'players.page', 'players.read', 'players.approve.write',
-    'players.create.write', 'players.update.write', 'players.waiver.resign.write',
-    'players.ban.write', 'players.reinstate.write', 'players.editor.varsitynotes.write',
-    'players.deletion.cancel.write', 'players.remove.write', 'players.merge.write',
-    'players.reliability.write', 'players.privilegedfields.write', 'seasons.page',
-    'seasons.create.write', 'seasons.activate.write', 'seasons.end.write',
-    'seasons.fees.write', 'sessions.page', 'sessions.reminders.write',
-    'sessions.create.write', 'sessions.update.write', 'sessions.archive.write',
-    'sessions.checkin.token.write', 'sessions.attendance.write', 'sessions.delete.write',
-    'matches.page', 'matches.void.write', 'matches.convert.write',
-    'matches.create.write', 'challenges.page', 'challenges.create.write',
-    'challenges.expire.write', 'announcements.page', 'announcements.create.write',
-    'announcements.update.write', 'announcements.delete.write', 'tournaments.page',
-    'tournaments.manage.create.write', 'tournaments.manage.update.write', 'tournaments.manage.status.write',
-    'tournaments.manage.suspend.write', 'tournaments.manage.resume.write', 'tournaments.manage.archive.write',
-    'tournaments.manage.delete.write', 'tournaments.manage.event.create.write', 'tournaments.manage.event.update.write',
-    'tournaments.manage.event.delete.write', 'tournaments.manage.event.status.write', 'tournaments.draw.participants.add.write',
-    'tournaments.draw.participants.remove.write', 'tournaments.draw.checkin.token.write', 'tournaments.draw.checkin.mark.write',
-    'tournaments.draw.noshow.write', 'tournaments.draw.exit.write', 'tournaments.draw.pairs.add.write',
-    'tournaments.draw.pairs.remove.write', 'tournaments.draw.seed.set.write', 'tournaments.draw.seed.auto.write',
-    'tournaments.draw.seed.clear.write', 'tournaments.draw.generate.write', 'tournaments.draw.lock.write',
-    'tournaments.draw.unlock.write', 'tournaments.draw.waivers.read', 'tournaments.results.enter.write',
-    'tournaments.results.walkover.write', 'tournaments.results.void.write', 'tournaments.results.unvoid.write',
-    'tournaments.results.undo.write', 'tournaments.results.edit.write', 'tournaments.results.entry.write',
-    'tournaments.results.doublenoshow.write', 'tournaments.results.bonuses.write', 'tournaments.results.standings.write',
-    'tournaments.results.finalize.write', 'tournaments.fees.read', 'tournaments.fees.tier.create.write',
-    'tournaments.fees.tier.update.write', 'tournaments.fees.tier.delete.write', 'tournaments.fees.markpaid.write',
-    'tournaments.fees.markunpaid.write', 'fees.page', 'fees.expenses.read',
-    'fees.expenses.add.write', 'fees.expenses.update.write', 'fees.expenses.reimburse.write',
-    'fees.expenses.remove.write', 'fees.otherincome.read', 'fees.otherincome.add.write',
-    'fees.otherincome.remove.write', 'fees.clubfees.read', 'fees.clubfees.markpaid.write',
-    'fees.clubfees.markunpaid.write', 'fees.clubfees.waive.write', 'fees.clubfees.addmanual.write',
-    'fees.clubfees.removemanual.write', 'fees.reinstatements.read', 'fees.reinstatements.write',
-    'fees.netposition.read', 'fees.playerflags.write', 'legal.page',
-    'legal.reacceptance.write', 'legal.documents.write', 'legal.waivertemplate.write',
-    'walkovers.page', 'walkovers.confirm.write', 'walkovers.reject.write',
-    'disputes.page', 'disputes.resolve.write', 'permissions.page',
-    'permissions.write', 'audit.page', 'ratings.page',
-    'accounts.page', 'platform.page', 'platform.settings.write'
-    ]::TEXT[]
-    AND permission_revokes <@ ARRAY[
+    (permission_grants || permission_revokes) <@ ARRAY[
     'players.page', 'players.read', 'players.approve.write',
     'players.create.write', 'players.update.write', 'players.waiver.resign.write',
     'players.ban.write', 'players.reinstate.write', 'players.editor.varsitynotes.write',
