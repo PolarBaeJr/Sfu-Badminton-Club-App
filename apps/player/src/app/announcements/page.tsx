@@ -215,7 +215,15 @@ export default async function AnnouncementsPage() {
       <header className="news-head">
         <Link href="/feed" className="news-back">← FEED</Link>
         <h1 className="news-title">News<span className="dot">.</span></h1>
-        <p className="news-sub">Everything the exec has posted this term.</p>
+        {/* "this term" only while a term is actually filtering the list. With
+            no active season the query above deliberately drops the season
+            filter, and what is on screen is then every notice the club has
+            published — a different promise. */}
+        <p className="news-sub">
+          {activeSeason?.id
+            ? 'Everything the exec has posted this term.'
+            : 'Everything the exec has posted.'}
+        </p>
       </header>
 
       {visible.length === 0 ? (
