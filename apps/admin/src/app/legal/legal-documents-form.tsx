@@ -378,7 +378,8 @@ export function LegalConsole({
                     Discard changes — drops your edits. Members see nothing either way.
                     <br />
                     Publish quietly — text changes, version stays v{selected.version}. Nobody
-                    re-signs and every existing signature stands.
+                    re-signs, every existing signature stands, and new members sign the new text
+                    under that same version — so the record will not show who saw which wording.
                     <br />
                     Publish and require re-sign — version bumps. {population} are gated out of the
                     app until they sign again.
