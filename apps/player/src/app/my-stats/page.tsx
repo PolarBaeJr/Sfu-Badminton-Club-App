@@ -1,7 +1,18 @@
 import { createServerSupabaseClient, getCurrentPlayer, getActiveSeason } from '@/lib/supabase-server';
-import { getWinRate, getOverallRecord, getStreakDisplay, getPointDifferential, formatDate, formatMemberNumber, TOURNAMENT_EVENT_TYPE_LABELS } from '@badminton/shared';
+import { getWinRate, getOverallRecord, getStreakDisplay, getPointDifferential, formatDate, clubToday, TOURNAMENT_EVENT_TYPE_LABELS } from '@badminton/shared';
 import { redirect } from 'next/navigation';
 import { AvatarChip, PageHeader } from '@badminton/ui';
+import { buildRatingSeries, buildFormFlags, deriveAttendance, type RatingSourceRow, type FormSourceRow } from '@/lib/stats-charts';
+import { formatMemberIdentifier } from '@/lib/member-identifier';
+import { RatingCard } from '@/components/my-stats/rating-card';
+import { AttendanceGrid } from '@/components/my-stats/attendance-grid';
+
+// The rating line, the form strip and the history table all read one window of
+// the member's matches. 200 is a season and a half of heavy play — deep enough
+// that the season divider has old-season matches to sit after, and bounded so
+// somebody four years in does not pull their whole career over the wire to draw
+// forty points.
+const MATCH_WINDOW = 200;
 
 export default async function MyStatsPage() {
   const player = await getCurrentPlayer();
@@ -11,17 +22,37 @@ export default async function MyStatsPage() {
   const activeSeason = await getActiveSeason();
   const r = Array.isArray(player.ratings) ? player.ratings[0] : player.ratings;
 
-  const [reliabilityRes, recentMatchesRes, h2hRes, partnersRes, walkoverEventsRes, tournamentNoShowsRes] = await Promise.all([
+  // The club's today, not UTC's. `toISOString().slice(0, 10)` is already
+  // tomorrow in Vancouver from about 5pm, so from dinner onwards it would pull
+  // TOMORROW's session into the attendance denominator — a session nobody has
+  // attended yet, which drops every member's rate and breaks their streak every
+  // single evening. clubToday() formats in America/Vancouver as YYYY-MM-DD,
+  // which is the shape the DATE column compares against.
+  const today = clubToday();
+
+  const [reliabilityRes, matchRowsRes, h2hRes, partnersRes, walkoverEventsRes, tournamentNoShowsRes, seasonsRes, attendanceRes, sessionsRes] = await Promise.all([
     supabase
       .from('reliability_metrics')
       .select('no_shows, late_cancellations, early_withdrawals, walkovers_received, matches_completed, walkover_flag')
       .eq('player_id', player.id)
       .maybeSingle(),
+    // Based on `matches` rather than on `match_participants`, so ORDER BY
+    // played_at is a real ordering. PostgREST cannot order parent rows by a
+    // column of a to-one embed, so the participant-first version of this query
+    // takes an arbitrary N rows and calls them recent — correct for a member
+    // with fifty matches, silently wrong for one with three hundred.
+    //
+    // `!inner` plus the filter on the embedded resource drops matches this
+    // player was not in. It is also supposed to narrow the embedded array to
+    // their own participant row — but ownParticipant() below does not rely on
+    // that, and `player_id` is in the select so it does not have to.
     supabase
-      .from('match_participants')
-      .select('id, win_flag, rating_delta, team_side, match:matches(score_summary, played_at, match_type, format)')
-      .eq('player_id', player.id)
-      .limit(60),
+      .from('matches')
+      .select('id, played_at, match_type, format, rated_flag, completed_flag, result_status, score_summary, participants:match_participants!inner(id, player_id, win_flag, rating_delta, post_rating, team_side)')
+      .eq('participants.player_id', player.id)
+      .not('played_at', 'is', null)
+      .order('played_at', { ascending: false })
+      .limit(MATCH_WINDOW),
     supabase
       .from('head_to_head_stats')
       .select('id, player_a_id, player_b_id, player_a_wins, player_b_wins, total_matches, match_type, a:players!head_to_head_stats_player_a_id_fkey(id, full_name, avatar_url), b:players!head_to_head_stats_player_b_id_fkey(id, full_name, avatar_url)')
@@ -46,23 +77,112 @@ export default async function MyStatsPage() {
       .select('id, status, event:tournament_events(event_type, tournament:tournaments(name))')
       .eq('player_id', player.id)
       .eq('status', 'no_show'),
+    // get_active_season() returns the name and the fees but not start_date, and
+    // the chart needs that date to place the season divider — plus the season
+    // BEFORE it, to find the prior-season rule. Both come out of one ordered
+    // read rather than two round trips.
+    supabase
+      .from('seasons')
+      .select('id, name, start_date')
+      .order('start_date', { ascending: false })
+      .limit(8),
+    supabase
+      .from('session_attendance')
+      .select('session_id, status')
+      .eq('player_id', player.id),
+    // Only sessions that have already happened. A session still to come is not
+    // an absence, and counting it as one would drop every member's attendance
+    // rate the moment the term's schedule is published.
+    activeSeason
+      ? supabase
+          .from('sessions')
+          .select('id, date, track')
+          .eq('season_id', activeSeason.id)
+          .lte('date', today)
+          .order('date', { ascending: true })
+      : Promise.resolve({ data: [] as { id: string; date: string; track: string }[] }),
   ]);
 
   const reliability = reliabilityRes.data;
-  // match_participants has no timestamp, so recency is derived from the embedded
-  // match (ISO played_at sorts chronologically) and capped to the display count.
-  const playedAtOf = (mp: { match: unknown }): string => {
-    const raw = mp.match;
-    const m = (Array.isArray(raw) ? raw[0] : raw) as { played_at?: string } | null;
-    return m?.played_at ?? '';
-  };
-  const recentMatches = [...(recentMatchesRes.data ?? [])]
-    .sort((a, b) => playedAtOf(b).localeCompare(playedAtOf(a)))
-    .slice(0, 20);
+  const matchRows = matchRowsRes.data ?? [];
   const h2h = h2hRes.data ?? [];
   const partners = partnersRes.data ?? [];
   const walkoverEvents = walkoverEventsRes.data ?? [];
   const tournamentNoShows = tournamentNoShowsRes.data ?? [];
+  const seasons = (seasonsRes.data ?? []) as { id: string; name: string; start_date: string }[];
+  const attendanceRecords = (attendanceRes.data ?? []) as { session_id: string; status: string }[];
+  const sessions = (sessionsRes.data ?? []) as { id: string; date: string; track: string }[];
+
+  // Matched on player_id rather than taken as `rows[0]`.
+  //
+  // The filter on the embedded resource is SUPPOSED to narrow the array to this
+  // player as well as dropping matches they were not in, which would make the
+  // first element theirs. If that is ever not true — a PostgREST version that
+  // only filters the parent, a doubles match where the join comes back in a
+  // different order — `rows[0]` is an OPPONENT, and the page renders their
+  // win_flag and rating_delta as the member's own. Every chart on this page
+  // would be plausibly wrong and nothing would fail. `player_id` is selected
+  // precisely so the answer does not depend on that behaviour.
+  const ownParticipant = (m: { participants: unknown }) => {
+    const raw = m.participants;
+    const rows = (Array.isArray(raw) ? raw : raw ? [raw] : []) as {
+      player_id: string;
+      win_flag: boolean | null;
+      rating_delta: number | null;
+      post_rating: number | null;
+      team_side: string | null;
+    }[];
+    return rows.find((p) => p.player_id === player.id) ?? null;
+  };
+
+  // One reshape feeding both chart builders, so the rating line and the form
+  // strip can never disagree about which matches happened.
+  const chartRows = matchRows.map((m) => {
+    const p = ownParticipant(m as { participants: unknown });
+    return {
+      win_flag: p?.win_flag ?? null,
+      rating_delta: p?.rating_delta ?? null,
+      post_rating: p?.post_rating ?? null,
+      match: {
+        played_at: m.played_at as string | null,
+        match_type: m.match_type as string | null,
+        rated_flag: m.rated_flag as boolean | null,
+        completed_flag: m.completed_flag as boolean | null,
+        result_status: m.result_status as string | null,
+      },
+    };
+  });
+  const ratingRows: RatingSourceRow[] = chartRows;
+  const formRows: FormSourceRow[] = chartRows;
+
+  const activeSeasonRow = activeSeason ? seasons.find((s) => s.id === activeSeason.id) ?? null : null;
+  // The season before the active one, by start date. `seasons` came back newest
+  // first, so it is simply the next entry — and null in the club's first
+  // season, which is the case the prior-season rule is skipped for.
+  const activeIndex = activeSeasonRow ? seasons.findIndex((s) => s.id === activeSeasonRow.id) : -1;
+  const priorSeason = activeIndex >= 0 ? seasons[activeIndex + 1] ?? null : null;
+
+  // season_final_ratings is only written when the NEXT season is activated
+  // (00067), so the row to draw is the PREVIOUS season's: the active season has
+  // no archived rating until it ends, and reading its id back would return
+  // nothing and silently drop the context line.
+  const priorRatingsRes = priorSeason
+    ? await supabase
+        .from('season_final_ratings')
+        .select('singles_elo, doubles_elo')
+        .eq('season_id', priorSeason.id)
+        .eq('player_id', player.id)
+        .maybeSingle()
+    : null;
+  const priorRatings = priorRatingsRes?.data as { singles_elo: number; doubles_elo: number } | null | undefined;
+
+  // Eligibility is judged against the member's CURRENT status, because a
+  // status is a column and not a history — there is no record of what somebody
+  // was in October. A member who moved from recreational to competitive
+  // mid-season therefore has the season's earlier competitive sessions counted
+  // against them. Naming it rather than approximating it: the alternative is a
+  // guess about a past that is not stored.
+  const attendance = deriveAttendance(sessions, attendanceRecords, player.status as string | null);
 
   // Reliability card is only rendered when something is on record — players
   // with a clean history never see it.
@@ -89,14 +209,24 @@ export default async function MyStatsPage() {
   const created = (player.created_at as string | undefined) || '';
   const joined = created ? new Date(created).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }).toUpperCase() : '';
 
-  // `@kiera · MEMBER #0042`, and whichever half exists when only one does.
-  // Both are genuinely absent for real people: nobody has a handle until they
-  // choose one, and a member awaiting approval has no number yet.
-  const memberNumber = formatMemberNumber(player.member_number as number | null);
+  // `@kiera · MEMBER #0042 · JOINED SEP 2025`, and whichever parts exist when
+  // some do not. The handle is genuinely absent for anyone who has not chosen
+  // one, and a member awaiting approval has no identifier yet.
+  //
+  // The identifier goes through formatMemberIdentifier and NOT through the
+  // column, because its shape is mid-change — see lib/member-identifier.ts for
+  // the seam and why it takes `unknown`.
+  const handle = (player.handle as string | null | undefined) || null;
+  const memberIdentifier = formatMemberIdentifier(player.member_number);
   const identity = [
-    player.handle ? `@${player.handle}` : null,
-    memberNumber ? `MEMBER ${memberNumber}` : null,
+    handle ? `@${handle}` : null,
+    memberIdentifier ? `MEMBER ${memberIdentifier}` : null,
+    joined ? `JOINED ${joined}` : null,
   ].filter(Boolean).join(' · ');
+
+  // Already newest-first from the query, so the table is a slice rather than
+  // another sort.
+  const recentMatches = matchRows.slice(0, 20);
 
   return (
     <div data-screen-label="My Stats">
@@ -114,7 +244,7 @@ export default async function MyStatsPage() {
         >
           <div className="row" style={{ gap: 20 }}>
             <AvatarChip name={player.full_name} id={player.id} src={player.avatar_url} size="xl" ring />
-            <div>
+            <div style={{ minWidth: 0 }}>
               <div
                 style={{
                   fontFamily: 'var(--display)',
@@ -128,13 +258,15 @@ export default async function MyStatsPage() {
                 {player.full_name}
               </div>
               {identity && (
-                <div className="mono muted" style={{ fontSize: 12, marginTop: 6 }}>
+                <div className="mono muted" style={{ fontSize: 12, marginTop: 6, overflowWrap: 'anywhere' }}>
                   {identity}
                 </div>
               )}
-              {joined && (
-                <div className="mono muted" style={{ fontSize: 12, marginTop: 6 }}>
-                  JOINED {joined}
+              {!handle && (
+                <div className="mono" style={{ fontSize: 12, marginTop: 6 }}>
+                  <a href="/settings" style={{ color: 'var(--mute)', textDecoration: 'underline' }}>
+                    Choose a handle
+                  </a>
                 </div>
               )}
               <div className="row" style={{ gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
@@ -158,18 +290,22 @@ export default async function MyStatsPage() {
                 paddingLeft: 32,
               }}
             >
+              {/* The K factor used to be quoted on these two lines. It is a
+                  platform-wide setting rather than this member's, and printing
+                  it beside their own rating read as a number chosen for them
+                  personally. Provisional stays: that one IS about them. */}
               <div className="stat">
                 <div className="stat-label">SINGLES ELO</div>
                 <div className="stat-value">{r.singles_elo}</div>
                 <div className="mono muted" style={{ fontSize: 11 }}>
-                  {r.singles_provisional ? 'Provisional' : `K=${r.singles_k_factor}`} · {getWinRate(r.singles_wins, r.singles_losses)}
+                  {r.singles_provisional ? 'Provisional · ' : ''}{getWinRate(r.singles_wins, r.singles_losses)}
                 </div>
               </div>
               <div className="stat">
                 <div className="stat-label">DOUBLES ELO</div>
                 <div className="stat-value">{r.doubles_elo}</div>
                 <div className="mono muted" style={{ fontSize: 11 }}>
-                  {r.doubles_provisional ? 'Provisional' : `K=${r.doubles_k_factor}`} · {getWinRate(r.doubles_wins, r.doubles_losses)}
+                  {r.doubles_provisional ? 'Provisional · ' : ''}{getWinRate(r.doubles_wins, r.doubles_losses)}
                 </div>
               </div>
             </div>
@@ -229,7 +365,47 @@ export default async function MyStatsPage() {
       )}
 
       <div className="grid grid-12">
+        {/* The 980px rule collapses grid-12 to one column, so the order in this
+            first column IS the phone order: charts, then the tables that back
+            them up. The wide layout is the same content with the reference
+            panels moved into the right rail. */}
         <div style={{ gridColumn: 'span 8' }} className="feed-col">
+          {r && (
+            <RatingCard
+              singles={{
+                elo: r.singles_elo,
+                provisional: r.singles_provisional === true,
+                wins: r.singles_wins ?? 0,
+                losses: r.singles_losses ?? 0,
+                points: buildRatingSeries(ratingRows, 'singles'),
+                winFlags: buildFormFlags(formRows, 'singles'),
+                priorRating: priorRatings?.singles_elo ?? null,
+              }}
+              doubles={{
+                elo: r.doubles_elo,
+                provisional: r.doubles_provisional === true,
+                wins: r.doubles_wins ?? 0,
+                losses: r.doubles_losses ?? 0,
+                points: buildRatingSeries(ratingRows, 'doubles'),
+                winFlags: buildFormFlags(formRows, 'doubles'),
+                priorRating: priorRatings?.doubles_elo ?? null,
+              }}
+              priorSeasonName={priorSeason?.name ?? null}
+              seasonStart={activeSeasonRow?.start_date ?? null}
+            />
+          )}
+
+          <div className="card-base">
+            <div className="card-head">
+              <h3 className="card-title">Attendance</h3>
+              {activeSeason && <span className="tag">{activeSeason.name}</span>}
+            </div>
+            <div className="card-sub" style={{ marginBottom: 18 }}>
+              One square per session you could attend — filled when you were there
+            </div>
+            <AttendanceGrid summary={attendance} seasonName={activeSeason?.name ?? null} />
+          </div>
+
           <div className="card-base" style={{ padding: 0, overflow: 'hidden' }}>
             <div
               className="card-head"
@@ -252,16 +428,15 @@ export default async function MyStatsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {recentMatches.map((mp) => {
-                      const matchRaw = mp.match as unknown;
-                      const m = (Array.isArray(matchRaw) ? matchRaw[0] : matchRaw) as Record<string, unknown> | null;
-                      if (!m) return null;
-                      const isWin = mp.win_flag === true;
-                      const isLoss = mp.win_flag === false;
-                      const delta = mp.rating_delta as number | null | undefined;
+                    {recentMatches.map((m) => {
+                      const p = ownParticipant(m as { participants: unknown });
+                      if (!p) return null;
+                      const isWin = p.win_flag === true;
+                      const isLoss = p.win_flag === false;
+                      const delta = p.rating_delta;
                       const deltaStr = typeof delta === 'number' ? `${delta >= 0 ? '+' : ''}${delta}` : '—';
                       return (
-                        <tr key={mp.id}>
+                        <tr key={m.id as string}>
                           <td className="mono muted">
                             {m.played_at ? formatDate(m.played_at as string) : '—'}
                           </td>
