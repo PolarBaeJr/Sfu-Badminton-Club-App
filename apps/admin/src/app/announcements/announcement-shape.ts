@@ -80,6 +80,40 @@ export function reachPercent(opened: number, audienceSize: number): number | nul
 }
 
 /**
+ * Read receipts bucketed by post — the arithmetic the screen used to make
+ * Postgres do once per published announcement.
+ *
+ * `announcement_reads` has no aggregate endpoint through PostgREST (no GROUP
+ * BY), so the page pages the receipts and counts them here. That trades N round
+ * trips, one per post, for ceil(receipts / 1000) — and the post count is the one
+ * that only ever grows, since nothing retires an announcement from this screen.
+ *
+ * COUNTS STAY EXACT. Nothing is sampled, estimated or capped: every receipt the
+ * caller read is counted, and a receipt for a post that is not in `publishedIds`
+ * is skipped rather than folded into a total.
+ *
+ * PUBLISHED POSTS ONLY, seeded to zero. A draft was never sent to anybody, so it
+ * must come back absent rather than as `0` — "0 opened" on a draft is not a
+ * reach figure, it is a category error, and the caller distinguishes the two by
+ * whether the map has the key at all.
+ */
+export function tallyOpens(
+  receipts: Array<{ announcement_id: string }>,
+  publishedIds: Iterable<string>,
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const id of publishedIds) counts.set(id, 0);
+
+  for (const receipt of receipts) {
+    const current = counts.get(receipt.announcement_id);
+    if (current === undefined) continue;
+    counts.set(receipt.announcement_id, current + 1);
+  }
+
+  return counts;
+}
+
+/**
  * "Alice Mercer" → "A. MERCER". The byline is a mono micro-label at 10px, and
  * a full name at that size in a 480px rail wraps onto the counts beside it.
  *

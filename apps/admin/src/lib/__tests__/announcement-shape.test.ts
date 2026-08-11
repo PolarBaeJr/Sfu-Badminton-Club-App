@@ -5,6 +5,7 @@ import {
   audienceLabel,
   bylineName,
   reachPercent,
+  tallyOpens,
   typeBadge,
 } from '../../app/announcements/announcement-shape';
 
@@ -79,5 +80,62 @@ describe('bylineName', () => {
     expect(bylineName(null)).toBeNull();
     expect(bylineName(undefined)).toBeNull();
     expect(bylineName('   ')).toBeNull();
+  });
+});
+
+// THE OPENED FIGURES, AFTER THEY STOPPED BEING ONE COUNT QUERY PER POST.
+//
+// The page now pages every receipt in and buckets them here, so the property
+// worth proving is that the swap changed the number of round trips and NOT a
+// single figure: the same counts, exact, with a draft still absent rather than
+// zero.
+describe('tallyOpens', () => {
+  const receipt = (id: string) => ({ announcement_id: id });
+
+  it('counts every receipt against its own post', () => {
+    const counts = tallyOpens(
+      [receipt('a'), receipt('b'), receipt('a'), receipt('a'), receipt('b')],
+      ['a', 'b'],
+    );
+
+    expect(counts.get('a')).toBe(3);
+    expect(counts.get('b')).toBe(2);
+  });
+
+  it('gives a published post with no readers a zero', () => {
+    const counts = tallyOpens([receipt('a')], ['a', 'b']);
+
+    // Nobody has opened b, which is a real answer and a different one from
+    // "b is a draft".
+    expect(counts.get('b')).toBe(0);
+    expect(counts.has('b')).toBe(true);
+  });
+
+  it('leaves a draft out of the map entirely', () => {
+    // A receipt CAN exist against a post that is a draft today — publish it,
+    // members read it, revert it — and it still must not produce a figure the
+    // byline would print.
+    const counts = tallyOpens([receipt('draft'), receipt('live')], ['live']);
+
+    expect(counts.has('draft')).toBe(false);
+    expect(counts.get('draft')).toBeUndefined();
+    expect(counts.get('live')).toBe(1);
+  });
+
+  it('never folds an unknown post into another post’s total', () => {
+    const counts = tallyOpens([receipt('a'), receipt('ghost'), receipt('a')], ['a']);
+
+    expect([...counts.entries()]).toEqual([['a', 2]]);
+  });
+
+  it('is exact across a page boundary', () => {
+    // The caller reads in windows of 1000 and concatenates; this asserts the
+    // arithmetic does not care where the windows fell.
+    const many = Array.from({ length: 2500 }, () => receipt('a'));
+    expect(tallyOpens(many, ['a']).get('a')).toBe(2500);
+  });
+
+  it('has nothing to count when nothing is published', () => {
+    expect([...tallyOpens([receipt('a')], []).entries()]).toEqual([]);
   });
 });
