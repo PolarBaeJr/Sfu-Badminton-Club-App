@@ -5,6 +5,7 @@ import { logAdminAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import { parseOrThrow, legalDocumentUpdateSchema, waiverDocumentSchema, eventWaiverTemplateUpdateSchema, type LegalDocumentUpdateInput, type EventWaiverTemplateUpdateInput, type WaiverDocument } from '@badminton/shared';
 import { requireCapability } from './_shared';
+import { MIN_REASON_LENGTH } from '../legal-reason';
 
 // Platform configuration. Admin-only, and this is the boundary that matters:
 // /ratings and /accounts merely decide who is shown the form.
@@ -66,8 +67,24 @@ function nextVersion(oldVersion: string): string {
   return today;
 }
 
-export async function updateLegalDocument(input: LegalDocumentUpdateInput) {
+// The typed reason arrives as a SECOND PARAMETER rather than a field on
+// `input`. legalDocumentUpdateSchema lives in @badminton/shared and is pinned
+// by its own tests; the console's requirement that every audited action carry a
+// reason is an admin-app rule, so it is enforced here, where the audit row is
+// written. Validated server-side and not merely on the client: a reason the
+// client gates on but the server never stores is the exact failure the rule
+// exists to prevent — the audit row would still read as boilerplate.
+function requireReason(reason: string | undefined): string {
+  const trimmed = (reason ?? '').trim();
+  if (trimmed.length < MIN_REASON_LENGTH) {
+    throw new Error(`A reason of at least ${MIN_REASON_LENGTH} characters is required`);
+  }
+  return trimmed;
+}
+
+export async function updateLegalDocument(input: LegalDocumentUpdateInput, reason: string) {
   parseOrThrow(legalDocumentUpdateSchema, input);
+  const auditReason = requireReason(reason);
   const admin = await requireCapability('legal.documents.write');
   const adminClient = createAdminClient();
 
@@ -100,10 +117,12 @@ export async function updateLegalDocument(input: LegalDocumentUpdateInput) {
     target_id: null,
     old_value: { version: old.version, content_length: old.content.length },
     new_value: { version: newVersion, content_length: input.content.length },
-    // Document first, same reason as above.
+    // Document first, same reason as above. The editor's own words are kept
+    // verbatim after the machine-written summary: the summary says what the
+    // action did, and only the typed half says why.
     reason: input.bump_version
-      ? `${input.document} — legal document updated, version bumped (re-acceptance required)`
-      : `${input.document} — legal document content updated`,
+      ? `${input.document} — legal document updated, version bumped (re-acceptance required): ${auditReason}`
+      : `${input.document} — legal document content updated: ${auditReason}`,
   });
 
   // Left over from when the documents were a block inside /settings.
@@ -183,8 +202,9 @@ export async function updateEventWaiverTemplate(input: EventWaiverTemplateUpdate
 // Exec-level on purpose: re-running the consent flow is operational — "everyone
 // re-sign before the tournament" — and it cannot change what anyone is agreeing
 // to. Editing the TEXT stays admin-only, which is where the legal exposure is.
-export async function requireReacceptance(document: WaiverDocument) {
+export async function requireReacceptance(document: WaiverDocument, reason: string) {
   parseOrThrow(waiverDocumentSchema, document);
+  const auditReason = requireReason(reason);
   const admin = await requireCapability('legal.reacceptance.write');
   const adminClient = createAdminClient();
 
@@ -209,7 +229,7 @@ export async function requireReacceptance(document: WaiverDocument) {
     target_id: null,
     old_value: { reacceptance_required_since: old.reacceptance_required_since },
     new_value: { reacceptance_required_since: now },
-    reason: `${document} — all members must re-sign on their next visit`,
+    reason: `${document} — all members must re-sign on their next visit: ${auditReason}`,
   });
 
   revalidatePath('/legal');
