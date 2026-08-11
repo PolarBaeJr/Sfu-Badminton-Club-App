@@ -21,6 +21,7 @@ import {
 } from '@/lib/officer-access';
 import { CAPABILITY_GATES } from '@badminton/shared/src/utils/capability-gates';
 import { formatRelativeTime } from '@badminton/shared';
+import * as Sentry from '@sentry/nextjs';
 import { AvatarChip, Badge, Card, EmptyState, PageHeader, ResponsiveTable, TableCard } from '@badminton/ui';
 import Link from 'next/link';
 import { PlatformSettingsForm } from '@/components/platform-settings-form';
@@ -134,7 +135,7 @@ export default async function AccountsPage() {
   // writes (it composes updatePlayer) and it is also what renaming a member
   // writes, so it cannot be taken wholesale. See officer-access.ts for why the
   // narrowing is not a PostgREST filter on new_value.
-  const { data: recentLogs } = showOfficers
+  const { data: recentLogs, error: logsError } = showOfficers
     ? await adminClient
         .from('audit_logs')
         .select(
@@ -143,7 +144,17 @@ export default async function AccountsPage() {
         .in('action_type', [...ACCESS_CHANGE_ACTION_TYPES])
         .order('created_at', { ascending: false })
         .limit(100)
-    : { data: null };
+    : { data: null, error: null };
+
+  // A REFUSED EMBED IS NOT AN EMPTY LOG. If PostgREST cannot resolve the actor
+  // relationship — a stale schema cache is the usual way — `data` comes back
+  // null with the error unread, and this card would state, in plain English,
+  // that the club has never changed anybody's access. That is the loudest
+  // possible false claim on a page about who can undo things, so the failure
+  // gets reported even though the render below degrades quietly.
+  if (logsError) {
+    Sentry.captureException(new Error(`Accounts access-log read failed: ${logsError.message}`));
+  }
 
   const lastChange = (recentLogs ?? []).find(isAccessChange) ?? null;
 
@@ -210,7 +221,14 @@ export default async function AccountsPage() {
         {/* LEFT — section rail. The same sticky rail /settings uses; its rule in
             globals.css must not set `display`, so visibility stays on these
             utilities. */}
-        <nav className="settings-rail hidden lg:flex lg:flex-col lg:sticky lg:top-6 lg:self-start">
+        {/* Guarded on the count, not just on `lg`: a viewer holding neither
+            capability gets no sections at all, and an empty bordered nav is the
+            blank panel that reads as broken. */}
+        <nav
+          className={`settings-rail lg:flex-col lg:sticky lg:top-6 lg:self-start ${
+            sections.length > 0 ? 'hidden lg:flex' : 'hidden'
+          }`}
+        >
           {sections.map((section, index) => (
             <a key={section.id} href={`#${section.id}`} className={index === 0 ? 'active' : undefined}>
               <span className="rail-label block">{section.label}</span>
@@ -665,9 +683,15 @@ function changeSummary(log: AuditRowish, subjectName: string | null): string {
  * later edit to ROLE_DEFAULTS to falsify.
  */
 function sectionsOpenedBy(capabilities: readonly Capability[]): string[] {
-  const pages = new Set<Capability>();
-  for (const capability of capabilities) pages.add(pageOf(capability));
-  return [...pages].map((page) => CAPABILITY_GATES[page].label);
+  // The page keys as they are LISTED, rather than every capability mapped
+  // through pageOf() and de-duplicated — the two differ in order, and the
+  // second one sorts by whichever capability of an area happens to come first.
+  // Safe because every role carries the page for every area it touches; that is
+  // an invariant of the resolver (a capability whose area page is absent is
+  // pruned) and it is pinned by a test, so filtering cannot lose a section.
+  return capabilities
+    .filter((capability) => capability === pageOf(capability))
+    .map((page) => CAPABILITY_GATES[page].label);
 }
 
 /** `5 OFFICERS`, `1 OFFICER`. */
