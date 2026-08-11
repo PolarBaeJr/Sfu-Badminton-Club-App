@@ -335,15 +335,21 @@ export interface Tournament {
   updated_at: string;
 }
 
-export interface TournamentParticipant {
-  id: string;
-  tournament_id: string;
-  player_id: string;
-  partner_id: string | null;
-  seed: number | null;
-  placement: number | null;
-  bonus_applied: number;
-}
+// `TournamentParticipant` WAS HERE, and it is gone rather than renamed.
+//
+// It described legacy_tournament_participants — {tournament_id, player_id,
+// partner_id, seed, placement, bonus_applied}, which is that table's row and
+// nothing else. The name did not say so, and this file is `export *`d from the
+// package root, so the shape most likely to be reached for when somebody wanted
+// the LIVE tournament_participants row was the one describing the retired
+// table. Nothing had made that mistake yet; the name was the trap, not a bug.
+//
+// The live event-based row is TournamentEventParticipant, further down this
+// file — event_id, seed_number, status, check-in and Elo columns, no
+// tournament_id and no partner_id. Its pair counterpart is TournamentPair.
+// Note that TournamentParticipantStatus, which both of those use, is a
+// different declaration that stays: it is live, and its name is only a
+// near-miss for the one deleted here.
 
 export interface Dispute {
   id: string;
