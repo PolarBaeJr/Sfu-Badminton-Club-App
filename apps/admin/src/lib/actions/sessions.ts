@@ -173,11 +173,36 @@ async function updateSessionImpl(sessionId: string, data: {
   revalidatePath('/sessions');
 }
 
-export async function archiveSession(sessionId: string): Promise<ActionResult<void>> {
-  return runAction(() => archiveSessionImpl(sessionId));
+// A typed reason on the two audited session writes that destroy something.
+//
+// The console's rule is that every audited action carries one, and `audit_logs`
+// already has the column — logAdminAudit takes `reason`, and voidMatch,
+// removePlayer and approvePlayer all fill it. Archiving and deleting a session
+// did not, so the log recorded that a night's schedule changed and never why.
+// Closing a session is the one write that silently ends check-in for everybody
+// still walking through the door, and deleting one takes its attendance rows
+// with it (see deleteSessionImpl) — the two writes on this page that most need
+// a sentence attached.
+//
+// Checked on the server rather than only in the dialog: the dialog is a
+// courtesy, this is the rule. A trimmed floor is the point — "." satisfies
+// `required` on the client and tells the next reader nothing.
+const REASON_MIN = 5;
+
+function requireReason(reason: string, what: string): string {
+  const trimmed = reason.trim();
+  if (trimmed.length < REASON_MIN) {
+    throw new Error(`${what} needs a reason of at least ${REASON_MIN} characters.`);
+  }
+  return trimmed;
 }
 
-async function archiveSessionImpl(sessionId: string) {
+export async function archiveSession(sessionId: string, reason: string): Promise<ActionResult<void>> {
+  return runAction(() => archiveSessionImpl(sessionId, reason));
+}
+
+async function archiveSessionImpl(sessionId: string, reason: string) {
+  const why = requireReason(reason, 'Archiving a session');
   const admin = await requireCapability('sessions.archive.write');
   const adminClient = createAdminClient();
 
@@ -193,6 +218,7 @@ async function archiveSessionImpl(sessionId: string) {
     target_id: sessionId,
     old_value: { status: old?.status },
     new_value: { status: 'closed' },
+    reason: why,
   }, { sessionId });
 
   revalidatePath('/sessions');
@@ -357,11 +383,12 @@ async function clearAttendanceMarkImpl(sessionId: string, playerId: string) {
   revalidatePath('/sessions');
 }
 
-export async function deleteSession(sessionId: string): Promise<ActionResult<void>> {
-  return runAction(() => deleteSessionImpl(sessionId));
+export async function deleteSession(sessionId: string, reason: string): Promise<ActionResult<void>> {
+  return runAction(() => deleteSessionImpl(sessionId, reason));
 }
 
-async function deleteSessionImpl(sessionId: string) {
+async function deleteSessionImpl(sessionId: string, reason: string) {
+  const why = requireReason(reason, 'Deleting a session');
   const admin = await requireCapability('sessions.delete.write');
   const adminClient = createAdminClient();
 
@@ -379,6 +406,7 @@ async function deleteSessionImpl(sessionId: string) {
     target_type: 'session',
     target_id: sessionId,
     old_value: old,
+    reason: why,
   }, { sessionId });
 
   revalidatePath('/sessions');
