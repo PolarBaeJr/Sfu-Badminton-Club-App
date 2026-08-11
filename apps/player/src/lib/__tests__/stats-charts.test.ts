@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildRatingSeries,
+  buildFormFlags,
   computeRatingScale,
   buildRatingPath,
   buildRatingAreaPath,
@@ -207,6 +208,35 @@ describe('seasonBoundaryX', () => {
   it('is null without a season start', () => {
     expect(seasonBoundaryX(points, null, scale)).toBeNull();
     expect(seasonBoundaryX(points, undefined, scale)).toBeNull();
+  });
+});
+
+describe('buildFormFlags', () => {
+  const rows = [
+    { win_flag: true, match: { played_at: '2026-01-03T00:00:00Z', match_type: 'singles', result_status: 'confirmed' } },
+    { win_flag: false, match: { played_at: '2026-01-01T00:00:00Z', match_type: 'singles', result_status: 'confirmed' } },
+    { win_flag: true, match: { played_at: '2026-01-02T00:00:00Z', match_type: 'doubles', result_status: 'confirmed' } },
+    { win_flag: true, match: { played_at: '2026-01-04T00:00:00Z', match_type: 'singles', result_status: 'disputed' } },
+    { win_flag: true, match: null },
+  ];
+
+  it('returns one discipline, oldest first', () => {
+    expect(buildFormFlags(rows, 'singles')).toEqual([false, true]);
+  });
+
+  it('drops results that are not confirmed', () => {
+    expect(buildFormFlags(rows, 'singles')).toHaveLength(2);
+  });
+
+  it('keeps an unrated match, because a casual game still has a winner', () => {
+    const casual = [
+      { win_flag: true, match: { played_at: '2026-02-01T00:00:00Z', match_type: 'singles', result_status: 'confirmed' } },
+    ];
+    expect(buildFormFlags(casual, 'singles')).toEqual([true]);
+  });
+
+  it('drops a row with no embedded match', () => {
+    expect(buildFormFlags([{ win_flag: true, match: null }], 'singles')).toEqual([]);
   });
 });
 

@@ -292,6 +292,44 @@ export function seasonBoundaryX(
 // Recent form
 // ============================================================
 
+/** A row of `match_participants` carrying only what the form strip reads. */
+export interface FormSourceRow {
+  win_flag: boolean | null;
+  match: {
+    played_at: string | null;
+    match_type: string | null;
+    result_status: string | null;
+  } | null;
+}
+
+/**
+ * The `win_flag`s for one discipline, oldest first.
+ *
+ * Looser than `buildRatingSeries` in one way that matters: an UNRATED match is
+ * kept. A casual game is still a game somebody won, and form answers "am I
+ * winning lately" rather than "what moved my number" — dropping casual results
+ * would tell a member who plays mostly unrated badminton that they have no
+ * recent form at all.
+ *
+ * Still requires a confirmed result and a date: a disputed match has no winner
+ * yet, and an undated one cannot be placed in the order the strip depends on.
+ */
+export function buildFormFlags(
+  rows: readonly FormSourceRow[],
+  matchType: 'singles' | 'doubles'
+): (boolean | null)[] {
+  return rows
+    .filter((row) => {
+      const m = row.match;
+      if (!m) return false;
+      return (
+        m.match_type === matchType && m.result_status === 'confirmed' && m.played_at !== null
+      );
+    })
+    .sort((a, b) => (a.match!.played_at as string).localeCompare(b.match!.played_at as string))
+    .map((row) => row.win_flag);
+}
+
 export type FormResult = 'W' | 'L';
 
 export interface FormSummary {
