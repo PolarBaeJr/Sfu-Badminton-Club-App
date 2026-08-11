@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { getPostHogClient } from '@/lib/posthog';
 import { createClient } from '@/lib/supabase-browser';
 import { Search, Crosshair, Trophy } from 'lucide-react';
-import { AvatarChip, PageHeader } from '@badminton/ui';
+import { AvatarChip, PageHeader, normalizeSearchQuery } from '@badminton/ui';
 import { getWinRate, getWinRateNumeric } from '@badminton/shared';
 import { useStanding } from '@/components/standing-provider';
 import { StandingNote } from '@/components/standing-notice';
@@ -27,6 +27,7 @@ type Ratings = {
 export type LeaderboardEntry = {
   id: string;
   full_name: string;
+  handle: string | null;
   avatar_url?: string | null;
   status: string;
   ratings: Ratings | null;
@@ -38,6 +39,7 @@ export type LeaderboardEntry = {
 export type LeaderboardRow = Ratings & {
   id: string;
   name: string;
+  handle: string | null;
   avatar_url: string | null;
   status: string;
   tournament_points: number;
@@ -116,10 +118,17 @@ export default function LeaderboardClient({
     return players;
   }, [players, activeTab, isTpts]);
 
-  const filtered = useMemo(
-    () => searchQuery ? tabFiltered.filter((p) => p.full_name.toLowerCase().includes(searchQuery.toLowerCase())) : tabFiltered,
-    [tabFiltered, searchQuery]
-  );
+  // Name OR handle, and the `@` is optional — a member is searchable by the
+  // thing the club calls them. NOT filterPlayerOptions, which re-ranks: this
+  // list is ordered by rating and that ordering is the whole point of a ladder.
+  // Only the matching is shared in spirit; the order stays the page's.
+  const filtered = useMemo(() => {
+    const q = normalizeSearchQuery(searchQuery);
+    if (!q) return tabFiltered;
+    return tabFiltered.filter(
+      (p) => p.full_name.toLowerCase().includes(q) || (p.handle ?? '').toLowerCase().includes(q),
+    );
+  }, [tabFiltered, searchQuery]);
 
   const ranked = useMemo(() => {
     if (isTpts) {
@@ -172,7 +181,7 @@ export default function LeaderboardClient({
             <input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search player..."
+              placeholder="Name or @handle"
               aria-label="Search leaderboard"
               style={{ width: 180 }}
             />
@@ -240,7 +249,12 @@ export default function LeaderboardClient({
                     </div>
                     <AvatarChip name={p.full_name} id={p.id} src={p.avatar_url} size="md" ring={i === 0} />
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                      <div style={{ fontWeight: 600, fontSize: 15 }}>{p.full_name}</div>
+                      {/* Real name first, handle beside it. A row reading only
+                          `@kiera` tells a reader less than both together do. */}
+                      <div style={{ fontWeight: 600, fontSize: 15 }}>
+                        {p.full_name}
+                        {p.handle && <span className="muted" style={{ fontWeight: 400 }}> · @{p.handle}</span>}
+                      </div>
                       <div className="mono muted" style={{ fontSize: 11 }}>
                         {isTpts ? 'Tournament points' : isDoubles ? 'Doubles' : 'Singles'}
                       </div>
@@ -391,6 +405,9 @@ export default function LeaderboardClient({
                               <AvatarChip name={p.full_name} id={p.id} src={p.avatar_url} size="sm" ring={isMeRow} />
                               <div>
                                 <div style={{ fontWeight: 600, fontSize: 14 }}>{p.full_name}</div>
+                                {p.handle && (
+                                  <div className="mono muted" style={{ fontSize: 11 }}>@{p.handle}</div>
+                                )}
                                 {prov && (
                                   <div className="mono muted" style={{ fontSize: 11 }}>Provisional</div>
                                 )}

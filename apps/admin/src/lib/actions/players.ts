@@ -39,13 +39,28 @@ async function approvePlayerImpl(playerId: string, status: 'competitive' | 'recr
 
   if (error) throw new Error(error.message);
 
+  // Approval is the moment somebody becomes a member, so it is where the club's
+  // membership number is stamped — not at signup, which is only a request. The
+  // RPC takes the number from a sequence (so two approvals at once cannot be
+  // handed the same one) and returns the existing number untouched if this row
+  // already has one, which is what makes a re-approval harmless.
+  const { data: memberNumber, error: numberError } = await adminClient.rpc('assign_member_number', {
+    p_player_id: playerId,
+  });
+  // The approval itself is already committed. A member with no number reads the
+  // app exactly as they did before this feature existed, so failing the action
+  // here would undo a real decision over a cosmetic one.
+  if (numberError) {
+    Sentry.captureException(numberError, { extra: { step: 'assign-member-number', playerId } });
+  }
+
   await logAdminAudit(adminClient, {
     actor_id: actor.id,
     action_type: 'player_approved',
     target_type: 'player',
     target_id: playerId,
     old_value: oldPlayer,
-    new_value: { status },
+    new_value: { status, member_number: memberNumber ?? null },
     reason,
   }, { playerId });
 
@@ -128,6 +143,23 @@ async function createPlayerImpl(data: {
     if (data.is_exec) flags.is_exec = true;
     if (data.is_trainer) flags.is_trainer = true;
     await adminClient.from('players').update(flags).eq('id', playerId);
+  }
+
+  // Adding somebody from the console IS the club letting them in — there is no
+  // approval step ahead of them — so the number is stamped here for the same
+  // reason approvePlayer stamps it there. The exception is a row deliberately
+  // created as pending_approval: that one has an approval ahead of it, and
+  // getting numbered before the decision is made would be the console
+  // pre-empting itself.
+  if ((data.status || 'recreational') !== 'pending_approval') {
+    const { error: numberError } = await adminClient.rpc('assign_member_number', {
+      p_player_id: playerId,
+    });
+    // The member exists and is on the roster; a missing number is not worth
+    // failing a creation that already succeeded.
+    if (numberError) {
+      Sentry.captureException(numberError, { extra: { step: 'assign-member-number', playerId } });
+    }
   }
 
   await logAdminAudit(adminClient, {

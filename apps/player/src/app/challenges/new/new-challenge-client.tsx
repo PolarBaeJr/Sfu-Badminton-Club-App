@@ -24,6 +24,7 @@ import Link from 'next/link';
 interface PlayerOption {
   id: string;
   full_name: string;
+  handle: string | null;
   avatar_url?: string | null;
   singles_elo: number;
   doubles_elo: number;
@@ -76,7 +77,7 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
 
       const { data } = await supabase
         .from('players')
-        .select('id, full_name, avatar_url, ratings(singles_elo, doubles_elo)')
+        .select('id, full_name, handle, avatar_url, ratings(singles_elo, doubles_elo)')
         .eq('active_flag', true)
         .not('status', 'in', '("pending_approval","suspended")')
         .neq('id', me?.id ?? '');
@@ -86,6 +87,7 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
         return {
           id: p.id,
           full_name: p.full_name,
+          handle: p.handle,
           singles_elo: r?.singles_elo ?? 400,
           doubles_elo: r?.doubles_elo ?? 400,
         };
@@ -163,6 +165,7 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
   const playerOptions = players.map((p) => ({
     id: p.id,
     name: p.full_name,
+    handle: p.handle,
     avatarUrl: p.avatar_url ?? null,
     trailing: String(type === 'singles' ? p.singles_elo : p.doubles_elo),
   }));

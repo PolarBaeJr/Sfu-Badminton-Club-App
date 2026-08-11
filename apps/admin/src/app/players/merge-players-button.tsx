@@ -10,6 +10,7 @@ import { Merge, ArrowRight, AlertTriangle } from 'lucide-react';
 interface MergeCandidate {
   id: string;
   full_name: string;
+  handle: string | null;
   email: string;
   avatar_url?: string | null;
   has_login: boolean;
@@ -73,6 +74,7 @@ export function MergePlayersButton({ players }: Props) {
   const options = players.map((p) => ({
     id: p.id,
     name: p.full_name,
+    handle: p.handle,
     avatarUrl: p.avatar_url,
     meta: `${p.email} · ${p.has_login ? 'has login' : 'no login'}`,
   }));

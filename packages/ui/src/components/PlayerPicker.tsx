@@ -21,6 +21,10 @@ export interface PlayerOption {
   id: string;
   name: string;
   avatarUrl?: string | null;
+  /** The member's chosen name, stored bare and shown `@handle`. Searched with
+   *  the SAME ranking as `name` rather than as a `meta` fallback — see rankOf in
+   *  player-search.ts for why that distinction matters. */
+  handle?: string | null;
   /** Secondary line — email, "has login", etc. Searched as well as displayed,
    *  so an admin can disambiguate two people with the same name by typing the
    *  email instead of the name. */
@@ -339,7 +343,13 @@ export function PlayerPicker(props: PlayerPickerProps) {
             >
               <AvatarChip name={p.name} id={p.id} src={p.avatarUrl} size="sm" />
               <span className="flex-1 min-w-0">
-                <span className="block text-sm text-[var(--text-primary)] truncate">{p.name}</span>
+                {/* Beside the name, not instead of it: disambiguating two
+                    people called Matthew is what this list is FOR, and `@m2`
+                    alone would not do it either. */}
+                <span className="block text-sm text-[var(--text-primary)] truncate">
+                  {p.name}
+                  {p.handle && <span className="text-[var(--text-muted)]"> @{p.handle}</span>}
+                </span>
                 {p.meta && <span className="block text-xs text-[var(--text-muted)] truncate">{p.meta}</span>}
               </span>
               {p.trailing && (

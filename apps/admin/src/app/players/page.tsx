@@ -71,7 +71,7 @@ export default async function PlayersPage({
 
   let query = supabase
     .from('players')
-    .select('id, full_name, email, avatar_url, status, role, is_exec, is_trainer, fee_exempt, is_banned, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
+    .select('id, full_name, handle, email, avatar_url, status, role, is_exec, is_trainer, fee_exempt, is_banned, deletion_requested_at, waiver_reset_at, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_wins, singles_losses, doubles_wins, doubles_losses), waiver_acceptances(document, version, accepted_at)')
     .order('created_at', { ascending: false })
     .limit(500);
 
@@ -128,7 +128,7 @@ export default async function PlayersPage({
   const { data: countRows } = canRead
     ? await supabase
         .from('players')
-        .select('id, full_name, email, avatar_url, user_id, status, is_banned, active_flag')
+        .select('id, full_name, handle, email, avatar_url, user_id, status, is_banned, active_flag')
         .order('full_name')
         .limit(5000)
     : { data: null };
@@ -187,6 +187,7 @@ export default async function PlayersPage({
     return {
       id: player.id,
       name: player.full_name,
+      handle: player.handle,
       meta: player.email,
       row: (
         <tr className="hover:bg-[var(--border-hover)] transition-colors">
@@ -291,6 +292,7 @@ export default async function PlayersPage({
                 players={(countRows ?? []).map((p) => ({
                   id: p.id,
                   full_name: p.full_name,
+                  handle: p.handle,
                   email: p.email,
                   avatar_url: p.avatar_url,
                   has_login: p.user_id !== null,

@@ -30,8 +30,9 @@ import {
 //
 // Not belt-and-braces given the capability system, but the thing that system
 // cannot express. Grant closure bounds what one person may hand another, and it
-// bounds it in CAPABILITIES. These six are not capabilities: three are the level
-// markers themselves and three are where a person's permissions are stored.
+// bounds it in CAPABILITIES. None of these is a capability: three are the level
+// markers themselves, three are where a person's permissions are stored, and one
+// is an identity the club assigns rather than a field anybody edits.
 // Without this list, players.privilegedfields.write could set is_exec and mint
 // an exec, or write another person's grants directly, and grant closure could
 // not see it — because the actor holds that capability legitimately. Keeping
@@ -53,6 +54,14 @@ import {
 //                     Listed even though adminPlayerUpdateSchema does not carry
 //                     them: the day somebody adds one, this is what stops the
 //                     Edit dialog becoming a privilege editor.
+//  - member_number  — not privilege, and the only entry here that is not. It is
+//                     an identity the club assigns once and never reuses, so
+//                     there is no such thing as editing one correctly: a
+//                     renumber either collides with somebody or rewrites who
+//                     joined first. Floor rather than grantable because no
+//                     capability should ever reach it — "may edit privileged
+//                     profile fields" is about a person's details, and this is
+//                     not one of their details.
 export const PLAYER_FIELD_FLOOR = [
   'role',
   'is_exec',
@@ -60,6 +69,7 @@ export const PLAYER_FIELD_FLOOR = [
   'permission_role',
   'permission_grants',
   'permission_revokes',
+  'member_number',
 ] as const;
 
 // The GRANTABLE remainder — admin-only today, because

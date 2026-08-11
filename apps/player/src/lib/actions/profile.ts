@@ -13,6 +13,10 @@ import {
   emailPreferenceKey,
   getReminderLeadMinutes,
   ExpectedError,
+  normalizeHandle,
+  handleError,
+  isHandleTakenError,
+  HANDLE_TAKEN_MESSAGE,
   type LegalAcceptanceInput,
   type WaiverDocument,
 } from '@badminton/shared';
@@ -23,7 +27,7 @@ import { requirePlayer, trackServerEvent, runAction, type ActionResult } from '.
 export async function updateProfile(data: {
   first_name: string;
   last_name?: string;
-  display_name?: string;
+  handle?: string;
   phone?: string;
   bio?: string;
   hide_from_leaderboard?: boolean;
@@ -91,7 +95,7 @@ export async function updateNotificationPreferences(
 async function updateProfileImpl(data: {
   first_name: string;
   last_name?: string;
-  display_name?: string;
+  handle?: string;
   phone?: string;
   bio?: string;
   hide_from_leaderboard?: boolean;
@@ -106,9 +110,23 @@ async function updateProfileImpl(data: {
     first_name: data.first_name,
     last_name: data.last_name ?? null,
   };
-  if (data.display_name !== undefined) {
-    // Empty string -> null so the column isn't stuck with ''.
-    update.display_name = data.display_name === '' ? null : data.display_name;
+  // display_name is deliberately absent. The handle replaced it (00092): one
+  // chosen name per member instead of a free-text nickname nobody could search
+  // for. The column stays, and stays populated, because every handle was
+  // derived from it — but nothing writes it any more.
+  //
+  // The handle is the one field on this form a member shares a namespace with
+  // everyone else in, so it is normalized and checked here rather than left to
+  // profileSchema: the rules are in a plain function (member-identity.ts) that
+  // the settings form and the database CHECK are both written against, and
+  // normalizing has to happen BEFORE the rules or every capital is a rejection.
+  // NOT in profileSchema also because completeOnboarding parses that same schema
+  // and collects no handle.
+  if (data.handle !== undefined) {
+    const handle = normalizeHandle(data.handle);
+    const problem = handleError(handle);
+    if (problem) throw new ExpectedError(problem);
+    update.handle = handle;
   }
   if (data.phone !== undefined) update.phone = data.phone;
   if (data.bio !== undefined) update.bio = data.bio;
@@ -121,6 +139,11 @@ async function updateProfileImpl(data: {
     .eq('id', player.id);
 
   if (error) {
+    // Somebody else got that handle first. The unique index is what decides
+    // this — never a read followed by a write, because two members can claim the
+    // same handle in the same second and both pass a prior check. Expected, so
+    // it reaches the member as a sentence and Sentry as nothing.
+    if (isHandleTakenError(error)) throw new ExpectedError(HANDLE_TAKEN_MESSAGE);
     Sentry.captureException(error, { extra: { action: 'updateProfile', playerId: player.id } });
     throw new Error(error.message);
   }

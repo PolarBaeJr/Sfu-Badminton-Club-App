@@ -101,6 +101,10 @@ export interface Player {
   // Generated column (00023): read-only, never write it.
   full_name: string;
   display_name: string | null;
+  /** 00092 — the username this member picked, or null until they pick one. Public, lowercase, unique case-insensitively. */
+  handle: string | null;
+  /** 00092 — the club's own membership number, assigned once at approval and never reused. Null for a pending signup. Not a student number. */
+  member_number: number | null;
   email: string;
   phone: string | null;
   status: PlayerStatus;

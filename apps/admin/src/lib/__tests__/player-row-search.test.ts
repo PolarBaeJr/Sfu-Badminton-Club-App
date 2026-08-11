@@ -95,3 +95,46 @@ describe('filterRowsByPlayers', () => {
     expect(viaRows).toEqual(viaPicker);
   });
 });
+
+/**
+ * Searching by handle. The handle is the member's ONE chosen name — the thing
+ * the club writes as `@kiera` — so it is matched with the same ranking as the
+ * real name rather than as a `meta` fallback, and it is found with or without
+ * the `@`.
+ */
+describe('filterPlayerOptions by handle', () => {
+  const people = [
+    { id: 'p1', name: 'Akierabayashi Sato', handle: 'sato' },
+    { id: 'p2', name: 'Kiera Watanabe', handle: 'kiera' },
+    { id: 'p3', name: 'Erin Park', handle: null },
+    { id: 'p4', name: 'Matthew Cheng', handle: 'matthew_43', meta: 'm@example.com' },
+  ];
+  const found = (q: string) => filterPlayerOptions(people, q).map((p) => p.id);
+
+  it('finds a member by their handle', () => {
+    expect(found('matthew_43')).toEqual(['p4']);
+  });
+
+  it('treats @kiera and kiera as the same search', () => {
+    expect(found('@kiera')).toEqual(found('kiera'));
+  });
+
+  // The reason the handle is not simply folded into `meta`: a meta match ranks
+  // below every name match, so the person whose handle IS the query would have
+  // been listed under someone who merely contains it.
+  it('ranks an exact handle above a name that only contains the query', () => {
+    expect(found('kiera')).toEqual(['p2', 'p1']);
+  });
+
+  it('leaves a member with no handle matchable by name', () => {
+    expect(found('erin')).toEqual(['p3']);
+  });
+
+  it('still falls back to meta, and still ranks it last', () => {
+    expect(found('example.com')).toEqual(['p4']);
+  });
+
+  it('a query of nothing but @ is an empty query', () => {
+    expect(found('@')).toEqual(['p1', 'p2', 'p3', 'p4']);
+  });
+});

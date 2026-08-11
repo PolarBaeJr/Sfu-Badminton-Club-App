@@ -17,27 +17,50 @@
 
 const norm = (s: string) => s.toLowerCase().trim();
 
+/**
+ * The query, with a leading `@` removed. A handle is WRITTEN `@kiera` and
+ * STORED `kiera`, so requiring the `@` would mean the club's own notation
+ * matched nothing — and demanding it would be worse, because then the obvious
+ * thing to type finds nobody. Both spellings are the same search.
+ */
+export const normalizeSearchQuery = (query: string) => norm(query).replace(/^@+/, '');
+
 /** Prefix > word-prefix > substring, so typing "ma" surfaces "Matthew" ahead of
  *  "Roman". Ties keep the caller's order (usually alphabetical). */
-function rankOf(option: { name: string }, q: string): number {
-  const name = norm(option.name);
-  if (name.startsWith(q)) return 0;
-  if (name.split(/\s+/).some((w) => w.startsWith(q))) return 1;
-  if (name.includes(q)) return 2;
+function rankOfText(text: string, q: string): number {
+  const t = norm(text);
+  if (t.startsWith(q)) return 0;
+  if (t.split(/\s+/).some((w) => w.startsWith(q))) return 1;
+  if (t.includes(q)) return 2;
   return 3;
 }
 
 /**
- * Rank and filter a list of people: same ranking, same email fallback, same
- * "empty query means everyone" wherever it is used. Generic over the row type
- * because a roster row carries a rendered table row alongside its name; only
- * `name` and `meta` are read.
+ * The best rank across the two things a person is CALLED.
+ *
+ * The handle is ranked exactly like the name, deliberately, and not folded into
+ * `meta` where it would have been a one-line change. A meta match keeps rank 3
+ * and sorts below every name match, including a bare substring — so `kiera`
+ * would have put @kiera underneath "Akierabayashi". For the field whose entire
+ * job is to be the searchable identifier, that is backwards.
  */
-export function filterPlayerOptions<T extends { name: string; meta?: string | null }>(
+function rankOf(option: { name: string; handle?: string | null }, q: string): number {
+  const byName = rankOfText(option.name, q);
+  if (!option.handle) return byName;
+  return Math.min(byName, rankOfText(option.handle, q));
+}
+
+/**
+ * Rank and filter a list of people: same ranking, same handle matching, same
+ * email fallback, same "empty query means everyone" wherever it is used.
+ * Generic over the row type because a roster row carries a rendered table row
+ * alongside its name; only `name`, `handle` and `meta` are read.
+ */
+export function filterPlayerOptions<T extends { name: string; handle?: string | null; meta?: string | null }>(
   options: T[],
   query: string,
 ): T[] {
-  const q = norm(query);
+  const q = normalizeSearchQuery(query);
   if (!q) return options;
   return options
     .map((p, i) => ({ p, i, rank: rankOf(p, q) }))
@@ -68,7 +91,7 @@ export function filterRowsByPlayers<T extends { id: string; players: string[]; m
   rows: T[],
   query: string,
 ): T[] {
-  if (!norm(query)) return rows;
+  if (!normalizeSearchQuery(query)) return rows;
   const matched = new Set(
     filterPlayerOptions(
       rows.map((r) => ({

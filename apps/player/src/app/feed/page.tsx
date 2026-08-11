@@ -83,8 +83,9 @@ export default async function FeedPage() {
     .sort((a, b) => (b.played_at ?? '').localeCompare(a.played_at ?? ''))
     .slice(0, 5);
 
-  // get_leaderboard() returns rows already filtered and sorted; it exposes the
-  // display name as `name` (display_name falling back to full_name).
+  // get_leaderboard() returns rows already filtered and sorted; it exposes
+  // full_name as `name`. It used to be COALESCE(display_name, full_name), so
+  // this widget showed nicknames until 00092 retired them.
   // get_leaderboard() has no ORDER BY — the leaderboard page sorts per tab in
   // memory — so this must sort explicitly. Ranking by rating is the whole point
   // of the widget; without it the list came out in arbitrary table order.

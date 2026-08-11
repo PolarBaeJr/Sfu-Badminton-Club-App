@@ -17,6 +17,7 @@ export default async function LeaderboardPage() {
   const entries: LeaderboardEntry[] = ((data ?? []) as LeaderboardRow[]).map((row) => ({
     id: row.id,
     full_name: row.name,
+    handle: row.handle,
     avatar_url: row.avatar_url,
     status: row.status,
     ratings: {

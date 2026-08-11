@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Input, Textarea, Switch, Select, PageHeader, Dialog } from '@badminton/ui';
 import { updateProfile, updateNotificationPreferences, deleteMyAccount } from '@/lib/actions';
-import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, normalizeEmailPreferences, emailPreferenceKey, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, clearHostOnlyAuthCookies, hasConsoleAccess, getAccountStanding, type NotificationCategory } from '@badminton/shared';
+import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, normalizeEmailPreferences, emailPreferenceKey, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, clearHostOnlyAuthCookies, hasConsoleAccess, getAccountStanding, normalizeHandle, handleError, formatMemberNumber, HANDLE_MAX_LENGTH, HANDLE_TAKEN_MESSAGE, type NotificationCategory } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -64,7 +64,13 @@ function Section({
 export default function SettingsPage() {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
-  const [displayName, setDisplayName] = useState('');
+  const [handle, setHandle] = useState('');
+  // Only the server can answer "is it taken" — the unique index decides it, and
+  // it decides it at the moment of the write. Held separately from the shape
+  // rules below so typing clears it: the answer is about a value that is no
+  // longer in the box.
+  const [handleTaken, setHandleTaken] = useState(false);
+  const [memberNumber, setMemberNumber] = useState<number | null>(null);
   const [phone, setPhone] = useState('');
   const [bio, setBio] = useState('');
   const [loading, setLoading] = useState(false);
@@ -119,12 +125,25 @@ export default function SettingsPage() {
       // this user's row — including the phone and notification preferences that
       // 00032 withholds from the plain players grant.
       const { data } = await supabase.from('players_self').select('*').maybeSingle();
+      // NOT from players_self. Postgres expands `SELECT *` when a view is
+      // CREATEd and freezes the column list into it, so the view still returns
+      // exactly the columns players had in 00032 — handle and member_number are
+      // not among them, and re-creating it would also undo 00060's deliberate
+      // exclusion of inactivity_notice_sent_at. Read the two from the base
+      // table instead: players_select opens the caller's own row to them, and
+      // 00092's column grant is what makes them public anyway.
+      const { data: identity } = await supabase
+        .from('players')
+        .select('handle, member_number')
+        .eq('user_id', user.id)
+        .maybeSingle();
       if (data) {
         setPlayerId(data.id);
         setAvatarUrl(data.avatar_url);
         setFirstName(data.first_name);
         setLastName(data.last_name || '');
-        setDisplayName(data.display_name || '');
+        setHandle(identity?.handle || '');
+        setMemberNumber(identity?.member_number ?? null);
         setPhone(data.phone || '');
         setBio(data.bio || '');
         setShowOnLeaderboard(!data.hide_from_leaderboard);
@@ -174,20 +193,35 @@ export default function SettingsPage() {
     document.documentElement.setAttribute('data-theme', resolved);
   }
 
+  // The same rules the server action applies, run against the same normalized
+  // value — so the field says what is wrong while it is being typed instead of
+  // after a round trip. The server still checks; this is only the earlier of the
+  // two answers.
+  const handleShapeError = handleError(normalizeHandle(handle));
+
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
+    if (handleShapeError) {
+      toast(handleShapeError, 'error');
+      return;
+    }
     setLoading(true);
+    setHandleTaken(false);
     try {
       const res = await updateProfile({
         first_name: firstName,
         last_name: lastName || undefined,
-        display_name: displayName || undefined,
+        // Always sent, unlike the fields above: '' is how a member CLEARS their
+        // handle, and `|| undefined` would make that the one edit the form
+        // cannot save.
+        handle,
         phone: phone || undefined,
         bio: bio || undefined,
         hide_from_leaderboard: !showOnLeaderboard,
         show_activity_status: showActivity,
       });
       if (!res.ok) {
+        if (res.error === HANDLE_TAKEN_MESSAGE) setHandleTaken(true);
         toast(res.error, 'error');
         setLoading(false);
         return;
@@ -320,7 +354,47 @@ export default function SettingsPage() {
             <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <Input label="First name"          value={firstName}   onChange={(e) => setFirstName(e.target.value)} required />
               <Input label="Last name"           value={lastName}    onChange={(e) => setLastName(e.target.value)} placeholder="Optional" />
-              <Input label="Display name / nickname" value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Optional" />
+              {/* The handle REPLACES the old free-text "display name /
+                  nickname": one chosen name per member, unique, and the thing
+                  the club is searched by. The column is still there and still
+                  populated — every handle was derived from it (00092) — but
+                  nothing writes or shows it any more.
+
+                  Lowercased as it is typed rather than on save, so the box
+                  always shows what will actually be stored — and so "Kiera is
+                  taken" never appears next to a field reading `Kiera` that the
+                  member believes is a different name. */}
+              <div>
+                <Input
+                  label="Handle"
+                  value={handle}
+                  onChange={(e) => { setHandle(e.target.value.toLowerCase()); setHandleTaken(false); }}
+                  placeholder="Optional"
+                  maxLength={HANDLE_MAX_LENGTH}
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  error={handleTaken ? HANDLE_TAKEN_MESSAGE : handleShapeError ?? undefined}
+                />
+                <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                  Shown to other members as @{normalizeHandle(handle) ?? 'yourname'}. Letters,
+                  numbers and underscores; 3–{HANDLE_MAX_LENGTH} characters.
+                </p>
+              </div>
+              {/* Assigned by the club, never typed — so it is stated here rather
+                  than offered as a field. A member who has not been approved yet
+                  has none, and sees nothing. */}
+              {memberNumber !== null && (
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">Member number</div>
+                    <div className="settings-row-hint">Assigned when you joined the club. It never changes.</div>
+                  </div>
+                  <div className="settings-row-control">
+                    <span className="mono tag">{formatMemberNumber(memberNumber)}</span>
+                  </div>
+                </div>
+              )}
               <Input label="Phone"               value={phone}       onChange={(e) => setPhone(e.target.value.replace(/[^\d\s+\-()]/g, ''))} placeholder="Optional" inputMode="tel" />
               <Textarea label="Bio"              value={bio}         onChange={(e) => setBio(e.target.value)} placeholder="A few words about yourself" />
               {/* Execs only: their bio is published on the public /exec page

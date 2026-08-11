@@ -1,5 +1,5 @@
 import { createServerSupabaseClient, getCurrentPlayer, getActiveSeason } from '@/lib/supabase-server';
-import { getWinRate, getOverallRecord, getStreakDisplay, getPointDifferential, formatDate, TOURNAMENT_EVENT_TYPE_LABELS } from '@badminton/shared';
+import { getWinRate, getOverallRecord, getStreakDisplay, getPointDifferential, formatDate, formatMemberNumber, TOURNAMENT_EVENT_TYPE_LABELS } from '@badminton/shared';
 import { redirect } from 'next/navigation';
 import { AvatarChip, PageHeader } from '@badminton/ui';
 
@@ -89,6 +89,15 @@ export default async function MyStatsPage() {
   const created = (player.created_at as string | undefined) || '';
   const joined = created ? new Date(created).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }).toUpperCase() : '';
 
+  // `@kiera · MEMBER #0042`, and whichever half exists when only one does.
+  // Both are genuinely absent for real people: nobody has a handle until they
+  // choose one, and a member awaiting approval has no number yet.
+  const memberNumber = formatMemberNumber(player.member_number as number | null);
+  const identity = [
+    player.handle ? `@${player.handle}` : null,
+    memberNumber ? `MEMBER ${memberNumber}` : null,
+  ].filter(Boolean).join(' · ');
+
   return (
     <div data-screen-label="My Stats">
       <PageHeader
@@ -118,6 +127,11 @@ export default async function MyStatsPage() {
               >
                 {player.full_name}
               </div>
+              {identity && (
+                <div className="mono muted" style={{ fontSize: 12, marginTop: 6 }}>
+                  {identity}
+                </div>
+              )}
               {joined && (
                 <div className="mono muted" style={{ fontSize: 12, marginTop: 6 }}>
                   JOINED {joined}

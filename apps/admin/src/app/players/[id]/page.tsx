@@ -1,7 +1,7 @@
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { Card, Badge, StatCard, AvatarChip, EmptyState, PageHeader } from '@badminton/ui';
-import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, TOURNAMENT_EVENT_TYPE_LABELS, getWinRate, getStreakDisplay, getPointDifferential } from '@badminton/shared';
+import { PLAYER_STATUS_LABELS, MATCH_FORMAT_LABELS, TOURNAMENT_EVENT_TYPE_LABELS, getWinRate, getStreakDisplay, getPointDifferential, formatMemberNumber } from '@badminton/shared';
 import { PlayerEditForm } from './edit-form';
 import { VarsityNotes } from './varsity-notes';
 import { ReliabilityEditor } from './reliability-editor';
@@ -172,6 +172,13 @@ export default async function PlayerDetailPage({
     r = archived ? ({ ...rating, ...archived } as typeof rating) : null;
   }
 
+  // Empty for a member with neither, which is every member until they pick a
+  // handle and a pending signup who has not been numbered yet.
+  const identity = [
+    player.handle ? `@${player.handle}` : null,
+    formatMemberNumber(player.member_number),
+  ].filter(Boolean).join(' · ');
+
   return (
     <div className="space-y-6">
       {/* Back link */}
@@ -189,6 +196,14 @@ export default async function PlayerDetailPage({
           sub={
             <>
               {player.email}
+              {/* Both read-only, and read-only for different reasons: the handle
+                  belongs to the member (nobody sets anyone else's), and the
+                  number belongs to the club (nobody sets one at all). Neither is
+                  in adminPlayerUpdateSchema, so the Edit dialog cannot offer
+                  them even by accident. */}
+              {identity && (
+                <span className="block mt-1 font-mono text-xs text-[var(--text-muted)]">{identity}</span>
+              )}
               <span className="flex gap-2 mt-2">
                 <Badge variant={player.status === 'competitive' ? 'success' : player.status === 'suspended' ? 'danger' : 'default'}>
                   {PLAYER_STATUS_LABELS[player.status as keyof typeof PLAYER_STATUS_LABELS]}

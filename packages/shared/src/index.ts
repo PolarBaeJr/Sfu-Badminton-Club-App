@@ -24,6 +24,7 @@ export * from './utils/finance-refs';
 export * from './utils/tournament-window';
 export * from './utils/tournament-bonuses';
 export * from './utils/tournament-withdrawal';
+export * from './utils/member-identity';
 export * from './utils/membership';
 export * from './utils/match-result';
 export * from './utils/season';
