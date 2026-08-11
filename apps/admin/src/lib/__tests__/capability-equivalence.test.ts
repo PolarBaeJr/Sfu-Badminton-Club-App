@@ -142,6 +142,14 @@ const TODAY: Row[] = [
   { capability: 'tournaments.draw.generate.write',            admin: T, exec: T, trainer: F, was: "getExecOrAdmin('tournaments') — brackets.ts:363, 664" },
   { capability: 'tournaments.draw.lock.write',                admin: T, exec: T, trainer: F, was: "getExecOrAdmin('tournaments') — brackets.ts:796" },
   { capability: 'tournaments.draw.unlock.write',              admin: T, exec: T, trainer: F, was: "getExecOrAdmin('tournaments') — brackets.ts:822" },
+  // THE FOURTH ROW IN THIS TABLE WITH NO GATE TO TRANSCRIBE, and for the same
+  // reason as `players.read`: there was no gate, because there was no fetch.
+  // event_waiver_acceptances was write-only across the whole codebase — one
+  // insert in the player app and not a single read anywhere. So the answers are
+  // transcribed from the DOOR this fetch stands behind, the event page's
+  // `tournaments.page`, and adding the capability takes nothing from anybody who
+  // can open that page today.
+  { capability: 'tournaments.draw.waivers.read',              admin: T, exec: T, trainer: F, was: 'new fetch — no predecessor gate; behind tournaments.page on the event page' },
 
   // ---- tournaments · results -------------------------------------------
   { capability: 'tournaments.results.enter.write',        admin: T, exec: T, trainer: F, was: "getExecOrAdmin('tournaments') — results.ts:241" },

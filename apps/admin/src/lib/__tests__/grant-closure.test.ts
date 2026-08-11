@@ -472,7 +472,7 @@ describe('setPlayerPermissions — the shape of what gets stored', () => {
     expect(before.permission_role).toBeNull();
     // Unrestricted before, so the resolved set is the whole exec baseline —
     // which the triple on its own says nothing about.
-    expect((before.effective as string[]).length).toBe(71);
+    expect((before.effective as string[]).length).toBe(72);
     expect(after.permission_role).toBe('finance');
     expect(after.permission_grants).toEqual(['players.page']);
     expect((after.effective as string[]).sort()).toEqual([

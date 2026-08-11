@@ -19,7 +19,7 @@ import {
 } from '../access-level';
 import { CAPABILITY_GATES, ENFORCEMENT_POINTS } from '../capability-gates';
 
-// 116 capabilities is 116 promises that something is enforced. This suite is
+// 117 capabilities is 117 promises that something is enforced. This suite is
 // what keeps the vocabulary closed: it pins the list literally, refuses the
 // shapes that would let one capability quietly imply another, and asserts that
 // every one of them names a place in the app that reads it.
@@ -28,9 +28,9 @@ const resourceOf = (capability: string) => capability.split('.').slice(0, -1);
 const modeOf = (capability: string) => capability.split('.').at(-1)!;
 
 describe('the capability vocabulary', () => {
-  it('is exactly 116 entries, with no duplicates', () => {
-    expect(CAPABILITIES.length).toBe(116);
-    expect(new Set(CAPABILITIES).size).toBe(116);
+  it('is exactly 117 entries, with no duplicates', () => {
+    expect(CAPABILITIES.length).toBe(117);
+    expect(new Set(CAPABILITIES).size).toBe(117);
   });
 
   it('has 16 areas, every one of them used', () => {
@@ -148,16 +148,16 @@ describe('CAPABILITY_GATES', () => {
   // it is a real check rather than documentation: deleting a gate without
   // deleting its capability leaves the editor offering a tick box nothing
   // reads, and that is what this fails on.
-  it('names 133 distinct enforcement points, none of them claimed twice', () => {
+  it('names 134 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(133);
-    expect(new Set(sites).size).toBe(133);
-    expect(ENFORCEMENT_POINTS).toBe(133);
+    expect(sites.length).toBe(134);
+    expect(new Set(sites).size).toBe(134);
+    expect(ENFORCEMENT_POINTS).toBe(134);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be
@@ -200,7 +200,7 @@ describe('baselines', () => {
     ]);
   });
 
-  it('gives an exec exactly 71 capabilities, pinned one by one', () => {
+  it('gives an exec exactly 72 capabilities, pinned one by one', () => {
     expect([...EXEC_BASELINE]).toEqual([
       'players.page',
       'players.read',
@@ -257,6 +257,7 @@ describe('baselines', () => {
       'tournaments.draw.generate.write',
       'tournaments.draw.lock.write',
       'tournaments.draw.unlock.write',
+      'tournaments.draw.waivers.read',
       'tournaments.results.enter.write',
       'tournaments.results.walkover.write',
       'tournaments.results.void.write',
@@ -274,7 +275,7 @@ describe('baselines', () => {
       'legal.page',
       'legal.reacceptance.write',
     ]);
-    expect(EXEC_BASELINE.length).toBe(71);
+    expect(EXEC_BASELINE.length).toBe(72);
   });
 
   // THE INVARIANT, CHECKED AGAINST THE BASELINES THEMSELVES. A baseline is fed
@@ -453,7 +454,7 @@ describe('ROLE_DEFAULTS', () => {
   });
 
   it('gives tournaments the draw, the ladder and the sessions, but not entry money', () => {
-    expect(ROLE_DEFAULTS.tournaments.length).toBe(49);
+    expect(ROLE_DEFAULTS.tournaments.length).toBe(50);
     expect([...ROLE_DEFAULTS.tournaments].slice(0, 12)).toEqual([
       'sessions.page',
       'sessions.reminders.write',
@@ -527,11 +528,11 @@ describe('EDITOR_OFFERABLE', () => {
 // ---------------------------------------------------------------------------
 
 describe('permits', () => {
-  it('makes an admin a superuser BY LEVEL, holding all 116', () => {
+  it('makes an admin a superuser BY LEVEL, holding all 117', () => {
     for (const capability of CAPABILITIES) {
       expect(permits('admin', UNRESTRICTED, capability), capability).toBe(true);
     }
-    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(116);
+    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(117);
   });
 
   it('gives an unrestricted person their level baseline and nothing more', () => {

@@ -1,6 +1,6 @@
 // WHERE EVERY CAPABILITY IS ACTUALLY ENFORCED.
 //
-// 116 capabilities is 116 promises that something in the app checks something.
+// 117 capabilities is 117 promises that something in the app checks something.
 // This map is what keeps them honest: every entry names the file and function
 // that stands behind it, and the drift test asserts the map is exhaustive, that
 // no two capabilities claim the same enforcement point, and that any capability
@@ -21,7 +21,7 @@ export type CapabilityGate = {
   area: Area;
   /**
    * Tier-2 grouping for the editor. Non-null only where an area is too large to
-   * render flat (tournaments at 43, fees at 18), and always the capability's
+   * render flat (tournaments at 44, fees at 18), and always the capability's
    * second path segment.
    */
   group: string | null;
@@ -355,6 +355,10 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   'tournaments.draw.unlock.write': {
     label: 'Unlock the draw', area: 'tournaments', group: 'draw', mode: 'write',
     gate: 'tournament-actions/brackets.ts unlockDraw',
+  },
+  'tournaments.draw.waivers.read': {
+    label: 'Who has signed the event waiver', area: 'tournaments', group: 'draw', mode: 'read',
+    gate: 'app/tournaments/[id]/events/[eventId]/page.tsx event-waiver fetch',
   },
 
   // ---- tournaments · results ---------------------------------------------

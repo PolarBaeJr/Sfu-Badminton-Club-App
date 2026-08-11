@@ -191,7 +191,7 @@ export const CAPABILITIES = [
   'announcements.delete.write',
 
   // ---- tournaments -------------------------------------------------------
-  // The largest area by a distance: 43 of the 116. Four groups, and the split
+  // The largest area by a distance: 44 of the 117. Four groups, and the split
   // matters — running a draw, entering results and handling entry money are
   // three different jobs that happen to share a section.
   //
@@ -225,6 +225,11 @@ export const CAPABILITIES = [
   'tournaments.draw.generate.write',
   'tournaments.draw.lock.write',
   'tournaments.draw.unlock.write',
+  // Who in this draw has accepted the event waiver. A READ of
+  // event_waiver_acceptances, in the `draw` group because it is read where the
+  // field is managed — the roster and the check-in board — and because the
+  // thing it gates is a fetch, not a page.
+  'tournaments.draw.waivers.read',
   'tournaments.results.enter.write',
   'tournaments.results.walkover.write',
   'tournaments.results.void.write',
@@ -348,7 +353,7 @@ export function pageOf(capability: Capability): Capability {
 // somebody has widened a level.
 //
 // "Unrestricted" is the LEVEL's baseline, not everything. An unrestricted exec
-// holds 71 capabilities, not 116.
+// holds 72 capabilities, not 117.
 //
 // EVERY AREA A BASELINE REACHES CARRIES THAT AREA'S `.page`. Not a style rule:
 // the resolver prunes any capability whose area page is missing, so a baseline
@@ -446,6 +451,11 @@ export const EXEC_BASELINE: readonly Capability[] = [
   'tournaments.draw.generate.write',
   'tournaments.draw.lock.write',
   'tournaments.draw.unlock.write',
+  // The waiver state of a draw. An exec who runs check-in must be able to see
+  // who has signed, because check-in now refuses an unsigned entrant — a gate
+  // whose reason the officer at the door cannot see is a gate they will work
+  // around. No predecessor: nothing read this table before.
+  'tournaments.draw.waivers.read',
   'tournaments.results.enter.write',
   'tournaments.results.walkover.write',
   'tournaments.results.void.write',
@@ -627,6 +637,10 @@ export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {
     'tournaments.draw.generate.write',
     'tournaments.draw.lock.write',
     'tournaments.draw.unlock.write',
+    // The partition puts this here and nowhere else: /tournaments belongs to
+    // the tournaments job, and the officer who runs check-in is the one person
+    // who has to see why an entrant was refused.
+    'tournaments.draw.waivers.read',
     'tournaments.results.enter.write',
     'tournaments.results.walkover.write',
     'tournaments.results.void.write',

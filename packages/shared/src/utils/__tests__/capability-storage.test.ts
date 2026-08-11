@@ -49,12 +49,20 @@ describe('the migrations and the vocabulary', () => {
   // live in 00087, which is applied on staging and is not edited, and pointing
   // them anywhere else would fail on a missing marker rather than on a real
   // disagreement.
-  const vocabularySql = migration('00089_');
-  // The RENAME lives in 00088 and stays pinned there. Following it to 00089
-  // would look like it still passed while quietly checking nothing: 00089 renames
-  // nothing, so `dropped` would be empty and the mapping assertion would never
-  // run again.
+  // ...and 00097 adds `tournaments.draw.waivers.read`, reaching 117. THE LIVE
+  // LIST IS THIS ONE, and only this one.
+  const vocabularySql = migration('00097_');
+  // The RENAME lives in 00088 and stays pinned there. Following it forward
+  // would look like it still passed while quietly checking nothing: no later
+  // migration renames anything, so `dropped` would be empty and the mapping
+  // assertion would never run again.
   const renameSql = migration('00088_');
+  // 00089 stays pinned for the same reason, in the other direction. Its own
+  // "purely additive, therefore no rewrite of stored arrays" claim is asserted
+  // below against 00088; moving this pointer to 00097 would silently retire that
+  // assertion instead of extending it. 00097 makes the same claim and gets its
+  // own assertion, chained off this one.
+  const additiveSql = migration('00089_');
 
   it('pins exactly the capabilities this build has', () => {
     const stored = arrayLiteralAfter(vocabularySql, 'players_permission_vocabulary_check');
@@ -89,6 +97,16 @@ describe('the migrations and the vocabulary', () => {
   // with it.
   it('removes nothing in 00089, which is why it needs no rewrite', () => {
     const before = arrayLiteralAfter(renameSql, 'players_permission_vocabulary_check');
+    const after = new Set(arrayLiteralAfter(additiveSql, 'players_permission_vocabulary_check'));
+    expect(before.filter((capability) => !after.has(capability))).toEqual([]);
+  });
+
+  // 00097 makes the same claim as 00089 and is held to it the same way, chained
+  // off the previous link rather than jumping back to 00088 — so the chain from
+  // the last RENAME to the live list is unbroken, and every hop in it is
+  // asserted to remove nothing.
+  it('removes nothing in 00097 either, which is why it needs no rewrite', () => {
+    const before = arrayLiteralAfter(additiveSql, 'players_permission_vocabulary_check');
     const after = new Set(arrayLiteralAfter(vocabularySql, 'players_permission_vocabulary_check'));
     expect(before.filter((capability) => !after.has(capability))).toEqual([]);
   });
@@ -129,12 +147,19 @@ describe('the migrations and the vocabulary', () => {
   // 00093 — the baselines table
   // ------------------------------------------------------------------
   // A THIRD COPY OF THE VOCABULARY exists as of 00093: permission_baselines
-  // constrains its own `capabilities` array to the same 116 strings. Two copies
+  // constrains its own `capabilities` array to the same strings. Two copies
   // in SQL can drift, and the direction this one drifts in is a baseline that
   // stores a string the code does not know and therefore hands out nothing. So
   // it is pinned exactly as the players copy is, against the same array.
   describe('the baselines table', () => {
-    const baselineSql = migration('00093_');
+    // TWO POINTERS, ON PURPOSE. 00093 created the table and owns the live
+    // definition of guard_player_privileged_columns; 00097 re-adds only the
+    // vocabulary CHECK. Following the guard assertion to 00097 would fail on a
+    // missing function rather than on a real disagreement, and following the
+    // vocabulary assertion back to 00093 would check a list that is no longer
+    // the live one.
+    const baselineGuardSql = migration('00093_');
+    const baselineSql = migration('00097_');
 
     it('pins the same vocabulary the players columns pin', () => {
       const stored = arrayLiteralAfter(baselineSql, 'permission_baselines_vocabulary_check');
@@ -157,11 +182,11 @@ describe('the migrations and the vocabulary', () => {
     // protected has to still be in it. A column dropped in the copy is a guard
     // silently removed, which is the failure 00072's header describes.
     it('carries every guarded column forward and adds the baseline label', () => {
-      const from = baselineSql.indexOf(
+      const from = baselineGuardSql.indexOf(
         'CREATE OR REPLACE FUNCTION public.guard_player_privileged_columns',
       );
       expect(from, '00093 must replace the guard').toBeGreaterThan(-1);
-      const body = baselineSql.slice(from);
+      const body = baselineGuardSql.slice(from);
       const [insertBranch, updateBranch] = body.split('IF TG_OP = \'INSERT\' THEN')[1]!
         .split('RETURN NEW;\n  END IF;');
       const columns = [
