@@ -1,13 +1,127 @@
 export const dynamic = 'force-dynamic';
-import { scopeToActiveSeason } from '@badminton/shared';
-import { createAdminClient } from '@/lib/supabase-server';
-import { Card, Badge, PageHeader } from '@badminton/ui';
-import { formatDate, formatTime, type AttendanceStatus } from '@badminton/shared';
-import { CreateSessionForm, SessionCardMenu, AttendanceDialog, CheckinQrDialog } from './actions';
-import { Calendar, MapPin, FileText } from 'lucide-react';
+import Link from 'next/link';
+import QRCode from 'qrcode';
+import { Card, EmptyState, PageHeader } from '@badminton/ui';
+import {
+  CLUB_TIMEZONE,
+  clubToday,
+  getCheckinWindow,
+  parseCheckinSettings,
+  scopeToActiveSeason,
+  type AttendanceStatus,
+  type SessionGroupInput,
+} from '@badminton/shared';
+import { createAdminClient, requireCapability } from '@/lib/supabase-server';
+import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/permissions';
 import { PastSeasonNotice, resolveSeasonScope } from '@/components/season-scope';
 import { SeasonSelect } from '@/components/season-select';
-import QRCode from 'qrcode';
+import { isWaivedFee } from '@/lib/fee-status';
+import { CreateSessionForm, SessionCardMenu, AttendanceDialog, CheckinQrDialog } from './actions';
+import { SessionTable, type SessionRow } from './session-table';
+import { TonightCheckin, DoorFeed, type DoorFeedEntry } from './tonight';
+
+// ---------------------------------------------------------------------------
+// Formatters. All wall-clock reasoning on this page is club-local: the club is
+// in Vancouver, the officer reading it is standing in the gym, and "tonight"
+// has to mean tonight there rather than wherever the server happens to be.
+// ---------------------------------------------------------------------------
+
+const DAY_FMT = new Intl.DateTimeFormat('en-GB', {
+  weekday: 'short',
+  day: 'numeric',
+  month: 'short',
+  timeZone: 'UTC',
+});
+const CLOCK_FMT = new Intl.DateTimeFormat('en-GB', {
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+  timeZone: CLUB_TIMEZONE,
+});
+
+/** 24-hour wall clock from a `TIME` column. The console compares these down a
+ *  column, so they are zero-padded and never 12-hour. */
+function hhmm(time: string | null): string | null {
+  if (!time) return null;
+  const [h, m] = time.split(':');
+  return `${(h ?? '00').padStart(2, '0')}:${(m ?? '00').padStart(2, '0')}`;
+}
+
+/** Club sessions after this hour are "tonight"; anything earlier on the same
+ *  date is "today". The club runs weekday evenings, but the schema does not
+ *  stop anybody booking a Saturday morning, and calling a 10:00 session
+ *  TONIGHT on the screen an officer works the door from is exactly the kind of
+ *  wrong this page cannot afford. */
+const EVENING_HOUR = 17;
+
+/** Relative day where it helps, absolute otherwise — the mockup's rule. Past
+ *  dates never go relative: "3 days ago" is not how anybody refers to a
+ *  session they are looking up. */
+function dayLabel(date: string, today: string, startTime: string | null): string {
+  if (date === today) {
+    // No start time means no way to tell a morning session from an evening
+    // one, and the club's ordinary case is the evening.
+    if (!startTime) return 'Tonight';
+    return Number(startTime.slice(0, 2)) >= EVENING_HOUR ? 'Tonight' : 'Today';
+  }
+  const dayMs = 86400000;
+  const diff = Math.round((Date.parse(date) - Date.parse(today)) / dayMs);
+  if (diff === 1) return 'Tomorrow';
+  if (diff === -1) return 'Yesterday';
+  return DAY_FMT.format(new Date(`${date}T00:00:00Z`));
+}
+
+function timeLabel(start: string | null, end: string | null): string {
+  const s = hhmm(start);
+  const e = hhmm(end);
+  if (s && e) return `${s}–${e}`;
+  if (s) return s;
+  return 'Time not set';
+}
+
+const money = (cents: number) => `$${(cents / 100).toFixed(0)}`;
+
+/**
+ * Which week of the term this is. Purely for the header eyebrow, and dropped
+ * entirely when it cannot be computed honestly — a season with no start date,
+ * or a date before the term began, prints "SCHEDULE" and nothing more rather
+ * than "WEEK NAN" or "WEEK 0".
+ */
+function weekOfSeason(startDate: string | null, today: string): number | null {
+  if (!startDate) return null;
+  const days = Math.floor((Date.parse(today) - Date.parse(startDate)) / 86400000);
+  if (!Number.isFinite(days) || days < 0) return null;
+  return Math.floor(days / 7) + 1;
+}
+
+/** Monday of the club week containing `today`, as YYYY-MM-DD. */
+function weekStart(today: string): string {
+  const d = new Date(`${today}T00:00:00Z`);
+  const dow = (d.getUTCDay() + 6) % 7; // Monday = 0
+  d.setUTCDate(d.getUTCDate() - dow);
+  return d.toISOString().slice(0, 10);
+}
+
+/** A stat-strip cell. Bare number over label, and it links to the thing it
+ *  counts — there is no per-session route, so these are anchors on this page
+ *  rather than invented URLs.
+ *
+ *  The mono lives on a child span rather than on `.stat-value`. The shipped
+ *  rule sets `--display`, and `.stat-strip .stat-value` is two classes deep so
+ *  a Tailwind `font-mono` on the same element loses to it — but a direct rule
+ *  on a CHILD beats what that child inherits, so this needs no CSS change and
+ *  no borrowing of `.is-money`, which means something else. */
+function Stat({ label, value, href }: { label: string; value: React.ReactNode; href?: string }) {
+  const body = (
+    <>
+      <p className="stat-label">{label}</p>
+      <p className="stat-value">
+        <span className="font-mono tracking-[-0.03em]">{value}</span>
+      </p>
+    </>
+  );
+  return href ? <Link href={href}>{body}</Link> : <div>{body}</div>;
+}
 
 export default async function SessionsPage({
   searchParams,
@@ -15,17 +129,44 @@ export default async function SessionsPage({
   searchParams: Promise<{ season?: string }>;
 }) {
   const { season: seasonParam } = await searchParams;
-  const supabase = createAdminClient();
 
-  // The schedule belongs to the season it is part of. Without this, activating a
-  // new term left last term's sessions on the page alongside this term's, with
-  // nothing to tell them apart but the date.
+  // WHO IS LOOKING, asked before anything is read. Middleware already maps
+  // /sessions to `sessions.page`, but a page that renders the club's roll —
+  // and, for some viewers, what each of them owes — must not depend on
+  // middleware having been reached. Same shape as /fees and /legal.
+  const viewer = await requireCapability('sessions.page');
+  const level = accessLevelFor(viewer);
+  const permissions = permissionsOf(viewer);
+  const may = (capability: Capability) => permits(level, permissions, capability);
+
+  // EVERY CONTROL ON ITS OWN CAPABILITY. Not one `canManage`: the server
+  // actions have always re-checked these individually, so a menu built on a
+  // single flag offers three controls that bounce to whoever holds the fourth.
+  const canCreate = may('sessions.create.write');
+  const canMarkAttendance = may('sessions.attendance.write');
+  const canIssueToken = may('sessions.checkin.token.write');
+  const menuCan = {
+    update: may('sessions.update.write'),
+    reminders: may('sessions.reminders.write'),
+    archive: may('sessions.archive.write'),
+    delete: may('sessions.delete.write'),
+  };
+  // WHAT A MEMBER OWES IS NOT SESSION DATA. The door feed shows a fee badge
+  // beside each person walking in, which means whoever is working the door
+  // reads the club's debt list — so it asks for the capability that gates the
+  // club-fee roster on /fees, and not for anything in the sessions area.
   //
-  // Sessions with NO season are included deliberately: they are unassigned, not
-  // "in another season", and filtering them out would strand them somewhere with
-  // no page that lists them. When no season is active at all, the filter is
-  // skipped entirely — hiding the whole schedule because nobody pressed
-  // "activate" is worse than showing too much.
+  // EXEC_BASELINE holds `fees.expenses.read` and NOT `fees.clubfees.read`, so
+  // an exec on the door sees no fee badges. That is the intended answer, not an
+  // oversight: "may file an expense" was never "may see who has not paid".
+  const showFees = may('fees.clubfees.read');
+
+  const supabase = createAdminClient();
+  const today = clubToday();
+
+  // ---- seasons ------------------------------------------------------------
+  // The season picker is page furniture, not a ledger, and start_date is what
+  // the header eyebrow counts weeks from.
   const { data: allSeasons } = await supabase
     .from('seasons')
     .select('id, name, start_date, end_date, active_flag')
@@ -33,51 +174,109 @@ export default async function SessionsPage({
   const { seasons: seasonList, selected: scopedSeason, isPast } =
     resolveSeasonScope(allSeasons, seasonParam);
 
+  // ---- sessions -----------------------------------------------------------
+  // Ascending, because this page is now read forwards: the next few nights
+  // first and the term's archive underneath.
+  //
+  // Sessions with NO season are included deliberately: they are unassigned, not
+  // "in another season", and filtering them out would strand them somewhere
+  // with no page that lists them. When no season is active at all the filter is
+  // skipped entirely — hiding the whole schedule because nobody pressed
+  // "activate" is worse than showing too much.
   const { data: sessions } = await scopeToActiveSeason(
     supabase.from('sessions').select('*'),
     scopedSeason?.id,
-  ).order('date', { ascending: false });
+  ).order('date', { ascending: true });
+  type SessionRecord = NonNullable<typeof sessions>[number];
+  const sessionIds = (sessions ?? []).map((s) => s.id as string);
 
-  const { data: attendanceRows } = await supabase
-    .from('session_attendance')
-    .select('session_id, player_id, checked_in_at, status, marked_by, marked_at, players(full_name)');
+  // ---- attendance and RSVPs ----------------------------------------------
+  // SCOPED TO THE SESSIONS ON SCREEN. These two reads used to fetch every row
+  // in the table with no filter at all, which meant the term's no-show count —
+  // and the average this page now prints — were computed over the club's entire
+  // history while claiming to describe one season.
+  const { data: attendanceRows } = sessionIds.length
+    ? await supabase
+        .from('session_attendance')
+        .select(
+          'session_id, player_id, checked_in_at, status, marked_by, marked_at, players(full_name, avatar_url)',
+        )
+        .in('session_id', sessionIds)
+    : { data: [] };
 
-  const { data: rsvpRows } = await supabase
-    .from('session_rsvp')
-    .select('session_id, intent, players(full_name)');
+  const { data: rsvpRows } = sessionIds.length
+    ? await supabase
+        .from('session_rsvp')
+        .select('session_id, intent, players(full_name)')
+        .in('session_id', sessionIds)
+    : { data: [] };
 
-  const { data: activePlayers } = await supabase
-    .from('players')
-    .select('id, full_name, avatar_url')
-    .eq('active_flag', true)
-    .order('full_name');
+  // ---- the walk-in roster -------------------------------------------------
+  // ONLY FOR SOMEBODY WHO MAY MARK ATTENDANCE. This list feeds exactly one
+  // control — the PlayerPicker inside the attendance dialog — and it was
+  // fetched for every viewer the section admitted and handed to a client
+  // component, so the club's whole active roster crossed into the RSC payload
+  // for a viewer with no way to use it. Same class as the two leaks found on
+  // /fees.
+  const { data: activePlayers } = canMarkAttendance
+    ? await supabase
+        .from('players')
+        .select('id, full_name, avatar_url')
+        .eq('active_flag', true)
+        .order('full_name')
+    : { data: [] };
 
-  // QR check-in tokens (00024). RLS denies everyone, so this read only works
-  // because createAdminClient() is the service-role client.
-  const { data: checkinTokens } = await supabase
-    .from('session_checkin_tokens')
-    .select('session_id, token');
+  // ---- QR check-in tokens -------------------------------------------------
+  // ONLY FOR SOMEBODY WHO MAY ISSUE ONE. A token is the check-in secret: anyone
+  // holding the URL can put it in front of a room. It is also RLS-denied to
+  // everybody (00024) precisely so it cannot be read by accident — and this
+  // page then read it with the service-role client for every viewer and shipped
+  // the URL into a client component. The capability that MINTS a token is the
+  // one that may see it.
+  const { data: checkinTokens } = canIssueToken
+    ? await supabase.from('session_checkin_tokens').select('session_id, token')
+    : { data: [] };
 
-  // Group attendance records by session_id
+  // ---- the check-in window ------------------------------------------------
+  // session_checkin_open() reads these two tunables out of platform_settings on
+  // every call and is the enforcement source of truth; getCheckinWindow mirrors
+  // it. Fetched rather than taken from the TypeScript fallback so the line this
+  // page prints agrees with the gate the player app will actually hit.
+  const { data: checkinSetting } = await supabase
+    .from('platform_settings')
+    .select('value')
+    .eq('key', 'session_attendance')
+    .maybeSingle();
+  const checkinSettings = parseCheckinSettings(checkinSetting?.value ?? null);
+
+  // ------------------------------------------------------------------------
+  // Shaping
+  // ------------------------------------------------------------------------
   type AttendeeEntry = {
     player_id: string;
     full_name: string;
+    avatar_url: string | null;
     checked_in_at: string;
     status: AttendanceStatus;
     marked_by: string | null;
     marked_at: string | null;
   };
+
+  // supabase-js types an embedded one-to-one as either an object or an array
+  // depending on how it infers the relationship, so both shapes are unwrapped.
+  function embedded<T extends object>(value: unknown): T | null {
+    if (Array.isArray(value)) return (value[0] as T) ?? null;
+    return (value as T) ?? null;
+  }
+
   const attendanceMap: Record<string, AttendeeEntry[]> = {};
   for (const row of attendanceRows ?? []) {
-    const name =
-      Array.isArray(row.players)
-        ? (row.players[0]?.full_name ?? 'Unknown')
-        : ((row.players as { full_name: string } | null)?.full_name ?? 'Unknown');
+    const player = embedded<{ full_name: string; avatar_url: string | null }>(row.players);
     const sid = row.session_id as string;
-    if (!attendanceMap[sid]) attendanceMap[sid] = [];
-    attendanceMap[sid].push({
+    (attendanceMap[sid] ??= []).push({
       player_id: row.player_id as string,
-      full_name: name,
+      full_name: player?.full_name ?? 'Unknown',
+      avatar_url: player?.avatar_url ?? null,
       checked_in_at: row.checked_in_at as string,
       status: row.status as AttendanceStatus,
       marked_by: row.marked_by as string | null,
@@ -85,22 +284,42 @@ export default async function SessionsPage({
     });
   }
 
-  // Group RSVP records by session_id, splitting on intent.
   const rsvpMap: Record<string, { going: string[]; declined: string[] }> = {};
   for (const row of rsvpRows ?? []) {
-    const name = Array.isArray(row.players)
-      ? (row.players[0]?.full_name ?? 'Unknown')
-      : ((row.players as { full_name: string } | null)?.full_name ?? 'Unknown');
+    const player = embedded<{ full_name: string }>(row.players);
     const sid = row.session_id as string;
-    (rsvpMap[sid] ??= { going: [], declined: [] })[row.intent as 'going' | 'declined'].push(name);
+    (rsvpMap[sid] ??= { going: [], declined: [] })[row.intent as 'going' | 'declined'].push(
+      player?.full_name ?? 'Unknown',
+    );
   }
 
+  // Hosts. `sessions.host_player_id` is stamped with whoever CREATED the
+  // session (lib/actions/sessions.ts) and there is no control anywhere that
+  // reassigns it — updateSession does not write the column. So this column is
+  // labelled HOST rather than "DOOR", and there is no "Assign door" button:
+  // offering one would imply a write that does not exist. The FK is ON DELETE
+  // SET NULL, so "Unassigned" is a state that genuinely occurs.
+  const hostIds = [
+    ...new Set((sessions ?? []).map((s) => s.host_player_id as string | null).filter(Boolean)),
+  ] as string[];
+  const { data: hostRows } = hostIds.length
+    ? await supabase.from('players').select('id, full_name, avatar_url').in('id', hostIds)
+    : { data: [] };
+  const hostById = new Map(
+    (hostRows ?? []).map((h) => [
+      h.id as string,
+      { id: h.id as string, name: h.full_name as string, avatarUrl: (h.avatar_url as string | null) ?? null },
+    ]),
+  );
+
   // QR images are built here, server-side, so the qrcode library never reaches
-  // the client bundle. Only open sessions get one — nothing else can be
-  // checked into, so rendering a code for them would just be noise.
+  // the client bundle. Only open sessions get one — nothing else can be checked
+  // into, so rendering a code for them would just be noise. `checkinTokens` is
+  // already empty for a viewer who may not issue them, so this loop produces
+  // nothing for them either.
   const playerBaseUrl = process.env.NEXT_PUBLIC_PLAYER_URL || 'http://localhost:3000';
   const openSessionIds = new Set(
-    (sessions ?? []).filter((s) => s.status === 'open').map((s) => s.id as string)
+    (sessions ?? []).filter((s) => s.status === 'open').map((s) => s.id as string),
   );
   const qrEntries = await Promise.all(
     (checkinTokens ?? [])
@@ -111,18 +330,228 @@ export default async function SessionsPage({
           row.session_id as string,
           { url, svg: await QRCode.toString(url, { type: 'svg', margin: 1, width: 320 }) },
         ];
-      })
+      }),
   );
   const qrBySession = Object.fromEntries(qrEntries);
 
+  const upcoming = (sessions ?? []).filter((s) => (s.date as string) >= today);
+  const earlier = (sessions ?? []).filter((s) => (s.date as string) < today).reverse();
+  const tonightSessions = (sessions ?? []).filter((s) => (s.date as string) === today);
+
+  // ---- the fee lookup behind the door feed --------------------------------
+  // Gated on the FETCH, not on the badge. And the payer predicate is the same
+  // one /fees uses — active competitive/recreational members who are neither
+  // exec nor fee-exempt — because printing "OWES $40" beside an exec at the
+  // door would be worse than printing nothing at all.
+  //
+  // Two whole queries rather than one with a conditional column list: the
+  // supabase-js select string is parsed at COMPILE time to type the row, and a
+  // ternary yields a union it cannot parse as either branch.
+  //
+  // All three reads also need a SEASON: a club fee belongs to one, and with no
+  // season in scope there is no ledger to be unpaid against. Without that
+  // clause the feed would badge every arrival "Unpaid" on the strength of rows
+  // that do not exist.
+  const feeSeasonId = scopedSeason?.id ?? null;
+  const readFees = showFees && feeSeasonId !== null;
+  const { data: feeSeason } = readFees
+    ? await supabase
+        .from('seasons')
+        .select('competitive_fee_cents, recreational_fee_cents')
+        .eq('id', feeSeasonId)
+        .maybeSingle()
+    : { data: null };
+  const { data: payers } = readFees
+    ? await supabase
+        .from('players')
+        .select('id, status')
+        .in('status', ['competitive', 'recreational'])
+        .eq('is_exec', false)
+        .eq('fee_exempt', false)
+    : { data: [] };
+  const { data: feeRows } = readFees
+    ? await supabase
+        .from('club_fees')
+        .select('player_id, paid_at, method')
+        .eq('season_id', feeSeasonId)
+    : { data: [] };
+  const payerStatus = new Map((payers ?? []).map((p) => [p.id as string, p.status as string]));
+  const feeByPlayer = new Map(
+    (feeRows ?? []).filter((f) => f.player_id != null).map((f) => [f.player_id as string, f]),
+  );
+
+  function feeFor(playerId: string): DoorFeedEntry['fee'] {
+    const status = payerStatus.get(playerId);
+    // Not on the fee roster at all. Nothing is owed, so nothing is said — which
+    // is a different thing from the badge being withheld.
+    if (!status) return null;
+    const fee = feeByPlayer.get(playerId);
+    if (isWaivedFee(fee)) return { state: 'waived' };
+    if (fee?.paid_at) return { state: 'paid' };
+    const cents =
+      status === 'competitive'
+        ? (feeSeason?.competitive_fee_cents as number | null)
+        : (feeSeason?.recreational_fee_cents as number | null);
+    // No price on the season means no amount to name. Still outstanding, just
+    // said without a figure rather than with a made-up one.
+    return { state: 'owes', amount: cents == null ? undefined : money(cents) };
+  }
+
+  // ---- tonight ------------------------------------------------------------
+  // A `session_attendance` row is not the same thing as somebody turning up:
+  // 'no_show' and 'excused' are marks an officer puts on the roll for people
+  // who did NOT come (00008). Counting rows would have made the no-show column
+  // and the turnout column count the same people twice, and put a no-show in a
+  // feed titled "just scanned in".
+  const arrived = (a: AttendeeEntry) => a.status === 'checked_in' || a.status === 'present';
+  const countArrived = (sessionId: string) => (attendanceMap[sessionId] ?? []).filter(arrived).length;
+
+  const tonightAttendees = tonightSessions
+    .flatMap((s) => attendanceMap[s.id as string] ?? [])
+    .filter(arrived);
+  const tonightSignedUp = tonightSessions.reduce(
+    (n, s) => n + (rsvpMap[s.id as string]?.going.length ?? 0),
+    0,
+  );
+  const doorFeed: DoorFeedEntry[] = [...tonightAttendees]
+    .sort((a, b) => Date.parse(b.checked_in_at) - Date.parse(a.checked_in_at))
+    .slice(0, 12)
+    .map((a) => ({
+      playerId: a.player_id,
+      name: a.full_name,
+      avatarUrl: a.avatar_url,
+      timeLabel: CLOCK_FMT.format(new Date(a.checked_in_at)),
+      // 'checked_in' is the self-scan status the QR route writes (00008);
+      // anything else was put there by an officer.
+      viaQr: a.status === 'checked_in',
+      fee: readFees ? feeFor(a.player_id) : null,
+    }));
+
+  // "DOORS CLOSE IN 42 MIN", from the same window the RLS gate enforces. The
+  // first OPEN session tonight with a start time wins — the club runs one night
+  // at a time, a session with no time has no window to describe, and
+  // session_checkin_open() refuses a closed session outright, so quoting a
+  // window for one would describe a door the player app has already shut.
+  // "Tonight" only when everything on today's schedule is actually an evening.
+  // ONE NIGHT AT A TIME IS AN ASSUMPTION, not a constraint: `sessions` permits
+  // two rows on one date, in which case this card sums both counts and the door
+  // line below describes the first open one. That is the club's shape today and
+  // the honest reading of the mockup's single "TONIGHT" card.
+  const todayIsEvening = tonightSessions.every(
+    (s) => !s.start_time || Number((s.start_time as string).slice(0, 2)) >= EVENING_HOUR,
+  );
+  const tonightHeading = todayIsEvening ? 'Tonight · Check-in' : 'Today · Check-in';
+
+  const windowSession = tonightSessions.find((s) => s.start_time && s.status === 'open');
+  let doorLine: string | null = null;
+  if (!windowSession && tonightSessions.some((s) => s.status !== 'open')) {
+    doorLine = 'Doors closed';
+  }
+  if (windowSession) {
+    const { opensAt, closesAt } = getCheckinWindow(
+      {
+        date: windowSession.date as string,
+        start_time: windowSession.start_time as string | null,
+        end_time: windowSession.end_time as string | null,
+        status: windowSession.status as string,
+      },
+      checkinSettings,
+    );
+    const now = Date.now();
+    const mins = (t: number) => Math.max(0, Math.round((t - now) / 60000));
+    if (opensAt && now < opensAt.getTime()) doorLine = `Doors open in ${mins(opensAt.getTime())} min`;
+    else if (now < closesAt.getTime()) doorLine = `Doors close in ${mins(closesAt.getTime())} min`;
+    else doorLine = 'Doors closed';
+  }
+
+  // ---- the stat strip -----------------------------------------------------
+  // FOUR CELLS, NOT FIVE. "COURTS BOOKED" is dropped outright: `sessions` has
+  // no court column and nothing else in the schema counts courts, so the number
+  // could only have been invented. Everything below is a count of rows this
+  // page has already read.
+  const thisWeekStart = weekStart(today);
+  const thisWeekCount = (sessions ?? []).filter((s) => {
+    const d = s.date as string;
+    return d >= thisWeekStart && Date.parse(d) - Date.parse(thisWeekStart) < 7 * 86400000;
+  }).length;
+  const checkedInTonight = tonightAttendees.length;
+  // The average is over nights that actually happened. A session nobody
+  // attended — one that was cancelled on the day, or never had its roll taken —
+  // would otherwise drag the mean down while describing nothing.
+  const playedSessions = earlier.filter((s) => countArrived(s.id as string) > 0);
+  const avgAttendance = playedSessions.length
+    ? Math.round(
+        playedSessions.reduce((n, s) => n + countArrived(s.id as string), 0) / playedSessions.length,
+      )
+    : null;
+  const noShows = (attendanceRows ?? []).filter((r) => r.status === 'no_show').length;
+
+  const week = weekOfSeason(scopedSeason?.start_date ?? null, today);
+  const eyebrow = week ? `Schedule · Week ${week}` : 'Schedule';
+
+  /** One row's worth of controls, each on its own capability. */
+  function rowActions(session: SessionRecord, isTonight: boolean) {
+    const id = session.id as string;
+    const qr = qrBySession[id];
+    return (
+      <>
+        <AttendanceDialog
+          sessionId={id}
+          attendees={attendanceMap[id] ?? []}
+          players={activePlayers ?? []}
+          canWrite={canMarkAttendance}
+          variant={isTonight ? 'secondary' : 'ghost'}
+          label={isTonight ? 'Open door list' : 'Door list'}
+        />
+        {canIssueToken && session.status === 'open' && (
+          <CheckinQrDialog sessionId={id} url={qr?.url ?? null} svg={qr?.svg ?? null} />
+        )}
+        <SessionCardMenu
+          session={{
+            id,
+            name: session.name as string | null,
+            date: session.date as string,
+            start_time: session.start_time as string | null,
+            end_time: session.end_time as string | null,
+            location: session.location as string,
+            notes: session.notes as string | null,
+            status: session.status as string,
+            track: session.track as SessionGroupInput,
+          }}
+          can={menuCan}
+        />
+      </>
+    );
+  }
+
+  function toRow(session: SessionRecord): SessionRow {
+    const id = session.id as string;
+    const date = session.date as string;
+    return {
+      id,
+      name: (session.name as string | null) || 'Untitled session',
+      dayLabel: dayLabel(date, today, session.start_time as string | null),
+      timeLabel: timeLabel(session.start_time as string | null, session.end_time as string | null),
+      venue: session.location as string,
+      signedUp: rsvpMap[id]?.going.length ?? 0,
+      checkedIn: countArrived(id),
+      host: hostById.get(session.host_player_id as string) ?? null,
+      closed: session.status !== 'open',
+      actions: rowActions(session, date === today),
+    };
+  }
+
+  const upcomingRows = upcoming.map(toRow);
+  const earlierRows = earlier.map(toRow);
+
   return (
-    <div className="space-y-8">
-      {/* Page Header */}
+    <div className="space-y-6">
       <PageHeader
+        eyebrow={eyebrow}
         title="Sessions"
-        sub="Schedule and manage club practice sessions"
+        sub="Who is on the door, who is turning up."
         watermark="S"
-        actions={<CreateSessionForm />}
+        actions={canCreate ? <CreateSessionForm /> : undefined}
       />
 
       <div className="space-y-2">
@@ -130,106 +559,90 @@ export default async function SessionsPage({
         {isPast && scopedSeason && <PastSeasonNotice season={scopedSeason} />}
       </div>
 
-      {/* Sessions List */}
-      {sessions && sessions.length > 0 ? (
-        <div className="space-y-3">
-          {sessions.map((session) => {
-            const rsvp = rsvpMap[session.id];
-            const qr = qrBySession[session.id];
-            return (
-            <Card key={session.id}>
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1 min-w-0 space-y-2">
-                  {/* Name + Status */}
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <h2 className="text-base font-semibold text-[var(--text-primary)]">
-                      {session.name || 'Untitled Session'}
-                    </h2>
-                    <Badge variant={session.status === 'open' ? 'success' : 'neutral'}>
-                      {session.status === 'open' ? 'Open' : 'Closed'}
-                    </Badge>
-                    <Badge variant={session.track === 'competitive' ? 'info' : session.track === 'recreational' ? 'warning' : 'neutral'}>
-                      {session.track === 'competitive' ? 'Competitive' : session.track === 'recreational' ? 'Recreational' : 'All'}
-                    </Badge>
-                  </div>
+      {/* Bare number/label pairs, hairline above and below, no card chrome —
+          the console's stat strip. Each cell links to the block it counts;
+          there is no per-session route to link to, so these are anchors. */}
+      <div className="stat-strip">
+        <Stat label="This week" value={thisWeekCount} href="#upcoming" />
+        {/* "Today" rather than the mockup's "TONIGHT": this counts every
+            session on today's date, and the club is free to book a morning. */}
+        <Stat label="Checked in today" value={checkedInTonight} href="#tonight" />
+        <Stat label="Avg attendance" value={avgAttendance ?? '—'} href="#earlier" />
+        <Stat label="No-shows · term" value={noShows} href="#earlier" />
+      </div>
 
-                  {/* Date + Location */}
-                  <div className="flex items-center gap-4 flex-wrap">
-                    <div className="flex items-center gap-1.5 text-sm text-[var(--text-secondary)]">
-                      <Calendar className="w-3.5 h-3.5 text-[var(--text-muted)]" />
-                      {formatDate(session.date)}
-                      {session.start_time && ` · ${formatTime(session.start_time)}`}
-                      {session.start_time && session.end_time && ` – ${formatTime(session.end_time)}`}
-                    </div>
-                    <div className="flex items-center gap-1.5 text-sm text-[var(--text-secondary)]">
-                      <MapPin className="w-3.5 h-3.5 text-[var(--text-muted)]" />
-                      {session.location}
-                    </div>
-                  </div>
-
-                  {/* Notes preview */}
-                  {session.notes && (
-                    <div className="flex items-start gap-1.5 text-sm text-[var(--text-muted)]">
-                      <FileText className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-                      <span className="line-clamp-1">{session.notes}</span>
-                    </div>
-                  )}
-
-                  {/* Attendance count + view dialog, and the self check-in QR */}
-                  <div className="flex items-center gap-4 flex-wrap">
-                    <AttendanceDialog
-                      sessionId={session.id}
-                      attendees={attendanceMap[session.id] ?? []}
-                      players={activePlayers ?? []}
-                    />
-                    {session.status === 'open' && (
-                      <CheckinQrDialog
-                        sessionId={session.id}
-                        url={qr?.url ?? null}
-                        svg={qr?.svg ?? null}
-                      />
-                    )}
-                  </div>
-
-                  {/* RSVP intents (read-only) */}
-                  {rsvp && (rsvp.going.length > 0 || rsvp.declined.length > 0) && (
-                    <div className="space-y-0.5">
-                      {rsvp.going.length > 0 && (
-                        <div className="text-xs text-[var(--text-secondary)]">
-                          Going ({rsvp.going.length}): {rsvp.going.join(', ')}
-                        </div>
-                      )}
-                      {rsvp.declined.length > 0 && (
-                        <div className="text-xs text-[var(--text-muted)]">
-                          Can&apos;t make it ({rsvp.declined.length}): {rsvp.declined.join(', ')}
-                        </div>
-                      )}
-                    </div>
-                  )}
+      <div className="grid gap-5 items-start lg:grid-cols-[2fr_1fr]">
+        {/* Left: the schedule. */}
+        <div className="space-y-5">
+          {/* The anchor sits on a wrapper rather than on the Card: Card takes
+              children/className/padding and nothing else, and packages/ui is
+              not this change's to widen. */}
+          <div id="upcoming" className="scroll-mt-6">
+            <Card padding={false}>
+              {upcomingRows.length > 0 ? (
+                <SessionTable
+                  rows={upcomingRows}
+                  heading="Upcoming"
+                  count={`Next ${upcomingRows.length} session${upcomingRows.length === 1 ? '' : 's'}`}
+                />
+              ) : (
+                <div className="p-6">
+                  <EmptyState
+                    title="Nothing scheduled"
+                    description={
+                      canCreate
+                        ? 'No sessions on or after today in this season. Create one from the button above.'
+                        : 'No sessions on or after today in this season.'
+                    }
+                  />
                 </div>
-
-                {/* Three-dot menu */}
-                <div className="flex-shrink-0">
-                  <SessionCardMenu session={session} />
-                </div>
-              </div>
+              )}
             </Card>
-            );
-          })}
-        </div>
-      ) : (
-        <Card>
-          <div className="flex flex-col items-center justify-center py-12 px-4">
-            <div className="flex items-center justify-center w-14 h-14 rounded-full bg-[var(--bg-surface)] mb-4">
-              <Calendar className="w-7 h-7 text-[var(--text-muted)]" />
-            </div>
-            <p className="text-[var(--text-primary)] font-medium mb-1">No sessions yet</p>
-            <p className="text-sm text-[var(--text-muted)]">
-              Create your first session to get started
-            </p>
           </div>
-        </Card>
-      )}
+
+          {/* The term's archive stays on the page. Marking a no-show after the
+              fact, or fixing one, is ordinary work and this is the only route
+              in the console that can open a past session's door list — slicing
+              the page down to the next few nights would have taken that away
+              without saying so. */}
+          {earlierRows.length > 0 && (
+            <div id="earlier" className="scroll-mt-6">
+              <Card padding={false}>
+                <SessionTable
+                  rows={earlierRows}
+                  heading="Earlier this season"
+                  count={`${earlierRows.length} session${earlierRows.length === 1 ? '' : 's'}`}
+                />
+              </Card>
+            </div>
+          )}
+        </div>
+
+        {/* Right: the door. */}
+        <div className="space-y-5">
+          <div id="tonight" className="scroll-mt-6">
+            <Card padding={false}>
+              <TonightCheckin
+                heading={tonightHeading}
+                sessionName={
+                  tonightSessions.length
+                    ? tonightSessions
+                        .map((s) => (s.name as string | null) || 'Untitled session')
+                        .join(' · ')
+                    : null
+                }
+                checkedIn={checkedInTonight}
+                signedUp={tonightSignedUp}
+                doorLine={doorLine}
+              />
+            </Card>
+          </div>
+
+          <Card padding={false}>
+            <DoorFeed entries={doorFeed} showFees={showFees} />
+          </Card>
+        </div>
+      </div>
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Badge, Button, Dialog, Input, PlayerPicker, Select, useConfirm, DatePicker } from '@badminton/ui';
+import { Badge, Button, Dialog, Input, PlayerPicker, Select, Textarea, useConfirm, DatePicker } from '@badminton/ui';
 import { createSession, updateSession, archiveSession, deleteSession, markAttendance, clearAttendanceMark, sendSessionReminders, getOrCreateSessionCheckinToken, rotateSessionCheckinToken } from '@/lib/actions';
 import { runBulk, summarizeBulk } from '@/lib/bulk-add';
 import { useToast } from '@/components/toast-provider';
@@ -32,7 +32,18 @@ interface Attendee {
 interface AttendanceDialogProps {
   sessionId: string;
   attendees: Attendee[];
+  /** The walk-in roster. EMPTY when the viewer may not mark attendance — the
+   *  page skips that fetch entirely rather than sending a list nothing draws. */
   players: { id: string; full_name: string; avatar_url?: string | null }[];
+  /** `sessions.attendance.write`. Every control inside the dialog is this one
+   *  capability; the LIST is not, because reading who turned up is what the
+   *  section is for. */
+  canWrite: boolean;
+  /** How the row-action button is drawn. Tonight's door list is the thing an
+   *  officer is reaching for, so it gets the solid treatment and every other
+   *  row gets the quiet one. */
+  variant?: 'secondary' | 'ghost';
+  label?: string;
 }
 
 const ATTENDANCE_BADGES: Record<AttendanceStatus, { label: string; variant: 'success' | 'warning' | 'danger' }> = {
@@ -53,7 +64,14 @@ function relativeTime(iso: string): string {
   return `${days}d ago`;
 }
 
-export function AttendanceDialog({ sessionId, attendees, players }: AttendanceDialogProps) {
+export function AttendanceDialog({
+  sessionId,
+  attendees,
+  players,
+  canWrite,
+  variant = 'ghost',
+  label = 'Door list',
+}: AttendanceDialogProps) {
   const [open, setOpen] = useState(false);
   const [addPlayerIds, setAddPlayerIds] = useState<string[]>([]);
   // Separate from busyPlayerId: that one names the single row whose buttons are
@@ -113,13 +131,16 @@ export function AttendanceDialog({ sessionId, attendees, players }: AttendanceDi
 
   return (
     <>
-      <button
+      {/* 44px, because this is the button an officer taps one-handed at the
+          gym door. Button's `md` stops at 40. */}
+      <Button
+        variant={variant}
         onClick={() => setOpen(true)}
-        className="flex items-center gap-1 text-xs text-[var(--color-accent)] hover:underline"
+        className="min-h-[44px] w-full sm:w-auto"
       >
         <Users className="w-3.5 h-3.5" />
-        <span>{attendees.length} checked in</span>
-      </button>
+        <span>{label}</span>
+      </Button>
 
       <Dialog open={open} onClose={() => setOpen(false)} title="Attendance">
         {attendees.length === 0 ? (
@@ -138,28 +159,37 @@ export function AttendanceDialog({ sessionId, attendees, players }: AttendanceDi
                       <span className="text-xs text-[var(--text-muted)]">{relativeTime(a.checked_in_at)}</span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <Button size="sm" variant="ghost" disabled={busy || a.status === 'present'} onClick={() => handleMark(a.player_id, 'present')}>
-                      Present
-                    </Button>
-                    <Button size="sm" variant="ghost" disabled={busy || a.status === 'no_show'} onClick={() => handleMark(a.player_id, 'no_show')}>
-                      No-show
-                    </Button>
-                    <Button size="sm" variant="ghost" disabled={busy || a.status === 'excused'} onClick={() => handleMark(a.player_id, 'excused')}>
-                      Excused
-                    </Button>
-                    <Button size="sm" variant="danger" disabled={busy} onClick={() => handleRemove(a.player_id)}>
-                      Remove
-                    </Button>
-                  </div>
+                  {/* The marks are `sessions.attendance.write`, the list above
+                      is not. Somebody who may see who turned up but not change
+                      it gets the roll and no buttons. */}
+                  {canWrite && (
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <Button size="sm" variant="ghost" disabled={busy || a.status === 'present'} onClick={() => handleMark(a.player_id, 'present')}>
+                        Present
+                      </Button>
+                      <Button size="sm" variant="ghost" disabled={busy || a.status === 'no_show'} onClick={() => handleMark(a.player_id, 'no_show')}>
+                        No-show
+                      </Button>
+                      <Button size="sm" variant="ghost" disabled={busy || a.status === 'excused'} onClick={() => handleMark(a.player_id, 'excused')}>
+                        Excused
+                      </Button>
+                      <Button size="sm" variant="danger" disabled={busy} onClick={() => handleRemove(a.player_id)}>
+                        Remove
+                      </Button>
+                    </div>
+                  )}
                 </li>
               );
             })}
           </ul>
         )}
 
-        {/* Walk-ins: mark a player present without a self check-in */}
-        {addablePlayers.length > 0 && (
+        {/* Walk-ins: mark a player present without a self check-in.
+            `canWrite` as well as a non-empty roster, because the roster is only
+            fetched for a holder of the write in the first place — the second
+            test is belt to that brace, so a future caller that hands the list
+            over cannot accidentally hand over the control with it. */}
+        {canWrite && addablePlayers.length > 0 && (
           <div className="flex items-end gap-2 pt-4 mt-2 border-t border-[var(--border)]">
             <div className="flex-1">
               <PlayerPicker
@@ -233,13 +263,15 @@ export function CheckinQrDialog({ sessionId, url, svg }: CheckinQrDialogProps) {
 
   return (
     <>
-      <button
+      <Button
+        variant="ghost"
         onClick={() => setOpen(true)}
-        className="flex items-center gap-1 text-xs text-[var(--color-accent)] hover:underline"
+        aria-label="Check-in QR"
+        className="min-h-[44px] px-3"
       >
-        <QrCode className="w-3.5 h-3.5" />
-        <span>Check-in QR</span>
-      </button>
+        <QrCode className="w-4 h-4" />
+        <span>QR</span>
+      </Button>
 
       <Dialog open={open} onClose={() => setOpen(false)} title="Check-in QR">
         {url && svg ? (
@@ -356,7 +388,7 @@ export function CreateSessionForm() {
 
   return (
     <>
-      <Button onClick={() => setOpen(true)}>New Session</Button>
+      <Button onClick={() => setOpen(true)}>New session</Button>
       <Dialog open={open} onClose={() => setOpen(false)} title="Create Session">
         <form onSubmit={handleCreate} className="space-y-4">
           <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required placeholder="e.g. Tuesday Practice" />
@@ -429,9 +461,21 @@ interface SessionCardMenuProps {
     status: string;
     track: SessionGroupInput;
   };
+  /** FOUR CAPABILITIES, NOT ONE FLAG. This menu offered Edit, Send reminder,
+   *  Archive and Delete to everybody the section admitted, and each of those is
+   *  a separate grant — `sessions.update.write`, `sessions.reminders.write`,
+   *  `sessions.archive.write`, `sessions.delete.write`. The server actions have
+   *  always re-checked them individually, so the menu was offering three
+   *  controls that would bounce to anyone holding only the fourth. */
+  can: {
+    update: boolean;
+    reminders: boolean;
+    archive: boolean;
+    delete: boolean;
+  };
 }
 
-export function SessionCardMenu({ session }: SessionCardMenuProps) {
+export function SessionCardMenu({ session, can }: SessionCardMenuProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [name, setName] = useState(session.name || '');
@@ -442,9 +486,18 @@ export function SessionCardMenu({ session }: SessionCardMenuProps) {
   const [notes, setNotes] = useState(session.notes || '');
   const [track, setTrack] = useState<SessionGroupInput>(session.track);
   const [loading, setLoading] = useState(false);
+  // The audited pair. Archiving ends check-in for everyone still walking in and
+  // deleting takes the attendance rows with it, so both go through a dialog that
+  // names the session and takes a written reason — the console's rule for an
+  // audited action, and one useConfirm() cannot express (ConfirmOptions has no
+  // reason field, and packages/ui is out of scope here).
+  const [reasonFor, setReasonFor] = useState<'archive' | 'delete' | null>(null);
+  const [reason, setReason] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const confirm = useConfirm();
+
+  const sessionLabel = session.name || 'this session';
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -486,74 +539,86 @@ export function SessionCardMenu({ session }: SessionCardMenuProps) {
     setMenuOpen(false);
   }
 
-  async function handleArchive() {
-    if (!(await confirm({ title: 'Archive session?', message: 'Archive this session? It will be marked as closed.', confirmLabel: 'Archive' }))) return;
-    setLoading(true);
-    try {
-      const res = await archiveSession(session.id);
-      if (!res.ok) { toast(res.error, 'error'); setLoading(false); setMenuOpen(false); return; }
-      toast('Session archived', 'success');
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Failed', 'error');
-    }
-    setLoading(false);
-    setMenuOpen(false);
+  function closeReason() {
+    setReasonFor(null);
+    setReason('');
   }
 
-  async function handleDelete() {
-    if (!(await confirm({ title: 'Delete session?', message: 'Delete this session? This cannot be undone.', confirmLabel: 'Delete', danger: true }))) return;
+  async function handleReasonedAction() {
+    const which = reasonFor;
+    if (!which) return;
+    // Mirrors the server's floor (REASON_MIN in lib/actions/sessions.ts) so the
+    // refusal arrives before the round trip, not as a thrown error afterwards.
+    if (reason.trim().length < 5) { toast('A reason of at least 5 characters is required', 'error'); return; }
     setLoading(true);
     try {
-      const res = await deleteSession(session.id);
-      if (!res.ok) { toast(res.error, 'error'); setLoading(false); setMenuOpen(false); return; }
-      toast('Session deleted', 'success');
+      const res = which === 'archive'
+        ? await archiveSession(session.id, reason)
+        : await deleteSession(session.id, reason);
+      if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
+      toast(which === 'archive' ? 'Session archived' : 'Session deleted', 'success');
+      closeReason();
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
     setLoading(false);
-    setMenuOpen(false);
   }
+
+  // Nothing to open. A viewer holding the page and none of the four writes gets
+  // no menu button at all rather than an empty popover.
+  if (!can.update && !can.reminders && !can.archive && !can.delete) return null;
+
+  const ITEM =
+    'w-full px-4 py-2.5 text-left text-sm transition-colors disabled:opacity-50 min-h-[44px]';
 
   return (
     <>
       <div ref={menuRef} className="relative">
         <button
           onClick={() => setMenuOpen((v) => !v)}
-          className="flex items-center justify-center w-8 h-8 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-hover)] transition-colors"
+          className="flex items-center justify-center min-h-[44px] min-w-[44px] rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-hover)] transition-colors"
           aria-label="Session options"
         >
           <MoreVertical className="w-4 h-4" />
         </button>
 
         {menuOpen && (
-          <div className="absolute right-0 top-9 z-20 w-36 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] shadow-lg shadow-black/10 overflow-hidden">
-            <button
-              onClick={() => { setEditOpen(true); setMenuOpen(false); }}
-              className="w-full px-4 py-2.5 text-left text-sm text-[var(--text-primary)] hover:bg-[var(--border-hover)] transition-colors"
-            >
-              Edit
-            </button>
-            <button
-              onClick={handleSendReminders}
-              disabled={loading}
-              className="w-full px-4 py-2.5 text-left text-sm text-[var(--text-primary)] hover:bg-[var(--border-hover)] transition-colors disabled:opacity-50"
-            >
-              Send reminder
-            </button>
-            <button
-              onClick={handleArchive}
-              disabled={loading}
-              className="w-full px-4 py-2.5 text-left text-sm text-[var(--text-primary)] hover:bg-[var(--border-hover)] transition-colors disabled:opacity-50"
-            >
-              Archive
-            </button>
-            <button
-              onClick={handleDelete}
-              disabled={loading}
-              className="w-full px-4 py-2.5 text-left text-sm text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10 transition-colors disabled:opacity-50"
-            >
-              Delete
-            </button>
+          <div className="absolute right-0 top-11 z-20 w-40 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] shadow-lg shadow-black/10 overflow-hidden">
+            {can.update && (
+              <button
+                onClick={() => { setEditOpen(true); setMenuOpen(false); }}
+                className={`${ITEM} text-[var(--text-primary)] hover:bg-[var(--border-hover)]`}
+              >
+                Edit
+              </button>
+            )}
+            {can.reminders && (
+              <button
+                onClick={handleSendReminders}
+                disabled={loading}
+                className={`${ITEM} text-[var(--text-primary)] hover:bg-[var(--border-hover)]`}
+              >
+                Send reminder
+              </button>
+            )}
+            {can.archive && (
+              <button
+                onClick={() => { setReasonFor('archive'); setMenuOpen(false); }}
+                disabled={loading}
+                className={`${ITEM} text-[var(--text-primary)] hover:bg-[var(--border-hover)]`}
+              >
+                Archive
+              </button>
+            )}
+            {can.delete && (
+              <button
+                onClick={() => { setReasonFor('delete'); setMenuOpen(false); }}
+                disabled={loading}
+                className={`${ITEM} text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10`}
+              >
+                Delete
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -574,6 +639,36 @@ export function SessionCardMenu({ session }: SessionCardMenuProps) {
             <Button type="submit" loading={loading}>Save Changes</Button>
           </div>
         </form>
+      </Dialog>
+
+      {/* The audited pair. The title names the session rather than asking "are
+          you sure?", and the confirm button stays disabled until the reason has
+          real content in it — a reason nobody wrote is a reason nobody can read
+          back. */}
+      <Dialog
+        open={reasonFor !== null}
+        onClose={closeReason}
+        title={reasonFor === 'delete' ? `Delete ${sessionLabel}` : `Archive ${sessionLabel}`}
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-[var(--text-secondary)]">
+            {reasonFor === 'delete'
+              ? 'This deletes the session and every attendance record on it. It cannot be undone.'
+              : 'This closes the session. Nobody can check in to it afterwards.'}
+          </p>
+          <Textarea label="Reason (required)" value={reason} onChange={(e) => setReason(e.target.value)} />
+          <div className="flex items-center justify-between pt-1">
+            <Button variant="ghost" type="button" onClick={closeReason}>Cancel</Button>
+            <Button
+              variant="danger"
+              loading={loading}
+              disabled={reason.trim().length < 5}
+              onClick={handleReasonedAction}
+            >
+              {reasonFor === 'delete' ? 'Delete session' : 'Archive session'}
+            </Button>
+          </div>
+        </div>
       </Dialog>
     </>
   );
