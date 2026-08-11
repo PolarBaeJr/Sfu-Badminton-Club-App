@@ -53,7 +53,15 @@ deploy-staging.sh
 deploy/
 
 # Local scripts (deploy/maintenance) — keep out of new commits
-scripts/
+#
+# `scripts/*` rather than `scripts/`: git never descends into an excluded
+# DIRECTORY, so a `!scripts/foo` exception is unreachable under `scripts/`.
+scripts/*
+# ...except the ones that are toolchain rather than someone's local maintenance
+# habit. gen-db-types.mjs is the documented way to regenerate
+# packages/shared/src/types/database.gen.ts (RUNBOOK, "Apply a database
+# migration"), so the generator has to ship with the file it generates.
+!scripts/gen-db-types.mjs
 
 # Internal working notes / security findings — keep out of the public repo
 docs/sensitive/
