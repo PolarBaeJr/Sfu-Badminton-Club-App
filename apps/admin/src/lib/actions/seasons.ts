@@ -49,8 +49,27 @@ export async function createSeason(data: SeasonCreateInput) {
   revalidatePath('/seasons');
 }
 
-export async function updateSeasonFees(seasonId: string, fees: SeasonFeeInput) {
+// A typed reason, checked here rather than in @badminton/shared's schemas.
+//
+// The console's rule is that every audited action carries one, and audit_logs
+// already has the column — `logAdminAudit` takes `reason`, and voidMatch,
+// removePlayer and approvePlayer all fill it. The two writes below did not, so
+// the log recorded that a season's fees changed and never why. A trimmed length
+// floor is the point: "." satisfies `required` on the client and tells the next
+// reader nothing.
+const REASON_MIN = 5;
+
+function requireReason(reason: string, what: string): string {
+  const trimmed = reason.trim();
+  if (trimmed.length < REASON_MIN) {
+    throw new ExpectedError(`${what} needs a reason of at least ${REASON_MIN} characters.`);
+  }
+  return trimmed;
+}
+
+export async function updateSeasonFees(seasonId: string, fees: SeasonFeeInput, reason: string) {
   parseOrThrow(seasonFeeSchema, fees);
+  const why = requireReason(reason, 'Changing a season’s fees');
   const admin = await requireCapability('seasons.fees.write');
   const adminClient = createAdminClient();
 
@@ -76,6 +95,7 @@ export async function updateSeasonFees(seasonId: string, fees: SeasonFeeInput) {
     target_id: seasonId,
     old_value: old,
     new_value: fees,
+    reason: why,
   }, { seasonId });
 
   revalidatePath('/seasons');
@@ -108,7 +128,11 @@ export async function setActiveSeason(seasonId: string, eloPolicy: SeasonEloPoli
   revalidatePath('/fees');
 }
 
-export async function endSeason(seasonId: string) {
+// Closing a season freezes its ladder: every session, tournament, match and fee
+// filed afterwards belongs to whatever is activated next. That is worth a
+// sentence in the log, and the dialog will not send without one.
+export async function endSeason(seasonId: string, reason: string) {
+  const why = requireReason(reason, 'Closing a season');
   const admin = await requireCapability('seasons.end.write');
   const adminClient = createAdminClient();
 
@@ -128,6 +152,7 @@ export async function endSeason(seasonId: string) {
     action_type: 'season_ended',
     target_type: 'season',
     target_id: seasonId,
+    reason: why,
   }, { seasonId });
 
   revalidatePath('/seasons');

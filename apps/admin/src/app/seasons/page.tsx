@@ -1,239 +1,330 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
-import { Card, Badge, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
-import { formatDate } from '@badminton/shared';
-import { CreateSeasonForm, SeasonActions, SeasonFeesEditor } from './actions';
-import { Medal, Calendar, CalendarClock, CheckCircle2, XCircle, Clock, AlertTriangle } from 'lucide-react';
-import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
+import { Card, Badge, PageHeader, ResponsiveTable, TableCard, Atomic, EmptyState } from '@badminton/ui';
+import { CreateSeasonForm, SeasonRowActions, SeasonFeesPanel } from './actions';
+import { SeasonProgressCard } from './season-progress';
+import { PanelLabel, PANEL_NOTE } from './panel';
+import { dateRange, hasStarted, seasonStatus, shortDate, today } from './season-shape';
+import { AlertTriangle } from 'lucide-react';
+import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/permissions';
+
+/** Cents as the club writes them. Mono, and never split across a line. */
+const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+
+/**
+ * Distinct players with a recorded match, per season.
+ *
+ * There is no stored season headcount. `season_final_ratings` and
+ * `season_snapshots` are written at ROLLOVER, so they answer for a season the
+ * club has already left and are empty for the one being played — which is the
+ * season anybody looking at this screen cares about. The live answer only
+ * exists in match_participants, so it is counted here.
+ *
+ * Paged deliberately. PostgREST caps a response at 1000 rows by default, and a
+ * single unpaged select would therefore have UNDER-counted silently once the
+ * club passed a few hundred matches — a wrong number in a mono column is worse
+ * than no number. The loop stops on the first short page; the iteration cap is
+ * a guard against a misbehaving server, not a real limit (100 pages is 100,000
+ * participant rows, roughly 30,000 matches).
+ */
+async function playersPlayedBySeason(
+  supabase: ReturnType<typeof createAdminClient>,
+): Promise<Map<string, number>> {
+  const PAGE = 1000;
+  const bySeason = new Map<string, Set<string>>();
+
+  for (let page = 0; page < 100; page++) {
+    const { data, error } = await supabase
+      .from('match_participants')
+      .select('player_id, matches!inner(season_id)')
+      // Ordered so the ranges below partition the table instead of overlapping
+      // it: an unordered paged read may return the same row twice and miss
+      // another entirely.
+      .order('id')
+      .range(page * PAGE, page * PAGE + PAGE - 1);
+
+    if (error || !data) break;
+
+    for (const row of data) {
+      // A to-one embed comes back as an object, but the generated types for an
+      // untyped client describe it as an array — the same shape-check every
+      // other page here does on `players(full_name)`.
+      const embedded = row.matches as
+        | { season_id: string | null }
+        | { season_id: string | null }[]
+        | null;
+      const seasonId = (Array.isArray(embedded) ? embedded[0] : embedded)?.season_id;
+      // matches.season_id is nullable (ON DELETE SET NULL) — a match whose
+      // season was removed belongs to no season and is counted under none.
+      if (!seasonId) continue;
+      let seen = bySeason.get(seasonId);
+      if (!seen) bySeason.set(seasonId, (seen = new Set()));
+      seen.add(row.player_id);
+    }
+
+    if (data.length < PAGE) break;
+  }
+
+  return new Map([...bySeason].map(([id, players]) => [id, players.size]));
+}
 
 export default async function SeasonsPage() {
-  // seasons.read opens the page, but updateSeasonFees asks for
-  // seasons.fees.write, which no baseline below admin holds. Without this flag
-  // the page opened a fee editor for every exec, accepted their typing, and
-  // rejected them at Save — the route and the nav agreed, and the rendered
-  // CONTROL was the layer that disagreed. Same shape the Legal page uses: the
-  // flag decides what is offered, the server action is still the boundary.
+  // WHO IS LOOKING, and the only door on this screen.
+  //
+  // `seasons.page` admits somebody to the section; it does not decide what they
+  // may do once here. Every control below asks for its own capability, and the
+  // server action each one opens re-checks the same one — the route and the
+  // rendered control cannot disagree, which is the bug this page had: an exec
+  // holds no `seasons.fees.write`, and the desktop table handed them a fee
+  // editor anyway, then rejected them at Save. (The mobile card already gated
+  // it. Two halves of one component, one of them wrong.)
+  //
+  // EVERY FETCH ON THIS PAGE IS GATED BY THIS CALL AND NOTHING NARROWER, and
+  // that is a statement about the capability vocabulary rather than an omission:
+  // `seasons.*` has exactly one page key and four writes — there is no
+  // `seasons.read` to gate a query on, and inventing one would move an answer in
+  // the capability-equivalence table. Nothing read here belongs to another area:
+  // the counts come from matches and match_participants, not from club_fees
+  // (that is `fees.clubfees.read`) or platform_settings (`platform.page`).
   const viewer = await requireCapability('seasons.page');
-  const canEditFees = permits(accessLevelFor(viewer), permissionsOf(viewer), 'seasons.fees.write');
+  const level = accessLevelFor(viewer);
+  const permissions = permissionsOf(viewer);
+  const may = (capability: Capability) => permits(level, permissions, capability);
+
+  const canCreate = may('seasons.create.write');
+  const rowCapabilities = {
+    fees: may('seasons.fees.write'),
+    end: may('seasons.end.write'),
+    activate: may('seasons.activate.write'),
+  };
 
   const supabase = createAdminClient();
 
   const { data: seasons } = await supabase
     .from('seasons')
-    .select('*')
+    // Explicit, so the RSC payload carries the eight columns this screen draws
+    // and not whatever the table gains next.
+    .select('id, name, start_date, end_date, active_flag, competitive_fee_cents, recreational_fee_cents')
     .order('start_date', { ascending: false });
 
-  // Today as a plain calendar date, for comparing against DATE columns.
-  //
-  // en-CA rather than toISOString(): the latter converts to UTC first, so from
-  // 5pm Pacific onwards it reports tomorrow's date and a season would be called
-  // "started" the evening before it does.
-  const today = new Date().toLocaleDateString('en-CA');
+  const rows = (seasons ?? []) as {
+    id: string;
+    name: string;
+    start_date: string | null;
+    end_date: string | null;
+    active_flag: boolean;
+    competitive_fee_cents: number | null;
+    recreational_fee_cents: number | null;
+  }[];
 
-  // The active season whose last day has already passed, if there is one.
-  const overdueSeason =
-    (seasons ?? []).find((s) => s.active_flag && s.end_date && s.end_date < today) ?? null;
+  const now = today();
 
-  // Shared by the table cell and the card so the two can't drift apart.
-  //
-  // "Ended" used to mean nothing more than "has an end_date", which every
-  // properly filled-in season has from the day it is created. A season running
-  // September to December therefore read as Ended all summer, before it had
-  // begun. The dates decide it now.
-  const statusBadge = (s: { active_flag: boolean; start_date: string | null; end_date: string | null }) =>
-    // The DATES come first, including ahead of active_flag.
-    //
-    // A season is a semester: it runs from its first day to its last and then it
-    // is over, whether or not anybody pressed a button. Letting the flag win
-    // meant a season that finished last week still read "Active" — which is
-    // exactly what production was showing, a term that ended yesterday
-    // presented as the one currently being played.
-    //
-    // Still flagged active AFTER its end date is a state worth shouting about
-    // rather than hiding: it means the rollover has not happened, and until it
-    // does every new session, tournament and fee is still being filed under the
-    // finished term. Warning colour, and the page says so above the table.
-    s.end_date && s.end_date < today ? (
-      <Badge variant={s.active_flag ? 'warning' : 'neutral'}>
-        <span className="flex items-center gap-1.5">
-          <XCircle className="w-3.5 h-3.5" />
-          Ended
-        </span>
-      </Badge>
-    ) : s.active_flag ? (
-      <Badge variant="success">
-        <span className="flex items-center gap-1.5">
-          <CheckCircle2 className="w-3.5 h-3.5" />
-          Active
-        </span>
-      </Badge>
-    ) : s.start_date && s.start_date > today ? (
-      <Badge variant="info">
-        <span className="flex items-center gap-1.5">
-          <CalendarClock className="w-3.5 h-3.5" />
-          Upcoming
-        </span>
-      </Badge>
-    ) : (
-      // Started, not finished, but not the active season either — someone has
-      // not pressed Activate.
-      <Badge variant="warning">
-        <span className="flex items-center gap-1.5">
-          <Clock className="w-3.5 h-3.5" />
-          Inactive
-        </span>
+  // Counts, only when there is something to count. Both reads sit behind
+  // `seasons.page` above; skipping them on an empty list is about not making
+  // six round trips to learn that zero seasons have zero matches.
+  const [matchCounts, playerCounts] = rows.length
+    ? await Promise.all([
+        Promise.all(
+          rows.map(async (s) => {
+            // head + exact: a COUNT on the server, no rows over the wire, and no
+            // 1000-row cap to trip over.
+            const { count } = await supabase
+              .from('matches')
+              .select('id', { count: 'exact', head: true })
+              .eq('season_id', s.id);
+            return [s.id, count ?? 0] as const;
+          }),
+        ).then((entries) => new Map(entries)),
+        playersPlayedBySeason(supabase),
+      ])
+    : [new Map<string, number>(), new Map<string, number>()];
+
+  // The season the club is playing, as the right-hand column understands it.
+  // The FLAG, not the dates: a term still flagged active after its last day is
+  // where new matches and fees are being filed, so it is the one whose progress
+  // and fees are worth showing — and the band below says it is overdue.
+  const liveSeason = rows.find((s) => s.active_flag) ?? null;
+
+  // The rollover is overdue. Every season-scoped write — sessions, tournaments,
+  // matches, fees — is still being filed under a term that is over, and nothing
+  // else in the console says so. The badge alone is too quiet for that: it is
+  // one word in a table somebody has to think to visit.
+  const overdueSeason = rows.find((s) => s.active_flag && s.end_date && s.end_date < now) ?? null;
+
+  const statusBadge = (s: (typeof rows)[number]) => {
+    const status = seasonStatus(s, now);
+    return (
+      <Badge variant={status.variant} className="uppercase tracking-[0.1em] text-[10px]">
+        {status.label}
       </Badge>
     );
+  };
+
+  /** A count, or an em-dash for a season whose first day has not arrived. */
+  const countCell = (s: (typeof rows)[number], count: number | undefined) =>
+    hasStarted(s, now) ? (
+      <span className="font-mono text-sm text-[var(--text-primary)]">{count ?? 0}</span>
+    ) : (
+      <span className="font-mono text-sm text-[var(--text-muted)]">—</span>
+    );
+
+  const feesLine = (s: (typeof rows)[number]) => (
+    <Atomic>
+      {`Comp ${money(s.competitive_fee_cents ?? 0)} · Rec ${money(s.recreational_fee_cents ?? 0)}`}
+    </Atomic>
+  );
+
+  const rowActions = (s: (typeof rows)[number]) => (
+    <SeasonRowActions
+      seasonId={s.id}
+      seasonName={s.name}
+      status={seasonStatus(s, now).key}
+      competitiveFeeCents={s.competitive_fee_cents ?? 0}
+      recreationalFeeCents={s.recreational_fee_cents ?? 0}
+      can={rowCapabilities}
+    />
+  );
 
   return (
-    <div className="space-y-8">
-      {/* Page Header */}
+    <div className="space-y-6">
       <PageHeader
+        eyebrow={`Ladder · ${rows.length} ${rows.length === 1 ? 'season' : 'seasons'}`}
         title="Seasons"
-        sub="Manage club seasons, set active periods, and track history"
+        sub="A rating only means something inside its season."
         watermark="S"
-        actions={<CreateSeasonForm />}
+        actions={canCreate ? <CreateSeasonForm /> : undefined}
       />
 
-      {/* The rollover is overdue.
-          Every season-scoped write — sessions, tournaments, matches, fees — is
-          still being filed under a term that is over, and nothing else in the
-          console says so. The badge alone is too quiet for that: it is one word
-          in a table somebody has to think to visit. */}
       {overdueSeason && (
         <Card>
           <div className="flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5 text-[var(--color-warning)]" />
             <div className="space-y-1">
               <p className="text-sm font-semibold text-[var(--text-primary)]">
-                {overdueSeason.name} ended on {formatDate(overdueSeason.end_date!)} and is still the active season.
+                {overdueSeason.name} ended on {shortDate(overdueSeason.end_date!)} and is still the active season.
               </p>
               <p className="text-sm text-[var(--text-secondary)]">
                 Until the next season is activated, every new session, tournament, match and fee is still recorded
-                against this one. Activate the season the club is actually playing to roll over.
+                against this one. Set the season the club is actually playing active to roll over.
               </p>
             </div>
           </div>
         </Card>
       )}
 
-      {/* Seasons Table */}
-      <Card padding={false}>
-        {seasons && seasons.length > 0 ? (
-          <ResponsiveTable
-            cards={seasons.map((s) => (
-              <TableCard
-                key={s.id}
-                title={s.name}
-                badges={statusBadge(s)}
-                fields={[
-                  { label: 'Start date', value: <Atomic>{formatDate(s.start_date)}</Atomic> },
-                  { label: 'End date', value: s.end_date ? <Atomic>{formatDate(s.end_date)}</Atomic> : '--' },
-                  {
-                    label: 'Fees',
-                    wide: true,
-                    value: canEditFees ? (
-                      <SeasonFeesEditor
-                        seasonId={s.id}
-                        competitiveFeeCents={s.competitive_fee_cents ?? 0}
-                        recreationalFeeCents={s.recreational_fee_cents ?? 0}
-                      />
-                    ) : (
-                      <Atomic>
-                        {`Competitive $${((s.competitive_fee_cents ?? 0) / 100).toFixed(2)} · `}
-                        {`Recreational $${((s.recreational_fee_cents ?? 0) / 100).toFixed(2)}`}
-                      </Atomic>
-                    ),
-                  },
-                ]}
-                actions={<SeasonActions seasonId={s.id} seasonName={s.name} isActive={s.active_flag} />}
-              />
-            ))}
-          >
-            <table className="w-full">
-              <thead>
-                <tr className="border-b-2 border-[var(--border)] bg-[var(--bg-surface)]/50">
-                  <th className="px-5 py-3.5 text-left text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
-                    Name
-                  </th>
-                  <th className="px-5 py-3.5 text-left text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
-                    Start Date
-                  </th>
-                  <th className="px-5 py-3.5 text-left text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
-                    End Date
-                  </th>
-                  <th className="px-5 py-3.5 text-left text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-5 py-3.5 text-left text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
-                    Fees
-                  </th>
-                  <th className="px-5 py-3.5 text-right text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {seasons.map((s, index) => (
-                  <tr
+      {/* 2fr / 1fr, top-aligned — the table is as tall as the club's history and
+          the two panels beside it are not. One column below `lg`, where the
+          table has already become stacked cards. */}
+      <div className="grid gap-5 items-start lg:grid-cols-[2fr_1fr]">
+        <Card padding={false}>
+          <PanelLabel label="All seasons" note="Newest first" className="px-5 pt-5 pb-3.5" />
+
+          {rows.length > 0 ? (
+            <>
+              <ResponsiveTable
+                cards={rows.map((s) => (
+                  <TableCard
                     key={s.id}
-                    className={`
-                      group transition-colors duration-150 hover:bg-[var(--color-accent)]/5
-                      ${index !== seasons.length - 1 ? 'border-b border-[var(--border)]' : ''}
-                    `}
-                  >
-                    <td className="px-5 py-4 text-sm text-[var(--text-primary)] font-semibold">
-                      <div className="flex items-center gap-2">
-                        <Medal className="w-4 h-4 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
-                        {s.name}
-                      </div>
-                    </td>
-                    <td className="px-5 py-4 text-sm text-[var(--text-secondary)]">
-                      <div className="flex items-center gap-2">
-                        <Calendar className="w-3.5 h-3.5 text-[var(--text-muted)]" />
-                        {formatDate(s.start_date)}
-                      </div>
-                    </td>
-                    <td className="px-5 py-4 text-sm text-[var(--text-secondary)]">
-                      {s.end_date ? (
-                        <div className="flex items-center gap-2">
-                          <Calendar className="w-3.5 h-3.5 text-[var(--text-muted)]" />
-                          {formatDate(s.end_date)}
-                        </div>
-                      ) : (
-                        <span className="text-[var(--text-muted)]">--</span>
-                      )}
-                    </td>
-                    <td className="px-5 py-4">
-                      {statusBadge(s)}
-                    </td>
-                    <td className="px-5 py-4">
-                      <SeasonFeesEditor
-                        seasonId={s.id}
-                        competitiveFeeCents={s.competitive_fee_cents ?? 0}
-                        recreationalFeeCents={s.recreational_fee_cents ?? 0}
-                      />
-                    </td>
-                    <td className="px-5 py-4 text-right">
-                      <SeasonActions seasonId={s.id} seasonName={s.name} isActive={s.active_flag} />
-                    </td>
-                  </tr>
+                    title={s.name}
+                    badges={statusBadge(s)}
+                    fields={[
+                      { label: 'Dates', value: <Atomic>{dateRange(s.start_date, s.end_date)}</Atomic> },
+                      { label: 'Players', value: countCell(s, playerCounts.get(s.id)) },
+                      { label: 'Matches', value: countCell(s, matchCounts.get(s.id)) },
+                      { label: 'Fees', wide: true, value: feesLine(s) },
+                    ]}
+                    actions={rowActions(s)}
+                  />
                 ))}
-              </tbody>
-            </table>
-          </ResponsiveTable>
-        ) : (
-          <div className="flex flex-col items-center justify-center py-16 px-4">
-            <div className="flex items-center justify-center w-14 h-14 rounded-full bg-[var(--bg-surface)] mb-4">
-              <Medal className="w-7 h-7 text-[var(--text-muted)]" />
-            </div>
-            <p className="text-[var(--text-primary)] font-medium mb-1">No seasons yet</p>
-            <p className="text-sm text-[var(--text-muted)]">
-              Create your first season to get started
-            </p>
-          </div>
-        )}
-      </Card>
+              >
+                <table className="w-full">
+                  <thead>
+                    <tr>
+                      <th className="px-5 pb-2 text-left font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                        Season
+                      </th>
+                      <th className="px-5 pb-2 text-left font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                        Status
+                      </th>
+                      <th className="px-5 pb-2 text-left font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                        Dates
+                      </th>
+                      <th className="px-5 pb-2 text-right font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                        Players
+                      </th>
+                      <th className="px-5 pb-2 text-right font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                        Matches
+                      </th>
+                      <th className="px-5 pb-2 text-right font-mono text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                        Action
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((s) => (
+                      <tr key={s.id} className="border-t border-[var(--border)]">
+                        <td className="px-5 py-4">
+                          <div className="text-[14px] text-[var(--text-primary)]">{s.name}</div>
+                          {/* The mockup's rule line (`CARRY-OVER 75% · K=24`)
+                              names per-season rating knobs that do not exist —
+                              those live in platform_settings, club-wide. The two
+                              things a season genuinely carries of its own are
+                              its fees. */}
+                          <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                            {feesLine(s)}
+                          </div>
+                        </td>
+                        <td className="px-5 py-4">{statusBadge(s)}</td>
+                        <td className="px-5 py-4 font-mono text-xs text-[var(--text-secondary)]">
+                          <Atomic>{dateRange(s.start_date, s.end_date)}</Atomic>
+                        </td>
+                        <td className="px-5 py-4 text-right">{countCell(s, playerCounts.get(s.id))}</td>
+                        <td className="px-5 py-4 text-right">{countCell(s, matchCounts.get(s.id))}</td>
+                        <td className="px-5 py-4 text-right">{rowActions(s)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </ResponsiveTable>
+
+              {rowCapabilities.end && (
+                <div className={`border-t border-[var(--border)] px-5 py-3.5 ${PANEL_NOTE}`}>
+                  Closing a season freezes its ladder and takes a typed reason
+                </div>
+              )}
+            </>
+          ) : (
+            // No second New season button here: the one in the header is this
+            // screen's single primary, and the guidance is that two reds in one
+            // view means one of them is wrong.
+            <EmptyState
+              title="No seasons yet"
+              description={
+                canCreate
+                  ? 'Use New season above to set up the term the club is playing. Every match, fee and rating is filed against one.'
+                  : 'Nothing has been created yet. An exec or admin sets the club’s first season up.'
+              }
+            />
+          )}
+        </Card>
+
+        <div className="space-y-5">
+          <SeasonProgressCard season={liveSeason} />
+          <Card padding={false}>
+            <SeasonFeesPanel
+              season={
+                liveSeason && {
+                  id: liveSeason.id,
+                  name: liveSeason.name,
+                  competitive_fee_cents: liveSeason.competitive_fee_cents ?? 0,
+                  recreational_fee_cents: liveSeason.recreational_fee_cents ?? 0,
+                }
+              }
+              canEdit={rowCapabilities.fees}
+            />
+          </Card>
+        </div>
+      </div>
     </div>
   );
 }
