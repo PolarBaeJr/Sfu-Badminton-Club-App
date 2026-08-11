@@ -6,6 +6,9 @@ import { buildRatingSeries, buildOverallFormFlags, deriveAttendance, deriveSessi
 import { RatingCard } from '@/components/my-stats/rating-card';
 import { FormCard } from '@/components/my-stats/form-card';
 import { AttendanceGrid } from '@/components/my-stats/attendance-grid';
+import { SeasonPick } from '@/components/my-stats/season-pick';
+import { seasonPickerOptions, type HistorySeason } from '@/lib/season-history';
+import { PastSeasonStats } from './past-season';
 
 // The rating line, the form strip and the history table all read one window of
 // the member's matches. 200 is a season and a half of heavy play — deep enough
@@ -43,7 +46,35 @@ const ORDER = {
 /** A row of get_leaderboard(), narrowed to what a ladder position needs. */
 type LadderRow = { id: string; singles_elo: number | null };
 
-export default async function MyStatsPage() {
+/**
+ * /my-stats is two screens behind one address.
+ *
+ * The bare path is this term, and is the whole of what this page has ever been.
+ * `?season=<id>` is a term that is over, which is a different screen with
+ * different sources — see past-season.tsx — rather than this one with a filter
+ * on it: almost nothing here is season-scoped in the database. The header
+ * readouts, the streaks, the point differentials, head-to-head and best partners
+ * are all cumulative columns that were rebased at the rollover, and the
+ * attendance grid is computed against the member's status TODAY.
+ *
+ * Dispatching at the top rather than branching inside means the live screen pays
+ * nothing for the feature: it runs exactly the query set it always has, in one
+ * round trip, with the season control added to its header.
+ */
+export default async function MyStatsPage({
+  searchParams,
+}: {
+  // Next 15 hands search params over as a promise.
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = (await searchParams) ?? {};
+  const raw = params.season;
+  const seasonParam = (typeof raw === 'string' ? raw : '').trim();
+  if (seasonParam) return <PastSeasonStats seasonId={seasonParam} />;
+  return <CurrentSeasonStats />;
+}
+
+async function CurrentSeasonStats() {
   const player = await getCurrentPlayer();
   if (!player) redirect('/login');
 
@@ -59,7 +90,7 @@ export default async function MyStatsPage() {
   // which is the shape the DATE column compares against.
   const today = clubToday();
 
-  const [reliabilityRes, matchRowsRes, h2hRes, partnersRes, walkoverEventsRes, tournamentNoShowsRes, seasonsRes, attendanceRes, sessionsRes, ladderRes] = await Promise.all([
+  const [reliabilityRes, matchRowsRes, h2hRes, partnersRes, walkoverEventsRes, tournamentNoShowsRes, seasonsRes, attendanceRes, sessionsRes, ladderRes, archivedSeasonsRes] = await Promise.all([
     supabase
       .from('reliability_metrics')
       .select('no_shows, late_cancellations, early_withdrawals, walkovers_received, matches_completed, walkover_flag')
@@ -110,9 +141,12 @@ export default async function MyStatsPage() {
     // the chart needs that date to place the season divider — plus the season
     // BEFORE it, to find the prior-season rule. Both come out of one ordered
     // read rather than two round trips.
+    // `end_date` and `active_flag` came along for the season control: a term is
+    // past because it is not active, never because of where its dates sit — see
+    // season-history.ts.
     supabase
       .from('seasons')
-      .select('id, name, start_date')
+      .select('id, name, start_date, end_date, active_flag')
       .order('start_date', { ascending: false })
       .limit(8),
     supabase
@@ -142,6 +176,14 @@ export default async function MyStatsPage() {
     // position at all. 00053 already makes that case fail open rather than
     // read as last place, and so does this.
     supabase.rpc('get_leaderboard'),
+    // Which finished terms this member has a place in — a season_final_ratings
+    // row means they were on the ladder when the club closed that term off, and
+    // that is exactly the set the season control should offer. At most one row
+    // per season, so it is a handful of ids however long they have been here.
+    supabase
+      .from('season_final_ratings')
+      .select('season_id')
+      .eq('player_id', player.id),
   ]);
 
   const reliability = reliabilityRes.data;
@@ -150,7 +192,11 @@ export default async function MyStatsPage() {
   const partners = partnersRes.data ?? [];
   const walkoverEvents = walkoverEventsRes.data ?? [];
   const tournamentNoShows = tournamentNoShowsRes.data ?? [];
-  const seasons = (seasonsRes.data ?? []) as { id: string; name: string; start_date: string }[];
+  const seasons = (seasonsRes.data ?? []) as HistorySeason[];
+  const archivedSeasonIds = new Set(
+    ((archivedSeasonsRes.data ?? []) as { season_id: string }[]).map((r) => r.season_id)
+  );
+  const seasonOptions = seasonPickerOptions(seasons, archivedSeasonIds, null);
   const attendanceRecords = (attendanceRes.data ?? []) as { session_id: string; status: string }[];
   const sessions = (sessionsRes.data ?? []) as { id: string; date: string; track: string }[];
 
@@ -351,6 +397,14 @@ export default async function MyStatsPage() {
       <PageHeader
         title="My stats"
         sub={activeSeason ? activeSeason.name : undefined}
+        // undefined rather than a control that renders null, because PageHeader
+        // wraps whatever it is given in a row: a member with no finished term
+        // behind them would otherwise get an empty flex box in their header.
+        actions={
+          seasonOptions.length > 1 ? (
+            <SeasonPick options={seasonOptions} selectedId={activeSeason?.id ?? null} />
+          ) : undefined
+        }
       />
 
       <div className="card-base reveal reveal-1" style={{ padding: 28, marginBottom: 24 }}>

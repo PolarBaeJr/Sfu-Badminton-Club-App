@@ -3565,3 +3565,102 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
   text-underline-offset: 2px;
 }
 @media (hover: hover) { .fees-link:hover { color: var(--ink); } }
+
+/* ═══════════════════════════════════════════════════════════
+   PAST SEASON — /my-stats?season=<a term that is over>
+   ═══════════════════════════════════════════════════════════
+   Self-contained. This block adds only the two things that
+   screen needs and the house does not already own: the season
+   control, and the small figure grid inside its rail cards.
+   The layout is .wide-grid / .wide-rail from the WIDE LAYOUTS
+   block above, and every card, table, tag, pill and empty
+   state on it is the house component.
+   ═══════════════════════════════════════════════════════════ */
+
+/* The season control, in the page header beside the title.
+
+   A native <select>, so on a phone this is the OS wheel: full
+   height, system-sized rows, and a target a thumb hits without
+   looking. It is dressed as one of this app's mono pills, but
+   nothing here changes how it OPENS — the appearance reset is
+   on the closed box only. */
+.season-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  padding: 0 10px 0 12px;
+  /* 40px rather than the ~34px this would come out at. The
+     header is read one-handed in a gym and this is the only
+     control on the screen; it is worth the extra six pixels. */
+  height: 40px;
+  max-width: 100%;
+}
+.season-pick:focus-within {
+  outline: 2px solid var(--red);
+  outline-offset: 0;
+  border-color: transparent;
+}
+.season-pick-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .16em;
+  color: var(--mute);
+  white-space: nowrap;
+}
+.season-pick-select {
+  /* -webkit- first: Safari on iOS still needs the prefixed form
+     to drop the native bevel, and without it the pill has a
+     rounded lozenge sitting inside its square border. */
+  -webkit-appearance: none;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  /* Room on the right for the caret, which is a background
+     image on the box rather than a pseudo-element because a
+     <select> cannot have children to hang one off. */
+  padding: 0 18px 0 0;
+  max-width: 46vw;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M0 0h8L4 5z' fill='%23888888'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 2px center;
+}
+/* The pill already takes a red ring via :focus-within, so a
+   second outline on the box inside it would draw two. */
+.season-pick-select:focus { outline: none; }
+/* An <option> is drawn by the OS and not by this stylesheet.
+   Naming both sides is the only thing that reliably reaches the
+   popup, and without it a dark theme can render the list as
+   black on black. */
+.season-pick-select option {
+  background: var(--surface);
+  color: var(--ink);
+}
+/* At 360px the page title and a 46vw control fight over one
+   line. .page-header is a flex row, so giving the control the
+   full width drops it onto its own line under the title —
+   better than truncating a term to "Fall 20…". */
+@media (max-width: 420px) {
+  .season-pick { width: 100%; }
+  .season-pick-select { max-width: 100%; flex: 1; }
+}
+
+/* The figure grids inside the past-season rail cards — the
+   record, and the archived ladder.
+
+   Two columns, not the four the live screen's .stat-strip uses:
+   that strip is full width and scrolls sideways past its edge,
+   and a card sitting in a 1fr rail has neither the width for
+   four labels like "POINT DIFF" nor any business scrolling. */
+.season-figures {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 12px;
+}
