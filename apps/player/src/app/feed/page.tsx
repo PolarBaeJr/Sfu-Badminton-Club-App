@@ -81,9 +81,22 @@ function RatingRow({
         >
           {label}
         </span>
+        {/* The hero figure follows .stat-value rather than --mono, which is a
+            deliberate exception to "numbers in mono": every big number in this
+            app (my-stats, leaderboard, the hero strip two elements below) is
+            set in --display, and a feed that alone disagreed would read as a
+            bug. Everything smaller here — deltas, ladder ratings, the form run
+            — is mono, which is the split the design system's own renders use.
+            tabular-nums so a rating changing by a digit does not shift the row. */}
         <span
-          className="mono"
-          style={{ fontFamily: 'var(--display)', fontSize: 34, fontWeight: 700, letterSpacing: '-.03em', lineHeight: 1 }}
+          style={{
+            fontFamily: 'var(--display)',
+            fontSize: 34,
+            fontWeight: 700,
+            letterSpacing: '-.03em',
+            lineHeight: 1,
+            fontVariantNumeric: 'tabular-nums',
+          }}
         >
           {elo}
         </span>
@@ -301,7 +314,9 @@ export default async function FeedPage() {
       {r && (
         <div className="hero-banner reveal reveal-1" style={{ marginBottom: 20 }}>
           <div style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', gap: 22 }}>
-            <div className="eyebrow">Your rating</div>
+            {/* .hero-banner .eyebrow carries its own 12px bottom margin, which
+                would stack on top of this column's gap. */}
+            <div className="eyebrow" style={{ marginBottom: 0 }}>Your rating</div>
             <RatingRow
               label="Singles"
               elo={r.singles_elo}
@@ -320,19 +335,19 @@ export default async function FeedPage() {
           <div className="hero-stats">
             <div className="stat">
               <div className="stat-label">Win rate</div>
-              <div className="stat-value mono">{singlesWinRate}</div>
+              <div className="stat-value">{singlesWinRate}</div>
             </div>
             <div className="stat">
               <div className="stat-label">Streak</div>
-              <div className="stat-value mono">{streakLabel}</div>
+              <div className="stat-value">{streakLabel}</div>
             </div>
             <div className="stat">
               <div className="stat-label">Singles</div>
-              <div className="stat-value mono">{(r.singles_wins ?? 0) + (r.singles_losses ?? 0)}</div>
+              <div className="stat-value">{(r.singles_wins ?? 0) + (r.singles_losses ?? 0)}</div>
             </div>
             <div className="stat">
               <div className="stat-label">Doubles</div>
-              <div className="stat-value mono">{(r.doubles_wins ?? 0) + (r.doubles_losses ?? 0)}</div>
+              <div className="stat-value">{(r.doubles_wins ?? 0) + (r.doubles_losses ?? 0)}</div>
             </div>
           </div>
         </div>
@@ -494,7 +509,7 @@ export default async function FeedPage() {
                           </div>
                         </div>
                         <div style={{ textAlign: 'center' }}>
-                          <div className="score mono">
+                          <div className="score">
                             <span style={{ opacity: isWin ? 1 : 0.4 }}>{myTotal}</span>
                             <span className="muted" style={{ margin: '0 8px', fontWeight: 400 }}>
                               :
