@@ -6,7 +6,7 @@ import type { Capability } from '../permissions';
 // the reinstatement row with paid_at = now() and amount_cents = null anyway.
 // That row claimed a payment had been taken and valued it at nothing, and it
 // could never be corrected: reinstatePlayer refuses a second call because the
-// member is no longer banned, and reinstatement_fees_player_ban_key (00065)
+// member is no longer banned, and club_fees_reinstatement_ban_key (00065, 00094)
 // refuses a second row for the same ban. Money received, permanently booked as
 // $0, with no edit path anywhere in the console.
 //
@@ -129,7 +129,10 @@ const PLAYER = '11111111-1111-4111-8111-111111111111';
 const EXEC = { id: 'exec-1', role: 'player', is_exec: true };
 const ADMIN = { id: 'admin-1', role: 'admin' };
 
-const fees = () => store.db.reinstatement_fees ?? [];
+// Reinstatements live in club_fees now (00094), tagged fee_type
+// 'reinstatement'. Filtering on the tag rather than reading the raw table means
+// a row written without it fails these assertions instead of passing them.
+const fees = () => (store.db.club_fees ?? []).filter((r) => r.fee_type === 'reinstatement');
 const player = () => store.db.players![0]!;
 
 beforeEach(() => {
@@ -145,7 +148,7 @@ beforeEach(() => {
       ban_reason: 'Repeated no-shows',
     }],
     seasons: [{ id: 'season-1', active_flag: true }],
-    reinstatement_fees: [],
+    club_fees: [],
     audit_logs: [],
   };
 });
@@ -190,7 +193,7 @@ describe('reinstatePlayer — what the fee row claims', () => {
   // without any other test noticing. The bad outcome has to stay "unbanned but
   // the payment was not recorded", never "charged and still banned".
   it('still lifts the ban when the fee row cannot be written', async () => {
-    store.faults.push({ table: 'reinstatement_fees', op: 'insert', message: 'ledger exploded' });
+    store.faults.push({ table: 'club_fees', op: 'insert', message: 'ledger exploded' });
 
     await expect(reinstatePlayer({ player_id: PLAYER })).rejects.toThrow();
     expect(player().is_banned).toBe(false);
@@ -290,7 +293,7 @@ describe('recordReinstatementPayment', () => {
     // Stand in for the other admin committing first, between this call's read
     // and its guarded update.
     store.faults.push({
-      table: 'reinstatement_fees',
+      table: 'club_fees',
       op: 'update',
       when: () => {
         fees()[0]!.amount_cents = 2000;

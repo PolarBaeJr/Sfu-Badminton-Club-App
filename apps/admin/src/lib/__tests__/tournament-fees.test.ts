@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 //     tournament with no default tier — after which unlisted players price at
 //     nothing and markTournamentFeePaid snapshots a null amount.
 //
-//   * markTournamentFeePaid looked a fee tier up by id alone. tournament_fees
+//   * markTournamentFeePaid looked a fee tier up by id alone. The fee row
 //     .tier_id is a plain FK to tournament_fee_tiers(id) (00001), so a tier
 //     belonging to a different tournament is a valid row as far as Postgres is
 //     concerned, and the wrong price was copied onto the wrong tournament.
@@ -136,7 +136,10 @@ const tiers = () => store.db.tournament_fee_tiers ?? [];
 const tier = (id: string) => tiers().find((t) => t.id === id)!;
 const defaultsOf = (tournamentId: string) =>
   tiers().filter((t) => t.tournament_id === tournamentId && t.is_default);
-const feeRows = () => store.db.tournament_fees ?? [];
+// Entry fees live in club_fees now (00094), tagged fee_type 'tournament'.
+// Filtering here rather than reading the raw table is deliberate: if the action
+// ever wrote a row without the tag, these assertions would go to zero and say so.
+const feeRows = () => (store.db.club_fees ?? []).filter((r) => r.fee_type === 'tournament');
 
 // The exact shape from the report: tournament A has a default "Member" tier and
 // a non-default "Guest" tier, so "Guest" is the name that collides. Tournament B
@@ -151,7 +154,11 @@ beforeEach(() => {
       { id: STUDENT_TIER, tournament_id: TOURNAMENT_A, name: 'Student', amount_cents: 500, is_default: false },
       { id: OTHER_TIER, tournament_id: TOURNAMENT_B, name: 'Other cup', amount_cents: 9900, is_default: true },
     ],
-    tournament_fees: [],
+    club_fees: [],
+    tournaments: [
+      { id: TOURNAMENT_A, season_id: 'season-1' },
+      { id: TOURNAMENT_B, season_id: 'season-1' },
+    ],
     audit_logs: [],
   };
 });
@@ -313,7 +320,7 @@ describe('updateFeeTier', () => {
 
   // feeTierSchema.partial() accepts tournament_id, and this action used to pass
   // the whole payload straight through — so a tier could be moved to another
-  // tournament, turning every tournament_fees row already pointing at it into
+  // tournament, turning every entry-fee row already pointing at it into
   // the cross-tournament reference markTournamentFeePaid now refuses to create.
   it('will not move a tier to a different tournament', async () => {
     await updateFeeTier(GUEST_TIER, { tournament_id: TOURNAMENT_B, name: 'Visitor' });

@@ -5,21 +5,46 @@ import { getSeasonFinances } from '../season-finance';
 // returns `this`, and the chain is awaited for its rows. Records which table
 // each chain started from, and with which filters, so a test can assert the
 // scoping that actually decides a money figure.
-function makeClient(rows: Record<string, Record<string, unknown>[]>) {
+//
+// club_fees rows are keyed by fee_type, because since 00094 one table holds
+// dues, entry fees and reinstatements and getSeasonIncome reads it three times.
+// A stub that ignored fee_type would hand every read the whole table and report
+// the club's income at three times the money — which is the exact bug the
+// filters exist to prevent, so the stub models them.
+function makeClient(rows: {
+  dues?: Record<string, unknown>[];
+  tournament?: Record<string, unknown>[];
+  reinstatement?: Record<string, unknown>[];
+  other_income?: Record<string, unknown>[];
+  club_expenses?: Record<string, unknown>[];
+}) {
   const calls: { table: string; filters: string[] }[] = [];
   return {
     calls,
     from(table: string) {
       const entry = { table, filters: [] as string[] };
       calls.push(entry);
+      let feeType: string | null = null;
       const chain: Record<string, unknown> = {
         select: () => chain,
-        eq: (col: string, val: unknown) => { entry.filters.push(`eq:${col}=${val}`); return chain; },
+        eq: (col: string, val: unknown) => {
+          if (col === 'fee_type') feeType = String(val);
+          entry.filters.push(`eq:${col}=${val}`);
+          return chain;
+        },
         gte: (col: string, val: unknown) => { entry.filters.push(`gte:${col}=${val}`); return chain; },
         lte: (col: string, val: unknown) => { entry.filters.push(`lte:${col}=${val}`); return chain; },
         not: (col: string, op: string) => { entry.filters.push(`not:${col}:${op}`); return chain; },
-        then: (resolve: (v: { data: unknown }) => unknown) =>
-          resolve({ data: rows[table] ?? [] }),
+        then: (resolve: (v: { data: unknown }) => unknown) => {
+          if (table === 'club_fees') {
+            return resolve({
+              data: feeType
+                ? rows[feeType as 'dues' | 'tournament' | 'reinstatement'] ?? []
+                : [...(rows.dues ?? []), ...(rows.tournament ?? []), ...(rows.reinstatement ?? [])],
+            });
+          }
+          return resolve({ data: rows[table as 'other_income' | 'club_expenses'] ?? [] });
+        },
       };
       return chain;
     },
@@ -35,7 +60,7 @@ describe('getSeasonFinances', () => {
   // disagreed with reality for months.
   it('nets expenses off income', async () => {
     const client = makeClient({
-      club_fees: [{ amount_cents: 20000 }],
+      dues: [{ amount_cents: 20000 }],
       club_expenses: [{ amount_cents: 8400, category: 'shuttles' }],
     });
 
@@ -52,7 +77,7 @@ describe('getSeasonFinances', () => {
   // this page could do.
   it('reports a negative net rather than clamping at zero', async () => {
     const client = makeClient({
-      club_fees: [{ amount_cents: 5000 }],
+      dues: [{ amount_cents: 5000 }],
       club_expenses: [{ amount_cents: 12000, category: 'court_rental' }],
     });
 
@@ -135,7 +160,7 @@ describe('getSeasonFinances', () => {
   // the net, and "$NaN" on the dashboard is a figure nobody can act on.
   it('treats a missing amount as zero rather than NaN', async () => {
     const client = makeClient({
-      club_fees: [{ amount_cents: 5000 }],
+      dues: [{ amount_cents: 5000 }],
       club_expenses: [{ amount_cents: null, category: 'other' }, { amount_cents: 100, category: 'other' }],
     });
 
@@ -193,7 +218,7 @@ describe('getSeasonFinances', () => {
   // "Are we in the positives" has to include a commitment already made.
   it('counts a reimbursed expense exactly the same as an unreimbursed one', async () => {
     const rows = (reimbursed: boolean) => ({
-      club_fees: [{ amount_cents: 20000 }],
+      dues: [{ amount_cents: 20000 }],
       club_expenses: [
         {
           amount_cents: 8400,
