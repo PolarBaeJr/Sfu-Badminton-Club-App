@@ -59,9 +59,11 @@ function lastDefinitionOf(fn: string): { file: string; body: string } {
 const NICKNAME_AS_NAME = /COALESCE\s*\([^)]*display_name[^)]*\)\s+AS\s+name\b/i;
 
 describe('the public pages agree about a member’s name', () => {
-  // ORDER BY is deliberately not covered. get_executives() still sorts on
-  // COALESCE(display_name, full_name) as its last tiebreaker — 00096 says why
-  // it was left alone — and a sort key is not a name anybody reads.
+  // ORDER BY is covered as of 00100. 00096 moved `name` onto full_name and
+  // left the tiebreaker on COALESCE(display_name, full_name), which left /exec
+  // sorted by a string it no longer prints; 00100 moved the sort onto
+  // full_name too. Asserted below rather than described, because a sort key
+  // nobody can see is the kind of thing that gets reintroduced silently.
   for (const fn of ['get_leaderboard', 'get_executives']) {
     it(`${fn}() returns full_name as the member's name`, () => {
       const { file, body } = lastDefinitionOf(fn);
@@ -71,11 +73,24 @@ describe('the public pages agree about a member’s name', () => {
     });
   }
 
+  it('get_executives() sorts by the name it returns', () => {
+    // The last ORDER BY term is the tiebreaker between officers who share a
+    // title — and on production nobody has a title at all, so it is the ONLY
+    // thing ordering that public page. Sorting it by the retired nickname put
+    // four people in an order the page gave no way to explain.
+    const { file, body } = lastDefinitionOf('get_executives');
+    expect(body, `get_executives defined in ${file} still sorts on the retired nickname`)
+      .not.toMatch(/ORDER BY[^;]*display_name/i);
+    expect(body, `get_executives defined in ${file}`)
+      .toMatch(/ORDER BY\s*\(exec_title IS NULL\),\s*exec_title,\s*full_name/i);
+  });
+
   it('finds the newest definition, not the first one written', () => {
-    // 00042 defined get_executives() with the nickname and 00096 redefined it.
-    // If this helper ever started returning the earlier file the two assertions
-    // above would pass or fail for the wrong reason, so it is pinned too.
-    expect(lastDefinitionOf('get_executives').file).toMatch(/^00096_/);
+    // 00042 defined get_executives() with the nickname, 00096 redefined it and
+    // 00100 redefined it again. If this helper ever started returning an
+    // earlier file the assertions above would pass or fail for the wrong
+    // reason, so it is pinned too.
+    expect(lastDefinitionOf('get_executives').file).toMatch(/^00100_/);
     expect(lastDefinitionOf('get_leaderboard').file).toMatch(/^00092_/);
   });
 });
