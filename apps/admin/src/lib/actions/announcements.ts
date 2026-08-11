@@ -185,7 +185,22 @@ export async function updateAnnouncement(announcementId: string, data: {
   revalidatePath('/announcements');
 }
 
-export async function deleteAnnouncement(announcementId: string) {
+/**
+ * Deleting a post is audited, so it takes a typed reason.
+ *
+ * A published announcement is the club's record of having said something, and
+ * `announcement_deleted` was being written with no explanation at all — the
+ * audit row named the actor and the row, and nobody reading it back could tell
+ * whether the post was wrong, superseded or posted to the wrong audience. The
+ * dialog keeps its confirm disabled until this has content; checked again here
+ * because the dialog is not the boundary.
+ */
+export async function deleteAnnouncement(announcementId: string, reason: string) {
+  const trimmedReason = (reason ?? '').trim();
+  if (!trimmedReason) {
+    throw new ExpectedError('Deleting an announcement needs a reason — say why it is going.');
+  }
+
   const admin = await requireCapability('announcements.delete.write');
   const adminClient = createAdminClient();
 
@@ -211,6 +226,7 @@ export async function deleteAnnouncement(announcementId: string) {
     target_type: 'announcement',
     target_id: announcementId,
     old_value: old,
+    reason: trimmedReason,
   }, { announcementId });
 
   revalidatePath('/announcements');
