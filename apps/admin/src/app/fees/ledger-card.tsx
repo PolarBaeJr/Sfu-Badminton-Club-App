@@ -15,6 +15,7 @@ import {
   RemoveLedgerEntry,
   MarkReimbursed,
 } from './finance-actions';
+import { CardHeading } from './card-heading';
 
 /**
  * The row list for one of the two non-fee ledgers (00073).
@@ -234,17 +235,17 @@ export async function LedgerCard({
 
   return (
     <Card padding={false}>
-      <div className="px-4 pt-4 flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-sm font-medium text-[var(--text-primary)]">{heading}</h2>
-          <p className="text-xs text-[var(--text-muted)]">{blurb}</p>
-        </div>
-        {canWrite.add && (isIncome ? (
-          <AddOtherIncome seasonId={seasonId} seasonName={seasonName} />
-        ) : (
-          <AddExpense seasonId={seasonId} seasonName={seasonName} payerOptions={payerOptions} />
-        ))}
-      </div>
+      <CardHeading
+        title={heading}
+        sub={blurb}
+        action={
+          canWrite.add
+            ? isIncome
+              ? <AddOtherIncome seasonId={seasonId} seasonName={seasonName} />
+              : <AddExpense seasonId={seasonId} seasonName={seasonName} payerOptions={payerOptions} />
+            : undefined
+        }
+      />
 
       {/* "You may not see this" and "there is nothing to see" are different
           statements, and telling somebody the ledger is empty when it is merely
@@ -366,12 +367,15 @@ export async function LedgerCard({
                   </td>
                   <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">{day(row.paid_at)}</td>
                   <td className="px-4 py-3 text-right">
-                    <span
+                    {/* Atomic: the sign and the amount are one token. A row
+                        reading "-" on one line and "$84.00" on the next is a
+                        different number. */}
+                    <Atomic
                       className={`font-mono ${isIncome ? 'text-[var(--color-success)]' : 'text-[var(--color-danger)]'}`}
                     >
                       {isIncome ? '' : '-'}
                       {money(row.amount_cents)}
-                    </span>
+                    </Atomic>
                   </td>
                   <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">
                     {row.method ? formatPaymentMethod(row.method) : '-'}

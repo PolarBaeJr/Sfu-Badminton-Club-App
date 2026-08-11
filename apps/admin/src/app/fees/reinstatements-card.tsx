@@ -2,6 +2,7 @@ import { createAdminClient } from '@/lib/supabase-server';
 import { Badge, Card, AvatarChip, EmptyState, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { unwrap, formatPaymentMethod } from '@badminton/shared';
 import { RecordReinstatementPayment } from './fee-actions';
+import { CardHeading } from './card-heading';
 
 /**
  * Reinstatement payments, and the ones nobody has been able to write down.
@@ -59,9 +60,7 @@ export async function ReinstatementsCard({
   if (!canRead) {
     return (
       <Card padding={false}>
-        <div className="px-4 pt-4">
-          <h2 className="text-sm font-medium text-[var(--text-primary)]">Reinstatements</h2>
-        </div>
+        <CardHeading title="Reinstatements" />
         <EmptyState
           title="Reinstatement payments are not shown to you"
           description="You can record a reinstatement payment, but it is recorded against the row it belongs to — and those rows are not yours to see."
@@ -102,12 +101,10 @@ export async function ReinstatementsCard({
 
   return (
     <Card padding={false}>
-      <div className="px-4 pt-4">
-        <h2 className="text-sm font-medium text-[var(--text-primary)]">Reinstatements</h2>
-        <p className="text-xs text-[var(--text-muted)]">
-          Bans lifted this season, and any reinstatement whose payment has not been recorded yet.
-        </p>
-      </div>
+      <CardHeading
+        title="Reinstatements"
+        sub="Bans lifted this season, and any reinstatement whose payment has not been recorded yet."
+      />
       <ResponsiveTable
         cards={rows.map((fee) => (
           <TableCard
@@ -164,7 +161,7 @@ export async function ReinstatementsCard({
                   </Badge>
                 </td>
                 <td className="px-4 py-3 text-right">
-                  <span className="font-mono text-[var(--text-primary)]">{money(fee.amount_cents)}</span>
+                  <Atomic className="font-mono text-[var(--text-primary)]">{money(fee.amount_cents)}</Atomic>
                 </td>
                 <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">
                   {fee.method ? formatPaymentMethod(fee.method) : '-'}

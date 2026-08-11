@@ -1,4 +1,4 @@
-import { Card } from '@badminton/ui';
+import { Atomic } from '@badminton/ui';
 import { formatExpenseCategory } from '@badminton/shared';
 import type { SeasonFinances } from '@/lib/season-finance';
 
@@ -10,9 +10,24 @@ import type { SeasonFinances } from '@/lib/season-finance';
  * page already fetched; nothing here sums a row. Two pages independently
  * summing money is how the income figure came to read $0.00 while the money sat
  * in the database, and a component that does its own arithmetic is a third.
+ *
+ * Drawn as the console's `.stat-strip` rather than as three cards. The design
+ * guidance reserves card chrome for content and asks for headline figures as a
+ * hairline-divided row of bare label/value pairs — the same primitive the
+ * dashboard already uses for its counts, so the two money summaries in the
+ * console now read as one thing seen twice rather than as two designs.
+ *
+ * The one place this departs from `.stat-strip`: the shipped `.stat-value` rule
+ * sets `--display`, and every figure here is money. Money is compared digit by
+ * digit between rows, so it is `--mono` throughout the console and overriding
+ * the font here is what keeps the three totals column-aligned with the amounts
+ * in the ledgers below them.
  */
 
 const money = (cents: number) => `$${(Math.abs(cents) / 100).toFixed(2)}`;
+
+/** `.stat-value`, but in mono — see the note above about money vs. display. */
+const VALUE = 'stat-value is-money';
 
 export function NetPositionStrip({
   finances,
@@ -26,48 +41,57 @@ export function NetPositionStrip({
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card>
-          <p className="text-xs text-[var(--text-muted)] uppercase">Income</p>
-          <p className="text-2xl font-bold font-mono text-[var(--color-success)]">{money(income.totalCents)}</p>
-          <p className="text-xs text-[var(--text-muted)] mt-1">
+      <div className="stat-strip">
+        <div>
+          <p className="stat-label">In</p>
+          <p className={`${VALUE} text-[var(--color-success)]`}>
+            <Atomic>{money(income.totalCents)}</Atomic>
+          </p>
+          <p className="text-xs text-[var(--text-muted)] mt-2">
             Fees, tournaments, reinstatements and other income
           </p>
-        </Card>
-        <Card>
-          <p className="text-xs text-[var(--text-muted)] uppercase">Expenses</p>
-          <p className="text-2xl font-bold font-mono text-[var(--color-danger)]">-{money(expenseCents)}</p>
-          <p className="text-xs text-[var(--text-muted)] mt-1">Shuttles, courts, equipment, food</p>
-        </Card>
-        {/* The headline. A minus sign is easy to miss at a glance, so the label
-            says which side of zero this is in words as well. */}
-        <Card className={inTheRed ? 'border-[var(--color-danger)]' : 'border-[var(--color-success)]'}>
-          <p className="text-xs text-[var(--text-muted)] uppercase">Net · {seasonName}</p>
+        </div>
+        <div>
+          <p className="stat-label">Out</p>
+          <p className={`${VALUE} text-[var(--color-danger)]`}>
+            <Atomic>-{money(expenseCents)}</Atomic>
+          </p>
+          <p className="text-xs text-[var(--text-muted)] mt-2">Shuttles, courts, equipment, food</p>
+        </div>
+        {/* The headline. A minus sign is easy to miss at a glance, so the
+            sub-line says which side of zero this is in words as well. */}
+        <div>
+          <p className="stat-label">Net · {seasonName}</p>
           <p
-            className={`text-2xl font-bold font-mono ${
+            className={`${VALUE} ${
               inTheRed ? 'text-[var(--color-danger)]' : 'text-[var(--color-success)]'
             }`}
           >
-            {inTheRed ? '-' : ''}
-            {money(netCents)}
+            <Atomic>
+              {inTheRed ? '-' : ''}
+              {money(netCents)}
+            </Atomic>
           </p>
-          <p className="text-xs text-[var(--text-muted)] mt-1">
+          <p className="text-xs text-[var(--text-muted)] mt-2">
             {inTheRed ? 'Spending more than the club has taken in' : 'In the positives'}
           </p>
-        </Card>
+        </div>
       </div>
 
       {/* Where the money went. Rendered from the same rows that produced the
-          expense total, so the parts always add up to the whole. */}
+          expense total, so the parts always add up to the whole.
+          Square hairline tags rather than filled pills: the design language is
+          flat and sharp, and a row of rounded chips was the one piece of this
+          page borrowing a shape nothing else here uses. */}
       {expensesByCategory.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {expensesByCategory.map(({ category, cents }) => (
             <span
               key={category}
-              className="text-xs px-2 py-1 rounded-full bg-[var(--bg-elevated)] text-[var(--text-secondary)]"
+              className="text-xs px-2 py-1 border border-[var(--border)] text-[var(--text-secondary)]"
             >
               {formatExpenseCategory(category)}{' '}
-              <span className="font-mono text-[var(--text-muted)]">{money(cents)}</span>
+              <Atomic className="font-mono text-[var(--text-muted)]">{money(cents)}</Atomic>
             </span>
           ))}
         </div>
