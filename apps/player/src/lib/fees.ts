@@ -1,13 +1,17 @@
 // Derivations behind /fees — the money rules, as pure functions over the rows
 // the page reads, so they can be tested without a database.
 //
-// The screen answers one question ("what do I owe?") from three ledgers that do
-// not share a table: club_fees (per season), tournament_fees (per event) and
-// reinstatement_fees (per ban episode). Flattening them to one FeeLine shape
-// here is what lets the headline figure, the badge and the receipt list agree —
-// they are three readings of the same array rather than three separate sums,
-// which is how the admin side ended up counting fees in one place and people in
+// The screen answers one question ("what do I owe?") from one ledger holding
+// three kinds of row (00094): dues per season, entry fees per tournament, and
+// reinstatements per ban episode. Flattening them to one FeeLine shape here is
+// what lets the headline figure, the badge and the receipt list agree — they
+// are three readings of the same array rather than three separate sums, which
+// is how the admin side ended up counting fees in one place and people in
 // another.
+//
+// FeeKind mirrors club_fees.fee_type and is deliberately a separate type: it
+// drives the WORDING (a "Reinstatement fee" is not a "membership") and, in
+// summariseFees below, the one place the two differ in arithmetic — exemption.
 
 import { formatPaymentMethod, isReservedMethod } from '@badminton/shared';
 
@@ -18,8 +22,8 @@ import { formatPaymentMethod, isReservedMethod } from '@badminton/shared';
 /**
  * A price, or the honest admission that nothing records one.
  *
- * `amount_cents` is nullable on all three ledgers and a tournament with no fee
- * row, no tier and no default tier has no price anywhere. Rendering that as
+ * `amount_cents` is nullable on every kind of fee row, and an entry made when
+ * the tournament had no matching tier has no price anywhere. Rendering that as
  * "$0.00" would tell a member they owe nothing for an event they will be asked
  * to pay for at the door. 'TBD' is the vocabulary the page already used before
  * the redesign; it is kept rather than replaced.
@@ -32,7 +36,7 @@ export function money(cents: number | null | undefined): string {
 // One thing that costs money
 // ------------------------------------------------------------------
 
-/** Which ledger a line came from. Drives the wording, not the arithmetic. */
+/** Which kind of fee a line came from. Drives the wording, not the arithmetic. */
 export type FeeKind = 'season' | 'tournament' | 'reinstatement';
 
 export interface FeeLine {
@@ -42,8 +46,9 @@ export interface FeeLine {
   /** What the money is for, in the member's words. */
   name: string;
   /**
-   * Cents owed. May be derived — a tournament with no fee row falls back to its
-   * default tier's price — and is null when no source records one at all.
+   * Cents owed. For a season fee with no row yet this is the season's list
+   * price; for everything else it is the row's own amount, and null when
+   * nothing records one.
    */
   owedCents: number | null;
   /**
@@ -132,8 +137,9 @@ export function summariseFees(lines: FeeLine[], opts: { exempt: boolean }): Outs
 
   // Exemption is from DUES, and only from dues. is_exec / fee_exempt take a
   // member out of the club-fee table (apps/admin/src/app/fees/page.tsx filters
-  // on exactly those two columns) and out of tournament entry fees. They do not
-  // touch reinstatement_fees, which has no exemption check anywhere — a
+  // on exactly those two columns) and out of tournament entry fees —
+  // ensureEntryFees skips them outright, so no row is even filed. They do not
+  // touch reinstatement rows, which have no exemption check anywhere — a
   // reinstatement is not a due, it is the price of lifting a ban. Zeroing one
   // here would tell an exempt member they owe nothing while the club is still
   // waiting to be paid.

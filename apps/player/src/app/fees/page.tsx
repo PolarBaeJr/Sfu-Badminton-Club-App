@@ -25,27 +25,20 @@ type SeasonRow = {
   competitive_fee_cents: number;
   recreational_fee_cents: number;
 };
-type ClubFeeRow = {
-  id: string;
-  amount_cents: number | null;
-  paid_at: string | null;
-  method: string | null;
-  reference: string | null;
-};
-type EventRefRow = { event: { tournament_id: string } | { tournament_id: string }[] | null };
 type TournamentRow = { id: string; name: string };
-type TournamentFeeRow = {
+/**
+ * One row of the club's one fee ledger (00094).
+ *
+ * This used to be three shapes off three tables. They were always the same
+ * five money columns plus something naming what the money was for; fee_type is
+ * that something, and it is the only field below that decides how a row is
+ * read.
+ */
+type FeeRow = {
   id: string;
-  tournament_id: string;
-  amount_cents: number | null;
-  paid_at: string | null;
-  method: string | null;
-  reference: string | null;
-  tier_id: string | null;
-};
-type FeeTierRow = { id: string; tournament_id: string; amount_cents: number; is_default: boolean };
-type ReinstatementRow = {
-  id: string;
+  fee_type: 'dues' | 'tournament' | 'reinstatement';
+  season_id: string | null;
+  tournament_id: string | null;
   amount_cents: number | null;
   paid_at: string | null;
   method: string | null;
@@ -65,9 +58,9 @@ export default async function FeesPage() {
   // never the service-role client getCurrentPlayer() uses for the player's own
   // row. That means two independent layers say "yours only":
   //
-  //   1. an explicit .eq('player_id', player.id) on all three fee ledgers, and
-  //   2. RLS — club_fees_select_own / tf_select_own / rf_select_own in
-  //      00005_rls.sql, each USING (player_id = get_player_id(auth.uid())).
+  //   1. an explicit .eq('player_id', player.id) on the fee ledger, and
+  //   2. RLS — club_fees_select_own in 00005_rls.sql,
+  //      USING (player_id = get_player_id(auth.uid())).
   //
   // Either alone would do it; both together mean a dropped filter cannot become
   // a leak of somebody else's payment history. The one table read without a
@@ -110,19 +103,39 @@ export default async function FeesPage() {
       ? 'recreational'
       : null;
 
+  // ── EVERYTHING THIS MEMBER OWES, IN ONE READ ──────────────────────────
+  // Dues, entry fees and reinstatements are one table since 00094, so this
+  // screen no longer has to know that they were ever three. What it replaced:
+  // a club_fees query, a walk of tournament_participants and tournament_pairs
+  // to work out which tournaments the member had entered, a tournament_fees
+  // query, a tournament_fee_tiers query to guess a price for entries with no
+  // fee row, and a reinstatement_fees query. Six reads and a three-level price
+  // fallback, all of it reconstructing what the ledger now simply states.
+  //
+  // ONE CONSEQUENCE, WORTH KNOWING: an entry with no fee row is not shown. That
+  // used to be derivable from the participant rows; it is not any more, and it
+  // is the right trade — the price came from a tier the club might have
+  // changed since, so the figure shown was a guess dressed as a statement. Every
+  // entry made from now on has a row (ensureEntryFees writes one at
+  // registration) and the ones made before it are backfilled by the data
+  // migration.
+  const feesRes = await supabase
+    .from('club_fees')
+    .select(
+      'id, fee_type, season_id, tournament_id, amount_cents, paid_at, method, reference, created_at',
+    )
+    .eq('player_id', player.id)
+    .order('created_at', { ascending: false });
+  const feeRows = unwrapMaybe<FeeRow[]>(feesRes) ?? [];
+
   const lines: FeeLine[] = [];
   let seasonLine: FeeLine | null = null;
 
   // ── Club dues ─────────────────────────────────────────────────────────
-  // club_fees is UNIQUE(player_id, season_id), so maybeSingle() is safe here.
+  // club_fees_dues_player_season_key (00094) keeps this at one row per member
+  // per season, so find() cannot be hiding a second one.
   if (season && !exempt) {
-    const clubFeeRes = await supabase
-      .from('club_fees')
-      .select('id, amount_cents, paid_at, method, reference')
-      .eq('player_id', player.id)
-      .eq('season_id', season.id)
-      .maybeSingle();
-    const clubFee = unwrapMaybe<ClubFeeRow>(clubFeeRes);
+    const clubFee = feeRows.find((f) => f.fee_type === 'dues' && f.season_id === season.id);
     const { paid, waived } = settlementOf(clubFee ?? {});
     seasonLine = {
       // A member with no row yet is the brand-new case: they owe the season fee
@@ -145,110 +158,56 @@ export default async function FeesPage() {
   }
 
   // ── Competition dues ──────────────────────────────────────────────────
-  // Tournaments this member is entered in, singles (participants) and doubles
-  // (pairs) alike.
-  if (!exempt) {
-    const [partRes, pairRes] = await Promise.all([
-      supabase
-        .from('tournament_participants')
-        .select('event:tournament_events(tournament_id)')
-        .eq('player_id', player.id)
-        .neq('status', 'withdrawn'),
-      supabase
-        .from('tournament_pairs')
-        .select('event:tournament_events(tournament_id)')
-        .or(`player1_id.eq.${player.id},player2_id.eq.${player.id}`)
-        .neq('status', 'withdrawn'),
-    ]);
-
-    const extractIds = (rows: EventRefRow[] | null): string[] =>
-      (rows ?? [])
-        .map((r) => {
-          const event = Array.isArray(r.event) ? r.event[0] : r.event;
-          return event?.tournament_id ?? null;
-        })
-        .filter((id): id is string => id != null);
-
-    const tournamentIds = Array.from(
-      new Set([
-        ...extractIds(unwrapMaybe<EventRefRow[]>(partRes)),
-        ...extractIds(unwrapMaybe<EventRefRow[]>(pairRes)),
-      ]),
+  // The entry fees already in `feeRows`, named. The only extra read the whole
+  // screen still makes is the tournaments' NAMES — a fee row knows which
+  // tournament it is for, not what that tournament is called, and "Fall Open"
+  // is what a member recognises.
+  //
+  // The price is the row's own amount_cents and nothing else. It was snapshotted
+  // from the matching tier at entry (selectFeeTier), so there is no fallback
+  // chain left to get wrong, and re-deriving it here would mean a member who
+  // changed membership group saw a different figure from the one the club has
+  // on its books.
+  const entryFees = feeRows.filter((f) => f.fee_type === 'tournament' && f.tournament_id);
+  if (entryFees.length > 0) {
+    const tournaments = unwrap<TournamentRow[]>(
+      await supabase
+        .from('tournaments')
+        .select('id, name')
+        .in('id', [...new Set(entryFees.map((f) => f.tournament_id as string))]),
     );
+    const nameById = new Map(tournaments.map((t) => [t.id, t.name]));
 
-    if (tournamentIds.length > 0) {
-      const [tournamentsRes, feesRes, tiersRes] = await Promise.all([
-        supabase.from('tournaments').select('id, name').in('id', tournamentIds),
-        supabase
-          .from('tournament_fees')
-          .select('id, tournament_id, amount_cents, paid_at, method, reference, tier_id')
-          .eq('player_id', player.id)
-          .in('tournament_id', tournamentIds),
-        supabase
-          .from('tournament_fee_tiers')
-          .select('id, tournament_id, amount_cents, is_default')
-          .in('tournament_id', tournamentIds),
-      ]);
-      const tournaments = unwrap<TournamentRow[]>(tournamentsRes);
-      const fees = unwrapMaybe<TournamentFeeRow[]>(feesRes);
-      const tiers = unwrapMaybe<FeeTierRow[]>(tiersRes);
-
-      // tournament_fees is UNIQUE(tournament_id, player_id), so one entry per
-      // tournament — keying the map on tournament_id cannot lose a row.
-      const feeByTournament = new Map((fees ?? []).map((f) => [f.tournament_id, f]));
-      const tierById = new Map((tiers ?? []).map((t) => [t.id, t]));
-      const defaultTierByTournament = new Map(
-        (tiers ?? []).filter((t) => t.is_default).map((t) => [t.tournament_id, t]),
-      );
-
-      const competitionLines: FeeLine[] = [];
-      for (const t of tournaments) {
-        const fee = feeByTournament.get(t.id);
-        // Three places a price can come from, in descending order of authority.
-        // All three can miss — a tournament with no fee row, no tier and no
-        // default tier genuinely has no recorded price, and that stays null so
-        // the total can say so rather than add a zero.
-        let owedCents: number | null;
-        if (fee?.amount_cents != null) {
-          owedCents = fee.amount_cents;
-        } else if (fee?.tier_id != null) {
-          owedCents = tierById.get(fee.tier_id)?.amount_cents ?? null;
-        } else {
-          owedCents = defaultTierByTournament.get(t.id)?.amount_cents ?? null;
-        }
-        const { paid, waived } = settlementOf(fee ?? {});
-        competitionLines.push({
-          key: fee?.id ?? `tournament-${t.id}`,
-          kind: 'tournament',
-          name: t.name,
-          owedCents,
-          recordedCents: fee?.amount_cents ?? null,
-          paid,
-          waived,
-          paidAt: fee?.paid_at ?? null,
-          method: fee?.method ?? null,
-          reference: fee?.reference ?? null,
-        });
-      }
-      competitionLines.sort((a, b) => a.name.localeCompare(b.name));
-      lines.push(...competitionLines);
-    }
+    const competitionLines = entryFees.map((fee) => {
+      const { paid, waived } = settlementOf(fee);
+      return {
+        key: fee.id,
+        kind: 'tournament' as const,
+        // A tournament the member can no longer read — deleted, or outside
+        // whatever the tournaments policy allows — still has a real fee on
+        // their ledger. Naming it generically beats dropping the line.
+        name: nameById.get(fee.tournament_id as string) ?? 'Tournament entry',
+        owedCents: fee.amount_cents,
+        recordedCents: fee.amount_cents,
+        paid,
+        waived,
+        paidAt: fee.paid_at,
+        method: fee.method,
+        reference: fee.reference,
+      };
+    });
+    competitionLines.sort((a, b) => a.name.localeCompare(b.name));
+    lines.push(...competitionLines);
   }
 
   // ── Reinstatement ─────────────────────────────────────────────────────
   // A banned member is told on this page that money is owed. Before the
   // redesign that was a sentence with no figure beside it, which made the
-  // banner a second, vaguer source of truth about what they owe. The rows are
-  // real (reinstatement_fees), player-readable (rf_select_own) and 00065 keys
-  // them per ban episode — so a member can legitimately have more than one, and
-  // this is a list rather than a maybeSingle(). Charged regardless of
-  // fee_exempt: exemption is from dues, and a reinstatement is not a due.
-  const reinstatementRes = await supabase
-    .from('reinstatement_fees')
-    .select('id, amount_cents, paid_at, method, reference, created_at')
-    .eq('player_id', player.id)
-    .order('created_at', { ascending: false });
-  for (const r of unwrapMaybe<ReinstatementRow[]>(reinstatementRes) ?? []) {
+  // banner a second, vaguer source of truth about what they owe. 00094 keys
+  // these per ban episode — so a member can legitimately have more than one,
+  // and this is a list rather than one row. Charged regardless of fee_exempt:
+  // exemption is from dues, and a reinstatement is not a due.
+  for (const r of feeRows.filter((f) => f.fee_type === 'reinstatement')) {
     const { paid, waived } = settlementOf(r);
     lines.push({
       key: r.id,

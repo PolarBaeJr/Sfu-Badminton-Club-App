@@ -91,11 +91,13 @@ export function selectFeeTier(
 
   const targeted = tiers.filter((t) => t.applies_to != null && t.applies_to.includes(group));
   if (targeted.length > 0) {
+    // `targeted` is non-empty, so the sort has a first element; the check keeps
+    // noUncheckedIndexedAccess honest rather than asserting past it.
     const best = [...targeted].sort((a, b) => {
       const specificity = (a.applies_to?.length ?? 0) - (b.applies_to?.length ?? 0);
       return specificity !== 0 ? specificity : bySortOrderThenName(a, b);
     })[0];
-    return { tier: best, reason: 'membership' };
+    if (best) return { tier: best, reason: 'membership' };
   }
 
   // `applies_to` absent OR an empty array. The column CHECK forbids an empty
@@ -104,9 +106,8 @@ export function selectFeeTier(
   // list is the shape a UI produces when every box is deselected, and reading
   // that as "prices nobody" would quietly zero out a tournament's fees.
   const anyone = tiers.filter((t) => t.applies_to == null || t.applies_to.length === 0);
-  if (anyone.length > 0) {
-    return { tier: [...anyone].sort(bySortOrderThenName)[0], reason: 'anyone' };
-  }
+  const general = [...anyone].sort(bySortOrderThenName)[0];
+  if (general) return { tier: general, reason: 'anyone' };
 
   // Every tier names a group and none of them names this member's. The
   // is_default tier is the club's own answer to "what if none of these fit",
