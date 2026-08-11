@@ -4,7 +4,8 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Card, Dialog, Input, Select, Switch, Badge } from '@badminton/ui';
 import { useToast } from '@/components/toast-provider';
-import type { TournamentFeeTier } from '@badminton/shared';
+import type { TournamentFeeTier, MembershipType } from '@badminton/shared';
+import { MEMBERSHIP_TYPES, formatMembershipType } from '@badminton/shared';
 import { resolvePaymentMethod } from '@badminton/shared';
 import {
   PaymentMethodFields,
@@ -32,7 +33,18 @@ function TierDialog({ tournamentId, tier, open, onClose }: TierDialogProps) {
   const [name, setName] = useState(tier?.name ?? '');
   const [amount, setAmount] = useState(tier ? (tier.amount_cents / 100).toFixed(2) : '');
   const [isDefault, setIsDefault] = useState(Boolean(tier?.is_default));
+  // Which memberships this tier prices. EMPTY MEANS "anyone", and it is stored
+  // as null — the two are the same statement and the column CHECK refuses an
+  // empty array precisely so they cannot drift apart. Deselecting everything
+  // therefore restores the general price rather than pricing nobody.
+  const [appliesTo, setAppliesTo] = useState<MembershipType[]>(tier?.applies_to ?? []);
   const { toast } = useToast();
+
+  const toggleMembership = (value: MembershipType) =>
+    setAppliesTo((current) =>
+      current.includes(value) ? current.filter((m) => m !== value) : [...current, value],
+    );
+
   const router = useRouter();
 
   function handleSave() {
@@ -43,6 +55,7 @@ function TierDialog({ tournamentId, tier, open, onClose }: TierDialogProps) {
           name: name.trim(),
           amount_cents: Math.round(parseFloat(amount || '0') * 100),
           is_default: isDefault,
+          applies_to: appliesTo.length > 0 ? appliesTo : null,
         };
         if (tier) {
           await updateFeeTier(tier.id, payload);
@@ -64,7 +77,47 @@ function TierDialog({ tournamentId, tier, open, onClose }: TierDialogProps) {
       <div className="space-y-4">
         <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Member, Guest" />
         <Input label="Amount $" type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 10.00" />
-        <Switch label="Default tier" description="Used as the default fee for this tournament" checked={isDefault} onChange={setIsDefault} />
+        {/* WHO THIS PRICE IS FOR. Before 00094 an exec picked a tier by hand
+            for every entrant — "manual assignment is crazy annoying", and the
+            roster already records who is internal, alumni or external. Chosen
+            here once, applied at every registration by selectFeeTier.
+
+            Checkboxes rather than a Select: the groups are not ranked, and
+            "alumni and external" is as real a combination as either alone. */}
+        <fieldset className="space-y-2">
+          <legend className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wide">
+            Applies to
+          </legend>
+          <p className="text-xs text-[var(--text-muted)]">
+            {appliesTo.length === 0
+              ? 'Everyone. This is the general price for the tournament.'
+              : `Charged to ${appliesTo.map(formatMembershipType).join(' and ')} members.`}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {MEMBERSHIP_TYPES.map((m) => {
+              const on = appliesTo.includes(m.value);
+              return (
+                <button
+                  key={m.value}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => toggleMembership(m.value)}
+                  className={`px-3 min-h-[44px] text-xs font-bold uppercase tracking-[0.08em] border transition-colors ${
+                    on
+                      ? 'bg-[var(--color-accent)] text-white border-[var(--color-accent)]'
+                      : 'border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-hover)]'
+                  }`}
+                >
+                  {m.label}
+                </button>
+              );
+            })}
+          </div>
+        </fieldset>
+        {/* Still worth setting even with `applies_to` above: it is the price a
+            member gets when no tier names their group at all, which is the one
+            case that would otherwise record an entry with no fee. */}
+        <Switch label="Default tier" description="Charged when no tier matches the entrant's membership" checked={isDefault} onChange={setIsDefault} />
         <div className="flex gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button onClick={handleSave} loading={isPending} className="flex-1" disabled={!name.trim()}>
@@ -160,9 +213,20 @@ export function TournamentFeeActions({ mode, tournamentId, tiers, playerId, play
         <div className="divide-y divide-[var(--border)]">
           {tiers.map((tier) => (
             <div key={tier.id} className="flex items-center justify-between py-3">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-sm font-medium text-[var(--text-primary)]">{tier.name}</span>
                 {tier.is_default && <Badge variant="info">Default</Badge>}
+                {/* Who this price is for, on the row rather than only inside the
+                    edit dialog: the whole point of applies_to is that nobody
+                    chooses a tier by hand any more, so which tier catches whom
+                    has to be readable without opening anything. "Everyone" is
+                    said out loud because a blank space here would read as an
+                    unfinished tier rather than the general price. */}
+                <Badge variant="neutral">
+                  {tier.applies_to?.length
+                    ? tier.applies_to.map(formatMembershipType).join(' · ')
+                    : 'Everyone'}
+                </Badge>
                 <span className="text-xs text-[var(--text-muted)] font-mono">
                   ${(tier.amount_cents / 100).toFixed(2)}
                 </span>
