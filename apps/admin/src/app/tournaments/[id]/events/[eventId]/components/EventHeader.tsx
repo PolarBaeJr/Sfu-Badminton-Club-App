@@ -49,6 +49,8 @@ interface Props {
    * EventControlCenter for why the two counts must stay apart.
    */
   playedMatches: number;
+  /** How many matches the CURRENT phase holds — what a redraw would replace. */
+  phaseMatches: number;
   /** How many matches the POOL half holds, and how many are decided. */
   poolTotal: number;
   poolDecided: number;
@@ -58,7 +60,7 @@ interface Props {
   hasThirdPlace: boolean;
 }
 
-export function EventHeader({ tournament, event, siblingEvents, isDoubles, totalEntries, checkedIn, totalMatches, completedMatches, playedMatches, poolTotal, poolDecided, drawCapabilities, hasThirdPlace }: Props) {
+export function EventHeader({ tournament, event, siblingEvents, isDoubles, totalEntries, checkedIn, totalMatches, completedMatches, playedMatches, phaseMatches, poolTotal, poolDecided, drawCapabilities, hasThirdPlace }: Props) {
   const [loading, setLoading] = useState(false);
   const [lockLoading, setLockLoading] = useState(false);
   const [regenLoading, setRegenLoading] = useState(false);
@@ -233,9 +235,12 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
       message: (
         <div className="space-y-3">
           <p>
-            The {totalMatches === 1 ? 'one match' : `${totalMatches} matches`} in the current draw
-            {' '}are deleted and a new draw is built from the {totalEntries === 1 ? 'entry' : `${totalEntries} entries`}
-            {' '}in the event right now. Match numbers, courts and who plays whom all change, so anyone
+            The {phaseMatches === 1 ? 'one match' : `${phaseMatches} matches`} in
+            {' '}{phaseNow === 'pool' ? 'the round robin' : 'the current draw'}
+            {' '}are deleted and a new draw is built from{' '}
+            {phaseNow === 'bracket' && poolToBracket
+              ? 'the round-robin standings as they stand now'
+              : `the ${totalEntries === 1 ? 'entry' : `${totalEntries} entries`} in the event right now`}. Match numbers, courts and who plays whom all change, so anyone
             who has already been told their first-round opponent will have the wrong one.
           </p>
           {/* THE LIVE PARAGRAPH SAYS THE TWO THINGS THE EXEC CANNOT SEE FROM THE
@@ -256,6 +261,7 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
           <p>
             Everyone in the new draw is notified that the bracket has been published, again.
             {seededFromPool && ' The field is re-read from the pool standings, so a pool result edited since the first draw is picked up.'}
+            {phaseNow === 'pool' && ' The knockout has not been drawn yet, so nothing downstream depends on these fixtures.'}
             {' '}Nothing that has been played is touched: if any result, walkover or forfeit has been
             recorded, this is refused rather than done. Byes do not count as played.
           </p>

@@ -112,7 +112,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
   // pool_to_bracket event that is a real distinction: the pool is drawn and
   // played first, and offering an empty Bracket tab through all of it would
   // invite an exec to go looking for a draw that deliberately does not exist yet.
-  if (endsInKnockout(format) && (!poolToBracket || bracketMatches.length > 0 || status === 'bracket_generated' || status === 'live' || status === 'completed')) {
+  if (hasDraw && endsInKnockout(format) && (!poolToBracket || bracketMatches.length > 0)) {
     tabs.push({ id: 'bracket', label: 'Bracket', icon: <Swords className="w-4 h-4" /> });
   }
 
@@ -178,6 +178,11 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
         totalMatches={totalMatches}
         completedMatches={completedMatches}
         playedMatches={playedMatches}
+        // How many matches the REDRAW would actually replace — the current
+        // phase's, not the event's. The confirm dialog names this number, and
+        // on a pool_to_bracket event "the 18 matches in the current draw are
+        // deleted" would be a false and alarming claim about a knockout of 3.
+        phaseMatches={phaseMatches.length}
         // The POOL's own progress, which is what decides whether the knockout
         // can be drawn yet. Equal to the whole event on the other two formats,
         // where nothing reads it.
