@@ -48,10 +48,14 @@ interface RatingRow {
  * ever passes a few thousand members the answer is a histogram computed in the
  * database, not a limit here.
  *
- * `players!inner` keeps the join a FILTER rather than an embed: a suspended
- * member or a pending signup still has a ratings row, and counting them in "the
- * shape of the field" would draw a ladder the club does not play on. Nothing
- * from the joined row is selected, so no roster column rides along.
+ * `players!inner` makes the join a FILTER rather than a nullable embed: a
+ * suspended member or a pending signup still has a ratings row, and counting
+ * them in "the shape of the field" would draw a ladder the club does not play
+ * on. PostgREST needs SOMETHING selected from an embed to join through it, so
+ * it selects `id` and nothing else — the narrowest column there is, and one
+ * `players.read` owns anyway. Those ids stay on the server: this function
+ * returns arrays of numbers and two counts, so nothing identifying a member
+ * reaches the RSC payload.
  *
  * PROVISIONAL RATINGS ARE EXCLUDED FROM THE BINS AND COUNTED INSTEAD. A rating
  * below the provisional threshold is still settling and moves further per
@@ -63,6 +67,15 @@ interface RatingRow {
  * constant. That threshold is also a database setting (00041), so the TypeScript
  * mirror of it can disagree with the value the rating engine actually used; the
  * booleans are written by the engine and cannot.
+ *
+ * RUN AGAINST STAGING BEFORE SHIPPING, because nothing else could check it: the
+ * admin client carries no generated Database type, so tsc proves nothing about
+ * this chain, and an embedded-resource filter that PostgREST rejects would
+ * throw through unwrap() before the first byte of markup — on the dashboard of
+ * every console user, since players.read is in TRAINER_BASELINE. It returns 98
+ * rows there: 92 settled singles ratings over 402–1400 and 6 provisional, 86
+ * settled doubles and 12 provisional, which is exactly what the equivalent SQL
+ * returns.
  */
 export async function getLadderSpread(supabase: SupabaseClient): Promise<LadderSpread> {
   const result = await supabase
