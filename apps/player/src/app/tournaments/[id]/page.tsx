@@ -8,6 +8,7 @@ import {
   hasTournamentEnded,
   getAccountStanding,
   resolveEventWaiverText,
+  TOURNAMENT_EVENT_FORMAT_LABELS,
 } from '@badminton/shared';
 import { loadMyEventWaiver } from '@/lib/event-waiver';
 import { EventWaiverGate } from './EventWaiverGate';
@@ -273,7 +274,8 @@ export default async function TournamentDetailPage({ params }: { params: Promise
                           {TOURNAMENT_EVENT_STATUS_LABELS[eventStatus]?.toUpperCase()}
                         </span>
                         <span className="tag">
-                          {event.format === 'single_elimination' ? 'SINGLE ELIM' : 'ROUND ROBIN'}
+                          {(TOURNAMENT_EVENT_FORMAT_LABELS[event.format as keyof typeof TOURNAMENT_EVENT_FORMAT_LABELS]
+                            ?? (event.format as string)).toUpperCase()}
                         </span>
                       </div>
                     </div>

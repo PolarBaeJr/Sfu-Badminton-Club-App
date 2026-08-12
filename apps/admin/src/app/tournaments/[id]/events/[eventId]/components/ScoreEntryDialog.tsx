@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Input, Select, Switch } from '@badminton/ui';
-import { getEventRules, previewEloChange, tallyGames, isLegalGameScore, isLegalGameCount } from '@badminton/shared';
+import { getEventRules, previewEloChange, tallyGames, isLegalGameScore, isLegalGameCount, resolveMatchShape, describeMatchShape } from '@badminton/shared';
 import type { TournamentMatchFormat, MatchFormat } from '@badminton/shared';
 import {
   enterMatchResult, enterWalkover, voidMatch, unvoidMatch, setMatchEntry, recordDoubleNoShow,
@@ -36,10 +36,27 @@ interface Props {
 type View = 'score' | 'walkover' | 'slots' | 'restore' | 'correct';
 
 export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, entries, onClose }: Props) {
-  const matchFormat = event.match_format as TournamentMatchFormat;
-  // The typed shape wins over the enum, so an event shortened to one game to 15
+  // THE MATCH'S OWN SHAPE, FALLING BACK TO THE EVENT'S (00108).
+  //
+  // Every rule in this dialog — how many score rows to draw, whether a game is
+  // possible, whether the match has been clinched, what the refusal messages
+  // name — is decided from this one value, and enterMatchResultImpl resolves it
+  // from the SAME function on the same two rows. A draw played 11s in round one
+  // and best-of-3 in the final has a different answer in every round, and if
+  // the dialog resolved from the event while the server resolved from the
+  // match, a 21-19 first-round game would be accepted by one and refused by the
+  // other — which is the exact class of disagreement this dialog was last fixed
+  // for.
+  const shape = resolveMatchShape(match, event);
+  const matchFormat = shape.match_format as TournamentMatchFormat;
+  // The typed shape wins over the enum, so a round shortened to one game to 15
   // offers one score row rather than three.
-  const maxGames = getEventRules(event).bestOf;
+  const maxGames = getEventRules(shape).bestOf;
+  // Named on screen, because a round that is NOT played to the event's shape is
+  // otherwise indistinguishable from one that is — and the exec typing the
+  // score is the person who needs to know which.
+  const shapeLabel = describeMatchShape(shape);
+  const shapeIsOverridden = match.games_per_match != null || match.points_per_game != null || match.match_format != null;
 
   const aId = isDoubles ? match.pair_a_id : match.participant_a_id;
   const bId = isDoubles ? match.pair_b_id : match.participant_b_id;
@@ -102,7 +119,7 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
     isLegalGameScore(
       parseInt(g.a, 10), parseInt(g.b, 10),
       matchFormat as unknown as MatchFormat,
-      event.games_per_match, event.points_per_game, timeExceeded,
+      shape.games_per_match, shape.points_per_game, timeExceeded,
     ),
   );
 
@@ -125,7 +142,7 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
       Math.max(aGamesWon, bGamesWon),
       Math.min(aGamesWon, bGamesWon),
       matchFormat as unknown as MatchFormat,
-      event.games_per_match,
+      shape.games_per_match,
     );
 
   // Only a legal, fully-numeric, FINISHED scoreline names a winner. Everything
@@ -151,14 +168,14 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
     // event to 30 sends an exec looking for the wrong mistake.
     if (!scoresAreIntegers) { toast('Scores must be whole numbers', 'error'); return; }
     if (!gamesAreLegal) {
-      toast(`That scoreline cannot end a game to ${getEventRules(event).target}`, 'error');
+      toast(`That scoreline cannot end a game to ${getEventRules(shape).target}`, 'error');
       return;
     }
     // TWO DIFFERENT PROBLEMS, and telling them apart is the whole point of
     // saying anything. "Games are level" for a best-of-3 at 1-0 is simply
     // false, and sends an exec hunting a tie that is not there.
     if (!matchIsDecided) {
-      const needed = Math.floor(getEventRules(event).bestOf / 2) + 1;
+      const needed = Math.floor(getEventRules(shape).bestOf / 2) + 1;
       toast(
         `${Math.max(aGamesWon, bGamesWon)}-${Math.min(aGamesWon, bGamesWon)} does not finish this match — ${needed} games are needed to win`,
         'error',
@@ -358,6 +375,16 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
   return (
     <Dialog open={true} onClose={onClose} title={title}>
       <div className="space-y-5">
+        {/* WHAT THIS MATCH IS PLAYED TO, shown only when it is NOT the event's
+            shape (00108). Always showing it would be noise on the thousands of
+            matches that inherit; showing it when a round has been shortened is
+            the difference between an exec typing 21-19 into a game to 11 and
+            finding out from a refusal, and knowing before they start. */}
+        {shapeIsOverridden && (
+          <p className="text-xs text-[var(--text-muted)]" role="status">
+            This round is played to <span className="font-semibold text-[var(--text-primary)]">{shapeLabel}</span>.
+          </p>
+        )}
         {/* Players header */}
         <div className="flex items-center justify-between p-3 rounded-lg bg-[var(--bg-elevated)]">
           <div className="text-center flex-1">

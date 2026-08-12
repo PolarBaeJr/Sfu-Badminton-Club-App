@@ -10,6 +10,9 @@ import {
   isOutOfEvent,
   unwrap,
   unwrapMaybe,
+  TOURNAMENT_EVENT_FORMAT_LABELS,
+  isPoolToBracket,
+  endsInKnockout,
 } from '@badminton/shared';
 import type {
   TournamentEventType,
@@ -217,7 +220,22 @@ export default async function EventDetailPage({
   // player who is in it wants to see it, and it identifies itself there by
   // round_name ("3rd Place Playoff") with nothing implied about the draw.
   const thirdPlaceMatch = allMatches.find((m) => m.is_third_place) ?? null;
-  const bracketMatches = allMatches.filter((m) => !m.is_third_place);
+  // TWO HALVES ON A pool_to_bracket EVENT (00107). The knockout diagram is
+  // built from the bracket phase and the results list from the pool phase, so
+  // both are shown and neither is fed the other's matches — a bracket drawn
+  // over the pool's fixtures would be a tree of round-robin games.
+  //
+  // On the other two formats every match carries phase NULL, so `poolMatches`
+  // is the whole list for a round robin and `bracketMatches` is the whole list
+  // for a knockout, exactly as before.
+  const poolToBracket = isPoolToBracket(event.format as string);
+  const poolMatches = poolToBracket
+    ? allMatches.filter((m) => m.phase === 'pool')
+    : allMatches;
+  const knockoutMatches = poolToBracket
+    ? allMatches.filter((m) => m.phase === 'bracket')
+    : allMatches;
+  const bracketMatches = knockoutMatches.filter((m) => !m.is_third_place);
 
   const roundsMap = new Map<number, Array<Record<string, unknown>>>();
   let maxRound = 0;
@@ -230,6 +248,16 @@ export default async function EventDetailPage({
 
   const totalRounds = maxRound;
   const sortedRounds = Array.from(roundsMap.entries()).sort(([a], [b]) => a - b);
+
+  // The pool half's own rounds, listed separately so a pool_to_bracket event
+  // shows its round robin as a results list under the bracket.
+  const poolRoundsMap = new Map<number, Array<Record<string, unknown>>>();
+  for (const m of poolMatches) {
+    const rn = m.round_number as number;
+    if (!poolRoundsMap.has(rn)) poolRoundsMap.set(rn, []);
+    poolRoundsMap.get(rn)!.push(m);
+  }
+  const sortedPoolRounds = Array.from(poolRoundsMap.entries()).sort(([a], [b]) => a - b);
 
   function getEntryName(match: Record<string, unknown>, side: 'a' | 'b'): string {
     const key = doubles
@@ -264,7 +292,9 @@ export default async function EventDetailPage({
     return scores.map((s) => `${s.a}–${s.b}`).join(', ');
   }
 
-  const isSingleElim = event.format === 'single_elimination';
+  // endsInKnockout, not `=== 'single_elimination'`: a pool_to_bracket event has
+  // a bracket too, and it is the half that decides the event.
+  const isSingleElim = endsInKnockout(event.format as string);
 
   return (
     <div className="space-y-5 pb-28 px-4 sm:px-0">
@@ -300,7 +330,8 @@ export default async function EventDetailPage({
                 {TOURNAMENT_EVENT_STATUS_LABELS[eventStatus]}
               </span>
               <span className="chip">
-                {isSingleElim ? 'Single Elim' : 'Round Robin'}
+                {TOURNAMENT_EVENT_FORMAT_LABELS[event.format as keyof typeof TOURNAMENT_EVENT_FORMAT_LABELS]
+                  ?? (event.format as string)}
               </span>
               <span className="chip">
                 {matchShape}
@@ -341,8 +372,9 @@ export default async function EventDetailPage({
         </div>
       </FadeIn>
 
-      {/* Bracket View (Single Elimination) */}
-      {isSingleElim && allMatches.length > 0 && (
+      {/* Bracket View (Single Elimination, and the knockout half of a
+          pool_to_bracket event) */}
+      {isSingleElim && bracketMatches.length > 0 && (
         <FadeIn delay={0.05}>
           <div className="card-elevated rounded-2xl overflow-hidden">
             <div className="flex items-center gap-2 p-4 pb-0 mb-3">
@@ -481,16 +513,19 @@ export default async function EventDetailPage({
         </FadeIn>
       )}
 
-      {/* Round Robin View */}
-      {!isSingleElim && allMatches.length > 0 && (
+      {/* Round Robin View — the whole event on a round_robin, and the pool half
+          on a pool_to_bracket. Shown ALONGSIDE the bracket on that format
+          rather than instead of it: a player wants to see the pool they played
+          and the draw it put them into. */}
+      {poolMatches.length > 0 && (!isSingleElim || poolToBracket) && (
         <FadeIn delay={0.05}>
           <div className="card-elevated rounded-2xl overflow-hidden">
             <div className="flex items-center gap-2 p-4 pb-0 mb-3">
               <Swords className="w-4 h-4 text-[var(--color-accent)]" />
-              <h2 className="display-md">Match Results</h2>
+              <h2 className="display-md">{poolToBracket ? 'Round Robin' : 'Match Results'}</h2>
             </div>
             <div className="px-4 pb-4 space-y-4">
-              {sortedRounds.map(([roundNum, roundMatches]) => (
+              {sortedPoolRounds.map(([roundNum, roundMatches]) => (
                 <div key={roundNum}>
                   <h3 className="eyebrow mb-2">Round {roundNum}</h3>
                   <div className="space-y-2">

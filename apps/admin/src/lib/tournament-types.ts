@@ -7,8 +7,26 @@ import type { Database } from '@badminton/shared';
 type Tables = Database['public']['Tables'];
 
 export type TournamentRow = Tables['tournaments']['Row'];
-export type TournamentEventRow = Tables['tournament_events']['Row'];
-export type TournamentMatchRow = Tables['tournament_matches']['Row'];
+export type TournamentEventRow = Tables['tournament_events']['Row'] & {
+  /** The group shape (00106) and, on a pool_to_bracket event, how many qualify. */
+  group_count?: number | null;
+  qualifiers_per_group?: number | null;
+};
+// COLUMNS THE GENERATED TYPE DOES NOT KNOW ABOUT YET. database.gen.ts is
+// generated from the live database, and 00107/00108 have not been applied there
+// — the same situation 00106's group_number was in, which the code worked
+// around with a cast at every read site. Declaring them once here is the same
+// workaround done in one place, and it disappears of its own accord the next
+// time the types are regenerated: an intersection with properties the base type
+// already has is the base type.
+export type TournamentMatchRow = Tables['tournament_matches']['Row'] & {
+  /** Which half of a pool_to_bracket event this match is in (00107). */
+  phase?: string | null;
+  /** This match's own shape, overriding the event's (00108). */
+  match_format?: string | null;
+  games_per_match?: number | null;
+  points_per_game?: number | null;
+};
 export type TournamentParticipantRow = Tables['tournament_participants']['Row'];
 export type TournamentPairRow = Tables['tournament_pairs']['Row'];
 

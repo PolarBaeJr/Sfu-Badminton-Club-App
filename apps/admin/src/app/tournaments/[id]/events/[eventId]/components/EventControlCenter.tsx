@@ -7,6 +7,11 @@ import {
   TOURNAMENT_EVENT_STATUS_LABELS,
   TOURNAMENT_EVENT_STATUS_COLORS,
   isPlayedMatch,
+  isPoolToBracket,
+  playsRoundRobin,
+  endsInKnockout,
+  eventHasDraw,
+  currentPhase,
 } from '@badminton/shared';
 import type {
   TournamentEventType,
@@ -33,7 +38,13 @@ import { RoundRobinTab } from './RoundRobinTab';
 import { ResultsTab } from './ResultsTab';
 import { LeaderboardTab } from './LeaderboardTab';
 
-type TabId = 'participants' | 'checkin' | 'bracket' | 'results' | 'leaderboard';
+// 'pool' is a tab of its own rather than a mode of 'bracket' (00107). On a
+// pool_to_bracket event BOTH halves exist at once from the moment the knockout
+// is drawn, and they are different things to look at: the pool is a table and a
+// fixture list, the bracket is a tree. One tab that switched between them would
+// hide half the event behind a control, and would have no answer for the exec
+// who wants the standings open while entering a quarter-final.
+type TabId = 'participants' | 'checkin' | 'pool' | 'bracket' | 'results' | 'leaderboard';
 
 interface Props {
   tournament: TournamentRow;
@@ -82,8 +93,27 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
     tabs.push({ id: 'checkin', label: 'Check-In', icon: <CheckCircle className="w-4 h-4" /> });
   }
 
-  if (['bracket_generated', 'live', 'completed'].includes(status)) {
-    tabs.push({ id: 'bracket', label: format === 'round_robin' ? 'Round Robin' : 'Bracket', icon: <Swords className="w-4 h-4" /> });
+  // WHICH HALVES EXIST. A single-phase event has exactly one of these and it is
+  // the one it always had; a pool_to_bracket event grows the second when its
+  // knockout is drawn.
+  const poolToBracket = isPoolToBracket(format);
+  const poolMatches = poolToBracket ? matches.filter((m) => m.phase === 'pool') : matches;
+  const bracketMatches = poolToBracket ? matches.filter((m) => m.phase === 'bracket') : matches;
+  const hasDraw = eventHasDraw(status);
+
+  if (hasDraw && playsRoundRobin(format)) {
+    tabs.push({
+      id: 'pool',
+      label: poolToBracket ? 'Round Robin' : 'Round Robin',
+      icon: <Swords className="w-4 h-4" />,
+    });
+  }
+  // The knockout tab appears only once there is a knockout. On a
+  // pool_to_bracket event that is a real distinction: the pool is drawn and
+  // played first, and offering an empty Bracket tab through all of it would
+  // invite an exec to go looking for a draw that deliberately does not exist yet.
+  if (endsInKnockout(format) && (!poolToBracket || bracketMatches.length > 0 || status === 'bracket_generated' || status === 'live' || status === 'completed')) {
+    tabs.push({ id: 'bracket', label: 'Bracket', icon: <Swords className="w-4 h-4" /> });
   }
 
   // hasResultsTab() rather than a second `status === 'completed'`: the event
@@ -99,8 +129,11 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
   }
 
   // Default to the most relevant tab
+  // The half that is CURRENT, not a fixed tab id — an exec opening a
+  // pool_to_bracket event mid-round-robin wants the round robin.
   const defaultTab: TabId = hasResultsTab(status) ? 'results'
-    : ['bracket_generated', 'live'].includes(status) ? 'bracket'
+    : ['pool_generated', 'pool_live'].includes(status) ? 'pool'
+    : ['bracket_generated', 'live'].includes(status) ? (endsInKnockout(format) ? 'bracket' : 'pool')
     : status === 'checkin' ? 'checkin'
     : 'participants';
 
@@ -121,7 +154,16 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
   // question the redraw asks: rebuilding the draw deletes every match, and a bye
   // has no score and no Elo to lose. Gating the redraw on the progress figure
   // would grey the button on every draw whose field is not a power of two.
-  const playedMatches = matches.filter(isPlayedMatch).length;
+  //
+  // COUNTED WITHIN THE CURRENT PHASE (00107). The redraw rebuilds one half, and
+  // assertNoResultsEntered refuses on that half's results only — so a
+  // pool_to_bracket event arriving at its knockout with a fully played pool
+  // must NOT show "9 matches have been played, void them first" against a
+  // Regenerate button that would not touch any of them. currentPhase is null
+  // for the other two formats, where this is the whole event exactly as before.
+  const phaseNow = currentPhase(format, status);
+  const phaseMatches = phaseNow === 'pool' ? poolMatches : phaseNow === 'bracket' ? bracketMatches : matches;
+  const playedMatches = phaseMatches.filter(isPlayedMatch).length;
 
   return (
     <div className="space-y-6">
@@ -136,6 +178,11 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
         totalMatches={totalMatches}
         completedMatches={completedMatches}
         playedMatches={playedMatches}
+        // The POOL's own progress, which is what decides whether the knockout
+        // can be drawn yet. Equal to the whole event on the other two formats,
+        // where nothing reads it.
+        poolTotal={poolMatches.length}
+        poolDecided={poolMatches.filter((m) => m.status === 'completed' || m.status === 'walkover' || m.is_bye).length}
         drawCapabilities={drawCapabilities}
         // WHETHER THE DRAW THAT EXISTS HAS A BRONZE MATCH, read off the matches
         // themselves. The third-place choice is deliberately not stored on
@@ -145,7 +192,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
         // drop the playoff (EventHeader's `offerThirdPlace` is false outside
         // `checkin`) or silently add one, which is the same defect from the
         // other side.
-        hasThirdPlace={matches.some((m) => m.is_third_place)}
+        hasThirdPlace={bracketMatches.some((m) => m.is_third_place)}
       />
 
       {/* Suspension Banner — server actions enforce the actual blocking */}
@@ -206,22 +253,24 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
             waiverStates={waiverStates}
           />
         )}
-        {activeTab === 'bracket' && format === 'round_robin' && (
+        {activeTab === 'pool' && (
           <RoundRobinTab
             event={event}
-            matches={matches}
+            matches={poolMatches}
             participants={participants}
             pairs={pairs}
             isDoubles={isDoubles}
+            phase={poolToBracket ? 'pool' : null}
           />
         )}
-        {activeTab === 'bracket' && format !== 'round_robin' && (
+        {activeTab === 'bracket' && (
           <BracketTab
             event={event}
-            matches={matches}
+            matches={bracketMatches}
             participants={participants}
             pairs={pairs}
             isDoubles={isDoubles}
+            phase={poolToBracket ? 'bracket' : null}
           />
         )}
         {/* Both conditions say the same thing — the tab only exists at

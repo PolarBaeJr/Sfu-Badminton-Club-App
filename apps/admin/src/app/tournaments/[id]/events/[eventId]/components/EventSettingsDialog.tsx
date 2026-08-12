@@ -5,6 +5,7 @@ import { Button, Dialog, Input } from '@badminton/ui';
 import { updateTournamentEvent } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
+import { playsRoundRobin, isPoolToBracket } from '@badminton/shared';
 import type { SeedBy, TournamentMatchFormat } from '@badminton/shared';
 import {
   EventFormatFields,
@@ -36,22 +37,30 @@ export function EventSettingsDialog({
     // columns are not in the generated Database type until the migration has
     // been run and the types regenerated from the database it changed.
     groupCount: (event as { group_count?: number | null }).group_count?.toString() ?? '',
-    qualifiersPerGroup: (event as { qualifiers_per_group?: number | null }).qualifiers_per_group?.toString() ?? '2',
+    // A flat pool_to_bracket pool defaults to 4 qualifiers rather than 2, since
+    // "top 2 of one pool" is a final and nothing else. Same default the server
+    // applies (normalizeGroupShape).
+    qualifiersPerGroup: (event as { qualifiers_per_group?: number | null }).qualifiers_per_group?.toString()
+      ?? (isPoolToBracket(event.format) && !((event as { group_count?: number | null }).group_count ?? 0 > 1) ? '4' : '2'),
   });
   const [maxParticipants, setMaxParticipants] = useState(event.max_participants?.toString() ?? '');
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
 
-  // A round robin produces standings rather than consuming them.
-  const seedableSiblings = event.format === 'round_robin' ? [] : siblings;
+  // A round robin produces standings rather than consuming them, and a
+  // pool_to_bracket event produces its own and consumes them itself.
+  const seedableSiblings = playsRoundRobin(event.format) ? [] : siblings;
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     try {
       const res = await updateTournamentEvent(event.id, {
-        ...toFormatPayload(event.format === 'round_robin' ? { ...values, seededFrom: '' } : values),
+        ...toFormatPayload(
+          playsRoundRobin(event.format) ? { ...values, seededFrom: '' } : values,
+          event.format,
+        ),
         max_participants: maxParticipants === '' ? null : Number(maxParticipants),
       });
       if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
