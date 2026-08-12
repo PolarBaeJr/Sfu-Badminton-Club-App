@@ -245,17 +245,39 @@ export interface RegenerateDrawControl {
  * entered, or the draw is locked. This was a missing door, not a missing room.
  *
  * ------------------------------------------------------------
- * `bracket_generated` ONLY, AND IN PLACE
+ * AND `live` TOO, WHICH THIS FILE USED TO ARGUE AGAINST
  * ------------------------------------------------------------
- * NOT `live`. Once an event is live people are playing, and going live runs
- * forfeitOutOfEventEntries (setEventStatus), which records real walkovers for
- * anybody who withdrew after the draw was published — so a live event that has
- * had a single withdrawal or a single result already fails
- * assertNoResultsEntered. A destructive button that refuses in most of the
- * states it is offered in is worse than no button: it teaches the exec that the
- * console guesses. A live event with genuinely nothing played is a real gap and
- * it is a smaller one; it needs a way back OUT of live, which is a different
- * change with a different capability (tournaments.manage.event.status.write).
+ * The argument that stood here was: going live runs forfeitOutOfEventEntries,
+ * which records real walkovers for anyone who withdrew after the draw was
+ * published, so a live event "has had a single withdrawal or a single result"
+ * and the action would refuse — and a destructive button that usually refuses
+ * teaches the exec that the console guesses.
+ *
+ * It was wrong about the frequency, and the owner walked straight into the gap
+ * it left: they pressed "Start Tournament", the Regenerate button vanished, and
+ * there was no way back. On staging today four events sit at `live` and three
+ * of them have NOTHING played — the go-live sweep only records a walkover when
+ * somebody has actually withdrawn, and most events go live with the field they
+ * drew with. The common live event is redrawable, not the rare one.
+ *
+ * THE GUARD IS THE AUTHORITY, NOT THE STATUS. `live` does not mean "something
+ * has been played" — it means the exec pressed a button. What has been played
+ * is a property of the match rows, and assertNoResultsEntered reads exactly
+ * that, counting walkovers and disputed results and refusing to count byes.
+ * `playedMatches` below is the same question asked on the page (isPlayedMatch,
+ * packages/shared) so the button can grey itself and SAY the number rather than
+ * refusing after the click — one definition, asked in two places, and the
+ * server's answer is still the one that decides.
+ *
+ * WHAT MADE IT SAFE TO OFFER is not in this file: the generators used to end
+ * with an unconditional `status: 'bracket_generated'` write, which from a live
+ * event would have quietly sent it backwards a step. See statusAfterDraw in
+ * tournament-actions/brackets.ts. Flipping this status check without that fix
+ * would have been the whole bug.
+ *
+ * NOT `completed`. assertNotFinalised refuses it outright and nothing here
+ * should suggest otherwise: final positions, tournament points and placement
+ * bonuses were awarded off the current draw and no redraw can take them back.
  *
  * NOT via `checkin`. The other shape was to send the event backwards so the
  * existing Generate button became reachable. It costs more than it looks:
@@ -265,29 +287,46 @@ export interface RegenerateDrawControl {
  * (status.write) on an act that already has one. And it buys less than it looks
  * — participantControls above keeps `add`, `remove`, `editSeed` and `autoSeed`
  * on `registration`, so an event dropped back to `checkin` still cannot take a
- * new entry or be re-seeded by hand. What check-in does unlock is the check-in
- * desk itself and doubles pairing, which is worth having; it is just not worth
- * a reversible status machine, and regenerating in place leaves that door open
- * to be added later without taking this one away.
+ * new entry or be re-seeded by hand.
  *
  * ------------------------------------------------------------
- * A LOCKED DRAW IS SHOWN, NOT HIDDEN
+ * A LOCKED DRAW — AND A PLAYED ONE — ARE SHOWN, NOT HIDDEN
  * ------------------------------------------------------------
  * draw_locked is the event's own switch and the generators refuse on it. The
  * Unlock Draw button sits in the same row and the "Draw Locked" badge is on
  * screen, so the honest thing is a greyed button naming the lock — hiding it
  * would look identical to not holding the capability, which is the one thing
- * this module exists to keep distinct.
+ * this module exists to keep distinct. A draw with results already in it is
+ * greyed for the same reason and named the same way.
  */
+const REDRAWABLE_STATUSES = new Set<string>(['bracket_generated', 'live']);
+
 export function regenerateDrawControl(
-  event: { status: string; drawLocked: boolean },
+  event: {
+    status: string;
+    drawLocked: boolean;
+    /**
+     * Matches with a real result — isPlayedMatch, so byes are NOT counted.
+     * Optional so a caller that has not got the figure gets the old behaviour
+     * (offer it, let the server refuse) rather than a silently wrong greying.
+     */
+    playedMatches?: number;
+  },
   can: DrawCapabilities,
 ): RegenerateDrawControl {
-  if (event.status !== 'bracket_generated' || !can.generate) {
+  if (!REDRAWABLE_STATUSES.has(event.status) || !can.generate) {
     return { show: false, blockedReason: null };
   }
-  return {
-    show: true,
-    blockedReason: event.drawLocked ? 'Unlock the draw before redrawing it' : null,
-  };
+  // The lock is named first: it is the one the exec can undo from this same row.
+  if (event.drawLocked) {
+    return { show: true, blockedReason: 'Unlock the draw before redrawing it' };
+  }
+  const played = event.playedMatches ?? 0;
+  if (played > 0) {
+    return {
+      show: true,
+      blockedReason: `${played} match${played === 1 ? ' has' : 'es have'} been played — void ${played === 1 ? 'it' : 'them'} first`,
+    };
+  }
+  return { show: true, blockedReason: null };
 }

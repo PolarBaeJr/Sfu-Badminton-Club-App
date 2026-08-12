@@ -6,6 +6,7 @@ import {
   TOURNAMENT_EVENT_TYPE_LABELS,
   TOURNAMENT_EVENT_STATUS_LABELS,
   TOURNAMENT_EVENT_STATUS_COLORS,
+  isPlayedMatch,
 } from '@badminton/shared';
 import type {
   TournamentEventType,
@@ -113,6 +114,14 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
   const completedMatches = matches.filter((m) =>
     m.status === 'completed' || m.status === 'walkover' || m.is_bye
   ).length;
+  // A SECOND, NARROWER COUNT, and the two must not be merged. `completedMatches`
+  // above is the PROGRESS figure — how many slots no longer need a court — so it
+  // counts byes, which is right for "11/15 matches" and for greying Finalize.
+  // `playedMatches` is how many matches somebody actually PLAYED, which is the
+  // question the redraw asks: rebuilding the draw deletes every match, and a bye
+  // has no score and no Elo to lose. Gating the redraw on the progress figure
+  // would grey the button on every draw whose field is not a power of two.
+  const playedMatches = matches.filter(isPlayedMatch).length;
 
   return (
     <div className="space-y-6">
@@ -126,6 +135,7 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
         checkedIn={checkedIn}
         totalMatches={totalMatches}
         completedMatches={completedMatches}
+        playedMatches={playedMatches}
         drawCapabilities={drawCapabilities}
         // WHETHER THE DRAW THAT EXISTS HAS A BRONZE MATCH, read off the matches
         // themselves. The third-place choice is deliberately not stored on

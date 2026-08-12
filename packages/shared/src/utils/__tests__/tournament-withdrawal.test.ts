@@ -5,6 +5,8 @@ import {
   isOpenMatch,
   forfeitOutcome,
   OPEN_MATCH_STATUSES,
+  isPlayedMatch,
+  RESULT_MATCH_STATUSES,
 } from '../tournament-withdrawal';
 
 describe('eventHasDraw', () => {
@@ -111,5 +113,77 @@ describe('forfeitOutcome', () => {
 
   it('returns null for an empty match shell', () => {
     expect(forfeitOutcome({}, 'p1', false)).toBeNull();
+  });
+});
+
+describe('isPlayedMatch — the one definition of "somebody played this"', () => {
+  // THE DEFECT THIS EXISTS TO STOP HAPPENING TWICE. Generation writes
+  // status:'completed' onto every bye, and the redraw guard counted exactly
+  // that set of statuses — so every field that is not a power of two produced a
+  // draw the guard called "results already entered", about matches with no
+  // score, no Elo and no opponent to void. The guard was fixed; putting the
+  // rule here is what stops the event page reinventing it wrongly one layer up.
+  it('does not count a bye, however completed it says it is', () => {
+    expect(isPlayedMatch({ status: 'completed', is_bye: true })).toBe(false);
+  });
+
+  it('counts a real completed match', () => {
+    expect(isPlayedMatch({ status: 'completed', is_bye: false })).toBe(true);
+  });
+
+  // A WALKOVER IS A RESULT even though nobody played: recordWalkover rates it,
+  // and going live records real ones for anybody who withdrew after the draw
+  // was published. Rebuilding the draw over one would erase Elo that has moved.
+  it('counts a walkover and a disputed result', () => {
+    expect(isPlayedMatch({ status: 'walkover', is_bye: false })).toBe(true);
+    expect(isPlayedMatch({ status: 'disputed', is_bye: null })).toBe(true);
+  });
+
+  // NOT the complement of OPEN_MATCH_STATUSES. Voiding takes the result and its
+  // Elo back off, so a voided match is history that no longer counts — and it
+  // is the remedy the redraw's refusal points the exec at, so it has to be
+  // false here or that remedy does nothing.
+  it('does not count a voided match, or one nobody has reached yet', () => {
+    for (const status of ['voided', 'pending', 'ready', 'live']) {
+      expect(isPlayedMatch({ status, is_bye: false }), status).toBe(false);
+    }
+  });
+
+  // is_bye is `BOOLEAN DEFAULT false` and nullable (00001), and nothing writes
+  // it on a non-bye match. Treating null as "might be a bye" would exclude
+  // every real match and make the count vacuous — the same shape of failure,
+  // from the other side.
+  it('treats a null or missing is_bye as not-a-bye', () => {
+    expect(isPlayedMatch({ status: 'completed', is_bye: null })).toBe(true);
+    expect(isPlayedMatch({ status: 'completed' })).toBe(true);
+  });
+
+  it('says nothing about a status it has never heard of', () => {
+    expect(isPlayedMatch({ status: 'retired' })).toBe(false);
+    expect(isPlayedMatch({})).toBe(false);
+  });
+
+  it('lists the three statuses the server guard filters on', () => {
+    // The server cannot call isPlayedMatch — its half is a PostgREST `.in()`
+    // filter — so the list itself is what is shared, and this is what keeps the
+    // two halves the same list.
+    expect([...RESULT_MATCH_STATUSES]).toEqual(['completed', 'walkover', 'disputed']);
+    for (const status of RESULT_MATCH_STATUSES) {
+      expect(isPlayedMatch({ status }), status).toBe(true);
+    }
+  });
+
+  // Every match is exactly one of: open, played, or voided. A status that is
+  // neither open nor played nor voided would be a row the console has no
+  // opinion about — invisible to the redraw guard and to the forfeit sweep at
+  // once. The schema's CHECK constraint lists exactly these seven.
+  it('partitions every status the schema allows', () => {
+    const ALL = ['pending', 'ready', 'live', 'completed', 'walkover', 'disputed', 'voided'];
+    for (const status of ALL) {
+      const open = isOpenMatch(status);
+      const played = isPlayedMatch({ status });
+      expect(open && played, status).toBe(false);
+      expect(open || played || status === 'voided', status).toBe(true);
+    }
   });
 });

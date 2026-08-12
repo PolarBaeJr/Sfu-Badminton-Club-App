@@ -4,7 +4,7 @@ import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { runAction, type ActionResult } from '../action-result';
-import { isDoublesEvent, nextPowerOf2, getRoundName, ExpectedError } from '@badminton/shared';
+import { isDoublesEvent, nextPowerOf2, getRoundName, ExpectedError, RESULT_MATCH_STATUSES } from '@badminton/shared';
 import type { SeedBy } from '@badminton/shared';
 import {
   requireCapability,
@@ -75,7 +75,11 @@ async function assertNoResultsEntered(adminClient: ReturnType<typeof createAdmin
     .from('tournament_matches')
     .select('id', { count: 'exact', head: true })
     .eq('event_id', eventId)
-    .in('status', ['completed', 'walkover', 'disputed'])
+    // RESULT_MATCH_STATUSES, not a literal list, since the event page now counts
+    // the same thing to decide whether to offer the button at all — see
+    // isPlayedMatch in packages/shared. The `is_bye` half is spelt out here
+    // rather than shared because it has to be expressed as a PostgREST filter.
+    .in('status', [...RESULT_MATCH_STATUSES])
     .not('is_bye', 'is', true);
   // THE ERROR WAS DISCARDED, AND THIS GUARD FAILS OPEN WITHOUT IT. supabase-js
   // resolves rather than rejects on a PostgREST error and leaves `count` null,
@@ -87,9 +91,46 @@ async function assertNoResultsEntered(adminClient: ReturnType<typeof createAdmin
     Sentry.captureException(error);
     throw new Error(`Could not check whether this event has results yet, so the draw was left alone: ${error.message}`);
   }
+  // NAMES THE NUMBER, because the refusal is now reachable from a live event
+  // where the exec cannot see at a glance what has been played. "Results have
+  // already been entered" on a 128-match draw is not something anybody can act
+  // on; "3 matches have a result" is.
   if ((count ?? 0) > 0) {
-    throw new Error('Results have already been entered for this event — regenerating would erase them. Void those matches first if you really need to reset the draw.');
+    const n = count as number;
+    throw new ExpectedError(
+      `${n} match${n === 1 ? '' : 'es'} in this event ${n === 1 ? 'has' : 'have'} a result, and rebuilding the draw deletes every match — including ${n === 1 ? 'that one' : 'those'}. ` +
+      'Void or undo them first if the draw really has to be rebuilt. Byes do not count towards this.',
+    );
   }
+}
+
+/**
+ * WHAT STATUS AN EVENT IS LEFT IN BY A (RE)DRAW.
+ *
+ * THIS IS THE CHANGE THAT LETS THE BUTTON BE OFFERED AT `live`, not the status
+ * check in participant-controls.ts. Both generators ended with an unconditional
+ *
+ *     .update({ status: 'bracket_generated', ... })
+ *
+ * which was invisible while the only caller was the check-in press — the event
+ * was AT check-in, so writing `bracket_generated` was the forward step. The
+ * moment a redraw is reachable from a running event it stops being a forward
+ * step and becomes the only write in the whole console that sends an event
+ * BACKWARDS: the header's primary button would revert from "Finalize
+ * Tournament" to "Start Tournament", the players' app would stop showing the
+ * event as under way, and pressing Start again would re-run the go-live
+ * forfeit sweep. setEventStatus's transition table is deliberately forward-only
+ * (registration -> checkin -> bracket_generated -> live -> completed) precisely
+ * so that cannot happen, and this would have gone around it silently.
+ *
+ * REDRAWING IS NOT A STATUS CHANGE. It replaces the matches; it does not
+ * un-start the event. A live event stays live.
+ *
+ * `completed` is not handled here because assertNotFinalised has already
+ * refused it, and no other status can reach a generator with a draw to replace.
+ */
+function statusAfterDraw(event: Record<string, unknown>): 'live' | 'bracket_generated' {
+  return event.status === 'live' ? 'live' : 'bracket_generated';
 }
 
 // ============================================================
@@ -655,7 +696,7 @@ async function generateSingleEliminationBracketImpl(eventId: string, includeThir
 
   // Update event status
   await adminClient.from('tournament_events')
-    .update({ status: 'bracket_generated', updated_at: new Date().toISOString() })
+    .update({ status: statusAfterDraw(event), updated_at: new Date().toISOString() })
     .eq('id', eventId);
 
   await logAudit(adminClient, {
@@ -672,6 +713,10 @@ async function generateSingleEliminationBracketImpl(eventId: string, includeThir
       // and "not asked for". The middle one is the only silent outcome in this
       // function, so it is the one the audit trail owes an explanation for.
       third_place_match: includeThirdPlace ? (thirdPlaceId ? 'created' : 'skipped_no_semi_finals') : 'not_requested',
+      // A redraw of a RUNNING event is the one worth being able to find again
+      // in the audit trail months later — it is the only case where the matches
+      // this deleted had already been published to the people playing them.
+      redrawn_live: event.status === 'live',
       // Recorded because a pool-seeded draw is not reproducible from the event
       // row alone — the pool can be edited afterwards.
       ...(seededFromPool
@@ -822,7 +867,7 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
 
   // Update event status
   await adminClient.from('tournament_events')
-    .update({ status: 'bracket_generated', updated_at: new Date().toISOString() })
+    .update({ status: statusAfterDraw(event), updated_at: new Date().toISOString() })
     .eq('id', eventId);
 
   await logAudit(adminClient, {
@@ -830,7 +875,7 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
     event_id: eventId,
     action: 'round_robin_generated',
     performed_by: admin.id,
-    details: { participants: N, rounds: numRounds },
+    details: { participants: N, rounds: numRounds, redrawn_live: event.status === 'live' },
   });
 
   revalidateEventPaths(event.tournament_id, eventId);

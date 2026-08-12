@@ -385,7 +385,7 @@ import {
   enterMatchResult, editMatchResult, enterWalkover, voidMatch, undoMatchResult,
 } from '../tournament-actions/results';
 import { finalizeEvent, applyPlacementBonuses } from '../tournament-actions/finalize';
-import { generateSingleEliminationBracket } from '../tournament-actions/brackets';
+import { generateSingleEliminationBracket, generateRoundRobinMatches } from '../tournament-actions/brackets';
 import { withdrawParticipant } from '../tournament-actions/participants';
 import {
   settleWrites, assertWritesSucceeded, reverseEloSnapshot, undoDecidedResult,
@@ -1693,7 +1693,12 @@ describe('regenerating a draw that already exists', () => {
     const res = await generateSingleEliminationBracket('e1', false);
 
     expect(res.ok).toBe(false);
-    expect(res.ok === false && res.error).toMatch(/Results have already been entered/);
+    // NAMES THE NUMBER. The refusal is now reachable from a live event, where
+    // the exec cannot see at a glance what has been played, so "results have
+    // already been entered" on a 128-match draw is not something anybody can
+    // act on.
+    expect(res.ok === false && res.error).toMatch(/1 match in this event has a result/);
+    expect(res.ok === false && res.error).toMatch(/Byes do not count/);
     // Refused before the delete — the draw people are reading is still there.
     expect(store.db.tournament_matches!.length).toBeGreaterThan(0);
   });
@@ -1765,6 +1770,105 @@ describe('regenerating a draw that already exists', () => {
     const seeded = store.db.tournament_matches!.flatMap((m) => [m.participant_a_id, m.participant_b_id]);
     expect(seeded).not.toContain('p-3');
     expect(byes()).toHaveLength(1);
+  });
+
+  // ------------------------------------------------------------
+  // REDRAWING A LIVE EVENT
+  // ------------------------------------------------------------
+  //
+  // The owner pressed "Start Tournament" and the Regenerate button vanished
+  // with no way back. Three of the four events sitting at `live` on staging
+  // have nothing played at all, so this is the common live event and not a
+  // corner of one.
+
+  it('REDRAWS A LIVE EVENT AND LEAVES IT LIVE', async () => {
+    // THE BUG THIS FEATURE WOULD HAVE SHIPPED WITH, and it is not in the guard.
+    // Both generators ended with an unconditional
+    // `.update({ status: 'bracket_generated' })`, which was the forward step
+    // while the only caller was the check-in press. Reached from a live event
+    // it becomes the only write in the console that sends an event BACKWARDS:
+    // the header's primary button reverts from "Finalize Tournament" to "Start
+    // Tournament", and pressing it re-runs the go-live forfeit sweep.
+    // setEventStatus's transition table is forward-only precisely so that
+    // cannot happen, and this went around it.
+    seedField(5);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    Object.assign(event(), { status: 'live' });
+    const firstIds = store.db.tournament_matches!.map((m) => m.id);
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    expect(res.ok).toBe(true);
+    expect(event().status).toBe('live');
+    // Genuinely rebuilt, not quietly skipped: every match is a new row.
+    const secondIds = store.db.tournament_matches!.map((m) => m.id);
+    expect(secondIds.some((id) => firstIds.includes(id))).toBe(false);
+    // ...and the byes came back, so the guard did not mistake them for results
+    // on the way through.
+    expect(byes().length).toBeGreaterThan(0);
+  });
+
+  it('leaves a live round robin live too', async () => {
+    // The same unconditional write sat at the bottom of the other generator.
+    Object.assign(event(), { format: 'round_robin' });
+    seedField(4);
+    Object.assign(event(), { format: 'round_robin' });
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+    Object.assign(event(), { status: 'live' });
+
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+
+    expect(event().status).toBe('live');
+  });
+
+  it('still refuses a live event the moment anything has been played', async () => {
+    // The status is not the authority — the match rows are. A live event with a
+    // real result must refuse exactly as a bracket_generated one does, and
+    // nothing may be deleted on the way to the refusal.
+    seedField(4);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    Object.assign(event(), { status: 'live' });
+    const played = store.db.tournament_matches!.find((m) => m.round_number === 1)!;
+    Object.assign(played, { status: 'completed', is_bye: false });
+    const before = store.db.tournament_matches!.length;
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/1 match in this event has a result/);
+    expect(store.db.tournament_matches!).toHaveLength(before);
+    expect(event().status).toBe('live');
+  });
+
+  it('refuses a live event that has a WALKOVER, which the go-live sweep records', async () => {
+    // A walkover is rated (recordWalkover -> applyTournamentMatchElo), so it is
+    // a result in every sense that matters here even though nobody played. This
+    // is the case the old "never at live" rule was written around, and it is
+    // still refused — it is just no longer the reason to hide the button.
+    seedField(4);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    Object.assign(event(), { status: 'live' });
+    const m = store.db.tournament_matches!.find((x) => x.round_number === 1)!;
+    Object.assign(m, { status: 'walkover', is_bye: false });
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/1 match in this event has a result/);
+  });
+
+  it('does not treat a VOIDED match as something that was played', async () => {
+    // Voiding takes the result and its Elo back off (voidMatch -> reverse
+    // snapshot), so a voided match is history that no longer counts. It is the
+    // remedy the refusal above points the exec at, and it has to actually work.
+    seedField(4);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    Object.assign(event(), { status: 'live' });
+    const m = store.db.tournament_matches!.find((x) => x.round_number === 1)!;
+    Object.assign(m, { status: 'voided', is_bye: false });
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    expect(event().status).toBe('live');
   });
 
   /**

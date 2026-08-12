@@ -252,53 +252,103 @@ describe('participantControls — capability, not just status', () => {
 });
 
 describe('regenerateDrawControl — a way back to Generate', () => {
-  const at = (status: string, drawLocked = false) => ({ status, drawLocked });
+  const at = (status: string, drawLocked = false, playedMatches = 0) =>
+    ({ status, drawLocked, playedMatches });
 
   it('offers the redraw exactly where a draw exists and can still honestly be redone', () => {
-    const c = regenerateDrawControl(at('bracket_generated'), EVERYTHING);
-    expect(c.show).toBe(true);
-    expect(c.blockedReason).toBeNull();
+    for (const status of ['bracket_generated', 'live']) {
+      const c = regenerateDrawControl(at(status), EVERYTHING);
+      expect(c.show, status).toBe(true);
+      expect(c.blockedReason, status).toBeNull();
+    }
+  });
+
+  it('OFFERS IT AT `live`, WHICH IT USED TO REFUSE ON PRINCIPLE', () => {
+    // The old rule was `status !== 'bracket_generated' -> hidden`, argued on
+    // the grounds that going live records walkovers for anyone who withdrew
+    // (setEventStatus -> forfeitOutOfEventEntries) so the action would usually
+    // refuse anyway. It was wrong about the frequency and the owner walked into
+    // the gap: they pressed "Start Tournament" and the button disappeared with
+    // no way back. Three of the four live events on staging have nothing played
+    // — the sweep only fires when somebody actually withdrew.
+    const live = regenerateDrawControl(at('live'), EVERYTHING);
+    expect(live.show).toBe(true);
+    expect(live.blockedReason).toBeNull();
   });
 
   it('never offers it at any other status', () => {
-    // `live` is the deliberate omission, not an oversight: going live records
-    // real walkovers for anybody who withdrew after the draw was published
-    // (setEventStatus -> forfeitOutOfEventEntries), so the action refuses on
-    // assertNoResultsEntered for most live events. A destructive button that
-    // usually refuses is worse than no button.
-    for (const status of ['registration', 'checkin', 'live', 'completed', 'cancelled', 'archived']) {
+    // `completed` is the one that stays refused, and not for want of a guard:
+    // finalizeEvent has already awarded final positions, tournament points and
+    // placement bonuses off the current draw, and nothing in the console can
+    // take those back (assertNotFinalised).
+    for (const status of ['registration', 'checkin', 'completed', 'cancelled', 'archived']) {
       expect(regenerateDrawControl(at(status), EVERYTHING).show, status).toBe(false);
     }
   });
 
   it('asks the capability, and asks only that one', () => {
-    expect(regenerateDrawControl(at('bracket_generated'), NOBODY).show).toBe(false);
-    expect(regenerateDrawControl(at('bracket_generated'), only('generate')).show).toBe(true);
-    // No other key buys it. Holding the seeding desk or the roster is not
-    // permission to throw the draw away and build another.
-    for (const key of Object.keys(NOBODY) as Array<keyof DrawCapabilities>) {
-      if (key === 'generate') continue;
-      expect(regenerateDrawControl(at('bracket_generated'), only(key)).show, key).toBe(false);
+    for (const status of ['bracket_generated', 'live']) {
+      expect(regenerateDrawControl(at(status), NOBODY).show, status).toBe(false);
+      expect(regenerateDrawControl(at(status), only('generate')).show, status).toBe(true);
+      // No other key buys it. Holding the seeding desk or the roster is not
+      // permission to throw the draw away and build another.
+      for (const key of Object.keys(NOBODY) as Array<keyof DrawCapabilities>) {
+        if (key === 'generate') continue;
+        expect(regenerateDrawControl(at(status), only(key)).show, `${status}/${key}`).toBe(false);
+      }
     }
   });
 
   it('shows a locked draw greyed with a reason rather than hiding it', () => {
     // Hiding it would look identical to not holding the capability, and the
     // Unlock Draw button is right next to it.
-    const locked = regenerateDrawControl(at('bracket_generated', true), EVERYTHING);
-    expect(locked.show).toBe(true);
-    expect(locked.blockedReason).toBe('Unlock the draw before redrawing it');
+    for (const status of ['bracket_generated', 'live']) {
+      const locked = regenerateDrawControl(at(status, true), EVERYTHING);
+      expect(locked.show, status).toBe(true);
+      expect(locked.blockedReason, status).toBe('Unlock the draw before redrawing it');
+    }
+  });
+
+  it('greys a draw with results in it and SAYS HOW MANY', () => {
+    // The server refuses this either way (assertNoResultsEntered). Saying it
+    // before the click is the difference between "the console knows" and "the
+    // console guesses" — and on a 128-match live draw the number is the only
+    // part of the message anybody can act on.
+    const one = regenerateDrawControl(at('live', false, 1), EVERYTHING);
+    expect(one.show).toBe(true);
+    expect(one.blockedReason).toBe('1 match has been played — void it first');
+
+    const many = regenerateDrawControl(at('bracket_generated', false, 7), EVERYTHING);
+    expect(many.blockedReason).toBe('7 matches have been played — void them first');
+  });
+
+  it('names the LOCK before the results when both are true', () => {
+    // Both refuse, but only one of them has its remedy in the same button row.
+    const both = regenerateDrawControl(at('live', true, 3), EVERYTHING);
+    expect(both.blockedReason).toBe('Unlock the draw before redrawing it');
+  });
+
+  it('counts nothing when the caller has not supplied a figure', () => {
+    // `playedMatches` is optional so a caller that has not got the count falls
+    // back to the old behaviour — offer it, let the server refuse — rather than
+    // greying the button on a silent `undefined`.
+    const c = regenerateDrawControl({ status: 'live', drawLocked: false }, EVERYTHING);
+    expect(c.show).toBe(true);
+    expect(c.blockedReason).toBeNull();
   });
 
   it('never offers a reason for a button it is not drawing', () => {
     // A blockedReason on a hidden control would be rendered by a caller that
     // read the fields in the wrong order.
-    for (const status of ['registration', 'checkin', 'live', 'completed']) {
+    for (const status of ['registration', 'checkin', 'completed']) {
       for (const drawLocked of [true, false]) {
-        const c = regenerateDrawControl(at(status, drawLocked), EVERYTHING);
-        expect(c.blockedReason, status).toBeNull();
+        for (const played of [0, 4]) {
+          const c = regenerateDrawControl(at(status, drawLocked, played), EVERYTHING);
+          expect(c.blockedReason, status).toBeNull();
+        }
       }
     }
     expect(regenerateDrawControl(at('bracket_generated', true), NOBODY).blockedReason).toBeNull();
+    expect(regenerateDrawControl(at('live', false, 2), NOBODY).blockedReason).toBeNull();
   });
 });

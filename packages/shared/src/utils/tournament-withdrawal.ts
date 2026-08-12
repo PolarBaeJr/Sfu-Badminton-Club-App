@@ -35,6 +35,52 @@ export function isOpenMatch(matchStatus: string | null | undefined): boolean {
   return (OPEN_MATCH_STATUSES as readonly string[]).includes(matchStatus ?? '');
 }
 
+// ------------------------------------------------------------
+// "SOMETHING HAS BEEN PLAYED HERE" — ONE DEFINITION, TWO CALLERS
+// ------------------------------------------------------------
+//
+// NOT the complement of OPEN_MATCH_STATUSES. 'voided' is neither: a voided
+// match has had its result and its Elo taken back off, so it is history that
+// no longer counts, and it must not block a redraw.
+//
+// It lives in shared because two places now have to agree on it and they are in
+// different processes. The server guard (admin tournament-actions/brackets.ts,
+// assertNoResultsEntered) refuses to rebuild a draw over a result; the event
+// page counts the same thing to decide whether to grey the Regenerate button
+// and say why. If those two definitions drift, the console either offers a
+// button that always refuses or greys one that would have worked.
+//
+// AND THE COUNT ON THE PAGE IS NOT THE ONE ALREADY THERE. EventControlCenter's
+// `completedMatches` is `status === 'completed' || status === 'walkover' ||
+// is_bye` — the progress figure, which counts a bye because a bye is a slot
+// that no longer needs a court. Gating the redraw on that number would have
+// reproduced, in the client, the exact bye defect the server guard was fixed
+// for: every draw whose field is not a power of two would show the button
+// greyed for matches nobody played.
+export const RESULT_MATCH_STATUSES = ['completed', 'walkover', 'disputed'] as const;
+
+export interface PlayableMatch {
+  status?: string | null;
+  is_bye?: boolean | null;
+}
+
+/**
+ * Has this match been decided by something that happened?
+ *
+ * A BYE IS NOT A RESULT. Generation writes `status: 'completed'` onto a bye
+ * because it has already been decided — its winner advances with nothing to
+ * play — so the status alone cannot be trusted. There is no score, no Elo and
+ * no opponent, and nothing about a bye is evidence that anybody turned up.
+ *
+ * A WALKOVER IS. It is rated (recordWalkover -> applyTournamentMatchElo), and
+ * going live records real ones for anybody who withdrew after the draw was
+ * published, so it carries exactly the consequences a played match carries.
+ */
+export function isPlayedMatch(match: PlayableMatch): boolean {
+  if (match.is_bye === true) return false;
+  return (RESULT_MATCH_STATUSES as readonly string[]).includes(match.status ?? '');
+}
+
 export interface ForfeitableMatch {
   participant_a_id?: string | null;
   participant_b_id?: string | null;

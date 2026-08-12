@@ -34,7 +34,14 @@ interface Props {
   totalEntries: number;
   checkedIn: number;
   totalMatches: number;
+  /** Progress: decided slots, byes included. Feeds the stats row and Finalize. */
   completedMatches: number;
+  /**
+   * Matches somebody actually played — isPlayedMatch, so byes are excluded.
+   * The redraw is the only control that asks this narrower question; see
+   * EventControlCenter for why the two counts must stay apart.
+   */
+  playedMatches: number;
   /** Only `generate` is read here; the rest belong to the participants tab. */
   drawCapabilities: DrawCapabilities;
   /** Does the draw that exists right now carry a 3rd place playoff match? */
@@ -43,7 +50,7 @@ interface Props {
 
 const STATUS_STEPS: TournamentEventStatus[] = ['registration', 'checkin', 'bracket_generated', 'live', 'completed'];
 
-export function EventHeader({ tournament, event, siblingEvents, isDoubles, totalEntries, checkedIn, totalMatches, completedMatches, drawCapabilities, hasThirdPlace }: Props) {
+export function EventHeader({ tournament, event, siblingEvents, isDoubles, totalEntries, checkedIn, totalMatches, completedMatches, playedMatches, drawCapabilities, hasThirdPlace }: Props) {
   const [loading, setLoading] = useState(false);
   const [lockLoading, setLockLoading] = useState(false);
   const [regenLoading, setRegenLoading] = useState(false);
@@ -126,7 +133,7 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
   }
 
   const regenerate = regenerateDrawControl(
-    { status, drawLocked },
+    { status, drawLocked, playedMatches },
     drawCapabilities,
   );
   const eventLabel = TOURNAMENT_EVENT_TYPE_LABELS[eventType] ?? eventType;
@@ -136,9 +143,15 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
    *
    * Calls the same two actions the primary button calls at check-in, on an
    * event that already has a bracket. Both delete every match for the event and
-   * rebuild from the current field, and both leave the status at
-   * `bracket_generated` — so there is no state to move and nothing to put back
-   * if it refuses.
+   * rebuild from the current field, and both leave the event's status exactly
+   * where they found it (statusAfterDraw, tournament-actions/brackets.ts) — so
+   * there is no state to move and nothing to put back if it refuses.
+   *
+   * OFFERED AT `live` AS WELL AS `bracket_generated`. The owner pressed "Start
+   * Tournament" and the button vanished with no way back, and most live events
+   * have nothing played. What decides it is not the status but the match rows:
+   * `playedMatches` greys the button here and assertNoResultsEntered refuses on
+   * the server, and both count the same thing.
    *
    * IT IS NOT A THIN RE-RUN. Everything the first generation checked is checked
    * again, because the field can have changed underneath it: a pool-seeded
@@ -155,7 +168,9 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
     regenThirdPlace.current = hasThirdPlace;
 
     const ok = await confirm({
-      title: `Regenerate the ${eventLabel} draw?`,
+      title: status === 'live'
+        ? `Redraw the ${eventLabel} while it is running?`
+        : `Regenerate the ${eventLabel} draw?`,
       message: (
         <div className="space-y-3">
           <p>
@@ -164,11 +179,26 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
             {' '}in the event right now. Match numbers, courts and who plays whom all change, so anyone
             who has already been told their first-round opponent will have the wrong one.
           </p>
+          {/* THE LIVE PARAGRAPH SAYS THE TWO THINGS THE EXEC CANNOT SEE FROM THE
+              SCREEN: that the console has no idea whether a match is on court
+              right now (nothing writes tournament_matches.court or the 'live'
+              match status, so a match sits at "ready" from the moment its two
+              names are known until a score is typed in), and that the event is
+              not being un-started. Both are consequences of this button that
+              the bracket behind the dialog does not show. */}
+          {status === 'live' && (
+            <p>
+              This event is under way. Nothing has been played yet as far as the console can tell —
+              but a match that is being played right now looks exactly like one that has not started,
+              because it only stops being &ldquo;ready&rdquo; when a score is entered. Check the courts
+              before you do this. The event stays live either way; only the matches are replaced.
+            </p>
+          )}
           <p>
             Everyone in the new draw is notified that the bracket has been published, again.
             {seededFromPool && ' The field is re-read from the pool standings, so a pool result edited since the first draw is picked up.'}
-            {' '}Nothing that has been played is touched: if any result has been entered, this is refused
-            rather than done.
+            {' '}Nothing that has been played is touched: if any result, walkover or forfeit has been
+            recorded, this is refused rather than done. Byes do not count as played.
           </p>
           {thirdPlaceApplies && (
             <ThirdPlaceChoice
@@ -178,7 +208,7 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
           )}
         </div>
       ),
-      confirmLabel: 'Regenerate draw',
+      confirmLabel: status === 'live' ? 'Redraw the live event' : 'Regenerate draw',
       danger: true,
     });
     if (!ok) return;
