@@ -48,6 +48,7 @@ import {
 } from '@/lib/permission-batch';
 import {
   effectiveCapabilities,
+  isBuiltinPermissionRole,
   resolvePermissions,
   CAPABILITIES,
   EDITOR_OFFERABLE,
@@ -289,17 +290,46 @@ const BASELINE_PREFIX = 'baseline:';
 // Built per row for the same reason: the first option names the person's own
 // level, so it cannot be a module constant any more.
 //
-// THE CLUB'S OWN BASELINES SIT BELOW THE SHIPPED ONES, in the order the manager
-// lists them. They are a different KIND of thing — rows somebody wrote, not
-// names in the code — so they are grouped under their own heading rather than
-// mixed into the five, and picking one says which it was.
-function roleOptions(level: AccessLevel, baselines: readonly CustomBaseline[]) {
+// THE FOUR VP JOBS ARE NOT IN THIS LIST ANY MORE, AND LEAVING THEM WOULD BE THE
+// BUG THIS WHOLE FEATURE HAS TO AVOID. Since 00104 they are ROWS, editable by
+// the club — and they arrive here through `baselines` like any other. A literal
+// `finance` option beside the editable Finance row would be two things with one
+// name and different answers: picking the option resolves through the hard-coded
+// ROLE_DEFAULTS, which is now only the SEED, while picking the row copies what
+// the club actually edited it to say. So the built-ins are offered exactly once,
+// as rows, and PERMISSION_ROLES keeps them only for reading legacy storage.
+//
+// `custom` STAYS, because it is not a VP job — it is the empty base, the thing a
+// hand-picked set is stored as, and there is no row that could replace it.
+//
+// A LEGACY ROLE STILL SHOWS IF THE PERSON HAS ONE. 00104 rewrites every such row,
+// but a select whose value is absent from its options renders as blank — which
+// would read as "no role" on somebody who has one, on the screen where that
+// misreading is most expensive. So the person's own stored role is added back if
+// it is not otherwise offered, and choosing anything else replaces it for good.
+function roleOptions(
+  level: AccessLevel,
+  baselines: readonly CustomBaseline[],
+  storedRole: PermissionRole | null,
+) {
+  const roles = PERMISSION_ROLES.filter(
+    (role) => !isBuiltinPermissionRole(role) || role === storedRole,
+  );
   return [
     { value: LEVEL_DEFAULT_OPTION, label: LEVEL_ACCESS_LABELS[level] },
-    ...PERMISSION_ROLES.map((role) => ({ value: role, label: PERMISSION_ROLE_LABELS[role] })),
+    ...roles.map((role) => ({
+      value: role,
+      label: isBuiltinPermissionRole(role)
+        ? `${PERMISSION_ROLE_LABELS[role]} (old)`
+        : PERMISSION_ROLE_LABELS[role],
+    })),
+    // THE CLUB'S OWN BASELINES AND THE FOUR BUILT-INS, in the order the manager
+    // lists them. A built-in is not prefixed "Baseline —": to the person picking
+    // it, Finance is still Finance, and the fact that it is now a row rather than
+    // a constant is not something the picker should make them think about.
     ...baselines.map((baseline) => ({
       value: `${BASELINE_PREFIX}${baseline.id}`,
-      label: `Baseline — ${baseline.name}`,
+      label: baseline.builtinRole !== null ? baseline.name : `Baseline — ${baseline.name}`,
     })),
   ];
 }
@@ -1352,7 +1382,7 @@ export function PermissionEditor({
                       <div className="w-[200px]">
                         <Select
                           label="Starts from"
-                          options={roleOptions(selectedLevel, baselines)}
+                          options={roleOptions(selectedLevel, baselines, role)}
                           // A baseline holder reads back as their baseline, not
                           // as "Hand-picked": the label is the whole reason the
                           // column exists, and a select that forgot it the

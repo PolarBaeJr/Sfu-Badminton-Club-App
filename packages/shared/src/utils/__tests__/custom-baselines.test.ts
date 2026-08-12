@@ -177,18 +177,38 @@ describe('what may go in a baseline', () => {
     }
   });
 
-  // And the floor stated the other way: a baseline holding EVERY capability
-  // there is still resolves to a set that changes nobody's level. The two
+  // And the floor stated the other way: a baseline holding EVERY capability the
+  // ceiling allows still resolves to a set that changes nobody's level. The two
   // markers that decide a level are not in the vocabulary, so the widest
   // possible baseline leaves accessLevelFor() with nothing to read.
-  it('the widest baseline the ceiling allows is still only the exec baseline', () => {
+  //
+  // THE CEILING STOPPED BEING THE EXEC BASELINE when the four VP jobs became
+  // editable (00104): the club owner wanted a treasurer who can see the club's
+  // books, which no exec can. So the widest baseline is now the exec baseline
+  // PLUS four finance reads — asserted as a derivation from EDITOR_OFFERABLE
+  // rather than a fresh list, so this test says "the ceiling is the ceiling"
+  // instead of pinning the same numbers twice.
+  it('the widest baseline the ceiling allows is the ceiling, and no more', () => {
     const widest = normaliseBaselineCapabilities([...EDITOR_OFFERABLE]);
     expect(baselineCapabilityRefusal(widest, ALL)).toBeNull();
 
-    // A trainer composed with it holds exactly the exec baseline — a widening,
+    // A trainer composed with it holds exactly the ceiling — a widening,
     // deliberately, and bounded by it. Never more.
     const composed = effectiveCapabilities('trainer', resolvePermissions('custom', widest, []));
-    expect([...composed].sort()).toEqual([...EXEC_BASELINE].sort());
+    expect([...composed].sort()).toEqual([...EDITOR_OFFERABLE].sort());
+
+    // AND STILL BOUNDED BY SOMETHING NAMED. The point of the old assertion was
+    // that the widest composition is a set somebody enumerated, not "everything"
+    // — so it is restated as the gap, which is the four reads and nothing else.
+    const beyond = [...composed].filter(
+      (capability) => !(EXEC_BASELINE as readonly Capability[]).includes(capability),
+    );
+    expect(beyond.sort()).toEqual([
+      'fees.clubfees.read',
+      'fees.netposition.read',
+      'fees.otherincome.read',
+      'fees.reinstatements.read',
+    ]);
 
     // ...and an uncomposed trainer is untouched by any of this.
     expect([...effectiveCapabilities('trainer', UNRESTRICTED)].sort())

@@ -3,6 +3,7 @@ import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import {
   accessLevelFor,
   effectiveCapabilities,
+  isBuiltinPermissionRole,
   isCapability,
   isInGoodStanding,
   permissionsOf,
@@ -152,15 +153,29 @@ export default async function PermissionsPage() {
   // are by definition people with a level, who are already all here.
   const { data: baselineRows } = await adminClient
     .from('permission_baselines')
-    .select('id, name, capabilities, created_at, updated_at')
+    .select('id, name, capabilities, builtin_role, created_at, updated_at')
     .order('name');
 
-  const baselines: BaselineRow[] = (baselineRows ?? []).map((row) => ({
-    id: row.id as string,
-    name: row.name as string,
-    capabilities: ((row.capabilities as string[] | null) ?? []).filter(isCapability),
-    holders: holders.filter((person) => person.baselineId === row.id).length,
-  }));
+  const baselines: BaselineRow[] = (baselineRows ?? []).map((row) => {
+    const builtinRole = isBuiltinPermissionRole(row.builtin_role) ? row.builtin_role : null;
+    return {
+      id: row.id as string,
+      name: row.name as string,
+      capabilities: ((row.capabilities as string[] | null) ?? []).filter(isCapability),
+      builtinRole,
+      // BOTH POPULATIONS, for the same reason holdersOf() counts both: a built-in
+      // role reaches people whose grants were copied from it AND anybody still
+      // storing the legacy permission_role it replaced. 00104 converts the second
+      // kind, so this is normally zero — but a count that under-reports is the
+      // one thing this number must never do, because it is what the Edit dialog
+      // promises ("...and 3 people") before an admin presses the button.
+      holders: holders.filter(
+        (person) =>
+          person.baselineId === row.id
+          || (builtinRole !== null && person.baselineId === null && person.role === builtinRole),
+      ).length,
+    };
+  });
 
   return (
     <div>
@@ -186,7 +201,16 @@ export default async function PermissionsPage() {
         // own row and refuses anything outside it, so this is a courtesy, not
         // the boundary.
         viewerCapabilities={[...viewerSet]}
-        baselines={baselines.map(({ id, name, capabilities }) => ({ id, name, capabilities }))}
+        // The holder COUNT is dropped on the way in — the editor picks baselines,
+        // it does not manage them — but `builtinRole` is not, because the picker
+        // labels a built-in differently: to somebody assigning it, Finance is
+        // still Finance and not "Baseline — Finance".
+        baselines={baselines.map(({ id, name, capabilities, builtinRole }) => ({
+          id,
+          name,
+          capabilities,
+          builtinRole,
+        }))}
       />
 
       {/* THE BASELINES THEMSELVES, below the editor rather than beside it. They

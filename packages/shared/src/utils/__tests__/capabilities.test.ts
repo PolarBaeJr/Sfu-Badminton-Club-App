@@ -487,19 +487,48 @@ describe('ROLE_DEFAULTS', () => {
 // ---------------------------------------------------------------------------
 // EDITOR_OFFERABLE
 // ---------------------------------------------------------------------------
-// The ceiling this change ships with. Grant closure bounds what one person may
-// hand another and cannot bound an ADMIN, who holds everything by level — so
-// the set an admin may COMPOSE is capped at what execs already had, which is
-// what keeps this change provably inside the envelope that shipped before it.
+// The ceiling. Grant closure bounds what one person may hand another and cannot
+// bound an ADMIN, who holds everything by level — so the set an admin may
+// COMPOSE is capped here, which is the only thing bounding them.
+//
+// IT USED TO BE `= EXEC_BASELINE`, AND IT IS NOT ANY MORE. The constant was
+// doing two jobs: transcribing what execs held, and capping what anybody may be
+// composed up to. Editable roles (00104) pulled them apart — the club owner
+// wants the exec baseline NOT to grow and Finance to exceed it, and both are
+// true only once the ceiling is its own list.
+//
+// EXEC_BASELINE ITSELF DID NOT MOVE, and that is asserted below rather than
+// assumed. The widening is four READS on /fees, enumerated in access-level.ts
+// and pinned entry-by-entry in editable-roles.test.ts.
 
 describe('EDITOR_OFFERABLE', () => {
-  it('is exactly the exec baseline', () => {
-    expect([...EDITOR_OFFERABLE]).toEqual([...EXEC_BASELINE]);
+  it('contains the exec baseline, in order, and then the widening', () => {
+    expect([...EDITOR_OFFERABLE].slice(0, EXEC_BASELINE.length)).toEqual([...EXEC_BASELINE]);
+  });
+
+  // THE EXEC TRANSCRIPTION IS UNCHANGED. The whole risk of splitting the two
+  // constants is that a widening lands in the wrong one and reaches every exec
+  // in the club without anybody choosing it.
+  it('leaves the exec baseline exactly as it was', () => {
+    expect(EXEC_BASELINE.length).toBe(73);
+    const offerableOnly = [...EDITOR_OFFERABLE].filter(
+      (capability) => !new Set<Capability>(EXEC_BASELINE).has(capability),
+    );
+    for (const capability of offerableOnly) {
+      expect(
+        (EXEC_BASELINE as readonly Capability[]).includes(capability),
+        `${capability} leaked into the exec baseline`,
+      ).toBe(false);
+    }
   });
 
   // Named one by one so that opening any of them is a diff somebody has to
-  // read. These are the club's books, its rating and account rules, its audit
-  // trail, and the ability to hand out permissions at all.
+  // read. These are the club's rating and account rules, its audit trail, the
+  // ability to MOVE money, and the ability to hand out permissions at all.
+  //
+  // THE FOUR FINANCE READS CAME OFF THIS LIST, on purpose and as the whole
+  // point of 00104: the club owner asked for a treasurer who can SEE money in as
+  // well as out. Seeing is not moving, and every `fees.*.write` below stayed.
   it('withholds the admin-only half, permissions.write included', () => {
     const offerable = new Set<Capability>(EDITOR_OFFERABLE);
     for (const capability of [
@@ -510,10 +539,11 @@ describe('EDITOR_OFFERABLE', () => {
       'accounts.page',
       'platform.page',
       'platform.settings.write',
-      'fees.clubfees.read',
-      'fees.otherincome.read',
-      'fees.netposition.read',
-      'fees.reinstatements.read',
+      'fees.clubfees.markpaid.write',
+      'fees.clubfees.waive.write',
+      'fees.otherincome.add.write',
+      'fees.reinstatements.write',
+      'fees.playerflags.write',
       'seasons.fees.write',
       'tournaments.fees.read',
       'players.privilegedfields.write',

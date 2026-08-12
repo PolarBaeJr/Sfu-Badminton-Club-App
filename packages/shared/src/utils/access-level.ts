@@ -705,25 +705,80 @@ export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {
   custom: [],
 };
 
-// WHAT THE EDITOR MAY HAND OUT — the exec baseline, and nothing above it.
+// WHAT THE EDITOR MAY HAND OUT — the exec baseline PLUS one named widening.
 //
-// The one line that keeps composition provably inside the old envelope. Every
-// capability outside EXEC_BASELINE (the club's books, reinstatements, audit,
-// ratings, accounts, platform settings, permissions.write itself) is admin work
-// today, and offering it here would put somebody outside everything an exec
-// could already do. It ships with storage, grant closure and the editor proven
-// first, and exposing the rest is its own small reviewable diff.
+// THIS USED TO BE `= EXEC_BASELINE`, AND THE SPLIT IS THE POINT. The constant
+// was doing two jobs that finally pulled apart:
 //
-// A COMPOSED TRAINER IS BOUNDED BY THE SAME LINE, and it is the only thing
-// bounding them: composing a trainer WIDENS them past their level, on purpose,
-// so "nothing here can widen anyone" is not the property this constant has.
-// The property it has is a ceiling — nobody, whatever their level, can be
-// composed above what an exec already held.
+//   * EXEC_BASELINE is a TRANSCRIPTION — what an unrestricted exec could do the
+//     day composition shipped. It is pinned twice (here and, independently, by
+//     capability-equivalence.test.ts deriving it from the call sites), and the
+//     club owner has said it must not grow: "exec baseline shouldn't really be
+//     too much". Growing it would hand every exec in the club something no exec
+//     ever had, with nobody choosing it. It does not move, in this change or any
+//     other, and nothing below touches it.
 //
-// Grant closure would already stop a non-admin handing out anything they do not
-// hold; this bounds what an ADMIN can hand out too, which closure by definition
-// cannot.
-export const EDITOR_OFFERABLE: readonly Capability[] = EXEC_BASELINE;
+//   * EDITOR_OFFERABLE is a CEILING — the most anybody may be composed UP to by
+//     an admin. Grant closure already stops a non-admin handing out what they do
+//     not hold; this is the only thing bounding an ADMIN, who holds everything
+//     by level and whom closure therefore cannot bound at all.
+//
+// While the two were the same list, "an exec may not see the books" and "nobody
+// may ever be GIVEN the books" were the same sentence. The club owner wants the
+// second one false and the first one true: the treasurer should see money in as
+// well as out. That is only expressible once the ceiling is its own list.
+//
+// EDITABLE ROLES ARE WHY THIS BECAME BLOCKING RATHER THAN THEORETICAL. The four
+// VP jobs are rows now (00104) and the owner edits them himself, through
+// baselineCapabilityRefusal — which caps contents at this constant. Left as an
+// alias of EXEC_BASELINE, the seeded Finance row could be shipped but never
+// edited into the thing the feature exists to allow.
+//
+// THE WIDENING IS ENUMERATED, ONE LINE AT A TIME, so opening anything further is
+// a diff somebody reads. It is NOT `CAPABILITIES minus a deny-list`: a deny-list
+// admits every capability added next year by default, which is the one direction
+// a ceiling must never move on its own.
+const OFFERABLE_BEYOND_EXEC: readonly Capability[] = [
+  // THE OWNER'S CASE, and the whole reason this list exists. "Allow me to edit
+  // the permissions of each preassigned role" came out of wanting Finance to see
+  // money IN as well as out — today it stops at the expense ledger, because that
+  // is where execs stopped. These are the four remaining READS on /fees plus the
+  // net position: seeing the club's books, and not one write among them.
+  //
+  // Reads only, deliberately. Handing out `fees.clubfees.markpaid.write` or the
+  // reinstatement write is moving money, which is a bigger decision than showing
+  // a number, and it is not the one that was asked for. When it is asked for it
+  // is four more lines here and a diff somebody reads.
+  'fees.clubfees.read',
+  'fees.otherincome.read',
+  'fees.reinstatements.read',
+  'fees.netposition.read',
+];
+
+// DELIBERATELY STILL OUT OF REACH, and each for its own reason:
+//
+//   * `permissions.write` / `permissions.page` — a role that could be edited to
+//     contain these would make "pick Finance from a dropdown" hand over the
+//     ability to hand out permissions. Closure bounds the holder to their own
+//     set, so it is not unbounded escalation; it is still the single most
+//     consequential capability there is, and it must be a per-person act.
+//   * `players.privilegedfields.write` — the grantable EDGE of the hard floor
+//     (player-field-access.ts). The floor itself is unreachable by construction,
+//     no capability names it; this is the nearest thing to it and stays a
+//     per-person grant.
+//   * `players.remove.write` / `players.merge.write` / `players.deletion.cancel.write`
+//     / `players.reliability.write` — destructive or identity-altering roster
+//     work that stood behind getAdminPlayer().
+//   * `seasons.fees.write`, `tournaments.fees.*`, every remaining `fees.*.write`
+//     — setting or moving money.
+//   * `challenges.*`, `walkovers.*`, `disputes.*`, `legal.documents.write`,
+//     `legal.waivertemplate.write`, `audit.page`, `ratings.page`,
+//     `accounts.page`, `platform.*` — admin work today, unasked for, and each
+//     its own small reviewable diff when it is wanted.
+export const EDITOR_OFFERABLE: readonly Capability[] = [
+  ...EXEC_BASELINE,
+  ...OFFERABLE_BEYOND_EXEC,
+];
 
 // ---------------------------------------------------------------------------
 // CUSTOM BASELINES — the ones the club writes for itself
@@ -755,12 +810,94 @@ export const EDITOR_OFFERABLE: readonly Capability[] = EXEC_BASELINE;
 // path already enforces per person; they are here so a baseline is refused when
 // it is WRITTEN rather than silently doing nothing when it is USED.
 
-/** A named capability set as the console reads it back. */
+/**
+ * A named capability set as the console reads it back.
+ *
+ * `builtinRole` NAMES ONE OF THE FOUR VP JOBS THIS ROW SHIPPED AS, or null for
+ * one the club wrote itself. See BUILTIN_BASELINE_IDS below for why the four are
+ * rows at all.
+ */
 export type CustomBaseline = {
   id: string;
   name: string;
   capabilities: readonly Capability[];
+  builtinRole: PermissionRole | null;
 };
+
+// ---------------------------------------------------------------------------
+// THE FOUR VP JOBS, AS EDITABLE ROWS
+// ---------------------------------------------------------------------------
+// THE OWNER ASKED TO "edit the permissions of each preassigned role beforehand",
+// and the immediate case was Finance seeing money IN as well as out. Today that
+// is a developer editing ROLE_DEFAULTS, a deploy, and two structural tests to
+// unpick. It should be a screen.
+//
+// SO A BUILT-IN ROLE IS A SEEDED ROW IN permission_baselines (00104), AND
+// ROLE_DEFAULTS IS ITS SEED RATHER THAN THE RUNTIME ANSWER.
+//
+// THAT CHOICE IS THE WHOLE DESIGN, and it is 00093's choice applied a second
+// time. resolvePermissions() is pure, synchronous and reached from 22 places; a
+// role whose contents live in a table cannot be looked up from inside it, and
+// passing them in as a fourth argument means 22 call sites where forgetting
+// resolves somebody's entire base to nothing. So the row carries the answer:
+// assigning an edited Finance writes permission_role = 'custom' (the empty base)
+// and copies the capabilities into permission_grants, exactly as a club-written
+// baseline does. THE RESOLVER IS NOT TOUCHED BY THIS FEATURE — not one line.
+//
+// WHAT THAT BUYS, AND IT IS THE REASON TO PREFER IT: ROLE_DEFAULTS STOPS BEING
+// EDITED, SO ITS TWO STRUCTURAL INVARIANTS SURVIVE LITERALLY. Every role is
+// still inside EXEC_BASELINE, and the four still partition it exactly, because
+// the constant is now a frozen transcription of what shipped and the club's
+// edits land in the table instead. The partition test was expected to die; it
+// does not, and that is the strongest evidence this is the right shape.
+//
+// The security property those tests carried moves to WRITE TIME, where it now
+// has to be: baselineCapabilityRefusal() closure-checks an edit against the
+// editor's own set and caps it at EDITOR_OFFERABLE, on every path that writes
+// the table. A test could only ever pin a constant; this bounds an edit the club
+// makes at runtime, which is the thing that actually needs bounding.
+//
+// FIXED UUIDS, NOT LOOKUP BY NAME. The rows are renameable — 'Finance' may
+// become 'Treasurer' — so a name is not an identity. These constants are what
+// the seed writes, what "reset to shipped default" finds, and what refuses a
+// delete; they must stay byte-identical to 00104's INSERT, pinned by a test.
+export const BUILTIN_BASELINE_IDS: Record<
+  Exclude<PermissionRole, 'custom'>,
+  string
+> = {
+  finance: '5eed0060-0000-4000-8000-000000000101',
+  tournaments: '5eed0060-0000-4000-8000-000000000102',
+  internal: '5eed0060-0000-4000-8000-000000000103',
+  external: '5eed0060-0000-4000-8000-000000000104',
+};
+
+/** The four VP jobs — every PermissionRole except the empty base. */
+export const BUILTIN_PERMISSION_ROLES: readonly Exclude<PermissionRole, 'custom'>[] = [
+  'finance',
+  'tournaments',
+  'internal',
+  'external',
+] as const;
+
+/** Is this stored string one of the four jobs that ships with a value? */
+export function isBuiltinPermissionRole(
+  value: unknown,
+): value is Exclude<PermissionRole, 'custom'> {
+  return (BUILTIN_PERMISSION_ROLES as readonly string[]).includes(value as string);
+}
+
+/**
+ * What a built-in role SHIPPED as — the target of "reset to shipped default".
+ *
+ * Reads ROLE_DEFAULTS, which is exactly what that constant is for now: it is no
+ * longer consulted to decide what an edited role means, only to say what it
+ * meant on the day it shipped.
+ */
+export function shippedDefaultFor(
+  role: Exclude<PermissionRole, 'custom'>,
+): readonly Capability[] {
+  return ROLE_DEFAULTS[role];
+}
 
 /** Matches the length CHECK on permission_baselines.name. */
 export const BASELINE_NAME_MAX = 40;
