@@ -1,5 +1,5 @@
 import { Card } from '@badminton/ui';
-import { buildColumns } from '@/lib/charts';
+import { buildColumns, uniqueColumnLabels } from '@/lib/charts';
 import { ChartNote, ColumnChart, count } from '@/components/charts';
 import { PanelLabel } from './panel';
 import { hasStarted, type SeasonShape } from './season-shape';
@@ -36,23 +36,11 @@ interface TrendSeason extends SeasonShape {
   name: string;
 }
 
-/**
- * Labels ColumnChart can key on.
- *
- * `seasons.name` is typed and nothing in the schema makes it unique, so two
- * terms called "Fall 2026" are legal — and ColumnChart keys its columns by
- * label, so a collision would collapse two seasons into one React child. The
- * suffix is only ever added to the SECOND occurrence, so the ordinary case
- * still reads as the club named its terms.
- */
-function uniqueLabels(seasons: readonly TrendSeason[]): string[] {
-  const seen = new Map<string, number>();
-  return seasons.map((s) => {
-    const n = (seen.get(s.name) ?? 0) + 1;
-    seen.set(s.name, n);
-    return n === 1 ? s.name : `${s.name} (${n})`;
-  });
-}
+// The label de-duplication this panel used to keep privately now lives in the
+// kit as uniqueColumnLabels: /sessions needs exactly the same guard (two
+// sessions may share one date, as two terms may share one name), and the
+// constraint it works around — ColumnChart keying its columns by label — is the
+// kit's, so the fix belongs beside it rather than in two screens.
 
 export function SeasonTrendPanel({
   seasons,
@@ -77,7 +65,7 @@ export function SeasonTrendPanel({
   // backwards for a time axis. The cap keeps the most RECENT terms, which is
   // where the trend anybody acts on lives.
   const terms = started.slice(0, MAX_TERMS).reverse();
-  const labels = uniqueLabels(terms);
+  const labels = uniqueColumnLabels(terms.map((s) => s.name));
 
   const matches = buildColumns(
     terms.map((s, i) => ({ label: labels[i]!, value: matchCounts.get(s.id) ?? 0 })),

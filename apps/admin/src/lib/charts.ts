@@ -436,6 +436,38 @@ export interface Column extends ColumnPart {
  * question is the shape of a distribution, and wrong here, where the question
  * is what each column's number is.
  */
+/**
+ * LABELS A COLUMN SET CAN BE KEYED ON — de-duplicated, in place.
+ *
+ * ColumnChart keys its columns by `label`, so two columns sharing one collapse
+ * into a single React child and a night, a term or a round DISAPPEARS from the
+ * chart without any error. This is not hypothetical in either caller that has
+ * needed it: `seasons.name` is a plain text column with no unique constraint,
+ * so two terms called "Fall 2026" are legal; and `sessions` permits two rows on
+ * one date, which is why /sessions labels its columns by day and has to run
+ * them through here first.
+ *
+ * ONLY THE SECOND AND LATER OCCURRENCES ARE SUFFIXED, so the ordinary case —
+ * every label already distinct — is returned exactly as it was given and reads
+ * as the club's own names rather than as a machine's. The suffix is `(2)`,
+ * `(3)` … in the order the labels arrive, which is the reading order the caller
+ * already chose.
+ *
+ * ORDER IS PRESERVED AND NOTHING IS DROPPED. A column set is a sequence whose
+ * order carries meaning — that is the whole reason it is columns and not bars —
+ * so this may not sort, and a duplicate must become a second column rather than
+ * be merged into the first: two sessions on one night are two nights' worth of
+ * turnout, and adding them together would be a different chart.
+ */
+export function uniqueColumnLabels(labels: readonly string[]): string[] {
+  const seen = new Map<string, number>();
+  return labels.map((label) => {
+    const n = (seen.get(label) ?? 0) + 1;
+    seen.set(label, n);
+    return n === 1 ? label : `${label} (${n})`;
+  });
+}
+
 export function buildColumns(parts: readonly ColumnPart[]): Column[] {
   const totals = parts.map((p) => Math.max(0, p.value) + Math.max(0, p.under ?? 0));
   const peak = totals.reduce((max, t) => (t > max ? t : max), 0);
