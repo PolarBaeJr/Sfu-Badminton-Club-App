@@ -262,5 +262,20 @@ export function sectionLabelFor(pathname: string | undefined): string | null {
   if (!pathname || !pathname.startsWith('/')) return null;
   const capability = sectionCapability(pathname);
   if (capability === undefined) return null;
-  return CAPABILITY_GATES[capability]?.label ?? null;
+  const label = CAPABILITY_GATES[capability]?.label;
+  if (!label) return null;
+
+  // The gate labels are written as ACTIONS, because that is what they describe
+  // in the permissions editor: "Open the Audit log", "Open Finances". Quoted
+  // into a sentence about a place they read as nonsense — “Open the Audit log”
+  // is not part of your access — so the verb comes off and what is left is the
+  // section's own name.
+  //
+  // Derived from the one authoritative source rather than a second hand-typed
+  // map of section names, which would drift the first time somebody renamed a
+  // section in the editor and not here.
+  const section = label.replace(/^Open (?:the )?/, '');
+  // "Open the roster" leaves a lower-case word where every sibling leaves a
+  // capitalised one, and the difference shows once they are quoted side by side.
+  return section.charAt(0).toUpperCase() + section.slice(1);
 }
