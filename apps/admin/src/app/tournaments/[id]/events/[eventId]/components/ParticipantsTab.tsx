@@ -219,7 +219,8 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   // it, so they still hold their slot, still spend an entry-cap allowance and
   // still appear in a draw that was already generated around them. Moving them
   // into a block headed "Withdrawn" would say the opposite of all three.
-  const liveEntries = isDoubles ? pairs.filter((p) => !isOutOfEvent(p.status)) : participants.filter((p) => !isOutOfEvent(p.status));
+  // `activeEntries` above is already this list — the table simply was not using
+  // it, which is how the withdrawn rows got in.
   const withdrawnPairs = isDoubles ? pairs.filter((p) => isOutOfEvent(p.status)) : [];
   const withdrawnSolo = (isDoubles ? unpaired : participants).filter((p) => isOutOfEvent(p.status));
   const withdrawnCount = withdrawnPairs.length + withdrawnSolo.length;
@@ -767,7 +768,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
           </thead>
           <tbody>
             {isDoubles ? (
-              (liveEntries as PairWithPlayers[]).map((pair) => (
+              (activeEntries as PairWithPlayers[]).map((pair) => (
                 <tr key={pair.id} className="border-b border-[var(--border)] last:border-b-0 hover:bg-[var(--bg-elevated)] transition-colors">
                   <td className="px-4 py-3">
                     <SeedCell
@@ -817,7 +818,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                 </tr>
               ))
             ) : (
-              (liveEntries as ParticipantWithPlayer[]).map((p) => {
+              (activeEntries as ParticipantWithPlayer[]).map((p) => {
                 const player = p.player;
                 const ratings = pickOne(player?.ratings);
                 const elo = ratings?.singles_elo ?? p.elo_before ?? '-';
@@ -865,7 +866,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
         </table>
         </div>
 
-        {liveEntries.length === 0 && (
+        {activeEntries.length === 0 && (
           <div className="p-8 text-center text-sm text-[var(--text-muted)]">
             No {isDoubles ? 'pairs' : 'participants'} yet. Add some to get started.
           </div>
