@@ -1655,6 +1655,19 @@ describe('regenerating a draw that already exists', () => {
   }
   const byes = () => store.db.tournament_matches!.filter((m) => m.is_bye);
   const playoffs = () => store.db.tournament_matches!.filter((m) => m.is_third_place);
+  /** Round one in bracket order — the whole draw, since everything else follows. */
+  const round1 = () => store.db.tournament_matches!
+    .filter((m) => m.round_number === 1 && !m.is_third_place)
+    .sort((a, b) => (a.bracket_position as number) - (b.bracket_position as number));
+  /** The draw as one comparable string per match, for "did it change?" tests. */
+  const layout = () => round1().map((m) => `${m.participant_a_id}/${m.participant_b_id}`);
+  const matchIndexOf = (r1: Row[], id: string) =>
+    r1.findIndex((m) => m.participant_a_id === id || m.participant_b_id === id);
+  /** Which half of the draw an entrant is in: they can only meet across it in the final. */
+  const halfOf = (r1: Row[], id: string) => (matchIndexOf(r1, id) < r1.length / 2 ? 0 : 1);
+  /** Which quarter: two entrants sharing one must meet by the semi-finals. */
+  const quarterOf = (r1: Row[], id: string) =>
+    Math.floor(matchIndexOf(r1, id) / Math.max(1, r1.length / 4));
 
   it('lets a draw WITH BYES be redrawn — a bye is not a result', async () => {
     // THE BUG THIS FEATURE WOULD HAVE SHIPPED WITH. Generation writes
@@ -1947,18 +1960,21 @@ describe('regenerating a draw that already exists', () => {
     expect(drawn.sort()).toEqual(['p-0', 'p-1', 'p-2', 'p-3']);
   });
 
-  it('still seeds a clean 1..N field exactly where it always did', async () => {
-    // The fix must be invisible on the field the generator was written for, or
-    // it has changed every draw in the club rather than the broken ones. Top
-    // seed and second seed on opposite sides of a full 8-draw, as standard
-    // seeding requires.
+  it('seeds a hand-seeded field exactly where its seed numbers say', async () => {
+    // MANUAL SEEDING IS THE ONE DRAW THAT IS NOT DRAWN. An exec who typed every
+    // seed in by hand asked for the bracket those numbers describe and has to
+    // keep getting it, redraw after redraw — so this is the one case where an
+    // exact arrangement is still the right assertion.
+    //
+    // The standard positions themselves are pinned in draw-randomisation.test.ts
+    // against getStandardSeedPositions directly, so exact placement stays
+    // nailed down even if what `manual` means ever changes.
     seedField(8);
+    Object.assign(event(), { seeding_method: 'manual' });
 
     expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
 
-    const r1 = store.db.tournament_matches!
-      .filter((m) => m.round_number === 1)
-      .sort((a, b) => (a.bracket_position as number) - (b.bracket_position as number));
+    const r1 = round1();
     expect(r1).toHaveLength(4);
     // Standard positions for an 8-draw: 1v8, 4v5 | 2v7, 3v6. Seeds 1 and 2 sit
     // in opposite halves and cannot meet before the final, which is the entire
@@ -1971,9 +1987,173 @@ describe('regenerating a draw that already exists', () => {
     ]);
     // Said as the property, not just the arrangement: the top two seeds feed
     // different semi-finals.
-    const semiOf = (id: string) =>
-      r1.findIndex((m) => m.participant_a_id === id || m.participant_b_id === id) < 2 ? 0 : 1;
-    expect(semiOf('p-0')).not.toBe(semiOf('p-1'));
+    expect(halfOf(r1, 'p-0')).not.toBe(halfOf(r1, 'p-1'));
+
+    // And it is still that draw the second time, which is what "manual" means.
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    expect(layout()).toEqual([
+      'p-0/p-7', 'p-3/p-4', 'p-1/p-6', 'p-2/p-5',
+    ]);
+    const audit = store.db.tournament_audit_log!.filter((r) => r.action === 'bracket_generated').at(-1)!;
+    expect((audit.details as Row).draw_randomised).toBe(false);
+    expect((audit.details as Row).draw_seed).toBeNull();
+  });
+
+  /**
+   * "REGENERATE DRAW DOESNT CHANGE ANYTHING" — the club owner's report, as a
+   * test. It was true: placement was a pure function of the stored seeds
+   * against getStandardSeedPositions, so the same field produced a
+   * byte-identical bracket however many times the button was pressed. There was
+   * nothing to see, and no way to tell that apart from the button being broken.
+   */
+  it('gives a different draw when an ordinary field is redrawn', async () => {
+    seedField(8);
+    const seen = new Set<string>();
+    for (let i = 0; i < 30; i++) {
+      expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+      seen.add(layout().join(' | '));
+    }
+    // An 8-draw has 48 possible draws (2 for seeds 3-4, 24 for seeds 5-8), so
+    // 30 presses landing on one arrangement would take a 48^-29 coincidence.
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
+  /**
+   * THE INVARIANT THE RANDOMISATION IS ALLOWED TO KEEP AND NOTHING ELSE: two
+   * entrants of the same seeding tier can never meet before the round their
+   * tier implies. Asserted through the real generator here, and over thousands
+   * of draws against the placement itself in draw-randomisation.test.ts.
+   */
+  it('keeps the seeding tiers apart however the draw falls', async () => {
+    seedField(8);
+    for (let i = 0; i < 30; i++) {
+      expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+      const r1 = round1();
+      // Seeds 1 and 2 in opposite halves — they cannot meet before the final.
+      expect(halfOf(r1, 'p-0')).not.toBe(halfOf(r1, 'p-1'));
+      // Seeds 1-4 one per quarter — none of them can meet before the semis. In
+      // an 8-draw a quarter IS a first-round match, so this says they are four
+      // different matches.
+      const quarters = ['p-0', 'p-1', 'p-2', 'p-3'].map((id) => quarterOf(r1, id));
+      expect(new Set(quarters).size).toBe(4);
+      // Everybody drawn, nobody drawn twice.
+      const drawn = r1.flatMap((m) => [m.participant_a_id, m.participant_b_id]);
+      expect([...drawn].sort()).toEqual(['p-0', 'p-1', 'p-2', 'p-3', 'p-4', 'p-5', 'p-6', 'p-7']);
+    }
+  });
+
+  /**
+   * BYES STAY WITH THE TOP OF THE FIELD ON EVERY REDRAW.
+   *
+   * The draw shuffles ENTRANTS inside a tier, not rank slots between positions,
+   * and this is the difference. A 5-entry field leaves ranks 6, 7 and 8 of an
+   * 8-draw empty; shuffling slots could have moved an empty rank up into the
+   * 5-8 band and handed seed 4 a bye while seed 1 played, which is not a draw,
+   * it is a favour. Seeds 1 and 2 hold a bye every time, the third goes to one
+   * of the 3-4 tier — that one IS the draw's business, because a tier is by
+   * definition a set the draw treats as interchangeable — and seed 5 never has
+   * one.
+   */
+  it('leaves the byes with the top of the field on every redraw', async () => {
+    seedField(5);
+    const thirdByeWentTo = new Set<string>();
+    for (let i = 0; i < 30; i++) {
+      expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+      const withBye = byes()
+        .map((m) => (m.participant_a_id ?? m.participant_b_id) as string)
+        .sort();
+      expect(withBye).toHaveLength(3);
+      expect(withBye).toContain('p-0');
+      expect(withBye).toContain('p-1');
+      expect(withBye).not.toContain('p-4');
+      thirdByeWentTo.add(withBye.find((id) => id !== 'p-0' && id !== 'p-1')!);
+    }
+    // Only ever a member of the 3-4 tier.
+    expect([...thirdByeWentTo].sort().every((id) => id === 'p-2' || id === 'p-3')).toBe(true);
+  });
+
+  /**
+   * A DRAW THAT CAN BE EXPLAINED. "It was random" is not an answer to a player
+   * asking why they landed in the top seed's half, so the seed the draw was
+   * made from goes into the bracket_generated audit row — no column, no
+   * migration, and re-drawing from it reproduces the identical bracket.
+   */
+  it('records the seed it drew from, and that seed reproduces the bracket', async () => {
+    seedField(8);
+    // newDrawSeed is the only entropy in the feature, so pinning Math.random
+    // pins the draw — which is exactly the claim being tested.
+    const rand = vi.spyOn(Math, 'random').mockReturnValue(0.4242);
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    const first = layout();
+    const audit = store.db.tournament_audit_log!.filter((r) => r.action === 'bracket_generated').at(-1)!;
+    const seed = (audit.details as Row).draw_seed;
+    expect((audit.details as Row).draw_randomised).toBe(true);
+    expect(typeof seed).toBe('number');
+    expect(seed).toBe(Math.floor(0.4242 * 4294967296));
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    expect(layout()).toEqual(first);
+
+    // And an unpinned redraw is free to differ again.
+    rand.mockRestore();
+  });
+
+  /**
+   * A POOL-SEEDED DRAW IS NOT REDRAWN, and that is deliberate rather than an
+   * oversight. buildFieldFromPool refuses a half-played pool precisely so the
+   * bracket matches what everyone just played for; drawing the qualifiers again
+   * would put the pool's third finisher into the second seed's half on a coin
+   * flip, which is the outcome pool seeding exists to prevent. There is no
+   * seeding_method opt-out on that path, so the path itself is the rule.
+   */
+  it('does not redraw a pool-seeded event', async () => {
+    store.db.tournament_events!.push({
+      id: 'e0', tournament_id: 't1', status: 'completed', event_type: 'mens_singles',
+      format: 'round_robin', match_format: 'best_of_3_to_21', elo_multiplier: 1,
+      placement_bonus_enabled: false,
+    });
+    Object.assign(event(), {
+      status: 'checkin', draw_locked: false,
+      seeded_from_event_id: 'e0', seed_by: 'wins', max_participants: 4,
+    });
+    const pool = ['a', 'b', 'c', 'd'];
+    store.db.tournament_participants = pool.map((k, i) => ({
+      id: `q-${k}`, event_id: 'e0', player_id: `pl-${k}`, elo_before: 1200,
+      elo_after: 1200 + (3 - i) * 10, elo_change: null, seed_number: null,
+      final_position: null, points: null, status: 'checked_in',
+    }));
+    let n = 0;
+    store.db.tournament_matches = [];
+    for (let i = 0; i < pool.length; i++) {
+      for (let j = i + 1; j < pool.length; j++) {
+        store.db.tournament_matches.push({
+          id: `pm-${++n}`, event_id: 'e0', status: 'completed', is_bye: false,
+          is_third_place: false, round_number: 1, bracket_position: n,
+          participant_a_id: `q-${pool[i]}`, participant_b_id: `q-${pool[j]}`,
+          winner_participant_id: `q-${pool[i]}`, loser_participant_id: `q-${pool[j]}`,
+          winner_to_match_id: null, winner_to_position: null,
+          scores: [{ a: 21, b: 10 }, { a: 21, b: 12 }], elo_snapshot: null, notes: null,
+        });
+      }
+    }
+
+    const layouts = new Set<string>();
+    for (let i = 0; i < 20; i++) {
+      expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+      layouts.add(
+        store.db.tournament_matches!
+          .filter((m) => m.event_id === 'e1' && m.round_number === 1)
+          .sort((a, b) => (a.bracket_position as number) - (b.bracket_position as number))
+          .map((m) => `${m.participant_a_id}/${m.participant_b_id}`)
+          .join(' | '),
+      );
+    }
+    // One arrangement over twenty draws: the pool's finishing order, every time.
+    expect(layouts.size).toBe(1);
+    const audit = store.db.tournament_audit_log!.filter((r) => r.action === 'bracket_generated').at(-1)!;
+    expect((audit.details as Row).draw_randomised).toBe(false);
+    expect((audit.details as Row).draw_seed).toBeNull();
   });
 
   it('does not treat a VOIDED match as something that was played', async () => {
