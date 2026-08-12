@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Input, Select, Switch } from '@badminton/ui';
-import { getEventRules, previewEloChange, tallyGames, isLegalGameScore } from '@badminton/shared';
+import { getEventRules, previewEloChange, tallyGames, isLegalGameScore, isLegalGameCount } from '@badminton/shared';
 import type { TournamentMatchFormat, MatchFormat } from '@badminton/shared';
 import {
   enterMatchResult, enterWalkover, voidMatch, unvoidMatch, setMatchEntry, recordDoubleNoShow,
@@ -106,9 +106,31 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
     ),
   );
 
-  // Only a legal, fully-numeric scoreline names a winner. Everything downstream
-  // — the green highlight, the Elo preview, submit — keys off this.
-  const autoWinner = scoresAreIntegers && gamesAreLegal ? tallyWinner : null;
+  // ...AND the match has to be over. tallyGames only asks who won MORE games,
+  // so a best-of-3 sitting at 1-0 named a winner: the dialog went green, Submit
+  // lit up, and the server — which checks the clinch and always has — bounced it
+  // with a toast. Exactly the bug the paragraph above fixed for a single game's
+  // score, one layer up and still live.
+  //
+  // isLegalGameCount is the SAME function the server decides with, so the two
+  // cannot drift into disagreeing about whether a match has ended. The clock
+  // does not relax this: a best-of-3 called at 1-0 has no winner to record
+  // however the games themselves ended, so timeExceeded is deliberately not
+  // consulted here (it governs how a GAME may end, not whether a MATCH has).
+  const aGamesWon = filled.filter((g) => parseInt(g.a, 10) > parseInt(g.b, 10)).length;
+  const bGamesWon = filled.filter((g) => parseInt(g.b, 10) > parseInt(g.a, 10)).length;
+  const matchIsDecided =
+    scoresAreIntegers &&
+    isLegalGameCount(
+      Math.max(aGamesWon, bGamesWon),
+      Math.min(aGamesWon, bGamesWon),
+      matchFormat as unknown as MatchFormat,
+      event.games_per_match,
+    );
+
+  // Only a legal, fully-numeric, FINISHED scoreline names a winner. Everything
+  // downstream — the green highlight, the Elo preview, submit — keys off this.
+  const autoWinner = scoresAreIntegers && gamesAreLegal && matchIsDecided ? tallyWinner : null;
 
   // The dialog holds a snapshot of the match row, so any mutation invalidates
   // what it is displaying — close and let the refreshed bracket re-open it.
@@ -130,6 +152,17 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
     if (!scoresAreIntegers) { toast('Scores must be whole numbers', 'error'); return; }
     if (!gamesAreLegal) {
       toast(`That scoreline cannot end a game to ${getEventRules(event).target}`, 'error');
+      return;
+    }
+    // TWO DIFFERENT PROBLEMS, and telling them apart is the whole point of
+    // saying anything. "Games are level" for a best-of-3 at 1-0 is simply
+    // false, and sends an exec hunting a tie that is not there.
+    if (!matchIsDecided) {
+      const needed = Math.floor(getEventRules(event).bestOf / 2) + 1;
+      toast(
+        `${Math.max(aGamesWon, bGamesWon)}-${Math.min(aGamesWon, bGamesWon)} does not finish this match — ${needed} games are needed to win`,
+        'error',
+      );
       return;
     }
     if (!autoWinner) { toast('Games are level — enter the scores that decide the match', 'error'); return; }
