@@ -137,6 +137,7 @@ export function LedgerChartPanel({
                 linePath={buildRunningPath(points, scale)}
                 areaPath={buildRunningAreaPath(points, scale)}
                 tone={tone}
+                noun={['payment', 'payments']}
                 label={`${figureLabel}: ${money(ledger.total)} across ${dayCount} days, running total.`}
               />
             ) : (

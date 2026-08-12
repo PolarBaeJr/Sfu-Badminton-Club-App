@@ -41,6 +41,7 @@ export function RunningTotalChart({
   areaPath,
   tone,
   label,
+  noun = ['entry', 'entries'],
 }: {
   points: readonly CumulativePoint[];
   scale: RunningScale;
@@ -50,6 +51,13 @@ export function RunningTotalChart({
   tone: string;
   /** Read out to a screen reader in place of the drawing. */
   label: string;
+  /**
+   * What one of the underlying records is called, singular and plural, for the
+   * axis. "3 payments" on a ledger, "12 check-ins" on a session chart. A
+   * generic "entries" is what a chart says when nobody told it what it is
+   * counting.
+   */
+  noun?: readonly [string, string];
 }) {
   const last = points[points.length - 1]!;
   const paymentCount = points.reduce((n, p) => n + p.count, 0);
@@ -108,7 +116,7 @@ export function RunningTotalChart({
       <div className={`mt-2 flex items-baseline justify-between gap-2 ${MICRO}`}>
         <span>{chartDay(scale.firstDay)}</span>
         <span>
-          {paymentCount} {paymentCount === 1 ? 'entry' : 'entries'}
+          {paymentCount} {paymentCount === 1 ? noun[0] : noun[1]}
         </span>
         <span>{chartDay(scale.lastDay)}</span>
       </div>

@@ -108,13 +108,18 @@ export function ColumnChart({
             className="flex w-full flex-col justify-end border-b border-[var(--border)]"
             style={{ height }}
           >
-            <div style={{ height: `${column.pct}%`, background: tone }} aria-hidden />
+            {/* `under` is rendered FIRST so it lands on top of the stack: in a
+                flex column the first child is the highest, and the primary
+                value has to be the part standing on the baseline. Turnout with
+                the absences underneath it would read as absences holding the
+                attendance up. */}
             {column.under !== undefined && (
               <div
                 style={{ height: `${column.underPct}%`, background: underTone ?? tone }}
                 aria-hidden
               />
             )}
+            <div style={{ height: `${column.pct}%`, background: tone }} aria-hidden />
           </div>
           <span className={`${MICRO} truncate max-w-full`}>{column.label}</span>
           {column.note && <span className={`${MICRO} truncate max-w-full`}>{column.note}</span>}

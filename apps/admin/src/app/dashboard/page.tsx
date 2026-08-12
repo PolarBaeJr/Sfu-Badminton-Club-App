@@ -27,6 +27,8 @@ import {
   NetPositionPanel,
   OtherIncomePanel,
 } from '@/components/dashboard/finance-panels';
+import { getLadderSpread } from '@/lib/dashboard-ladder';
+import { LadderPanel } from '@/components/dashboard/ladder-panel';
 
 /** A club-local wall clock reading of an instant — "19:00", never "02:00Z". */
 const clubTime = (at: Date) =>
@@ -383,6 +385,15 @@ export default async function DashboardPage() {
       ? supabase.from('legal_documents').select('document, version, reacceptance_required_since')
       : noRows<{ document: string; version: string; reacceptance_required_since: string | null }>(),
   ]);
+
+  // ---- players.read, again ------------------------------------------------
+  // The ladder's shape. Same capability as the roster counts above and the same
+  // rule: the gate is the fetch, so a viewer without players.read has no
+  // ratings in their payload at all rather than a hidden card. Kept out of the
+  // Promise.all above only because it is a helper rather than a query builder;
+  // it is one round trip either way and both branches are already awaited
+  // before the first byte of markup.
+  const ladder = canReadRoster ? await getLadderSpread(supabase) : null;
 
   // ------------------------------------------------------------------------
   // TONIGHT — one query, two answers
@@ -1052,6 +1063,12 @@ export default async function DashboardPage() {
           )}
         </div>
       )}
+
+      {/* THE LADDER'S SHAPE. Full width rather than in the rail: a distribution
+          is read across, and fourteen bins in a 1fr column are three pixels
+          each. Behind players.read, which is in TRAINER_BASELINE — so this is
+          the one chart on the page every console user sees. */}
+      {ladder && <LadderPanel spread={ladder} />}
 
       {/* THE NARROWED LANDING. Every panel above belongs to a capability this
           person does not hold, so rather than a header over an empty page they
