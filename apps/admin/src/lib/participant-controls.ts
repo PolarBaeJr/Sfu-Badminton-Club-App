@@ -24,6 +24,31 @@
 // (tournament-actions/participants.ts and .../seeding.ts — transcribed from the
 // requireCapability call at the top of each, not inferred from the names.)
 //
+// ------------------------------------------------------------
+// AND FIVE MORE, FOR THE DOUBLES POOL (00102)
+// ------------------------------------------------------------
+// A doubles event now holds BOTH kinds of entry: pairs that have been formed,
+// and people who entered without a partner and are waiting to be given one.
+// That is two more things to add, two more things to take away, and a pairing
+// step in between — and they are NOT the same keys as the four above, because
+// an unpaired entrant is a tournament_participants row:
+//
+//   Enter alone      tournaments.draw.participants.add.write
+//                    (addParticipantsToEvent — the same action singles uses)
+//   Remove unpaired  tournaments.draw.participants.remove.write
+//   Pair two people  tournaments.draw.pairs.add.write     (addPairToEvent)
+//   Unpair a team    tournaments.draw.pairs.remove.write  (unpairEntry)
+//   Half withdrew    tournaments.draw.exit.write          (withdrawPairMember)
+//
+// The last one is exit.write and not remove.write on purpose: it takes somebody
+// OUT of the event and leaves a withdrawn row behind, which is the same thing
+// the other three withdrawal actions do and the same key they ask for.
+//
+// So a doubles event asks BOTH the pairs.* keys and the participants.* keys of
+// its viewer, where before it asked only the pairs ones. The event page's
+// `allPlayers` fetch has to widen to match, or the picker behind "enter alone"
+// is empty for a holder of participants.add.write who lacks pairs.add.write.
+//
 // THE STATUS CONDITION STAYS. Both have to hold: a capability does not let
 // anyone add to a locked draw, and being in `registration` does not let anyone
 // without the capability do anything. Deciding it here rather than inline in the
@@ -44,6 +69,14 @@ export interface DrawCapabilities {
   seedClear: boolean;
   /** exit.write — withdrawing an entry that is already in a draw. */
   exit: boolean;
+  /**
+   * participants.add.write — entering somebody in a DOUBLES event without a
+   * partner. In a singles event this is the same question as `add`; in a
+   * doubles event it is a different key from the one `add` asks.
+   */
+  soloAdd: boolean;
+  /** participants.remove.write — deleting an unpaired entrant's row. */
+  soloRemove: boolean;
 }
 
 export interface ParticipantControls {
@@ -60,6 +93,16 @@ export interface ParticipantControls {
    * the same dead invitation one row up.
    */
   actionsColumn: boolean;
+  /** "Add without a partner", in a doubles event. */
+  addSolo: boolean;
+  /** Delete an unpaired entrant's row, before a draw exists. */
+  removeSolo: boolean;
+  /** Put two unpaired entrants together. */
+  pair: boolean;
+  /** Split a formed pair back into two unpaired entrants. */
+  unpair: boolean;
+  /** One half of a formed pair has pulled out; the other returns to the pool. */
+  withdrawMember: boolean;
 }
 
 /**
@@ -87,6 +130,21 @@ export function participantControls(
   // that already have results.
   const exitable = DRAWN_STATUSES.has(event.status) && event.status !== 'completed';
 
+  // THE POOL STAYS EDITABLE THROUGH CHECK-IN, and `open` deliberately does not.
+  //
+  // Check-in is exactly when the club finds out who turned up without a partner
+  // — that is the whole situation this feature exists for — so refusing to pair
+  // people at the door would leave the loose entrants in the pool until the
+  // draw refused to generate. The server actions already accept both statuses
+  // (addPairToEvent, unpairEntry and withdrawPairMember all take
+  // 'registration' or 'checkin'), so this is the buttons agreeing with the
+  // actions rather than the actions being relaxed to suit the buttons.
+  //
+  // Adding and removing entries stay on `open`, unchanged: they are the same
+  // two affordances singles has and moving them would change who fits in an
+  // event that is already at check-in.
+  const pairingOpen = (event.status === 'registration' || event.status === 'checkin') && !event.drawLocked;
+
   const remove = open && can.remove;
   const withdraw = exitable && can.exit;
 
@@ -98,5 +156,10 @@ export function participantControls(
     remove,
     withdraw,
     actionsColumn: remove || withdraw,
+    addSolo: open && can.soloAdd,
+    removeSolo: open && can.soloRemove,
+    pair: pairingOpen && can.add,
+    unpair: pairingOpen && can.remove,
+    withdrawMember: pairingOpen && can.exit,
   };
 }

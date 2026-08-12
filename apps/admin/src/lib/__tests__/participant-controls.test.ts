@@ -20,6 +20,8 @@ const NOBODY: DrawCapabilities = {
   seedAuto: false,
   seedClear: false,
   exit: false,
+  soloAdd: false,
+  soloRemove: false,
 };
 
 const EVERYTHING: DrawCapabilities = {
@@ -29,6 +31,8 @@ const EVERYTHING: DrawCapabilities = {
   seedAuto: true,
   seedClear: true,
   exit: true,
+  soloAdd: true,
+  soloRemove: true,
 };
 
 const only = (key: keyof DrawCapabilities): DrawCapabilities => ({ ...NOBODY, [key]: true });
@@ -62,11 +66,58 @@ describe('participantControls — capability, not just status', () => {
 
   it('does not let one capability stand in for another', () => {
     // A seeding desk without the roster, and a roster desk without the seeds.
-    // The six actions ask six different questions, so the six buttons do too.
-    expect(shown(participantControls(registration, only('add')))).toEqual(['add']);
+    // The actions ask different questions, so the buttons do too.
+    //
+    // `add` brings `pair` with it and `remove` brings `unpair`, and that is not
+    // a leak: both pairs are the SAME capability behind the same action —
+    // pairs.add.write for addPairToEvent, pairs.remove.write for unpairEntry —
+    // differing only in which of the two the exec is looking at.
+    expect(shown(participantControls(registration, only('add')))).toEqual(['add', 'pair']);
     expect(shown(participantControls(registration, only('seedAuto')))).toEqual(['autoSeed']);
     expect(shown(participantControls(registration, only('seedClear')))).toEqual(['clearSeeds']);
     expect(shown(participantControls(registration, only('seedSet')))).toEqual(['editSeed']);
+    expect(shown(participantControls(registration, only('remove')))).toEqual([
+      'actionsColumn', 'remove', 'unpair',
+    ]);
+    // The two participants.* keys a doubles event now also asks for. They are
+    // NOT the same as add/remove, which are the pairs.* keys in a doubles
+    // event, and holding one must not offer the other.
+    expect(shown(participantControls(registration, only('soloAdd')))).toEqual(['addSolo']);
+    expect(shown(participantControls(registration, only('soloRemove')))).toEqual(['removeSolo']);
+  });
+
+  it('keeps pairing available at check-in, when the two adds are not', () => {
+    // Check-in is when the club finds out who turned up without a partner, so
+    // pairing them up has to be possible at the door — and the actions accept
+    // it (addPairToEvent, unpairEntry and withdrawPairMember all take
+    // 'registration' or 'checkin'). Adding and removing entries stay on the
+    // narrower window, exactly as they were.
+    const checkin = participantControls({ status: 'checkin', drawLocked: false }, EVERYTHING);
+    expect(checkin.pair).toBe(true);
+    expect(checkin.unpair).toBe(true);
+    expect(checkin.withdrawMember).toBe(true);
+    expect(checkin.add).toBe(false);
+    expect(checkin.addSolo).toBe(false);
+    expect(checkin.remove).toBe(false);
+    expect(checkin.removeSolo).toBe(false);
+  });
+
+  it('never offers a pairing control once a draw exists', () => {
+    // A seeded pair cannot be split up — tournament_matches.pair_a_id and its
+    // three siblings reference tournament_pairs(id) with no ON DELETE action,
+    // so the database refuses the delete outright. The whole-pair withdrawal is
+    // the only coherent exit from here.
+    for (const status of ['bracket_generated', 'live', 'completed']) {
+      const c = participantControls({ status, drawLocked: false }, EVERYTHING);
+      expect(c.pair).toBe(false);
+      expect(c.unpair).toBe(false);
+      expect(c.withdrawMember).toBe(false);
+    }
+    // And a locked draw freezes them too, capability or no capability.
+    const locked = participantControls({ status: 'registration', drawLocked: true }, EVERYTHING);
+    expect(locked.pair).toBe(false);
+    expect(locked.unpair).toBe(false);
+    expect(locked.withdrawMember).toBe(false);
   });
 
   it('keeps the status condition — both have to hold', () => {

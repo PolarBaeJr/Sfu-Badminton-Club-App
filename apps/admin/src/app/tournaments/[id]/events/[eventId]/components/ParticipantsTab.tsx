@@ -7,6 +7,8 @@ import {
   removeParticipantFromEvent,
   addPairToEvent,
   removePairFromEvent,
+  unpairEntry,
+  withdrawPairMember,
   autoSeedEventByElo,
   updateParticipantSeed,
   updatePairSeed,
@@ -19,7 +21,7 @@ import { participantControls, type DrawCapabilities } from '@/lib/participant-co
 import { nextPowerOf2, pickOne, isOutOfEvent } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil, UserMinus } from 'lucide-react';
+import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil, UserMinus, Unlink, Users } from 'lucide-react';
 import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';
 import type { EventWaiverStatus } from '@badminton/shared';
 import { WaiverState } from './WaiverState';
@@ -166,14 +168,31 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   const [playerId, setPlayerId] = useState('');
   const [player2Id, setPlayer2Id] = useState('');
   const [playerIds, setPlayerIds] = useState<string[]>([]);
+  // Which of the two doubles entry routes the Add dialog is on. A doubles event
+  // takes both — a formed team, or a person who will be given a partner — and
+  // they are different actions asking different capabilities.
+  const [addMode, setAddMode] = useState<'pair' | 'solo'>('pair');
+  // The unpaired entrants ticked for pairing. Exactly two makes a team.
+  const [selectedUnpaired, setSelectedUnpaired] = useState<string[]>([]);
+  // The pair whose halves are being offered a withdrawal, or null.
+  const [splitting, setSplitting] = useState<PairWithPlayers | null>(null);
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const { toast } = useToast();
   const router = useRouter();
   const confirm = useConfirm();
 
+  // THE DRAW IS PAIRS AND ONLY PAIRS, in a doubles event. `entries` feeds the
+  // bracket-size preview and the seed cells, and an unpaired entrant is not an
+  // entry in the draw — they are a person waiting to become half of one. The
+  // pool is rendered as its own block below, deliberately outside this.
   const entries: Array<ParticipantWithPlayer | PairWithPlayers> = isDoubles ? pairs : participants;
   const activeEntries = entries.filter((e) => !isOutOfEvent(e.status));
+  // Since 00102 a doubles event's tournament_participants rows are the people
+  // who entered without a partner. In a singles event they ARE the field, and
+  // this list is empty.
+  const unpaired = isDoubles ? participants : [];
+  const activeUnpaired = unpaired.filter((p) => !isOutOfEvent(p.status));
   const bracketSize = nextPowerOf2(activeEntries.length);
   const byes = bracketSize - activeEntries.length;
   const drawLocked = event.draw_locked as boolean;
@@ -262,6 +281,96 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     setActionLoading(null);
   }
 
+  // An unpaired entrant is a tournament_participants row whatever the event's
+  // discipline, so this is the singles remove — not removePairFromEvent.
+  async function handleRemoveUnpaired(id: string) {
+    setActionLoading(id);
+    try {
+      await removeParticipantFromEvent(id);
+      toast('Removed', 'success');
+      router.refresh();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed', 'error');
+    }
+    setActionLoading(null);
+  }
+
+  /**
+   * PUT TWO WAITING PEOPLE TOGETHER.
+   *
+   * The same action as Add Pair, because it is the same thing: addPairToEvent
+   * takes player ids and removes either of them from the pool in the same
+   * transaction (migration 00102). There is no separate "promote" endpoint to
+   * get out of step with it, and no path that can write a pair while leaving a
+   * pool row behind.
+   */
+  async function handlePairSelected() {
+    if (selectedUnpaired.length !== 2) return;
+    setLoading(true);
+    const [a, b] = selectedUnpaired;
+    const res = await addPairToEvent(event.id, a!, b!);
+    if (!res.ok) {
+      toast(res.error, 'error');
+      setLoading(false);
+      return;
+    }
+    toast('Paired', 'success');
+    setSelectedUnpaired([]);
+    router.refresh();
+    setLoading(false);
+  }
+
+  async function handleUnpair(pair: PairWithPlayers) {
+    const ok = await confirm({
+      title: 'Split up this pair?',
+      message: 'Both players go back to waiting for a partner. They keep their entry fee, their event waiver and their place in the tournament.',
+      confirmLabel: 'Unpair',
+    });
+    if (!ok) return;
+
+    setActionLoading(pair.id);
+    const res = await unpairEntry(pair.id);
+    if (!res.ok) {
+      toast(res.error, 'error');
+      setActionLoading(null);
+      return;
+    }
+    toast('Unpaired — both are waiting for a partner', 'success');
+    router.refresh();
+    setActionLoading(null);
+  }
+
+  /**
+   * ONE HALF PULLS OUT, and the other is not punished for it.
+   *
+   * Withdrawing does not refund, so the partner has already paid, has already
+   * signed the event waiver and is already spending one of their allowed
+   * entries. They go back into the pool keeping all three and can be given
+   * somebody else.
+   */
+  async function handleWithdrawMember(pair: PairWithPlayers, memberId: string, memberName: string) {
+    const partner = memberId === pair.player1_id ? pair.player2 : pair.player1;
+    const ok = await confirm({
+      title: `${memberName} has pulled out?`,
+      message: `The pair is broken up. ${partner?.full_name ?? 'Their partner'} goes back to waiting for a partner and keeps their entry fee, their event waiver and their place. ${memberName} is recorded as withdrawn — withdrawing does not refund.`,
+      confirmLabel: 'Withdraw them',
+      danger: true,
+    });
+    if (!ok) return;
+
+    setActionLoading(pair.id);
+    const res = await withdrawPairMember(pair.id, memberId);
+    if (!res.ok) {
+      toast(res.error, 'error');
+      setActionLoading(null);
+      return;
+    }
+    toast(`${memberName} withdrawn — ${partner?.full_name ?? 'their partner'} is waiting for a partner`, 'success');
+    setSplitting(null);
+    router.refresh();
+    setActionLoading(null);
+  }
+
   async function handleWithdraw(id: string, name: string) {
     const ok = await confirm({
       title: `Withdraw ${name}?`,
@@ -325,6 +434,34 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     }
   }
 
+  /**
+   * The two ways a formed pair comes apart, offered next to Remove.
+   *
+   * Three different things an exec can mean, so three controls rather than one:
+   * Remove says the team should never have been entered, Unpair says these two
+   * people belong here but this team does not, and Withdraw says one of them
+   * has pulled out. Only the last leaves anybody out of the event.
+   */
+  function renderPairSplitActions(pair: PairWithPlayers) {
+    if (isOutOfEvent(pair.status)) return null;
+    return (
+      <>
+        {controls.unpair && (
+          <Button size="sm" variant="ghost" onClick={() => handleUnpair(pair)} loading={actionLoading === pair.id} aria-label={`Unpair ${pair.pair_name ?? 'this pair'}`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
+            <Unlink className="w-3.5 h-3.5 mr-1" />
+            <span className="text-xs">Unpair</span>
+          </Button>
+        )}
+        {controls.withdrawMember && (
+          <Button size="sm" variant="ghost" onClick={() => setSplitting(pair)} aria-label={`Withdraw one player from ${pair.pair_name ?? 'this pair'}`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
+            <UserMinus className="w-3.5 h-3.5 mr-1 text-[var(--color-danger)]" />
+            <span className="text-xs">One pulled out</span>
+          </Button>
+        )}
+      </>
+    );
+  }
+
   function renderActions(id: string, name: string, status: string) {
     // An entry that is already out of the event has no next step — offering
     // "withdraw" on someone who has withdrawn is how a bracket gets a second
@@ -355,14 +492,39 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     entries.map((e) => e.seed_number).filter((s): s is number => s != null)
   );
 
+  // BOTH WAYS OF ALREADY BEING IN A DOUBLES EVENT. The picker used to exclude
+  // pair halves only; leave the pool out and it offers somebody who is already
+  // waiting for a partner, and the insert comes back a duplicate.
   const registeredPlayerIds = new Set(
     isDoubles
-      ? pairs.flatMap((p) => [p.player1_id, p.player2_id])
+      ? [...pairs.flatMap((p) => [p.player1_id, p.player2_id]), ...participants.map((p) => p.player_id)]
       : participants.map((p) => p.player_id)
   );
 
   const availablePlayers = allPlayers.filter(p => !registeredPlayerIds.has(p.id));
   const playerOptions = availablePlayers.map(p => ({ id: p.id, name: p.full_name, avatarUrl: p.avatar_url }));
+
+  // A doubles pair row can offer up to three things now, and the Actions column
+  // has to be drawn if ANY of them is on offer — actionsColumn alone follows
+  // remove and withdraw, which is what it was written for.
+  const showPairActions = controls.actionsColumn || (isDoubles && (controls.unpair || controls.withdrawMember));
+  // The Add button opens a dialog that may offer either route, so it appears
+  // for a holder of either key. Which panels are inside it is decided again.
+  const showAddButton = controls.add || (isDoubles && controls.addSolo);
+
+  function unpairedName(p: ParticipantWithPlayer): string {
+    return p.player?.full_name ?? 'Unknown';
+  }
+
+  function toggleUnpaired(id: string) {
+    setSelectedUnpaired((current) =>
+      current.includes(id)
+        ? current.filter((x) => x !== id)
+        // A team is two people. Ticking a third replaces the oldest rather than
+        // silently doing nothing, which reads as a broken checkbox.
+        : [...current, id].slice(-2),
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -371,6 +533,13 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
         <div className="flex items-center gap-3">
           <span className="text-sm text-[var(--text-muted)]">
             {activeEntries.length} {isDoubles ? 'pairs' : 'players'}
+            {/* Counted separately and never folded into the bracket figure —
+                somebody waiting for a partner is not an entry in the draw. */}
+            {activeUnpaired.length > 0 && (
+              <span className="text-[var(--color-warning)]">
+                {' '}+ {activeUnpaired.length} waiting for a partner
+              </span>
+            )}
             {event.format !== 'round_robin' && ` → ${bracketSize}-slot bracket`}
             {byes > 0 && event.format !== 'round_robin' && (
               <span className="text-[var(--color-warning)]"> ({byes} skip{byes > 1 ? 's' : ''})</span>
@@ -406,9 +575,9 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               <ArrowUpDown className="w-3.5 h-3.5 mr-1" /> Auto-Seed
             </Button>
           )}
-          {controls.add && (
-            <Button size="sm" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={() => setAddOpen(true)}>
-              <Plus className="w-3.5 h-3.5 mr-1" /> Add {isDoubles ? 'Pair' : 'Player'}
+          {showAddButton && (
+            <Button size="sm" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={() => { setAddMode(controls.add ? 'pair' : 'solo'); setAddOpen(true); }}>
+              <Plus className="w-3.5 h-3.5 mr-1" /> Add {isDoubles ? 'Entry' : 'Player'}
             </Button>
           )}
         </div>
@@ -449,7 +618,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               )}
               <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-24">Elo</th>
               <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-28">Status</th>
-              {controls.actionsColumn && (
+              {(isDoubles ? showPairActions : controls.actionsColumn) && (
                 <th className="text-right text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-32">Actions</th>
               )}
             </tr>
@@ -486,9 +655,12 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                       <span className="sr-only">Status: </span>{statusLabel(pair.status)}
                     </span>
                   </td>
-                  {controls.actionsColumn && (
+                  {showPairActions && (
                     <td className="px-4 py-3 text-right">
-                      {renderActions(pair.id, pair.pair_name ?? `${pair.player1?.full_name} / ${pair.player2?.full_name}`, pair.status)}
+                      <div className="flex items-center justify-end gap-1 flex-wrap">
+                        {renderPairSplitActions(pair)}
+                        {renderActions(pair.id, pair.pair_name ?? `${pair.player1?.full_name} / ${pair.player2?.full_name}`, pair.status)}
+                      </div>
                     </td>
                   )}
                 </tr>
@@ -548,10 +720,200 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
         )}
       </div>
 
-      {/* Add Dialog */}
-      <Dialog open={addOpen} onClose={() => setAddOpen(false)} title={isDoubles ? 'Add Pair' : 'Add Participant'}>
-        <form onSubmit={isDoubles ? handleAddPair : handleAddMany} className="space-y-4">
-          {isDoubles ? (
+      {/*
+        WAITING FOR A PARTNER — the doubles pool.
+
+        Its own block, below the pairs, and deliberately not merged into the
+        table above: these people are not entries in the draw, they are people
+        who will become half of one. Folding them in would put them in the
+        bracket-size figure and give them seed cells for a slot they do not hold.
+
+        Rendered whenever anybody is in it, whatever the viewer may do — the
+        rows are information the page already has, and hiding "three people are
+        still waiting" from somebody who cannot fix it is how a draw gets
+        refused for a reason nobody on screen can see.
+      */}
+      {isDoubles && unpaired.length > 0 && (
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+          <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-[var(--border)]">
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4 text-[var(--color-warning)]" />
+              <span className="text-sm font-medium text-[var(--text-primary)]">Waiting for a partner</span>
+              <span className="text-xs text-[var(--text-muted)]">
+                {activeUnpaired.length} {activeUnpaired.length === 1 ? 'person' : 'people'}
+              </span>
+            </div>
+            {controls.pair && (
+              <Button
+                size="sm"
+                onClick={handlePairSelected}
+                disabled={selectedUnpaired.length !== 2}
+                loading={loading}
+                className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+              >
+                Pair selected ({selectedUnpaired.length}/2)
+              </Button>
+            )}
+          </div>
+
+          {/* The draw refuses outright while anybody is here, so say so where
+              the exec is standing rather than at the moment they press
+              Generate. Both remedies, the same two the refusal names. */}
+          {activeUnpaired.length > 0 && (
+            <div className="flex items-start gap-2 px-4 py-3 bg-[var(--color-warning)]/10 border-b border-[var(--color-warning)]/20">
+              <AlertTriangle className="w-4 h-4 text-[var(--color-warning)] flex-shrink-0 mt-0.5" />
+              <span className="text-sm text-[var(--color-warning)]">
+                The draw cannot be generated while anyone is waiting. Pair them up, or take them out of the event.
+              </span>
+            </div>
+          )}
+
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-[var(--border)]">
+                {controls.pair && <th className="w-10 px-4 py-3"><span className="sr-only">Select for pairing</span></th>}
+                <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3">Player</th>
+                {waiverStates && (
+                  <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-56">Event waiver</th>
+                )}
+                <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-24">Elo</th>
+                <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-28">Status</th>
+                {controls.removeSolo && (
+                  <th className="text-right text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-24">Actions</th>
+                )}
+              </tr>
+            </thead>
+            <tbody>
+              {unpaired.map((p) => {
+                const out = isOutOfEvent(p.status);
+                const ratings = pickOne(p.player?.ratings);
+                // doubles_elo, because this is a doubles event — the same number
+                // elo_before was stamped with when they entered.
+                const elo = ratings?.doubles_elo ?? p.elo_before ?? '-';
+                return (
+                  <tr key={p.id} className="border-b border-[var(--border)] last:border-b-0 hover:bg-[var(--bg-elevated)] transition-colors">
+                    {controls.pair && (
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedUnpaired.includes(p.player_id)}
+                          onChange={() => toggleUnpaired(p.player_id)}
+                          // Somebody who has left the event is not raw material
+                          // for a team — the server refuses it too.
+                          disabled={out}
+                          aria-label={`Pair ${unpairedName(p)}`}
+                          className="w-4 h-4 accent-[var(--color-accent)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+                        />
+                      </td>
+                    )}
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2.5">
+                        <AvatarChip name={p.player?.full_name ?? ''} src={p.player?.avatar_url} size="sm" id={p.player?.id} />
+                        <span className="text-sm font-medium text-[var(--text-primary)]">{unpairedName(p)}</span>
+                      </div>
+                    </td>
+                    {waiverStates && (
+                      <td className="px-4 py-3">
+                        <WaiverState states={waiverStates} playerIds={[p.player_id]} />
+                      </td>
+                    )}
+                    <td className="px-4 py-3">
+                      <span className="text-sm font-mono text-[var(--text-muted)]">{elo}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-full" role="status" style={{ color: STATUS_COLORS[p.status], backgroundColor: `${STATUS_COLORS[p.status]}15` }}>
+                        <span className="sr-only">Status: </span>{statusLabel(p.status)}
+                      </span>
+                    </td>
+                    {controls.removeSolo && (
+                      <td className="px-4 py-3 text-right">
+                        {out ? (
+                          <span className="text-xs text-[var(--text-muted)]">—</span>
+                        ) : (
+                          <Button size="sm" variant="ghost" onClick={() => handleRemoveUnpaired(p.id)} loading={actionLoading === p.id} aria-label={`Remove ${unpairedName(p)}`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
+                            <Trash2 className="w-3.5 h-3.5 text-[var(--color-danger)]" />
+                          </Button>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/*
+        ONE HALF OF A PAIR HAS PULLED OUT — which one?
+
+        A dialog rather than two buttons in the row, because the row already
+        carries three controls and the choice here decides who keeps their entry
+        and who does not.
+      */}
+      <Dialog open={splitting !== null} onClose={() => setSplitting(null)} title="Which player has pulled out?">
+        {splitting && (
+          <div className="space-y-3">
+            <p className="text-sm text-[var(--text-muted)]">
+              The pair is broken up. The other player goes back to waiting for a partner and keeps their entry fee,
+              their event waiver and their place in the tournament. Withdrawing does not refund.
+            </p>
+            {[
+              { id: splitting.player1_id, name: splitting.player1?.full_name ?? 'Player 1' },
+              { id: splitting.player2_id, name: splitting.player2?.full_name ?? 'Player 2' },
+            ].map((half) => (
+              <Button
+                key={half.id}
+                variant="ghost"
+                className="w-full justify-start focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+                loading={actionLoading === splitting.id}
+                onClick={() => handleWithdrawMember(splitting, half.id, half.name)}
+              >
+                <UserMinus className="w-3.5 h-3.5 mr-2 text-[var(--color-danger)]" />
+                {half.name} has pulled out
+              </Button>
+            ))}
+            <Button variant="ghost" type="button" onClick={() => setSplitting(null)}>Cancel</Button>
+          </div>
+        )}
+      </Dialog>
+
+      {/*
+        Add Dialog.
+
+        A doubles event has TWO ways in and they are different server actions
+        asking different capabilities — "as a pair" is pairs.add.write, "without
+        a partner" is participants.add.write — so the switch only offers a route
+        the viewer may actually take, and a viewer holding one key sees one
+        panel with no toggle at all.
+      */}
+      <Dialog open={addOpen} onClose={() => setAddOpen(false)} title={isDoubles ? 'Add Entry' : 'Add Participant'}>
+        <form onSubmit={isDoubles && addMode === 'pair' ? handleAddPair : handleAddMany} className="space-y-4">
+          {isDoubles && controls.add && controls.addSolo && (
+            <div className="flex gap-1 p-1 rounded-lg bg-[var(--bg-elevated)]" role="tablist">
+              {([['pair', 'As a pair'], ['solo', 'Without a partner']] as const).map(([mode, label]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  role="tab"
+                  aria-selected={addMode === mode}
+                  onClick={() => setAddMode(mode)}
+                  className={`flex-1 text-sm px-3 py-1.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none ${addMode === mode ? 'bg-[var(--bg-card)] text-[var(--text-primary)] font-medium' : 'text-[var(--text-muted)]'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {isDoubles && addMode === 'solo' && (
+            <p className="text-sm text-[var(--text-muted)]">
+              They enter on their own and wait for a partner. They are invoiced and asked for the event waiver now,
+              exactly as a paired entrant is — being paired later is not when they agreed to anything.
+            </p>
+          )}
+
+          {isDoubles && addMode === 'pair' ? (
             <>
               <PlayerPicker
                 label="Player 1"
@@ -579,7 +941,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               field, so a short one can still sit over these buttons. */}
           <div className="flex gap-2 pt-6">
             <Button type="submit" loading={loading} className="flex-1">
-              {!isDoubles && playerIds.length > 1 ? `Add ${playerIds.length}` : 'Add'}
+              {!(isDoubles && addMode === 'pair') && playerIds.length > 1 ? `Add ${playerIds.length}` : 'Add'}
             </Button>
             <Button variant="ghost" onClick={() => setAddOpen(false)} type="button">Cancel</Button>
           </div>

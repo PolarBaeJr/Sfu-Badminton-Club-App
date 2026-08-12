@@ -78,9 +78,17 @@ export default async function EventPage({
   // the picker for the club's VP of Tournaments — the very person this page is
   // for. The right question here is "may this viewer add an entry?", and the
   // answer differs by discipline because the two adds are separate capabilities.
+  //
+  // BOTH KEYS FOR A DOUBLES EVENT, since 00102. A doubles event now takes solo
+  // entrants as well as pairs, and the two adds are separate capabilities:
+  // "Add Pair" asks pairs.add.write, "Add without a partner" asks
+  // participants.add.write. Asking only the first would leave the picker behind
+  // the second empty for anybody holding one and not the other — the dead
+  // invitation this gating exists to remove, reintroduced from the other side.
+  const canAddSolo = may('tournaments.draw.participants.add.write');
   const canAddEntries = doubles
-    ? may('tournaments.draw.pairs.add.write')
-    : may('tournaments.draw.participants.add.write');
+    ? may('tournaments.draw.pairs.add.write') || canAddSolo
+    : canAddSolo;
   // THE SAME QUESTION ASKED FOR EVERY CONTROL ON THE PARTICIPANTS TAB, not just
   // the one whose fetch it gates. The tab decided what to render from
   // `event.status === 'registration'` alone, so Add / Auto-Seed / Clear Seeds
@@ -88,7 +96,10 @@ export default async function EventPage({
   // refused on click. Six controls, six capabilities — the ones the actions
   // themselves re-check. See lib/participant-controls.ts for the transcription.
   const drawCapabilities: DrawCapabilities = {
-    add: canAddEntries,
+    // `add` is the DISCIPLINE'S add — Add Pair for doubles, Add Player for
+    // singles — and stays the single key its own action re-checks. `soloAdd`
+    // below is the second, separate one a doubles event now also needs.
+    add: doubles ? may('tournaments.draw.pairs.add.write') : canAddSolo,
     remove: doubles
       ? may('tournaments.draw.pairs.remove.write')
       : may('tournaments.draw.participants.remove.write'),
@@ -96,6 +107,8 @@ export default async function EventPage({
     seedAuto: may('tournaments.draw.seed.auto.write'),
     seedClear: may('tournaments.draw.seed.clear.write'),
     exit: may('tournaments.draw.exit.write'),
+    soloAdd: canAddSolo,
+    soloRemove: may('tournaments.draw.participants.remove.write'),
   };
   // `siblingEvents` feeds one picker too: the "seed from" list in
   // EventSettingsDialog, which is reached from EventHeader's settings button and
@@ -137,13 +150,18 @@ export default async function EventPage({
           .eq('event_id', eventId)
           .order('seed_number', { ascending: true, nullsFirst: false })
       : Promise.resolve({ data: [] as PairWithPlayers[] }),
-    doubles
-      ? Promise.resolve({ data: [] as ParticipantWithPlayer[] })
-      : supabase
-          .from('tournament_participants')
-          .select('*, player:players!player_id(id, full_name, avatar_url, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_matches_played, doubles_matches_played))')
-          .eq('event_id', eventId)
-          .order('seed_number', { ascending: true, nullsFirst: false }),
+    // FETCHED FOR A DOUBLES EVENT TOO, since 00102. This branch used to resolve
+    // to an empty array on the grounds that a doubles entrant "has no
+    // tournament_participants row at all" — which was true right up until
+    // somebody could enter without a partner. Left as it was, the pool would be
+    // written by the actions and never once appear on the screen that manages
+    // it. Same embed for both, so the pool's Elo column reads the same way the
+    // singles list does.
+    supabase
+      .from('tournament_participants')
+      .select('*, player:players!player_id(id, full_name, avatar_url, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_matches_played, doubles_matches_played))')
+      .eq('event_id', eventId)
+      .order('seed_number', { ascending: true, nullsFirst: false }),
     supabase
       .from('tournament_matches')
       .select('*')
@@ -214,8 +232,12 @@ export default async function EventPage({
   const waiverStates: Record<string, EventWaiverStatus> | null =
     waiverText && waiverAcceptances
       ? Object.fromEntries(
+          // BOTH LISTS FOR A DOUBLES EVENT. A member waiting for a partner is
+          // asked for the same signature at the same moment a paired one is —
+          // being paired is not when they agreed to anything — so the pool
+          // needs its waiver column filled in exactly as the pairs table does.
           (doubles
-            ? pairs.flatMap((p) => [p.player1_id, p.player2_id])
+            ? [...pairs.flatMap((p) => [p.player1_id, p.player2_id]), ...participants.map((p) => p.player_id)]
             : participants.map((p) => p.player_id)
           ).map((playerId) => [
             playerId,
