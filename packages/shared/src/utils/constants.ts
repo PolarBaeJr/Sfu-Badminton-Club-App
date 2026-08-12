@@ -598,13 +598,28 @@ export function isLegalTimeExceededScore(
   gamesPerMatch?: number | null,
   pointsPerGame?: number | null,
 ): boolean {
-  const { cap } = getRulesFor(format, gamesPerMatch, pointsPerGame);
+  const { target, cap } = getRulesFor(format, gamesPerMatch, pointsPerGame);
   // Integers only. The strict path is pinned to whole numbers by its equalities
   // against target and cap; this one compares nothing but bounds, so without
   // the check a client posting 15.5 would sail through.
   if (!Number.isInteger(a) || !Number.isInteger(b)) return false;
   if (a === b) return false;                       // no winner, no result
-  return Math.min(a, b) >= 0 && Math.max(a, b) <= cap;
+  if (Math.min(a, b) < 0 || Math.max(a, b) > cap) return false;
+
+  // AND THE GAME MUST STILL HAVE BEEN IN PROGRESS. Bounds alone accepted 21-2
+  // in a game to 15: 21 is under the cap, so nothing objected — but that game
+  // ended at 15-2 and could not still have been on court when time was called.
+  // The clock excuses a game that never FINISHED; it cannot excuse one that had
+  // already been won.
+  //
+  // Won means: somebody reached the target with two clear, or took the cap. So
+  // anything short of that is a position the game could genuinely have been
+  // stopped in — including deuce (16-15 to 15 is live, and legal here), which
+  // is why this is not simply `max < target`.
+  const hi = Math.max(a, b);
+  const lo = Math.min(a, b);
+  const alreadyWon = hi >= target && (hi - lo >= 2 || hi >= cap);
+  return !alreadyWon;
 }
 
 /**

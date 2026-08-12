@@ -206,7 +206,27 @@ describe('time-exceeded scores', () => {
     // stopped it.
     expect(isLegalGameScore(31, 2, 'best_of_3_to_21', null, null, true)).toBe(false);
     expect(isLegalGameScore(31, 2, 'best_of_3_to_21')).toBe(false);
-    expect(isLegalGameScore(30, 29, 'best_of_3_to_21', null, null, true)).toBe(true);
+    // 29-28 is a game still on court in deuce: nobody has two clear and nobody
+    // has the cap, so the clock could genuinely have stopped it.
+    expect(isLegalGameScore(29, 28, 'best_of_3_to_21', null, null, true)).toBe(true);
+    // 30-29 is NOT. Taking the cap WINS the game, so that game ended on its own
+    // and the clock cannot be what stopped it. This assertion used to expect
+    // true, which is what let 21-2 through in a game to 15.
+    expect(isLegalGameScore(30, 29, 'best_of_3_to_21', null, null, true)).toBe(false);
+  });
+
+  it('refuses a game that had already been won, whatever the clock says', () => {
+    // Reported from staging: a quarter-final played to 15 accepted 21-2 with
+    // the time-exceeded flag on, and named a winner. That game ended at 15-2 —
+    // it could not still have been on court when time was called. The flag
+    // excuses a game that never FINISHED; it cannot excuse one already won.
+    expect(isLegalGameScore(21, 2, 'one_game_15', null, null, true)).toBe(false);
+    expect(isLegalGameScore(15, 2, 'one_game_15', null, null, true)).toBe(false);
+    // Genuinely cut short, and still legal: nobody had reached 15 with two clear.
+    expect(isLegalGameScore(14, 2, 'one_game_15', null, null, true)).toBe(true);
+    expect(isLegalGameScore(9, 4, 'one_game_11', null, null, true)).toBe(true);
+    // The same shape one round earlier, played to 11.
+    expect(isLegalGameScore(15, 2, 'one_game_11', null, null, true)).toBe(false);
   });
 
   it('rejects negatives and non-integer scores', () => {
@@ -215,11 +235,15 @@ describe('time-exceeded scores', () => {
   });
 
   it('takes the cap from the format rather than assuming 30', () => {
-    // 11-point format: cap 20, so 20-3 is a plausible stoppage and 21-3 is not.
-    expect(isLegalTimeExceededScore(20, 3, 'one_game_11')).toBe(true);
-    expect(isLegalTimeExceededScore(21, 3, 'one_game_11')).toBe(false);
+    // 11-point format: cap 20. A stoppage has to be a game still in progress,
+    // so the high scores that probe the cap must be deuce, not blowouts —
+    // 20-3 was accepted here before and is impossible: that game ended at 11-3.
+    expect(isLegalTimeExceededScore(19, 18, 'one_game_11')).toBe(true);   // deuce, under the cap
+    expect(isLegalTimeExceededScore(20, 19, 'one_game_11')).toBe(false);  // 20 IS the cap: won
+    expect(isLegalTimeExceededScore(21, 3, 'one_game_11')).toBe(false);   // past the cap
     // …and a custom best-of-5-to-15 gets 24, not the preset's 30.
-    expect(isLegalTimeExceededScore(24, 3, 'bo3_21', 5, 15)).toBe(true);
+    expect(isLegalTimeExceededScore(23, 22, 'bo3_21', 5, 15)).toBe(true);
+    expect(isLegalTimeExceededScore(24, 23, 'bo3_21', 5, 15)).toBe(false); // 24 is that cap
     expect(isLegalTimeExceededScore(25, 3, 'bo3_21', 5, 15)).toBe(false);
   });
 });
