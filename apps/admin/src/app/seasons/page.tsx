@@ -3,6 +3,7 @@ import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { Card, Badge, PageHeader, ResponsiveTable, TableCard, Atomic, EmptyState } from '@badminton/ui';
 import { CreateSeasonForm, SeasonRowActions, SeasonFeesPanel } from './actions';
 import { SeasonProgressCard } from './season-progress';
+import { SeasonTrendPanel } from './trend-panel';
 import { PanelLabel, PANEL_NOTE } from './panel';
 import { dateRange, hasStarted, seasonStatus, shortDate, today } from './season-shape';
 import { AlertTriangle } from 'lucide-react';
@@ -336,6 +337,19 @@ export default async function SeasonsPage() {
           </Card>
         </div>
       </div>
+
+      {/* The two counts the table already prints, in calendar order. Full width
+          rather than in the column beside the table: eight terms of labels at
+          10px need the room, and this is the one thing on the screen that is
+          about the club rather than about a row.
+
+          Costs nothing — both maps were built above for the table. */}
+      <SeasonTrendPanel
+        seasons={rows}
+        matchCounts={matchCounts}
+        playerCounts={playerCounts}
+        now={now}
+      />
     </div>
   );
 }
