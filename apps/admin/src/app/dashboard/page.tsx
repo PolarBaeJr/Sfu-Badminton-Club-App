@@ -12,7 +12,7 @@ import {
   wallClockToUtc,
 } from '@badminton/shared';
 import Link from 'next/link';
-import { ArrowUpRight } from 'lucide-react';
+import { AlertTriangle, ArrowUpRight } from 'lucide-react';
 import { PlayerActions } from '../players/player-actions';
 import { openableSections } from '@/components/nav-sections';
 import { getSeasonFinances } from '@/lib/season-finance';
@@ -647,12 +647,17 @@ export default async function DashboardPage({
           a section they cannot open to this page rather than to /unauthorized —
           they belong in the console, just not in that part of it. Saying so once
           is what stops a narrowed officer concluding their account is broken.
-          Neutral tones, not warning: nothing is wrong. */}
+          A red mark, not a warning band: the refusal itself is worth noticing,
+          but nothing is broken and the surface stays neutral. role=status
+          because the eyebrow that used to carry this meaning is gone and the
+          icon is decorative — without it a screen reader gets the sentence with
+          no signal that it is a refusal. */}
       {deniedLabel && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border border-[var(--border)] bg-[var(--bg-elevated)] px-4 py-3">
-          <span className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--text-muted)]">
-            Not yours
-          </span>
+        <div
+          role="status"
+          className="flex flex-wrap items-center gap-x-3 gap-y-2 border border-[var(--border)] bg-[var(--bg-elevated)] px-4 py-3"
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0 text-[var(--color-danger)]" aria-hidden />
           <span className="text-sm text-[var(--text-secondary)]">
             “{deniedLabel}” is not part of your access, so you are on the dashboard instead.
           </span>
