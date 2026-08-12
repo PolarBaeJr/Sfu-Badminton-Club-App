@@ -1609,8 +1609,12 @@ async function setRoundMatchShapeImpl(
     .eq('event_id', eventId);
   if (target.phase) q = q.eq('phase', target.phase);
   else q = q.is('phase', null);
+  // `.not('is_third_place','is',true)` rather than `.eq(false)`, matching
+  // assertNoResultsEntered's treatment of is_bye: the negative form is
+  // null-safe, and a row written before 00080 added the column with a default
+  // must not silently drop out of its own round.
   if (target.thirdPlace) q = q.eq('is_third_place', true);
-  else q = q.eq('is_third_place', false).eq('round_number', target.roundNumber!);
+  else q = q.not('is_third_place', 'is', true).eq('round_number', target.roundNumber!);
 
   const { data: matches, error: readError } = await q;
   // The error is not discarded, for the same reason assertNoResultsEntered does
