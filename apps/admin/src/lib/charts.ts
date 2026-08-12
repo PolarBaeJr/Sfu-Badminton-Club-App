@@ -21,6 +21,8 @@
 //   TIME SERIES        buildRunningTotal + computeRunningScale + the two paths.
 //                      Money across a term, matches across a season, joins
 //                      across a term. Anything cumulative and dated.
+//                      computeSignedRunningScale is the same shape for the one
+//                      series that can go BELOW zero — the net position.
 //   CATEGORICAL        buildBars — one labelled part per row, measured against
 //                      the largest. Spend by category, entries per event.
 //   DISTRIBUTION       buildHistogram — equal-width bins over a numeric range.
@@ -131,6 +133,13 @@ export interface RunningScale {
   lastDay: string;
   /** Top of the value domain, in cents, after headroom. */
   maxCents: number;
+  /**
+   * Bottom of the value domain, in cents, after headroom. ZERO for every scale
+   * from computeRunningScale — a cumulative total starts at nothing and the
+   * floor is the fact that it did. Only a signed series (see
+   * computeSignedRunningScale) puts anything else here.
+   */
+  minCents: number;
   /** x in user units for a `YYYY-MM-DD`. Clamped to the box. */
   x: (day: string) => number;
   /** y in user units for a cents value. Clamped, so a stray value cannot escape. */
@@ -197,6 +206,7 @@ export function computeRunningScale(
     firstDay,
     lastDay,
     maxCents,
+    minCents: 0,
     x: (day: string) => {
       const n = dayNumber(day);
       if (!Number.isFinite(n)) return box.padX;
@@ -204,6 +214,86 @@ export function computeRunningScale(
     },
     // SVG y grows downward; more money must sit higher on screen.
     y: (cents: number) => box.padY + innerH * (1 - clamp(cents / maxCents)),
+  };
+}
+
+/**
+ * THE SAME RUNNING TOTAL, FOR A SERIES THAT CAN GO BELOW ZERO.
+ *
+ * For the net position across a term — money in, minus money out, day by day —
+ * and for nothing else today. The question it answers is the club owner's
+ * literal one: "are we in the positives", and when did that change.
+ *
+ * WHY THIS IS A SECOND FUNCTION AND NOT A FLAG ON THE FIRST. computeRunningScale
+ * pins its floor at zero and CLAMPS, which is exactly right for a cumulative
+ * total that cannot go backwards and is a lie for one that can: a season that
+ * went into the red would have every negative value pinned to the baseline and
+ * would draw as a flat line along the floor — "the club broke even all term"
+ * over a term it spent underwater. That is the same class of distortion the
+ * step path refuses, and it cannot be fixed by relaxing the clamp, because the
+ * DOMAIN is wrong too: dividing by `maxCents` alone has nowhere for a negative
+ * value to be.
+ *
+ * Making it a parameter of the existing function would also mean every caller
+ * of a scale has to know which kind it got. They are different questions with
+ * different refusals, so they are different functions with the same return
+ * type — RunningTotalChart draws either one unchanged, because it already
+ * places its baseline at `y(0)` and buildRunningPath already opens there.
+ *
+ * ZERO IS ALWAYS IN THE DOMAIN, whichever side the data is on. A term entirely
+ * in the red still shows the line it is under, because "how far below zero" is
+ * the whole content of the chart; a domain fitted to the data alone would put
+ * the worst day at the floor and the best day at the ceiling and say nothing
+ * about which side of the line either was.
+ *
+ * Headroom is applied to whichever ends actually carry value, so a series that
+ * never goes negative is drawn on exactly the domain computeRunningScale would
+ * have given it.
+ *
+ * NULL ON FEWER THAN TWO DAYS, for the same reason as its sibling: one day is a
+ * dot, and a dot stretched across the box reads as a flat line.
+ */
+export function computeSignedRunningScale(
+  points: readonly CumulativePoint[],
+  box: ChartBox,
+): RunningScale | null {
+  if (points.length < 2) return null;
+
+  const firstDay = points[0]!.day;
+  const lastDay = points[points.length - 1]!.day;
+  const lo = dayNumber(firstDay);
+  const hi = dayNumber(lastDay);
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) return null;
+
+  const highest = points.reduce((max, p) => (p.cents > max ? p.cents : max), 0);
+  const lowest = points.reduce((min, p) => (p.cents < min ? p.cents : min), 0);
+  const maxCents = highest > 0 ? highest * 1.08 : 0;
+  const minCents = lowest < 0 ? lowest * 1.08 : 0;
+  // A term that netted exactly zero every day has no range to divide. The `|| 1`
+  // is the same guard computeRunningScale carries and for the same reason: it
+  // is what stops NaN reaching every coordinate.
+  const span = maxCents - minCents || 1;
+
+  const innerW = box.width - box.padX * 2;
+  const innerH = box.height - box.padY * 2;
+  const clamp = (t: number) => (t < 0 ? 0 : t > 1 ? 1 : t);
+
+  return {
+    box,
+    firstDay,
+    lastDay,
+    maxCents,
+    minCents,
+    x: (day: string) => {
+      const n = dayNumber(day);
+      if (!Number.isFinite(n)) return box.padX;
+      return box.padX + innerW * clamp((n - lo) / (hi - lo));
+    },
+    // Measured from the BOTTOM of the domain rather than from zero, which is
+    // the whole difference. Still clamped, so a stray value cannot escape the
+    // box — but the domain now has room for a real negative, so clamping no
+    // longer swallows one.
+    y: (cents: number) => box.padY + innerH * (1 - clamp((cents - minCents) / span)),
   };
 }
 

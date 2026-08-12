@@ -56,6 +56,28 @@ export interface SeasonIncome {
   reinstatementCents: number;
   /** Donations, grants, socials — 00073. */
   otherCents: number;
+  /**
+   * EVERY INCOME LEDGER'S DATED AMOUNTS, MERGED AND UNLABELLED.
+   *
+   * The rows were always fetched — each of the four reads below returns a whole
+   * LedgerRead and this function used to take `.total` and drop the dates on
+   * the floor — so carrying them costs no query. What they are for is the net
+   * position across the term, which is the only chart in the console that
+   * spans every book.
+   *
+   * MERGED ON PURPOSE, AND THIS IS A PERMISSION PROPERTY RATHER THAN TIDINESS.
+   * A caller holding `fees.netposition.read` may see the club's total, not its
+   * individual ledgers — entry money answers to `tournaments.fees.read` and
+   * reinstatements to `fees.reinstatements.read`. A list tagged by ledger would
+   * hand that caller the itemised books through the back door, so there are no
+   * tags: what comes out is dated money, and which shelf it came off is not
+   * recoverable from it.
+   *
+   * The set is exactly the set the four totals are taken over — every query
+   * here filters `paid_at is not null` — so a running total built from this
+   * ends at `totalCents` and cannot drift from the figure printed beside it.
+   */
+  payments: LedgerPayment[];
 }
 
 /** Only the id is needed now that all three ledgers carry a real season key. */
@@ -99,29 +121,45 @@ export interface LedgerRead {
   byCategory: { category: string; cents: number }[];
 }
 
-type LedgerRow = {
+/**
+ * The shape every ledger row is read through — the two or three columns the
+ * arithmetic below actually touches, and nothing else. Exported because the
+ * fold is exported: a caller that already holds rows (see foldLedgerRows) needs
+ * to be able to say what it is handing over.
+ */
+export type LedgerAmountRow = {
   amount_cents: number | null;
   paid_at?: string | null;
   category?: string | null;
 };
 
 /**
- * REFUSING TO TREAT A FAILED QUERY AS AN EMPTY LEDGER.
+ * THE ARITHMETIC OVER A LEDGER'S ROWS, WITH NO QUERY IN FRONT OF IT.
  *
- * This used to be `(rows ?? []).reduce(...)` over `result.data`, which reads a
- * query that errored as a ledger containing nothing. That is the worst possible
- * failure for a money figure: it produces a number, the number looks fine, and
- * it is short by however much the failed ledger held. The first time it would
- * have bitten is the deploy of 00073 itself — the console ships through CI
- * while migrations are applied BY HAND, so between the two there is a window
- * where other_income does not exist yet and every query against it fails.
- * Silently, that window reports a plausible wrong total; loudly, it reports an
- * error somebody fixes by applying the migration.
+ * Split out of readLedger so that a screen ALREADY HOLDING the rows can reach
+ * the same three readings without asking the database for them a second time.
+ * /fees is that screen twice over: its fee table selects the dues ledger to
+ * decide who has paid, and its ledger card selects other_income row by row to
+ * list it — in both cases the rows a chart needs are already in memory, and a
+ * second read of the same table to draw a picture of it would be a round trip
+ * for data the page is holding.
  *
- * unwrap() is the repo's existing helper for exactly this and throws on error.
+ * WHAT MUST NOT HAPPEN IS A SECOND PIECE OF ARITHMETIC. That is the whole
+ * subject of the note at the top of this file: the club's income read $0.00 for
+ * months because two pages each summed the money their own way. A second CALLER
+ * of one fold is not that; a second fold would be. So this function is the only
+ * place a ledger's rows become a total, wherever the rows came from.
+ *
+ * IT DOES NOT FILTER ON paid_at, and the contract is the one LedgerRead states:
+ * `total` counts every row it is given, `payments` keeps only the dated ones.
+ * Every query in this file filters `paid_at is not null`, so the two sets are
+ * identical against the real table. A caller passing rows it fetched WITHOUT
+ * that filter — the ledger card selects unpaid rows too, so it can badge them
+ * "not recorded" — must apply it before calling, exactly as the queries do.
+ * Moving the filter in here would silently change what every existing caller
+ * counts.
  */
-const readLedger = (result: { data: LedgerRow[] | null; error: unknown }): LedgerRead => {
-  const rows = unwrap(result as { data: LedgerRow[] | null; error: { message: string } | null });
+export function foldLedgerRows(rows: readonly LedgerAmountRow[]): LedgerRead {
   const byCategory = new Map<string, number>();
   let total = 0;
   const payments: LedgerPayment[] = [];
@@ -144,7 +182,27 @@ const readLedger = (result: { data: LedgerRow[] | null; error: unknown }): Ledge
       .map(([category, cents]) => ({ category, cents }))
       .sort((a, b) => b.cents - a.cents),
   };
-};
+}
+
+/**
+ * REFUSING TO TREAT A FAILED QUERY AS AN EMPTY LEDGER.
+ *
+ * This used to be `(rows ?? []).reduce(...)` over `result.data`, which reads a
+ * query that errored as a ledger containing nothing. That is the worst possible
+ * failure for a money figure: it produces a number, the number looks fine, and
+ * it is short by however much the failed ledger held. The first time it would
+ * have bitten is the deploy of 00073 itself — the console ships through CI
+ * while migrations are applied BY HAND, so between the two there is a window
+ * where other_income does not exist yet and every query against it fails.
+ * Silently, that window reports a plausible wrong total; loudly, it reports an
+ * error somebody fixes by applying the migration.
+ *
+ * unwrap() is the repo's existing helper for exactly this and throws on error.
+ */
+const readLedger = (result: { data: LedgerAmountRow[] | null; error: unknown }): LedgerRead =>
+  foldLedgerRows(
+    unwrap(result as { data: LedgerAmountRow[] | null; error: { message: string } | null }),
+  );
 
 /**
  * One KIND of fee, summed for one season.
@@ -190,15 +248,14 @@ async function feeLedger(
  * would hand a dues reader two books that are somebody else's — and the
  * dashboard's fee chart is labelled "season dues" for that reason rather than
  * out of caution.
+ *
+ * A `total`-ONLY TWIN OF THIS USED TO SIT HERE (getClubFeeIncome), and
+ * getOtherIncome beside it. Both are gone: every caller wants the dates too —
+ * the panels chart them, and getSeasonIncome now merges them into the net
+ * position — so the pair had become two names for one read whose only
+ * difference was how much of the answer they threw away. `.total` is a field on
+ * what comes back.
  */
-export async function getClubFeeIncome(
-  supabase: SupabaseClient,
-  season: SeasonWindow,
-): Promise<number> {
-  return (await feeLedger(supabase, season, 'dues')).total;
-}
-
-/** The dues ledger with its dates, for the caller that draws a chart of it. */
 export async function getClubFeeLedger(
   supabase: SupabaseClient,
   season: SeasonWindow,
@@ -208,7 +265,7 @@ export async function getClubFeeLedger(
 
 /**
  * The other-income ledger on its own — donations, grants, socials (00073).
- * Same reason as getClubFeeIncome above, and the same paid_at rule.
+ * Same reason as getClubFeeLedger above, and the same paid_at rule.
  *
  * `category` is selected here and not for club_fees because other_income
  * actually has the column — sponsorships, grants and socials are different
@@ -228,13 +285,6 @@ export async function getOtherIncomeLedger(
   );
 }
 
-export async function getOtherIncome(
-  supabase: SupabaseClient,
-  season: SeasonWindow,
-): Promise<number> {
-  return (await getOtherIncomeLedger(supabase, season)).total;
-}
-
 export async function getSeasonIncome(
   supabase: SupabaseClient,
   season: SeasonWindow,
@@ -244,16 +294,27 @@ export async function getSeasonIncome(
   // cannot overlap and cannot leave a paid fee out: the only way a row escapes
   // all three is a fourth fee_type, which the CHECK forbids. That is what makes
   // "counted exactly once" a property of the schema rather than a hope.
-  const [clubCents, tournamentCents, reinstatementCents, otherCents] = await Promise.all([
-    getClubFeeIncome(supabase, season),
-    feeLedger(supabase, season, 'tournament').then((l) => l.total),
-    feeLedger(supabase, season, 'reinstatement').then((l) => l.total),
+  // THE WHOLE LedgerRead IS KEPT NOW, not just its total. Every one of these
+  // reads already returned the dated rows behind its figure and this function
+  // dropped them; keeping them is what lets the net position be drawn across
+  // the term without a single extra round trip. Nothing about WHAT is fetched
+  // changed — see the note on `payments` above for why the four are then merged
+  // into one untagged list.
+  const [club, tournament, reinstatement, other] = await Promise.all([
+    getClubFeeLedger(supabase, season),
+    feeLedger(supabase, season, 'tournament'),
+    feeLedger(supabase, season, 'reinstatement'),
 
     // 00073. season_id is NOT NULL here, so unlike fees there is no "attached
     // to no season" row to worry about — but the paid_at rule is the same, so a
     // row recorded before the money actually arrived stays out.
-    getOtherIncome(supabase, season),
+    getOtherIncomeLedger(supabase, season),
   ]);
+
+  const clubCents = club.total;
+  const tournamentCents = tournament.total;
+  const reinstatementCents = reinstatement.total;
+  const otherCents = other.total;
 
   return {
     clubCents,
@@ -261,5 +322,6 @@ export async function getSeasonIncome(
     reinstatementCents,
     otherCents,
     totalCents: clubCents + tournamentCents + reinstatementCents + otherCents,
+    payments: [...club.payments, ...tournament.payments, ...reinstatement.payments, ...other.payments],
   };
 }

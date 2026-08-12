@@ -71,9 +71,31 @@ export interface SeasonFinances {
    * owner asked for.
    */
   netCents: number;
+  /**
+   * EVERY MOVEMENT OF THE CLUB'S MONEY, SIGNED AND DATED — income positive,
+   * spending negative — for the net position across the term.
+   *
+   * Costs nothing: both halves were already fetched for the totals above, and
+   * both queries filter `paid_at is not null`, so cumulating this list ends at
+   * exactly `netCents`. The curve's last point IS the headline rather than
+   * agreeing with it by luck.
+   *
+   * THE NOTE BELOW USED TO SAY THE OPPOSITE, and it was right at the time: the
+   * expense payments were kept out of this object because "they belong to the
+   * expense panel and to nothing the net position shows". The net position
+   * shows one now. What has NOT changed is the rule underneath that note — this
+   * list is untagged, so a holder of `fees.netposition.read` gets the club's
+   * net over time and cannot recover any individual ledger from it. See the
+   * note on SeasonIncome.payments.
+   */
+  netPayments: { at: string; cents: number }[];
 }
 
-interface ExpenseRow {
+/**
+ * The five columns the expense arithmetic touches. Exported because the fold
+ * over them is exported — a caller holding rows has to be able to say so.
+ */
+export interface ExpenseRow {
   amount_cents: number | null;
   category: string | null;
   paid_at: string | null;
@@ -120,6 +142,20 @@ export interface SeasonExpenses extends Pick<SeasonFinances, 'expenseCents' | 'e
    */
   owedToExecsCents: number;
   owedToExecsCount: number;
+  /**
+   * EVERYTHING SOMEBODY FRONTED, settled or not — every row with `paid_by` set.
+   *
+   * The denominator `owedToExecsCents` is a part of, and the only honest one:
+   * "how much of what our people put in have we paid back" is a real quantity,
+   * where "unreimbursed as a share of all spending" is not — a season paid for
+   * entirely on the club card would read as 100% settled having settled
+   * nothing. Rows with no payer are excluded from BOTH, because a court booking
+   * on the club's own card has nobody to pay back.
+   *
+   * Reimbursed is this minus `owedToExecsCents`, so there is no third sum to
+   * disagree with the other two.
+   */
+  frontedCents: number;
 }
 
 /**
@@ -154,10 +190,33 @@ export async function getSeasonExpenses(
   // be read. Between this code deploying and 00073 being applied by hand, that
   // query DOES fail, so this is the normal path on the day of the deploy, not a
   // hypothetical.
-  const rows = unwrap(
-    expenses as { data: ExpenseRow[] | null; error: { message: string } | null },
+  return summariseExpenseRows(
+    unwrap(expenses as { data: ExpenseRow[] | null; error: { message: string } | null }),
   );
+}
 
+/**
+ * THE FOUR READINGS, OVER ROWS THAT ARE ALREADY IN HAND.
+ *
+ * Split out of getSeasonExpenses for the same reason foldLedgerRows was split
+ * out of readLedger: /fees' Expenses tab already selects this exact ledger, row
+ * by row, to list it — so a chart of what the club spent needs no query at all,
+ * only this arithmetic applied to rows the page is holding. Asking the database
+ * for club_expenses a second time on the same render, to draw a picture of rows
+ * already on screen, is a round trip for nothing.
+ *
+ * ONE FOLD, TWO CALLERS. A second CALLER of one piece of arithmetic is not what
+ * the note at the top of this file forbids; a second piece of arithmetic is.
+ * The dashboard's expense figure and /fees' expense chart now come out of the
+ * same function over the same columns, so they cannot disagree.
+ *
+ * IT DOES NOT FILTER ON paid_at. The query above does, and a caller passing
+ * rows it fetched without that filter must apply it first — /fees selects
+ * unpaid rows too, so it can badge them "not recorded". Moving the filter in
+ * here would be harmless for today's two callers and would quietly change what
+ * a third one counts.
+ */
+export function summariseExpenseRows(rows: readonly ExpenseRow[]): SeasonExpenses {
   // One pass: the total, the per-category map, the dated payments and the
   // unreimbursed debt are all built from the same rows, so no reading of this
   // ledger can fail to agree with any other reading of it.
@@ -166,6 +225,7 @@ export async function getSeasonExpenses(
   let expenseCents = 0;
   let owedToExecsCents = 0;
   let owedToExecsCount = 0;
+  let frontedCents = 0;
   for (const row of rows) {
     const cents = row.amount_cents ?? 0;
     expenseCents += cents;
@@ -178,6 +238,10 @@ export async function getSeasonExpenses(
     // undated is left OFF the time axis rather than being placed at its start,
     // which would move money earlier in the term.
     if (row.paid_at) payments.push({ at: row.paid_at, cents });
+    // Both of these ask for a PAYER first. A row the club paid for directly has
+    // nobody to pay back, so it is neither a debt nor part of the total that
+    // debt is measured against.
+    if (row.paid_by) frontedCents += cents;
     if (row.paid_by && !row.reimbursed_at) {
       owedToExecsCents += cents;
       owedToExecsCount += 1;
@@ -188,7 +252,14 @@ export async function getSeasonExpenses(
     .map(([category, cents]) => ({ category, cents }))
     .sort((a, b) => b.cents - a.cents);
 
-  return { expenseCents, expensesByCategory, payments, owedToExecsCents, owedToExecsCount };
+  return {
+    expenseCents,
+    expensesByCategory,
+    payments,
+    owedToExecsCents,
+    owedToExecsCount,
+    frontedCents,
+  };
 }
 
 export async function getSeasonFinances(
@@ -200,15 +271,24 @@ export async function getSeasonFinances(
     getSeasonExpenses(supabase, season),
   ]);
 
-  // The two expense fields SeasonFinances declares, named one at a time rather
-  // than spread. getSeasonExpenses now also returns the dated payments and the
-  // unreimbursed debt, which belong to the expense panel and to nothing the net
-  // position shows; spreading them would put a list of every payment the club
-  // made into the RSC payload of two pages that never draw one.
+  // Named one field at a time rather than spread. getSeasonExpenses also
+  // returns the unreimbursed debt and what execs fronted, which belong to the
+  // expense panel and to nothing the net position shows — spreading it would
+  // hand every caller of this function fields it has no business drawing.
+  //
+  // The dated payments ARE taken, and signed as they are taken: SPENDING IS
+  // NEGATIVE, which is the whole of the arithmetic behind the net curve. Doing
+  // it here rather than at the panel is the same rule the rest of this file
+  // follows — the last time a surface did its own sums over the club's money it
+  // disagreed with reality for months.
   return {
     income,
     expenseCents: expenses.expenseCents,
     expensesByCategory: expenses.expensesByCategory,
     netCents: income.totalCents - expenses.expenseCents,
+    netPayments: [
+      ...income.payments,
+      ...expenses.payments.map((p) => ({ at: p.at, cents: -p.cents })),
+    ],
   };
 }

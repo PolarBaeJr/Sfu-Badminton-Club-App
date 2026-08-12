@@ -16,17 +16,28 @@ import {
   MarkReimbursed,
 } from './finance-actions';
 import { CardHeading } from './card-heading';
+import { LedgerCharts } from './ledger-charts';
 
 /**
  * The row list for one of the two non-fee ledgers (00073).
  *
- * DELIBERATELY SHOWS NO SUBTOTAL. The season's money figures come from
- * getSeasonFinances and nowhere else. A card that summed its own rows would be
- * a second implementation of the same total sitting inches from the first, and
+ * IT SHOWS A TOTAL NOW, AND THE RULE THAT FORBADE ONE IS INTACT. This card used
+ * to refuse a subtotal outright: a card that summed its own rows would be a
+ * second implementation of the same total sitting inches from the first, and
  * the two would disagree the moment one of them changed — which is exactly how
- * the income headline came to read $0.00 while money sat in the database. The
- * list answers "what is in here"; the strip at the top of the page answers
- * "how much".
+ * the income headline came to read $0.00 while money sat in the database.
+ *
+ * What that rule actually forbids is a second piece of ARITHMETIC, and
+ * LedgerCharts below is not one: it folds these rows through the same
+ * `summariseExpenseRows` / `foldLedgerRows` the season figures come out of, so
+ * the number at the head of this card is the same number by construction rather
+ * than by two people remembering one rule. The refusal was also costing a real
+ * reader — the net-position strip is behind `fees.netposition.read`, which an
+ * exec does not hold, so the person who files the club's expenses was shown
+ * every row of this ledger and no total anywhere on the page.
+ *
+ * The list still answers "what is in here" and the charts answer "how much, and
+ * when". Neither asks the database for anything: the rows are already here.
  *
  * A row with no paid_at is excluded from those totals, so it is badged "Not
  * recorded" here rather than looking identical to a counted row. A filtered-out
@@ -253,6 +264,12 @@ export async function LedgerCard({
             : undefined
         }
       />
+
+      {/* How much, and when — out of the rows already fetched above, so this
+          adds no query. Nothing is rendered for a viewer who may not read the
+          ledger because nothing was fetched for them: `rows` is empty, and the
+          gate is the query, not this line. */}
+      {canRead && <LedgerCharts kind={kind} seasonName={seasonName} rows={rows} />}
 
       {/* "You may not see this" and "there is nothing to see" are different
           statements, and telling somebody the ledger is empty when it is merely

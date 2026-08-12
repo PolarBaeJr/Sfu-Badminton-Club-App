@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { unwrap } from '@badminton/shared';
-import { isWaivedFee } from './fee-status';
+import { isWaivedFee, type FeeStatusRow } from './fee-status';
 
 /**
  * HOW MUCH SEASON MONEY IS STILL OWED, IN CENTS.
@@ -42,6 +42,53 @@ export interface BillableSeason {
   recreational_fee_cents: number;
 }
 
+/** A member of the billable roster, as both callers of the sum below hold them. */
+export interface BillableMember {
+  id: string;
+  status: string;
+}
+
+/** The two columns that price a member. The season's id is not part of the sum. */
+export type PriceList = Pick<BillableSeason, 'competitive_fee_cents' | 'recreational_fee_cents'>;
+
+/**
+ * WHAT IS STILL OWED, OVER A ROSTER AND A FEE MAP ALREADY IN HAND.
+ *
+ * The predicate lives here rather than at either call site because there are
+ * now two of them and they must never drift: the dashboard fetches the roster
+ * and the ledger for this figure alone, while /fees is already holding both —
+ * it builds exactly this roster and exactly this `feeByPlayer` map to render
+ * the fee table — so its collection chart can reach the same number with no
+ * query at all. Two screens, one sum, no second read.
+ *
+ * PAID AND WAIVED BOTH SETTLE, through the shared isWaivedFee predicate. A
+ * waiver is a paid row with amount_cents 0 and method 'waived', so a test that
+ * looked only at the amount would bill somebody the club has already excused.
+ *
+ * WHO IS BILLABLE IS THE CALLER'S QUESTION, not this function's — it sums
+ * whatever roster it is given. Both callers filter it the same way (active
+ * competitive/recreational, not exec, not fee-exempt), and a caller that
+ * filtered differently would be printing a figure about a different club.
+ */
+export function outstandingClubFeeCents(
+  roster: readonly BillableMember[],
+  feeByPlayer: ReadonlyMap<string, FeeStatusRow | undefined>,
+  prices: PriceList,
+): number {
+  return roster.reduce((cents, player) => {
+    const fee = feeByPlayer.get(player.id);
+    const waived = isWaivedFee(fee);
+    const paid = Boolean(fee?.paid_at) && !waived;
+    if (paid || waived) return cents;
+    return (
+      cents +
+      (player.status === 'competitive'
+        ? prices.competitive_fee_cents
+        : prices.recreational_fee_cents)
+    );
+  }, 0);
+}
+
 export async function getOutstandingClubFees(
   supabase: SupabaseClient,
   season: BillableSeason,
@@ -77,16 +124,5 @@ export async function getOutstandingClubFees(
     fees.filter((f) => f.player_id != null).map((f) => [f.player_id as string, f]),
   );
 
-  return roster.reduce((cents, player) => {
-    const fee = feeByPlayer.get(player.id);
-    const waived = isWaivedFee(fee);
-    const paid = Boolean(fee?.paid_at) && !waived;
-    if (paid || waived) return cents;
-    return (
-      cents +
-      (player.status === 'competitive'
-        ? season.competitive_fee_cents
-        : season.recreational_fee_cents)
-    );
-  }, 0);
+  return outstandingClubFeeCents(roster, feeByPlayer, season);
 }
