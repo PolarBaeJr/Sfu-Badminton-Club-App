@@ -117,7 +117,9 @@ BEGIN
   -- A pair only means anything in a doubles event. The application checks this
   -- too; it is repeated here because this function is the ONLY writer of a pair
   -- row and an invariant guarded in one place cannot be got wrong in another.
-  IF v_event.event_type NOT IN ('mens_doubles', 'womens_doubles', 'mixed_doubles') THEN
+  -- All four, transcribed from isDoublesEvent() in packages/shared/src/utils/
+  -- constants.ts. open_doubles is easy to miss and is a real event type.
+  IF v_event.event_type NOT IN ('mens_doubles', 'womens_doubles', 'mixed_doubles', 'open_doubles') THEN
     RAISE EXCEPTION 'This is not a doubles event, so it has no pairs.'
       USING ERRCODE = 'check_violation';
   END IF;

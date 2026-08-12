@@ -964,7 +964,9 @@ async function addPairToEventImpl(eventId: string, player1Id: string, player2Id:
     // The function raises its own refusals with real messages — "already in a
     // pair", "already left this event", "not a doubles event" — so they are
     // passed through rather than replaced with something vaguer.
-    if (error.code === '23514' || error.code === '02000') throw new ExpectedError(error.message);
+    // 23514 check_violation, P0002 no_data_found — the two SQLSTATEs 00102
+    // raises its own refusals under.
+    if (error.code === '23514' || error.code === 'P0002') throw new ExpectedError(error.message);
     Sentry.captureException(error);
     throw new Error(error.message);
   }
@@ -1125,7 +1127,9 @@ async function splitPairImpl(
   if (error) {
     // The function's own refusals are sentences an exec can act on — "already
     // in the draw", "already left the event" — so they are passed through.
-    if (error.code === '23503' || error.code === '23514' || error.code === '02000') {
+    // 23503 foreign_key_violation (the pair is in the draw), 23514
+    // check_violation, P0002 no_data_found.
+    if (error.code === '23503' || error.code === '23514' || error.code === 'P0002') {
       throw new ExpectedError(error.message);
     }
     Sentry.captureException(error);

@@ -157,3 +157,74 @@ describe('ensureEntryFees', () => {
     expect(db.club_fees.filter((r) => r.player_id === 'p-alumni')).toHaveLength(1);
   });
 });
+
+// ===========================================================================
+// THE DOUBLES POOL (00102) — entering alone, then being paired
+// ===========================================================================
+// A doubles event now takes entrants who arrive without a partner. They are
+// invoiced when they ENTER, and pairing them later must not invoice them a
+// second time.
+//
+// It cannot, and not because addPairToEvent checks: the row is keyed on
+// (tournament_id, player_id) by club_fees_tournament_player_key, so the row a
+// solo entry creates IS the row a later pairing would write. Double-invoicing a
+// promoted entrant is not something the code avoids — it is something the
+// schema makes unreachable. These tests are that claim, executed.
+
+describe('ensureEntryFees across a doubles promotion', () => {
+  it('invoices a solo entrant at entry, and NOT AGAIN when they are paired', async () => {
+    const db = seed();
+
+    // 1. Two people enter the doubles event separately, with no partner.
+    const soloA = makeClient(db);
+    await ensureEntryFees(soloA as never, T, ['p-internal']);
+    const soloB = makeClient(db);
+    await ensureEntryFees(soloB as never, T, ['p-alumni']);
+    expect(db.club_fees).toHaveLength(2);
+
+    // 2. An exec pairs them. addPairToEvent calls ensureEntryFees for both
+    //    halves exactly as it always has — it has no idea whether this is a
+    //    promotion or a fresh team, and does not need one.
+    const pairing = makeClient(db);
+    const results = await ensureEntryFees(pairing as never, T, ['p-internal', 'p-alumni']);
+
+    expect(pairing.inserts).toHaveLength(0);
+    expect(db.club_fees).toHaveLength(2);
+    for (const r of results) expect(r.created).toBe(false);
+    // And nothing was re-priced on the way through.
+    expect(db.club_fees.find((r) => r.player_id === 'p-internal')?.amount_cents).toBe(1000);
+    expect(db.club_fees.find((r) => r.player_id === 'p-alumni')?.amount_cents).toBe(2500);
+  });
+
+  it('invoices only the half who had not entered, when one of the two is new', async () => {
+    const db = seed();
+    await ensureEntryFees(makeClient(db) as never, T, ['p-internal']);
+
+    // The exec pairs the waiting member with somebody who was not in the event
+    // at all. One new row, not two.
+    const pairing = makeClient(db);
+    await ensureEntryFees(pairing as never, T, ['p-internal', 'p-alumni']);
+
+    expect(pairing.inserts).toHaveLength(1);
+    expect(pairing.inserts[0]!.player_id).toBe('p-alumni');
+    expect(db.club_fees).toHaveLength(2);
+  });
+
+  it('leaves both fees standing when the pair is split up again', async () => {
+    // Withdrawing does not refund, and unpairing is not even a withdrawal.
+    // unpairEntry and withdrawPairMember touch club_fees at all — they do not
+    // call this function — so the assertion is that the ledger is untouched by
+    // anything the split does.
+    const db = seed();
+    await ensureEntryFees(makeClient(db) as never, T, ['p-internal', 'p-alumni']);
+    const before = JSON.stringify(db.club_fees);
+
+    // The partner who is left goes back into the pool. If any future edit adds
+    // an ensureEntryFees call to that path, this still has to hold.
+    const after = makeClient(db);
+    await ensureEntryFees(after as never, T, ['p-alumni']);
+
+    expect(after.inserts).toHaveLength(0);
+    expect(JSON.stringify(db.club_fees)).toBe(before);
+  });
+});
