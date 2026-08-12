@@ -15,9 +15,14 @@ import { UserPlus, UserMinus, CheckCircle } from 'lucide-react';
 interface Props {
   eventId: string;
   eventStatus: string;
-  /** `partnerName` present means a FORMED TEAM; absent means a lone entry. */
+  /**
+   * `paired` means a FORMED TEAM; false means a lone entry, which in a doubles
+   * event is somebody waiting to be given a partner. `partnerName` is display
+   * only and may be null even when `paired` is true — nothing branches on it.
+   */
   playerRegistration: {
     status: string;
+    paired?: boolean;
     partnerName?: string | null;
   } | null;
   isDoubles: boolean;
@@ -46,7 +51,7 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
   // nothing here can tell them that happened, so it is an exec action
   // (withdrawPairMember). Name the partner and name who to ask: a chip on its
   // own would read as the app having lost the option.
-  const paired = isDoubles && playerRegistration?.partnerName != null;
+  const paired = isDoubles && Boolean(playerRegistration?.paired);
   if (paired) {
     return (
       <div className="flex items-center gap-2 flex-wrap">
@@ -59,8 +64,11 @@ export function EventActions({ eventId, eventStatus, playerRegistration, isDoubl
           {playerRegistration!.status === 'checked_in' ? '✓ Checked In' : 'Paired'}
         </span>
         <p className="text-xs text-[var(--text-secondary)]">
-          Playing with <strong>{playerRegistration!.partnerName}</strong>. Leaving now would put them
-          back in the pool too, so ask a tournament admin if you need to withdraw.
+          {playerRegistration!.partnerName
+            ? <>Playing with <strong>{playerRegistration!.partnerName}</strong>.</>
+            : 'You have been given a partner.'}
+          {' '}Leaving now would put them back in the pool too, so ask a tournament admin if you
+          need to withdraw.
         </p>
       </div>
     );

@@ -102,7 +102,9 @@ export default async function EventDetailPage({
   const allMatches = matches as Array<Record<string, unknown>>;
 
   const currentPlayer = await getCurrentPlayer();
-  let playerRegistration: { status: string; partnerName?: string | null } | null = null;
+  // `paired` is the discriminator; `partnerName` is display only and may be
+  // null even for a real pair, so nothing branches on it.
+  let playerRegistration: { status: string; paired: boolean; partnerName?: string | null } | null = null;
   let playerParticipantId: string | null = null;
 
   // READ FOR DOUBLES TOO, since 00102. This was `!doubles` on the grounds that a
@@ -119,8 +121,12 @@ export default async function EventDetailPage({
       .maybeSingle();
     const reg = unwrapMaybe(regRes);
     if (reg) {
-      playerRegistration = { status: reg.status };
-      playerParticipantId = reg.id;
+      playerRegistration = { status: reg.status, paired: false };
+      // Only meaningful for singles: everything downstream that keys on a
+      // participant id (the bracket's "you" highlight, the match list) is inside
+      // a `!doubles` branch, because a doubles match names a PAIR id and never
+      // this one.
+      if (!doubles) playerParticipantId = reg.id;
     }
 
     // And the other way to be in a doubles event: on a formed team. The partner's
@@ -139,6 +145,7 @@ export default async function EventDetailPage({
         const one = Array.isArray(partnerEmbed) ? partnerEmbed[0] : partnerEmbed;
         playerRegistration = {
           status: mine.status as string,
+          paired: true,
           partnerName: (one as { full_name?: string | null } | null)?.full_name ?? null,
         };
       }

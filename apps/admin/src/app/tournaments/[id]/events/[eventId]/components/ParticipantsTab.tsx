@@ -961,6 +961,15 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               their event waiver and their place in the tournament. The team&apos;s seed does not move,
               but its combined rating is recalculated.
             </p>
+            {/* Said out loud, because the exec is standing at the desk and will
+                otherwise assume the team is still through. The old team was the
+                one that was screened; the new one has to be. */}
+            {swapping.status === 'checked_in' && (
+              <p className="text-sm text-[var(--color-warning)]">
+                This team is checked in. Swapping a player puts it back to Registered — check the new
+                team in again so the event waiver is checked for whoever is now in it.
+              </p>
+            )}
 
             {/* Extra clearance: the picker's list is fixed-positioned below the
                 field and a short one can sit over these buttons. */}

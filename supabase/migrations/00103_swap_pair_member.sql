@@ -179,15 +179,29 @@ BEGIN
   --    calculateTeamRating's and the caller's job for the reason 00070 gives.
   --
   --    The column written is chosen from which half is leaving, so the pair
-  --    keeps its identity (id, seed_number, status, created_at) and only its
-  --    membership moves.
+  --    keeps its id, its seed_number and its created_at, and only its
+  --    membership moves. seed_number is the identity that actually earns
+  --    preservation: the exec seeded this team's position and swapping a player
+  --    is not a reason to renumber the draw.
+  --
+  --    THE CHECK-IN IS RESET, and that is not incidental. 00102 creates a pair
+  --    as 'registered' even when both halves had been checked in individually,
+  --    because check-in is the gate that refuses an entrant with no current
+  --    event-waiver acceptance and it is asked of the thing that takes the
+  --    court. A swap on a CHECKED-IN pair carries that same hazard in its worst
+  --    form: the team was screened with Priya in it, and keeping the status
+  --    would leave Sam checked in — recorded as present at a desk he never
+  --    visited, past a gate he never passed. The desk checks the new team in.
   UPDATE tournament_pairs
      SET player1_id = CASE WHEN player1_id = p_outgoing_player_id
                            THEN p_incoming_player_id ELSE player1_id END,
          player2_id = CASE WHEN player2_id = p_outgoing_player_id
                            THEN p_incoming_player_id ELSE player2_id END,
          pair_name = p_pair_name,
-         combined_elo = p_combined_elo
+         combined_elo = p_combined_elo,
+         status = 'registered',
+         checked_in_at = NULL,
+         checked_in_by = NULL
    WHERE id = p_pair_id;
 
   -- 3. The outgoing player goes back to the pool — NOT out of the event. They
@@ -208,7 +222,7 @@ END;
 $function$;
 
 COMMENT ON FUNCTION public.swap_tournament_pair_member(uuid, uuid, uuid, text, integer, uuid) IS
-  'Replace one half of a doubles pair with a member from the same event''s unpaired pool, atomically: the incoming player leaves the pool, the pair is updated in place (keeping its id, seed and status), and the outgoing player lands back in the pool keeping their fee, event waiver and entry-cap slot. Neutral in all three currencies by construction, which is why the incoming player must already have entered. UNLIKE unpair_tournament_pair this is an UPDATE, so the tournament_matches foreign keys do NOT protect a seeded pair — the explicit draw check inside is the only thing that does, and removing it would let a played team change identity. pair_name/combined_elo are recomputed by the caller (calculateTeamRating), per 00070.';
+  'Replace one half of a doubles pair with a member from the same event''s unpaired pool, atomically: the incoming player leaves the pool, the pair is updated in place (keeping its id and seed but RESET to ''registered'', because a check-in screened the old team), and the outgoing player lands back in the pool keeping their fee, event waiver and entry-cap slot. Neutral in all three currencies by construction, which is why the incoming player must already have entered. UNLIKE unpair_tournament_pair this is an UPDATE, so the tournament_matches foreign keys do NOT protect a seeded pair — the explicit draw check inside is the only thing that does, and removing it would let a played team change identity. pair_name/combined_elo are recomputed by the caller (calculateTeamRating), per 00070.';
 
 -- service_role ONLY, as 00102. Called by an admin server action behind
 -- requireCapability; SECURITY DEFINER means a grant to `authenticated` would

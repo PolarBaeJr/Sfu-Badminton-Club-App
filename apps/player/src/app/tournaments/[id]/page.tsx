@@ -38,6 +38,11 @@ async function loadMyPairs(
   eventIds: string[],
   playerId: string,
 ): Promise<Record<string, { status: string; partnerName: string | null }>> {
+  // The KEY's presence is what says "this member is on a team". The name is
+  // display, and it is nullable — the object-or-array embed unwrap below can
+  // legitimately come back empty. Deciding "paired" from a non-null name would
+  // tell somebody with an unreadable partner that they have no partner, and
+  // hand them a Withdraw button the server then refuses.
   if (eventIds.length === 0) return {};
   const { data } = await supabase
     .from('tournament_pairs')
@@ -72,10 +77,10 @@ export default async function TournamentDetailPage({ params }: { params: Promise
     .order('event_type');
 
   const currentPlayer = await getCurrentPlayer();
-  // `partnerName` set means this entry is a FORMED TEAM; absent means a lone
-  // participant row, which for a doubles event is somebody still waiting to be
-  // paired. The button reads exactly that distinction.
-  const registrationMap: Record<string, { status: string; partnerName?: string | null }> = {};
+  // `paired` is the discriminator and `partnerName` is only ever display: a
+  // pair whose partner name did not resolve is still a pair, and inferring the
+  // state from the name would show a paired member "Waiting for a partner".
+  const registrationMap: Record<string, { status: string; paired: boolean; partnerName?: string | null }> = {};
   let myPairs: Record<string, { status: string; partnerName: string | null }> = {};
   if (currentPlayer && events) {
     const eventIds = events.map((e) => e.id);
@@ -92,11 +97,11 @@ export default async function TournamentDetailPage({ params }: { params: Promise
       ]);
       myPairs = pairs;
       for (const r of regs ?? []) {
-        registrationMap[r.event_id] = { status: r.status };
+        registrationMap[r.event_id] = { status: r.status, paired: false };
       }
       // The pair wins where both somehow exist: it is the entry that plays.
       for (const [eventId, pair] of Object.entries(pairs)) {
-        registrationMap[eventId] = { status: pair.status, partnerName: pair.partnerName };
+        registrationMap[eventId] = { status: pair.status, paired: true, partnerName: pair.partnerName };
       }
     }
   }

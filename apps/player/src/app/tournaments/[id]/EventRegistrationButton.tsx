@@ -13,8 +13,14 @@ import { useRouter } from 'next/navigation';
 interface Props {
   eventId: string;
   eventStatus: string;
-  /** `partnerName` present means a FORMED TEAM; absent means a lone entry. */
-  registration: { status: string; partnerName?: string | null } | null;
+  /**
+   * `paired` means a FORMED TEAM; false means a lone entry, which in a doubles
+   * event is somebody still waiting to be given a partner. `partnerName` is
+   * display only and may be null even when `paired` is true — nothing branches
+   * on it, or a member whose partner's name failed to resolve would be told
+   * they have no partner and handed a button the server refuses.
+   */
+  registration: { status: string; paired?: boolean; partnerName?: string | null } | null;
   isDoubles: boolean;
   suspended?: boolean;
   eventWaiverText?: string | null;
@@ -42,7 +48,7 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
   // them back in the pool, so it is an exec action — see withdrawFromEvent. Say
   // who the partner is and who to ask, rather than showing a bare chip and
   // letting the missing button read as the app having lost the option.
-  if (isDoubles && registration?.partnerName !== undefined && registration.partnerName !== null) {
+  if (isDoubles && registration?.paired) {
     return (
       <div className="flex items-center gap-1.5">
         <span
@@ -52,7 +58,9 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
           <span className="sr-only">Registration status: </span>
           {registration.status === 'checked_in' ? 'Checked In' : 'Paired'}
         </span>
-        <span className="text-[10px] text-[var(--text-muted)]">with {registration.partnerName}</span>
+        <span className="text-[10px] text-[var(--text-muted)]">
+          {registration.partnerName ? `with ${registration.partnerName}` : 'with your partner'}
+        </span>
       </div>
     );
   }
