@@ -44,6 +44,10 @@ export type TournamentStage =
   | 'entries-open'
   | 'no-events';
 
+const UNDER_WAY_STATUSES = new Set<string>([
+  'pool_generated', 'pool_live', 'bracket_generated', 'live',
+]);
+
 export function tournamentStage(
   tournament: { status: string; suspended_at?: string | null },
   events: IndexEvent[],
@@ -52,7 +56,13 @@ export function tournamentStage(
   if (tournament.status === 'archived') return 'archived';
   if (tournament.status === 'completed') return 'finished';
   if (events.length === 0) return 'no-events';
-  if (events.some((e) => e.status === 'bracket_generated' || e.status === 'live' || e.draw_locked)) {
+  // NOT eventHasDraw, deliberately. That predicate includes `completed`, and
+  // the ordering here is load-bearing: a tournament with one finished event and
+  // one still taking entries must read ENTRIES OPEN, which is why `completed`
+  // falls through to the bottom. The two pool statuses (00107) are added
+  // because a pool_to_bracket event whose round robin is drawn or running is
+  // exactly as "draw set" as a knockout whose bracket is.
+  if (events.some((e) => UNDER_WAY_STATUSES.has(e.status) || e.draw_locked)) {
     return 'draw-set';
   }
   if (events.some((e) => e.status === 'registration' || e.status === 'checkin')) {

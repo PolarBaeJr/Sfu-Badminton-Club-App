@@ -52,6 +52,7 @@ export {
 export {
   generateSingleEliminationBracket,
   generateRoundRobinMatches,
+  setRoundMatchShape,
   lockDraw,
   unlockDraw,
 } from './tournament-actions/brackets';

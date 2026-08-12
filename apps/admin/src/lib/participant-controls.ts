@@ -148,7 +148,14 @@ export interface ParticipantControls {
  * imported so this module stays free of anything a test would have to mock —
  * the assertion that the two never overlap is in the test file.
  */
-const DRAWN_STATUSES = new Set<string>(['bracket_generated', 'live', 'completed']);
+// The two POOL statuses (00107) are on this list for exactly the reason
+// bracket_generated is: a pool_to_bracket event publishes its round-robin
+// fixtures at 'pool_generated', people have been told who they play, and a
+// withdrawal from that point has matches to forfeit into. Kept in step with
+// eventHasDraw by the assertion in the test file.
+const DRAWN_STATUSES = new Set<string>([
+  'pool_generated', 'pool_live', 'bracket_generated', 'live', 'completed',
+]);
 
 export function participantControls(
   event: { status: string; drawLocked: boolean },
@@ -299,7 +306,13 @@ export interface RegenerateDrawControl {
  * this module exists to keep distinct. A draw with results already in it is
  * greyed for the same reason and named the same way.
  */
-const REDRAWABLE_STATUSES = new Set<string>(['bracket_generated', 'live']);
+// Both phases are redrawable while they are the current one — the pool until
+// the knockout is drawn from it, the knockout until the event is finalised.
+// Which half the button rebuilds is decided by the generator it calls, not
+// here; see currentPhase.
+const REDRAWABLE_STATUSES = new Set<string>([
+  'pool_generated', 'pool_live', 'bracket_generated', 'live',
+]);
 
 export function regenerateDrawControl(
   event: {

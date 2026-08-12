@@ -11,7 +11,16 @@
 // A draw exists from the moment the bracket is generated — one step BEFORE the
 // event goes live. 'bracket_generated' is deliberately on this list: the draw
 // is published and players have already been told who they play.
-const DRAWN_EVENT_STATUSES = new Set<string>(['bracket_generated', 'live', 'completed']);
+//
+// THE POOL HALF COUNTS TOO (00107). A pool_to_bracket event publishes its
+// round-robin fixtures at 'pool_generated', and from that moment every word
+// above is true of it — people have been told who they play and when. Left off
+// this list, a member could withdraw out of a running pool through the player
+// app and the fixtures would silently keep their name in them. The two statuses
+// appear on no other format, so nothing else changes meaning.
+const DRAWN_EVENT_STATUSES = new Set<string>([
+  'pool_generated', 'pool_live', 'bracket_generated', 'live', 'completed',
+]);
 
 export function eventHasDraw(eventStatus: string | null | undefined): boolean {
   return !!eventStatus && DRAWN_EVENT_STATUSES.has(eventStatus);

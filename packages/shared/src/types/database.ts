@@ -620,13 +620,46 @@ export type TournamentEventType =
   | 'mixed_doubles'
   | 'open_doubles';
 
-export type TournamentEventFormat = 'single_elimination' | 'round_robin';
+/**
+ * How an event is played.
+ *
+ * `pool_to_bracket` (00107) is BOTH of the other two, in one event row: a round
+ * robin — optionally split into groups — is played first, then the qualifiers
+ * are re-seeded into a knockout without ever leaving the event. It is a third
+ * option beside the two-event pool→bracket link (`seeded_from_event_id`), which
+ * is untouched and still works.
+ */
+export type TournamentEventFormat = 'single_elimination' | 'round_robin' | 'pool_to_bracket';
+
+/**
+ * Which half of a `pool_to_bracket` event a match belongs to (00107).
+ *
+ * NULL in the database — and `null` here — on every match of a
+ * single_elimination or round_robin event: those have one phase, so naming it
+ * would add a value nothing reads.
+ */
+export type TournamentMatchPhase = 'pool' | 'bracket';
 
 export type TournamentMatchFormat = 'best_of_3_to_21' | 'one_game_21' | 'one_game_15' | 'one_game_11';
 
 export type TournamentSeedingMethod = 'elo' | 'manual' | 'random';
 
-export type TournamentEventStatus = 'registration' | 'checkin' | 'bracket_generated' | 'live' | 'completed';
+/**
+ * Where an event has got to.
+ *
+ * `pool_generated` and `pool_live` (00107) belong to the POOL half of a
+ * `pool_to_bracket` event and are written on no other format. `bracket_generated`
+ * and `live` keep their exact existing meanings — the KNOCKOUT is drawn, the
+ * KNOCKOUT is running — so nothing that reads them changed meaning.
+ */
+export type TournamentEventStatus =
+  | 'registration'
+  | 'checkin'
+  | 'pool_generated'
+  | 'pool_live'
+  | 'bracket_generated'
+  | 'live'
+  | 'completed';
 
 export type TournamentParticipantStatus = 'registered' | 'checked_in' | 'withdrawn' | 'disqualified' | 'no_show';
 
@@ -643,7 +676,14 @@ export interface TournamentEvent {
   points_per_game: number | null;
   // Pool this event draws its field from, and how to rank that pool (00046).
   seeded_from_event_id: string | null;
+  // How the pool is ranked. Set when seeded_from_event_id is (00046), and
+  // ALWAYS set on a pool_to_bracket event (00107), where the one row is both
+  // the pool and the bracket and the two must not disagree about the order.
   seed_by: SeedBy | null;
+  // The group shape (00106). On a pool_to_bracket event a flat pool is one
+  // group, so qualifiers_per_group reads as "how many qualify".
+  group_count: number | null;
+  qualifiers_per_group: number | null;
   max_participants: number | null;
   seeding_method: TournamentSeedingMethod;
   elo_multiplier: number;
@@ -693,10 +733,19 @@ export interface TournamentPair {
 export interface TournamentMatch {
   id: string;
   event_id: string;
+  // Which half of a pool_to_bracket event this match belongs to (00107). NULL
+  // on every match of the other two formats — they have one phase.
+  phase: TournamentMatchPhase | null;
   round_number: number;
   round_name: string | null;
   bracket_position: number;
   match_number: number | null;
+  // This match's own shape, overriding the event's (00108). All three NULL —
+  // every match written before 00108 — means the event decides, which is the
+  // behaviour these columns replace nothing of. See resolveMatchShape.
+  match_format: TournamentMatchFormat | null;
+  games_per_match: number | null;
+  points_per_game: number | null;
   participant_a_id: string | null;
   participant_b_id: string | null;
   pair_a_id: string | null;

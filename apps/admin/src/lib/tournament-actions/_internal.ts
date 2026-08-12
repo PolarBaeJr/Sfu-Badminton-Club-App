@@ -24,6 +24,8 @@ import {
   screenForEventWaiver,
   eventWaiverRefusal,
   unpairedDrawRefusal,
+  phaseValueFor,
+  resolveMatchShape,
   ExpectedError,
 } from '@badminton/shared';
 // By SUBPATH, never through the barrel — eventWaiverHash uses node:crypto and
@@ -36,6 +38,7 @@ import type {
   RatingSettings,
   SeedBy,
   EventMatchShape,
+  MatchShapeOverride,
   AcceptedEventWaiver,
   EventWaiverEntry,
 } from '@badminton/shared';
@@ -1065,7 +1068,13 @@ export async function applyTournamentMatchElo(matchId: string) {
 
   const event = match.event as Record<string, unknown>;
   const doubles = isDoublesEvent(event.event_type as TournamentEventType);
-  const shape = event as unknown as EventMatchShape;
+  // THE MATCH'S OWN SHAPE, falling back to the event's (00108). A draw whose
+  // rounds are played to different lengths has to rate them differently or the
+  // whole ladder is cosmetic: a first-round game to 11 would move ratings by as
+  // much as a best-of-3 final. derivedFormatWeight already says exactly that —
+  // (target / 21) x (1.25 for a best-of) — so a game to 11 lands at ~0.52 and
+  // the final at 1.25 with no new formula and no new setting.
+  const shape = resolveMatchShape(match as MatchShapeOverride, event as unknown as EventMatchShape);
   const rules = getEventRules(shape);
   const eloMultiplier = Number(event.elo_multiplier) || 1.25;
   // A typed format has no entry in the weight table, so its weight is derived
@@ -1074,7 +1083,7 @@ export async function applyTournamentMatchElo(matchId: string) {
   // event's fallback enum — usually best of 3 to 21, worth 2.5x as much.
   const formatWeight = hasTypedFormat(shape)
     ? derivedFormatWeight(rules.bestOf, rules.target)
-    : getFormatWeight(toEloFormat(event.match_format as TournamentMatchFormat));
+    : getFormatWeight(toEloFormat(shape.match_format as TournamentMatchFormat));
 
   // What this match does to one player's ratings row. Everything except
   // participant_id is required by apply_tournament_match_rating; only the four
@@ -1887,11 +1896,22 @@ export async function computeRoundRobinStandings(eventId: string, seedBy: SeedBy
   const groupCount = (event as { group_count?: number | null }).group_count ?? 1;
   const grouped = groupCount >= 2;
 
-  // Get all completed matches
-  const { data: matches } = await adminClient.from('tournament_matches')
+  // Get all completed matches.
+  //
+  // THE POOL'S MATCHES ONLY, ON A POOL-TO-BRACKET EVENT (00107). Both phases
+  // live in this one event, so an unfiltered tally would fold the knockout's
+  // results back into the pool table — the champion would gain wins in the
+  // standings that decided who qualified, and finalizeEvent (which ranks the
+  // non-qualifiers off this same list) would rank them against a table that had
+  // moved underneath it. phaseValueFor returns null for the other two formats,
+  // whose matches all carry phase NULL, so this is exactly the old query there.
+  const poolPhase = phaseValueFor(event.format as string, 'pool');
+  let matchQuery = adminClient.from('tournament_matches')
     .select('*')
     .eq('event_id', eventId)
     .in('status', ['completed', 'walkover']);
+  if (poolPhase) matchQuery = matchQuery.eq('phase', poolPhase);
+  const { data: matches } = await matchQuery;
 
   // EVERY entry, including the ones that left. They are filtered out of the
   // final ordering further down, not out of the tally.
