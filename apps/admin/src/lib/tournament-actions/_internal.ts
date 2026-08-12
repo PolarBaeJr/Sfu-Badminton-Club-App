@@ -21,6 +21,7 @@ import {
   resolveEventWaiverText,
   screenForEventWaiver,
   eventWaiverRefusal,
+  unpairedDrawRefusal,
   ExpectedError,
 } from '@badminton/shared';
 // By SUBPATH, never through the barrel — eventWaiverHash uses node:crypto and
@@ -323,6 +324,53 @@ export async function assertDrawFieldEventWaiverSigned(
   throw new ExpectedError(
     `${eventWaiverRefusal(blocked)} The draw was not generated — get their signatures, or take them out of the event first.`,
   );
+}
+
+/**
+ * THE THIRD HARD BLOCK ON A DRAW: nobody may still be waiting for a partner.
+ *
+ * Since 00102 a doubles event can hold tournament_participants rows — people
+ * who entered without a partner and are waiting to be given one. Both bracket
+ * generators seed a doubles event from tournament_pairs and only from there, so
+ * an event with three formed pairs and two loose people would produce a
+ * perfectly valid-looking three-team draw and silently leave two members out.
+ *
+ * REFUSING IS THE ONLY DEFENSIBLE ANSWER of the three. Auto-pairing them at
+ * draw time assigns partners nobody agreed to at the moment it is hardest to
+ * change, and dropping them silently is the failure this exists to prevent —
+ * the exec finds out when somebody turns up for a match that was never created.
+ * So the draw stops and NAMES them, with both remedies, which is what lets an
+ * exec fix it in the ten seconds they have. Same shape, and the same reasoning,
+ * as assertDrawFieldEventWaiverSigned above.
+ *
+ * Singles events return immediately: their entrants ARE participant rows.
+ */
+export async function assertNobodyLeftUnpaired(
+  adminClient: ReturnType<typeof createAdminClient>,
+  eventId: string,
+  doubles: boolean,
+): Promise<void> {
+  if (!doubles) return;
+
+  const { data: loose, error } = await adminClient
+    .from('tournament_participants')
+    .select('player_id, status, player:players!player_id(full_name)')
+    .eq('event_id', eventId)
+    .in('status', ['registered', 'checked_in']);
+  // A failed read must not read as "everybody is paired" — that is exactly the
+  // silent omission this function exists to make impossible.
+  if (error) {
+    Sentry.captureException(error);
+    throw new Error('Could not check whether anyone is still waiting for a partner. The draw was not generated — try again.');
+  }
+  if (!loose || loose.length === 0) return;
+
+  const names = loose.map((row) => {
+    const embed = (row as Record<string, unknown>).player;
+    const one = Array.isArray(embed) ? embed[0] : embed;
+    return (one as { full_name?: string | null } | null)?.full_name || 'A member';
+  });
+  throw new ExpectedError(unpairedDrawRefusal(names));
 }
 
 /**

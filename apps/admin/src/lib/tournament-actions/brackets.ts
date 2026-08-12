@@ -13,6 +13,7 @@ import {
   getStandardSeedPositions,
   assertTournamentNotSuspended,
   assertDrawFieldEventWaiverSigned,
+  assertNobodyLeftUnpaired,
   computeRoundRobinStandings,
   settleWrites,
   assertWritesSucceeded,
@@ -372,6 +373,12 @@ async function generateSingleEliminationBracketImpl(eventId: string, includeThir
 
   const doubles = isDoublesEvent(event.event_type);
 
+  // NOBODY LEFT WAITING FOR A PARTNER. Checked before the field is read, and
+  // for the pool-seeded path as well as the ordinary one: the field below comes
+  // from tournament_pairs only, so anyone still unpaired in THIS event would be
+  // dropped from the draw without a word. See assertNobodyLeftUnpaired.
+  await assertNobodyLeftUnpaired(adminClient, eventId, doubles);
+
   // Fetch eligible participants/pairs
   let entries: FieldEntry[] = [];
   // A pool-seeded event takes its field and its order from the pool, so the
@@ -681,6 +688,11 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
   const doubles = isDoublesEvent(event.event_type);
+
+  // Same block as the knockout path. A round robin gives every entrant a match,
+  // so a member still waiting for a partner would be left out of the whole
+  // event rather than out of one draw.
+  await assertNobodyLeftUnpaired(adminClient, eventId, doubles);
 
   let entries: Array<{ id: string; seed: number | null }> = [];
 

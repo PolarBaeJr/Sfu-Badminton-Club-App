@@ -30,6 +30,8 @@ export {
   disqualifyPair,
   addPairToEvent,
   removePairFromEvent,
+  unpairEntry,
+  withdrawPairMember,
   checkInPair,
   markPairNoShow,
   bulkCheckIn,

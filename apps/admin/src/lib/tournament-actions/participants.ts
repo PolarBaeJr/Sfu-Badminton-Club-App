@@ -13,6 +13,9 @@ import {
   loadTournamentEntryCounts,
   isAtEntryCap,
   entryCapRefusal,
+  doublesDrawSlots,
+  countDoublesField,
+  wouldExceedCapacity,
   ExpectedError,
 } from '@badminton/shared';
 import { runAction, type ActionResult } from '../action-result';
@@ -89,8 +92,97 @@ async function nameOf(
 }
 
 // ============================================================
+// The doubles pool
+// ============================================================
+// A doubles event holds BOTH kinds of entry at once: tournament_pairs rows for
+// teams that have been formed, and tournament_participants rows for people who
+// entered without a partner and are waiting to be given one. Pairing PROMOTES
+// two of the second into one of the first (migration 00102).
+//
+// "unpaired", never "pool", in anything that touches brackets.ts —
+// `seeded_from_event_id` / buildFieldFromPool already mean something else
+// entirely there (seed this draw from another event's standings).
+
+/** The doubles field as it stands right now, in the currency the cap counts. */
+async function loadDoublesField(
+  adminClient: ReturnType<typeof createAdminClient>,
+  eventId: string,
+): Promise<{ unpaired: number; pairs: number; slots: number }> {
+  const [unpairedRes, pairsRes] = await Promise.all([
+    adminClient.from('tournament_participants').select('player_id, status').eq('event_id', eventId),
+    adminClient.from('tournament_pairs').select('player1_id, player2_id, status').eq('event_id', eventId),
+  ]);
+  // A failed read must not read as "the event is empty" — that would wave a
+  // whole batch past max_participants in one go, which is the same failure the
+  // batch capacity check already refuses to have.
+  if (unpairedRes.error || pairsRes.error) {
+    Sentry.captureException(unpairedRes.error ?? pairsRes.error);
+    throw new Error('Could not check how full this event is. Nothing was added — try again.');
+  }
+  return countDoublesField(unpairedRes.data ?? [], pairsRes.data ?? []);
+}
+
+/** Which of these players are already on a team in this event. */
+async function playersAlreadyPaired(
+  adminClient: ReturnType<typeof createAdminClient>,
+  eventId: string,
+  playerIds: readonly string[],
+): Promise<Set<string>> {
+  if (playerIds.length === 0) return new Set();
+  const { data, error } = await adminClient
+    .from('tournament_pairs')
+    .select('player1_id, player2_id, status')
+    .eq('event_id', eventId);
+  if (error) {
+    Sentry.captureException(error);
+    throw new Error('Could not check who is already paired in this event. Nothing was added — try again.');
+  }
+  const wanted = new Set(playerIds);
+  const paired = new Set<string>();
+  for (const row of data ?? []) {
+    // Entries that have LEFT are ignored, exactly as the entry cap ignores
+    // them: somebody whose team withdrew is free to enter again.
+    if (row.status === 'withdrawn' || row.status === 'disqualified') continue;
+    for (const half of [row.player1_id as string, row.player2_id as string]) {
+      if (wanted.has(half)) paired.add(half);
+    }
+  }
+  return paired;
+}
+
+/** Which of these players are already loose in this event's pool. */
+async function playersAlreadyUnpaired(
+  adminClient: ReturnType<typeof createAdminClient>,
+  eventId: string,
+  playerIds: readonly string[],
+): Promise<Set<string>> {
+  if (playerIds.length === 0) return new Set();
+  const { data, error } = await adminClient
+    .from('tournament_participants')
+    .select('player_id, status')
+    .eq('event_id', eventId)
+    .in('player_id', playerIds as string[]);
+  if (error) {
+    Sentry.captureException(error);
+    throw new Error('Could not read this event’s entries. Nothing was changed — try again.');
+  }
+  return new Set(
+    (data ?? [])
+      .filter((r) => r.status !== 'withdrawn' && r.status !== 'disqualified')
+      .map((r) => r.player_id as string),
+  );
+}
+
+const ALREADY_PAIRED_REFUSAL =
+  'is already in a pair in this event. Unpair that team first if they need a different partner.';
+
+// ============================================================
 // Singles Participant Management
 // ============================================================
+// …and, since 00102, SOLO ENTRY INTO A DOUBLES EVENT. Both paths below used to
+// throw 'Use addPairToEvent for doubles events' outright, which is what made a
+// partnerless entrant impossible. What still cannot happen is a PAIR in a
+// singles event — addPairToEvent keeps its own refusal for that.
 
 export async function addParticipantToEvent(eventId: string, playerId: string) {
   const admin = await requireCapability('tournaments.draw.participants.add.write');
@@ -104,18 +196,37 @@ export async function addParticipantToEvent(eventId: string, playerId: string) {
   if (event.draw_locked) throw new Error('Draw is locked. Unlock it before making changes.');
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
-  if (isDoublesEvent(event.event_type)) {
-    throw new Error('Use addPairToEvent for doubles events');
+  // A DOUBLES EVENT TAKES A SOLO ENTRANT — that is the whole point of the pool.
+  // What it must not take is the same person twice, and the second way to be in
+  // a doubles event is as half of a team.
+  const doubles = isDoublesEvent(event.event_type);
+  if (doubles) {
+    const paired = await playersAlreadyPaired(adminClient, eventId, [playerId]);
+    if (paired.has(playerId)) {
+      throw new ExpectedError(`${await nameOf(adminClient, playerId)} ${ALREADY_PAIRED_REFUSAL}`);
+    }
   }
 
-  // Check max participants
+  // Check max participants. For doubles that is counted in DRAW SLOTS — formed
+  // pairs plus one slot per two loose entrants — because max_participants has
+  // always meant "how many entries fit", and a doubles entry is a team. Counting
+  // participant rows there would let forty unpaired people into an event with
+  // room for eight teams.
   if (event.max_participants) {
-    const { count } = await adminClient.from('tournament_participants')
-      .select('*', { count: 'exact', head: true })
-      .eq('event_id', eventId)
-      .not('status', 'eq', 'withdrawn');
-    if (count && count >= event.max_participants) {
-      throw new Error('Event is full');
+    if (doubles) {
+      const field = await loadDoublesField(adminClient, eventId);
+      const after = doublesDrawSlots(field.pairs, field.unpaired + 1);
+      if (wouldExceedCapacity(field.slots, after, event.max_participants)) {
+        throw new ExpectedError('Event is full');
+      }
+    } else {
+      const { count } = await adminClient.from('tournament_participants')
+        .select('*', { count: 'exact', head: true })
+        .eq('event_id', eventId)
+        .not('status', 'eq', 'withdrawn');
+      if (count && count >= event.max_participants) {
+        throw new Error('Event is full');
+      }
     }
   }
 
@@ -129,7 +240,7 @@ export async function addParticipantToEvent(eventId: string, playerId: string) {
   }
 
   // Get or create player's ratings record
-  let { data: rating } = await adminClient.from('ratings').select('singles_elo').eq('player_id', playerId).maybeSingle();
+  let { data: rating } = await adminClient.from('ratings').select('singles_elo, doubles_elo').eq('player_id', playerId).maybeSingle();
   if (!rating) {
     // Player has no ratings record — create one with defaults
     const { data: newRating } = await adminClient.from('ratings').insert({
@@ -140,14 +251,20 @@ export async function addParticipantToEvent(eventId: string, playerId: string) {
       doubles_provisional: true,
       singles_k_factor: 40,
       doubles_k_factor: 40,
-    }).select('singles_elo').single();
+    }).select('singles_elo, doubles_elo').single();
     rating = newRating;
   }
+
+  // THE DISCIPLINE'S OWN RATING. elo_before was hardcoded to singles_elo, which
+  // was right while only singles produced participant rows. A solo entrant in a
+  // doubles event is rated on doubles_elo — it is the number the pool's Elo
+  // column shows, and the number the team they end up in would be built from.
+  const eloBefore = (doubles ? rating?.doubles_elo : rating?.singles_elo) ?? 400;
 
   const { data, error } = await adminClient.from('tournament_participants').insert({
     event_id: eventId,
     player_id: playerId,
-    elo_before: rating?.singles_elo ?? 400,
+    elo_before: eloBefore,
     added_by: admin.id,
   }).select().single();
 
@@ -226,9 +343,8 @@ export async function addParticipantsToEvent(eventId: string, playerIds: string[
   if (event.draw_locked) throw new Error('Draw is locked. Unlock it before making changes.');
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
-  if (isDoublesEvent(event.event_type)) {
-    throw new Error('Use addPairToEvent for doubles events');
-  }
+  // Solo entry into a doubles event, same as the per-player path above.
+  const doubles = isDoublesEvent(event.event_type);
 
   const failures: BatchAddFailure[] = [];
 
@@ -252,6 +368,19 @@ export async function addParticipantsToEvent(eventId: string, playerIds: string[
     return true;
   });
 
+  // The OTHER way to already be in a doubles event: on a team. Partitioned per
+  // player rather than refusing the batch, like every other check here.
+  if (doubles && candidates.length > 0) {
+    const paired = await playersAlreadyPaired(adminClient, eventId, candidates);
+    candidates = candidates.filter((id) => {
+      if (paired.has(id)) {
+        failures.push({ id, message: `This player ${ALREADY_PAIRED_REFUSAL}` });
+        return false;
+      }
+      return true;
+    });
+  }
+
   // Capacity, counted once against the WHOLE batch rather than re-read per
   // player. Everyone past the line is refused with the same sentence the
   // sequential path used, so a partial add still reads the same way.
@@ -260,17 +389,26 @@ export async function addParticipantsToEvent(eventId: string, playerIds: string[
   // selection, so "the query failed" must not be allowed to read as "the number
   // is zero" or "nobody has a rating".
   if (event.max_participants) {
-    const { count, error: countError } = await adminClient.from('tournament_participants')
-      .select('*', { count: 'exact', head: true })
-      .eq('event_id', eventId)
-      .not('status', 'eq', 'withdrawn');
-    // A failed count reads as null, and `max - 0` is the FULL cap: the batch
-    // would then be waved past a nearly full event in one go.
-    if (countError || count === null) {
-      if (countError) Sentry.captureException(countError);
-      throw new Error('Could not check how full this event is. Nothing was added — try again.');
+    let room: number;
+    if (doubles) {
+      // In DRAW SLOTS, as the per-player path explains. `ceil((u + k) / 2)` must
+      // fit in what is left after the formed pairs, so k is bounded by
+      // `2 * (max - pairs) - u` exactly — no search, no off-by-one.
+      const field = await loadDoublesField(adminClient, eventId);
+      room = Math.max(Math.max(event.max_participants - field.pairs, 0) * 2 - field.unpaired, 0);
+    } else {
+      const { count, error: countError } = await adminClient.from('tournament_participants')
+        .select('*', { count: 'exact', head: true })
+        .eq('event_id', eventId)
+        .not('status', 'eq', 'withdrawn');
+      // A failed count reads as null, and `max - 0` is the FULL cap: the batch
+      // would then be waved past a nearly full event in one go.
+      if (countError || count === null) {
+        if (countError) Sentry.captureException(countError);
+        throw new Error('Could not check how full this event is. Nothing was added — try again.');
+      }
+      room = Math.max(event.max_participants - count, 0);
     }
-    const room = Math.max(event.max_participants - count, 0);
     if (candidates.length > room) {
       for (const id of candidates.slice(room)) failures.push({ id, message: 'Event is full' });
       candidates = candidates.slice(0, room);
@@ -310,17 +448,23 @@ export async function addParticipantsToEvent(eventId: string, playerIds: string[
 
   if (candidates.length === 0) return { added: [], failures };
 
-  // elo_before is stamped at registration, so every candidate needs a rating.
+  // elo_before is stamped at registration, so every candidate needs a rating —
+  // and it is the DISCIPLINE'S rating. See the per-player path: a solo entrant
+  // in a doubles event is stamped with doubles_elo.
+  const eloColumn = doubles ? 'doubles_elo' : 'singles_elo';
   const { data: ratingRows, error: ratingsReadError } = await adminClient
     .from('ratings')
-    .select('player_id, singles_elo')
+    .select(`player_id, ${eloColumn}`)
     .in('player_id', candidates);
   if (ratingsReadError) {
     Sentry.captureException(ratingsReadError);
     throw new Error('Could not read player ratings. Nothing was added — try again.');
   }
   const eloByPlayer = new Map<string, number>(
-    (ratingRows ?? []).map((r) => [r.player_id as string, r.singles_elo as number]),
+    (ratingRows ?? []).map((r) => [
+      (r as Record<string, unknown>).player_id as string,
+      (r as Record<string, unknown>)[eloColumn] as number,
+    ]),
   );
 
   // Same defaults as the single-player path, deliberately including the k_factor
@@ -353,13 +497,16 @@ export async function addParticipantsToEvent(eventId: string, playerIds: string[
     // that belongs in elo_before.
     const { data: filled, error: refetchError } = await adminClient
       .from('ratings')
-      .select('player_id, singles_elo')
+      .select(`player_id, ${eloColumn}`)
       .in('player_id', missing);
     if (refetchError) {
       Sentry.captureException(refetchError);
       throw new Error('Could not read the ratings that were just created. Nothing was added — try again.');
     }
-    for (const r of filled ?? []) eloByPlayer.set(r.player_id as string, r.singles_elo as number);
+    for (const r of filled ?? []) {
+      const row = r as Record<string, unknown>;
+      eloByPlayer.set(row.player_id as string, row[eloColumn] as number);
+    }
   }
 
   // Refuse rather than fall back to 400. A participant stamped with a made-up
@@ -718,15 +865,17 @@ async function addPairToEventImpl(eventId: string, player1Id: string, player2Id:
     throw new Error('Use addParticipantToEvent for singles events');
   }
 
-  if (event.max_participants) {
-    const { count } = await adminClient.from('tournament_pairs')
-      .select('*', { count: 'exact', head: true })
-      .eq('event_id', eventId)
-      .not('status', 'eq', 'withdrawn');
-    if (count && count >= event.max_participants) {
-      throw new Error('Event is full');
-    }
-  }
+  if (player1Id === player2Id) throw new ExpectedError('A pair needs two different players.');
+
+  // WHO IS ALREADY WHERE, because since 00102 either half may already be in
+  // this event as an unpaired entrant — and forming their team is then a
+  // PROMOTION, not a new entry. Everything below has to know which it is: a
+  // promotion spends no new cap slot, occupies no new draw slot and is already
+  // invoiced.
+  const [alreadyPaired, alreadyUnpaired] = await Promise.all([
+    playersAlreadyPaired(adminClient, eventId, [player1Id, player2Id]),
+    playersAlreadyUnpaired(adminClient, eventId, [player1Id, player2Id]),
+  ]);
 
   // Get both players' Elo and names
   const { data: ratings } = await adminClient.from('ratings')
@@ -736,6 +885,28 @@ async function addPairToEventImpl(eventId: string, player1Id: string, player2Id:
   const { data: players } = await adminClient.from('players')
     .select('id, full_name')
     .in('id', [player1Id, player2Id]);
+  const nameFor = (id: string) => players?.find((p) => p.id === id)?.full_name ?? 'This player';
+
+  // Refused here as well as inside the RPC, so the exec gets a sentence with a
+  // NAME in it rather than the database's own wording.
+  for (const half of [player1Id, player2Id]) {
+    if (alreadyPaired.has(half)) {
+      throw new ExpectedError(`${nameFor(half)} ${ALREADY_PAIRED_REFUSAL}`);
+    }
+  }
+
+  // Capacity, in draw slots. PROMOTION IS SLOT-NEUTRAL by construction — two
+  // loose entrants were already worth one prospective team — so pairing up an
+  // event that is exactly full still works, which is the whole point of letting
+  // people enter alone. See doublesDrawSlots.
+  if (event.max_participants) {
+    const field = await loadDoublesField(adminClient, eventId);
+    const promoted = [player1Id, player2Id].filter((id) => alreadyUnpaired.has(id)).length;
+    const after = doublesDrawSlots(field.pairs + 1, field.unpaired - promoted);
+    if (wouldExceedCapacity(field.slots, after, event.max_participants)) {
+      throw new ExpectedError('Event is full');
+    }
+  }
 
   // THE PER-MEMBER CAP, FOR BOTH HALVES. A pair is two entrants who happen to
   // play together — this row spends one of each player's allowance — so EITHER
@@ -747,11 +918,17 @@ async function addPairToEventImpl(eventId: string, player1Id: string, player2Id:
   // the partner standing right there that is the difference between a two-second
   // fix and a support question. Checked before the insert, and before the fee
   // rows and waiver notices below, so a refused pair leaves nothing behind.
+  //
+  // THE PROMOTION IS DISCOUNTED. countEventEntriesPerPlayer already counts an
+  // unpaired entrant's row, and this pair CONSUMES that row rather than adding
+  // to it. Without the subtraction, pairing two people who each entered alone
+  // at a tournament capped to one event would be refused for being at a limit
+  // the operation does not move.
   const { cap, counts } = await loadEntryCapState(adminClient, event.tournament_id);
   if (cap !== null) {
-    const nameFor = (id: string) => players?.find((p) => p.id === id)?.full_name ?? 'This player';
     for (const half of [player1Id, player2Id]) {
-      if (isAtEntryCap(counts.get(half) ?? 0, cap)) {
+      const spent = (counts.get(half) ?? 0) - (alreadyUnpaired.has(half) ? 1 : 0);
+      if (isAtEntryCap(spent, cap)) {
         throw new ExpectedError(entryCapRefusal(nameFor(half), cap));
       }
     }
@@ -764,24 +941,46 @@ async function addPairToEventImpl(eventId: string, player1Id: string, player2Id:
   const p1Name = players?.find(p => p.id === player1Id)?.full_name ?? '';
   const p2Name = players?.find(p => p.id === player2Id)?.full_name ?? '';
 
-  const { data, error } = await adminClient.from('tournament_pairs').insert({
-    event_id: eventId,
-    player1_id: player1Id,
-    player2_id: player2Id,
-    pair_name: `${p1Name} / ${p2Name}`,
-    combined_elo: combinedElo,
-    added_by: admin.id,
-  }).select().single();
+  // ONE TRANSACTION: the pair is written and both halves leave the unpaired
+  // pool together, or neither happens. From here that could only be a delete
+  // and an insert over two PostgREST round trips, and a failure between them
+  // leaves somebody counted twice by the entry cap — in the draw AND in the
+  // pool — or strips two entries that were paid for. See migration 00102.
+  //
+  // The arithmetic stays out of the database, per 00070: combined_elo is
+  // calculateTeamRating's answer and the name is joined here, so there is only
+  // ever one implementation of either.
+  const { data: newPairId, error } = await adminClient.rpc('pair_tournament_entrants', {
+    p_event_id: eventId,
+    p_player1_id: player1Id,
+    p_player2_id: player2Id,
+    p_pair_name: `${p1Name} / ${p2Name}`,
+    p_combined_elo: combinedElo,
+    p_added_by: admin.id,
+  });
 
   if (error) {
-    if (error.code === '23505') throw new Error('This pair is already registered');
+    if (error.code === '23505') throw new ExpectedError('This pair is already registered');
+    // The function raises its own refusals with real messages — "already in a
+    // pair", "already left this event", "not a doubles event" — so they are
+    // passed through rather than replaced with something vaguer.
+    if (error.code === '23514' || error.code === '02000') throw new ExpectedError(error.message);
     Sentry.captureException(error);
     throw new Error(error.message);
   }
 
+  const { data } = await adminClient.from('tournament_pairs').select().eq('id', newPairId as string).maybeSingle();
+
   // BOTH HALVES OF THE PAIR, each priced off their own membership_type. A pair
   // is two entrants who happen to play together, not one; an internal member
   // partnering an alum pays the internal price and the alum pays theirs.
+  //
+  // A PROMOTED HALF IS NOT INVOICED TWICE, and not because of a check here:
+  // club_fees_tournament_player_key (00094) keys the row on
+  // (tournament_id, player_id), so the row their solo entry created IS the row
+  // this call would write, and ensureEntryFees skips everyone who already has
+  // one. Double-invoicing a promoted entrant is not something this code avoids;
+  // it is something the schema makes unreachable.
   await ensureEntryFees(adminClient, event.tournament_id, [player1Id, player2Id]);
 
   await logAudit(adminClient, {
@@ -789,7 +988,14 @@ async function addPairToEventImpl(eventId: string, player1Id: string, player2Id:
     event_id: eventId,
     action: 'pair_added',
     performed_by: admin.id,
-    details: { player1_id: player1Id, player2_id: player2Id },
+    // `promoted_from_pool` is how the trail distinguishes "an exec entered a
+    // team" from "two people who had entered alone were put together" — the
+    // same row either way, and a different thing to have happened.
+    details: {
+      player1_id: player1Id,
+      player2_id: player2Id,
+      promoted_from_pool: [player1Id, player2Id].filter((id) => alreadyUnpaired.has(id)),
+    },
   });
 
   // BOTH HALVES ARE TOLD, and each is asked for their own signature — because
@@ -804,6 +1010,157 @@ async function addPairToEventImpl(eventId: string, player1Id: string, player2Id:
 
   revalidateEventPaths(event.tournament_id, eventId);
   return data;
+}
+
+// ============================================================
+// Taking a team APART — the two ways out that are not "remove"
+// ============================================================
+// Three different things an exec might mean by "this pair is wrong", and they
+// are deliberately three actions rather than one:
+//
+//   removePairFromEvent  — the team should never have been entered. The row is
+//                          deleted and nobody is left in the event.
+//   unpairEntry          — the two PEOPLE belong here, this TEAM does not.
+//                          Both return to the unpaired pool and can be paired
+//                          with somebody else.
+//   withdrawPairMember   — one half has pulled out. The leaver is marked
+//                          withdrawn; the partner returns to the pool.
+//
+// Both of the new ones are the same two writes in the opposite order to
+// pairing (delete a pair, insert two participants) and carry the same hazard,
+// so both go through unpair_tournament_pair (00102) and are atomic for the same
+// reason.
+
+/** What the caller is told back, so the toast can name the pool. */
+export interface UnpairResult {
+  /** The two members now loose in the pool — or one, when the other withdrew. */
+  returned: number;
+  withdrawnName: string | null;
+}
+
+export async function unpairEntry(pairId: string): Promise<ActionResult<UnpairResult>> {
+  return runAction(() => splitPairImpl(pairId, null, undefined));
+}
+
+/**
+ * ONE HALF OF A FORMED PAIR PULLS OUT.
+ *
+ * The club owner has ruled that withdrawing does not refund. So the partner who
+ * is left has already paid the tournament's entry fee, has already accepted its
+ * event waiver, and is already spending one of their allowed entries — and none
+ * of those three came from having a partner. Deleting their entry because
+ * somebody else bailed would take all three away and punish the wrong person.
+ * They drop back into the unpaired pool instead, keeping every one of them, and
+ * can be given a different partner. That is the whole point of the pool.
+ *
+ * The leaver keeps a 'withdrawn' row rather than disappearing: it is what makes
+ * "no refund" legible next to their fee, and it releases their own entry-cap
+ * slot exactly as any other withdrawal does.
+ *
+ * ONLY BEFORE THE DRAW. Once the pair is seeded, splitting it up is not
+ * something the database will do — tournament_matches.pair_a_id and its three
+ * siblings REFERENCE tournament_pairs(id) with no ON DELETE action, so the
+ * delete raises a foreign-key violation. At that point the coherent exit is
+ * withdrawing the WHOLE pair, which forfeits its matches to its opponents and
+ * is what withdrawPair already does.
+ */
+export async function withdrawPairMember(
+  pairId: string,
+  playerId: string,
+  reason?: string,
+): Promise<ActionResult<UnpairResult>> {
+  return runAction(() => splitPairImpl(pairId, playerId, reason));
+}
+
+async function splitPairImpl(
+  pairId: string,
+  withdrawnPlayerId: string | null,
+  reason: string | undefined,
+): Promise<UnpairResult> {
+  // TWO DIFFERENT CAPABILITIES FOR ONE FUNCTION, chosen by what is being asked
+  // for. Unpairing destroys a pair row and creates nothing that is not already
+  // in the event, which is `pairs.remove.write`. Withdrawing a member takes
+  // somebody OUT of the event, which is `exit.write` — the same key the other
+  // three withdrawal actions in this file ask for. Handing one to a holder of
+  // the other would be a hole in whichever they do not hold.
+  const admin = withdrawnPlayerId
+    ? await requireCapability('tournaments.draw.exit.write')
+    : await requireCapability('tournaments.draw.pairs.remove.write');
+  const adminClient = createAdminClient();
+
+  const { data: pair } = await adminClient.from('tournament_pairs')
+    .select('id, event_id, player1_id, player2_id, event:tournament_events(id, status, tournament_id, draw_locked), player1:players!tournament_pairs_player1_id_fkey(full_name), player2:players!tournament_pairs_player2_id_fkey(full_name)')
+    .eq('id', pairId)
+    .maybeSingle();
+  if (!pair) throw new ExpectedError('Pair not found');
+
+  const event = (Array.isArray(pair.event) ? pair.event[0] : pair.event) as {
+    id: string; status: string; tournament_id: string; draw_locked: boolean;
+  } | null;
+  if (!event) throw new ExpectedError('Pair is not attached to an event');
+
+  if (withdrawnPlayerId && withdrawnPlayerId !== pair.player1_id && withdrawnPlayerId !== pair.player2_id) {
+    throw new ExpectedError('That player is not in this pair.');
+  }
+
+  // Same window pairing has: while the entry list is still being assembled.
+  // `bracket_generated` and everything after is refused by the function too, on
+  // the stronger test of whether the pair is actually in a match.
+  if (event.status !== 'registration' && event.status !== 'checkin') {
+    throw new ExpectedError(
+      withdrawnPlayerId
+        ? 'The draw already exists, so this pair cannot be split up. Withdraw the whole pair instead — their matches are forfeited to their opponents.'
+        : 'Pairs can only be split up while the event is still taking entries.',
+    );
+  }
+  if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before making changes.');
+  await assertTournamentNotSuspended(adminClient, event.tournament_id);
+
+  const { error } = await adminClient.rpc('unpair_tournament_pair', {
+    p_pair_id: pairId,
+    p_withdrawn_player_id: withdrawnPlayerId,
+    p_reason: reason ?? null,
+    p_added_by: admin.id,
+  });
+  if (error) {
+    // The function's own refusals are sentences an exec can act on — "already
+    // in the draw", "already left the event" — so they are passed through.
+    if (error.code === '23503' || error.code === '23514' || error.code === '02000') {
+      throw new ExpectedError(error.message);
+    }
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+
+  const nameOfHalf = (id: string) =>
+    pickName(id === pair.player1_id ? pair.player1 : pair.player2) ?? 'This player';
+
+  await logAudit(adminClient, {
+    tournament_id: event.tournament_id,
+    event_id: event.id,
+    action: withdrawnPlayerId ? 'participant_withdrawn' : 'pair_unpaired',
+    performed_by: admin.id,
+    details: {
+      pair_id: pairId,
+      player1_id: pair.player1_id,
+      player2_id: pair.player2_id,
+      withdrawn_player_id: withdrawnPlayerId,
+      reason: reason ?? null,
+    },
+  });
+
+  // NO FEE IS TOUCHED, in either direction. ensureEntryFees is not called
+  // because both members already have their one row for this tournament, and
+  // nothing is refunded because the club owner has ruled that a withdrawal does
+  // not refund. Nor is the event-waiver acceptance touched: it is per member per
+  // TOURNAMENT and was never a fact about who they were playing with.
+  revalidateEventPaths(event.tournament_id, event.id);
+  // Both rows exist either way; only one of them is still IN the event when a
+  // member withdrew, and that is the number the toast should say.
+  return {
+    returned: withdrawnPlayerId ? 1 : 2,
+    withdrawnName: withdrawnPlayerId ? nameOfHalf(withdrawnPlayerId) : null,
+  };
 }
 
 export async function removePairFromEvent(pairId: string) {
