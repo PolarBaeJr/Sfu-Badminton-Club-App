@@ -33,6 +33,47 @@ export interface SiblingEvent {
   format: string;
   /** Present since 00106; absent on a page that has not been updated. */
   group_count?: number | null;
+  // Carried so a new event can start from how the last one was set up — see
+  // inheritableFrom below. All optional: a caller that only needs the pool
+  // picker (which is what SiblingEvent was originally for) still type-checks.
+  match_format?: string | null;
+  games_per_match?: number | null;
+  points_per_game?: number | null;
+  elo_multiplier?: number | string | null;
+}
+
+/**
+ * The form state a new event should open with, given the events already in
+ * this tournament.
+ *
+ * WHAT IS INHERITED IS THE HOUSE STYLE, not the event. A club setting up five
+ * events on one day plays them all to the same shape, so the match format and
+ * the Elo weight are worth carrying; typing them five times is the actual
+ * complaint. What is deliberately NOT carried:
+ *
+ *   * the POOL LINK. It names one specific other event. Copying it would point
+ *     the new event at a pool that may be the wrong discipline entirely — the
+ *     exact mis-link the picker filter now prevents, reintroduced by the back
+ *     door — and a pool can only sensibly feed one bracket anyway.
+ *   * the CAPACITY. Draw size is the thing that most often differs between a
+ *     men's and a mixed event, and a silently inherited cap is the kind of
+ *     limit nobody notices until entries start being refused.
+ *   * the GROUP SHAPE, which depends on how many people turn up for THIS event.
+ *
+ * Returns null when there is nothing to inherit from, so the caller keeps the
+ * shipped defaults rather than having to special-case an empty tournament.
+ */
+export function inheritableFrom(siblings: readonly SiblingEvent[]): Partial<EventFormatValues> | null {
+  // The most recently created one: the page orders by created_at, so it is the
+  // last. "What I just set up" is a better guess at intent than "what I set up
+  // first", and it means correcting the format once fixes every event after it.
+  const last = siblings.length > 0 ? siblings[siblings.length - 1] : undefined;
+  if (!last?.match_format) return null;
+  return {
+    matchFormat: last.match_format as TournamentMatchFormat,
+    gamesPerMatch: last.games_per_match == null ? '' : String(last.games_per_match),
+    pointsPerGame: last.points_per_game == null ? '' : String(last.points_per_game),
+  };
 }
 
 export const EMPTY_FORMAT_VALUES: EventFormatValues = {

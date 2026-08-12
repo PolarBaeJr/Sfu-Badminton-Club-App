@@ -11,6 +11,7 @@ import type { TournamentEventType, TournamentEventFormat, TournamentSeedingMetho
 import {
   EventFormatFields,
   EMPTY_FORMAT_VALUES,
+  inheritableFrom,
   toFormatPayload,
   type EventFormatValues,
   type SiblingEvent,
@@ -27,6 +28,16 @@ export function CreateEventButton({ tournamentId, siblings = [] }: { tournamentI
   const [eloMultiplier, setEloMultiplier] = useState('1.25');
   const { toast } = useToast();
   const router = useRouter();
+
+  // Seeded when the dialog OPENS, not once on mount: creating an event
+  // refreshes the page and changes what there is to inherit from, and a
+  // mount-time initialiser would keep offering the FIRST event's shape all
+  // session. Opening is also the only moment the exec can be surprised by it.
+  function openDialog() {
+    const inherited = inheritableFrom(siblings);
+    setFormatValues(inherited ? { ...EMPTY_FORMAT_VALUES, ...inherited } : EMPTY_FORMAT_VALUES);
+    setOpen(true);
+  }
 
   // A round robin has no draw to seed, so the pool picker is meaningless there.
   //
@@ -79,7 +90,7 @@ export function CreateEventButton({ tournamentId, siblings = [] }: { tournamentI
 
   return (
     <>
-      <Button size="sm" onClick={() => setOpen(true)}>
+      <Button size="sm" onClick={openDialog}>
         <Plus className="w-4 h-4 mr-1" /> Add Event
       </Button>
       <Dialog open={open} onClose={() => setOpen(false)} title="Create Tournament Event">

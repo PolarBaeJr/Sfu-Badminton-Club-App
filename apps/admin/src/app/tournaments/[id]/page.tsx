@@ -169,6 +169,10 @@ export default async function TournamentDetailPage({ params }: { params: Promise
                 event_type: ev.event_type,
                 format: ev.format,
                 group_count: (ev as { group_count?: number | null }).group_count ?? null,
+                // Carried so a new event opens on the last one's match shape.
+                match_format: ev.match_format,
+                games_per_match: (ev as { games_per_match?: number | null }).games_per_match ?? null,
+                points_per_game: (ev as { points_per_game?: number | null }).points_per_game ?? null,
               }))}
             />
           )}
