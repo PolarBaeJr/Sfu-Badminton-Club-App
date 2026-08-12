@@ -2299,6 +2299,163 @@ describe('regenerating a draw that already exists', () => {
   });
 });
 
+// ============================================================
+// Group stage (00106)
+// ============================================================
+//
+// THE PURE HALF IS TESTED WITHOUT A DATABASE (group-draw.test.ts, and
+// group-stage.test.ts in shared). What only the generator can be wrong about is
+// what it WRITES, and there are exactly two things:
+//
+//   1. bracket_position. 00081 put a UNIQUE index on
+//      (event_id, round_number, bracket_position) WHERE NOT is_third_place, and
+//      running the circle method per group means Round 1 of group B is inserted
+//      after Round 1 of group A into the same round number. A per-group counter
+//      starting at 0 would collide on group B's very first fixture — as a
+//      Postgres unique violation, mid-generation, after group A's matches are
+//      already in the table, on the day. The inserts here discard their return
+//      value (as they did before 00106), so nothing in the code would catch it.
+//
+//   2. Who plays whom. A group stage where somebody is handed a fixture against
+//      another group is not a group stage; it is a broken round robin that
+//      still looks plausible on the screen.
+//
+// Neither is visible to a test of pure functions, so both are asserted here
+// against the row store.
+describe('generating a group stage', () => {
+  function groupField(n: number, groups: number) {
+    store.db.tournament_matches = [];
+    store.db.tournament_participants = Array.from({ length: n }, (_, i) => ({
+      id: `p-${i}`, event_id: 'e1', player_id: `pl-${i}`, elo_before: 1500 - i * 10,
+      elo_after: null, elo_change: null, seed_number: i + 1, group_number: null,
+      final_position: null, points: null, status: 'checked_in',
+    }));
+    Object.assign(event(), {
+      status: 'checkin', draw_locked: false, format: 'round_robin',
+      group_count: groups, qualifiers_per_group: 2,
+    });
+  }
+  const fixtures = () => store.db.tournament_matches!.filter((m) => m.event_id === 'e1');
+  const groupOf = (id: string | null) =>
+    store.db.tournament_participants!.find((p) => p.id === id)?.group_number ?? null;
+
+  it('plays each group as its own round robin and nothing across groups', async () => {
+    // 12 entrants in 4 groups of 3. Each group is 3 fixtures, so 12 in total —
+    // against 66 for one flat pool of 12, which is the entire reason the format
+    // exists.
+    groupField(12, 4);
+
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+
+    expect(fixtures()).toHaveLength(12);
+    for (const m of fixtures()) {
+      const a = groupOf(m.participant_a_id as string);
+      const b = groupOf(m.participant_b_id as string);
+      expect(a).not.toBeNull();
+      expect(a).toBe(b);
+    }
+    // Everybody plays everybody in their own group, exactly once: a group of 3
+    // is 3 distinct pairings and each member appears in 2 of them.
+    const appearances = new Map<string, number>();
+    for (const m of fixtures()) {
+      for (const id of [m.participant_a_id, m.participant_b_id] as string[]) {
+        appearances.set(id, (appearances.get(id) ?? 0) + 1);
+      }
+    }
+    expect([...appearances.values()]).toEqual(new Array(12).fill(2));
+    expect(new Set(fixtures().map((m) => [m.participant_a_id, m.participant_b_id].sort().join('|'))).size).toBe(12);
+  });
+
+  it('never repeats a bracket_position within a round, across every group', async () => {
+    // 00081's unique index, asserted as the property it enforces. Four groups
+    // means four fixtures land in Round 1, and a per-group counter would have
+    // given all four position 0.
+    groupField(12, 4);
+
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+
+    const seen = new Set<string>();
+    for (const m of fixtures()) {
+      const key = `${m.round_number}:${m.bracket_position}`;
+      expect(seen.has(key)).toBe(false);
+      seen.add(key);
+    }
+    // And the match numbers are one sequence over the whole event, not one per
+    // group — M7 has to mean one fixture on the scoresheet.
+    expect(fixtures().map((m) => m.match_number).sort((a, b) => (a as number) - (b as number)))
+      .toEqual(Array.from({ length: 12 }, (_, i) => i + 1));
+  });
+
+  it('deals the field serpentine by seed, so the top seeds are spread out', async () => {
+    groupField(8, 4);
+
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+
+    const assigned = store.db.tournament_participants!.map((p) => p.group_number);
+    expect(assigned).toEqual([1, 2, 3, 4, 4, 3, 2, 1]);
+  });
+
+  it('keeps a hand-placed entry and only fills the gaps', async () => {
+    // THE OVERRIDE HAS TO SURVIVE GENERATE. An exec moved the top seed into
+    // group 2; a late entrant has no group at all.
+    groupField(8, 2);
+    for (const p of store.db.tournament_participants!) p.group_number = 1;
+    Object.assign(participant('p-0'), { group_number: 2 });
+    Object.assign(participant('p-7'), { group_number: null });
+
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+
+    expect(participant('p-0').group_number).toBe(2);
+    expect(participant('p-1').group_number).toBe(1);
+    // Group 2 was the smaller of the two, so the unplaced entry went there.
+    expect(participant('p-7').group_number).toBe(2);
+  });
+
+  it('refuses a group nobody could play in, and writes nothing on the way out', async () => {
+    // Five entrants in four groups: one group would hold a single person, who
+    // would be handed no fixtures and then ranked first on a record of nothing.
+    groupField(5, 4);
+
+    const res = await generateRoundRobinMatches('e1');
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/fewer than 2 entries/);
+    // REFUSED BEFORE ANY WRITE. A refusal that had already stamped group
+    // numbers onto half the field would leave the event carrying an assignment
+    // nobody asked for and no screen explaining it.
+    expect(store.db.tournament_participants!.every((p) => p.group_number == null)).toBe(true);
+    expect(fixtures()).toHaveLength(0);
+  });
+
+  it('leaves a flat round robin exactly as it was', async () => {
+    // group_count NULL is every round-robin event that exists today. 5
+    // entrants, one pool: 10 fixtures over 5 rounds, positions from 0 in each.
+    groupField(5, 4);
+    Object.assign(event(), { group_count: null, qualifiers_per_group: null });
+
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+
+    expect(fixtures()).toHaveLength(10);
+    expect(store.db.tournament_participants!.every((p) => p.group_number === null)).toBe(true);
+    expect(new Set(fixtures().map((m) => m.round_number))).toEqual(new Set([1, 2, 3, 4, 5]));
+    for (const round of [1, 2, 3, 4, 5]) {
+      const positions = fixtures().filter((m) => m.round_number === round).map((m) => m.bracket_position);
+      expect(positions.sort()).toEqual([0, 1]);
+    }
+  });
+
+  it('records the group shape in the audit row', async () => {
+    groupField(12, 4);
+
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+
+    const audit = store.db.tournament_audit_log!.filter((r) => r.action === 'round_robin_generated').at(-1)!;
+    expect((audit.details as Row).group_count).toBe(4);
+    expect((audit.details as Row).group_sizes).toEqual([3, 3, 3, 3]);
+    expect((audit.details as Row).matches).toBe(12);
+  });
+});
+
 describe('third-place playoff', () => {
   beforeEach(seedFourDraw);
 

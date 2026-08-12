@@ -220,9 +220,15 @@ async function assignEventGroupsImpl(eventId: string) {
     };
   });
 
-  if (entries.length < groupCount) {
+  // THE SAME RULE THE GENERATOR ENFORCES, ASKED HERE TOO. A group needs two
+  // people to be a round robin. Left to the generator alone, an exec who set 8
+  // groups over 9 entries would get a cheerful "dealt into 8 groups" here and
+  // the refusal three screens later, at Generate, naming groups they can no
+  // longer see how they got. The refusal belongs where the number was set.
+  if (entries.length < groupCount * 2) {
     throw new ExpectedError(
-      `There are ${entries.length} entries and ${groupCount} groups, so at least one group would be empty. Add entries or lower the group count.`,
+      `There are ${entries.length} entries and ${groupCount} groups, so at least one group would have fewer than 2 people in it. ` +
+      `Lower the group count to ${Math.max(1, Math.floor(entries.length / 2))} or fewer, or add entries.`,
     );
   }
 

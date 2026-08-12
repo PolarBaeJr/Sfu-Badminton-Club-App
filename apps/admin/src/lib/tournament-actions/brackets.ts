@@ -1057,6 +1057,26 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
     // which is the whole field the first time, and just the late entrant the
     // second time.
     const plan = planGroupAssignment(entries, groupCount);
+
+    // CHECKED BEFORE ANYTHING IS WRITTEN, and the order is the point. A group of
+    // one has nobody to play, so the event would hand that entrant no matches at
+    // all and then rank them first on a record of nothing. Refusing AFTER the
+    // group_number writes would leave the event carrying a half-applied
+    // assignment it never asked for — a refusal has to leave the row exactly as
+    // it found it. The plan is enough to count sizes; no write is needed to know.
+    const planned = new Array<number>(groupCount).fill(0);
+    for (const g of plan.values()) planned[g - 1]!++;
+    const short = planned
+      .map((size, i) => ({ size, number: i + 1 }))
+      .filter(g => g.size < 2);
+    if (short.length > 0) {
+      throw new ExpectedError(
+        `Group ${short.map(g => String.fromCharCode(64 + g.number)).join(', ')} ` +
+        `${short.length === 1 ? 'has' : 'have'} fewer than 2 entries, so nobody there would have a match. ` +
+        'Lower the group count or move somebody across.',
+      );
+    }
+
     const newlyAssigned = entries.filter(e => e.group !== plan.get(e.id));
     if (newlyAssigned.length > 0) {
       const table = doubles ? 'tournament_pairs' : 'tournament_participants';
@@ -1080,17 +1100,6 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
   const groups: Array<{ number: number; entries: typeof entries }> = [];
   for (let g = 1; g <= Math.max(1, groupCount); g++) {
     groups.push({ number: g, entries: entries.filter(e => e.group === g) });
-  }
-  // A group of one has nobody to play, so the event would quietly hand that
-  // entrant no matches at all — and then rank them first, on a record of
-  // nothing. Refuse it while there is still nothing to undo.
-  const empty = groups.filter(g => g.entries.length < 2);
-  if (groupCount >= 2 && empty.length > 0) {
-    throw new ExpectedError(
-      `Group ${empty.map(g => String.fromCharCode(64 + g.number)).join(', ')} ` +
-      `${empty.length === 1 ? 'has' : 'have'} fewer than 2 entries, so nobody there would have a match. ` +
-      'Lower the group count or move somebody across.',
-    );
   }
 
   // Delete any existing matches
