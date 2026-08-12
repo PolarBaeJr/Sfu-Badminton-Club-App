@@ -13,9 +13,11 @@ import {
   baselineCapabilityRefusal,
   baselineNameRefusal,
   effectiveCapabilities,
+  isBuiltinPermissionRole,
   isCapability,
   normaliseBaselineCapabilities,
   permissionsOf,
+  shippedDefaultFor,
   type Capability,
   type CustomBaseline,
 } from '../permissions';
@@ -60,7 +62,11 @@ type BaselineRow = {
   id: string;
   name: string;
   capabilities: string[];
+  builtin_role: string | null;
 };
+
+/** Every column asBaseline() reads, in one place so no SELECT can forget one. */
+const BASELINE_COLUMNS = 'id, name, capabilities, builtin_role';
 
 function asBaseline(row: BaselineRow): CustomBaseline {
   return {
@@ -71,6 +77,10 @@ function asBaseline(row: BaselineRow): CustomBaseline {
     // nothing anyway, and offering to re-save it as though it meant something is
     // how a dead capability survives a rename.
     capabilities: normaliseBaselineCapabilities(row.capabilities.filter(isCapability)),
+    // Narrowed rather than cast. A value outside the four reads as "not a
+    // built-in", which is the safe answer: it makes the row deletable and not
+    // resettable, and both of those are what an unrecognised row should be.
+    builtinRole: isBuiltinPermissionRole(row.builtin_role) ? row.builtin_role : null,
   };
 }
 
@@ -97,22 +107,60 @@ type Client = ReturnType<typeof createAdminClient>;
 async function loadBaseline(adminClient: Client, id: string): Promise<CustomBaseline> {
   const { data } = await adminClient
     .from('permission_baselines')
-    .select('id, name, capabilities')
+    .select(BASELINE_COLUMNS)
     .eq('id', id)
     .maybeSingle();
   if (!data) throw new ExpectedError('That baseline no longer exists.');
-  return asBaseline(data as BaselineRow);
+  return asBaseline(data as unknown as BaselineRow);
 }
 
-/** Everyone whose grants were copied from this baseline. */
-async function holdersOf(adminClient: Client, id: string) {
-  const { data } = await adminClient
+const HOLDER_COLUMNS =
+  'id, full_name, email, role, is_exec, is_trainer, permission_role, permission_grants, permission_revokes';
+
+/**
+ * Everyone this edit has to reach.
+ *
+ * TWO POPULATIONS FOR A BUILT-IN ROLE, AND THE SECOND ONE IS THE WHOLE REASON
+ * THIS FUNCTION TAKES A BASELINE RATHER THAN AN ID.
+ *
+ *  1. Rows whose grants were COPIED from this baseline — permission_baseline_id.
+ *     The only population a club-written baseline ever has.
+ *
+ *  2. For a built-in, rows still storing the LEGACY permission_role ('finance'),
+ *     which resolve through the hard-coded ROLE_DEFAULTS. 00104 rewrites those
+ *     to the copied shape, so after it is applied there are none — and this
+ *     branch is what makes the code correct BEFORE it is applied, and what makes
+ *     a row that somehow acquires one later get swept up rather than silently
+ *     keeping the shipped value under a name that now means something else.
+ *
+ *     Propagation writes them as role 'custom' with the baseline's capabilities,
+ *     which is exactly the conversion 00104 performs — so the two agree, and
+ *     running either after the other changes nothing.
+ */
+async function holdersOf(adminClient: Client, baseline: CustomBaseline) {
+  const { data: copied } = await adminClient
     .from('players')
-    .select(
-      'id, full_name, email, role, is_exec, is_trainer, permission_role, permission_grants, permission_revokes',
-    )
-    .eq('permission_baseline_id', id);
-  return (data ?? []) as Record<string, unknown>[];
+    .select(HOLDER_COLUMNS)
+    .eq('permission_baseline_id', baseline.id);
+
+  const rows = [...((copied ?? []) as Record<string, unknown>[])];
+
+  if (baseline.builtinRole !== null) {
+    const { data: legacy } = await adminClient
+      .from('players')
+      .select(HOLDER_COLUMNS)
+      .eq('permission_role', baseline.builtinRole);
+    // De-duplicated by id: the two queries are disjoint today (the check
+    // constraint forbids a baseline label on anything but 'custom'), but a
+    // holder counted twice would be propagated to twice and reported as two
+    // people in the audit row, and neither is worth trusting a constraint for.
+    const seen = new Set(rows.map((row) => row.id as string));
+    for (const row of (legacy ?? []) as Record<string, unknown>[]) {
+      if (!seen.has(row.id as string)) rows.push(row);
+    }
+  }
+
+  return rows;
 }
 
 const nameOfPerson = (person: Record<string, unknown>) =>
@@ -260,7 +308,7 @@ async function updateImpl(
 
   const stored = normaliseBaselineCapabilities(capabilities as Capability[]);
   const trimmed = name.trim();
-  const holders = await holdersOf(adminClient, id);
+  const holders = await holdersOf(adminClient, before);
 
   // PRE-FLIGHT, PER HOLDER. setPlayerPermissions runs all five closure checks
   // again for each of them, so this is not the boundary — it is the refusal
@@ -384,7 +432,22 @@ async function deleteImpl(id: string, reason: string): Promise<void> {
     );
   }
 
-  const holders = await holdersOf(adminClient, id);
+  // A BUILT-IN ROLE IS NEVER DELETED, AND THE HOLDER CHECK BELOW IS NOT ENOUGH
+  // ON ITS OWN. A Finance row that nobody currently holds would pass it and
+  // delete cleanly — taking with it the seed, the "reset to shipped default"
+  // target, and one of the four names the club has always picked from. 00104's
+  // INSERT is ON CONFLICT DO NOTHING, so re-running the migration would not
+  // bring it back either.
+  //
+  // Editing and renaming are the feature. Deleting is not, and there is nothing
+  // it would buy: a built-in nobody holds is already inert.
+  if (baseline.builtinRole !== null) {
+    throw new ExpectedError(
+      `${baseline.name} is one of the four roles the club ships with, so it cannot be deleted. Edit what it means, or reset it to its original set.`,
+    );
+  }
+
+  const holders = await holdersOf(adminClient, baseline);
   if (holders.length > 0) {
     const names = holders.map(nameOfPerson).sort();
     throw new ExpectedError(
@@ -411,4 +474,63 @@ async function deleteImpl(id: string, reason: string): Promise<void> {
   );
 
   revalidatePath('/permissions');
+}
+
+// ---------------------------------------------------------------------------
+// RESET
+// ---------------------------------------------------------------------------
+/**
+ * Put a built-in role back to the set it shipped with.
+ *
+ * THE ANSWER TO "can this be undone", and the reason the four are worth
+ * distinguishing from the club's own baselines at all. A club-written baseline
+ * has no shipped value to return to — there is nothing it was before somebody
+ * wrote it. A built-in does: ROLE_DEFAULTS, which stopped being the runtime
+ * answer when 00104 seeded these rows and survives as exactly this.
+ *
+ * IT IS updatePermissionBaseline WITH THE CAPABILITIES CHOSEN FOR THE CALLER,
+ * and deliberately not a second write path. Every rule that applies to an edit
+ * applies here: the reason, closure on what the row says AND on what it will
+ * say, the EDITOR_OFFERABLE ceiling, the per-holder pre-flight, and propagation
+ * to every holder with an audit row each.
+ *
+ * THAT MEANS A RESET CAN BE REFUSED, which is correct and worth saying out loud.
+ * If the owner has taught Finance to read the club's books and hands it to three
+ * people, a treasurer who does not hold `fees.clubfees.read` cannot reset it —
+ * resetting is a revoke for those three, and an unbounded revoke is a
+ * denial-of-access weapon. The shipped set being narrower than the current one
+ * does not make putting it back a safe act for anybody to perform.
+ *
+ * THE NAME IS NOT RESET. A club that renamed Finance to 'Treasurer' meant it,
+ * and it is not part of what the role can DO — the thing this feature is about.
+ */
+export async function resetPermissionBaseline(
+  id: string,
+  reason: string,
+): Promise<ActionResult<{ propagated: number }>> {
+  return runAction(() => resetImpl(id, reason));
+}
+
+async function resetImpl(id: string, reason: string): Promise<{ propagated: number }> {
+  const { adminClient } = await actorContext();
+  const baseline = await loadBaseline(adminClient, id);
+
+  if (baseline.builtinRole === null) {
+    throw new ExpectedError(
+      `${baseline.name} is a baseline the club wrote, so there is no original set to go back to. Edit it, or delete it once nobody holds it.`,
+    );
+  }
+
+  // Read through the same narrowing every other reader uses, so a value the
+  // database somehow holds outside the four cannot pick a default here.
+  if (!isBuiltinPermissionRole(baseline.builtinRole)) {
+    throw new Error('resetPermissionBaseline: unrecognised built-in role');
+  }
+
+  return updateImpl(
+    id,
+    baseline.name,
+    [...shippedDefaultFor(baseline.builtinRole)],
+    reason,
+  );
 }

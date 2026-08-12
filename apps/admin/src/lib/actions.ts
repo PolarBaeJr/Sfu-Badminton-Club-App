@@ -55,6 +55,7 @@ export {
   createPermissionBaseline,
   updatePermissionBaseline,
   deletePermissionBaseline,
+  resetPermissionBaseline,
 } from './actions/permission-baselines';
 
 export {

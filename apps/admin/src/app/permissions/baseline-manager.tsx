@@ -20,6 +20,7 @@ import { REASON_MIN } from '@/lib/audit-reason';
 import {
   createPermissionBaseline,
   deletePermissionBaseline,
+  resetPermissionBaseline,
   updatePermissionBaseline,
 } from '@/lib/actions';
 import { CAPABILITY_GATES } from '@badminton/shared/src/utils/capability-gates';
@@ -32,6 +33,7 @@ import {
   EDITOR_OFFERABLE,
   type Area,
   type Capability,
+  type PermissionRole,
 } from '@/lib/permissions';
 
 // THE CLUB'S OWN BASELINES — the answer to "we will have others".
@@ -53,6 +55,14 @@ export interface BaselineRow {
   capabilities: Capability[];
   /** How many people hold it right now — what an edit would reach. */
   holders: number;
+  /**
+   * Which of the four VP jobs this row SHIPPED as, or null for one the club
+   * wrote. Three things hang off it, and they are the whole of "editable roles":
+   * the row can be RESET to its shipped set, it can never be DELETED, and it is
+   * labelled as built-in so an admin can tell a job the app came with from one
+   * the club invented.
+   */
+  builtinRole: PermissionRole | null;
 }
 
 const MICRO = 'text-[11px] font-bold uppercase tracking-[0.12em]';
@@ -113,6 +123,7 @@ export function BaselineManager({
   const [draft, setDraft] = useState<DraftBaseline>(emptyDraft);
   const [reason, setReason] = useState('');
   const [deleting, setDeleting] = useState<BaselineRow | null>(null);
+  const [resetting, setResetting] = useState<BaselineRow | null>(null);
   const [deleteReason, setDeleteReason] = useState('');
   const [saving, startSaving] = useTransition();
   const { toast } = useToast();
@@ -210,6 +221,35 @@ export function BaselineManager({
     });
   }
 
+  /**
+   * Put a built-in role back to what it shipped with.
+   *
+   * ITS OWN DIALOG for the same reason the deletion has one: this is an audited
+   * action that changes what a group of people may do, so it takes a typed
+   * reason. It reuses the deletion dialog's state rather than growing a third —
+   * `resetting` and `deleting` are never both open, because a row is either
+   * built-in or it is not.
+   */
+  function reset() {
+    if (resetting === null) return;
+    const target = resetting;
+    startSaving(async () => {
+      const result = await resetPermissionBaseline(target.id, deleteReason);
+      if (!result.ok) {
+        toast(result.error, 'error');
+        return;
+      }
+      setResetting(null);
+      router.refresh();
+      toast(
+        target.holders === 0
+          ? `${target.name} reset`
+          : `${target.name} reset · ${target.holders} ${target.holders === 1 ? 'person' : 'people'} changed with it`,
+        'success',
+      );
+    });
+  }
+
   /** Editable when the viewer could have written it — closure, shown early. */
   const canEdit = (baseline: BaselineRow) =>
     baseline.capabilities.every((capability) => held.has(capability));
@@ -218,16 +258,38 @@ export function BaselineManager({
     canEdit(baseline) ? (
       <div className="flex justify-end gap-2">
         <Button variant="ghost" size="sm" onClick={() => open(baseline)}>Edit</Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            setDeleting(baseline);
-            setDeleteReason('');
-          }}
-        >
-          Delete
-        </Button>
+        {/*
+          RESET WHERE A CLUB-WRITTEN BASELINE OFFERS DELETE, never both. A
+          built-in has a shipped set to go back to and must not be deleted — a
+          Finance row with no holders would otherwise delete cleanly and take one
+          of the four names with it. A club-written one has no shipped set and
+          nothing depending on its existence. The server refuses each of these on
+          the other kind; this is the same refusal drawn as the absence of a
+          button, which is where a refusal belongs.
+        */}
+        {baseline.builtinRole !== null ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setResetting(baseline);
+              setDeleteReason('');
+            }}
+          >
+            Reset
+          </Button>
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setDeleting(baseline);
+              setDeleteReason('');
+            }}
+          >
+            Delete
+          </Button>
+        )}
       </div>
     ) : (
       // WITHHELD IS NOT EMPTY. A row with no controls and no explanation reads as
@@ -266,13 +328,19 @@ export function BaselineManager({
                 <span className="font-mono text-[13px]">{baseline.capabilities.length}</span>
               }
               badges={
-                baseline.holders > 0 ? (
-                  <Badge variant="warning">
-                    {baseline.holders} {baseline.holders === 1 ? 'holder' : 'holders'}
-                  </Badge>
-                ) : (
-                  <Badge variant="neutral">unused</Badge>
-                )
+                <>
+                  {/* SAID ON THE ROW, because "can I delete this?" and "what does
+                      Reset mean here?" are both answered by it, and an admin
+                      should not have to infer it from which buttons appeared. */}
+                  {baseline.builtinRole !== null && <Badge variant="neutral">built-in</Badge>}
+                  {baseline.holders > 0 ? (
+                    <Badge variant="warning">
+                      {baseline.holders} {baseline.holders === 1 ? 'holder' : 'holders'}
+                    </Badge>
+                  ) : (
+                    <Badge variant="neutral">unused</Badge>
+                  )}
+                </>
               }
               fields={[{ label: 'Areas', value: areasOf(baseline.capabilities) }]}
               actions={actions(baseline)}
@@ -454,6 +522,50 @@ export function BaselineManager({
               onClick={remove}
             >
               Delete baseline
+            </Button>
+          </div>
+        </div>
+      </Dialog>
+
+      {/* RESET — the built-in half of the pair above. Same rules: it is audited,
+          so it takes a typed reason, and it names what it will reach. */}
+      <Dialog
+        open={resetting !== null}
+        onClose={() => setResetting(null)}
+        title={resetting === null ? 'Reset role' : `Reset ${resetting.name}`}
+      >
+        <div className="space-y-4">
+          <p className="text-[13px] leading-relaxed text-[var(--ink-2)]">
+            {resetting?.name} goes back to the set it shipped with, and{' '}
+            <span className="text-[var(--ink)]">every edit the club has made to it is lost</span>.
+            The name is kept.
+          </p>
+          {resetting !== null && resetting.holders > 0 && (
+            <p className="border border-[var(--color-warning)] p-3 text-[12px] text-[var(--color-warning)]">
+              {resetting.holders} {resetting.holders === 1 ? 'person holds' : 'people hold'} it,
+              and {resetting.holders === 1 ? 'their' : 'their'} access changes with it. If the
+              shipped set is narrower than the current one this TAKES CAPABILITIES AWAY from
+              them, so it is bounded by the same rule as any other revoke: it will be refused
+              unless you hold everything they do.
+            </p>
+          )}
+          <Textarea
+            label="Reason (required)"
+            value={deleteReason}
+            onChange={(e) => setDeleteReason(e.target.value)}
+          />
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setResetting(null)}>Cancel</Button>
+            <Button
+              variant="danger"
+              // REASON_MIN rather than non-empty, because resetImpl forwards this
+              // straight into updateImpl, which measures against it. A shorter
+              // one would be accepted here and refused there, after the dialog
+              // had closed on a promise it could not keep.
+              disabled={saving || deleteReason.trim().length < REASON_MIN}
+              onClick={reset}
+            >
+              Reset to shipped default
             </Button>
           </div>
         </div>

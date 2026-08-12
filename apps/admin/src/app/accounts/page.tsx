@@ -6,7 +6,8 @@ import {
   permissionsOf,
   permits,
   pageOf,
-  PERMISSION_ROLES,
+  isCapability,
+  BUILTIN_PERMISSION_ROLES,
   PERMISSION_ROLE_LABELS,
   ROLE_DEFAULTS,
   type Capability,
@@ -174,6 +175,42 @@ export default async function AccountsPage() {
   const { data: settings } = showPlatformSettings
     ? await adminClient.from('platform_settings').select('*').order('key')
     : { data: null };
+
+  // WHAT THE ROLES ACTUALLY SAY, READ FROM THE TABLE RATHER THAN FROM THE CODE.
+  //
+  // This card is club-facing documentation of the four jobs, and until 00104 it
+  // could read ROLE_DEFAULTS because that constant WAS the answer. It is the
+  // SEED now — the owner edits the rows — so rendering it here would describe
+  // Finance as the expense ledger on a club whose Finance sees the whole books.
+  // Documentation derived from the wrong source is worse than none: it is
+  // believed.
+  //
+  // The four built-ins only. The club's own baselines are listed on /permissions
+  // beside the people holding them, which is where a question about them starts;
+  // this card answers "what do the named jobs mean", and it has always answered
+  // it about four things.
+  const { data: roleRows } = await adminClient
+    .from('permission_baselines')
+    .select('name, capabilities, builtin_role')
+    .not('builtin_role', 'is', null)
+    .order('name');
+
+  // FALLS BACK TO THE SHIPPED DEFAULTS, and only when the table says nothing.
+  // That is the pre-migration state — 00104 unapplied, no rows — and there the
+  // constant is still literally correct, because nothing can have edited a row
+  // that does not exist. An empty card would read as "these roles do nothing".
+  const namedRoles: { key: string; label: string; capabilities: readonly Capability[] }[] =
+    (roleRows ?? []).length > 0
+      ? (roleRows ?? []).map((row) => ({
+          key: row.builtin_role as string,
+          label: row.name as string,
+          capabilities: ((row.capabilities as string[] | null) ?? []).filter(isCapability),
+        }))
+      : BUILTIN_PERMISSION_ROLES.map((role) => ({
+          key: role,
+          label: PERMISSION_ROLE_LABELS[role],
+          capabilities: ROLE_DEFAULTS[role],
+        }));
 
   // The rail lists what is actually on the page, so a withheld section never
   // leaves a link to nothing.
@@ -372,23 +409,22 @@ export default async function AccountsPage() {
                   }
                 />
                 <dl className="mt-4 flex flex-col">
-                  {PERMISSION_ROLES.map((role) => {
-                    const capabilities = ROLE_DEFAULTS[role];
+                  {namedRoles.map(({ key, label, capabilities }) => {
                     return (
                       <div
-                        key={role}
+                        key={key}
                         className="flex flex-col gap-1 border-t border-[var(--line)] py-3.5 first:border-t-0 first:pt-0 sm:flex-row sm:items-baseline sm:gap-4"
                       >
                         <dt className="w-[140px] shrink-0 text-[15px] text-[var(--ink)]">
-                          {PERMISSION_ROLE_LABELS[role]}
+                          {label}
                         </dt>
                         <dd className="min-w-0 text-[13px] text-[var(--mute)]">
                           {capabilities.length === 0 ? (
-                            // `custom` is the EMPTY base, not a fifth VP job —
-                            // everything a hand-picked person holds is in their
-                            // grants, so there is nothing to summarise here and
-                            // saying "nothing" is the accurate summary.
-                            'Nothing by default — every capability is picked by hand, per person.'
+                            // A role edited down to nothing. It used to be how
+                            // `custom` rendered — the empty base, which is no
+                            // longer listed here because it is not one of the
+                            // four named jobs.
+                            'Nothing — every capability would be picked by hand, per person.'
                           ) : (
                             <>
                               {sectionsOpenedBy(capabilities).join(' · ')}
