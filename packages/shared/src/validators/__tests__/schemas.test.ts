@@ -295,21 +295,13 @@ describe('tournamentCreateSchema', () => {
     const result = tournamentCreateSchema.safeParse(base);
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.bracket_size).toBe(8);
       expect(result.data.event_multiplier).toBeCloseTo(1.15);
       expect(result.data.placement_bonus_enabled).toBe(true);
     }
   });
-  it('rejects an unknown scope', () => {
-    expect(
-      tournamentCreateSchema.safeParse({ ...base, scope: 'private' }).success,
-    ).toBe(false);
-  });
-  it('rejects an unknown type', () => {
-    expect(
-      tournamentCreateSchema.safeParse({ ...base, type: 'world_championship' }).success,
-    ).toBe(false);
-  });
+  // The scope/type rejection tests went with 00108: those columns decided
+  // nothing and were dropped, so asserting that a bad value for them is
+  // refused was asserting a rule about a field that no longer exists.
 });
 
 describe('tournamentSuspendSchema', () => {

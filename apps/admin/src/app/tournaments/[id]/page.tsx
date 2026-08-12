@@ -117,9 +117,8 @@ export default async function TournamentDetailPage({ params }: { params: Promise
               <span className="flex items-center gap-3">
                 <span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5" />{formatDate(tournament.start_date)}</span>
                 <span>&middot;</span>
-                <span>{tournament.format}</span>
                 <span>&middot;</span>
-                <span className="flex items-center gap-1"><Zap className="w-3 h-3" />{tournament.event_multiplier}x</span>
+                <span className="flex items-center gap-1"><Zap className="w-3 h-3" />{tournament.event_multiplier}x default</span>
               </span>
             }
           />
@@ -131,7 +130,6 @@ export default async function TournamentDetailPage({ params }: { params: Promise
               <span className="sr-only">Tournament status: </span>{tournament.status}
             </Badge>
             {tournament.suspended_at && <Badge variant="danger">suspended</Badge>}
-            {tournament.scope === 'eligible_only' && <Badge variant="info">Eligible Only</Badge>}
             {tournament.placement_bonus_enabled && <Badge variant="default">Placement Bonuses</Badge>}
           </div>
           {tournament.suspended_at && tournament.suspension_reason && (
@@ -164,6 +162,7 @@ export default async function TournamentDetailPage({ params }: { params: Promise
           {(tournament.status === 'draft' || tournament.status === 'active') && (
             <CreateEventButton
               tournamentId={id}
+              defaultEloMultiplier={tournament.event_multiplier}
               siblings={(events ?? []).map((ev) => ({
                 id: ev.id,
                 event_type: ev.event_type,

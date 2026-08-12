@@ -178,7 +178,6 @@ export default async function TournamentDetailPage({ params }: { params: Promise
               <span className="muted">·</span>
               <span className="muted" style={{ textTransform: 'capitalize' }}>{tournament.format}</span>
               <span className="muted">·</span>
-              <span className="muted" style={{ textTransform: 'capitalize' }}>{tournament.scope}</span>
             </div>
           </div>
           <div className="row" style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -189,7 +188,6 @@ export default async function TournamentDetailPage({ params }: { params: Promise
           </div>
         </div>
         <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-          {tournament.scope === 'eligible_only' && <span className="tag">ELIGIBLE ONLY</span>}
           <span className="tag tag-gold row" style={{ gap: 4 }}>
             <Zap size={10} /> {tournament.event_multiplier}× MULTIPLIER
           </span>
