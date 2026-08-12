@@ -752,14 +752,20 @@ async function setConsoleAccessImpl(playerId: string, access: ExecRole, rawReaso
     clears ? UNRESTRICTED : permissionsOf(target),
   );
 
+  // THE TWO LOCALS ARE NAMED `level*` ON PURPOSE. The blocks below are the same
+  // shape as checks 3 and 4 of applyPlayerPermissions, and the second one was
+  // once byte-identical to its twin — which made a search-and-replace across
+  // this file silently edit the wrong copy. The prefix is what stops that
+  // happening to the next person.
+
   // 1. WHO MAY EDIT WHOM. Stops a narrowly-scoped holder reaching into somebody
   //    who holds more than they do — which, with no grant involved at all, is
   //    the denial-of-access half of this action: taking the console away from a
   //    colleague who was elected to use it.
-  const outOfReach = missingFrom(actorSet, [...before]);
-  if (outOfReach.length > 0) {
+  const levelOutOfReach = missingFrom(actorSet, [...before]);
+  if (levelOutOfReach.length > 0) {
     throw new ExpectedError(
-      `You cannot change this person's console access: they hold ${listOf(outOfReach)}, which you do not.`,
+      `You cannot change this person's console access: they hold ${listOf(levelOutOfReach)}, which you do not.`,
     );
   }
 
@@ -767,10 +773,10 @@ async function setConsoleAccessImpl(playerId: string, access: ExecRole, rawReaso
   //    executive, and it is why one capability covers both levels rather than
   //    two: the graduation is a consequence of the baselines, not of a second
   //    tick box that would have to be kept in step with them.
-  const wouldExceed = missingFrom(actorSet, [...after]);
-  if (wouldExceed.length > 0) {
+  const levelWouldExceed = missingFrom(actorSet, [...after]);
+  if (levelWouldExceed.length > 0) {
     throw new ExpectedError(
-      `That would give them ${listOf(wouldExceed)}, which you do not hold.`,
+      `That would give them ${listOf(levelWouldExceed)}, which you do not hold.`,
     );
   }
 
