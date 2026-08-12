@@ -7,7 +7,7 @@ import { PlayerActions } from './player-actions';
 import { AddPlayerButton } from './add-player-button';
 import { MergePlayersButton } from './merge-players-button';
 import { RosterTable, type RosterRow } from './roster-table';
-import { RosterRowLink } from './row-link';
+import { RowLink } from '@/components/row-link';
 import { RosterCharts } from './roster-charts';
 import { memberIdentifier } from '@/lib/member-identifier';
 import { rosterActionsFor, rosterActionKey, type RosterAction } from '@/lib/roster-actions';
@@ -347,7 +347,7 @@ export default async function PlayersPage({
       handle: player.handle,
       meta: player.email,
       row: (
-        <RosterRowLink
+        <RowLink
           href={`/players/${player.id}`}
           className="cursor-pointer transition-colors hover:bg-[var(--border-hover)]"
         >
@@ -377,7 +377,7 @@ export default async function PlayersPage({
               {actions}
             </div>
           </td>
-        </RosterRowLink>
+        </RowLink>
       ),
       card: (
         <TableCard

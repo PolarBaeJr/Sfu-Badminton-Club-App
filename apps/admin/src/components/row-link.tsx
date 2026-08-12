@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import type { MouseEvent, ReactNode } from 'react';
 
-/** Anything inside the row that owns its own click. A roster row carries Edit,
+/** Anything inside the row that owns its own click. A row carries its own actions,
  *  Ban, Inactive and their dialogs; every one of them must keep working, so a
  *  click that started inside one is never a navigation.
  *  `dialog`/`[role=dialog]` are here because a confirm panel that renders in
@@ -14,7 +14,11 @@ const INTERACTIVE =
   'a,button,input,select,textarea,label,dialog,[role="button"],[role="menuitem"],[role="dialog"]';
 
 /**
- * The roster row as a whole is a link to the member.
+ * A table row that is, as a whole, a link.
+ *
+ * Written for the roster and now shared: the tournaments index wanted the same
+ * thing, and a second copy would have been a second place to get the guards
+ * wrong.
  *
  * This is deliberately an ENHANCEMENT and not the only way in: the member's
  * name in the first cell is a real `<Link>`, and so is `View`. A `<tr>` cannot
@@ -23,7 +27,7 @@ const INTERACTIVE =
  * expect from a table of records. Remove either anchor and the row becomes
  * mouse-only.
  */
-export function RosterRowLink({
+export function RowLink({
   href,
   className,
   children,

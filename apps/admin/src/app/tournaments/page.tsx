@@ -19,6 +19,7 @@ import {
   type TournamentData,
   type WaiverTemplateContext,
 } from './actions';
+import { RowLink } from '@/components/row-link';
 import { EntriesByEvent } from './entries-by-event';
 import { PastSeasonNotice, resolveSeasonScope } from '@/components/season-scope';
 import { SeasonSelect } from '@/components/season-select';
@@ -548,7 +549,11 @@ export default async function TournamentsPage({
                     const fee = canSeeFees ? feeLabel(feeTiersByTournament.get(t.id) ?? []) : null;
                     const disciplines = disciplineLine(evts);
                     return (
-                      <tr key={t.id} className="border-t border-[var(--border)] first:border-t-0">
+                      <RowLink
+                        key={t.id}
+                        href={`/tournaments/${t.id}`}
+                        className="cursor-pointer border-t border-[var(--border)] transition-colors first:border-t-0 hover:bg-[var(--bg-elevated)]"
+                      >
                         <td className="px-5 py-3.5 align-middle">
                           <Link
                             href={`/tournaments/${t.id}`}
@@ -586,7 +591,7 @@ export default async function TournamentsPage({
                             <ActionLink href={`/tournaments/${t.id}`}>{STAGE_ACTION[stage]}</ActionLink>
                           </div>
                         </td>
-                      </tr>
+                      </RowLink>
                     );
                   })}
                 </tbody>
