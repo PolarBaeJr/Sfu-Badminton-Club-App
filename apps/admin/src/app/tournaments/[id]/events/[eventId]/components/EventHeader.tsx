@@ -47,7 +47,14 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
   // match is the record — so this is deliberately plain local state that resets
   // with the page, which is also what makes it honest: it can only ever describe
   // the draw that is about to be built, never one that already exists.
-  const [thirdPlace, setThirdPlace] = useState(false);
+  // DEFAULT ON, at the club owner's instruction. A club running a knockout
+  // almost always plays off for third — leaving it unticked meant the common
+  // case needed a deliberate act and the rare one did not, and a draw generated
+  // without it cannot be given one afterwards without regenerating.
+  //
+  // offerThirdPlace still gates whether the box is shown at all, so a draw with
+  // no semi-final round is unaffected by this default.
+  const [thirdPlace, setThirdPlace] = useState(true);
   const { toast } = useToast();
   const router = useRouter();
   const drawLocked = event.draw_locked as boolean;
