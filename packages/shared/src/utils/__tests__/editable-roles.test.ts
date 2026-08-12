@@ -69,10 +69,10 @@ describe('EDITOR_OFFERABLE, now that it is not EXEC_BASELINE', () => {
     }
   });
 
-  // THE WIDENING, NAMED. Four reads on /fees and nothing else — the club's
-  // books, which is what the owner asked Finance to be able to see. If this
-  // list grows, this assertion is the diff somebody has to read.
-  it('adds exactly the four finance reads, and nothing else', () => {
+  // THE WIDENING, NAMED. Four reads on /fees — the club's books, which is what
+  // the owner asked Finance to be able to see — and, since 00105, one write. If
+  // this list grows, this assertion is the diff somebody has to read.
+  it('adds exactly the four finance reads and the console-access write', () => {
     const exec = new Set<Capability>(EXEC_BASELINE);
     const added = [...EDITOR_OFFERABLE].filter((capability) => !exec.has(capability));
     expect(added.sort()).toEqual([
@@ -80,15 +80,34 @@ describe('EDITOR_OFFERABLE, now that it is not EXEC_BASELINE', () => {
       'fees.netposition.read',
       'fees.otherincome.read',
       'fees.reinstatements.read',
+      'players.consoleaccess.write',
     ]);
   });
 
-  it('adds no WRITE, so seeing the books is not moving the money', () => {
+  // THE MONEY WIDENING IS STILL READ-ONLY, which is the claim that assertion
+  // used to make about the whole list and can no longer make about the whole
+  // list. Seeing the books is not moving the money, and every `fees.*.write`
+  // stayed out — so it is asserted where it is actually true, over the `fees`
+  // half, rather than weakened into nothing.
+  it('adds no fees WRITE, so seeing the books is not moving the money', () => {
     const exec = new Set<Capability>(EXEC_BASELINE);
     for (const capability of EDITOR_OFFERABLE) {
       if (exec.has(capability)) continue;
+      if (!capability.startsWith('fees.')) continue;
       expect(capability.endsWith('.read'), capability).toBe(true);
     }
+  });
+
+  // THE ONE WRITE, AND IT IS ALONE. 00105 — "also make role change a
+  // permission". A second write arriving on this list is the diff this pins:
+  // the ceiling is what bounds an ADMIN, whom grant closure cannot bound, so
+  // every write on it is a thing an admin may hand to somebody who is not one.
+  it('adds exactly one write, and it is the console-access one', () => {
+    const exec = new Set<Capability>(EXEC_BASELINE);
+    const writes = [...EDITOR_OFFERABLE].filter(
+      (capability) => !exec.has(capability) && capability.endsWith('.write'),
+    );
+    expect(writes).toEqual(['players.consoleaccess.write']);
   });
 
   // THE ONES THAT STAY OUT, each named so opening it is deliberate. These are

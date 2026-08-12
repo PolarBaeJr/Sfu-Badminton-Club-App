@@ -140,16 +140,41 @@ function reasonFor(reason: string, what: string): string {
 }
 
 async function setPlayerPermissionsImpl(playerId: string, next: PermissionsPayload) {
-  // THE ACTOR'S SET COMES FROM THEIR OWN ROW, resolved server-side through the
-  // same path every gate uses — permissionsOf, resolvePermissions,
-  // effectiveCapabilities — and never from anything the client sent. That is
-  // the whole of grant closure's foundation: if the actor's set could be
-  // influenced from outside, every check below would be checking a number the
-  // attacker chose.
-  //
   // requireCapability returns the row it just authenticated, so there is not
   // even a second lookup that could disagree with the one that let them in.
   const actor = await requireCapability('permissions.write');
+  await applyPlayerPermissions(actor, playerId, next);
+}
+
+/**
+ * Everything setPlayerPermissions does EXCEPT asking for `permissions.write`.
+ *
+ * SPLIT OUT SO THE ONE OTHER CALLER CAN REACH IT, and that caller is
+ * setConsoleAccess clearing a stored composition. It runs under a different
+ * capability — `players.consoleaccess.write` — and it must not be made to hold
+ * `permissions.write` as well, because that capability is offerable to nobody:
+ * it is outside EDITOR_OFFERABLE, so check 5 below refuses to grant it and only
+ * an admin can ever hold it. Requiring it here would have made the console
+ * capability unusable by the only people it exists for.
+ *
+ * IT IS NOT A HOLE. Every check in this function still runs, against the ACTOR'S
+ * OWN SET, for whichever of the two capabilities got them in — the closure
+ * tests, the admin-target refusal, the ceiling and the reason are all below and
+ * none of them is conditional on how the caller was authenticated. What the
+ * split removes is one `requireCapability` call that the caller has already made
+ * for its own act.
+ *
+ * THE ACTOR'S SET COMES FROM THEIR OWN ROW, resolved server-side through the
+ * same path every gate uses — permissionsOf, resolvePermissions,
+ * effectiveCapabilities — and never from anything the client sent. That is the
+ * whole of grant closure's foundation: if the actor's set could be influenced
+ * from outside, every check below would be checking a number the attacker chose.
+ */
+async function applyPlayerPermissions(
+  actor: Awaited<ReturnType<typeof requireCapability>>,
+  playerId: string,
+  next: PermissionsPayload,
+) {
   const actorLevel = accessLevelFor(actor);
   const actorSet = effectiveCapabilities(actorLevel, permissionsOf(actor));
 
@@ -492,12 +517,13 @@ async function setPlayerPermissionsImpl(playerId: string, next: PermissionsPaylo
  * require isAdminActor(). If a capability could mint an admin, holding it would
  * be equivalent to being one and the hard floor would be decorative.
  *
- * BOTH CAPABILITIES, NOT ONE, and the second is not decoration either:
- * clearComposition() below calls setPlayerPermissions, which requires
- * `permissions.write` on its own. A holder without it would pass this gate and
- * then fail mid-action — on the clearAfter path, AFTER the level write had
- * landed, which is exactly the half-applied state the ordering comment below
- * exists to prevent.
+ * ONE CAPABILITY, AND DELIBERATELY NOT `permissions.write` AS WELL. Requiring
+ * both was the obvious shape and it would have made the feature inert:
+ * `permissions.write` is outside EDITOR_OFFERABLE, so check 5 of
+ * setPlayerPermissions refuses to grant it and only an admin can ever hold it.
+ * A gate that asks for it is a gate only admins pass, which is what this change
+ * exists to stop being true. The composition clear below therefore goes through
+ * applyPlayerPermissions rather than the gated action — see the note there.
  *
  * GRANT CLOSURE IS WHAT MAKES IT SAFE, checked in both directions and against
  * the LEVEL BASELINES rather than a delta: what the target holds now must be
@@ -586,13 +612,17 @@ async function writeConsoleLevel(
 }
 
 async function setConsoleAccessImpl(playerId: string, access: ExecRole, rawReason: string) {
-  const actor = await requireCapability('permissions.write');
+  // THE CAPABILITY THAT REPLACED isAdminActor(). An admin passes it by level,
+  // holding every capability there is; anybody else holds it because somebody
+  // granted it to them by name.
+  const actor = await requireCapability('players.consoleaccess.write');
   // THE SAME FLOOR AS EVERY OTHER AUDITED ACTION. This used to be enforced only
   // by the dialog, at two characters — "ok" reached the audit log — and it now
   // has to hold here as well, because both clearComposition paths below forward
-  // this reason into setPlayerPermissions, which measures it against REASON_MIN.
-  // Left at two, a console-access change that also cleared a composition would
-  // half-apply and report a refusal about a screen the admin never saw.
+  // this reason into applyPlayerPermissions, which measures it against
+  // REASON_MIN. Left at two, a console-access change that also cleared a
+  // composition would half-apply and report a refusal about a screen the admin
+  // never saw.
   const reason = reasonFor(rawReason, 'Changing somebody’s console access');
 
   const actorIsAdmin = isAdminActor(actor);
@@ -603,12 +633,6 @@ async function setConsoleAccessImpl(playerId: string, access: ExecRole, rawReaso
   // could be influenced from outside makes every check below check a number the
   // attacker chose.
   const actorSet = effectiveCapabilities(actorLevel, permissionsOf(actor));
-
-  if (!actorIsAdmin && !actorSet.has('players.consoleaccess.write')) {
-    throw new ExpectedError(
-      'You cannot give somebody the console or take it away. Ask an admin.',
-    );
-  }
 
   // THE LINE THAT DOES NOT MOVE. A capability may hand out `executive` and
   // `trainer`; the admin level stays admin-only, because a capability that could
@@ -767,18 +791,32 @@ async function setConsoleAccessImpl(playerId: string, access: ExecRole, rawReaso
     // reason for, and the member's audit trail should say so rather than carry
     // a permissions row explaining nothing beside a level row explaining
     // everything. (It is also what keeps this path working at all now that
-    // setPlayerPermissions requires one.)
-    const cleared = await setPlayerPermissions(playerId, {
-      role: null,
-      grants: [],
-      revokes: [],
-      reason,
-    });
-    if (!cleared.ok) {
+    // applyPlayerPermissions requires one.)
+    //
+    // APPLIED RATHER THAN CALLED THROUGH setPlayerPermissions, because that
+    // action asks for `permissions.write`, which nobody below admin can hold —
+    // see the note on applyPlayerPermissions. Every CHECK inside it still runs
+    // against this actor's own set.
+    //
+    // AND IT IS INERT WHENEVER IT RUNS, which is why clearing a composition
+    // cannot widen anybody here. clearFirst runs while the target is at a level
+    // that consults no stored set (none, or admin); clearAfter runs only after
+    // the level write has landed on such a level, and only if that write
+    // succeeded. So "role = null" — which reads as UNRESTRICTED — is being
+    // written to somebody for whom unrestricted resolves to nothing anyway.
+    try {
+      await applyPlayerPermissions(actor, playerId, {
+        role: null,
+        grants: [],
+        revokes: [],
+        reason,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
       throw new ExpectedError(
         levelAlreadyChanged
-          ? `Console access changed, but their stored permissions could not be cleared: ${cleared.error}`
-          : `Their stored permissions could not be cleared, so console access was left alone: ${cleared.error}`,
+          ? `Console access changed, but their stored permissions could not be cleared: ${message}`
+          : `Their stored permissions could not be cleared, so console access was left alone: ${message}`,
       );
     }
   }

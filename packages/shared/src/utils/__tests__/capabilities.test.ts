@@ -19,7 +19,7 @@ import {
 } from '../access-level';
 import { CAPABILITY_GATES, ENFORCEMENT_POINTS } from '../capability-gates';
 
-// 118 capabilities is 118 promises that something is enforced. This suite is
+// 119 capabilities is 119 promises that something is enforced. This suite is
 // what keeps the vocabulary closed: it pins the list literally, refuses the
 // shapes that would let one capability quietly imply another, and asserts that
 // every one of them names a place in the app that reads it.
@@ -28,9 +28,9 @@ const resourceOf = (capability: string) => capability.split('.').slice(0, -1);
 const modeOf = (capability: string) => capability.split('.').at(-1)!;
 
 describe('the capability vocabulary', () => {
-  it('is exactly 118 entries, with no duplicates', () => {
-    expect(CAPABILITIES.length).toBe(118);
-    expect(new Set(CAPABILITIES).size).toBe(118);
+  it('is exactly 119 entries, with no duplicates', () => {
+    expect(CAPABILITIES.length).toBe(119);
+    expect(new Set(CAPABILITIES).size).toBe(119);
   });
 
   it('has 16 areas, every one of them used', () => {
@@ -155,17 +155,19 @@ describe('CAPABILITY_GATES', () => {
   // The failure it guards against is the opposite one — a site disappearing
   // while the entry claiming it stays. `tournaments.draw.participants.remove.write`
   // itself survives, still gated on removeParticipantFromEvent, and no
-  // capability was added or removed: CAPABILITIES is still 118 above.
-  it('names 133 distinct enforcement points, none of them claimed twice', () => {
+  // capability was added or removed there: CAPABILITIES is 119 above, and the
+  // one added by `players.consoleaccess.write` is the 134th site — setConsoleAccess,
+  // which no other capability claims.
+  it('names 134 distinct enforcement points, none of them claimed twice', () => {
     const sites: string[] = [];
     for (const capability of CAPABILITIES) {
       const entry = CAPABILITY_GATES[capability];
       if (entry.gate !== null) sites.push(entry.gate);
       sites.push(...(entry.also ?? []));
     }
-    expect(sites.length).toBe(133);
-    expect(new Set(sites).size).toBe(133);
-    expect(ENFORCEMENT_POINTS).toBe(133);
+    expect(sites.length).toBe(134);
+    expect(new Set(sites).size).toBe(134);
+    expect(ENFORCEMENT_POINTS).toBe(134);
   });
 
   // Merging two call sites into one capability is a decision, so it has to be
@@ -529,6 +531,15 @@ describe('EDITOR_OFFERABLE', () => {
   // THE FOUR FINANCE READS CAME OFF THIS LIST, on purpose and as the whole
   // point of 00104: the club owner asked for a treasurer who can SEE money in as
   // well as out. Seeing is not moving, and every `fees.*.write` below stayed.
+  //
+  // `players.consoleaccess.write` IS OFFERABLE AND IS DELIBERATELY NOT BELOW —
+  // 00105, the club owner's "also make role change a permission". It is the
+  // first WRITE on the offerable list, and what bounds it is not this list: the
+  // action reading it closure-checks the target's whole set on both sides and
+  // still refuses the admin level outright, both pinned in
+  // apps/admin/src/lib/__tests__/console-access-capability.test.ts. Handing out
+  // the admin LEVEL remains the act no capability expresses, which is why
+  // `permissions.write` is still below and this is not.
   it('withholds the admin-only half, permissions.write included', () => {
     const offerable = new Set<Capability>(EDITOR_OFFERABLE);
     for (const capability of [
@@ -567,11 +578,11 @@ describe('EDITOR_OFFERABLE', () => {
 // ---------------------------------------------------------------------------
 
 describe('permits', () => {
-  it('makes an admin a superuser BY LEVEL, holding all 118', () => {
+  it('makes an admin a superuser BY LEVEL, holding all 119', () => {
     for (const capability of CAPABILITIES) {
       expect(permits('admin', UNRESTRICTED, capability), capability).toBe(true);
     }
-    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(118);
+    expect(effectiveCapabilities('admin', UNRESTRICTED).size).toBe(119);
   });
 
   it('gives an unrestricted person their level baseline and nothing more', () => {

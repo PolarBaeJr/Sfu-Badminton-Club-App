@@ -153,10 +153,20 @@ describe('what may go in a baseline', () => {
   // THE HARD FLOOR
   // ------------------------------------------------------------------
   // role, is_exec, is_trainer and the three permission_* columns are refused
-  // below admin under all circumstances and are reachable by NO capability —
-  // see player-field-access.ts. A baseline is a set of capabilities, so it
-  // cannot name a column at all; this is that fact as an assertion, in the file
-  // where somebody adding a capability for "granting exec" would look.
+  // below admin under all circumstances by assertPlayerFieldAccess, which is
+  // what stands in front of updatePlayer() — see player-field-access.ts. A
+  // baseline is a set of capabilities, so it cannot name a column at all; this
+  // is that fact as an assertion, in the file where somebody adding a capability
+  // for "granting exec" would look.
+  //
+  // SOMEBODY DID ADD ONE (00105, `players.consoleaccess.write`) AND THIS STILL
+  // HOLDS, which is the interesting part. That capability is not a licence to
+  // write a column: it is read by ONE action, setConsoleAccess, which
+  // closure-checks the target's whole capability set before and after the change
+  // and still requires admin BY LEVEL to touch the admin level in either
+  // direction. updatePlayer's guard did not move, so the member Edit dialog
+  // reaches none of these columns below admin, exactly as before. A baseline
+  // that named a column would be something else entirely, and cannot exist.
   it('no capability in the vocabulary names a hard-floor column', () => {
     const floor = [
       'role',
@@ -184,10 +194,18 @@ describe('what may go in a baseline', () => {
   //
   // THE CEILING STOPPED BEING THE EXEC BASELINE when the four VP jobs became
   // editable (00104): the club owner wanted a treasurer who can see the club's
-  // books, which no exec can. So the widest baseline is now the exec baseline
-  // PLUS four finance reads — asserted as a derivation from EDITOR_OFFERABLE
-  // rather than a fresh list, so this test says "the ceiling is the ceiling"
-  // instead of pinning the same numbers twice.
+  // books, which no exec can. So the widest baseline is the exec baseline PLUS
+  // four finance reads, and since 00105 plus `players.consoleaccess.write` —
+  // asserted as a derivation from EDITOR_OFFERABLE rather than a fresh list, so
+  // this test says "the ceiling is the ceiling" instead of pinning the same
+  // numbers twice.
+  //
+  // THAT LAST ADDITION IS WHY THE ASSERTION BELOW MATTERS MORE THAN IT DID. The
+  // widest baseline now contains the capability that hands out a LEVEL, and the
+  // claim being made is still that composing somebody with it leaves
+  // accessLevelFor() with nothing to read: a capability set is not a level, and
+  // the person holding it has to go through setConsoleAccess — closure-checked,
+  // audited, and refused outright for the admin level — to move anybody.
   it('the widest baseline the ceiling allows is the ceiling, and no more', () => {
     const widest = normaliseBaselineCapabilities([...EDITOR_OFFERABLE]);
     expect(baselineCapabilityRefusal(widest, ALL)).toBeNull();
@@ -199,7 +217,8 @@ describe('what may go in a baseline', () => {
 
     // AND STILL BOUNDED BY SOMETHING NAMED. The point of the old assertion was
     // that the widest composition is a set somebody enumerated, not "everything"
-    // — so it is restated as the gap, which is the four reads and nothing else.
+    // — so it is restated as the gap: the four finance reads and, since 00105,
+    // the console-access write. Nothing else.
     const beyond = [...composed].filter(
       (capability) => !(EXEC_BASELINE as readonly Capability[]).includes(capability),
     );
@@ -208,6 +227,7 @@ describe('what may go in a baseline', () => {
       'fees.netposition.read',
       'fees.otherincome.read',
       'fees.reinstatements.read',
+      'players.consoleaccess.write',
     ]);
 
     // ...and an uncomposed trainer is untouched by any of this.

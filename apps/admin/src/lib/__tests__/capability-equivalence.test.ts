@@ -76,6 +76,18 @@ const TODAY: Row[] = [
   { capability: 'players.merge.write',                 admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — players.ts:387, 404' },
   { capability: 'players.reliability.write',           admin: T, exec: F, trainer: F, was: 'getAdminPlayer() — reliability.ts:11' },
   { capability: 'players.privilegedfields.write',      admin: T, exec: F, trainer: F, was: 'ADMIN_ONLY_PLAYER_FIELDS — player-field-access.ts' },
+  // THE ROW WHOSE PREDECESSOR IS AN EXPLICIT LEVEL CHECK RATHER THAN A GATE
+  // FUNCTION. Giving somebody the console was `permissions.write` PLUS
+  // isAdminActor(actor) inside setConsoleAccess, so the door it stands at
+  // admitted admins and nobody else — which is what these three answers are
+  // transcribed from, and why nothing moves for anybody when it is added.
+  //
+  // THE EXEC ANSWER IS FALSE AND HAS TO STAY FALSE. It is not in EXEC_BASELINE
+  // and must not arrive there: an exec who held it by LEVEL could make more
+  // execs, which nobody chose. It is reachable only by an explicit grant or by a
+  // baseline somebody deliberately puts it in — see the EDITOR_OFFERABLE block
+  // in capabilities.test.ts, which is where that decision is pinned.
+  { capability: 'players.consoleaccess.write',         admin: T, exec: F, trainer: F, was: "permissions.write + isAdminActor() — actions/permissions.ts setConsoleAccess" },
 
   // ---- seasons ---------------------------------------------------------
   { capability: 'seasons.page',                        admin: T, exec: T, trainer: F, was: "getAuthenticatedExecOrAdmin('internal') — seasons/page.tsx:16" },
