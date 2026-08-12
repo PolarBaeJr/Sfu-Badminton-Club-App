@@ -210,6 +210,27 @@ describe('ensureEntryFees across a doubles promotion', () => {
     expect(db.club_fees).toHaveLength(2);
   });
 
+  it('invoices nobody when one half of a team is SWAPPED for another entrant', async () => {
+    // 00103: the incoming player has to be in the waiting list already, which is
+    // precisely what makes this free — they were charged when they entered it.
+    // The outgoing player keeps their row, because withdrawing does not refund
+    // and being replaced is not even a withdrawal.
+    const db = seed();
+    await ensureEntryFees(makeClient(db) as never, T, ['p-internal', 'p-alumni']);
+    expect(db.club_fees).toHaveLength(2);
+    const before = JSON.stringify(db.club_fees);
+
+    // swapPairMember calls this for the incoming half, exactly as
+    // addPairToEvent does — so that the guarantee is stated where a future edit
+    // would break it rather than only in a comment.
+    const swap = makeClient(db);
+    const results = await ensureEntryFees(swap as never, T, ['p-alumni']);
+
+    expect(swap.inserts).toHaveLength(0);
+    expect(results[0]!.created).toBe(false);
+    expect(JSON.stringify(db.club_fees)).toBe(before);
+  });
+
   it('leaves both fees standing when the pair is split up again', async () => {
     // Withdrawing does not refund, and unpairing is not even a withdrawal.
     // unpairEntry and withdrawPairMember touch club_fees at all — they do not

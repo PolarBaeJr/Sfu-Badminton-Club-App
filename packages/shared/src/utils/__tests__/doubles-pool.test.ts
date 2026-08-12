@@ -204,6 +204,27 @@ describe('the entry cap across a promotion', () => {
     expect(isAtEntryCap(spent, cap)).toBe(true);
   });
 
+  it('IS UNCHANGED BY A SWAP — one member in, one member out, both already entered', () => {
+    // "Priya is injured, Sam is taking her place" (00103). Sam was waiting for a
+    // partner and Priya was on a team; afterwards Sam is on the team and Priya
+    // is waiting. Nobody entered and nobody left, so not one number may move —
+    // and that is exactly why the incoming player is required to be in the pool
+    // already rather than being swapped in off the street.
+    const before = countEventEntriesPerPlayer([P(CARA)], [PAIR(ALICE, BOB)]);
+    const after = countEventEntriesPerPlayer([P(ALICE)], [PAIR(CARA, BOB)]);
+
+    expect([...after.entries()].sort()).toEqual([...before.entries()].sort());
+    for (const id of [ALICE, BOB, CARA]) expect(after.get(id)).toBe(1);
+  });
+
+  it('is unchanged by a swap in the other column too', () => {
+    // The outgoing half may be player1 or player2, and the pair keeps its
+    // column order — so both orientations have to come out the same.
+    const before = countEventEntriesPerPlayer([P(CARA)], [PAIR(ALICE, BOB)]);
+    const after = countEventEntriesPerPlayer([P(BOB)], [PAIR(ALICE, CARA)]);
+    expect([...after.entries()].sort()).toEqual([...before.entries()].sort());
+  });
+
   it('gives the slot back when one half of a pair withdraws', () => {
     // withdrawPairMember writes the leaver back as a 'withdrawn' participant
     // row and the partner as an ordinary one. The leaver releases their slot —
@@ -275,6 +296,45 @@ describe('the event waiver across a promotion', () => {
     expect(blocked).toEqual([]);
   });
 
+  it('re-evaluates the pair when a half is SWAPPED, on the incoming member', () => {
+    // The team was clear; Cara replaces Bob and has not signed. The pair is
+    // blocked afterwards and names Cara — the check-in and draw gates read the
+    // pair as it now stands, so the swap cannot smuggle an unsigned player past
+    // a screen that already happened.
+    //
+    // NOTE the swap itself does NOT refuse: addPairToEvent does not refuse an
+    // unsigned entrant either (permissive at entry, strict at participation),
+    // and a swap that was stricter than unpair-then-re-pair would only teach
+    // execs to take the longer route. What it does is push the signature at the
+    // incoming member, and leave the two hard blocks to do their job.
+    const beforeSwap = screenForEventWaiver(
+      [{ id: 'pair', members: [{ id: ALICE, name: 'Alice' }, { id: BOB, name: 'Bob' }] }],
+      HASH,
+      [signed(ALICE), signed(BOB)],
+    );
+    const afterSwap = screenForEventWaiver(
+      [{ id: 'pair', members: [{ id: ALICE, name: 'Alice' }, { id: CARA, name: 'Cara' }] }],
+      HASH,
+      [signed(ALICE), signed(BOB)],
+    );
+
+    expect(beforeSwap.allowed).toEqual(['pair']);
+    expect(afterSwap.allowed).toEqual([]);
+    expect(afterSwap.blocked[0]!.unsigned.map((u) => u.id)).toEqual([CARA]);
+  });
+
+  it('does not hold the outgoing member against the team they have left', () => {
+    // Bob was the unsigned one and has been swapped out. The team is clear
+    // again, and Bob's own pool row is his problem rather than theirs.
+    const { allowed, blocked } = screenForEventWaiver(
+      [{ id: 'pair', members: [{ id: ALICE, name: 'Alice' }, { id: CARA, name: 'Cara' }] }],
+      HASH,
+      [signed(ALICE), signed(CARA)],
+    );
+    expect(allowed).toEqual(['pair']);
+    expect(blocked).toEqual([]);
+  });
+
   it('leaves the partner signed when the other half withdraws', () => {
     // withdrawPairMember touches no acceptance. The partner returns to the pool
     // already eligible, which is one of the three things they keep.
@@ -327,6 +387,18 @@ describe('max_participants across the pool', () => {
     expect(field.slots).toBe(8);
     const afterSoloAdd = doublesDrawSlots(field.pairs, field.unpaired + 1);
     expect(wouldExceedCapacity(field.slots, afterSoloAdd, max)).toBe(false);
+  });
+
+  it('IS UNCHANGED BY A SWAP, so a full event can still be edited', () => {
+    // The injury substitution happens on the morning, when the event is
+    // invariably full. If a swap moved the slot count it would be refused
+    // exactly when it is needed.
+    const before = countDoublesField([P(CARA)], [PAIR(ALICE, BOB)]);
+    const after = countDoublesField([P(ALICE)], [PAIR(CARA, BOB)]);
+    expect(after.slots).toBe(before.slots);
+    expect(wouldExceedCapacity(before.slots, after.slots, 2)).toBe(false);
+    // Even against a cap the event is already over.
+    expect(wouldExceedCapacity(before.slots, after.slots, 1)).toBe(false);
   });
 
   it('computes the batch room exactly — 2 * (max - pairs) - unpaired', () => {

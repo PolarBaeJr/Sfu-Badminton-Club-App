@@ -11,6 +11,9 @@ import {
   eventHasDraw,
   loadTournamentEntryCounts,
   isAtEntryCap,
+  countDoublesField,
+  doublesDrawSlots,
+  wouldExceedCapacity,
   ExpectedError,
 } from '@badminton/shared';
 import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
@@ -51,11 +54,31 @@ function pickEntryCap(embed: unknown): number | null {
   return typeof value === 'number' ? value : null;
 }
 
-export async function registerForEvent(eventId: string, opts?: { eventWaiverAccepted?: boolean }): Promise<ActionResult> {
+/**
+ * What the member has to have been TOLD before this runs.
+ *
+ * Both flags are the server's copy of something the dialog said out loud, and
+ * neither is a UI convenience: a request that arrives without one is refused,
+ * so the sentence cannot be skipped by a client that forgot to render it.
+ * `eventWaiverAccepted` already worked this way; `soloEntryAcknowledged` is the
+ * same fiction for the same reason.
+ */
+export interface RegisterOptions {
+  eventWaiverAccepted?: boolean;
+  /**
+   * DOUBLES ONLY, AND REQUIRED THERE. Entering a doubles event on your own is a
+   * commitment to play with whoever you are given — the exec pairs you later —
+   * and finding that out when a partner appears is not consent. This is set by
+   * the dialog that says so, and nothing else sets it.
+   */
+  soloEntryAcknowledged?: boolean;
+}
+
+export async function registerForEvent(eventId: string, opts?: RegisterOptions): Promise<ActionResult> {
   return runAction(() => registerForEventImpl(eventId, opts));
 }
 
-async function registerForEventImpl(eventId: string, opts?: { eventWaiverAccepted?: boolean }) {
+async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
   const player = await requirePlayer();
   if (player.is_banned) {
     throw new Error('Your account is suspended pending a reinstatement fee. Contact an admin to be reinstated.');
@@ -66,13 +89,24 @@ async function registerForEventImpl(eventId: string, opts?: { eventWaiverAccepte
   // Parallelize the three independent reads needed before we can validate.
   // `.maybeSingle()` instead of `.single()` so a missing existing row isn't
   // surfaced as a thrown PGRST116 error.
-  const [eventRes, existingRes, ratingRes] = await Promise.all([
+  const [eventRes, existingRes, existingPairRes, ratingRes] = await Promise.all([
     service.from('tournament_events')
       .select('id, status, event_type, tournament_id, max_participants, tournament:tournaments(suspended_at, suspension_reason, waiver_text, allowed_memberships, max_events_per_player)')
       .eq('id', eventId).maybeSingle(),
     service.from('tournament_participants')
-      .select('id').eq('event_id', eventId).eq('player_id', player.id).maybeSingle(),
-    service.from('ratings').select('singles_elo').eq('player_id', player.id).maybeSingle(),
+      .select('id, status').eq('event_id', eventId).eq('player_id', player.id).maybeSingle(),
+    // THE OTHER WAY TO ALREADY BE IN A DOUBLES EVENT. Since 00102 a member can
+    // be an unpaired entrant (a participant row) OR half of a formed pair, and
+    // the second has no participant row at all — so the existing check above
+    // would wave a paired member straight through into a second entry.
+    service.from('tournament_pairs')
+      .select('id').eq('event_id', eventId)
+      .or(`player1_id.eq.${player.id},player2_id.eq.${player.id}`)
+      .limit(1),
+    // Both disciplines' ratings. elo_before is stamped at registration and a
+    // doubles entrant is rated on doubles_elo — it is the number the pool shows
+    // and the number the team they end up in would be built from.
+    service.from('ratings').select('singles_elo, doubles_elo').eq('player_id', player.id).maybeSingle(),
   ]);
 
   const event = eventRes.data;
@@ -94,8 +128,50 @@ async function registerForEventImpl(eventId: string, opts?: { eventWaiverAccepte
   }
 
   if (event.status !== 'registration') throw new Error('Registration is closed');
-  if (isDoublesEvent(event.event_type)) throw new Error('Use pair registration for doubles events');
-  if (existingRes.data) throw new Error('Already registered');
+
+  // ---------------------------------------------------------------------
+  // ENTERING A DOUBLES EVENT ON YOUR OWN
+  // ---------------------------------------------------------------------
+  // "i need it to be allowed to join" — the club owner. This used to throw
+  // 'Use pair registration for doubles events', which was true because there was
+  // no way to be in a doubles event without a partner. Since 00102 there is: the
+  // member enters the POOL and an exec pairs them later.
+  //
+  // SOLO ONLY. Entering as a self-selected pair is deliberately still
+  // admin-managed — one member cannot enter another, because that needs the
+  // partner's own consent, which needs an invite and an accept and states for
+  // both. That is a separate feature and this is not half of it.
+  //
+  // THE ACKNOWLEDGEMENT IS A HARD GATE, not a tick box the client may skip.
+  // Being paired with a stranger is the substance of what is being agreed to
+  // here, and a member who finds that out when a partner appears was never
+  // asked. Refused server-side so that no client can register somebody who was
+  // not shown the sentence.
+  const doubles = isDoublesEvent(event.event_type);
+  if (doubles && !opts?.soloEntryAcknowledged) {
+    throw new ExpectedError(
+      'Entering a doubles event on your own means the exec will pair you with another member. ' +
+      'Confirm that before you enter.',
+    );
+  }
+  if (doubles && (existingPairRes.data?.length ?? 0) > 0) {
+    throw new ExpectedError('You are already in a pair in this event.');
+  }
+
+  // A WITHDRAWN ROW IS STILL A ROW, and the insert below would collide with it
+  // on UNIQUE(event_id, player_id). Saying "Already registered" to somebody
+  // looking at their own withdrawal is the one reading that cannot be right, so
+  // the two cases are separated. Re-entry is deliberately NOT an UPDATE here:
+  // resurrecting a withdrawn entry is an exec decision with its own fee and cap
+  // consequences, and it is already reachable from the console.
+  if (existingRes.data) {
+    if (existingRes.data.status === 'withdrawn' || existingRes.data.status === 'disqualified') {
+      throw new ExpectedError(
+        'You have already left this event. Ask a tournament admin if you want to enter it again.',
+      );
+    }
+    throw new ExpectedError('Already registered');
+  }
 
   // Event waiver gate — the tournament may require its own waiver before
   // registering. The client must confirm acceptance; the hash is always taken
@@ -106,12 +182,37 @@ async function registerForEventImpl(eventId: string, opts?: { eventWaiverAccepte
   }
 
   // Capacity check is the only thing that has to wait — it depends on a fresh count.
+  //
+  // FOR DOUBLES IT IS COUNTED IN DRAW SLOTS: formed pairs, plus one slot per two
+  // people still waiting for a partner. max_participants has always meant "how
+  // many entries fit" and a doubles entry is a TEAM, so counting participant
+  // rows would let forty loose entrants into an event with room for eight teams.
+  // The same arithmetic the admin app enforces and the same the /tournaments
+  // card shows — one implementation, in @badminton/shared, so the screen cannot
+  // promise a place this action then refuses.
   if (event.max_participants) {
-    const { count } = await service.from('tournament_participants')
-      .select('id', { count: 'exact', head: true })
-      .eq('event_id', eventId)
-      .not('status', 'in', '("withdrawn","disqualified")');
-    if (count && count >= event.max_participants) throw new Error('Event is full');
+    if (doubles) {
+      const [unpairedRes, pairsRes] = await Promise.all([
+        service.from('tournament_participants').select('player_id, status').eq('event_id', eventId),
+        service.from('tournament_pairs').select('player1_id, player2_id, status').eq('event_id', eventId),
+      ]);
+      // A failed read must not read as "the event is empty" and wave somebody
+      // past a full event.
+      if (unpairedRes.error || pairsRes.error) {
+        throw new Error('Could not check how full this event is. Nothing was changed — try again.');
+      }
+      const field = countDoublesField(unpairedRes.data ?? [], pairsRes.data ?? []);
+      const after = doublesDrawSlots(field.pairs, field.unpaired + 1);
+      if (wouldExceedCapacity(field.slots, after, event.max_participants)) {
+        throw new ExpectedError('Event is full');
+      }
+    } else {
+      const { count } = await service.from('tournament_participants')
+        .select('id', { count: 'exact', head: true })
+        .eq('event_id', eventId)
+        .not('status', 'in', '("withdrawn","disqualified")');
+      if (count && count >= event.max_participants) throw new Error('Event is full');
+    }
   }
 
   // THE PER-MEMBER EVENT CAP (00098). The tournament may limit how many of its
@@ -123,15 +224,20 @@ async function registerForEventImpl(eventId: string, opts?: { eventWaiverAccepte
   // for nothing extra and does not reach the counting queries at all.
   //
   // Counted across BOTH tables, because this member may already be half of a
-  // doubles pair and that pair is not a tournament_participants row. This
-  // action only ever registers singles, but what it has to count is everything.
+  // doubles pair and that pair is not a tournament_participants row. An
+  // unpaired doubles entrant DOES have one, and counts once through it — the
+  // same single slot they keep when an exec later pairs them.
   const entryCap = pickEntryCap(event.tournament);
   if (entryCap !== null) {
     const counts = await loadTournamentEntryCounts(service, event.tournament_id);
     if (isAtEntryCap(counts.get(player.id) ?? 0, entryCap)) {
       throw new ExpectedError(
         `You are already entered in ${entryCap} ${entryCap === 1 ? 'event' : 'events'} at this tournament, which is the limit. ` +
-        'Withdraw from one to enter another.',
+        // "Withdraw from one" is not advice a member in a formed doubles pair
+        // can act on — leaving a pair is an exec action, because it takes
+        // somebody else's team away from them. Don't tell them to do something
+        // the app will refuse.
+        'Withdraw from one to enter another, or ask a tournament admin if one of them is a doubles pair.',
       );
     }
   }
@@ -139,7 +245,7 @@ async function registerForEventImpl(eventId: string, opts?: { eventWaiverAccepte
   const { error: insertErr } = await service.from('tournament_participants').insert({
     event_id: eventId,
     player_id: player.id,
-    elo_before: ratingRes.data?.singles_elo ?? 400,
+    elo_before: (doubles ? ratingRes.data?.doubles_elo : ratingRes.data?.singles_elo) ?? 400,
     status: 'registered',
   });
   if (insertErr) throw new Error(insertErr.message);
@@ -243,7 +349,33 @@ async function withdrawFromEventImpl(eventId: string) {
   const { data: participant } = await service.from('tournament_participants')
     .select('id, status, event:tournament_events(tournament_id, status)')
     .eq('event_id', eventId).eq('player_id', player.id).maybeSingle();
-  if (!participant) throw new Error('Not registered');
+
+  // NO PARTICIPANT ROW IS NOT THE SAME AS NOT ENTERED, since 00102. A member in
+  // a formed doubles pair is entered and has no row here, and 'Not registered'
+  // is flatly wrong for them.
+  //
+  // LEAVING A FORMED PAIR IS AN EXEC ACTION, deliberately. It is not a solo act:
+  // it takes another member's team away from them and puts them back in the
+  // pool, and that person has to be told. Nothing on the player side can tell
+  // them. The exec's withdrawPairMember does the whole thing properly — the
+  // partner keeps their fee, their event waiver and their entry-cap slot — and
+  // this is the same line the app already draws once a draw is published.
+  //
+  // Entering alone and changing your mind BEFORE being paired needs none of
+  // that, and falls straight through to the ordinary withdrawal below.
+  if (!participant) {
+    const { data: pair } = await service.from('tournament_pairs')
+      .select('id').eq('event_id', eventId)
+      .or(`player1_id.eq.${player.id},player2_id.eq.${player.id}`)
+      .limit(1);
+    if ((pair?.length ?? 0) > 0) {
+      throw new ExpectedError(
+        'You have been paired with a partner, so leaving is not something you can do on your own — ' +
+        'it puts them back in the pool too. Ask a tournament admin to withdraw you.',
+      );
+    }
+    throw new ExpectedError('Not registered');
+  }
   if (participant.status !== 'registered' && participant.status !== 'checked_in') {
     throw new ExpectedError('Cannot withdraw at this stage');
   }

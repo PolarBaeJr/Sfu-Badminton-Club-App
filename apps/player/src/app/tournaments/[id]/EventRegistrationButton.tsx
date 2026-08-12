@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Button, Dialog, useConfirm } from '@badminton/ui';
 import { EventWaiverConsent } from './EventWaiverConsent';
+import { SoloEntryConsent } from './SoloEntryConsent';
 import { registerForEvent, withdrawFromEvent, selfCheckIn } from '@/lib/tournament-actions';
 import type { ActionResult } from '@/lib/actions/_shared';
 import { useToast } from '@/components/toast-provider';
@@ -12,7 +13,14 @@ import { useRouter } from 'next/navigation';
 interface Props {
   eventId: string;
   eventStatus: string;
-  registration: { status: string } | null;
+  /**
+   * `paired` means a FORMED TEAM; false means a lone entry, which in a doubles
+   * event is somebody still waiting to be given a partner. `partnerName` is
+   * display only and may be null even when `paired` is true — nothing branches
+   * on it, or a member whose partner's name failed to resolve would be told
+   * they have no partner and handed a button the server refuses.
+   */
+  registration: { status: string; paired?: boolean; partnerName?: string | null } | null;
   isDoubles: boolean;
   suspended?: boolean;
   eventWaiverText?: string | null;
@@ -22,6 +30,10 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
   const [loading, setLoading] = useState(false);
   const [waiverOpen, setWaiverOpen] = useState(false);
   const [waiverAccepted, setWaiverAccepted] = useState(false);
+  // The doubles acknowledgement. Its own state and not folded into
+  // `waiverAccepted`, because they are two different things being agreed to and
+  // a tournament may require one, the other, both or neither.
+  const [soloAccepted, setSoloAccepted] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
   const confirm = useConfirm();
@@ -31,22 +43,25 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
   // only withhold the buttons and leave the status chips.
   const standing = useStanding();
 
-  if (isDoubles) {
-    if (registration) {
-      return (
+  // A member in a FORMED TEAM. This is the only doubles state that still has no
+  // controls: leaving a pair takes somebody else's team away from them and puts
+  // them back in the pool, so it is an exec action — see withdrawFromEvent. Say
+  // who the partner is and who to ask, rather than showing a bare chip and
+  // letting the missing button read as the app having lost the option.
+  if (isDoubles && registration?.paired) {
+    return (
+      <div className="flex items-center gap-1.5">
         <span
           className={`chip ${registration.status === 'checked_in' ? 'chip-success' : 'chip-info'}`}
           role="status"
         >
           <span className="sr-only">Registration status: </span>
-          {registration.status === 'checked_in' ? 'Checked In' : 'Registered'}
+          {registration.status === 'checked_in' ? 'Checked In' : 'Paired'}
         </span>
-      );
-    }
-    return (
-      <span className="text-[10px] text-[var(--text-muted)] italic">
-        Doubles — admin managed
-      </span>
+        <span className="text-[10px] text-[var(--text-muted)]">
+          {registration.partnerName ? `with ${registration.partnerName}` : 'with your partner'}
+        </span>
+      </div>
     );
   }
 
@@ -68,41 +83,58 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
   }
 
   const waiverText = eventWaiverText?.trim();
+  // A DOUBLES ENTRY ALWAYS GOES THROUGH THE DIALOG, waiver or no waiver: the
+  // acknowledgement is the thing being collected, and registerForEvent refuses
+  // without it. A singles entry with no waiver still registers on one tap.
+  const needsDialog = Boolean(waiverText) || isDoubles;
+  const canSubmit = (!waiverText || waiverAccepted) && (!isDoubles || soloAccepted);
 
   if (!registration) {
     if (eventStatus === 'registration' && !suspended && standing.ok) {
-      if (waiverText) {
+      if (needsDialog) {
         return (
           <>
             <Button
               size="sm"
               loading={loading}
-              onClick={() => { setWaiverAccepted(false); setWaiverOpen(true); }}
+              onClick={() => { setWaiverAccepted(false); setSoloAccepted(false); setWaiverOpen(true); }}
               className="press focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none min-h-[36px]"
             >
-              Register
+              Enter
             </Button>
-            <Dialog open={waiverOpen} onClose={() => setWaiverOpen(false)} title="Event waiver">
+            <Dialog
+              open={waiverOpen}
+              onClose={() => setWaiverOpen(false)}
+              title={isDoubles ? 'Enter without a partner' : 'Event waiver'}
+            >
               <div className="space-y-4">
-                <EventWaiverConsent
-                  text={waiverText}
-                  accepted={waiverAccepted}
-                  onAcceptedChange={setWaiverAccepted}
-                />
+                {isDoubles && (
+                  <SoloEntryConsent accepted={soloAccepted} onAcceptedChange={setSoloAccepted} />
+                )}
+                {waiverText && (
+                  <EventWaiverConsent
+                    text={waiverText}
+                    accepted={waiverAccepted}
+                    onAcceptedChange={setWaiverAccepted}
+                  />
+                )}
                 <div className="flex items-center justify-between">
                   <Button variant="ghost" type="button" onClick={() => setWaiverOpen(false)}>Cancel</Button>
                   <Button
                     loading={loading}
-                    disabled={!waiverAccepted}
+                    disabled={!canSubmit}
                     onClick={() =>
                       act(async () => {
-                        const r = await registerForEvent(eventId, { eventWaiverAccepted: true });
+                        const r = await registerForEvent(eventId, {
+                          ...(waiverText ? { eventWaiverAccepted: true } : {}),
+                          ...(isDoubles ? { soloEntryAcknowledged: true } : {}),
+                        });
                         if (r.ok) setWaiverOpen(false);
                         return r;
-                      }, 'Registered!')
+                      }, isDoubles ? 'Entered — waiting for a partner' : 'Registered!')
                     }
                   >
-                    Register
+                    Enter
                   </Button>
                 </div>
               </div>
@@ -125,10 +157,19 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
   }
 
   const s = registration.status;
+  // An unpaired doubles entrant: entered, invoiced, signed — and with no team
+  // yet, so nothing to check in. Check-in in a doubles event is done on the
+  // PAIR, and offering it here would be a button for a court they cannot take.
+  const waitingForPartner = isDoubles;
 
   return (
     <div className="flex items-center gap-1.5" onClick={(e) => e.preventDefault()}>
-      {s === 'registered' && eventStatus === 'checkin' && !suspended && standing.ok && (
+      {waitingForPartner && (
+        <span className="chip chip-info" role="status">
+          <span className="sr-only">Registration status: </span>Waiting for a partner
+        </span>
+      )}
+      {!waitingForPartner && s === 'registered' && eventStatus === 'checkin' && !suspended && standing.ok && (
         <Button
           size="sm"
           loading={loading}
@@ -153,12 +194,12 @@ export function EventRegistrationButton({ eventId, eventStatus, registration, is
           Withdraw
         </Button>
       )}
-      {s === 'checked_in' && (
+      {!waitingForPartner && s === 'checked_in' && (
         <span className="chip chip-success" role="status">
           <span className="sr-only">Registration status: </span>Checked In
         </span>
       )}
-      {s === 'registered' && eventStatus !== 'checkin' && (
+      {!waitingForPartner && s === 'registered' && eventStatus !== 'checkin' && (
         <span
           className="chip chip-info"
           role="status"

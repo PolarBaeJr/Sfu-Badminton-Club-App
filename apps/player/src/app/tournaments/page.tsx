@@ -205,6 +205,19 @@ export default async function TournamentsPage() {
     pairRows = (prRes.data ?? []) as unknown as PairRow[];
   }
 
+  // How big the field WAS, for a finished event — this feeds "12 PAIRS" /
+  // "24 ENTRIES" under a past placing and nothing else.
+  //
+  // ADDING THE TWO TABLES IS SAFE HERE AND WOULD NOT BE ANYWHERE ELSE. Since
+  // 00102 a doubles event can hold participant rows (members waiting for a
+  // partner), and adding those to a count of pairs mixes people with teams. It
+  // cannot happen on THIS list: assertNobodyLeftUnpaired refuses to generate a
+  // draw while anyone is still unpaired, so an event that reached a
+  // final_position had none — and the ones who withdrew before the draw are
+  // dropped by occupiesAPlace. The doubles term is therefore always zero.
+  //
+  // Do not reuse this for an event still taking entries. doublesDrawSlots is
+  // the figure that means something there, and spotsLeft is what uses it.
   const fieldSize = (eventId: string) =>
     entryRows.filter((r) => r.event_id === eventId && occupiesAPlace(r.status)).length +
     pairRows.filter((r) => r.event_id === eventId && occupiesAPlace(r.status)).length;
@@ -216,7 +229,13 @@ export default async function TournamentsPage() {
     entryRows.filter((r) => heroEventIds.includes(r.event_id)),
     pairRows.filter((r) => heroEventIds.includes(r.event_id)),
   );
-  const heroSpots = spotsLeft(heroEvents, entryRows.filter((r) => heroEventIds.includes(r.event_id)));
+  // Pairs as well as participants: a doubles event's spots are TEAMS, and
+  // leaving the formed ones out would advertise a field that is already taken.
+  const heroSpots = spotsLeft(
+    heroEvents,
+    entryRows.filter((r) => heroEventIds.includes(r.event_id)),
+    pairRows.filter((r) => heroEventIds.includes(r.event_id)),
+  );
   const heroEnterable = soleEnterableEvent(heroEvents);
 
   // The entry fee, from the tournament's own tiers. The default tier is the one

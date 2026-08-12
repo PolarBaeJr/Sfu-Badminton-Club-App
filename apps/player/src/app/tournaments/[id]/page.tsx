@@ -20,25 +20,47 @@ import { EventRegistrationButton } from './EventRegistrationButton';
 import { FeedbackForm } from './feedback-form';
 
 /**
- * Is this member half of a pair in any of these events?
+ * The teams this member is in, across these events, and WHO WITH.
  *
  * Its own function because the `.or()` is the easy thing to get wrong: a pair
  * names its two members in separate columns, so a filter on one of them misses
  * every entry where the member happens to be player2 — and would show no waiver
  * demand to half the doubles field.
+ *
+ * The partner's NAME, not just a boolean, since a member can now enter a doubles
+ * event on their own and be paired by an exec afterwards. "You are in this
+ * event" is not enough to tell somebody who agreed to play with whoever they
+ * were given; the one thing they want off this screen is who that turned out to
+ * be.
  */
-async function hasPairEntry(
+async function loadMyPairs(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   eventIds: string[],
   playerId: string,
-): Promise<boolean> {
+): Promise<Record<string, { status: string; partnerName: string | null }>> {
+  // The KEY's presence is what says "this member is on a team". The name is
+  // display, and it is nullable — the object-or-array embed unwrap below can
+  // legitimately come back empty. Deciding "paired" from a non-null name would
+  // tell somebody with an unreadable partner that they have no partner, and
+  // hand them a Withdraw button the server then refuses.
+  if (eventIds.length === 0) return {};
   const { data } = await supabase
     .from('tournament_pairs')
-    .select('id')
+    .select('event_id, status, player1_id, player2_id, player1:players!tournament_pairs_player1_id_fkey(full_name), player2:players!tournament_pairs_player2_id_fkey(full_name)')
     .in('event_id', eventIds)
-    .or(`player1_id.eq.${playerId},player2_id.eq.${playerId}`)
-    .limit(1);
-  return (data?.length ?? 0) > 0;
+    .or(`player1_id.eq.${playerId},player2_id.eq.${playerId}`);
+
+  const out: Record<string, { status: string; partnerName: string | null }> = {};
+  for (const row of data ?? []) {
+    const r = row as Record<string, unknown>;
+    const partnerEmbed = r.player1_id === playerId ? r.player2 : r.player1;
+    const one = Array.isArray(partnerEmbed) ? partnerEmbed[0] : partnerEmbed;
+    out[r.event_id as string] = {
+      status: r.status as string,
+      partnerName: (one as { full_name?: string | null } | null)?.full_name ?? null,
+    };
+  }
+  return out;
 }
 
 export default async function TournamentDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -55,17 +77,31 @@ export default async function TournamentDetailPage({ params }: { params: Promise
     .order('event_type');
 
   const currentPlayer = await getCurrentPlayer();
-  const registrationMap: Record<string, { status: string }> = {};
+  // `paired` is the discriminator and `partnerName` is only ever display: a
+  // pair whose partner name did not resolve is still a pair, and inferring the
+  // state from the name would show a paired member "Waiting for a partner".
+  const registrationMap: Record<string, { status: string; paired: boolean; partnerName?: string | null }> = {};
+  let myPairs: Record<string, { status: string; partnerName: string | null }> = {};
   if (currentPlayer && events) {
     const eventIds = events.map((e) => e.id);
     if (eventIds.length > 0) {
-      const { data: regs } = await supabase
-        .from('tournament_participants')
-        .select('event_id, status')
-        .eq('player_id', currentPlayer.id)
-        .in('event_id', eventIds);
+      // BOTH TABLES, always. A member can be an unpaired entrant in one doubles
+      // event and half of a team in another at the same tournament.
+      const [{ data: regs }, pairs] = await Promise.all([
+        supabase
+          .from('tournament_participants')
+          .select('event_id, status')
+          .eq('player_id', currentPlayer.id)
+          .in('event_id', eventIds),
+        loadMyPairs(supabase, eventIds, currentPlayer.id),
+      ]);
+      myPairs = pairs;
       for (const r of regs ?? []) {
-        registrationMap[r.event_id] = { status: r.status };
+        registrationMap[r.event_id] = { status: r.status, paired: false };
+      }
+      // The pair wins where both somehow exist: it is the entry that plays.
+      for (const [eventId, pair] of Object.entries(pairs)) {
+        registrationMap[eventId] = { status: pair.status, paired: true, partnerName: pair.partnerName };
       }
     }
   }
@@ -93,9 +129,8 @@ export default async function TournamentDetailPage({ params }: { params: Promise
   // whole feature is about.
   let waiverGate: { text: string; state: 'unsigned' | 'stale' } | null = null;
   if (currentPlayer && resolveEventWaiverText(tournament)) {
-    const eventIds = (events ?? []).map((e) => e.id);
-    const entered = Object.keys(registrationMap).length > 0
-      || (eventIds.length > 0 && await hasPairEntry(supabase, eventIds, currentPlayer.id));
+    // registrationMap already folds in both tables, so a pair entry is covered.
+    const entered = Object.keys(registrationMap).length > 0 || Object.keys(myPairs).length > 0;
     if (entered) {
       // Service role: event_waiver_acceptances' SELECT policy admits a member's
       // own rows, so the user client would work — but loadMyEventWaiver also

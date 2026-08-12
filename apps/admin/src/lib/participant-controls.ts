@@ -103,6 +103,15 @@ export interface ParticipantControls {
   unpair: boolean;
   /** One half of a formed pair has pulled out; the other returns to the pool. */
   withdrawMember: boolean;
+  /**
+   * Replace one half of a formed pair with somebody from the pool.
+   *
+   * BOTH pair keys, because swapPairMember asks for both: a swap is a removal
+   * and an addition fused, and gating it on one would make it the way a holder
+   * of that one does the other's job. Nothing is widened — anybody who could
+   * already unpair and re-pair can do it in a single step, and nobody else can.
+   */
+  swapMember: boolean;
 }
 
 /**
@@ -161,5 +170,6 @@ export function participantControls(
     pair: pairingOpen && can.add,
     unpair: pairingOpen && can.remove,
     withdrawMember: pairingOpen && can.exit,
+    swapMember: pairingOpen && can.add && can.remove,
   };
 }

@@ -73,6 +73,11 @@ describe('participantControls — capability, not just status', () => {
     // pairs.add.write for addPairToEvent, pairs.remove.write for unpairEntry —
     // differing only in which of the two the exec is looking at.
     expect(shown(participantControls(registration, only('add')))).toEqual(['add', 'pair']);
+    // Notably NOT 'swapMember': it needs both pair keys, so one alone buys
+    // nothing. That is the assertion that keeps the swap from becoming the way
+    // a holder of add does remove's job.
+    expect(shown(participantControls(registration, only('add')))).not.toContain('swapMember');
+    expect(shown(participantControls(registration, only('remove')))).not.toContain('swapMember');
     expect(shown(participantControls(registration, only('seedAuto')))).toEqual(['autoSeed']);
     expect(shown(participantControls(registration, only('seedClear')))).toEqual(['clearSeeds']);
     expect(shown(participantControls(registration, only('seedSet')))).toEqual(['editSeed']);
@@ -96,6 +101,8 @@ describe('participantControls — capability, not just status', () => {
     expect(checkin.pair).toBe(true);
     expect(checkin.unpair).toBe(true);
     expect(checkin.withdrawMember).toBe(true);
+    // The injury substitution is a check-in-morning operation if anything is.
+    expect(checkin.swapMember).toBe(true);
     expect(checkin.add).toBe(false);
     expect(checkin.addSolo).toBe(false);
     expect(checkin.remove).toBe(false);
@@ -112,12 +119,18 @@ describe('participantControls — capability, not just status', () => {
       expect(c.pair).toBe(false);
       expect(c.unpair).toBe(false);
       expect(c.withdrawMember).toBe(false);
+      // Swapping matters most here, because unlike unpairing it is an UPDATE —
+      // no foreign key refuses it, so the button going away and the function's
+      // own check are the only two things between an exec and rewriting who
+      // played a match that is already rated.
+      expect(c.swapMember).toBe(false);
     }
     // And a locked draw freezes them too, capability or no capability.
     const locked = participantControls({ status: 'registration', drawLocked: true }, EVERYTHING);
     expect(locked.pair).toBe(false);
     expect(locked.unpair).toBe(false);
     expect(locked.withdrawMember).toBe(false);
+    expect(locked.swapMember).toBe(false);
   });
 
   it('keeps the status condition — both have to hold', () => {

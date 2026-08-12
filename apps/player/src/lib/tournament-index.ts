@@ -8,7 +8,7 @@
 // than reading the clock, so "open" and "upcoming" can be tested rather than
 // hoped for.
 
-import { isDoublesEvent, type TournamentEventType } from '@badminton/shared';
+import { isDoublesEvent, doublesDrawSlots, type TournamentEventType } from '@badminton/shared';
 
 export type IndexEvent = {
   id: string;
@@ -106,35 +106,59 @@ export function countEnteredPlayers(
  *
  * `max_participants` is per EVENT, not per tournament, so a tournament running
  * a 16-cap singles event beside an 8-cap doubles event has no single well-defined
- * "spots left" figure. Three things must therefore all hold before a number is
- * shown, and otherwise the screen shows a bare entered count and no denominator:
+ * "spots left" figure. Two things must therefore hold before a number is shown,
+ * and otherwise the screen shows a bare entered count and no denominator:
  *
  *   1. exactly one event is taking entries, so "the cap" is unambiguous;
- *   2. that event is singles — doubles has no member entry path at all
- *      (EventRegistrationButton renders "Doubles — admin managed"), so spots
- *      a member cannot take are not spots;
- *   3. the event actually carries a cap. max_participants is nullable and
+ *   2. the event actually carries a cap. max_participants is nullable and
  *      uncapped events are normal.
+ *
+ * ------------------------------------------------------------------------
+ * DOUBLES USED TO BE A THIRD CONDITION, AND IS NOT ANY MORE
+ * ------------------------------------------------------------------------
+ * It returned null for doubles because "spots a member cannot take are not
+ * spots" — there was no member entry path at all. Since 00102 there is: a member
+ * enters the pool alone and an exec pairs them. So the number has to be real,
+ * and it has to be the number the server enforces, or the badge promises a place
+ * registerForEvent then refuses.
+ *
+ * A DOUBLES SPOT IS A DRAW SLOT — a TEAM — because that is what max_participants
+ * counts (doublesDrawSlots in @badminton/shared, one implementation shared with
+ * the admin capacity checks and this action). Two people waiting are worth one
+ * slot, rounded up. So "3 spots" on a doubles event means three more TEAMS, and
+ * a single member joining an even pool takes one of them while the next member
+ * to join takes none.
+ *
+ * `pairs` is therefore required, and passing an empty array for a doubles event
+ * would silently understate the field by every formed team in it.
  */
 export function spotsLeft(
   events: IndexEvent[],
   participants: Array<{ event_id: string; status: string }>,
+  pairs: Array<{ event_id: string; status: string }> = [],
 ): number | null {
   const open = events.filter(isOpenForEntry);
   if (open.length !== 1) return null;
   const event = open[0]!;
-  if (isDoublesEvent(event.event_type)) return null;
   if (!event.max_participants) return null;
-  const taken = participants.filter(
-    (p) => p.event_id === event.id && occupiesAPlace(p.status),
-  ).length;
-  return Math.max(0, event.max_participants - taken);
+
+  const mine = participants.filter((p) => p.event_id === event.id && occupiesAPlace(p.status)).length;
+  if (!isDoublesEvent(event.event_type)) {
+    return Math.max(0, event.max_participants - mine);
+  }
+  const formed = pairs.filter((p) => p.event_id === event.id && occupiesAPlace(p.status)).length;
+  return Math.max(0, event.max_participants - doublesDrawSlots(formed, mine));
 }
 
-/** The single singles event a member can enter, when there is exactly one.
- *  Used to decide whether the hero card may promise entry at all. */
+/** The single event a member can enter, when there is exactly one.
+ *  Used to decide whether the hero card may promise entry at all.
+ *
+ *  Doubles now counts, for the reason spotsLeft gives — but note the CTA this
+ *  feeds is a LINK to the tournament page, not an inline register. That matters:
+ *  the doubles consent copy lives in the button's own dialog there, and a hero
+ *  CTA that entered somebody directly would route them straight past it. */
 export function soleEnterableEvent(events: IndexEvent[]): IndexEvent | null {
-  const enterable = events.filter((e) => isOpenForEntry(e) && !isDoublesEvent(e.event_type));
+  const enterable = events.filter(isOpenForEntry);
   return enterable.length === 1 ? enterable[0]! : null;
 }
 
