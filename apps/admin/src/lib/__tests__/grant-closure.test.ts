@@ -435,12 +435,21 @@ describe('setPlayerPermissions — the shape of what gets stored', () => {
     expect(res.ok === false && res.error).toMatch(/grant and revoke the same thing/);
   });
 
-  // THE CEILING THIS CHANGE SHIPS WITH. Grant closure cannot bound an admin,
-  // who holds everything by level — so the set an admin may compose is capped
-  // at what execs already had, which is what keeps this change provably inside
-  // the envelope that shipped before it. Opening these up is its own change.
+  // THE CEILING. Grant closure cannot bound an admin, who holds everything by
+  // level — so the set an admin may compose is capped at EDITOR_OFFERABLE, and
+  // that cap is the only thing bounding them.
+  //
+  // `fees.clubfees.read` USED TO BE IN THIS LIST AND IS NOW IN THE ONE BELOW.
+  // Editable roles (00104) moved the four finance READS inside the ceiling,
+  // because the club owner asked for a treasurer who can see money in as well as
+  // out and that is not expressible while the ceiling is the exec baseline. The
+  // corresponding WRITES did not move, which is why one of them stands in here.
   it('refuses even an admin the admin-only half of the vocabulary', async () => {
-    for (const capability of ['audit.page', 'fees.clubfees.read', 'permissions.write'] as const) {
+    for (const capability of [
+      'audit.page',
+      'fees.clubfees.markpaid.write',
+      'permissions.write',
+    ] as const) {
       const res = await setPlayerPermissions(EXEC_A, {
         role: 'finance',
         grants: [capability],
@@ -448,6 +457,27 @@ describe('setPlayerPermissions — the shape of what gets stored', () => {
       });
       expect(res.ok, capability).toBe(false);
       expect(res.ok === false && res.error).toMatch(/admin-only/);
+    }
+  });
+
+  // ...AND THE OTHER HALF OF THAT MOVE, so the ceiling's new position is pinned
+  // from both sides. An admin may now compose somebody who SEES the club's
+  // books; `finance` carries fees.page, so the read survives the resolver's
+  // area-page prune and is actually stored.
+  it('allows an admin the four finance reads the ceiling was widened for', async () => {
+    for (const capability of [
+      'fees.clubfees.read',
+      'fees.otherincome.read',
+      'fees.reinstatements.read',
+      'fees.netposition.read',
+    ] as const) {
+      const res = await setPlayerPermissions(EXEC_A, {
+        role: 'finance',
+        grants: [capability],
+        revokes: [],
+      });
+      expect(res.ok, capability).toBe(true);
+      expect(rowFor(EXEC_A).permission_grants, capability).toEqual([capability]);
     }
   });
 
