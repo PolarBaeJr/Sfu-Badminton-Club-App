@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createElement as h } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { EntriesByEvent } from '@/app/tournaments/entries-by-event';
+import type { IndexEvent } from '@/lib/tournament-index';
 import { KFactorPanel } from '@/app/ratings/k-factor-panel';
 import { AuditActivityChart } from '@/app/audit/activity-chart';
 
@@ -28,15 +29,24 @@ import { AuditActivityChart } from '@/app/audit/activity-chart';
  * so renderToStaticMarkup drives them exactly as a request would.
  */
 
-const html = (type: Parameters<typeof h>[0], props: Record<string, unknown>) =>
+// GENERIC over the component's own props. This was typed as
+// `Parameters<typeof h>[0]`, which createElement resolves to a component
+// taking NO props — so every chart here, all of which take required props,
+// was a type error while the tests themselves passed. Tying `props` to the
+// component's parameter also means passing the wrong shape is now caught.
+const html = <P,>(type: (props: P) => unknown, props: P) =>
   renderToStaticMarkup(h(type as never, props as never));
 
+// Typed against IndexEvent rather than with a bare `string`, so a fixture
+// cannot invent an event type the component would never be handed.
 const ev = (
   id: string,
-  event_type: string,
+  event_type: IndexEvent['event_type'],
   max_participants: number | null,
   status = 'registration',
-) => ({ id, tournament_id: 't1', event_type, status, draw_locked: false, max_participants });
+): IndexEvent => ({
+  id, tournament_id: 't1', event_type, status, draw_locked: false, max_participants,
+});
 
 const rows = (eventId: string, n: number) =>
   Array.from({ length: n }, () => ({ event_id: eventId }));

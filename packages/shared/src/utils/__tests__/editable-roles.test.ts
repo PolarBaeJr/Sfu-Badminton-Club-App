@@ -234,8 +234,11 @@ describe('00104 seeds what ROLE_DEFAULTS says', () => {
     const block = MIGRATION.slice(0, end);
     const open = block.lastIndexOf('ARRAY[');
     const close = block.indexOf(']::TEXT[]', open);
+    // Group 1 is non-null by construction: matchAll only yields matches, and
+    // the pattern cannot match without capturing. Asserted rather than guarded
+    // so a genuinely empty capture would still fail the assertion below.
     return [...block.slice(open + 'ARRAY['.length, close).matchAll(/'([^']+)'/g)].map(
-      (m) => m[1],
+      (m) => m[1]!,
     );
   }
 
@@ -244,7 +247,7 @@ describe('00104 seeds what ROLE_DEFAULTS says', () => {
     const end = MIGRATION.indexOf(`'${role}'\n)`);
     const block = MIGRATION.slice(0, end);
     const open = block.lastIndexOf('VALUES (');
-    return block.slice(open).match(/'([0-9a-f-]{36})'/)![1];
+    return block.slice(open).match(/'([0-9a-f-]{36})'/)![1]!;
   }
 
   it.each([...BUILTIN_PERMISSION_ROLES])('seeds %s with its shipped default', (role) => {

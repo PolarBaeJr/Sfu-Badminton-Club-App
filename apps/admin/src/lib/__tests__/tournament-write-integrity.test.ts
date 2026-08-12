@@ -2136,12 +2136,12 @@ describe('regenerating a draw that already exists', () => {
     seedField(8);
     expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
 
-    const alone = await updateTournamentEvent('e1', { match_format: 'single_to_21' });
+    const alone = await updateTournamentEvent('e1', { match_format: 'one_game_21' });
     expect(alone.ok).toBe(false);
     expect(alone.ok ? '' : alone.error).toContain('already has a draw');
 
     const bundled = await updateTournamentEvent('e1', {
-      seeding_method: 'manual', match_format: 'single_to_21',
+      seeding_method: 'manual', match_format: 'one_game_21',
     });
     expect(bundled.ok).toBe(false);
     expect(bundled.ok ? '' : bundled.error).toContain('already has a draw');

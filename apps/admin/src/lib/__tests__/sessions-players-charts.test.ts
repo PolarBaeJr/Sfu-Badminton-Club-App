@@ -29,7 +29,12 @@ import { uniqueColumnLabels } from '@/lib/charts';
  * request would.
  */
 
-const html = (type: Parameters<typeof h>[0], props: Record<string, unknown>) =>
+// GENERIC over the component's own props. This was typed as
+// `Parameters<typeof h>[0]`, which createElement resolves to a component
+// taking NO props — so every chart here, all of which take required props,
+// was a type error while the tests themselves passed. Tying `props` to the
+// component's parameter also means passing the wrong shape is now caught.
+const html = <P,>(type: (props: P) => unknown, props: P) =>
   renderToStaticMarkup(h(type as never, props as never));
 
 const up = (n: number) => Array.from({ length: n }, () => 'checked_in' as const);
