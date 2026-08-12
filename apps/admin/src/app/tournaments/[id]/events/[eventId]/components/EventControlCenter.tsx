@@ -126,6 +126,16 @@ export function EventControlCenter({ tournament, event, participants, pairs, mat
         checkedIn={checkedIn}
         totalMatches={totalMatches}
         completedMatches={completedMatches}
+        drawCapabilities={drawCapabilities}
+        // WHETHER THE DRAW THAT EXISTS HAS A BRONZE MATCH, read off the matches
+        // themselves. The third-place choice is deliberately not stored on
+        // tournament_events — the generated match IS the record — so this is
+        // the only truthful source, and it is what the Regenerate confirm
+        // pre-ticks its checkbox from. Without it a regenerate would silently
+        // drop the playoff (EventHeader's `offerThirdPlace` is false outside
+        // `checkin`) or silently add one, which is the same defect from the
+        // other side.
+        hasThirdPlace={matches.some((m) => m.is_third_place)}
       />
 
       {/* Suspension Banner — server actions enforce the actual blocking */}

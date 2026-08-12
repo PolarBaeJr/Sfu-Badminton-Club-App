@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   participantControls,
+  regenerateDrawControl,
   type DrawCapabilities,
   type ParticipantControls,
 } from '../participant-controls';
@@ -22,6 +23,7 @@ const NOBODY: DrawCapabilities = {
   exit: false,
   soloAdd: false,
   soloRemove: false,
+  generate: false,
 };
 
 const EVERYTHING: DrawCapabilities = {
@@ -33,6 +35,7 @@ const EVERYTHING: DrawCapabilities = {
   exit: true,
   soloAdd: true,
   soloRemove: true,
+  generate: true,
 };
 
 const only = (key: keyof DrawCapabilities): DrawCapabilities => ({ ...NOBODY, [key]: true });
@@ -230,5 +233,64 @@ describe('participantControls — capability, not just status', () => {
     expect(shown(participantControls({ status: 'archived', drawLocked: false }, EVERYTHING))).toEqual(
       [],
     );
+  });
+
+  it('does not let the new generate capability open a participants control', () => {
+    // `generate` was added to DrawCapabilities for the header's Regenerate
+    // button, and nothing on this tab may start reading it by accident.
+    expect(shown(participantControls(registration, only('generate')))).toEqual([]);
+    expect(shown(participantControls({ status: 'bracket_generated', drawLocked: false }, only('generate')))).toEqual([]);
+  });
+});
+
+describe('regenerateDrawControl — a way back to Generate', () => {
+  const at = (status: string, drawLocked = false) => ({ status, drawLocked });
+
+  it('offers the redraw exactly where a draw exists and can still honestly be redone', () => {
+    const c = regenerateDrawControl(at('bracket_generated'), EVERYTHING);
+    expect(c.show).toBe(true);
+    expect(c.blockedReason).toBeNull();
+  });
+
+  it('never offers it at any other status', () => {
+    // `live` is the deliberate omission, not an oversight: going live records
+    // real walkovers for anybody who withdrew after the draw was published
+    // (setEventStatus -> forfeitOutOfEventEntries), so the action refuses on
+    // assertNoResultsEntered for most live events. A destructive button that
+    // usually refuses is worse than no button.
+    for (const status of ['registration', 'checkin', 'live', 'completed', 'cancelled', 'archived']) {
+      expect(regenerateDrawControl(at(status), EVERYTHING).show, status).toBe(false);
+    }
+  });
+
+  it('asks the capability, and asks only that one', () => {
+    expect(regenerateDrawControl(at('bracket_generated'), NOBODY).show).toBe(false);
+    expect(regenerateDrawControl(at('bracket_generated'), only('generate')).show).toBe(true);
+    // No other key buys it. Holding the seeding desk or the roster is not
+    // permission to throw the draw away and build another.
+    for (const key of Object.keys(NOBODY) as Array<keyof DrawCapabilities>) {
+      if (key === 'generate') continue;
+      expect(regenerateDrawControl(at('bracket_generated'), only(key)).show, key).toBe(false);
+    }
+  });
+
+  it('shows a locked draw greyed with a reason rather than hiding it', () => {
+    // Hiding it would look identical to not holding the capability, and the
+    // Unlock Draw button is right next to it.
+    const locked = regenerateDrawControl(at('bracket_generated', true), EVERYTHING);
+    expect(locked.show).toBe(true);
+    expect(locked.blockedReason).toBe('Unlock the draw before redrawing it');
+  });
+
+  it('never offers a reason for a button it is not drawing', () => {
+    // A blockedReason on a hidden control would be rendered by a caller that
+    // read the fields in the wrong order.
+    for (const status of ['registration', 'checkin', 'live', 'completed']) {
+      for (const drawLocked of [true, false]) {
+        const c = regenerateDrawControl(at(status, drawLocked), EVERYTHING);
+        expect(c.blockedReason, status).toBeNull();
+      }
+    }
+    expect(regenerateDrawControl(at('bracket_generated', true), NOBODY).blockedReason).toBeNull();
   });
 });

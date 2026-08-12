@@ -77,6 +77,18 @@ export interface DrawCapabilities {
   soloAdd: boolean;
   /** participants.remove.write — deleting an unpaired entrant's row. */
   soloRemove: boolean;
+  /**
+   * tournaments.draw.generate.write — building the draw, and rebuilding it.
+   *
+   * Transcribed from the requireCapability call at the top of BOTH generators
+   * (tournament-actions/brackets.ts — generateSingleEliminationBracketImpl and
+   * generateRoundRobinMatchesImpl). Regenerating is not a second act needing a
+   * second key: it is the same action, called again, on an event that already
+   * has a draw. Minting a key for it would have handed the club a distinction
+   * — "may draw, may not redraw" — that neither generator could enforce, since
+   * both have deleted and rebuilt since they were written.
+   */
+  generate: boolean;
 }
 
 export interface ParticipantControls {
@@ -185,5 +197,83 @@ export function participantControls(
     unpair: pairingOpen && can.remove,
     withdrawMember: pairingOpen && can.exit,
     swapMember: pairingOpen && can.add && can.remove,
+  };
+}
+
+// ============================================================
+// Regenerate draw
+// ============================================================
+
+/** Whether the header offers "Regenerate draw", and why it is greyed if it is. */
+export interface RegenerateDrawControl {
+  /** Render the button at all. */
+  show: boolean;
+  /**
+   * Rendered but not pressable, and this says why. `null` means pressable.
+   * A greyed button with no reason sends an exec hunting for what is missing.
+   */
+  blockedReason: string | null;
+}
+
+/**
+ * WHY THERE WAS NO WAY BACK.
+ *
+ * EventHeader drove the event through one primary button —
+ * registration -> "Open Check-In" -> checkin -> "Generate Bracket" ->
+ * bracket_generated -> "Start Tournament" -> live -> "Finalize Tournament" —
+ * and nothing moved an event backwards, so "Generate Bracket" could be pressed
+ * exactly once in an event's life. The club owner hit it on staging: "once the
+ * bracket is generated theres no way to regenerate a bracket."
+ *
+ * The ACTION was always regenerable. Both generators open with
+ * `delete().eq('event_id', eventId)` and rebuild from the current field, and
+ * both already refuse the two cases that must be refused — a result has been
+ * entered, or the draw is locked. This was a missing door, not a missing room.
+ *
+ * ------------------------------------------------------------
+ * `bracket_generated` ONLY, AND IN PLACE
+ * ------------------------------------------------------------
+ * NOT `live`. Once an event is live people are playing, and going live runs
+ * forfeitOutOfEventEntries (setEventStatus), which records real walkovers for
+ * anybody who withdrew after the draw was published — so a live event that has
+ * had a single withdrawal or a single result already fails
+ * assertNoResultsEntered. A destructive button that refuses in most of the
+ * states it is offered in is worse than no button: it teaches the exec that the
+ * console guesses. A live event with genuinely nothing played is a real gap and
+ * it is a smaller one; it needs a way back OUT of live, which is a different
+ * change with a different capability (tournaments.manage.event.status.write).
+ *
+ * NOT via `checkin`. The other shape was to send the event backwards so the
+ * existing Generate button became reachable. It costs more than it looks:
+ * setEventStatus's transition table is forward-only
+ * (registration -> checkin -> bracket_generated -> live -> completed), so it
+ * would mean widening the state machine and spending a SECOND capability
+ * (status.write) on an act that already has one. And it buys less than it looks
+ * — participantControls above keeps `add`, `remove`, `editSeed` and `autoSeed`
+ * on `registration`, so an event dropped back to `checkin` still cannot take a
+ * new entry or be re-seeded by hand. What check-in does unlock is the check-in
+ * desk itself and doubles pairing, which is worth having; it is just not worth
+ * a reversible status machine, and regenerating in place leaves that door open
+ * to be added later without taking this one away.
+ *
+ * ------------------------------------------------------------
+ * A LOCKED DRAW IS SHOWN, NOT HIDDEN
+ * ------------------------------------------------------------
+ * draw_locked is the event's own switch and the generators refuse on it. The
+ * Unlock Draw button sits in the same row and the "Draw Locked" badge is on
+ * screen, so the honest thing is a greyed button naming the lock — hiding it
+ * would look identical to not holding the capability, which is the one thing
+ * this module exists to keep distinct.
+ */
+export function regenerateDrawControl(
+  event: { status: string; drawLocked: boolean },
+  can: DrawCapabilities,
+): RegenerateDrawControl {
+  if (event.status !== 'bracket_generated' || !can.generate) {
+    return { show: false, blockedReason: null };
+  }
+  return {
+    show: true,
+    blockedReason: event.drawLocked ? 'Unlock the draw before redrawing it' : null,
   };
 }

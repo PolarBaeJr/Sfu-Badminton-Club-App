@@ -109,6 +109,10 @@ export default async function EventPage({
     exit: may('tournaments.draw.exit.write'),
     soloAdd: canAddSolo,
     soloRemove: may('tournaments.draw.participants.remove.write'),
+    // Feeds the header's Regenerate draw button rather than the participants
+    // tab, and it is the same key both generators already ask for — no new
+    // capability, and nothing gated on it that was not gated on it before.
+    generate: may('tournaments.draw.generate.write'),
   };
   // `siblingEvents` feeds one picker too: the "seed from" list in
   // EventSettingsDialog, which is reached from EventHeader's settings button and

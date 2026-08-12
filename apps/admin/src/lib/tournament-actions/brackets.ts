@@ -44,12 +44,39 @@ function assertNotFinalised(event: Record<string, unknown>, action: string) {
   }
 }
 
+/**
+ * A BYE IS NOT A RESULT, and counting it as one made the draw unregenerable the
+ * instant it was drawn.
+ *
+ * Generation writes `status: 'completed'` onto every bye it creates (see the
+ * round-one loop below) because a bye has already been decided — its winner
+ * advances with nothing to play. The guard then read those rows back as entered
+ * results, so ANY field that is not a power of two produced a draw that answered
+ * "Results have already been entered — void those matches first" about matches
+ * that have no score, no Elo and no opponent to void.
+ *
+ * It went unnoticed because generation was reachable exactly once: the button
+ * lived at `checkin` and the first press moved the event to `bracket_generated`,
+ * out of the button's reach. Three of the four staging events sitting at
+ * `bracket_generated` today have byes and no other completed match, so a
+ * Regenerate control would have refused on three out of four.
+ *
+ * `NOT (is_bye IS TRUE)` and not `is_bye <> true`, because the column is
+ * nullable (00001: `BOOLEAN DEFAULT false`) and under SQL's three-valued logic
+ * `<>` is UNKNOWN against NULL — a `.neq` would have dropped every NULL row as
+ * well, quietly excluding real matches and leaving the guard permanently
+ * satisfied. `IS TRUE` is null-safe: true -> false, false -> true, null -> true.
+ *
+ * A walkover is still a result and still blocks: it is rated, and the go-live
+ * sweep records real ones (setEventStatus -> forfeitOutOfEventEntries).
+ */
 async function assertNoResultsEntered(adminClient: ReturnType<typeof createAdminClient>, eventId: string) {
   const { count } = await adminClient
     .from('tournament_matches')
     .select('id', { count: 'exact', head: true })
     .eq('event_id', eventId)
-    .in('status', ['completed', 'walkover', 'disputed']);
+    .in('status', ['completed', 'walkover', 'disputed'])
+    .not('is_bye', 'is', true);
   if ((count ?? 0) > 0) {
     throw new Error('Results have already been entered for this event — regenerating would erase them. Void those matches first if you really need to reset the draw.');
   }
@@ -368,6 +395,12 @@ async function generateSingleEliminationBracketImpl(eventId: string, includeThir
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
   if (event.draw_locked) throw new Error('Draw is locked. Unlock it before generating bracket.');
+  // The knockout half of the finalisation block, which only ever reached the
+  // round-robin path (1922133 wired it into one of the two generators). The
+  // reasoning applies here at least as hard: finalizeEvent reads final_position
+  // off the BRACKET, so a completed knockout event whose matches were all voided
+  // could be redrawn on top of a ledger that had already paid the old finishers.
+  assertNotFinalised(event, 'regenerated');
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
   await assertNoResultsEntered(adminClient, eventId);
 

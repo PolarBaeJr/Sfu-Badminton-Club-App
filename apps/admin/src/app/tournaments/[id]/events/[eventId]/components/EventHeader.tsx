@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { Badge, Button } from '@badminton/ui';
+import { useRef, useState } from 'react';
+import { Badge, Button, useConfirm } from '@badminton/ui';
 import {
   TOURNAMENT_EVENT_TYPE_LABELS,
   TOURNAMENT_EVENT_STATUS_LABELS,
@@ -20,8 +20,9 @@ import {
 } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { Trophy, Users, CheckCircle, Swords, BarChart3, ChevronRight, Lock, Unlock, SlidersHorizontal } from 'lucide-react';
+import { Trophy, Users, CheckCircle, Swords, BarChart3, ChevronRight, Lock, Unlock, SlidersHorizontal, RefreshCw } from 'lucide-react';
 import { EventSettingsDialog } from './EventSettingsDialog';
+import { regenerateDrawControl, type DrawCapabilities } from '@/lib/participant-controls';
 import type { SiblingEvent } from '../../../event-format-fields';
 import type { TournamentEventRow } from '@/lib/tournament-types';
 
@@ -34,13 +35,18 @@ interface Props {
   checkedIn: number;
   totalMatches: number;
   completedMatches: number;
+  /** Only `generate` is read here; the rest belong to the participants tab. */
+  drawCapabilities: DrawCapabilities;
+  /** Does the draw that exists right now carry a 3rd place playoff match? */
+  hasThirdPlace: boolean;
 }
 
 const STATUS_STEPS: TournamentEventStatus[] = ['registration', 'checkin', 'bracket_generated', 'live', 'completed'];
 
-export function EventHeader({ tournament, event, siblingEvents, isDoubles, totalEntries, checkedIn, totalMatches, completedMatches }: Props) {
+export function EventHeader({ tournament, event, siblingEvents, isDoubles, totalEntries, checkedIn, totalMatches, completedMatches, drawCapabilities, hasThirdPlace }: Props) {
   const [loading, setLoading] = useState(false);
   const [lockLoading, setLockLoading] = useState(false);
+  const [regenLoading, setRegenLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // The third-place playoff is a generation-time choice, so it lives next to the
   // button that generates. It is NOT persisted on the event — the generated
@@ -55,7 +61,16 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
   // offerThirdPlace still gates whether the box is shown at all, so a draw with
   // no semi-final round is unaffected by this default.
   const [thirdPlace, setThirdPlace] = useState(true);
+  // The SECOND third-place choice: the one made inside the Regenerate confirm.
+  // It cannot share `thirdPlace` above — that state describes a draw that does
+  // not exist yet and defaults ON, whereas regenerating starts from whatever the
+  // existing draw actually has. A ref rather than state because the confirm
+  // dialog stores the message element it was handed and re-rendering EventHeader
+  // does not re-render it; the checkbox owns its own state (ThirdPlaceChoice
+  // below) and writes the answer out through here.
+  const regenThirdPlace = useRef(hasThirdPlace);
   const { toast } = useToast();
+  const confirm = useConfirm();
   const router = useRouter();
   const drawLocked = event.draw_locked as boolean;
 
@@ -65,10 +80,13 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
   const currentStepIdx = STATUS_STEPS.indexOf(status);
   const bracketSize = nextPowerOf2(totalEntries);
   const byes = bracketSize - totalEntries;
-  // Offered only where it means something: a knockout draw, at the moment the
-  // draw is generated. A round robin already produces a full ordering, and a
-  // 2-entry draw is a final with no semi-finals to lose.
-  const offerThirdPlace = status === 'checkin' && format !== 'round_robin' && bracketSize >= 4;
+  // Offered only where it means something: a knockout draw. A round robin
+  // already produces a full ordering, and a 2-entry draw is a final with no
+  // semi-finals to lose.
+  const thirdPlaceApplies = format !== 'round_robin' && bracketSize >= 4;
+  // ...and at the moment the draw is generated, which is now two moments: the
+  // first press at check-in, and a redraw once a bracket exists.
+  const offerThirdPlace = status === 'checkin' && thirdPlaceApplies;
   // Same rule the server applies: the format is editable until a draw exists.
   const settingsEditable = totalMatches === 0 && (status === 'registration' || status === 'checkin');
   const seededFromPool = Boolean(event.seeded_from_event_id);
@@ -105,6 +123,79 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
       toast(err instanceof Error ? err.message : 'Action failed', 'error');
     }
     setLoading(false);
+  }
+
+  const regenerate = regenerateDrawControl(
+    { status, drawLocked },
+    drawCapabilities,
+  );
+  const eventLabel = TOURNAMENT_EVENT_TYPE_LABELS[eventType] ?? eventType;
+
+  /**
+   * REDRAW THE EVENT, IN PLACE.
+   *
+   * Calls the same two actions the primary button calls at check-in, on an
+   * event that already has a bracket. Both delete every match for the event and
+   * rebuild from the current field, and both leave the status at
+   * `bracket_generated` — so there is no state to move and nothing to put back
+   * if it refuses.
+   *
+   * IT IS NOT A THIN RE-RUN. Everything the first generation checked is checked
+   * again, because the field can have changed underneath it: a pool-seeded
+   * event re-reads the pool standings and re-promotes the qualifiers (the pool
+   * may have been edited, and a qualifier may have withdrawn since), a doubles
+   * event re-runs assertNobodyLeftUnpaired, the whole drawn field is re-tested
+   * for event-waiver signatures, and an unseeded field is re-seeded by rating.
+   * That re-checking is the point: the reason to redraw is usually that the
+   * field is not what it was.
+   */
+  async function handleRegenerate() {
+    // Reset before every open — the ref outlives the dialog, and `hasThirdPlace`
+    // may have changed since the last one.
+    regenThirdPlace.current = hasThirdPlace;
+
+    const ok = await confirm({
+      title: `Regenerate the ${eventLabel} draw?`,
+      message: (
+        <div className="space-y-3">
+          <p>
+            The {totalMatches === 1 ? 'one match' : `${totalMatches} matches`} in the current draw
+            {' '}are deleted and a new draw is built from the {totalEntries === 1 ? 'entry' : `${totalEntries} entries`}
+            {' '}in the event right now. Match numbers, courts and who plays whom all change, so anyone
+            who has already been told their first-round opponent will have the wrong one.
+          </p>
+          <p>
+            Everyone in the new draw is notified that the bracket has been published, again.
+            {seededFromPool && ' The field is re-read from the pool standings, so a pool result edited since the first draw is picked up.'}
+            {' '}Nothing that has been played is touched: if any result has been entered, this is refused
+            rather than done.
+          </p>
+          {thirdPlaceApplies && (
+            <ThirdPlaceChoice
+              defaultChecked={hasThirdPlace}
+              onChange={(v) => { regenThirdPlace.current = v; }}
+            />
+          )}
+        </div>
+      ),
+      confirmLabel: 'Regenerate draw',
+      danger: true,
+    });
+    if (!ok) return;
+
+    setRegenLoading(true);
+    // Dispatched on format exactly as handleAction does — a round robin sitting
+    // at bracket_generated has its own delete-and-rebuild and no playoff.
+    const res = format === 'round_robin'
+      ? await generateRoundRobinMatches(event.id as string)
+      // Same reasoning as the check-in press: `thirdPlaceApplies` gates the
+      // CHECKBOX, not the request, and createThirdPlaceMatch skips a draw with
+      // no semi-final round rather than refusing the whole generation.
+      : await generateSingleEliminationBracket(event.id as string, thirdPlaceApplies && regenThirdPlace.current);
+    if (!res.ok) { toast(res.error, 'error'); setRegenLoading(false); return; }
+    toast('Draw regenerated', 'success');
+    router.refresh();
+    setRegenLoading(false);
   }
 
   const actionLabel: Record<string, string> = {
@@ -215,6 +306,35 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
               {drawLocked ? <Unlock className="w-4 h-4 mr-1" /> : <Lock className="w-4 h-4 mr-1" />}
               {drawLocked ? 'Unlock Draw' : 'Lock Draw'}
             </Button>
+          )}
+          {/* SECONDARY WEIGHT, DELIBERATELY. It sits in the same ghost row as
+              Lock Draw and never competes with the primary button — starting the
+              tournament stays the obvious next step, and redrawing is the thing
+              you go looking for. */}
+          {regenerate.show && (
+            <div className="flex flex-col items-end gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                loading={regenLoading}
+                disabled={regenerate.blockedReason !== null}
+                aria-label={`Regenerate the ${eventLabel} draw`}
+                // describedby rather than title, for the same reason the primary
+                // button uses it: a title attribute wins the accessible name
+                // computation and the button would announce as its own excuse.
+                aria-describedby={regenerate.blockedReason ? 'regenerate-draw-hint' : undefined}
+                className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+                onClick={handleRegenerate}
+              >
+                <RefreshCw className="w-4 h-4 mr-1" />
+                Regenerate Draw
+              </Button>
+              {regenerate.blockedReason && (
+                <p id="regenerate-draw-hint" className="text-xs text-[var(--text-muted)] max-w-[15rem] text-right">
+                  {regenerate.blockedReason}
+                </p>
+              )}
+            </div>
           )}
           {status !== 'completed' && (
             <div className="flex flex-col items-end gap-1">
@@ -330,6 +450,49 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
         />
       )}
     </div>
+  );
+}
+
+/**
+ * The third-place tick box, asked again at the moment of regenerating.
+ *
+ * THE CHOICE HAS TO BE MADE HERE, not inherited. It is not stored on the event —
+ * the generated match IS the record — so a regenerate that reused the header's
+ * `thirdPlace` state would have silently DROPPED the playoff every time
+ * (`offerThirdPlace` is false outside `checkin`, so the flag passed would be
+ * false), and one that hard-coded the new default ON would silently ADD one to
+ * every draw that had deliberately gone without. Neither is a choice anybody
+ * made. So it is pre-ticked from the draw that exists and shown where the exec
+ * can see it before they agree.
+ *
+ * ITS OWN COMPONENT, WITH ITS OWN STATE, because ConfirmProvider stores the
+ * message element it was handed: an input controlled by EventHeader's state
+ * would never repaint inside the dialog. This one repaints itself and reports
+ * out through onChange.
+ */
+function ThirdPlaceChoice({ defaultChecked, onChange }: { defaultChecked: boolean; onChange: (v: boolean) => void }) {
+  const [checked, setChecked] = useState(defaultChecked);
+  return (
+    <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2.5">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => { setChecked(e.target.checked); onChange(e.target.checked); }}
+        className="mt-0.5 accent-[var(--color-accent)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+      />
+      <span>
+        <span className="text-sm font-medium text-[var(--text-primary)] block">
+          Include a 3rd place playoff
+        </span>
+        <span className="text-xs text-[var(--text-muted)]">
+          {defaultChecked
+            ? 'The current draw has one. Untick to redraw without it.'
+            : 'The current draw does not have one. Tick to add it to the new draw.'}
+          {' '}The two semi-final losers play for 3rd, scheduled alongside the final. It is a rated
+          match like any other, and it needs a court.
+        </span>
+      </span>
+    </label>
   );
 }
 
