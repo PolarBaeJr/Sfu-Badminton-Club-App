@@ -156,7 +156,7 @@ BEGIN
      AND player_id IN (p_player1_id, p_player2_id)
      AND status IN ('withdrawn', 'disqualified');
   IF v_out_count > 0 THEN
-    RAISE EXCEPTION 'One of these players has already left this event. Add them again before pairing them.'
+    RAISE EXCEPTION 'One of these players has already withdrawn from this event. Remove their withdrawn entry from the waiting list first, then add them again.'
       USING ERRCODE = 'check_violation';
   END IF;
 
@@ -336,9 +336,18 @@ GRANT EXECUTE ON FUNCTION public.unpair_tournament_pair(uuid, uuid, text, uuid) 
 -- of a pair, never both". Postgres cannot express that as a CHECK or a unique
 -- index (it spans two tables), and the alternatives are a pair of triggers,
 -- which would have to fire on four statements and could still be bypassed by a
--- direct DELETE. Instead pair_tournament_entrants is made the ONLY way a pair
--- row is ever written, and it removes the pool rows itself. The invariant is
--- held by there being one door rather than by a guard on many.
+-- direct DELETE. Instead this function is the only door a pair row is written
+-- through DURING REGISTRATION, and it removes the pool rows itself.
+--
+-- ONE OTHER WRITER EXISTS, and it is deliberate: buildFieldFromPool() in
+-- apps/admin/src/lib/tournament-actions/brackets.ts inserts tournament_pairs
+-- rows when an event is seeded from ANOTHER event's standings
+-- (`seeded_from_event_id` — a different sense of "pool" entirely; see the header
+-- of packages/shared/src/utils/doubles-pool.ts). It cannot leave a stranded
+-- unpaired row behind, because assertNobodyLeftUnpaired() runs against the
+-- target event before it and refuses the whole draw if anyone there is still
+-- waiting for a partner. So the invariant holds on both paths, by a guard on
+-- the second rather than by the second going through here.
 --
 -- To find any drift on production (expect zero rows):
 --

@@ -827,13 +827,17 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                     </td>
                     {controls.removeSolo && (
                       <td className="px-4 py-3 text-right">
-                        {out ? (
-                          <span className="text-xs text-[var(--text-muted)]">—</span>
-                        ) : (
-                          <Button size="sm" variant="ghost" onClick={() => handleRemoveUnpaired(p.id)} loading={actionLoading === p.id} aria-label={`Remove ${unpairedName(p)}`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
-                            <Trash2 className="w-3.5 h-3.5 text-[var(--color-danger)]" />
-                          </Button>
-                        )}
+                        {/* OFFERED ON A WITHDRAWN ROW TOO, unlike the singles
+                            list above, and that is what makes the server's
+                            refusal followable: pairing somebody who has
+                            withdrawn is refused and tells the exec to remove
+                            the withdrawn entry first, which without this button
+                            is an instruction with nothing behind it. Adding
+                            them again then hits UNIQUE(event_id, player_id)
+                            until the old row is gone. */}
+                        <Button size="sm" variant="ghost" onClick={() => handleRemoveUnpaired(p.id)} loading={actionLoading === p.id} aria-label={`Remove ${unpairedName(p)}`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
+                          <Trash2 className="w-3.5 h-3.5 text-[var(--color-danger)]" />
+                        </Button>
                       </td>
                     )}
                   </tr>

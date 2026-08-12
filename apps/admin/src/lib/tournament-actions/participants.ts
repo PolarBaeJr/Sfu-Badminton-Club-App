@@ -103,7 +103,19 @@ async function nameOf(
 // `seeded_from_event_id` / buildFieldFromPool already mean something else
 // entirely there (seed this draw from another event's standings).
 
-/** The doubles field as it stands right now, in the currency the cap counts. */
+/**
+ * The doubles field as it stands right now, in the currency the cap counts.
+ *
+ * READ-THEN-WRITE, and knowingly. pair_tournament_entrants serialises the
+ * PAIRING on an advisory lock, but this count and the entry-cap count above it
+ * are taken outside that lock, so two desks adding to the same event at the same
+ * second can both see room for one more and both take it. That is the shape
+ * every capacity check in this file already has — max_participants has never
+ * been enforced by anything but a prior read — and the failure is one slot over
+ * a soft limit, which an exec can see and undo. The invariants that CANNOT be
+ * repaired from the console (a player counted twice, an entry deleted without a
+ * pair to show for it) are the ones that moved into the database.
+ */
 async function loadDoublesField(
   adminClient: ReturnType<typeof createAdminClient>,
   eventId: string,
