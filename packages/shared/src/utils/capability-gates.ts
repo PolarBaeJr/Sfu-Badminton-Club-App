@@ -1,6 +1,6 @@
 // WHERE EVERY CAPABILITY IS ACTUALLY ENFORCED.
 //
-// 118 capabilities is 118 promises that something in the app checks something.
+// 119 capabilities is 119 promises that something in the app checks something.
 // This map is what keeps them honest: every entry names the file and function
 // that stands behind it, and the drift test asserts the map is exhaustive, that
 // no two capabilities claim the same enforcement point, and that any capability
@@ -114,6 +114,20 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   'players.privilegedfields.write': {
     label: 'Privileged player fields', area: 'players', group: null, mode: 'write',
     gate: 'lib/player-field-access.ts assertPlayerFieldAccess',
+  },
+  // ONE GATE, AND IT HAS TO STAY ONE. This is the only place in the app that
+  // reads this capability, and the reason it is safe to hand out at all is that
+  // everything bounding it — closure on the target's set before and after, the
+  // admin-only branches, the self-edit refusal — lives inside that one function.
+  // A second reader would be a second place all of that has to be remembered.
+  //
+  // NOT assertPlayerFieldAccess, which is where the neighbouring capability is
+  // read. The three level columns stay on PLAYER_FIELD_FLOOR there, refused to
+  // everybody below admin and consulted by no capability, so the member Edit
+  // dialog is untouched by this.
+  'players.consoleaccess.write': {
+    label: 'Give or take console access', area: 'players', group: null, mode: 'write',
+    gate: 'actions/permissions.ts setConsoleAccess',
   },
 
   // ---- seasons -----------------------------------------------------------
