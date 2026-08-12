@@ -73,7 +73,11 @@ export interface SeasonFinances {
   netCents: number;
 }
 
-interface ExpenseRow {
+/**
+ * The five columns the expense arithmetic touches. Exported because the fold
+ * over them is exported — a caller holding rows has to be able to say so.
+ */
+export interface ExpenseRow {
   amount_cents: number | null;
   category: string | null;
   paid_at: string | null;
@@ -154,10 +158,33 @@ export async function getSeasonExpenses(
   // be read. Between this code deploying and 00073 being applied by hand, that
   // query DOES fail, so this is the normal path on the day of the deploy, not a
   // hypothetical.
-  const rows = unwrap(
-    expenses as { data: ExpenseRow[] | null; error: { message: string } | null },
+  return summariseExpenseRows(
+    unwrap(expenses as { data: ExpenseRow[] | null; error: { message: string } | null }),
   );
+}
 
+/**
+ * THE FOUR READINGS, OVER ROWS THAT ARE ALREADY IN HAND.
+ *
+ * Split out of getSeasonExpenses for the same reason foldLedgerRows was split
+ * out of readLedger: /fees' Expenses tab already selects this exact ledger, row
+ * by row, to list it — so a chart of what the club spent needs no query at all,
+ * only this arithmetic applied to rows the page is holding. Asking the database
+ * for club_expenses a second time on the same render, to draw a picture of rows
+ * already on screen, is a round trip for nothing.
+ *
+ * ONE FOLD, TWO CALLERS. A second CALLER of one piece of arithmetic is not what
+ * the note at the top of this file forbids; a second piece of arithmetic is.
+ * The dashboard's expense figure and /fees' expense chart now come out of the
+ * same function over the same columns, so they cannot disagree.
+ *
+ * IT DOES NOT FILTER ON paid_at. The query above does, and a caller passing
+ * rows it fetched without that filter must apply it first — /fees selects
+ * unpaid rows too, so it can badge them "not recorded". Moving the filter in
+ * here would be harmless for today's two callers and would quietly change what
+ * a third one counts.
+ */
+export function summariseExpenseRows(rows: readonly ExpenseRow[]): SeasonExpenses {
   // One pass: the total, the per-category map, the dated payments and the
   // unreimbursed debt are all built from the same rows, so no reading of this
   // ledger can fail to agree with any other reading of it.

@@ -99,29 +99,45 @@ export interface LedgerRead {
   byCategory: { category: string; cents: number }[];
 }
 
-type LedgerRow = {
+/**
+ * The shape every ledger row is read through — the two or three columns the
+ * arithmetic below actually touches, and nothing else. Exported because the
+ * fold is exported: a caller that already holds rows (see foldLedgerRows) needs
+ * to be able to say what it is handing over.
+ */
+export type LedgerAmountRow = {
   amount_cents: number | null;
   paid_at?: string | null;
   category?: string | null;
 };
 
 /**
- * REFUSING TO TREAT A FAILED QUERY AS AN EMPTY LEDGER.
+ * THE ARITHMETIC OVER A LEDGER'S ROWS, WITH NO QUERY IN FRONT OF IT.
  *
- * This used to be `(rows ?? []).reduce(...)` over `result.data`, which reads a
- * query that errored as a ledger containing nothing. That is the worst possible
- * failure for a money figure: it produces a number, the number looks fine, and
- * it is short by however much the failed ledger held. The first time it would
- * have bitten is the deploy of 00073 itself — the console ships through CI
- * while migrations are applied BY HAND, so between the two there is a window
- * where other_income does not exist yet and every query against it fails.
- * Silently, that window reports a plausible wrong total; loudly, it reports an
- * error somebody fixes by applying the migration.
+ * Split out of readLedger so that a screen ALREADY HOLDING the rows can reach
+ * the same three readings without asking the database for them a second time.
+ * /fees is that screen twice over: its fee table selects the dues ledger to
+ * decide who has paid, and its ledger card selects other_income row by row to
+ * list it — in both cases the rows a chart needs are already in memory, and a
+ * second read of the same table to draw a picture of it would be a round trip
+ * for data the page is holding.
  *
- * unwrap() is the repo's existing helper for exactly this and throws on error.
+ * WHAT MUST NOT HAPPEN IS A SECOND PIECE OF ARITHMETIC. That is the whole
+ * subject of the note at the top of this file: the club's income read $0.00 for
+ * months because two pages each summed the money their own way. A second CALLER
+ * of one fold is not that; a second fold would be. So this function is the only
+ * place a ledger's rows become a total, wherever the rows came from.
+ *
+ * IT DOES NOT FILTER ON paid_at, and the contract is the one LedgerRead states:
+ * `total` counts every row it is given, `payments` keeps only the dated ones.
+ * Every query in this file filters `paid_at is not null`, so the two sets are
+ * identical against the real table. A caller passing rows it fetched WITHOUT
+ * that filter — the ledger card selects unpaid rows too, so it can badge them
+ * "not recorded" — must apply it before calling, exactly as the queries do.
+ * Moving the filter in here would silently change what every existing caller
+ * counts.
  */
-const readLedger = (result: { data: LedgerRow[] | null; error: unknown }): LedgerRead => {
-  const rows = unwrap(result as { data: LedgerRow[] | null; error: { message: string } | null });
+export function foldLedgerRows(rows: readonly LedgerAmountRow[]): LedgerRead {
   const byCategory = new Map<string, number>();
   let total = 0;
   const payments: LedgerPayment[] = [];
@@ -144,7 +160,27 @@ const readLedger = (result: { data: LedgerRow[] | null; error: unknown }): Ledge
       .map(([category, cents]) => ({ category, cents }))
       .sort((a, b) => b.cents - a.cents),
   };
-};
+}
+
+/**
+ * REFUSING TO TREAT A FAILED QUERY AS AN EMPTY LEDGER.
+ *
+ * This used to be `(rows ?? []).reduce(...)` over `result.data`, which reads a
+ * query that errored as a ledger containing nothing. That is the worst possible
+ * failure for a money figure: it produces a number, the number looks fine, and
+ * it is short by however much the failed ledger held. The first time it would
+ * have bitten is the deploy of 00073 itself — the console ships through CI
+ * while migrations are applied BY HAND, so between the two there is a window
+ * where other_income does not exist yet and every query against it fails.
+ * Silently, that window reports a plausible wrong total; loudly, it reports an
+ * error somebody fixes by applying the migration.
+ *
+ * unwrap() is the repo's existing helper for exactly this and throws on error.
+ */
+const readLedger = (result: { data: LedgerAmountRow[] | null; error: unknown }): LedgerRead =>
+  foldLedgerRows(
+    unwrap(result as { data: LedgerAmountRow[] | null; error: { message: string } | null }),
+  );
 
 /**
  * One KIND of fee, summed for one season.
