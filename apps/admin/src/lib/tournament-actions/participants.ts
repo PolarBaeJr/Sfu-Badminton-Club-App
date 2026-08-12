@@ -16,6 +16,9 @@ import {
   doublesDrawSlots,
   countDoublesField,
   wouldExceedCapacity,
+  planAutoPairs,
+  isOutOfEvent,
+  isExpectedFailure,
   ExpectedError,
 } from '@badminton/shared';
 import { runAction, type ActionResult } from '../action-result';
@@ -1537,4 +1540,208 @@ async function bulkCheckInImpl(
 
   revalidateEventPaths(event.tournament_id, eventId);
   return { checkedIn: (updated ?? []).length, skippedForWaiver };
+}
+
+// ============================================================
+// Auto pair — the waiting list, sorted out in one press
+// ============================================================
+
+/** What Auto pair reports back. Never a bare success: see the comment below. */
+export interface AutoPairResult {
+  pairsMade: number;
+  /** How many people are still in the pool afterwards. */
+  stillWaiting: number;
+  /**
+   * How many pairs were REFUSED, as opposed to never attempted.
+   *
+   * Reported separately from `stillWaiting` because the two are different
+   * facts and the caller has to tell them apart to choose a tone. An odd list
+   * leaves somebody over by arithmetic — the exec was told that in the confirm
+   * and agreed to it, so it is not a failure. A refused pair is something going
+   * wrong. Collapsing both into "not everybody was paired" made auto-pairing
+   * five people report itself in red.
+   */
+  refused: number;
+  /**
+   * Why they are still there — the odd one out, and anybody a pair was refused
+   * for. Empty only when the list emptied completely.
+   */
+  stillWaitingReason: string;
+  /**
+   * Newly paired players with no current event-waiver signature.
+   *
+   * NOT A REFUSAL, and this is the point most likely to be got wrong by a later
+   * reader. Pairing does not require a signature and never has: the gates are
+   * check-in (assertEventWaiverSigned) and draw generation
+   * (assertDrawFieldEventWaiverSigned), and migration 00102 writes every new
+   * pair as 'registered' precisely so the team faces the waiver gate as a team.
+   * Auto pair therefore pairs an unsigned entrant exactly as the manual button
+   * beside it does — refusing here would make the bulk control STRICTER than
+   * the single one and strand pairable people in the pool for a reason nothing
+   * else in the flow cares about.
+   *
+   * It is still worth SAYING, because those pairs cannot be checked in and will
+   * stop the draw, and the exec is standing in front of the people who need to
+   * sign.
+   */
+  unsignedNotice: string;
+}
+
+/**
+ * Pair everybody on the waiting list, strongest with weakest.
+ *
+ * ONE TRANSACTION PER PAIR, not one for the batch, and the result type is built
+ * around that being visible. Each pair goes through addPairToEventImpl — the
+ * same function the manual button calls, so there is exactly one pairing path
+ * and no second copy of the entry-cap discount, the capacity arithmetic, the
+ * fee rows, the audit row or the waiver notification to drift out of step. A
+ * pair that fails therefore fails AFTER the earlier ones have committed, which
+ * is why this reports counts and reasons rather than ok/not-ok: "3 pairs made,
+ * 2 people still waiting" is the true statement, and a bare success would not
+ * be.
+ *
+ * RE-RUNNING IS SAFE. The plan is rebuilt from the pool as it is now, so people
+ * paired by the previous press are simply not in it; and if two execs press at
+ * once, pair_tournament_entrants takes an advisory lock on the event and
+ * refuses the second attempt on anybody already placed on a team. Nobody can be
+ * double-paired by pressing this twice.
+ */
+export async function autoPairWaitingEntrants(eventId: string): Promise<ActionResult<AutoPairResult>> {
+  return runAction(() => autoPairWaitingEntrantsImpl(eventId));
+}
+
+async function autoPairWaitingEntrantsImpl(eventId: string): Promise<AutoPairResult> {
+  // THE SAME CAPABILITY MANUAL PAIRING ASKS FOR, transcribed from
+  // addPairToEventImpl's own requireCapability call rather than inferred from
+  // the name. Auto pair is that act in bulk and no new key was minted for it:
+  // anybody who can pair two people can pair six, and nobody else can. Asked
+  // here as well as inside each addPairToEventImpl so a viewer without it is
+  // refused before any reads happen, not after the first pair commits.
+  await requireCapability('tournaments.draw.pairs.add.write');
+  const adminClient = createAdminClient();
+
+  const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
+  if (!event) throw new Error('Event not found');
+  if (!isDoublesEvent(event.event_type)) {
+    throw new ExpectedError('Only a doubles event has a waiting list to pair.');
+  }
+  // The same two statuses manual pairing accepts. Check-in is exactly when the
+  // club finds out who turned up without a partner, so this has to work there.
+  if (event.status !== 'registration' && event.status !== 'checkin') {
+    throw new ExpectedError('Cannot pair in current status');
+  }
+  if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before making changes.');
+  await assertTournamentNotSuspended(adminClient, event.tournament_id);
+
+  const { data: pool, error: poolError } = await adminClient
+    .from('tournament_participants')
+    .select('player_id, status, elo_before, player:players!player_id(full_name, ratings(doubles_elo))')
+    .eq('event_id', eventId);
+  // A failed read must not read as "nobody is waiting" — that would report a
+  // cheerful zero and change nothing, which is the one answer the exec cannot
+  // tell apart from success.
+  if (poolError) {
+    Sentry.captureException(poolError);
+    throw new Error('Could not read the waiting list. Nobody was paired — try again.');
+  }
+
+  // WITHDRAWN ROWS ARE NOT RAW MATERIAL. 00102 refuses them outright ("remove
+  // their withdrawn entry from the waiting list first"), so including them
+  // would spend a whole pair's attempt on a guaranteed refusal and drag their
+  // partner down with it.
+  const waiting = (pool ?? []).filter((row) => !isOutOfEvent(row.status));
+
+  const nameOfPlayer = new Map<string, string>();
+  const candidates = waiting.map((row) => {
+    const embed = (Array.isArray(row.player) ? row.player[0] : row.player) as
+      { full_name?: string | null; ratings?: unknown } | null;
+    nameOfPlayer.set(row.player_id, embed?.full_name ?? 'This player');
+    const ratings = Array.isArray(embed?.ratings) ? embed?.ratings[0] : embed?.ratings;
+    const doublesElo = (ratings as { doubles_elo?: number | null } | null)?.doubles_elo;
+    // The same fallback chain the pool's own Elo column shows, and the same 400
+    // default unpair_tournament_pair stamps — so the fold sorts on the number
+    // the exec is looking at.
+    return { playerId: row.player_id, rating: doublesElo ?? row.elo_before ?? 400 };
+  });
+
+  const nameOf = (id: string) => nameOfPlayer.get(id) ?? 'This player';
+
+  // NOT AN ERROR when there is nobody to pair, and not when there is only one
+  // person. The exec asked a reasonable question and gets the reason rather
+  // than a failure — bulkCheckIn's rule, for the same situation.
+  if (candidates.length < 2) {
+    return {
+      pairsMade: 0,
+      stillWaiting: candidates.length,
+      refused: 0,
+      stillWaitingReason: candidates.length === 1
+        ? `${nameOf(candidates[0]!.playerId)} is the only person waiting, so there is nobody to pair them with.`
+        : 'Nobody is waiting for a partner.',
+      unsignedNotice: '',
+    };
+  }
+
+  const plan = planAutoPairs(candidates);
+
+  let pairsMade = 0;
+  let refused = 0;
+  const paired: string[] = [];
+  const reasons: string[] = [];
+  let stillWaiting = 0;
+
+  for (const [player1Id, player2Id] of plan.pairs) {
+    try {
+      // THE ONLY PAIRING PATH. Every check, fee row, audit row and notification
+      // that manual pairing performs happens here too, because it is literally
+      // the same function.
+      await addPairToEventImpl(eventId, player1Id, player2Id);
+      pairsMade += 1;
+      paired.push(player1Id, player2Id);
+    } catch (err) {
+      // ONE PAIR'S REFUSAL IS NOT THE BATCH'S. bulkCheckIn's partition rule:
+      // the ones who can be paired are, and the ones who cannot are named with
+      // the reason the server gave, which is already written to be read by an
+      // exec standing at a desk.
+      stillWaiting += 2;
+      refused += 1;
+      const why = err instanceof Error ? err.message : 'the pair was refused';
+      reasons.push(`${nameOf(player1Id)} and ${nameOf(player2Id)} could not be paired — ${why}`);
+      if (!isExpectedFailure(err)) Sentry.captureException(err);
+    }
+  }
+
+  // SAY WHO IS STILL WAITING AND WHY, always. An odd list leaves somebody
+  // behind by arithmetic, and that person must not be discovered later by a
+  // refused draw.
+  if (plan.leftOver) {
+    stillWaiting += 1;
+    reasons.push(
+      `${nameOf(plan.leftOver)} is still waiting — an odd number of people cannot be paired up completely.`,
+    );
+  }
+
+  // The waiver, reported and not enforced — see AutoPairResult.unsignedNotice.
+  //
+  // eventWaiverRefusal's wording was READ before being reused here, not assumed
+  // from its name: it says the members "cannot be CHECKED IN until they do" and
+  // tells the exec how they sign. That is exactly true of a pair auto-pairing
+  // just made, so the sentence is reused rather than reworded. It does not
+  // claim anybody was refused entry or refused a partner — if it ever starts
+  // to, this call needs its own wording, because here nobody was refused.
+  let unsignedNotice = '';
+  if (paired.length > 0) {
+    const { requiredHash, acceptances } = await loadTournamentWaiverContext(adminClient, event.tournament_id);
+    if (requiredHash) {
+      const { blocked } = screenForEventWaiver(
+        paired.map((id) => ({ id, members: [{ id, name: nameOf(id) }] })),
+        requiredHash,
+        acceptances,
+      );
+      if (blocked.length > 0) unsignedNotice = eventWaiverRefusal(blocked);
+    }
+  }
+
+  revalidateEventPaths(event.tournament_id, eventId);
+
+  return { pairsMade, stillWaiting, refused, stillWaitingReason: reasons.join(' '), unsignedNotice };
 }

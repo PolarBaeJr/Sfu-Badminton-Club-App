@@ -72,7 +72,11 @@ describe('participantControls — capability, not just status', () => {
     // a leak: both pairs are the SAME capability behind the same action —
     // pairs.add.write for addPairToEvent, pairs.remove.write for unpairEntry —
     // differing only in which of the two the exec is looking at.
-    expect(shown(participantControls(registration, only('add')))).toEqual(['add', 'pair']);
+    //
+    // `autoPair` joins that group for the same reason and NO new capability was
+    // minted for it: autoPairWaitingEntrants asks pairs.add.write and then calls
+    // addPairToEvent once per pair, so it is the same act in bulk.
+    expect(shown(participantControls(registration, only('add')))).toEqual(['add', 'autoPair', 'pair']);
     // Notably NOT 'swapMember': it needs both pair keys, so one alone buys
     // nothing. That is the assertion that keeps the swap from becoming the way
     // a holder of add does remove's job.
@@ -99,6 +103,9 @@ describe('participantControls — capability, not just status', () => {
     // narrower window, exactly as they were.
     const checkin = participantControls({ status: 'checkin', drawLocked: false }, EVERYTHING);
     expect(checkin.pair).toBe(true);
+    // Auto pair especially: a room of people who turned up without partners is
+    // the exact situation it exists for, and it is a check-in-desk situation.
+    expect(checkin.autoPair).toBe(true);
     expect(checkin.unpair).toBe(true);
     expect(checkin.withdrawMember).toBe(true);
     // The injury substitution is a check-in-morning operation if anything is.
@@ -117,6 +124,7 @@ describe('participantControls — capability, not just status', () => {
     for (const status of ['bracket_generated', 'live', 'completed']) {
       const c = participantControls({ status, drawLocked: false }, EVERYTHING);
       expect(c.pair).toBe(false);
+      expect(c.autoPair).toBe(false);
       expect(c.unpair).toBe(false);
       expect(c.withdrawMember).toBe(false);
       // Swapping matters most here, because unlike unpairing it is an UPDATE —
@@ -128,9 +136,34 @@ describe('participantControls — capability, not just status', () => {
     // And a locked draw freezes them too, capability or no capability.
     const locked = participantControls({ status: 'registration', drawLocked: true }, EVERYTHING);
     expect(locked.pair).toBe(false);
+    expect(locked.autoPair).toBe(false);
     expect(locked.unpair).toBe(false);
     expect(locked.withdrawMember).toBe(false);
     expect(locked.swapMember).toBe(false);
+  });
+
+  it('offers Auto pair exactly when it offers manual pairing, and never otherwise', () => {
+    // THE ASSERTION THAT KEEPS THE TWO FROM DRIFTING APART. Auto pair calls
+    // addPairToEvent once per pair, so a state where the bulk button is offered
+    // and the single one is not would be a button that is guaranteed to be
+    // refused — and the reverse would be a capability check the bulk path had
+    // quietly widened. Swept over every status, both lock states, and every
+    // single-capability holder rather than asserted on the happy path.
+    const statuses = ['registration', 'checkin', 'bracket_generated', 'live', 'completed', 'cancelled'];
+    const holders: DrawCapabilities[] = [
+      NOBODY,
+      EVERYTHING,
+      ...(Object.keys(NOBODY) as Array<keyof DrawCapabilities>).map((k) => only(k)),
+    ];
+
+    for (const status of statuses) {
+      for (const drawLocked of [false, true]) {
+        for (const can of holders) {
+          const c = participantControls({ status, drawLocked }, can);
+          expect(c.autoPair).toBe(c.pair);
+        }
+      }
+    }
   });
 
   it('keeps the status condition — both have to hold', () => {

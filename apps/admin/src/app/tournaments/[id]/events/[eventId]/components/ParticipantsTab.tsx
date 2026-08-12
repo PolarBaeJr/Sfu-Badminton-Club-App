@@ -16,13 +16,14 @@ import {
   clearSeeds,
   withdrawParticipant,
   withdrawPair,
+  autoPairWaitingEntrants,
 } from '@/lib/tournament-actions';
 import { summarizeBulk } from '@/lib/bulk-add';
 import { participantControls, type DrawCapabilities } from '@/lib/participant-controls';
 import { nextPowerOf2, pickOne, isOutOfEvent } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil, UserMinus, Unlink, Users, Replace } from 'lucide-react';
+import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil, UserMinus, Unlink, Users, Replace, Shuffle } from 'lucide-react';
 import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';
 import type { EventWaiverStatus } from '@badminton/shared';
 import { WaiverState } from './WaiverState';
@@ -175,6 +176,10 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   const [addMode, setAddMode] = useState<'pair' | 'solo'>('pair');
   // The unpaired entrants ticked for pairing. Exactly two makes a team.
   const [selectedUnpaired, setSelectedUnpaired] = useState<string[]>([]);
+  // Its own flag rather than sharing `loading` with "Pair selected": both
+  // buttons sit in the same header, and one spinner on both would say the wrong
+  // one is working.
+  const [autoPairing, setAutoPairing] = useState(false);
   // The pair whose halves are being offered a withdrawal, or null.
   const [splitting, setSplitting] = useState<PairWithPlayers | null>(null);
   // The pair being edited, and which half is on the way out. Two steps in one
@@ -199,6 +204,27 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   // this list is empty.
   const unpaired = isDoubles ? participants : [];
   const activeUnpaired = unpaired.filter((p) => !isOutOfEvent(p.status));
+
+  // WITHDRAWN ENTRIES LEAVE THE LIVE LISTS AND GO TO THEIR OWN BLOCK.
+  //
+  // `activeUnpaired` was computed here and then used ONLY for the counts, while
+  // both tables iterated the raw lists — so the "Waiting for a partner" heading
+  // said six people over a table of seven rows, and the block rendered at all
+  // whenever a withdrawn row existed even if nobody was actually waiting. The
+  // heading and the rows now read the same list, which is the fix.
+  //
+  // 'no_show' DELIBERATELY STAYS IN THE LIVE LIST. isOutOfEvent is withdrawn and
+  // disqualified only — packages/shared/src/utils/tournament-withdrawal.ts says
+  // why in its own words: a no-show is somebody who took a place and did not use
+  // it, so they still hold their slot, still spend an entry-cap allowance and
+  // still appear in a draw that was already generated around them. Moving them
+  // into a block headed "Withdrawn" would say the opposite of all three.
+  // `activeEntries` above is already this list — the table simply was not using
+  // it, which is how the withdrawn rows got in.
+  const withdrawnPairs = isDoubles ? pairs.filter((p) => isOutOfEvent(p.status)) : [];
+  const withdrawnSolo = (isDoubles ? unpaired : participants).filter((p) => isOutOfEvent(p.status));
+  const withdrawnCount = withdrawnPairs.length + withdrawnSolo.length;
+
   const bracketSize = nextPowerOf2(activeEntries.length);
   const byes = bracketSize - activeEntries.length;
   const drawLocked = event.draw_locked as boolean;
@@ -324,6 +350,70 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     setSelectedUnpaired([]);
     router.refresh();
     setLoading(false);
+  }
+
+  /**
+   * PAIR THE WHOLE WAITING LIST.
+   *
+   * CONFIRMED, unlike "Pair selected" beside it, and the difference is real:
+   * that button acts on two people the exec has just ticked and can see, this
+   * one decides who plays with whom for the entire event in a single press. The
+   * confirm names the count so what is about to happen is on screen before it
+   * happens. NO TYPED REASON, though — the neighbouring pairing actions were
+   * checked rather than assumed: addPairToEvent's audit row ('pair_added')
+   * records player ids and whether they were promoted from the pool, and has no
+   * reason field to fill in. Demanding one here would be a heavier ceremony
+   * than the act it audits.
+   *
+   * THE RESULT IS NEVER REPORTED AS A BARE SUCCESS. Each pair is its own
+   * transaction, so a later one can fail after earlier ones committed — the
+   * toast says how many were made and how many people are still waiting.
+   */
+  async function handleAutoPair() {
+    const count = activeUnpaired.length;
+    const willPair = Math.floor(count / 2);
+    const ok = await confirm({
+      title: `Pair ${willPair === 1 ? 'the 2 people' : `${willPair * 2} people`} waiting?`,
+      message: count % 2 === 0
+        ? `${willPair} ${willPair === 1 ? 'team' : 'teams'} will be formed, strongest player with weakest so the teams are evenly matched. You can unpair any of them afterwards.`
+        : `${willPair} ${willPair === 1 ? 'team' : 'teams'} will be formed, strongest player with weakest so the teams are evenly matched. ${count} is an odd number, so one person will still be waiting. You can unpair any of them afterwards.`,
+      confirmLabel: 'Auto pair',
+    });
+    if (!ok) return;
+
+    setAutoPairing(true);
+    const res = await autoPairWaitingEntrants(event.id);
+    if (!res.ok) {
+      toast(res.error, 'error');
+      setAutoPairing(false);
+      return;
+    }
+
+    const { pairsMade, stillWaiting, refused, stillWaitingReason, unsignedNotice } = res.data;
+    const made = `${pairsMade} ${pairsMade === 1 ? 'pair' : 'pairs'} made`;
+    const left = stillWaiting > 0
+      ? `, ${stillWaiting} ${stillWaiting === 1 ? 'person' : 'people'} still waiting. ${stillWaitingReason}`
+      : '';
+
+    // THE TONE FOLLOWS `refused`, NOT "was anybody left over".
+    //
+    // An odd list leaves somebody waiting by arithmetic, and the confirm dialog
+    // above said so before the exec agreed to it. Reporting that in red would
+    // tell them the thing they were promised had gone wrong — auto-pairing five
+    // people would have shown a red toast for working exactly as designed.
+    // 'error' is kept for a pair that was actually REFUSED; a clean sweep is
+    // 'success'; the leftover and the unsigned notice are 'info', because both
+    // are things to know rather than things that failed.
+    const tone = refused > 0
+      ? 'error'
+      : stillWaiting === 0 && !unsignedNotice
+        ? 'success'
+        : 'info';
+    toast(`${made}${left}${unsignedNotice ? ` ${unsignedNotice}` : ''}`, tone);
+
+    setSelectedUnpaired([]);
+    router.refresh();
+    setAutoPairing(false);
   }
 
   async function handleUnpair(pair: PairWithPlayers) {
@@ -647,7 +737,19 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
       )}
 
       {/* Participants table */}
+      {/* THE INNER overflow-x-auto IS WHAT MAKES THE ACTIONS CELL SAFE TO
+          nowrap, and it is not decoration. The roster (players/page.tsx) stops
+          its row actions folding onto a second line with flex-nowrap, and its
+          comment justifies that by the table sitting inside ResponsiveTable's
+          overflow-x-auto — a narrow desktop gets a horizontal scroll instead of
+          a ragged multi-line row. This table has no ResponsiveTable: it is a
+          bare <table> inside a rounded card whose overflow is HIDDEN, so
+          nowrap alone would have CLIPPED the fourth control rather than
+          scrolling to it, which is a worse fault than the one being fixed.
+          The card keeps overflow-hidden because that is what clips the table's
+          corners to the border radius; the scroll container goes inside it. */}
       <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+        <div className="overflow-x-auto">
         <table className="w-full">
           <thead>
             <tr className="border-b border-[var(--border)]">
@@ -678,7 +780,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
           </thead>
           <tbody>
             {isDoubles ? (
-              pairs.map((pair) => (
+              (activeEntries as PairWithPlayers[]).map((pair) => (
                 <tr key={pair.id} className="border-b border-[var(--border)] last:border-b-0 hover:bg-[var(--bg-elevated)] transition-colors">
                   <td className="px-4 py-3">
                     <SeedCell
@@ -709,8 +811,17 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                     </span>
                   </td>
                   {showPairActions && (
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-1 flex-wrap">
+                    // A formed pair now offers four controls — Swap, Unpair,
+                    // "One pulled out" and delete — and flex-wrap folded each
+                    // onto its own line, growing this row to about four times
+                    // the height of every other one. nowrap instead, with the
+                    // 44px touch floor .design-sync/guidelines/admin-console.md
+                    // requires of any row-action slot: this console is used on a
+                    // phone at the gym door and a thumb does not get a second
+                    // try at a 32px button. The width this claims is paid for by
+                    // the scroll container around the table, not by the row.
+                    <td className="whitespace-nowrap px-4 py-3 text-right align-middle">
+                      <div className="inline-flex flex-nowrap items-center justify-end gap-2 [&_button]:min-h-[44px]">
                         {renderPairSplitActions(pair)}
                         {renderActions(pair.id, pair.pair_name ?? `${pair.player1?.full_name} / ${pair.player2?.full_name}`, pair.status)}
                       </div>
@@ -719,7 +830,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                 </tr>
               ))
             ) : (
-              participants.map((p) => {
+              (activeEntries as ParticipantWithPlayer[]).map((p) => {
                 const player = p.player;
                 const ratings = pickOne(player?.ratings);
                 const elo = ratings?.singles_elo ?? p.elo_before ?? '-';
@@ -765,8 +876,9 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
             )}
           </tbody>
         </table>
+        </div>
 
-        {entries.length === 0 && (
+        {activeEntries.length === 0 && (
           <div className="p-8 text-center text-sm text-[var(--text-muted)]">
             No {isDoubles ? 'pairs' : 'participants'} yet. Add some to get started.
           </div>
@@ -785,10 +897,19 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
         rows are information the page already has, and hiding "three people are
         still waiting" from somebody who cannot fix it is how a draw gets
         refused for a reason nobody on screen can see.
+
+        ACTIVE ROWS ONLY. This block and its heading now read the same list.
+        Before, the block rendered on `unpaired.length` and the rows iterated
+        `unpaired` — both of which INCLUDE withdrawn and disqualified entries —
+        while the heading counted `activeUnpaired`. A withdrawn person was
+        therefore drawn as a row under a heading that did not count them, and an
+        event where the only pool row was a withdrawal showed "0 people" above a
+        table with somebody in it. Those rows moved to the Withdrawn block below;
+        this list is the people actually waiting.
       */}
-      {isDoubles && unpaired.length > 0 && (
+      {isDoubles && activeUnpaired.length > 0 && (
         <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
-          <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-[var(--border)]">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-[var(--border)]">
             <div className="flex items-center gap-2">
               <Users className="w-4 h-4 text-[var(--color-warning)]" />
               <span className="text-sm font-medium text-[var(--text-primary)]">Waiting for a partner</span>
@@ -796,17 +917,37 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                 {activeUnpaired.length} {activeUnpaired.length === 1 ? 'person' : 'people'}
               </span>
             </div>
-            {controls.pair && (
-              <Button
-                size="sm"
-                onClick={handlePairSelected}
-                disabled={selectedUnpaired.length !== 2}
-                loading={loading}
-                className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
-              >
-                Pair selected ({selectedUnpaired.length}/2)
-              </Button>
-            )}
+            <div className="flex items-center gap-2">
+              {/* AUTO PAIR sits beside the manual control rather than replacing
+                  it: hand-picking is still the right tool for "these two asked
+                  to play together", and this is the right tool for "sort the
+                  rest out". Same capability, same statuses — see
+                  participantControls, where autoPair is the pair flag. */}
+              {controls.autoPair && activeUnpaired.length >= 2 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={handleAutoPair}
+                  loading={autoPairing}
+                  aria-label="Automatically pair everyone waiting for a partner"
+                  className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+                >
+                  <Shuffle className="w-3.5 h-3.5 mr-1" />
+                  Auto pair
+                </Button>
+              )}
+              {controls.pair && (
+                <Button
+                  size="sm"
+                  onClick={handlePairSelected}
+                  disabled={selectedUnpaired.length !== 2}
+                  loading={loading}
+                  className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+                >
+                  Pair selected ({selectedUnpaired.length}/2)
+                </Button>
+              )}
+            </div>
           </div>
 
           {/* The draw refuses outright while anybody is here, so say so where
@@ -821,6 +962,9 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
             </div>
           )}
 
+          {/* Same scroll container as the pairs table, for the same reason: the
+              row-action cell below is nowrap, and this card clips. */}
+          <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="border-b border-[var(--border)]">
@@ -837,8 +981,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               </tr>
             </thead>
             <tbody>
-              {unpaired.map((p) => {
-                const out = isOutOfEvent(p.status);
+              {activeUnpaired.map((p) => {
                 const ratings = pickOne(p.player?.ratings);
                 // doubles_elo, because this is a doubles event — the same number
                 // elo_before was stamped with when they entered.
@@ -851,9 +994,11 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                           type="checkbox"
                           checked={selectedUnpaired.includes(p.player_id)}
                           onChange={() => toggleUnpaired(p.player_id)}
-                          // Somebody who has left the event is not raw material
-                          // for a team — the server refuses it too.
-                          disabled={out}
+                          // No `disabled` guard is needed any more: somebody who
+                          // has left the event is not in this list at all. The
+                          // server refuses them regardless — pair_tournament_
+                          // entrants (00102) raises on a withdrawn pool row, and
+                          // that is the guard that actually holds.
                           aria-label={`Pair ${unpairedName(p)}`}
                           className="w-4 h-4 accent-[var(--color-accent)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
                         />
@@ -879,18 +1024,17 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                       </span>
                     </td>
                     {controls.removeSolo && (
-                      <td className="px-4 py-3 text-right">
-                        {/* OFFERED ON A WITHDRAWN ROW TOO, unlike the singles
-                            list above, and that is what makes the server's
-                            refusal followable: pairing somebody who has
-                            withdrawn is refused and tells the exec to remove
-                            the withdrawn entry first, which without this button
-                            is an instruction with nothing behind it. Adding
-                            them again then hits UNIQUE(event_id, player_id)
-                            until the old row is gone. */}
-                        <Button size="sm" variant="ghost" onClick={() => handleRemoveUnpaired(p.id)} loading={actionLoading === p.id} aria-label={`Remove ${unpairedName(p)}`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
-                          <Trash2 className="w-3.5 h-3.5 text-[var(--color-danger)]" />
-                        </Button>
+                      // The withdrawn rows this cell used to also serve now live
+                      // in the Withdrawn block, and the Remove button went with
+                      // them — that is where "remove the withdrawn entry first"
+                      // has to be actionable. Here it is the ordinary "this
+                      // person should not be in the event" delete.
+                      <td className="whitespace-nowrap px-4 py-3 text-right align-middle">
+                        <div className="inline-flex flex-nowrap items-center justify-end gap-2 [&_button]:min-h-[44px]">
+                          <Button size="sm" variant="ghost" onClick={() => handleRemoveUnpaired(p.id)} loading={actionLoading === p.id} aria-label={`Remove ${unpairedName(p)}`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
+                            <Trash2 className="w-3.5 h-3.5 text-[var(--color-danger)]" />
+                          </Button>
+                        </div>
                       </td>
                     )}
                   </tr>
@@ -898,6 +1042,91 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               })}
             </tbody>
           </table>
+          </div>
+        </div>
+      )}
+
+      {/*
+        WITHDRAWN — the record, kept out of the live field.
+
+        A withdrawn entry sat inline among the people who are actually playing,
+        which is hardest to read at exactly the moment it matters: an exec
+        scanning the list before a draw wants to see who IS in it.
+
+        RELOCATED, NEVER HIDDEN, and the distinction is load-bearing. Withdrawing
+        does not refund — the fee stays on the books, the entry-cap slot is
+        released and the event-waiver acceptance stands — so the member can still
+        see the charge on their own /fees page. An admin screen that derived its
+        roster from live entries only would show that member's paid fee on
+        NEITHER admin surface while they are still looking at it, which is a bug
+        a sibling has already had to fix once. These rows stay on the page.
+
+        QUIET, because it is a record and not an alert: muted text, no warning
+        tones, one line per entry rather than a second full-weight table. Not
+        rendered at all when nobody has withdrawn.
+
+        WHY 'no_show' IS NOT HERE. isOutOfEvent covers withdrawn and disqualified
+        only; a no-show still holds their slot and still spends an entry-cap
+        allowance, so they belong in the live list. Disqualified IS here, because
+        it takes somebody out of the event exactly as a withdrawal does — the
+        heading says "Withdrawn" but each row carries its own status label, so a
+        disqualification is never mislabelled as a withdrawal.
+      */}
+      {withdrawnCount > 0 && (
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border)]">
+            <XCircle className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+            <span className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">Withdrawn</span>
+            <span className="text-xs text-[var(--text-muted)]">
+              {withdrawnCount} {withdrawnCount === 1 ? 'entry' : 'entries'}
+            </span>
+          </div>
+
+          <ul className="divide-y divide-[var(--border)]">
+            {withdrawnPairs.map((pair) => (
+              <li key={pair.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
+                <span className="text-sm text-[var(--text-muted)]">
+                  {pair.pair_name ?? `${pair.player1?.full_name} / ${pair.player2?.full_name}`}
+                </span>
+                <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--text-muted)]">
+                  <span className="sr-only">Status: </span>{statusLabel(pair.status)}
+                </span>
+              </li>
+            ))}
+            {withdrawnSolo.map((p) => (
+              <li key={p.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
+                <span className="text-sm text-[var(--text-muted)]">{unpairedName(p)}</span>
+                <div className="inline-flex flex-nowrap items-center gap-2 [&_button]:min-h-[44px]">
+                  <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--text-muted)]">
+                    <span className="sr-only">Status: </span>{statusLabel(p.status)}
+                  </span>
+                  {/* THE ONE ACTION THAT STILL APPLIES, and only in a doubles
+                      event. Pairing somebody who has withdrawn is refused by
+                      00102 with "remove their withdrawn entry from the waiting
+                      list first, then add them again" — an instruction with
+                      nothing behind it unless this button exists. Re-adding them
+                      without deleting the row hits UNIQUE(event_id, player_id).
+
+                      `isDoubles` GUARDS AGAINST A WIDENING NOBODY ASKED FOR.
+                      Relocating the rows is a readability change and applies to
+                      every shape, but a withdrawn SINGLES entrant was previously
+                      shown with an empty Actions cell — renderActions returns
+                      '—' for anybody out of the event — and there is no pairing
+                      refusal in a singles event for this button to unblock. So
+                      each row keeps exactly the actions it had before the move.
+
+                      Unpair, Swap and "One pulled out" are deliberately NOT here
+                      either: none is a thing you can do to an entry that has
+                      already left. */}
+                  {isDoubles && controls.removeSolo && (
+                    <Button size="sm" variant="ghost" onClick={() => handleRemoveUnpaired(p.id)} loading={actionLoading === p.id} aria-label={`Remove ${unpairedName(p)}'s withdrawn entry`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
+                      <Trash2 className="w-3.5 h-3.5 text-[var(--color-danger)]" />
+                    </Button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
