@@ -305,9 +305,13 @@ export const INACTIVITY_PURGE_DAYS = 365;
 // only when a key is absent or unparseable. Do not read this table directly at
 // an award or display site — that is how the panel and the engine drifted apart
 // in the first place.
+// thirdPlace sits between finalist and semifinalist, because that is what it
+// is: the club plays a best-of-3 play-off for it, the same length as the final.
+// Before this, third and fourth both took the semifinalist amount and the
+// play-off decided nothing but a label.
 export const PLACEMENT_BONUSES = {
-  singles: { champion: 32, finalist: 20, semifinalist: 12, quarterfinalist: 6 },
-  doubles: { champion: 28, finalist: 18, semifinalist: 10, quarterfinalist: 4 },
+  singles: { champion: 32, finalist: 20, thirdPlace: 16, semifinalist: 12, quarterfinalist: 6 },
+  doubles: { champion: 28, finalist: 18, thirdPlace: 14, semifinalist: 10, quarterfinalist: 4 },
 } as const;
 
 export const COLORS = {

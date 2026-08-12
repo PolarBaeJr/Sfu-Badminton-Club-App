@@ -31,6 +31,24 @@ const POSITION_LABELS: Record<number, string> = {
   5: 'Quarter-finalist', 6: 'Quarter-finalist', 7: 'Quarter-finalist', 8: 'Quarter-finalist',
 };
 
+/**
+ * The finish label, given whether a third-place play-off was actually played.
+ *
+ * WITHOUT a play-off, 3rd and 4th are both "Semi-finalist" and that is honest:
+ * the two beaten semi-finalists were never separated on court, and the numbers
+ * beside them are only a tiebreak.
+ *
+ * WITH one they are not the same, and saying so twice erased the entire point
+ * of the match — the club plays a best-of-3 to decide it, and both players came
+ * away labelled identically. Whoever won it finished THIRD.
+ */
+function positionLabel(position: number | null | undefined, playoffPlayed: boolean): string {
+  if (!position) return '';
+  if (playoffPlayed && position === 3) return '3rd place';
+  if (playoffPlayed && position === 4) return '4th place';
+  return POSITION_LABELS[position] ?? `#${position}`;
+}
+
 const POSITION_COLORS: Record<number, string> = {
   1: '#FFD700', 2: '#C0C0C0', 3: '#CD7F32', 4: '#CD7F32',
 };
@@ -52,6 +70,10 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles, bon
   // must coerce rather than compare against false.
   const bonusesApply = bonusSettings.enabled && !!event.placement_bonus_enabled;
   const completedMatchList = matches.filter((m) => m.status === 'completed' || m.status === 'walkover');
+  // Was the third-place play-off actually PLAYED? Not "does the event have
+  // one" — a generated-but-unplayed playoff separates nobody, and a voided one
+  // un-separates them again.
+  const playoffPlayed = completedMatchList.some((m) => (m as { is_third_place?: boolean | null }).is_third_place === true);
 
   async function handleUndo() {
     if (!undoConfirmId) return;
@@ -129,7 +151,7 @@ export function ResultsTab({ event, participants, pairs, matches, isDoubles, bon
               // Singles-only Elo fields — only read when !isDoubles.
               const p = e as ParticipantWithPlayer;
               const pos = e.final_position as number;
-              const label = POSITION_LABELS[pos] ?? `#${pos}`;
+              const label = positionLabel(pos, playoffPlayed);
               const color = POSITION_COLORS[pos] ?? 'var(--text-muted)';
               const bonus = bonusesApply ? placementBonusFor(pos, bonuses) : 0;
 

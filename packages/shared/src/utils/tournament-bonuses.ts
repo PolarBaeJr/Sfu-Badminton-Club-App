@@ -17,6 +17,8 @@ import { PLACEMENT_BONUSES } from './constants';
 export interface PlacementBonusAmounts {
   champion: number;
   finalist: number;
+  /** Won the third-place play-off. Fourth still takes `semifinalist`. */
+  thirdPlace: number;
   semifinalist: number;
   quarterfinalist: number;
 }
@@ -95,6 +97,7 @@ export function parseTournamentBonusSettings(value: unknown): TournamentBonusSet
     singles: {
       champion: settingNumber(row.singles_champion, PLACEMENT_BONUSES.singles.champion),
       finalist: settingNumber(row.singles_finalist, PLACEMENT_BONUSES.singles.finalist),
+      thirdPlace: settingNumber(row.singles_thirdplace, PLACEMENT_BONUSES.singles.thirdPlace),
       semifinalist: settingNumber(row.singles_semifinalist, PLACEMENT_BONUSES.singles.semifinalist),
       quarterfinalist: settingNumber(
         row.singles_quarterfinalist,
@@ -104,6 +107,7 @@ export function parseTournamentBonusSettings(value: unknown): TournamentBonusSet
     doubles: {
       champion: settingNumber(row.doubles_champion, PLACEMENT_BONUSES.doubles.champion),
       finalist: settingNumber(row.doubles_finalist, PLACEMENT_BONUSES.doubles.finalist),
+      thirdPlace: settingNumber(row.doubles_thirdplace, PLACEMENT_BONUSES.doubles.thirdPlace),
       semifinalist: settingNumber(row.doubles_semifinalist, PLACEMENT_BONUSES.doubles.semifinalist),
       quarterfinalist: settingNumber(
         row.doubles_quarterfinalist,
@@ -126,7 +130,10 @@ export function placementBonusFor(
   if (!position || position < 1) return 0;
   if (position === 1) return amounts.champion;
   if (position === 2) return amounts.finalist;
-  if (position <= 4) return amounts.semifinalist;
+  // THIRD IS ITS OWN TIER. Fourth keeps the semi-finalist amount — they did
+  // reach a semi-final — so the gap is what the play-off was worth.
+  if (position === 3) return amounts.thirdPlace;
+  if (position === 4) return amounts.semifinalist;
   if (position <= 8) return amounts.quarterfinalist;
   return 0;
 }

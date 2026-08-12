@@ -472,7 +472,22 @@ async function assignPositionsAndPoints(
   // round-robin rule, more than the 10 a beaten quarter-finalist takes.
   const pointsMap = new Map<string, number>();
   if (knockout) {
-    // Position-based points: 1st=100, 2nd=75, 3rd-4th=50, 5th-8th=25, else 10
+    // Position-based points: 1st=100, 2nd=75, 3rd=50, 4th=40, 5th-8th=25, else 10
+    //
+    // THIRD AND FOURTH ARE NOT THE SAME, at the club owner's instruction. They
+    // used to share 50, which made the third-place play-off — a best of 3 to 21,
+    // the same length as the final — decide a label and nothing else. A club
+    // does not ask two people to play a deciding match for identical reward.
+    //
+    // 40 rather than 25: fourth still reached a semi-final and must stay clear
+    // of the quarter-final band, so the gap says "you lost the play-off", not
+    // "you went out a round earlier".
+    //
+    // Where there was NO play-off the two are genuinely unseparated, but they
+    // still hold distinct final_positions (assigned by the tiebreak), so this
+    // splits them anyway. That is the pre-existing behaviour of that tiebreak
+    // rather than something introduced here, and it is why the RESULTS table
+    // only says "3rd place" when a play-off was actually played.
     const { data: allEntries } = await adminClient.from(table)
       .select('id, final_position')
       .eq('event_id', eventId)
@@ -482,7 +497,8 @@ async function assignPositionsAndPoints(
       let pts: number;
       if (pos === 1) pts = 100;
       else if (pos === 2) pts = 75;
-      else if (pos <= 4) pts = 50;
+      else if (pos === 3) pts = 50;
+      else if (pos === 4) pts = 40;
       else if (pos <= 8) pts = 25;
       else pts = 10;
       pointsMap.set(entry.id, pts);

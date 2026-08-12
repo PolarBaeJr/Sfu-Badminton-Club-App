@@ -2836,8 +2836,12 @@ describe('third-place playoff', () => {
     expect(participant('p-bob').final_position).toBe(3);
     expect(participant('p-dan').final_position).toBe(4);
     // Points follow the positions: 3rd and 4th both land in the "<= 4" band.
+    // 50 vs 40, not 50 and 50. They used to tie, which made the play-off — a
+    // best of 3, the same length as the final — worth nothing but a label.
+    // 4th stays clear of the quarter-final band (25): it lost a play-off, it
+    // did not go out a round earlier.
     expect(participant('p-bob').points).toBe(50);
-    expect(participant('p-dan').points).toBe(50);
+    expect(participant('p-dan').points).toBe(40);
   });
 
   it('still gives both semi-final losers joint 3rd when there is no playoff', async () => {

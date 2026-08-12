@@ -60,10 +60,13 @@ describe('settingNumber', () => {
 
 describe('parseTournamentBonusSettings', () => {
   it('reads the real prod row: bonuses globally OFF, amounts as stored', () => {
+    // thirdPlace is NOT in the stored row — it predates the tier — so it comes
+    // from PLACEMENT_BONUSES, which is the documented fallback for any key the
+    // row does not supply. Adding the key to the row overrides it.
     expect(parseTournamentBonusSettings(PROD_ROW)).toEqual({
       enabled: false,
-      singles: { champion: 32, finalist: 20, semifinalist: 12, quarterfinalist: 6 },
-      doubles: { champion: 28, finalist: 18, semifinalist: 10, quarterfinalist: 4 },
+      singles: { champion: 32, finalist: 20, thirdPlace: 16, semifinalist: 12, quarterfinalist: 6 },
+      doubles: { champion: 28, finalist: 18, thirdPlace: 14, semifinalist: 10, quarterfinalist: 4 },
     });
   });
 
@@ -119,12 +122,14 @@ describe('parseTournamentBonusSettings', () => {
 });
 
 describe('placementBonusFor', () => {
-  const amounts = { champion: 32, finalist: 20, semifinalist: 12, quarterfinalist: 6 };
+  const amounts = { champion: 32, finalist: 20, thirdPlace: 16, semifinalist: 12, quarterfinalist: 6 };
 
   it('maps the placement bands', () => {
     expect(placementBonusFor(1, amounts)).toBe(32);
     expect(placementBonusFor(2, amounts)).toBe(20);
-    expect(placementBonusFor(3, amounts)).toBe(12);
+    // Third is its own tier now: the club plays a best-of-3 play-off for it,
+    // and it used to pay exactly what losing that play-off paid.
+    expect(placementBonusFor(3, amounts)).toBe(16);
     expect(placementBonusFor(4, amounts)).toBe(12);
     expect(placementBonusFor(5, amounts)).toBe(6);
     expect(placementBonusFor(8, amounts)).toBe(6);
