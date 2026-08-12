@@ -195,10 +195,16 @@ export default async function AccountsPage() {
     .not('builtin_role', 'is', null)
     .order('name');
 
-  // FALLS BACK TO THE SHIPPED DEFAULTS, and only when the table says nothing.
-  // That is the pre-migration state — 00104 unapplied, no rows — and there the
-  // constant is still literally correct, because nothing can have edited a row
-  // that does not exist. An empty card would read as "these roles do nothing".
+  // FALLS BACK TO THE SHIPPED DEFAULTS WHEN THE QUERY ANSWERS NOTHING, and the
+  // case that actually reaches it is 00104 UNAPPLIED — where `builtin_role` does
+  // not exist, PostgREST answers the whole select with an error, and supabase-js
+  // returns { data: null } rather than throwing. So `roleRows` is null and this
+  // fires. (A migration applied but somehow unseeded lands here too.)
+  //
+  // The constant is still literally correct in exactly that state, because
+  // nothing can have edited a row that does not exist — which is what makes a
+  // fallback honest here rather than a guess. An empty card would read as "these
+  // roles do nothing", which is the one thing they never mean.
   const namedRoles: { key: string; label: string; capabilities: readonly Capability[] }[] =
     (roleRows ?? []).length > 0
       ? (roleRows ?? []).map((row) => ({

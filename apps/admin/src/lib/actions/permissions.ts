@@ -200,6 +200,29 @@ async function setPlayerPermissionsImpl(playerId: string, next: PermissionsPaylo
     throw new ExpectedError('That is not a permission role.');
   }
 
+  // THE LITERAL ROLE VALUES STILL RESOLVE, AND THAT IS DELIBERATE.
+  //
+  // Since 00104 the four VP jobs are editable ROWS, handed over by copying like
+  // any baseline, and the editor no longer OFFERS them as names — roleOptions()
+  // filters them out, keeping one only when it is already what the person has.
+  // So a row storing permission_role = 'finance' can no longer be created
+  // through the console; it can only be a row that predates the migration.
+  //
+  // REFUSING THE VALUE HERE WAS TRIED AND REJECTED. It is not an escalation —
+  // the seeded defaults are inside EXEC_BASELINE, and checks 3-5 below run on
+  // the RESOLVED result regardless, so nothing can be gained by naming one. What
+  // it would be is incoherent: a second Finance that does not follow the Finance
+  // the club edited.
+  //
+  // TWO THINGS ALREADY CLOSE THAT, WHICH IS WHY A THIRD IS NOT WORTH ITS COST.
+  // 00104 rewrites every legacy holder to the copied shape when it is applied,
+  // and holdersOf() in permission-baselines.ts sweeps any that remain into it on
+  // the next edit to that role — so the incoherent state is self-healing and
+  // bounded by the shipped set while it lasts. A refusal here would additionally
+  // have forced seventeen existing closure and audit tests off a role base and
+  // onto hand-picked grants, which is a weaker thing to test than what they test
+  // now.
+
   // A ROLE ON AN ADMIN IS A VALUE NOTHING READS, and that is the whole reason
   // it is refused. permits() short-circuits on level === 'admin' before any set
   // is consulted, so a stored role would not take one capability away from

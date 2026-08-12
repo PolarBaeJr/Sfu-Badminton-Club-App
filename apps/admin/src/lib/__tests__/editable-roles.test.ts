@@ -453,6 +453,33 @@ describe('resetting a built-in role', () => {
     expect(result.error).toMatch(/at least/i);
   });
 
+  // VALIDATE EVERY HOLDER, THEN WRITE — inherited from updateImpl, and asserted
+  // for reset specifically because "a reset is just an edit with the
+  // capabilities chosen for you" is a claim this feature makes, and a claim
+  // about failure behaviour is worth exactly what its test is worth.
+  //
+  // WHAT THIS PINS IS THAT THE PRE-FLIGHT IS AHEAD OF THE WRITE. updateImpl
+  // writes the baseline row FIRST and then propagates — the other order would
+  // reach people and then fail to record why, leaving them holding capabilities
+  // no row describes — so everything that can be known in advance has to be
+  // known in advance, or a refusal arrives with the role already reset.
+  //
+  // An admin holder is the case: nothing stored on an admin is ever consulted,
+  // so propagating to one is meaningless and setPlayerPermissions refuses it.
+  // The pre-flight refuses it first, which is the property worth having.
+  it('refuses a reset before writing anything when a holder cannot be propagated to', async () => {
+    await updatePermissionBaseline(FINANCE, 'Finance', MONEY_IN, REASON);
+    Object.assign(rowFor(ADMIN_2), { permission_baseline_id: FINANCE });
+
+    const result = await resetPermissionBaseline(FINANCE, 'Reverting the finance change');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/is an admin/i);
+    // NOTHING WRITTEN — the role still says what the club edited it to say,
+    // rather than being reset with one person left behind on the old set.
+    expect(baselineFor(FINANCE).capabilities).toEqual([...MONEY_IN].sort());
+  });
+
   // A CLUB-WRITTEN BASELINE HAS NOTHING TO GO BACK TO.
   it('is refused on a baseline the club wrote', async () => {
     const created = await createPermissionBaseline('Socials VP', [
