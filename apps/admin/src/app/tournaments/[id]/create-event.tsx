@@ -21,7 +21,7 @@ export function CreateEventButton({
   tournamentId,
   siblings = [],
   // The TOURNAMENT's multiplier, used as this event's starting value. Before
-  // 00108 that number was shown to players as "1.15x MULTIPLIER" while every
+  // 00109 that number was shown to players as "1.15x MULTIPLIER" while every
   // event was created at 1.25 and the rating maths only ever read the EVENT —
   // so the figure on the page was not the one applied to anyone's rating.
   // Seeding from it here is what makes the display honest; the event's own

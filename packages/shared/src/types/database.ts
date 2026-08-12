@@ -312,7 +312,7 @@ export interface Tournament {
   name: string;
   start_date: string;
   end_date: string | null;
-  /** Default Elo multiplier for events created here — see 00108. */
+  /** Default Elo multiplier for events created here — see 00109. */
   event_multiplier: number;
   placement_bonus_enabled: boolean;
   status: TournamentStatus;

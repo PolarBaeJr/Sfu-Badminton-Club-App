@@ -1,5 +1,5 @@
 -- ============================================================
--- 00108 — retire four tournament columns that decide nothing
+-- 00109 — retire four tournament columns that decide nothing
 --
 -- *** RUN THIS AFTER THE CODE IS DEPLOYED, NOT BEFORE. ***
 -- Same rule as 00095, for the same reason: the running console selects these
