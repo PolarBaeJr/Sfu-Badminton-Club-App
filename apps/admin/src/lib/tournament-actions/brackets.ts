@@ -533,13 +533,44 @@ async function generateSingleEliminationBracketImpl(eventId: string, includeThir
   // Get standard seeding positions
   const seedPositions = getStandardSeedPositions(bracketSize);
 
-  // Map seed number to entry — seeds beyond N get a BYE (null entry)
+  // ------------------------------------------------------------
+  // PLACE BY RANK, NOT BY THE STORED SEED NUMBER
+  // ------------------------------------------------------------
+  //
+  // THIS SILENTLY DROPPED PEOPLE OUT OF THE DRAW, and a redraw is exactly how
+  // you reached it. The line was
+  //
+  //     const entry = entries.find(e => e.seed === seedPositions[pos])
+  //
+  // and getStandardSeedPositions returns a permutation of 1..bracketSize — so
+  // it only ever looked up seeds 1..bracketSize. Stored seed numbers are NOT
+  // renumbered when somebody leaves: withdraw the top seed of a 5-entry event
+  // and the four who remain are seeds 2,3,4,5 in a 4-slot draw, so seed 5 was
+  // never looked up and that player vanished from their own event, while seed 1
+  // was looked up, found nothing, and left a phantom bye in their place. The
+  // existing regression test happened to withdraw the LAST seed, which is the
+  // one case where the numbers stay in range.
+  //
+  // It survived because generation used to be reachable once, from a field
+  // that had just been auto-seeded 1..N contiguously. Every way of reaching it
+  // a second time — the Regenerate button, and now a redraw at `live` — starts
+  // from a field whose seeds have holes in them.
+  //
+  // Duplicate seeds had the mirror defect: `.find` returns the first match
+  // twice, seating one entrant in two slots and dropping another. Nothing
+  // stops two entries sharing a seed — there is no unique index on
+  // seed_number in either table, and the seed cell is hand-editable.
+  //
+  // `entries` is already in the order the draw wants (sorted by seed, or by
+  // rating when auto-seeding), so the rank IS the index. For a contiguous
+  // 1..N field this places every entrant exactly where the old line placed
+  // them; it differs only where the old line was wrong.
   const bracketSlots: Array<{ id: string; seed: number } | null> = new Array(bracketSize).fill(null);
   for (let pos = 0; pos < bracketSize; pos++) {
-    const seedNum = seedPositions[pos]!;
-    const entry = entries.find(e => e.seed === seedNum);
+    const rank = seedPositions[pos]!;
+    const entry = entries[rank - 1];
     if (entry) {
-      bracketSlots[pos] = { id: entry.id, seed: seedNum };
+      bracketSlots[pos] = { id: entry.id, seed: rank };
     }
   }
 

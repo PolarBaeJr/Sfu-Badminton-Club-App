@@ -1857,6 +1857,125 @@ describe('regenerating a draw that already exists', () => {
     expect(res.ok === false && res.error).toMatch(/1 match in this event has a result/);
   });
 
+  /**
+   * THE LIVE REDRAW THAT HAS REAL CONTENT, and the reason a partial redraw was
+   * not built instead of this.
+   *
+   * An entrant with a first-round BYE withdraws once the event is live. The
+   * forfeit sweep cannot settle them: their only open match is the round-two
+   * one, whose other slot is still TBD, so forfeitOpenMatchesForEntry counts it
+   * `unresolved` and writes nothing (there is nobody to award a walkover to).
+   * The event is therefore live, has a withdrawal, and has NO result rows —
+   * so the guard permits the redraw, and the redraw is the only thing that can
+   * take them out of the bracket.
+   *
+   * A partial redraw — hold the played matches, reshuffle the rest — could not
+   * have done this. It has to preserve the bracket's shape, so it can permute
+   * entrants between open slots but cannot remove one; the withdrawn entry
+   * would have stayed in the draw with a free pass to round two.
+   */
+  it('drops an entrant who withdrew from a LIVE event without leaving a result behind', async () => {
+    // Five entries: an 8-slot draw, so the top seeds have byes.
+    seedField(5);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    Object.assign(event(), { status: 'live' });
+    // The top seed — seeded first, so it is the one holding a bye.
+    const bye = byes()[0]!;
+    const withdrawing = (bye.participant_a_id ?? bye.participant_b_id) as string;
+    Object.assign(participant(withdrawing), { status: 'withdrawn' });
+    // No walkover was recorded: this is the state the sweep leaves behind.
+    expect(store.db.tournament_matches!.some((m) => m.status === 'walkover')).toBe(false);
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    expect(res.ok).toBe(true);
+    expect(event().status).toBe('live');
+    // Four left, so a 4-slot draw — and the withdrawn entry is nowhere in it.
+    const seeded = store.db.tournament_matches!.flatMap((m) => [m.participant_a_id, m.participant_b_id]);
+    expect(seeded).not.toContain(withdrawing);
+    expect(store.db.tournament_matches!.filter((m) => m.round_number === 1)).toHaveLength(2);
+    expect(byes()).toHaveLength(0);
+  });
+
+  /**
+   * EVERY ENTRANT IS IN THE DRAW, whatever numbers they are carrying.
+   *
+   * The bug the test above uncovered. Seeds are never renumbered when somebody
+   * leaves, and the placement loop looked entrants up BY STORED SEED against
+   * getStandardSeedPositions, which only ever emits 1..bracketSize. Withdraw
+   * the top seed of a 5-entry event and the survivors are seeds 2,3,4,5 in a
+   * 4-slot draw: seed 5 was never looked up and that player disappeared from
+   * their own event, seed 1 was looked up and found nothing and left a phantom
+   * bye. Nothing anywhere said so — the draw simply had one fewer person in it.
+   *
+   * The assertion that matters is the FIELD, not the shape: every entry that is
+   * still in the event appears exactly once in round one.
+   */
+  it('puts every remaining entrant in the draw when the seeds have holes in them', async () => {
+    seedField(5);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    // The TOP seed leaves, so the survivors are seeds 2,3,4,5 — every one of
+    // them out of range of the 4-slot draw they now belong in except by rank.
+    Object.assign(participant('p-0'), { status: 'withdrawn' });
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    const drawn = store.db.tournament_matches!
+      .filter((m) => m.round_number === 1)
+      .flatMap((m) => [m.participant_a_id, m.participant_b_id])
+      .filter((id): id is string => Boolean(id));
+    expect(drawn.sort()).toEqual(['p-1', 'p-2', 'p-3', 'p-4']);
+    // Four entrants in a 4-slot draw is no byes at all. The phantom bye was the
+    // visible symptom of the missing player.
+    expect(byes()).toHaveLength(0);
+  });
+
+  it('seats an entrant once when two entries share a seed number', async () => {
+    // The mirror of the same defect: `.find` returns the first match for both
+    // lookups, so one entrant took two slots and another took none. There is no
+    // unique index on seed_number in either table and the seed cell is
+    // hand-editable, so this is reachable without anything going wrong.
+    seedField(4);
+    Object.assign(participant('p-2'), { seed_number: 2 });
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    const drawn = store.db.tournament_matches!
+      .filter((m) => m.round_number === 1)
+      .flatMap((m) => [m.participant_a_id, m.participant_b_id])
+      .filter((id): id is string => Boolean(id));
+    expect(drawn.sort()).toEqual(['p-0', 'p-1', 'p-2', 'p-3']);
+  });
+
+  it('still seeds a clean 1..N field exactly where it always did', async () => {
+    // The fix must be invisible on the field the generator was written for, or
+    // it has changed every draw in the club rather than the broken ones. Top
+    // seed and second seed on opposite sides of a full 8-draw, as standard
+    // seeding requires.
+    seedField(8);
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    const r1 = store.db.tournament_matches!
+      .filter((m) => m.round_number === 1)
+      .sort((a, b) => (a.bracket_position as number) - (b.bracket_position as number));
+    expect(r1).toHaveLength(4);
+    // Standard positions for an 8-draw: 1v8, 4v5 | 2v7, 3v6. Seeds 1 and 2 sit
+    // in opposite halves and cannot meet before the final, which is the entire
+    // point of seeding and the property a rank/seed mix-up would break.
+    expect(r1.map((m) => [m.participant_a_id, m.participant_b_id])).toEqual([
+      ['p-0', 'p-7'],
+      ['p-3', 'p-4'],
+      ['p-1', 'p-6'],
+      ['p-2', 'p-5'],
+    ]);
+    // Said as the property, not just the arrangement: the top two seeds feed
+    // different semi-finals.
+    const semiOf = (id: string) =>
+      r1.findIndex((m) => m.participant_a_id === id || m.participant_b_id === id) < 2 ? 0 : 1;
+    expect(semiOf('p-0')).not.toBe(semiOf('p-1'));
+  });
+
   it('does not treat a VOIDED match as something that was played', async () => {
     // Voiding takes the result and its Elo back off (voidMatch -> reverse
     // snapshot), so a voided match is history that no longer counts. It is the
