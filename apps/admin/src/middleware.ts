@@ -171,9 +171,37 @@ export async function middleware(request: NextRequest) {
         permissions = permissionsOf(row);
       }
 
+      // TWO DIFFERENT REFUSALS, because they are two different facts about the
+      // person being refused.
+      //
+      // Somebody with NO console access at all belongs on /unauthorized: there
+      // is nowhere in here for them, and the page says so.
+      //
+      // Somebody who IS a console user and simply lacks THIS section does not.
+      // Sending a finance-scoped exec who clicks Audit to a dead-end page reads
+      // as "you should not be here at all", which is false and is exactly how a
+      // narrowed officer concludes their account is broken. They go to the
+      // dashboard — the one page every console user can open, and the one that
+      // now signposts what they CAN reach.
+      //
+      // `next` carries what they were denied so the dashboard can say so once,
+      // rather than silently swallowing the click. Sanitised there: it is a URL
+      // anyone can type, and an unchecked one is an open redirect.
       if (!canAccess(accessLevel, permissions, request.nextUrl.pathname)) {
         const url = request.nextUrl.clone();
-        url.pathname = '/unauthorized';
+        // THE LOOP GUARD, and it is not hypothetical: sending every refusal to
+        // /dashboard means a refusal OF /dashboard redirects to itself forever.
+        // /dashboard needs no capability today, so this is unreachable — which
+        // is exactly why it must be written down rather than relied upon. One
+        // capability added to that route and the console becomes an infinite
+        // redirect for whoever lacks it.
+        const canLandOnDashboard =
+          accessLevel !== null && request.nextUrl.pathname !== '/dashboard';
+        url.pathname = canLandOnDashboard ? '/dashboard' : '/unauthorized';
+        url.search = '';
+        if (canLandOnDashboard) {
+          url.searchParams.set('denied', request.nextUrl.pathname);
+        }
         return finish(NextResponse.redirect(url));
       }
 

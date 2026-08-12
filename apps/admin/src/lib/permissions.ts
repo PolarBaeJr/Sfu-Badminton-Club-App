@@ -53,6 +53,7 @@ import {
   type Capability,
   type Permissions,
 } from '@badminton/shared/src/utils/access-level';
+import { CAPABILITY_GATES } from '@badminton/shared/src/utils/capability-gates';
 
 // Re-exported so every existing `from '@/lib/permissions'` import keeps working
 // and there is still ONE place in the admin app to look for these.
@@ -245,4 +246,21 @@ export function canAccess(
   // section is reachable by the person who can fix the omission.
   if (capability === undefined) return level === 'admin';
   return effectiveCapabilities(level, permissions).has(capability);
+}
+
+/**
+ * A human name for the section a path belongs to, or null.
+ *
+ * SANITISATION, not decoration. `?denied=` on the dashboard comes straight off
+ * a URL the visitor typed, so it is never rendered. It is resolved through the
+ * console's own route map to a capability, and that capability's label is what
+ * reaches the page — so anything the map does not claim produces null and the
+ * dashboard simply says nothing. There is no path from the query string to the
+ * DOM.
+ */
+export function sectionLabelFor(pathname: string | undefined): string | null {
+  if (!pathname || !pathname.startsWith('/')) return null;
+  const capability = sectionCapability(pathname);
+  if (capability === undefined) return null;
+  return CAPABILITY_GATES[capability]?.label ?? null;
 }

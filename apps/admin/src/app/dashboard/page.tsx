@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient, getAuthenticatedConsoleUser } from '@/lib/supabase-server';
-import { accessLevelFor, atLeast, canAccess, permissionsOf, permits } from '@/lib/permissions';
+import { accessLevelFor, atLeast, canAccess, permissionsOf, permits, sectionLabelFor } from '@/lib/permissions';
 import { AvatarChip, Badge, Card, EmptyState, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import {
   CLUB_TIMEZONE,
@@ -116,7 +116,19 @@ type TonightSession = {
   status: string;
 };
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  // `?denied=` is set by the middleware when a console user asks for a section
+  // they cannot open. Saying so once, here, is the difference between "the app
+  // is broken" and "that part isn't yours" — a silent bounce reads as the first.
+  searchParams?: Promise<{ denied?: string }>;
+}) {
+  const params = (await searchParams) ?? {};
+  // Sanitised, never echoed. It is a URL anyone can type, so it is matched
+  // against the console's own route map and discarded if it names nothing —
+  // rendering it raw would put attacker-chosen text on the page.
+  const deniedLabel = sectionLabelFor(params.denied);
   const supabase = createAdminClient();
 
   // ------------------------------------------------------------------------
@@ -630,6 +642,22 @@ export default async function DashboardPage() {
           ) : undefined
         }
       />
+
+      {/* WHY YOU LANDED HERE. The middleware sends a console user who asked for
+          a section they cannot open to this page rather than to /unauthorized —
+          they belong in the console, just not in that part of it. Saying so once
+          is what stops a narrowed officer concluding their account is broken.
+          Neutral tones, not warning: nothing is wrong. */}
+      {deniedLabel && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border border-[var(--border)] bg-[var(--bg-elevated)] px-4 py-3">
+          <span className="font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+            Not yours
+          </span>
+          <span className="text-sm text-[var(--text-secondary)]">
+            {deniedLabel} is not part of your console access, so you are on the dashboard instead.
+          </span>
+        </div>
+      )}
 
       {/* THE ALERT BAND. One bordered row, warning tones over a 6% wash —
           color-mix rather than a `/6` opacity modifier, because Tailwind v3
