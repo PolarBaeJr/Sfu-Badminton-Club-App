@@ -4,7 +4,7 @@ import {
   isDoublesEvent,
   type TournamentEventType,
 } from '@badminton/shared';
-import { buildColumns } from '@/lib/charts';
+import { buildColumns, uniqueColumnLabels } from '@/lib/charts';
 import { ChartNote, ColumnChart, count } from '@/components/charts';
 import type { IndexEvent } from '@/lib/tournament-index';
 
@@ -78,27 +78,6 @@ export interface EntryPair {
   event_id: string;
 }
 
-/**
- * Labels ColumnChart can key on.
- *
- * A tournament may run the SAME event type more than once — staging's six-event
- * tournament has three `mens_singles` rows, which are three separate draws — and
- * ColumnChart keys its columns by label, so without this they would collapse
- * into one React child and two of the three would vanish. The suffix is only
- * ever added from the second occurrence onward, so the ordinary tournament
- * still reads as the club named its events. Same fix, same reason, as
- * uniqueLabels() in ../seasons/trend-panel.tsx.
- */
-function uniqueLabels(events: readonly IndexEvent[]): string[] {
-  const seen = new Map<string, number>();
-  return events.map((e) => {
-    const base =
-      TOURNAMENT_EVENT_TYPE_LABELS[e.event_type as TournamentEventType] ?? e.event_type;
-    const n = (seen.get(base) ?? 0) + 1;
-    seen.set(base, n);
-    return n === 1 ? base : `${base} (${n})`;
-  });
-}
 
 export function EntriesByEvent({
   events,
@@ -120,7 +99,16 @@ export function EntriesByEvent({
     );
   }
 
-  const labels = uniqueLabels(events);
+  // The kit owns the de-duplication; this only decides what a label SAYS.
+  // A tournament may run the same event type more than once — staging's
+  // six-event tournament has three `mens_singles` draws — and ColumnChart
+  // keys on the label, so two of the three would collapse into one React
+  // child without this.
+  const labels = uniqueColumnLabels(
+    events.map(
+      (e) => TOURNAMENT_EVENT_TYPE_LABELS[e.event_type as TournamentEventType] ?? e.event_type,
+    ),
+  );
 
   const perEvent = events.map((event) => {
     const loose = participants.filter((p) => p.event_id === event.id).length;
