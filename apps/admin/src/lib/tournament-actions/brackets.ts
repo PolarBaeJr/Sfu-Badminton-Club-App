@@ -142,7 +142,18 @@ function statusAfterDraw(event: Record<string, unknown>): 'live' | 'bracket_gene
 // Pool -> bracket seeding
 // ============================================================
 
-type FieldEntry = { id: string; seed: number | null; elo: number };
+type FieldEntry = {
+  id: string;
+  seed: number | null;
+  elo: number;
+  /**
+   * The group this entrant qualified out of, and where they finished in it.
+   * Both null outside a group-seeded field — an ordinary or single-pool draw
+   * has neither, and the draw code checks for null rather than assuming.
+   */
+  group?: number | null;
+  groupRank?: number | null;
+};
 
 // A pair may be entered with the two players in either order, so the key has to
 // be order-independent or the same pair in the pool and in the bracket would
@@ -163,19 +174,26 @@ function pairKey(a: string, b: string): string {
  * N is max_participants, the event's own capacity. A pool with fewer finishers
  * than that is not an error: the field is simply shorter and the draw gets the
  * byes it would get for any undersized entry list.
+ *
+ * A GROUP STAGE CAPS IT FURTHER (00106). When the source is split into groups
+ * the number of qualifiers is decided by the FORMAT — qualifiers_per_group out
+ * of each group — and not by how many slots this event happens to have. The two
+ * caps compose: the smaller wins, so an exec who sets a 16-slot bracket over 4
+ * groups of 2 still gets 8 qualifiers, and one who sets a 4-slot bracket over
+ * the same groups gets the best 4 of those 8.
  */
 async function buildFieldFromPool(
   adminClient: ReturnType<typeof createAdminClient>,
   event: Record<string, unknown>,
   doubles: boolean,
   adminId: string,
-): Promise<{ entries: FieldEntry[]; promoted: number; skipped: number }> {
+): Promise<{ entries: FieldEntry[]; promoted: number; skipped: number; groupCount: number }> {
   const eventId = event.id as string;
   const sourceId = event.seeded_from_event_id as string;
   const seedBy = ((event.seed_by as SeedBy | null) ?? 'wins') as SeedBy;
 
   const { data: source } = await adminClient.from('tournament_events')
-    .select('id, tournament_id, event_type')
+    .select('id, tournament_id, event_type, group_count, qualifiers_per_group')
     .eq('id', sourceId)
     .maybeSingle();
   // The FK is ON DELETE SET NULL, so a missing source means the row was read
@@ -253,7 +271,15 @@ async function buildFieldFromPool(
     for (const p of parts ?? []) existing.set(p.player_id, { id: p.id, status: p.status });
   }
 
-  const capacity = (event.max_participants as number | null) ?? standings.length;
+  const srcGroupCount = (source as { group_count?: number | null }).group_count ?? 1;
+  const perGroup = (source as { qualifiers_per_group?: number | null }).qualifiers_per_group ?? 2;
+  // Math.min over both caps rather than a branch, so a group stage whose
+  // qualifier count exceeds the bracket still respects the bracket, and a
+  // bracket with no cap still respects the format.
+  const capacity = Math.min(
+    (event.max_participants as number | null) ?? standings.length,
+    srcGroupCount >= 2 ? srcGroupCount * perGroup : standings.length,
+  );
   // Promoted qualifiers arrive checked in: they have just finished playing the
   // pool, so they are demonstrably present. checked_in_at is set alongside the
   // status because the attendance list keys on the timestamp, not the enum —
@@ -281,8 +307,15 @@ async function buildFieldFromPool(
     }
 
     const seed = entries.length + 1;
+    // Carried from the STANDING, not from the promoted row: the bracket entry is
+    // a different row in a different event and has no group of its own. This is
+    // what the draw uses to keep group-mates out of round one.
+    const from = {
+      group: (standing as { group?: number | null }).group ?? null,
+      groupRank: (standing as { groupRank?: number | null }).groupRank ?? null,
+    };
     if (already) {
-      entries.push({ id: already.id, seed, elo: src.elo });
+      entries.push({ id: already.id, seed, elo: src.elo, ...from });
       continue;
     }
 
@@ -323,7 +356,7 @@ async function buildFieldFromPool(
       throw new Error(`Could not enter a pool qualifier into the bracket: ${error?.message ?? 'unknown error'}`);
     }
     promoted++;
-    entries.push({ id: created.id, seed, elo: src.elo });
+    entries.push({ id: created.id, seed, elo: src.elo, ...from });
   }
 
   if (entries.length < 2) {
@@ -347,7 +380,7 @@ async function buildFieldFromPool(
   );
   assertWritesSucceeded('Seeding the bracket from the pool standings', failures);
 
-  return { entries, promoted, skipped };
+  return { entries, promoted, skipped, groupCount: srcGroupCount };
 }
 
 // ============================================================
@@ -486,12 +519,14 @@ async function generateSingleEliminationBracketImpl(
   const seededFromPool = Boolean(event.seeded_from_event_id);
   let poolPromoted = 0;
   let poolSkipped = 0;
+  let poolGroupCount = 1;
 
   if (seededFromPool) {
     const field = await buildFieldFromPool(adminClient, event, doubles, admin.id);
     entries = field.entries;
     poolPromoted = field.promoted;
     poolSkipped = field.skipped;
+    poolGroupCount = field.groupCount;
   } else if (doubles) {
     const { data: pairs } = await adminClient.from('tournament_pairs')
       .select('id, seed_number, combined_elo, status')
@@ -558,17 +593,53 @@ async function generateSingleEliminationBracketImpl(
   //   * seeding_method = 'manual'. An exec who hand-set every seed asked for
   //     the draw those seeds describe, and has to keep getting it. This is the
   //     opt-out, and it is the only one.
-  //   * A pool-seeded event. buildFieldFromPool refuses a half-played pool
-  //     precisely so the bracket matches what everyone just played for;
+  //   * A SINGLE-POOL-seeded event. buildFieldFromPool refuses a half-played
+  //     pool precisely so the bracket matches what everyone just played for;
   //     re-drawing the qualifiers would put the pool's third finisher into the
   //     second seed's half on a coin flip, which is the outcome pool seeding
   //     exists to prevent. seeding_method is not even consulted on that path,
   //     so there would be no opt-out to offer.
   //
-  // Every other event — which today is all ten of them on staging, all 'elo' —
-  // is drawn.
-  const drawIsRandomised = !seededFromPool && event.seeding_method !== 'manual';
-  if (drawIsRandomised) {
+  // A GROUP-SEEDED EVENT IS THE THIRD CASE, AND IT IS DRAWN (00106).
+  //
+  // The argument above does not survive the move from one pool to several, and
+  // it is worth saying exactly where it breaks. With ONE pool, the finishing
+  // order is a total order that everybody played for: 3rd beat 4th, or beat the
+  // people 4th lost to, and swapping them would overturn a result. With SEVERAL
+  // groups there is no such order between groups. "Winner of A plays runner-up
+  // of B" is fixed by the format, but WHICH B is a question the group stage
+  // never asked and cannot answer — the groups played disjoint fixtures. Fixing
+  // it to whichever group happens to be numbered lowest is not respecting a
+  // result, it is inventing one, and it makes the bracket a pure function of
+  // the group numbering, which is the "REGENERATE DOESN'T CHANGE ANYTHING"
+  // defect wearing a different hat.
+  //
+  // So it is drawn — but WITHIN QUALIFICATION TIERS, not within seeding bands.
+  // See drawAvoidingSameGroupRound1 for why drawWithinTiers is the wrong
+  // shuffle here (its bands straddle the winner/runner-up boundary whenever the
+  // group count is not a power of two) and for how the same-group round-one
+  // constraint is enforced.
+  //
+  // `manual` still opts out, and now it opts out of this too: an exec who
+  // hand-set the seeds after the groups finished has said where people go.
+  const groupSeeded = seededFromPool && poolGroupCount >= 2;
+  const drawIsRandomised = event.seeding_method !== 'manual' && (!seededFromPool || groupSeeded);
+  let drawAttempts = 0;
+  let sameGroupR1: 'avoided' | 'unavoidable' | 'not_applicable' = 'not_applicable';
+
+  if (drawIsRandomised && groupSeeded) {
+    const drawn = drawAvoidingSameGroupRound1(entries, {
+      bracketSize: nextPowerOf2(N),
+      // A qualifier whose groupRank somehow did not survive promotion is put in
+      // a tier of its own at the end rather than silently joining the winners.
+      tierOf: (e) => e.groupRank ?? Number.MAX_SAFE_INTEGER,
+      groupOf: (e) => e.group ?? null,
+      seed: drawSeed,
+    });
+    entries = drawn.entries;
+    drawAttempts = drawn.attempts;
+    sameGroupR1 = drawn.conflicts === 0 ? 'avoided' : 'unavoidable';
+  } else if (drawIsRandomised) {
     entries = drawWithinTiers(entries, makeDrawRng(drawSeed));
   }
 
@@ -804,6 +875,15 @@ async function generateSingleEliminationBracketImpl(
       // not randomised, which says so rather than implying a seed nobody used.
       draw_seed: drawIsRandomised ? drawSeed : null,
       draw_randomised: drawIsRandomised,
+      // WHETHER THE GROUP CONSTRAINT HELD, in three states rather than a
+      // boolean, for the same reason third_place_match is: "unavoidable" is the
+      // only silent outcome here, and it is the one an exec will be asked about
+      // when two group-mates find themselves playing again in round one.
+      // `draw_attempts` says how hard it tried, which is what distinguishes a
+      // genuinely impossible field from a run of bad luck.
+      ...(groupSeeded
+        ? { same_group_round_1: sameGroupR1, draw_attempts: drawAttempts, source_group_count: poolGroupCount }
+        : {}),
       // Recorded because a pool-seeded draw is not reproducible from the event
       // row alone — the pool can be edited afterwards.
       ...(seededFromPool
