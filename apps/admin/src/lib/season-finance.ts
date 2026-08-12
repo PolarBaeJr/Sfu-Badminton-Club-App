@@ -124,6 +124,20 @@ export interface SeasonExpenses extends Pick<SeasonFinances, 'expenseCents' | 'e
    */
   owedToExecsCents: number;
   owedToExecsCount: number;
+  /**
+   * EVERYTHING SOMEBODY FRONTED, settled or not — every row with `paid_by` set.
+   *
+   * The denominator `owedToExecsCents` is a part of, and the only honest one:
+   * "how much of what our people put in have we paid back" is a real quantity,
+   * where "unreimbursed as a share of all spending" is not — a season paid for
+   * entirely on the club card would read as 100% settled having settled
+   * nothing. Rows with no payer are excluded from BOTH, because a court booking
+   * on the club's own card has nobody to pay back.
+   *
+   * Reimbursed is this minus `owedToExecsCents`, so there is no third sum to
+   * disagree with the other two.
+   */
+  frontedCents: number;
 }
 
 /**
@@ -193,6 +207,7 @@ export function summariseExpenseRows(rows: readonly ExpenseRow[]): SeasonExpense
   let expenseCents = 0;
   let owedToExecsCents = 0;
   let owedToExecsCount = 0;
+  let frontedCents = 0;
   for (const row of rows) {
     const cents = row.amount_cents ?? 0;
     expenseCents += cents;
@@ -205,6 +220,10 @@ export function summariseExpenseRows(rows: readonly ExpenseRow[]): SeasonExpense
     // undated is left OFF the time axis rather than being placed at its start,
     // which would move money earlier in the term.
     if (row.paid_at) payments.push({ at: row.paid_at, cents });
+    // Both of these ask for a PAYER first. A row the club paid for directly has
+    // nobody to pay back, so it is neither a debt nor part of the total that
+    // debt is measured against.
+    if (row.paid_by) frontedCents += cents;
     if (row.paid_by && !row.reimbursed_at) {
       owedToExecsCents += cents;
       owedToExecsCount += 1;
@@ -215,7 +234,14 @@ export function summariseExpenseRows(rows: readonly ExpenseRow[]): SeasonExpense
     .map(([category, cents]) => ({ category, cents }))
     .sort((a, b) => b.cents - a.cents);
 
-  return { expenseCents, expensesByCategory, payments, owedToExecsCents, owedToExecsCount };
+  return {
+    expenseCents,
+    expensesByCategory,
+    payments,
+    owedToExecsCents,
+    owedToExecsCount,
+    frontedCents,
+  };
 }
 
 export async function getSeasonFinances(

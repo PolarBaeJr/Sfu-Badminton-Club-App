@@ -6,12 +6,15 @@ import { SeasonSelect } from '@/components/season-select';
 import { Badge, Card, AvatarChip, EmptyState, PageHeader, ResponsiveTable, TableCard, Atomic } from '@badminton/ui';
 import { unwrap, unwrapMaybe, formatPaymentMethod } from '@badminton/shared';
 import type { Season } from '@badminton/shared';
-import { isWaivedFee, summariseFeeCollection } from '@/lib/fee-status';
+import { isWaivedFee, summariseFeeCollection, type FeeStatusRow } from '@/lib/fee-status';
 import { getSeasonFinances } from '@/lib/season-finance';
+import { foldLedgerRows } from '@/lib/season-income';
+import { outstandingClubFeeCents } from '@/lib/fees-outstanding';
 import { FeeActions, AddManualFee, RemoveManualFee } from './fee-actions';
 import { ReinstatementsCard } from './reinstatements-card';
 import { LedgerCard } from './ledger-card';
 import { NetPositionStrip } from './net-position-strip';
+import { CollectionCharts } from './collection-charts';
 import { CardHeading } from './card-heading';
 
 // The three sections of the money page. 'fees' is the original table; the other
@@ -319,6 +322,33 @@ export default async function FeesPage({
     ...manualFees,
   ]);
 
+  // THE COLLECTION CHARTS, OUT OF THE TWO QUERIES ABOVE AND NO THIRD ONE.
+  //
+  // Both readings come from rows this page is already holding, through the same
+  // folds the dashboard's dues figures come from — so the chart's headline and
+  // the dashboard's cannot drift, and drawing them adds nothing to what /fees
+  // costs. Gated by `showFeeTable`, which is `showClubFees && tab === 'fees'`:
+  // the arithmetic runs over rows that were only fetched under
+  // `fees.clubfees.read` in the first place, so there is nothing here to leak.
+  //
+  // PAID ROWS ONLY, which is exactly the set getClubFeeLedger fetches
+  // (`paid_at is not null` over `fee_type = 'dues'`). Waivers are stored as paid
+  // rows worth $0, so they are in this set and add no money: matching the club's
+  // one dues figure is worth more than a slightly tidier payment count, and the
+  // strip above already says how many were waived.
+  const collected = showFeeTable ? foldLedgerRows(fees.filter((f) => f.paid_at)) : null;
+  // Not offered for a closed term. See the note on `outstandingCents` in
+  // ./collection-charts.tsx: the figure is priced from TODAY's roster, which is
+  // not the population that was billable in a season that has ended.
+  const outstandingCents =
+    showFeeTable && !isPast
+      ? outstandingClubFeeCents(
+          players,
+          feeByPlayer as ReadonlyMap<string, FeeStatusRow | undefined>,
+          season,
+        )
+      : null;
+
   // Everything in and everything out for this season, through the single
   // helper. Income used to be summed from club_fees only, so a recorded
   // reinstatement or tournament payment left the headline reading $0.00 while
@@ -496,6 +526,20 @@ export default async function FeesPage({
           </div>
         )}
       </div>
+
+      {/* Dollars, where the strip above counts people. Forty of ninety members
+          paid is not half the money when the two tiers are priced differently,
+          and "has collection stalled" is not a question a count can answer at
+          all. Costs no query — see the note beside `collected`. */}
+      {collected && (
+        <CollectionCharts
+          seasonName={season.name}
+          isPast={isPast}
+          collectedCents={collected.total}
+          outstandingCents={outstandingCents}
+          payments={collected.payments}
+        />
+      )}
 
       {/* Fee Table */}
       <Card padding={false}>
