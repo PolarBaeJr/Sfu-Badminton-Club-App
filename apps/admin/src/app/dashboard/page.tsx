@@ -654,7 +654,7 @@ export default async function DashboardPage({
             Not yours
           </span>
           <span className="text-sm text-[var(--text-secondary)]">
-            {deniedLabel} is not part of your console access, so you are on the dashboard instead.
+            “{deniedLabel}” is not part of your access, so you are on the dashboard instead.
           </span>
         </div>
       )}
