@@ -276,7 +276,6 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
           {settingsEditable && (
             <Button
               variant="ghost"
-              size="sm"
               aria-label="Event settings"
               className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
               onClick={() => setSettingsOpen(true)}
@@ -288,7 +287,6 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
           {['bracket_generated', 'live'].includes(status) && (
             <Button
               variant="ghost"
-              size="sm"
               loading={lockLoading}
               aria-label={drawLocked ? 'Unlock draw' : 'Lock draw'}
               className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
@@ -321,7 +319,6 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
             <div className="flex flex-col items-end gap-1">
               <Button
                 variant="ghost"
-                size="sm"
                 loading={regenLoading}
                 disabled={regenerate.blockedReason !== null}
                 aria-label={`Regenerate the ${eventLabel} draw`}

@@ -608,8 +608,21 @@ export async function removeParticipantFromEvent(participantId: string) {
   if (!participant) throw new Error('Participant not found');
 
   const event = participant.event as Record<string, unknown>;
-  if (event.status !== 'registration') {
-    throw new Error('Cannot remove participants after registration closes');
+  // CHECK-IN COUNTS AS OPEN, and leaving it out was a dead end.
+  //
+  // Removal was registration-only and withdrawal only appears once a draw
+  // exists, so at `checkin` an event offered NEITHER — while the status
+  // transitions are forward-only, so there was no way back to registration
+  // either. An exec who needed to take one entrant out during check-in could
+  // not, and could not generate the draw around them. The owner hit exactly
+  // that and reported the event stuck.
+  //
+  // Check-in is when a club learns who actually turned up, which makes it the
+  // moment an entrant most often has to come out. Allowing it here closes the
+  // gap without touching the draw statuses, where withdrawal — which keeps the
+  // record and the fee — is the correct instrument instead.
+  if (event.status !== 'registration' && event.status !== 'checkin') {
+    throw new ExpectedError('Entries can only be removed before the draw is generated.');
   }
   if (event.draw_locked) throw new Error('Draw is locked. Unlock it before making changes.');
 

@@ -98,12 +98,20 @@ describe('participantControls — capability, not just status', () => {
     expect(shown(participantControls(registration, only('soloRemove')))).toEqual(['removeSolo']);
   });
 
-  it('keeps pairing available at check-in, when the two adds are not', () => {
+  it('keeps pairing and removal available at check-in, when adding is not', () => {
     // Check-in is when the club finds out who turned up without a partner, so
     // pairing them up has to be possible at the door — and the actions accept
     // it (addPairToEvent, unpairEntry and withdrawPairMember all take
-    // 'registration' or 'checkin'). Adding and removing entries stay on the
-    // narrower window, exactly as they were.
+    // 'registration' or 'checkin').
+    //
+    // REMOVAL MOVED HERE AFTER A DEAD END. It used to stop at registration, and
+    // withdrawal only begins once a draw exists, so an event at check-in
+    // offered no way to take anybody out at all — with forward-only status
+    // transitions, there was no way back either. The owner hit it live: one
+    // entrant to remove, under two checked in, and the event stuck.
+    //
+    // ADDING deliberately did NOT move. Check-in is when somebody has to come
+    // out, not when more come in.
     const checkin = participantControls({ status: 'checkin', drawLocked: false }, EVERYTHING);
     expect(checkin.pair).toBe(true);
     // Auto pair especially: a room of people who turned up without partners is
@@ -115,8 +123,8 @@ describe('participantControls — capability, not just status', () => {
     expect(checkin.swapMember).toBe(true);
     expect(checkin.add).toBe(false);
     expect(checkin.addSolo).toBe(false);
-    expect(checkin.remove).toBe(false);
-    expect(checkin.removeSolo).toBe(false);
+    expect(checkin.remove).toBe(true);
+    expect(checkin.removeSolo).toBe(true);
   });
 
   it('never offers a pairing control once a draw exists', () => {

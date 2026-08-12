@@ -177,7 +177,21 @@ export function participantControls(
   // event that is already at check-in.
   const pairingOpen = (event.status === 'registration' || event.status === 'checkin') && !event.drawLocked;
 
-  const remove = open && can.remove;
+  // REMOVAL EXTENDS THROUGH CHECK-IN, and nothing else does.
+  //
+  // Removal used to stop where `open` stops, and withdrawal only begins once a
+  // draw exists — so an event at `checkin` offered no way to take anybody out
+  // at all, while the status transitions are forward-only so there was no way
+  // back to registration either. The owner hit exactly that: one entrant to
+  // remove, fewer than two checked in, and the event stuck.
+  //
+  // Only removal moves. Adding an entrant after check-in has opened is a
+  // different act with a different answer, and seeding stays where it was —
+  // check-in is when a club learns who turned up, which makes it the moment
+  // somebody has to come OUT, not the moment to let more in.
+  const removalOpen =
+    (event.status === 'registration' || event.status === 'checkin') && !event.drawLocked;
+  const remove = removalOpen && can.remove;
   const withdraw = exitable && can.exit;
   // One expression, two controls: see ParticipantControls.autoPair.
   const pair = pairingOpen && can.add;
@@ -191,7 +205,7 @@ export function participantControls(
     withdraw,
     actionsColumn: remove || withdraw,
     addSolo: open && can.soloAdd,
-    removeSolo: open && can.soloRemove,
+    removeSolo: removalOpen && can.soloRemove,
     pair,
     autoPair: pair,
     unpair: pairingOpen && can.remove,
