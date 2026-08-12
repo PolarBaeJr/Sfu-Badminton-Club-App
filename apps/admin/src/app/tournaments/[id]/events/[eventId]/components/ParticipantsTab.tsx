@@ -389,15 +389,27 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
       return;
     }
 
-    const { pairsMade, stillWaiting, stillWaitingReason, unsignedNotice } = res.data;
+    const { pairsMade, stillWaiting, refused, stillWaitingReason, unsignedNotice } = res.data;
     const made = `${pairsMade} ${pairsMade === 1 ? 'pair' : 'pairs'} made`;
     const left = stillWaiting > 0
       ? `, ${stillWaiting} ${stillWaiting === 1 ? 'person' : 'people'} still waiting. ${stillWaitingReason}`
       : '';
-    // Anything short of a clean sweep is a warning, not a success: the exec has
-    // something left to do and the toast has to look like it.
-    const clean = pairsMade > 0 && stillWaiting === 0;
-    toast(`${made}${left}${unsignedNotice ? ` ${unsignedNotice}` : ''}`, clean && !unsignedNotice ? 'success' : 'error');
+
+    // THE TONE FOLLOWS `refused`, NOT "was anybody left over".
+    //
+    // An odd list leaves somebody waiting by arithmetic, and the confirm dialog
+    // above said so before the exec agreed to it. Reporting that in red would
+    // tell them the thing they were promised had gone wrong — auto-pairing five
+    // people would have shown a red toast for working exactly as designed.
+    // 'error' is kept for a pair that was actually REFUSED; a clean sweep is
+    // 'success'; the leftover and the unsigned notice are 'info', because both
+    // are things to know rather than things that failed.
+    const tone = refused > 0
+      ? 'error'
+      : stillWaiting === 0 && !unsignedNotice
+        ? 'success'
+        : 'info';
+    toast(`${made}${left}${unsignedNotice ? ` ${unsignedNotice}` : ''}`, tone);
 
     setSelectedUnpaired([]);
     router.refresh();
@@ -1088,15 +1100,25 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                   <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--text-muted)]">
                     <span className="sr-only">Status: </span>{statusLabel(p.status)}
                   </span>
-                  {/* THE ONE ACTION THAT STILL APPLIES. Pairing somebody who has
-                      withdrawn is refused by 00102 with "remove their withdrawn
-                      entry from the waiting list first, then add them again" —
-                      an instruction with nothing behind it unless this button
-                      exists. Re-adding them without deleting the row hits
-                      UNIQUE(event_id, player_id). Unpair, Swap and "One pulled
-                      out" are deliberately NOT here: none of them is a thing you
-                      can do to an entry that has already left. */}
-                  {controls.removeSolo && (
+                  {/* THE ONE ACTION THAT STILL APPLIES, and only in a doubles
+                      event. Pairing somebody who has withdrawn is refused by
+                      00102 with "remove their withdrawn entry from the waiting
+                      list first, then add them again" — an instruction with
+                      nothing behind it unless this button exists. Re-adding them
+                      without deleting the row hits UNIQUE(event_id, player_id).
+
+                      `isDoubles` GUARDS AGAINST A WIDENING NOBODY ASKED FOR.
+                      Relocating the rows is a readability change and applies to
+                      every shape, but a withdrawn SINGLES entrant was previously
+                      shown with an empty Actions cell — renderActions returns
+                      '—' for anybody out of the event — and there is no pairing
+                      refusal in a singles event for this button to unblock. So
+                      each row keeps exactly the actions it had before the move.
+
+                      Unpair, Swap and "One pulled out" are deliberately NOT here
+                      either: none is a thing you can do to an entry that has
+                      already left. */}
+                  {isDoubles && controls.removeSolo && (
                     <Button size="sm" variant="ghost" onClick={() => handleRemoveUnpaired(p.id)} loading={actionLoading === p.id} aria-label={`Remove ${unpairedName(p)}'s withdrawn entry`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
                       <Trash2 className="w-3.5 h-3.5 text-[var(--color-danger)]" />
                     </Button>

@@ -622,6 +622,42 @@ describe('auto pair is cap-neutral and fee-neutral, by construction', () => {
   });
 });
 
+describe('auto pair reports a leftover as news, not as a failure', () => {
+  // THE BUG THIS PINS, which a green gate did not catch because every other
+  // auto-pair test is on the pure function: the toast tone was "anything short
+  // of a clean sweep is an error", so auto-pairing FIVE people — 2 pairs, 1 left
+  // over — showed red for doing exactly what the confirm dialog promised.
+  //
+  // The rule, transcribed from ParticipantsTab.handleAutoPair: tone follows
+  // `refused`, not `stillWaiting`.
+  const tone = (r: { refused: number; stillWaiting: number; unsignedNotice: string }) =>
+    r.refused > 0 ? 'error' : r.stillWaiting === 0 && !r.unsignedNotice ? 'success' : 'info';
+
+  it('is a success when the list empties completely', () => {
+    expect(tone({ refused: 0, stillWaiting: 0, unsignedNotice: '' })).toBe('success');
+  });
+
+  it('is NOT an error when an odd list leaves one person over', () => {
+    // Five people: the arithmetic leftover the exec already agreed to.
+    const plan = planAutoPairs(Array.from({ length: 5 }, (_, i) => C(`p${i}`, 100 - i)));
+    expect(plan.pairs).toHaveLength(2);
+    expect(plan.leftOver).not.toBeNull();
+    expect(tone({ refused: 0, stillWaiting: 1, unsignedNotice: '' })).toBe('info');
+  });
+
+  it('is an error only when a pair was actually refused', () => {
+    expect(tone({ refused: 1, stillWaiting: 2, unsignedNotice: '' })).toBe('error');
+    // A refusal outranks an otherwise clean sweep.
+    expect(tone({ refused: 1, stillWaiting: 2, unsignedNotice: 'x' })).toBe('error');
+  });
+
+  it('mentions an unsigned entrant without calling the run a failure', () => {
+    // Everybody was paired; some of them cannot be CHECKED IN yet. That is
+    // information, and pairing succeeded.
+    expect(tone({ refused: 0, stillWaiting: 0, unsignedNotice: 'Bob has not accepted…' })).toBe('info');
+  });
+});
+
 describe('auto pair and the event waiver', () => {
   it('does not screen out an unsigned entrant — pairing has never required a signature', () => {
     // THE PREMISE THIS PINS, because it is the one a later reader is most

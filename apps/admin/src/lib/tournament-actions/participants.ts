@@ -1552,6 +1552,17 @@ export interface AutoPairResult {
   /** How many people are still in the pool afterwards. */
   stillWaiting: number;
   /**
+   * How many pairs were REFUSED, as opposed to never attempted.
+   *
+   * Reported separately from `stillWaiting` because the two are different
+   * facts and the caller has to tell them apart to choose a tone. An odd list
+   * leaves somebody over by arithmetic — the exec was told that in the confirm
+   * and agreed to it, so it is not a failure. A refused pair is something going
+   * wrong. Collapsing both into "not everybody was paired" made auto-pairing
+   * five people report itself in red.
+   */
+  refused: number;
+  /**
    * Why they are still there — the odd one out, and anybody a pair was refused
    * for. Empty only when the list emptied completely.
    */
@@ -1662,6 +1673,7 @@ async function autoPairWaitingEntrantsImpl(eventId: string): Promise<AutoPairRes
     return {
       pairsMade: 0,
       stillWaiting: candidates.length,
+      refused: 0,
       stillWaitingReason: candidates.length === 1
         ? `${nameOf(candidates[0]!.playerId)} is the only person waiting, so there is nobody to pair them with.`
         : 'Nobody is waiting for a partner.',
@@ -1672,6 +1684,7 @@ async function autoPairWaitingEntrantsImpl(eventId: string): Promise<AutoPairRes
   const plan = planAutoPairs(candidates);
 
   let pairsMade = 0;
+  let refused = 0;
   const paired: string[] = [];
   const reasons: string[] = [];
   let stillWaiting = 0;
@@ -1690,6 +1703,7 @@ async function autoPairWaitingEntrantsImpl(eventId: string): Promise<AutoPairRes
       // the reason the server gave, which is already written to be read by an
       // exec standing at a desk.
       stillWaiting += 2;
+      refused += 1;
       const why = err instanceof Error ? err.message : 'the pair was refused';
       reasons.push(`${nameOf(player1Id)} and ${nameOf(player2Id)} could not be paired — ${why}`);
       if (!isExpectedFailure(err)) Sentry.captureException(err);
@@ -1707,6 +1721,13 @@ async function autoPairWaitingEntrantsImpl(eventId: string): Promise<AutoPairRes
   }
 
   // The waiver, reported and not enforced — see AutoPairResult.unsignedNotice.
+  //
+  // eventWaiverRefusal's wording was READ before being reused here, not assumed
+  // from its name: it says the members "cannot be CHECKED IN until they do" and
+  // tells the exec how they sign. That is exactly true of a pair auto-pairing
+  // just made, so the sentence is reused rather than reworded. It does not
+  // claim anybody was refused entry or refused a partner — if it ever starts
+  // to, this call needs its own wording, because here nobody was refused.
   let unsignedNotice = '';
   if (paired.length > 0) {
     const { requiredHash, acceptances } = await loadTournamentWaiverContext(adminClient, event.tournament_id);
@@ -1722,5 +1743,5 @@ async function autoPairWaitingEntrantsImpl(eventId: string): Promise<AutoPairRes
 
   revalidateEventPaths(event.tournament_id, eventId);
 
-  return { pairsMade, stillWaiting, stillWaitingReason: reasons.join(' '), unsignedNotice };
+  return { pairsMade, stillWaiting, refused, stillWaitingReason: reasons.join(' '), unsignedNotice };
 }
