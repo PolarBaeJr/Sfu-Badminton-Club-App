@@ -63,8 +63,50 @@ export interface SeasonWindow {
   id: string;
 }
 
+/** One dated amount out of a ledger, for a running total across the term. */
+export interface LedgerPayment {
+  at: string;
+  cents: number;
+}
+
 /**
- * Sum one ledger's rows, REFUSING to treat a failed query as an empty one.
+ * ONE LEDGER, BOTH READINGS OF IT.
+ *
+ * The tile wants a figure and the running-total chart wants the dates behind
+ * it. Reading the ledger twice — once summed, once itemised — would be a second
+ * piece of arithmetic over the club's money, which is precisely what the note
+ * at the top of this file forbids: the two could drift, and a chart whose last
+ * point disagrees with the number printed beside it is worse than no chart.
+ * So there is one read, and `total` is taken over the same rows `payments`
+ * comes from.
+ *
+ * The two are not quite the same SET, and deliberately so. `total` counts every
+ * row the query returned; `payments` keeps only those carrying a date, because
+ * a row with no date cannot be placed on a time axis and putting it at the
+ * start would silently move money earlier in the term. Every query below
+ * filters `paid_at is not null`, so against the real table the two sets are
+ * identical and the chart's last point IS the figure.
+ */
+export interface LedgerRead {
+  total: number;
+  payments: LedgerPayment[];
+  /**
+   * Money by category, largest first, for a ledger that HAS categories.
+   * Empty for one that does not — club_fees carries no category column, and an
+   * invented "other" bucket holding the whole ledger would draw a one-bar
+   * breakdown chart that says nothing.
+   */
+  byCategory: { category: string; cents: number }[];
+}
+
+type LedgerRow = {
+  amount_cents: number | null;
+  paid_at?: string | null;
+  category?: string | null;
+};
+
+/**
+ * REFUSING TO TREAT A FAILED QUERY AS AN EMPTY LEDGER.
  *
  * This used to be `(rows ?? []).reduce(...)` over `result.data`, which reads a
  * query that errored as a ledger containing nothing. That is the worst possible
@@ -78,9 +120,31 @@ export interface SeasonWindow {
  *
  * unwrap() is the repo's existing helper for exactly this and throws on error.
  */
-const sum = (result: { data: { amount_cents: number | null }[] | null; error: unknown }): number =>
-  unwrap(result as { data: { amount_cents: number | null }[] | null; error: { message: string } | null })
-    .reduce((acc, r) => acc + (r.amount_cents ?? 0), 0);
+const readLedger = (result: { data: LedgerRow[] | null; error: unknown }): LedgerRead => {
+  const rows = unwrap(result as { data: LedgerRow[] | null; error: { message: string } | null });
+  const byCategory = new Map<string, number>();
+  let total = 0;
+  const payments: LedgerPayment[] = [];
+  for (const row of rows) {
+    const cents = row.amount_cents ?? 0;
+    total += cents;
+    if (typeof row.paid_at === 'string') payments.push({ at: row.paid_at, cents });
+    // Only when the caller actually SELECTED a category. `'category' in row` is
+    // the test rather than `row.category != null`, so a ledger without the
+    // column stays uncategorised instead of collapsing into one 'other' bar.
+    if ('category' in row) {
+      const key = row.category ?? 'other';
+      byCategory.set(key, (byCategory.get(key) ?? 0) + cents);
+    }
+  }
+  return {
+    total,
+    payments,
+    byCategory: [...byCategory.entries()]
+      .map(([category, cents]) => ({ category, cents }))
+      .sort((a, b) => b.cents - a.cents),
+  };
+};
 
 /**
  * One KIND of fee, summed for one season.
@@ -92,15 +156,18 @@ const sum = (result: { data: { amount_cents: number | null }[] | null; error: un
  * are separate capabilities, so an unfiltered read hands one holder the other's
  * ledger.
  */
-async function feeIncome(
+async function feeLedger(
   supabase: SupabaseClient,
   season: SeasonWindow,
   feeType: FeeType,
-): Promise<number> {
-  return sum(
+): Promise<LedgerRead> {
+  return readLedger(
     await supabase
       .from('club_fees')
-      .select('amount_cents')
+      // paid_at rides along with the amount. It is already the filter below, so
+      // it costs nothing and it is what the running-total chart plots; the
+      // alternative was a second read of the same ledger for the same rows.
+      .select('amount_cents, paid_at')
       .eq('season_id', season.id)
       .eq('fee_type', feeType)
       .not('paid_at', 'is', null),
@@ -114,29 +181,58 @@ async function feeIncome(
  * of getSeasonIncome instead would read the club's tournament money and
  * reinstatements on their behalf, which is the leak the fetch gating on /fees
  * and /dashboard exists to prevent. See the note on the interface above.
+ *
+ * DUES ONLY IS A PERMISSION BOUNDARY, NOT A DEFAULT. `fees.clubfees.read` owns
+ * the dues slice of club_fees; entry fees answer to `tournaments.fees.read` and
+ * reinstatements to `fees.reinstatements.read`, both of which an admin may hold
+ * separately and a hand-picked person may not hold at all. So a chart of "the
+ * fee ledger split by fee_type" cannot be drawn under this capability — it
+ * would hand a dues reader two books that are somebody else's — and the
+ * dashboard's fee chart is labelled "season dues" for that reason rather than
+ * out of caution.
  */
 export async function getClubFeeIncome(
   supabase: SupabaseClient,
   season: SeasonWindow,
 ): Promise<number> {
-  return feeIncome(supabase, season, 'dues');
+  return (await feeLedger(supabase, season, 'dues')).total;
+}
+
+/** The dues ledger with its dates, for the caller that draws a chart of it. */
+export async function getClubFeeLedger(
+  supabase: SupabaseClient,
+  season: SeasonWindow,
+): Promise<LedgerRead> {
+  return feeLedger(supabase, season, 'dues');
 }
 
 /**
  * The other-income ledger on its own — donations, grants, socials (00073).
  * Same reason as getClubFeeIncome above, and the same paid_at rule.
+ *
+ * `category` is selected here and not for club_fees because other_income
+ * actually has the column — sponsorships, grants and socials are different
+ * kinds of money to the club, and unlike club_fees' fee_type they are all the
+ * same permission.
  */
+export async function getOtherIncomeLedger(
+  supabase: SupabaseClient,
+  season: SeasonWindow,
+): Promise<LedgerRead> {
+  return readLedger(
+    await supabase
+      .from('other_income')
+      .select('amount_cents, paid_at, category')
+      .eq('season_id', season.id)
+      .not('paid_at', 'is', null),
+  );
+}
+
 export async function getOtherIncome(
   supabase: SupabaseClient,
   season: SeasonWindow,
 ): Promise<number> {
-  return sum(
-    await supabase
-      .from('other_income')
-      .select('amount_cents')
-      .eq('season_id', season.id)
-      .not('paid_at', 'is', null),
-  );
+  return (await getOtherIncomeLedger(supabase, season)).total;
 }
 
 export async function getSeasonIncome(
@@ -150,8 +246,8 @@ export async function getSeasonIncome(
   // "counted exactly once" a property of the schema rather than a hope.
   const [clubCents, tournamentCents, reinstatementCents, otherCents] = await Promise.all([
     getClubFeeIncome(supabase, season),
-    feeIncome(supabase, season, 'tournament'),
-    feeIncome(supabase, season, 'reinstatement'),
+    feeLedger(supabase, season, 'tournament').then((l) => l.total),
+    feeLedger(supabase, season, 'reinstatement').then((l) => l.total),
 
     // 00073. season_id is NOT NULL here, so unlike fees there is no "attached
     // to no season" row to worry about — but the paid_at rule is the same, so a

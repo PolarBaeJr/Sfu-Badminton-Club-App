@@ -76,10 +76,51 @@ export interface SeasonFinances {
 interface ExpenseRow {
   amount_cents: number | null;
   category: string | null;
+  paid_at: string | null;
+  reimbursed_at: string | null;
+  paid_by: string | null;
 }
 
-/** Money out, with no ledger of money IN read at all. */
-export type SeasonExpenses = Pick<SeasonFinances, 'expenseCents' | 'expensesByCategory'>;
+/**
+ * Money out — the whole of what one read of the expense ledger yields, with no
+ * ledger of money IN read at all.
+ *
+ * FOUR READINGS OF ONE QUERY, not four queries. The dashboard draws the total,
+ * the category breakdown, the running total across the term and what the club
+ * still owes the people who fronted it, and every one of them is the same set
+ * of rows counted a different way. Assembling them here rather than at the call
+ * sites is the rule the rest of this file already follows: the last time two
+ * surfaces each did their own arithmetic over the club's money they disagreed
+ * with reality for months.
+ */
+export interface SeasonExpenses extends Pick<SeasonFinances, 'expenseCents' | 'expensesByCategory'> {
+  /**
+   * Every paid row as a dated amount, for the running total. Unsorted — the
+   * chart buckets by day and sorts there.
+   *
+   * The set is the same set `expenseCents` sums, because the query below
+   * filters `paid_at is not null`, so the last point of the running total and
+   * the headline beside it CANNOT disagree. That is the point of deriving both
+   * here instead of adding a second query for the chart.
+   */
+  payments: { at: string; cents: number }[];
+  /**
+   * MONEY THE CLUB OWES ITS OWN EXECS: rows somebody paid for out of pocket
+   * (`paid_by` set) that have not been reimbursed yet.
+   *
+   * `paid_by` is required, not just a null `reimbursed_at`. A court booking put
+   * on the club's own card has nobody to pay back, and counting it as a debt
+   * would tell the treasurer the club owes an exec for the gym.
+   *
+   * This is NOT netted off anywhere: an expense counts against the season in
+   * full whether or not the exec has been paid back — see the note at the top
+   * of this file on why net is an accrual figure. This is the other half of
+   * that story, and the reason it is worth showing: the accrual total is
+   * silent about who is still out of pocket.
+   */
+  owedToExecsCents: number;
+  owedToExecsCount: number;
+}
 
 /**
  * The expense half on its own.
@@ -99,7 +140,11 @@ export async function getSeasonExpenses(
 ): Promise<SeasonExpenses> {
   const expenses = await supabase
     .from('club_expenses')
-    .select('amount_cents, category')
+    // paid_at, reimbursed_at and paid_by ride along with the two columns the
+    // total needs. They are the same ledger under the same capability
+    // (fees.expenses.read), so this widens no permission — and fetching them
+    // together is what keeps the chart and the headline the same arithmetic.
+    .select('amount_cents, category, paid_at, reimbursed_at, paid_by')
     .eq('season_id', season.id)
     .not('paid_at', 'is', null);
 
@@ -113,10 +158,14 @@ export async function getSeasonExpenses(
     expenses as { data: ExpenseRow[] | null; error: { message: string } | null },
   );
 
-  // One pass: the per-category map and the total are built from the same rows,
-  // so the breakdown can never fail to add up to the headline.
+  // One pass: the total, the per-category map, the dated payments and the
+  // unreimbursed debt are all built from the same rows, so no reading of this
+  // ledger can fail to agree with any other reading of it.
   const byCategory = new Map<string, number>();
+  const payments: { at: string; cents: number }[] = [];
   let expenseCents = 0;
+  let owedToExecsCents = 0;
+  let owedToExecsCount = 0;
   for (const row of rows) {
     const cents = row.amount_cents ?? 0;
     expenseCents += cents;
@@ -124,13 +173,22 @@ export async function getSeasonExpenses(
     // already in the total above, so an unrecognised category cannot drop out.
     const key = row.category ?? 'other';
     byCategory.set(key, (byCategory.get(key) ?? 0) + cents);
+    // The query filters `paid_at is not null`, so this guard never fires
+    // against the real table — it is here so a row that somehow arrives
+    // undated is left OFF the time axis rather than being placed at its start,
+    // which would move money earlier in the term.
+    if (row.paid_at) payments.push({ at: row.paid_at, cents });
+    if (row.paid_by && !row.reimbursed_at) {
+      owedToExecsCents += cents;
+      owedToExecsCount += 1;
+    }
   }
 
   const expensesByCategory = [...byCategory.entries()]
     .map(([category, cents]) => ({ category, cents }))
     .sort((a, b) => b.cents - a.cents);
 
-  return { expenseCents, expensesByCategory };
+  return { expenseCents, expensesByCategory, payments, owedToExecsCents, owedToExecsCount };
 }
 
 export async function getSeasonFinances(
@@ -142,9 +200,15 @@ export async function getSeasonFinances(
     getSeasonExpenses(supabase, season),
   ]);
 
+  // The two expense fields SeasonFinances declares, named one at a time rather
+  // than spread. getSeasonExpenses now also returns the dated payments and the
+  // unreimbursed debt, which belong to the expense panel and to nothing the net
+  // position shows; spreading them would put a list of every payment the club
+  // made into the RSC payload of two pages that never draw one.
   return {
     income,
-    ...expenses,
+    expenseCents: expenses.expenseCents,
+    expensesByCategory: expenses.expensesByCategory,
     netCents: income.totalCents - expenses.expenseCents,
   };
 }

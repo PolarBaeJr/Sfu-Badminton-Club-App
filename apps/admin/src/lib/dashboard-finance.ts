@@ -1,12 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getClubFeeIncome, getOtherIncome } from './season-income';
-import { getSeasonExpenses } from './season-finance';
+import { getClubFeeLedger, getOtherIncomeLedger, type LedgerRead } from './season-income';
+import { getSeasonExpenses, type SeasonExpenses } from './season-finance';
 
 /**
  * THE DASHBOARD'S FINANCE FIGURES, FETCHED ONE CAPABILITY AT A TIME.
  *
  * The dashboard's net-position card asks for fees.netposition.read and reads
- * every ledger the club has. The per-ledger tiles beside it cannot do that:
+ * every ledger the club has. The per-ledger panels beside it cannot do that:
  * each is behind its own read, and the whole point of those reads is that
  * somebody may hold one and not the others. A card that is hidden but whose
  * query still ran is the leak this file exists to avoid — see the note beside
@@ -18,6 +18,14 @@ import { getSeasonExpenses } from './season-finance';
  * CAPABILITY EACH FLAG COMES FROM stays with the other gates in the page: this
  * module is handed booleans and never asks the permission model anything, so it
  * cannot become a second, disagreeing answer to who may see club money.
+ *
+ * IT NOW RETURNS ROWS, NOT JUST TOTALS, because the panels draw charts. That
+ * changes nothing about the gating and it adds no query: each ledger's dates
+ * and categories come back from the read that was already being made for its
+ * total, and the total is computed over those same rows — so a chart's last
+ * point and the figure printed beside it cannot drift apart. What it must NOT
+ * become is a convenience that fetches everything and lets the page choose; the
+ * flags below are still the whole contract.
  */
 export interface LedgerFigures {
   /** fees.expenses.read */
@@ -34,12 +42,15 @@ export interface ActiveSeason {
   name: string;
 }
 
-/** A figure is null when it was not asked for — nothing was fetched for it. */
+/** A ledger is null when it was not asked for — nothing was fetched for it. */
 export interface DashboardFinances {
   season: ActiveSeason;
-  expenseCents: number | null;
-  clubFeeCents: number | null;
-  otherIncomeCents: number | null;
+  /** club_expenses: total, categories, dated payments, and what execs are owed. */
+  expenses: SeasonExpenses | null;
+  /** club_fees where fee_type = 'dues'. Entry fees and reinstatements are other capabilities' books. */
+  clubFees: LedgerRead | null;
+  /** other_income: donations, grants, socials. */
+  otherIncome: LedgerRead | null;
 }
 
 /**
@@ -59,21 +70,16 @@ export async function getDashboardFinances(
   season: ActiveSeason | null,
   wants: LedgerFigures,
 ): Promise<DashboardFinances | null> {
-  // Nothing is fetched for somebody who may see none of the three. The tiles are
-  // the only reason this function exists.
+  // Nothing is fetched for somebody who will be shown none of the three. The
+  // panels are the only reason this function exists.
   if (!wants.expenses && !wants.clubFees && !wants.otherIncome) return null;
   if (!season) return null;
 
-  const [expenses, clubFeeCents, otherIncomeCents] = await Promise.all([
+  const [expenses, clubFees, otherIncome] = await Promise.all([
     wants.expenses ? getSeasonExpenses(supabase, season) : null,
-    wants.clubFees ? getClubFeeIncome(supabase, season) : null,
-    wants.otherIncome ? getOtherIncome(supabase, season) : null,
+    wants.clubFees ? getClubFeeLedger(supabase, season) : null,
+    wants.otherIncome ? getOtherIncomeLedger(supabase, season) : null,
   ]);
 
-  return {
-    season,
-    expenseCents: expenses?.expenseCents ?? null,
-    clubFeeCents,
-    otherIncomeCents,
-  };
+  return { season, expenses, clubFees, otherIncome };
 }
