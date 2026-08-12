@@ -93,11 +93,12 @@ export default async function PermissionsPage() {
       baselineId: (person.permission_baseline_id as string | null) ?? null,
     }));
 
-  // Everyone else, and ONLY FOR AN ADMIN. Giving somebody the console is a
-  // level, and levels are handed out by admins alone — so for anybody else this
-  // is a hundred rows they could look at and do nothing with, fetched on every
-  // request. Not a security decision (setConsoleAccess refuses them regardless);
-  // a decision about what is worth sending.
+  // Everyone else, and ONLY FOR SOMEBODY WHO MAY HAND OUT THE CONSOLE. That
+  // used to mean an admin and now means a holder of
+  // `players.consoleaccess.write` as well — for anybody else this is a hundred
+  // rows they could look at and do nothing with, fetched on every request. Not a
+  // security decision (setConsoleAccess refuses them regardless); a decision
+  // about what is worth sending.
   //
   // Excluded by id rather than by re-stating the level filter with the sense
   // flipped: two filters that have to be exact opposites of each other are one
@@ -110,8 +111,13 @@ export default async function PermissionsPage() {
   // nobody — no error, no empty state, nothing to notice. A Set the code owns
   // cannot fail that way.
   const viewerIsAdmin = isAdminActor(viewer);
+  // The capability, or the level that holds every capability. Resolved from the
+  // viewer's own row through the same path the gates use, which is the only
+  // place this answer is ever taken from.
+  const viewerCanGrantConsole =
+    viewerIsAdmin || viewerSet.has('players.consoleaccess.write');
   const holderIds = new Set(holders.map((person) => person.id));
-  const { data: members } = viewerIsAdmin
+  const { data: members } = viewerCanGrantConsole
     ? await adminClient
         .from('players')
         .select('id, full_name, email, is_banned, status, active_flag')
@@ -189,11 +195,14 @@ export default async function PermissionsPage() {
         holders={holders}
         others={others}
         viewerId={viewer.id as string}
-        // Console access is a LEVEL, and levels are handed out by admins alone —
-        // the hard floor in player-field-access.ts, which no capability reaches.
-        // setConsoleAccess checks this again from the actor's own row; this only
-        // decides whether the control is drawn.
+        // ADMIN BY LEVEL, and it decides ONE thing on this screen now: whether
+        // "Admin" appears on the console-access menu. Making somebody an admin is
+        // the act no capability reaches, and it stays that way.
         viewerIsAdmin={viewerIsAdmin}
+        // Whether the console-access control is drawn at all, and whether
+        // members without a level are searchable. setConsoleAccess checks this
+        // again from the actor's own row; this only decides what is rendered.
+        viewerCanGrantConsole={viewerCanGrantConsole}
         // The actor's own set, resolved on the SERVER through the same path
         // the gates use, and sent as a plain array because a Set does not
         // cross this boundary. It only decides what the editor DISABLES:

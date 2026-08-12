@@ -409,13 +409,29 @@ export function PermissionEditor({
   others,
   viewerId,
   viewerIsAdmin,
+  viewerCanGrantConsole,
   viewerCapabilities,
   baselines,
 }: {
   holders: PersonRow[];
   others: PersonRow[];
   viewerId: string;
+  /**
+   * ADMIN BY LEVEL, and now used for one thing only: whether "Admin" is on the
+   * console-access menu. Making somebody an admin is the act no capability
+   * reaches, so the option is not drawn for anybody else and setConsoleAccess
+   * refuses it again from the actor's own row.
+   */
   viewerIsAdmin: boolean;
+  /**
+   * Holds `players.consoleaccess.write`, or is an admin — the question that used
+   * to be spelled `viewerIsAdmin` everywhere on this screen. It decides whether
+   * the console-access control is drawn at all and whether members WITHOUT a
+   * level are searchable, which are the two halves of "may hand out the
+   * console". Not the boundary: setConsoleAccess resolves the same answer from
+   * the actor's own row.
+   */
+  viewerCanGrantConsole: boolean;
   viewerCapabilities: Capability[];
   /** The club's own baselines, offered beside the four VP jobs. */
   baselines: CustomBaseline[];
@@ -1308,7 +1324,7 @@ export function PermissionEditor({
               </>
             )}
 
-            {!viewerIsAdmin
+            {!viewerCanGrantConsole
               ? memberSearch.trim() !== '' &&
                 shownHolders.length === 0 &&
                 note(`Nobody with console access matches “${memberSearch.trim()}”.`)
@@ -1337,7 +1353,7 @@ export function PermissionEditor({
               of the club is reachable from that search box, and only the people
               who already hold the console are listed without being asked for. */}
           <p className="border-t border-[var(--line)] px-3 py-3 text-[11px] leading-relaxed text-[var(--mute)]">
-            {viewerIsAdmin
+            {viewerCanGrantConsole
               ? `Console access is the level somebody holds; capabilities are what they may do once they have it. ${others.length} other ${others.length === 1 ? 'member has' : 'members have'} none — search by name or email to bring one in. You can only hand out capabilities you hold yourself, and every change is recorded in the audit log.`
               : 'A role decides what somebody STARTS from; grants and revokes adjust it person by person. Leave a role unset and they keep the full access their level has always had. You can only hand out capabilities you hold yourself, and every change is recorded in the audit log.'}
           </p>
@@ -1425,25 +1441,49 @@ export function PermissionEditor({
 
               <div className="px-4 py-4 space-y-4">
                 {/* CONSOLE ACCESS — the half of this page's subtitle it could not
-                    answer until now. It is a LEVEL, not a capability: admins alone
-                    hand it out (the hard floor in player-field-access.ts, which no
-                    grant reaches), so the control is not drawn for anybody else and
-                    the server refuses it again regardless. */}
-                {viewerIsAdmin && (
+                    answer until now. It is a LEVEL rather than a capability, and
+                    handing one out is now itself a capability:
+                    `players.consoleaccess.write`, which is in no baseline and is
+                    given out by name. The control is not drawn for anybody
+                    without it, and setConsoleAccess resolves the same answer from
+                    the actor's own row regardless.
+
+                    THE MENU IS NARROWER FOR A NON-ADMIN, and that is the line
+                    this whole change keeps: `Admin` is offered only to an admin,
+                    because a capability that could mint an admin would make
+                    holding it the same thing as being one. The server refuses it
+                    too — this only decides what is drawn. */}
+                {viewerCanGrantConsole && (
                   <div className="border border-[var(--line)] p-3 space-y-3">
                     <p className={cn(MICRO, 'text-[var(--mute)]')}>Console access</p>
                     {selected.id === viewerId ? (
                       <p className="text-[11px] text-[var(--mute)] max-w-[64ch]">
-                        You cannot change your own. This is the only page that hands console access out,
-                        so an admin who takes their own away loses the screen they would need to put it
-                        back — and the database only protects the last admin holding a passkey, which is
-                        not the same promise. Ask another admin.
+                        You cannot change your own — in either direction. Taking it away here loses you
+                        the screen you would need to put it back, and the database only protects the
+                        last admin holding a passkey, which is not the same promise. Handing yourself a
+                        level you do not have is the one move that would let this capability promote its
+                        own holder, so it is refused before anything is read. Ask another admin.
+                      </p>
+                    ) : selected.level === 'admin' && !viewerIsAdmin ? (
+                      <p className="text-[11px] text-[var(--mute)] max-w-[64ch]">
+                        Only an admin can change an admin&rsquo;s console access. Taking it away is the
+                        same act as giving it, so the level that no capability hands out is also the one
+                        no capability takes back.
                       </p>
                     ) : (
                       <>
                         <Select
                           label="Level"
-                          options={EXEC_ROLE_OPTIONS}
+                          // ADMIN IS OFFERED TO ADMINS ONLY. Filtered rather
+                          // than disabled: a greyed-out option invites the
+                          // question "why not", and the answer — that no
+                          // capability may mint an admin — belongs in the
+                          // documentation rather than in a tooltip on a menu.
+                          options={
+                            viewerIsAdmin
+                              ? EXEC_ROLE_OPTIONS
+                              : EXEC_ROLE_OPTIONS.filter((option) => option.value !== 'admin')
+                          }
                           value={access}
                           onChange={(e) => setAccess(e.target.value as ExecRole)}
                           className="max-w-sm"
