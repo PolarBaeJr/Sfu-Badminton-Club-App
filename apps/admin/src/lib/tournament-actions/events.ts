@@ -396,7 +396,16 @@ export async function setEventStatus(eventId: string, status: TournamentEventSta
   // other formats have one phase and their matches carry phase NULL, so the
   // filter below is a no-op for them.
   const startingPhase = currentPhase(event.format as string, status);
-  if (status === 'live' || status === 'pool_live') {
+  // `bracket_generated` is on this list for a pool_to_bracket event only, and
+  // for a reason the other two formats never have: on them that status is
+  // written by the generator itself and is unreachable any other way, whereas
+  // here it is also the step AFTER `pool_live`, so calling this action directly
+  // could mark an event "bracket generated" with no bracket. The `live` guard
+  // would eventually catch it, but an event should not be able to sit in a
+  // state that is a lie about its own rows in the meantime.
+  const startsAPhase = status === 'live' || status === 'pool_live'
+    || (status === 'bracket_generated' && isPoolToBracket(event.format as string));
+  if (startsAPhase) {
     let q = adminClient.from('tournament_matches')
       .select('*', { count: 'exact', head: true })
       .eq('event_id', eventId);
