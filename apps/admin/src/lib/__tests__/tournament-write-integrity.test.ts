@@ -386,6 +386,7 @@ import {
 } from '../tournament-actions/results';
 import { finalizeEvent, applyPlacementBonuses } from '../tournament-actions/finalize';
 import { generateSingleEliminationBracket, generateRoundRobinMatches } from '../tournament-actions/brackets';
+import { updateTournamentEvent } from '../tournament-actions/events';
 import { withdrawParticipant } from '../tournament-actions/participants';
 import {
   settleWrites, assertWritesSucceeded, reverseEloSnapshot, undoDecidedResult,
@@ -2097,6 +2098,68 @@ describe('regenerating a draw that already exists', () => {
 
     // And an unpinned redraw is free to differ again.
     rand.mockRestore();
+  });
+
+  /**
+   * THE OPT-OUT HAS TO BE REACHABLE WHEN THE EXEC WANTS IT, and that is after a
+   * draw exists — not before.
+   *
+   * An exec hand-sets every seed, generates, and sees a draw that does not match
+   * their numbers. `seeding_method = 'manual'` is the answer, and until now
+   * updateTournamentEvent refused ANY update once matches existed: the remedy on
+   * offer was "void the matches first", which is the very thing they were trying
+   * not to do twice. The seeding method is not a format — nothing about the
+   * matches that exist depends on it, and it is read once, by the NEXT draw.
+   */
+  it('lets the seeding method be switched to manual after a draw exists, and then honours it', async () => {
+    seedField(8);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    Object.assign(event(), { status: 'live' });
+
+    // On its own, past both gates: matches exist and the event is running.
+    expect((await updateTournamentEvent('e1', { seeding_method: 'manual' })).ok).toBe(true);
+    expect(event().seeding_method).toBe('manual');
+
+    // And every draw from here is the one the seed numbers describe.
+    const layouts = new Set<string>();
+    for (let i = 0; i < 10; i++) {
+      expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+      layouts.add(layout().join(' | '));
+    }
+    expect([...layouts]).toEqual(['p-0/p-7 | p-3/p-4 | p-1/p-6 | p-2/p-5']);
+  });
+
+  it('still refuses a format change once a draw exists, and a bundled one', async () => {
+    // The gate the carve-out has to leave standing. A match format the draw has
+    // already been played under must not move, and the seeding method must not
+    // become a way of smuggling one past — hence "on its own" and not "contains".
+    seedField(8);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    const alone = await updateTournamentEvent('e1', { match_format: 'single_to_21' });
+    expect(alone.ok).toBe(false);
+    expect(alone.ok ? '' : alone.error).toContain('already has a draw');
+
+    const bundled = await updateTournamentEvent('e1', {
+      seeding_method: 'manual', match_format: 'single_to_21',
+    });
+    expect(bundled.ok).toBe(false);
+    expect(bundled.ok ? '' : bundled.error).toContain('already has a draw');
+    expect(event().seeding_method).toBeUndefined();
+    expect(event().match_format).toBe('best_of_3_to_21');
+  });
+
+  it('refuses to change how the draw is made once the event is finalised', async () => {
+    // A finalised event's draw can never be rebuilt (assertNotFinalised), so a
+    // setting that only the next draw would read has no next draw to read it.
+    seedField(8);
+    Object.assign(event(), { status: 'completed' });
+
+    const res = await updateTournamentEvent('e1', { seeding_method: 'manual' });
+
+    expect(res.ok).toBe(false);
+    expect(res.ok ? '' : res.error).toContain('finalised');
+    expect(event().seeding_method).toBeUndefined();
   });
 
   /**

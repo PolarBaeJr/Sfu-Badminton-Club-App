@@ -17,6 +17,7 @@ import {
   finalizeEvent,
   lockDraw,
   unlockDraw,
+  updateTournamentEvent,
 } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
@@ -76,6 +77,9 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
   // does not re-render it; the checkbox owns its own state (ThirdPlaceChoice
   // below) and writes the answer out through here.
   const regenThirdPlace = useRef(hasThirdPlace);
+  // The same trick again, for the OTHER choice a redraw makes: whether to draw
+  // at all. See DrawModeChoice.
+  const regenExactDraw = useRef(false);
   const { toast } = useToast();
   const confirm = useConfirm();
   const router = useRouter();
@@ -170,6 +174,7 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
     // Reset before every open — the ref outlives the dialog, and `hasThirdPlace`
     // may have changed since the last one.
     regenThirdPlace.current = hasThirdPlace;
+    regenExactDraw.current = !drawIsRandomised;
 
     const ok = await confirm({
       title: status === 'live'
@@ -213,19 +218,16 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
               that still redraw identically say so here rather than leave the
               exec pressing the button a third time to find out. */}
           {format !== 'round_robin' && (
-            drawIsRandomised ? (
+            seededFromPool ? (
               <p>
-                The draw is made again rather than rebuilt the same way. Seeds 1 and 2 stay at
-                opposite ends and every seeding tier keeps one place in each half, quarter or
-                eighth — but who lands where inside a tier is drawn at random, so this gives a
-                genuinely different bracket without weakening the seeding.
+                This event is seeded from a pool, so the draw follows the pool standings exactly
+                and will come out the same unless a pool result has changed.
               </p>
             ) : (
-              <p>
-                {seededFromPool
-                  ? 'This event is seeded from a pool, so the draw follows the pool standings exactly and will come out the same unless a pool result has changed.'
-                  : 'This event uses manual seeding, so the draw follows the seed numbers exactly and will come out the same unless a seed has changed.'}
-              </p>
+              <DrawModeChoice
+                defaultExact={!drawIsRandomised}
+                onChange={(v) => { regenExactDraw.current = v; }}
+              />
             )
           )}
           {thirdPlaceApplies && (
@@ -242,6 +244,24 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
     if (!ok) return;
 
     setRegenLoading(true);
+    // THE CHOICE HAS TO LAND BEFORE THE DRAW, because the generator reads it off
+    // the event row. Written only when it actually changed — an event already on
+    // the setting the exec picked needs no update, no audit row and no chance to
+    // fail. A pool-seeded event never gets here: it has no checkbox, because
+    // seeding_method is not consulted on that path at all.
+    //
+    // Turning the draw back on writes 'elo' rather than restoring a previous
+    // 'random', and that loses nothing today: nothing anywhere reads the
+    // difference between those two, both mean "drawn", and 'elo' is the default
+    // every event in the club already carries.
+    const modeShouldChange = !seededFromPool && format !== 'round_robin'
+      && regenExactDraw.current === drawIsRandomised;
+    if (modeShouldChange) {
+      const modeRes = await updateTournamentEvent(event.id as string, {
+        seeding_method: regenExactDraw.current ? 'manual' : 'elo',
+      });
+      if (!modeRes.ok) { toast(modeRes.error, 'error'); setRegenLoading(false); return; }
+    }
     // Dispatched on format exactly as handleAction does — a round robin sitting
     // at bracket_generated has its own delete-and-rebuild and no playoff.
     const res = format === 'round_robin'
@@ -551,6 +571,49 @@ function ThirdPlaceChoice({ defaultChecked, onChange }: { defaultChecked: boolea
             : 'The current draw does not have one. Tick to add it to the new draw.'}
           {' '}The two semi-final losers play for 3rd, scheduled alongside the final. It is a rated
           match like any other, and it needs a court.
+        </span>
+      </span>
+    </label>
+  );
+}
+
+/**
+ * WHETHER THE DRAW IS DRAWN, offered where the exec finds out that it is.
+ *
+ * The bracket is made at random within the seeding tiers, which is what makes
+ * Regenerate produce a different draw instead of the byte-identical one the
+ * club owner reported. `seeding_method = 'manual'` is the opt-out: place the
+ * field exactly where its seed numbers say, and redraw identically for ever.
+ *
+ * IT HAS TO BE HERE AND NOT ONLY IN EVENT SETTINGS. The exec who wants it is
+ * the one who hand-set every seed, pressed this button, and watched the draw
+ * move — which is after a draw exists, and Event Settings is not offered then
+ * (the format must not change under matches that exist). The seeding method is
+ * not a format: nothing about the existing matches depends on it, and the
+ * server lets it through on its own for exactly that reason.
+ *
+ * Its own component with its own state, for the same reason ThirdPlaceChoice is
+ * — see the note there.
+ */
+function DrawModeChoice({ defaultExact, onChange }: { defaultExact: boolean; onChange: (v: boolean) => void }) {
+  const [exact, setExact] = useState(defaultExact);
+  return (
+    <label className="flex items-start gap-2.5 cursor-pointer rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2.5">
+      <input
+        type="checkbox"
+        checked={exact}
+        onChange={(e) => { setExact(e.target.checked); onChange(e.target.checked); }}
+        className="mt-0.5 accent-[var(--color-accent)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+      />
+      <span>
+        <span className="text-sm font-medium text-[var(--text-primary)] block">
+          Follow the seed numbers exactly
+        </span>
+        <span className="text-xs text-[var(--text-muted)]">
+          {exact
+            ? 'On: every entrant goes to the bracket position their seed number says, so this draw and every later one come out identical.'
+            : 'Off: the draw is made at random within the seeding tiers. Seeds 1 and 2 stay at opposite ends and every tier keeps one place per half, quarter and eighth, but who lands where inside a tier is drawn — which is why a redraw gives a different bracket.'}
+          {' '}Tick this only if the seeds have been set by hand and the draw has to match them.
         </span>
       </span>
     </label>
