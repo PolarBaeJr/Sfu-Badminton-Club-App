@@ -2456,6 +2456,222 @@ describe('generating a group stage', () => {
   });
 });
 
+// ============================================================
+// Group stage -> knockout, end to end
+// ============================================================
+//
+// THE ONE PATH THAT TOUCHES EVERY PIECE. computeRoundRobinStandings partitions
+// by group_number and hands back a qualification order; buildFieldFromPool
+// promotes the top qualifiers_per_group of each group and carries their group
+// and finishing place onto the bracket entries; the generator draws them within
+// their qualification tiers and keeps group-mates out of round one. Every one of
+// those is unit-tested on its own — and a wrong branch in the join between them
+// is still a wrong bracket, and a wrong final_position, on the day.
+describe('a knockout seeded from a group stage', () => {
+  /**
+   * A finished group stage in 'e0': `groups` groups of `perGroup` entrants,
+   * every fixture played and decided in entry order, so each group's standings
+   * are a strict descending run. 'e1' is the knockout that seeds from it.
+   */
+  function finishedGroupStage(groups: number, perGroup: number, qualifiers = 2) {
+    store.db.tournament_events!.push({
+      id: 'e0', tournament_id: 't1', status: 'completed', event_type: 'mens_singles',
+      format: 'round_robin', match_format: 'best_of_3_to_21', elo_multiplier: 1,
+      placement_bonus_enabled: false, group_count: groups, qualifiers_per_group: qualifiers,
+    });
+    Object.assign(event(), {
+      status: 'checkin', draw_locked: false,
+      seeded_from_event_id: 'e0', seed_by: 'wins', max_participants: null,
+    });
+
+    store.db.tournament_participants = [];
+    store.db.tournament_matches = [];
+    let n = 0;
+    for (let g = 1; g <= groups; g++) {
+      const members = Array.from({ length: perGroup }, (_, i) => `q-g${g}-${i}`);
+      for (const [i, id] of members.entries()) {
+        store.db.tournament_participants.push({
+          id, event_id: 'e0', player_id: `pl-${id}`, elo_before: 1200,
+          elo_after: 1200 + (perGroup - i) * 10, elo_change: null, seed_number: null,
+          group_number: g, final_position: null, points: null, status: 'checked_in',
+        });
+      }
+      // Everybody in the group plays everybody, earlier entry wins — so member
+      // 0 finishes first, member 1 second, and so on. Nothing left pending:
+      // buildFieldFromPool refuses a half-finished pool.
+      for (let i = 0; i < members.length; i++) {
+        for (let j = i + 1; j < members.length; j++) {
+          store.db.tournament_matches.push({
+            id: `pm-${++n}`, event_id: 'e0', status: 'completed', is_bye: false,
+            is_third_place: false, round_number: 1, bracket_position: n,
+            participant_a_id: members[i], participant_b_id: members[j],
+            winner_participant_id: members[i], loser_participant_id: members[j],
+            winner_to_match_id: null, winner_to_position: null,
+            scores: [{ a: 21, b: 10 }, { a: 21, b: 12 }], elo_snapshot: null, notes: null,
+          });
+        }
+      }
+    }
+  }
+
+  /** Which group of the SOURCE event a promoted bracket entry came out of. */
+  const sourceGroupOf = (bracketEntryId: string | null) => {
+    const entry = store.db.tournament_participants!.find((p) => p.id === bracketEntryId);
+    const source = store.db.tournament_participants!.find(
+      (p) => p.event_id === 'e0' && p.player_id === entry?.player_id,
+    );
+    return (source?.group_number ?? null) as number | null;
+  };
+  const bracketRound1 = () => store.db.tournament_matches!
+    .filter((m) => m.event_id === 'e1' && m.round_number === 1)
+    .sort((a, b) => (a.bracket_position as number) - (b.bracket_position as number));
+
+  it('promotes the top two of each group, winners above runners-up', async () => {
+    finishedGroupStage(4, 3);
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    const promoted = store.db.tournament_participants!
+      .filter((p) => p.event_id === 'e1')
+      .sort((a, b) => (a.seed_number as number) - (b.seed_number as number));
+    // 4 groups x 2 qualifiers, and NOT the third-placed finishers — the cut is
+    // decided by the format, not by max_participants, which is null here.
+    expect(promoted).toHaveLength(8);
+    expect(promoted.map((p) => p.player_id)).not.toContain('pl-q-g1-2');
+
+    // Seeds 1-4 are the four group winners; 5-8 are the four runners-up. That
+    // ordering is the whole reason to run groups rather than one pool.
+    const winners = ['pl-q-g1-0', 'pl-q-g2-0', 'pl-q-g3-0', 'pl-q-g4-0'];
+    expect(promoted.slice(0, 4).map((p) => p.player_id).sort()).toEqual(winners.sort());
+    expect(new Set(promoted.slice(4).map((p) => p.player_id)))
+      .toEqual(new Set(['pl-q-g1-1', 'pl-q-g2-1', 'pl-q-g3-1', 'pl-q-g4-1']));
+    // One group, one winner: no group may take two places in the top tier.
+    expect(new Set(promoted.slice(0, 4).map((p) => sourceGroupOf(p.id as string))).size).toBe(4);
+  });
+
+  it('never pairs two entrants from the same group in round one', async () => {
+    // Run it repeatedly: the draw is randomised within the qualification tiers,
+    // so a constraint that held once could still be luck.
+    for (let attempt = 0; attempt < 25; attempt++) {
+      store.db.tournament_events = store.db.tournament_events!.filter((e) => e.id === 'e1');
+      finishedGroupStage(4, 3);
+
+      expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+      const r1 = bracketRound1();
+      expect(r1).toHaveLength(4);
+      for (const m of r1) {
+        const a = sourceGroupOf(m.participant_a_id as string);
+        const b = sourceGroupOf(m.participant_b_id as string);
+        expect(a).not.toBeNull();
+        expect(a).not.toBe(b);
+      }
+      const audit = store.db.tournament_audit_log!.filter((r) => r.action === 'bracket_generated').at(-1)!;
+      expect((audit.details as Row).same_group_round_1).toBe('avoided');
+      expect((audit.details as Row).source_group_count).toBe(4);
+    }
+  });
+
+  it('IS drawn, unlike a single-pool seeding, and says so in the audit row', async () => {
+    // A single pool's finishing order is a total order everybody played for, so
+    // that draw is fixed. Across groups, "which runner-up does the winner of A
+    // play" was never asked by anything the groups played — fixing it to the
+    // lowest-numbered group would make the bracket a pure function of the group
+    // numbering, which is the "regenerate changes nothing" defect again.
+    finishedGroupStage(4, 3);
+    const layouts = new Set<string>();
+    for (let i = 0; i < 20; i++) {
+      expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+      layouts.add(bracketRound1().map((m) => `${m.participant_a_id}/${m.participant_b_id}`).join(' | '));
+    }
+    expect(layouts.size).toBeGreaterThan(1);
+
+    const audit = store.db.tournament_audit_log!.filter((r) => r.action === 'bracket_generated').at(-1)!;
+    expect((audit.details as Row).draw_randomised).toBe(true);
+    expect((audit.details as Row).draw_seed).toEqual(expect.any(Number));
+  });
+
+  it('respects a bracket size smaller than the qualifier count', async () => {
+    // 3 groups x 2 = 6 qualifiers into a 4-slot bracket. The two caps compose,
+    // and the four who get in are the ones highest in the qualification order —
+    // all three group winners, then the best runner-up.
+    finishedGroupStage(3, 3);
+    Object.assign(event(), { max_participants: 4 });
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    const promoted = store.db.tournament_participants!.filter((p) => p.event_id === 'e1');
+    expect(promoted).toHaveLength(4);
+    const groupsOfField = promoted.map((p) => sourceGroupOf(p.id as string)).sort();
+    // Every group's winner plus one runner-up: one group appears twice.
+    expect(groupsOfField).toEqual([1, 1, 2, 3]);
+  });
+
+  it('reads the group off tournament_pairs for a doubles group stage', async () => {
+    // THE OTHER DISCIPLINE'S BRANCH. computeRoundRobinStandings reads
+    // group_number from tournament_pairs for a doubles event and from
+    // tournament_participants for a singles one, and only one of those two
+    // reads is exercised by everything above. A doubles group stage is a
+    // plausible first use of this feature.
+    store.db.tournament_events!.push({
+      id: 'e0', tournament_id: 't1', status: 'completed', event_type: 'mens_doubles',
+      format: 'round_robin', match_format: 'best_of_3_to_21', elo_multiplier: 1,
+      placement_bonus_enabled: false, group_count: 2, qualifiers_per_group: 2,
+    });
+    Object.assign(event(), {
+      status: 'checkin', draw_locked: false, event_type: 'mens_doubles',
+      seeded_from_event_id: 'e0', seed_by: 'wins', max_participants: null,
+    });
+    // Doubles reads pairs, not participants — and an unpaired entrant in the
+    // BRACKET would block generation, so this list stays empty.
+    store.db.tournament_participants = [];
+    store.db.tournament_pairs = [];
+    store.db.tournament_matches = [];
+    let n = 0;
+    for (const g of [1, 2]) {
+      const members = [0, 1, 2].map((i) => `pair-g${g}-${i}`);
+      members.forEach((id, i) => {
+        store.db.tournament_pairs!.push({
+          id, event_id: 'e0', player1_id: `${id}-a`, player2_id: `${id}-b`,
+          pair_name: id, combined_elo: 2400 - i * 10, seed_number: null,
+          group_number: g, final_position: null, points: null, status: 'checked_in',
+        });
+      });
+      for (let i = 0; i < members.length; i++) {
+        for (let j = i + 1; j < members.length; j++) {
+          store.db.tournament_matches.push({
+            id: `dm-${++n}`, event_id: 'e0', status: 'completed', is_bye: false,
+            is_third_place: false, round_number: 1, bracket_position: n,
+            pair_a_id: members[i], pair_b_id: members[j],
+            winner_pair_id: members[i], loser_pair_id: members[j],
+            winner_to_match_id: null, winner_to_position: null,
+            scores: [{ a: 21, b: 10 }, { a: 21, b: 12 }], elo_snapshot: null, notes: null,
+          });
+        }
+      }
+    }
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    const promoted = store.db.tournament_pairs!.filter((p) => p.event_id === 'e1');
+    expect(promoted).toHaveLength(4);
+    // The group came through: no round-one match pairs two teams from the
+    // same group. Both group winners were promoted, and neither is a
+    // third-placed team.
+    const groupOfPair = (id: string | null) => {
+      const here = store.db.tournament_pairs!.find((p) => p.id === id);
+      return store.db.tournament_pairs!.find((p) => p.event_id === 'e0' && p.pair_name === here?.pair_name)
+        ?.group_number ?? null;
+    };
+    for (const m of bracketRound1()) {
+      expect(groupOfPair(m.pair_a_id as string)).not.toBeNull();
+      expect(groupOfPair(m.pair_a_id as string)).not.toBe(groupOfPair(m.pair_b_id as string));
+    }
+    expect(promoted.map((p) => p.pair_name).sort())
+      .toEqual(['pair-g1-0', 'pair-g1-1', 'pair-g2-0', 'pair-g2-1']);
+  });
+});
+
 describe('third-place playoff', () => {
   beforeEach(seedFourDraw);
 
