@@ -44,6 +44,9 @@ export {
   updatePairSeed,
   autoSeedEventByElo,
   clearSeeds,
+  assignEventGroups,
+  updateParticipantGroup,
+  updatePairGroup,
 } from './tournament-actions/seeding';
 
 export {

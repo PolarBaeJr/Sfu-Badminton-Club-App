@@ -43,6 +43,42 @@ function normalizeTypedFormat(games?: number | null, points?: number | null): { 
   return { games_per_match: g, points_per_game: p };
 }
 
+// The group shape (00106). The CHECK constraints are the real enforcement, same
+// as the typed format above; this turns a violation into a sentence and pins
+// the two rules the database cannot see:
+//
+//   * A KNOCKOUT HAS NO GROUPS. 00106 has a row-level CHECK for this, but
+//     Postgres would report it as a constraint name — and the exec who hit it
+//     picked "Single Elimination" three fields higher up.
+//   * QUALIFIERS CANNOT EXCEED THE GROUP. Asking three out of a group of two is
+//     not a format, and it is the kind of typo that only shows up as a bracket
+//     with byes in it a week later. The group SIZE is not known yet at creation
+//     time — nobody has entered — so this can only bound it against the ceiling
+//     the schema allows, and the generator's own "fewer than 2 entries" refusal
+//     catches the rest on the day.
+function normalizeGroupShape(
+  format: TournamentEventFormat | string | undefined,
+  groupCount?: number | null,
+  qualifiersPerGroup?: number | null,
+): { group_count: number | null; qualifiers_per_group: number | null } {
+  const g = groupCount == null || Number.isNaN(groupCount) ? null : Math.trunc(groupCount);
+  const q = qualifiersPerGroup == null || Number.isNaN(qualifiersPerGroup) ? null : Math.trunc(qualifiersPerGroup);
+
+  if (g !== null && (g < 1 || g > 32)) {
+    throw new ExpectedError('Group count must be between 1 and 32. Leave it blank for an ordinary round robin.');
+  }
+  if (q !== null && (q < 1 || q > 16)) {
+    throw new ExpectedError('Qualifiers per group must be between 1 and 16.');
+  }
+  if (g !== null && g > 1 && format !== 'round_robin') {
+    throw new ExpectedError('Only a round robin can be split into groups. A single-elimination event is one bracket.');
+  }
+  // Stored only when it means something, exactly as seed_by is: a
+  // qualifiers-per-group left behind on a flat round robin is a stale choice
+  // waiting to be read the day somebody sets a group count.
+  return { group_count: g, qualifiers_per_group: g !== null && g > 1 ? (q ?? 2) : null };
+}
+
 // A seeding link is only meaningful within one tournament, and the self-seed
 // case would deadlock generation on standings it is supposed to produce.
 async function assertSeedSourceUsable(
@@ -75,6 +111,8 @@ async function createTournamentEventImpl(
     points_per_game?: number | null;
     seeded_from_event_id?: string | null;
     seed_by?: SeedBy | null;
+    group_count?: number | null;
+    qualifiers_per_group?: number | null;
     max_participants?: number;
     seeding_method?: TournamentSeedingMethod;
     elo_multiplier?: number;
@@ -85,6 +123,7 @@ async function createTournamentEventImpl(
   const adminClient = createAdminClient();
 
   const typedFormat = normalizeTypedFormat(config.games_per_match, config.points_per_game);
+  const groupShape = normalizeGroupShape(config.format, config.group_count, config.qualifiers_per_group);
   if (config.seeded_from_event_id) {
     await assertSeedSourceUsable(adminClient, tournamentId, null, config.seeded_from_event_id);
   }
@@ -99,6 +138,7 @@ async function createTournamentEventImpl(
     // seed_by is only read when a source is set; storing it without one would
     // leave a stale choice behind if a source is added later.
     seed_by: config.seeded_from_event_id ? (config.seed_by ?? 'wins') : null,
+    ...groupShape,
     max_participants: config.max_participants ?? null,
     seeding_method: config.seeding_method ?? 'elo',
     elo_multiplier: config.elo_multiplier ?? 1.25,
@@ -130,6 +170,8 @@ async function updateTournamentEventImpl(
     points_per_game?: number | null;
     seeded_from_event_id?: string | null;
     seed_by?: SeedBy | null;
+    group_count?: number | null;
+    qualifiers_per_group?: number | null;
     max_participants?: number | null;
     seeding_method?: TournamentSeedingMethod;
     elo_multiplier?: number;
@@ -187,6 +229,22 @@ async function updateTournamentEventImpl(
 
   if ('games_per_match' in updates || 'points_per_game' in updates) {
     Object.assign(patch, normalizeTypedFormat(updates.games_per_match, updates.points_per_game));
+  }
+
+  // NO seeding_method-style carve-out for the group shape, deliberately. That
+  // exemption exists because the seeding method is read once, by the next
+  // generation, and changes nothing about the matches that already exist. The
+  // group count is the opposite: the fixtures ARE the groups, so lowering it
+  // would leave people playing a group the event says does not exist and the
+  // standings partitioning differently from the schedule. The unmodified gate
+  // above — no draw, still editable — is the right one, and its remedy
+  // (regenerate the round robin) is the honest one here.
+  if ('group_count' in updates || 'qualifiers_per_group' in updates) {
+    Object.assign(patch, normalizeGroupShape(
+      event.format as TournamentEventFormat,
+      'group_count' in updates ? updates.group_count : (event as { group_count?: number | null }).group_count,
+      'qualifiers_per_group' in updates ? updates.qualifiers_per_group : (event as { qualifiers_per_group?: number | null }).qualifiers_per_group,
+    ));
   }
 
   if ('seeded_from_event_id' in updates) {

@@ -21,12 +21,17 @@ export interface EventFormatValues {
   /** Blank means this event is not seeded from a pool. */
   seededFrom: string;
   seedBy: SeedBy;
+  /** Blank or "1" is an ordinary flat round robin — see 00106. */
+  groupCount: string;
+  qualifiersPerGroup: string;
 }
 
 export interface SiblingEvent {
   id: string;
   event_type: string;
   format: string;
+  /** Present since 00106; absent on a page that has not been updated. */
+  group_count?: number | null;
 }
 
 export const EMPTY_FORMAT_VALUES: EventFormatValues = {
@@ -35,16 +40,25 @@ export const EMPTY_FORMAT_VALUES: EventFormatValues = {
   pointsPerGame: '',
   seededFrom: '',
   seedBy: 'wins',
+  groupCount: '',
+  qualifiersPerGroup: '2',
 };
 
 /** Server-action payload. Blank inputs become NULL, which means "use the enum". */
 export function toFormatPayload(v: EventFormatValues) {
+  const groups = v.groupCount === '' ? null : Number(v.groupCount);
   return {
     match_format: v.matchFormat,
     games_per_match: v.gamesPerMatch === '' ? null : Number(v.gamesPerMatch),
     points_per_game: v.pointsPerGame === '' ? null : Number(v.pointsPerGame),
     seeded_from_event_id: v.seededFrom === '' ? null : v.seededFrom,
     seed_by: v.seededFrom === '' ? null : v.seedBy,
+    group_count: groups,
+    // Same rule seed_by follows: only sent when there is something for it to
+    // qualify out of, so a leftover number cannot be read later as a choice.
+    qualifiers_per_group: groups !== null && groups > 1
+      ? (v.qualifiersPerGroup === '' ? null : Number(v.qualifiersPerGroup))
+      : null,
   };
 }
 
@@ -52,13 +66,22 @@ export function EventFormatFields({
   value,
   onChange,
   siblings,
+  format,
 }: {
   value: EventFormatValues;
   onChange: (next: EventFormatValues) => void;
   siblings: SiblingEvent[];
+  /**
+   * The event's format, so the group fields can be offered only where they
+   * mean something. Optional so a caller that has not been updated renders
+   * exactly what it rendered before rather than a field it cannot honour.
+   */
+  format?: string;
 }) {
   const set = (patch: Partial<EventFormatValues>) => onChange({ ...value, ...patch });
   const { minGames, maxGames, minPoints, maxPoints } = CUSTOM_FORMAT_BOUNDS;
+  const isRoundRobin = format === 'round_robin';
+  const groups = value.groupCount === '' ? 0 : Number(value.groupCount);
 
   // Preview the shape that will actually be played, so an exec can see at a
   // glance whether their typed values took effect over the preset.
@@ -103,6 +126,47 @@ export function EventFormatFields({
         preset; games must be odd.
       </p>
 
+      {/* GROUPS. Round robin only, because a bracket cannot be partitioned —
+          the server refuses it and 00106 has a CHECK constraint for it, so
+          offering the field on a knockout would be a dead invitation. */}
+      {isRoundRobin && (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              label="Groups (optional)"
+              type="number"
+              min={1}
+              max={32}
+              value={value.groupCount}
+              onChange={(e) => set({ groupCount: e.target.value })}
+              placeholder="One pool"
+            />
+            <Input
+              label="Advance Per Group"
+              type="number"
+              min={1}
+              max={16}
+              value={value.qualifiersPerGroup}
+              onChange={(e) => set({ qualifiersPerGroup: e.target.value })}
+              disabled={groups < 2}
+            />
+          </div>
+          <p className="text-xs text-[var(--text-muted)] -mt-2">
+            {groups >= 2 ? (
+              <>
+                {groups} groups, each a round robin of its own. The field is dealt out serpentine by seed so the strong
+                entrants are spread across them, and the top{' '}
+                <span className="font-medium text-[var(--text-primary)]">{value.qualifiersPerGroup || '2'}</span> of each
+                group go into whichever bracket seeds from this event — group winners first, then runners-up.
+              </>
+            ) : (
+              <>Leave blank for one pool where everybody plays everybody. Two or more makes this a group stage: far fewer
+              matches, and a bracket can seed from it.</>
+            )}
+          </p>
+        </>
+      )}
+
       {siblings.length > 0 && (
         <>
           <Select
@@ -114,7 +178,11 @@ export function EventFormatFields({
               ...siblings.map((s) => ({
                 value: s.id,
                 label: `${TOURNAMENT_EVENT_TYPE_LABELS[s.event_type as TournamentEventType] ?? s.event_type} · ${
-                  s.format === 'round_robin' ? 'Round Robin' : 'Single Elimination'
+                  s.format !== 'round_robin'
+                    ? 'Single Elimination'
+                    : (s.group_count ?? 1) >= 2
+                      ? `Group Stage (${s.group_count})`
+                      : 'Round Robin'
                 }`,
               })),
             ]}
@@ -131,8 +199,9 @@ export function EventFormatFields({
                 ]}
               />
               <p className="text-xs text-[var(--text-muted)] -mt-2">
-                The top finishers of that pool become this draw, in finishing order, up to Max Participants. The bracket
-                cannot be generated until every pool match has been played.
+                The top finishers of that pool become this draw, in finishing order, up to Max Participants. From a group
+                stage it is the top few of EACH group — winners seeded above runners-up, and two entrants from the same
+                group kept apart in round one. The bracket cannot be generated until every pool match has been played.
               </p>
             </>
           )}

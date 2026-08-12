@@ -164,7 +164,12 @@ export default async function TournamentDetailPage({ params }: { params: Promise
           {(tournament.status === 'draft' || tournament.status === 'active') && (
             <CreateEventButton
               tournamentId={id}
-              siblings={(events ?? []).map((ev) => ({ id: ev.id, event_type: ev.event_type, format: ev.format }))}
+              siblings={(events ?? []).map((ev) => ({
+                id: ev.id,
+                event_type: ev.event_type,
+                format: ev.format,
+                group_count: (ev as { group_count?: number | null }).group_count ?? null,
+              }))}
             />
           )}
         </div>

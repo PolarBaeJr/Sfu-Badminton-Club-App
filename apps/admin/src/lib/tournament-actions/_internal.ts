@@ -18,6 +18,8 @@ import {
   forfeitOutcome,
   OPEN_MATCH_STATUSES,
   sortStandings,
+  qualificationOrder,
+  snakeGroupAssignment,
   resolveEventWaiverText,
   screenForEventWaiver,
   eventWaiverRefusal,
@@ -742,6 +744,293 @@ export function drawWithinTiers<T>(entries: readonly T[], rng: () => number): T[
     }
   }
   return drawn;
+}
+
+// ============================================================
+// Assigning a field into groups (00106)
+// ============================================================
+
+/** Everything group assignment needs to know about one entry. */
+export type GroupCandidate = {
+  id: string;
+  seed: number | null;
+  /** Rating, the fallback ordering when nobody has been seeded. */
+  elo: number;
+  group: number | null;
+};
+
+/**
+ * The order the field is dealt into groups in — best first.
+ *
+ * SEEDS FIRST, THEN RATING, AND THE FALLBACK IS THE POINT. The round-robin
+ * generator reads its field ordered by seed_number and — unlike the knockout
+ * generator, which auto-seeds by Elo before it draws — never assigns one. A
+ * round-robin event can therefore reach group assignment with every seed NULL,
+ * at which point "serpentine by seed" is serpentine by whatever order Postgres
+ * felt like returning, which is not balanced at all. That is the exact failure
+ * the format exists to avoid, arrived at silently.
+ *
+ * So an unseeded field falls back to rating, mirroring what the knockout path
+ * has always done. A PARTIALLY seeded field puts the seeded entrants first in
+ * seed order and the rest behind them by rating, because an exec who seeded the
+ * top four and left the rest meant those four to be the top four.
+ */
+export function seedingOrderForGroups<T extends GroupCandidate>(entries: readonly T[]): T[] {
+  return [...entries].sort((a, b) => {
+    if (a.seed != null && b.seed != null) return a.seed - b.seed;
+    if (a.seed != null) return -1;
+    if (b.seed != null) return 1;
+    return b.elo - a.elo;
+  });
+}
+
+/**
+ * Decide which group every entry belongs to.
+ *
+ * THREE CASES, AND ONLY ONE OF THEM DEALS THE WHOLE FIELD:
+ *
+ *   * Nothing assigned yet (or `reassignAll`) — serpentine by seed over the
+ *     entire field. This is what the Assign Groups button does.
+ *   * Some assigned, some not — the assigned ones are LEFT ALONE and the rest
+ *     go into whichever group is currently smallest. This is what happens when
+ *     somebody enters after the groups were drawn: re-dealing the field would
+ *     silently undo an exec's hand-placement, which is the one thing an
+ *     override has to survive.
+ *   * All assigned — nothing to do, and the returned map still names every
+ *     entry so the caller can write it back idempotently.
+ *
+ * A group number outside 1..groupCount counts as unassigned. It can only come
+ * from group_count having been lowered after the fact, and leaving it would put
+ * somebody in a group that no longer exists.
+ */
+export function planGroupAssignment<T extends GroupCandidate>(
+  entries: readonly T[],
+  groupCount: number,
+  opts?: { reassignAll?: boolean },
+): Map<string, number> {
+  const ordered = seedingOrderForGroups(entries);
+  const out = new Map<string, number>();
+  if (groupCount < 2) {
+    for (const e of ordered) out.set(e.id, 1);
+    return out;
+  }
+
+  const keep = opts?.reassignAll
+    ? new Map<string, number>()
+    : new Map(
+        ordered
+          .filter((e) => e.group != null && e.group >= 1 && e.group <= groupCount)
+          .map((e) => [e.id, e.group as number]),
+      );
+
+  if (keep.size === 0) {
+    const plan = snakeGroupAssignment(ordered.length, groupCount);
+    ordered.forEach((e, i) => out.set(e.id, plan[i]!));
+    return out;
+  }
+
+  const counts = new Array<number>(groupCount).fill(0);
+  for (const g of keep.values()) counts[g - 1]!++;
+
+  for (const e of ordered) {
+    const kept = keep.get(e.id);
+    if (kept != null) { out.set(e.id, kept); continue; }
+    // Smallest group wins; ties go to the lowest number so the result does not
+    // depend on how Array.prototype behaves at equal values.
+    let pick = 0;
+    for (let g = 1; g < groupCount; g++) if (counts[g]! < counts[pick]!) pick = g;
+    counts[pick]!++;
+    out.set(e.id, pick + 1);
+  }
+  return out;
+}
+
+// ============================================================
+// Drawing a GROUP-seeded field (00106)
+// ============================================================
+//
+// WHY THIS IS NOT drawWithinTiers, AND WHY drawWithinTiers IS NOT TOUCHED.
+//
+// drawWithinTiers shuffles inside the SEEDING bands [1,1], [2,2], [3,4],
+// [5,8] ... — the powers of two the bracket's own geometry is built from. Those
+// bands are exactly right when the seeding order is a rating order, because
+// then the band boundaries are the only thing that separation depends on.
+//
+// They are WRONG for a group stage, and the failure is not hypothetical.
+// Qualification order puts every group WINNER first and every RUNNER-UP after
+// them, so with 3 groups of 2 qualifiers the winners hold ranks 1-3 and the
+// runners-up 4-6 — while seedTierBands(6) yields [1,1], [2,2], [3,4], [5,6].
+// Band [3,4] STRADDLES the boundary: shuffling it can draw a runner-up above a
+// group winner, which is precisely the outcome brackets.ts already refuses to
+// let a pool-seeded draw produce. Every group count that is not a power of two,
+// and every qualifiers-per-group above 2, has the same straddle somewhere.
+//
+// So the tiers a group-seeded draw is shuffled within are the QUALIFICATION
+// tiers — winners among themselves, runners-up among themselves, thirds among
+// themselves — and nothing else. That is the coin flip that is genuinely a
+// choice: "winner of A plays runner-up of B" is decided by the format, but
+// WHICH B is not decided by anything the groups played, so drawing it is more
+// honest than fixing it to whichever group happens to be numbered lowest.
+//
+// drawWithinTiers keeps its exact signature and keeps serving the ordinary
+// rating-seeded path, which is what the randomised-draw work built it for.
+
+/**
+ * Shuffle within each contiguous run of entries sharing a tier.
+ *
+ * `entries` must already be grouped by tier — which qualificationOrder
+ * guarantees, since it emits depth-major. Runs are detected rather than
+ * computed from a band table, so a tier that is short (a group with fewer
+ * finishers than the rest) needs no special case: it is simply a shorter run.
+ */
+export function drawWithinQualificationTiers<T>(
+  entries: readonly T[],
+  tierOf: (entry: T) => number,
+  rng: () => number,
+): T[] {
+  const drawn = [...entries];
+  let start = 0;
+  for (let i = 1; i <= drawn.length; i++) {
+    if (i < drawn.length && tierOf(drawn[i]!) === tierOf(drawn[start]!)) continue;
+    // Fisher-Yates over [start, i-1]. A one-member run has nothing to swap.
+    for (let j = i - 1; j > start; j--) {
+      const k = start + Math.floor(rng() * (j - start + 1));
+      const tmp = drawn[j]!;
+      drawn[j] = drawn[k]!;
+      drawn[k] = tmp;
+    }
+    start = i;
+  }
+  return drawn;
+}
+
+/**
+ * How many round-one matches this draw order would put two group-mates in.
+ *
+ * Evaluated on the BRACKET PLACEMENT, not on adjacent array indices. Rank r is
+ * seated at whichever bracket position getStandardSeedPositions sends it to, and
+ * round one pairs positions (0,1), (2,3), ... — so ranks 1 and 2 are never
+ * adjacent in the bracket even though they are adjacent in this array.
+ *
+ * A slot with a bye on the other side is never a conflict: nobody plays it.
+ */
+export function sameGroupRound1Conflicts<T>(
+  drawn: readonly T[],
+  bracketSize: number,
+  groupOf: (entry: T) => number | null,
+): number {
+  const positions = getStandardSeedPositions(bracketSize);
+  let conflicts = 0;
+  for (let pos = 0; pos < bracketSize; pos += 2) {
+    const a = drawn[positions[pos]! - 1];
+    const b = drawn[positions[pos + 1]! - 1];
+    if (!a || !b) continue;
+    const ga = groupOf(a);
+    const gb = groupOf(b);
+    if (ga != null && ga === gb) conflicts++;
+  }
+  return conflicts;
+}
+
+/**
+ * Draw a group-seeded field so that no two group-mates meet in round one.
+ *
+ * THE CONSTRAINT IS THE ONE THING GROUPS ADD TO A DRAW. Two entrants out of the
+ * same group have just played each other, sometimes minutes earlier; pairing
+ * them again in round one wastes the group stage's whole result for both of
+ * them and hands the rest of the draw a free half.
+ *
+ * ENFORCED BY REDRAWING, NOT BY SWAPPING. A repair pass that swaps two entrants
+ * to fix a clash has to prove it did not create another one, and has to prove it
+ * stayed inside its tier — two invariants to maintain by hand. Redrawing from a
+ * fresh RNG value preserves both by construction: every attempt is a valid draw
+ * of exactly the same shape, and the constraint is a filter over valid draws
+ * rather than an edit to an invalid one.
+ *
+ * IT CAN BE UNSATISFIABLE, so there are two guards and neither is a loop that
+ * hopes:
+ *
+ *   * A PIGEONHOLE PRE-CHECK. Round one has a fixed number of CONTESTED matches
+ *     — fixed because byes always fall on the last ranks, so which positions get
+ *     two real entrants does not depend on the permutation. Each contested match
+ *     can hold at most one entrant from any one group, and the bye slots can
+ *     hold the rest. If some group brings more qualifiers than
+ *     (contested matches + bye slots), no arrangement can separate them. The
+ *     realistic version of this is not exotic: withdrawals can leave a bracket
+ *     whose field is mostly one group.
+ *   * A BOUNDED ATTEMPT COUNT for everything the pigeonhole cannot see.
+ *
+ * When neither succeeds the FALLBACK IS THE BEST DRAW SEEN, not a refusal.
+ * Refusing would mean an exec cannot generate a knockout at all because of a
+ * scheduling nicety, on a day when the courts are already booked. The caller
+ * records `same_group_round_1` in the audit row so the compromise is written
+ * down rather than merely tolerated.
+ */
+export function drawAvoidingSameGroupRound1<T>(
+  entries: readonly T[],
+  opts: {
+    bracketSize: number;
+    tierOf: (entry: T) => number;
+    groupOf: (entry: T) => number | null;
+    seed: number;
+    maxAttempts?: number;
+  },
+): { entries: T[]; conflicts: number; attempts: number; feasible: boolean } {
+  const { bracketSize, tierOf, groupOf, seed } = opts;
+  const maxAttempts = opts.maxAttempts ?? 64;
+
+  // Contested = both slots hold a real entrant. entries.length is the field, so
+  // ranks above it are empty and their matches are byes or nothing at all.
+  const positions = getStandardSeedPositions(bracketSize);
+  let contested = 0;
+  let byeSlots = 0;
+  for (let pos = 0; pos < bracketSize; pos += 2) {
+    const a = positions[pos]! <= entries.length;
+    const b = positions[pos + 1]! <= entries.length;
+    if (a && b) contested++;
+    else if (a || b) byeSlots++;
+  }
+
+  const perGroup = new Map<number, number>();
+  for (const e of entries) {
+    const g = groupOf(e);
+    if (g != null) perGroup.set(g, (perGroup.get(g) ?? 0) + 1);
+  }
+  const biggest = perGroup.size === 0 ? 0 : Math.max(...perGroup.values());
+  const feasible = biggest <= contested + byeSlots;
+
+  let best: T[] = [...entries];
+  let bestConflicts = sameGroupRound1Conflicts(best, bracketSize, groupOf);
+  let attempts = 0;
+
+  if (!feasible) {
+    // Still DRAW it — the tier shuffle is wanted regardless — but do not spend
+    // 64 attempts chasing an arrangement that provably does not exist.
+    const drawn = drawWithinQualificationTiers(entries, tierOf, makeDrawRng(seed));
+    return {
+      entries: drawn,
+      conflicts: sameGroupRound1Conflicts(drawn, bracketSize, groupOf),
+      attempts: 1,
+      feasible: false,
+    };
+  }
+
+  while (attempts < maxAttempts) {
+    // A DIFFERENT SEED EACH ATTEMPT, derived from the recorded one. Re-running
+    // generation with the audit row's draw_seed reproduces this same sequence
+    // and therefore the same bracket, which is the property the randomised draw
+    // was built to have and this must not break.
+    const drawn = drawWithinQualificationTiers(entries, tierOf, makeDrawRng((seed + attempts * 0x9e3779b1) >>> 0));
+    attempts++;
+    const conflicts = sameGroupRound1Conflicts(drawn, bracketSize, groupOf);
+    if (conflicts < bestConflicts || attempts === 1) {
+      best = drawn;
+      bestConflicts = conflicts;
+    }
+    if (conflicts === 0) return { entries: drawn, conflicts: 0, attempts, feasible: true };
+  }
+
+  return { entries: best, conflicts: bestConflicts, attempts, feasible: true };
 }
 
 // ============================================================
@@ -1566,6 +1855,28 @@ export async function forfeitOutOfEventEntries(
 // seedBy picks the FIRST sort key only — see sortStandings. It exists so that
 // pool-to-bracket seeding and the leaderboard tally the same figures from the
 // same query and differ only in how the finished table is read.
+//
+// TWO ORDERS, ONE TALLY (00106). Everything above the final sort is identical
+// for a flat round robin and a group stage — the same matches, the same
+// withdrawal rule, the same figures — because a group stage IS a round robin
+// that happens to be partitioned. Only the last step differs:
+//
+//   * group_count NULL or 1 -> sortStandings, exactly as before. Not a special
+//     case of the group path, and not routed through it: the flat behaviour is
+//     the untouched one.
+//   * group_count >= 2 -> qualificationOrder, which reads the event as winners,
+//     then runners-up, then thirds. Every row also comes back carrying `group`
+//     and `groupRank`, which is what lets the bracket generator shuffle within
+//     qualification tiers and keep group-mates apart in round one.
+//
+// WHAT THIS CHANGES FOR A FINALISED GROUP STAGE, stated rather than left to be
+// discovered: finalize.ts assigns final_position from this list's order, so a
+// group stage's positions become 1..G for the group winners (best record
+// first), G+1..2G for the runners-up, and so on. Positions stay UNIQUE — one
+// 1st, one 2nd — so the placement-bonus ledger pays exactly the same number of
+// people it always did. The alternative, a flat ranking across groups by raw
+// wins, is the one that is actually wrong here: it compares records built
+// against different opposition over different numbers of fixtures.
 export async function computeRoundRobinStandings(eventId: string, seedBy: SeedBy = 'wins') {
   const adminClient = createAdminClient();
 
@@ -1573,6 +1884,8 @@ export async function computeRoundRobinStandings(eventId: string, seedBy: SeedBy
   if (!event) return [];
 
   const doubles = isDoublesEvent(event.event_type);
+  const groupCount = (event as { group_count?: number | null }).group_count ?? 1;
+  const grouped = groupCount >= 2;
 
   // Get all completed matches
   const { data: matches } = await adminClient.from('tournament_matches')
@@ -1590,24 +1903,26 @@ export async function computeRoundRobinStandings(eventId: string, seedBy: SeedBy
   // those matches stayed in the global Elo and in the players' match records.
   // Positions and round-robin points were then computed from a different set of
   // results than the ratings were, and nothing said so.
-  let entries: Array<{ id: string; name: string; out: boolean }> = [];
+  let entries: Array<{ id: string; name: string; out: boolean; group: number | null }> = [];
   if (doubles) {
     const { data: pairs } = await adminClient.from('tournament_pairs')
-      .select('id, pair_name, status')
+      .select('id, pair_name, status, group_number')
       .eq('event_id', eventId);
     entries = (pairs ?? []).map(p => ({
       id: p.id,
       name: p.pair_name ?? 'Unnamed',
       out: isOutOfEvent(p.status as string),
+      group: (p as { group_number?: number | null }).group_number ?? null,
     }));
   } else {
     const { data: participants } = await adminClient.from('tournament_participants')
-      .select('id, status, player:players(full_name)')
+      .select('id, status, group_number, player:players(full_name)')
       .eq('event_id', eventId);
     entries = (participants ?? []).map(p => ({
       id: p.id,
       name: ((p.player as unknown as Record<string, unknown>)?.full_name as string) ?? 'Unknown',
       out: isOutOfEvent(p.status as string),
+      group: (p as { group_number?: number | null }).group_number ?? null,
     }));
   }
   // Who may be RANKED. A withdrawn entry's results still count towards everyone
@@ -1618,6 +1933,8 @@ export async function computeRoundRobinStandings(eventId: string, seedBy: SeedBy
   const stats: Record<string, {
     id: string;
     name: string;
+    /** 1-based group, or null outside a group stage. */
+    group: number | null;
     wins: number;
     losses: number;
     pointsFor: number;
@@ -1630,7 +1947,7 @@ export async function computeRoundRobinStandings(eventId: string, seedBy: SeedBy
   }> = {};
 
   for (const e of entries) {
-    stats[e.id] = { id: e.id, name: e.name, wins: 0, losses: 0, pointsFor: 0, pointsAgainst: 0, gamesFor: 0, gamesAgainst: 0, h2h: {} };
+    stats[e.id] = { id: e.id, name: e.name, group: e.group, wins: 0, losses: 0, pointsFor: 0, pointsAgainst: 0, gamesFor: 0, gamesAgainst: 0, h2h: {} };
   }
 
   for (const m of matches ?? []) {
@@ -1674,5 +1991,10 @@ export async function computeRoundRobinStandings(eventId: string, seedBy: SeedBy
 
   // Ordering lives in @badminton/shared so it is testable without a database
   // and so seeding a bracket off this table cannot drift from the table itself.
-  return sortStandings(rankable, seedBy);
+  //
+  // groupRank is carried on BOTH shapes so callers never have to branch on
+  // which one they got. A flat round robin has one implicit group, so its
+  // groupRank is just the finishing place — which is what it means.
+  if (grouped) return qualificationOrder(rankable, seedBy);
+  return sortStandings(rankable, seedBy).map((s, i) => ({ ...s, groupRank: i + 1 }));
 }

@@ -20,6 +20,8 @@ import {
   drawWithinTiers,
   makeDrawRng,
   newDrawSeed,
+  planGroupAssignment,
+  drawAvoidingSameGroupRound1,
 } from './_internal';
 
 // Block (re)generating a draw once any match has a recorded result —
@@ -140,7 +142,18 @@ function statusAfterDraw(event: Record<string, unknown>): 'live' | 'bracket_gene
 // Pool -> bracket seeding
 // ============================================================
 
-type FieldEntry = { id: string; seed: number | null; elo: number };
+type FieldEntry = {
+  id: string;
+  seed: number | null;
+  elo: number;
+  /**
+   * The group this entrant qualified out of, and where they finished in it.
+   * Both null outside a group-seeded field — an ordinary or single-pool draw
+   * has neither, and the draw code checks for null rather than assuming.
+   */
+  group?: number | null;
+  groupRank?: number | null;
+};
 
 // A pair may be entered with the two players in either order, so the key has to
 // be order-independent or the same pair in the pool and in the bracket would
@@ -161,19 +174,26 @@ function pairKey(a: string, b: string): string {
  * N is max_participants, the event's own capacity. A pool with fewer finishers
  * than that is not an error: the field is simply shorter and the draw gets the
  * byes it would get for any undersized entry list.
+ *
+ * A GROUP STAGE CAPS IT FURTHER (00106). When the source is split into groups
+ * the number of qualifiers is decided by the FORMAT — qualifiers_per_group out
+ * of each group — and not by how many slots this event happens to have. The two
+ * caps compose: the smaller wins, so an exec who sets a 16-slot bracket over 4
+ * groups of 2 still gets 8 qualifiers, and one who sets a 4-slot bracket over
+ * the same groups gets the best 4 of those 8.
  */
 async function buildFieldFromPool(
   adminClient: ReturnType<typeof createAdminClient>,
   event: Record<string, unknown>,
   doubles: boolean,
   adminId: string,
-): Promise<{ entries: FieldEntry[]; promoted: number; skipped: number }> {
+): Promise<{ entries: FieldEntry[]; promoted: number; skipped: number; groupCount: number }> {
   const eventId = event.id as string;
   const sourceId = event.seeded_from_event_id as string;
   const seedBy = ((event.seed_by as SeedBy | null) ?? 'wins') as SeedBy;
 
   const { data: source } = await adminClient.from('tournament_events')
-    .select('id, tournament_id, event_type')
+    .select('id, tournament_id, event_type, group_count, qualifiers_per_group')
     .eq('id', sourceId)
     .maybeSingle();
   // The FK is ON DELETE SET NULL, so a missing source means the row was read
@@ -251,7 +271,15 @@ async function buildFieldFromPool(
     for (const p of parts ?? []) existing.set(p.player_id, { id: p.id, status: p.status });
   }
 
-  const capacity = (event.max_participants as number | null) ?? standings.length;
+  const srcGroupCount = (source as { group_count?: number | null }).group_count ?? 1;
+  const perGroup = (source as { qualifiers_per_group?: number | null }).qualifiers_per_group ?? 2;
+  // Math.min over both caps rather than a branch, so a group stage whose
+  // qualifier count exceeds the bracket still respects the bracket, and a
+  // bracket with no cap still respects the format.
+  const capacity = Math.min(
+    (event.max_participants as number | null) ?? standings.length,
+    srcGroupCount >= 2 ? srcGroupCount * perGroup : standings.length,
+  );
   // Promoted qualifiers arrive checked in: they have just finished playing the
   // pool, so they are demonstrably present. checked_in_at is set alongside the
   // status because the attendance list keys on the timestamp, not the enum —
@@ -279,8 +307,15 @@ async function buildFieldFromPool(
     }
 
     const seed = entries.length + 1;
+    // Carried from the STANDING, not from the promoted row: the bracket entry is
+    // a different row in a different event and has no group of its own. This is
+    // what the draw uses to keep group-mates out of round one.
+    const from = {
+      group: (standing as { group?: number | null }).group ?? null,
+      groupRank: (standing as { groupRank?: number | null }).groupRank ?? null,
+    };
     if (already) {
-      entries.push({ id: already.id, seed, elo: src.elo });
+      entries.push({ id: already.id, seed, elo: src.elo, ...from });
       continue;
     }
 
@@ -321,7 +356,7 @@ async function buildFieldFromPool(
       throw new Error(`Could not enter a pool qualifier into the bracket: ${error?.message ?? 'unknown error'}`);
     }
     promoted++;
-    entries.push({ id: created.id, seed, elo: src.elo });
+    entries.push({ id: created.id, seed, elo: src.elo, ...from });
   }
 
   if (entries.length < 2) {
@@ -345,7 +380,7 @@ async function buildFieldFromPool(
   );
   assertWritesSucceeded('Seeding the bracket from the pool standings', failures);
 
-  return { entries, promoted, skipped };
+  return { entries, promoted, skipped, groupCount: srcGroupCount };
 }
 
 // ============================================================
@@ -484,12 +519,14 @@ async function generateSingleEliminationBracketImpl(
   const seededFromPool = Boolean(event.seeded_from_event_id);
   let poolPromoted = 0;
   let poolSkipped = 0;
+  let poolGroupCount = 1;
 
   if (seededFromPool) {
     const field = await buildFieldFromPool(adminClient, event, doubles, admin.id);
     entries = field.entries;
     poolPromoted = field.promoted;
     poolSkipped = field.skipped;
+    poolGroupCount = field.groupCount;
   } else if (doubles) {
     const { data: pairs } = await adminClient.from('tournament_pairs')
       .select('id, seed_number, combined_elo, status')
@@ -556,17 +593,53 @@ async function generateSingleEliminationBracketImpl(
   //   * seeding_method = 'manual'. An exec who hand-set every seed asked for
   //     the draw those seeds describe, and has to keep getting it. This is the
   //     opt-out, and it is the only one.
-  //   * A pool-seeded event. buildFieldFromPool refuses a half-played pool
-  //     precisely so the bracket matches what everyone just played for;
+  //   * A SINGLE-POOL-seeded event. buildFieldFromPool refuses a half-played
+  //     pool precisely so the bracket matches what everyone just played for;
   //     re-drawing the qualifiers would put the pool's third finisher into the
   //     second seed's half on a coin flip, which is the outcome pool seeding
   //     exists to prevent. seeding_method is not even consulted on that path,
   //     so there would be no opt-out to offer.
   //
-  // Every other event — which today is all ten of them on staging, all 'elo' —
-  // is drawn.
-  const drawIsRandomised = !seededFromPool && event.seeding_method !== 'manual';
-  if (drawIsRandomised) {
+  // A GROUP-SEEDED EVENT IS THE THIRD CASE, AND IT IS DRAWN (00106).
+  //
+  // The argument above does not survive the move from one pool to several, and
+  // it is worth saying exactly where it breaks. With ONE pool, the finishing
+  // order is a total order that everybody played for: 3rd beat 4th, or beat the
+  // people 4th lost to, and swapping them would overturn a result. With SEVERAL
+  // groups there is no such order between groups. "Winner of A plays runner-up
+  // of B" is fixed by the format, but WHICH B is a question the group stage
+  // never asked and cannot answer — the groups played disjoint fixtures. Fixing
+  // it to whichever group happens to be numbered lowest is not respecting a
+  // result, it is inventing one, and it makes the bracket a pure function of
+  // the group numbering, which is the "REGENERATE DOESN'T CHANGE ANYTHING"
+  // defect wearing a different hat.
+  //
+  // So it is drawn — but WITHIN QUALIFICATION TIERS, not within seeding bands.
+  // See drawAvoidingSameGroupRound1 for why drawWithinTiers is the wrong
+  // shuffle here (its bands straddle the winner/runner-up boundary whenever the
+  // group count is not a power of two) and for how the same-group round-one
+  // constraint is enforced.
+  //
+  // `manual` still opts out, and now it opts out of this too: an exec who
+  // hand-set the seeds after the groups finished has said where people go.
+  const groupSeeded = seededFromPool && poolGroupCount >= 2;
+  const drawIsRandomised = event.seeding_method !== 'manual' && (!seededFromPool || groupSeeded);
+  let drawAttempts = 0;
+  let sameGroupR1: 'avoided' | 'unavoidable' | 'not_applicable' = 'not_applicable';
+
+  if (drawIsRandomised && groupSeeded) {
+    const drawn = drawAvoidingSameGroupRound1(entries, {
+      bracketSize: nextPowerOf2(N),
+      // A qualifier whose groupRank somehow did not survive promotion is put in
+      // a tier of its own at the end rather than silently joining the winners.
+      tierOf: (e) => e.groupRank ?? Number.MAX_SAFE_INTEGER,
+      groupOf: (e) => e.group ?? null,
+      seed: drawSeed,
+    });
+    entries = drawn.entries;
+    drawAttempts = drawn.attempts;
+    sameGroupR1 = drawn.conflicts === 0 ? 'avoided' : 'unavoidable';
+  } else if (drawIsRandomised) {
     entries = drawWithinTiers(entries, makeDrawRng(drawSeed));
   }
 
@@ -802,6 +875,15 @@ async function generateSingleEliminationBracketImpl(
       // not randomised, which says so rather than implying a seed nobody used.
       draw_seed: drawIsRandomised ? drawSeed : null,
       draw_randomised: drawIsRandomised,
+      // WHETHER THE GROUP CONSTRAINT HELD, in three states rather than a
+      // boolean, for the same reason third_place_match is: "unavoidable" is the
+      // only silent outcome here, and it is the one an exec will be asked about
+      // when two group-mates find themselves playing again in round one.
+      // `draw_attempts` says how hard it tried, which is what distinguishes a
+      // genuinely impossible field from a run of bad luck.
+      ...(groupSeeded
+        ? { same_group_round_1: sameGroupR1, draw_attempts: drawAttempts, source_group_count: poolGroupCount }
+        : {}),
       // Recorded because a pool-seeded draw is not reproducible from the event
       // row alone — the pool can be edited afterwards.
       ...(seededFromPool
@@ -858,6 +940,46 @@ async function generateSingleEliminationBracketImpl(
 // would move people's matches around for no gain. A round robin's "Regenerate"
 // producing the same fixture list is the correct answer, not the bug the
 // knockout path had.
+//
+// STILL TRUE WITH GROUPS (00106). The randomness a group stage needs is in the
+// ASSIGNMENT — who is in which group — and that is decided by seed, not by
+// chance, precisely so the groups come out balanced. Inside a group the circle
+// method is complete again, so there is still no draw to make.
+
+/**
+ * The circle method's fixtures for one set of entries.
+ *
+ * Lifted out of generateRoundRobinMatchesImpl unchanged in behaviour so it can
+ * run once per group instead of once per event. It returns pairings by round
+ * rather than writing them, because the caller has to interleave several
+ * groups' rounds into one shared numbering — see the note at the call site.
+ */
+function circleMethodRounds<T>(entries: readonly T[]): Array<Array<[T, T]>> {
+  // A phantom entry gives an odd field the bye it needs; the pairing it appears
+  // in is dropped, which is what makes that entrant's round a rest.
+  const padded: Array<T | null> = [...entries];
+  if (padded.length % 2 !== 0) padded.push(null);
+
+  const numRounds = padded.length - 1;
+  const halfSize = padded.length / 2;
+  const indices = padded.map((_, i) => i);
+  const rounds: Array<Array<[T, T]>> = [];
+
+  for (let round = 0; round < numRounds; round++) {
+    const fixtures: Array<[T, T]> = [];
+    for (let i = 0; i < halfSize; i++) {
+      const home = padded[indices[i]!];
+      const away = padded[indices[padded.length - 1 - i]!];
+      if (home != null && away != null) fixtures.push([home, away]);
+    }
+    rounds.push(fixtures);
+    // Rotate: keep index 0 fixed, rotate the rest.
+    const last = indices.pop()!;
+    indices.splice(1, 0, last);
+  }
+
+  return rounds;
+}
 
 async function generateRoundRobinMatchesImpl(eventId: string) {
   const admin = await requireCapability('tournaments.draw.generate.write');
@@ -877,22 +999,35 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
   // event rather than out of one draw.
   await assertNobodyLeftUnpaired(adminClient, eventId, doubles);
 
-  let entries: Array<{ id: string; seed: number | null }> = [];
+  // group_number and the rating come back too, because a group stage assigns
+  // any entry that does not yet have a group and needs the same ordering the
+  // Assign Groups button uses to do it.
+  let entries: Array<{ id: string; seed: number | null; elo: number; group: number | null }> = [];
 
   if (doubles) {
     const { data: pairs } = await adminClient.from('tournament_pairs')
-      .select('id, seed_number, status')
+      .select('id, seed_number, combined_elo, group_number, status')
       .eq('event_id', eventId)
       .in('status', ['registered', 'checked_in'])
       .order('seed_number', { ascending: true, nullsFirst: false });
-    entries = (pairs ?? []).map(p => ({ id: p.id, seed: p.seed_number }));
+    entries = (pairs ?? []).map(p => ({
+      id: p.id,
+      seed: p.seed_number,
+      elo: p.combined_elo ?? 400,
+      group: (p as { group_number?: number | null }).group_number ?? null,
+    }));
   } else {
     const { data: participants } = await adminClient.from('tournament_participants')
-      .select('id, seed_number, status')
+      .select('id, seed_number, elo_before, group_number, status')
       .eq('event_id', eventId)
       .in('status', ['registered', 'checked_in'])
       .order('seed_number', { ascending: true, nullsFirst: false });
-    entries = (participants ?? []).map(p => ({ id: p.id, seed: p.seed_number }));
+    entries = (participants ?? []).map(p => ({
+      id: p.id,
+      seed: p.seed_number,
+      elo: p.elo_before ?? 400,
+      group: (p as { group_number?: number | null }).group_number ?? null,
+    }));
   }
 
   const N = entries.length;
@@ -904,60 +1039,118 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
     adminClient, event.tournament_id, entries.map(e => e.id), doubles,
   );
 
+  // ------------------------------------------------------------
+  // GROUPS (00106). One event, several round robins inside it.
+  // ------------------------------------------------------------
+  //
+  // group_count NULL or 1 takes the single-group path below with a group of
+  // everybody, which is byte-for-byte the fixture list this function has always
+  // produced — the flat behaviour is not reimplemented on top of the group one,
+  // it IS the group one with one group.
+  const groupCount = (event as { group_count?: number | null }).group_count ?? 1;
+
+  if (groupCount >= 2) {
+    // FILL THE GAPS, DO NOT RE-DEAL. An exec who moved somebody between groups
+    // before pressing Generate meant it, and a generator that re-dealt the
+    // field would throw that away without saying so. planGroupAssignment keeps
+    // every valid existing group and only places the entries that have none —
+    // which is the whole field the first time, and just the late entrant the
+    // second time.
+    const plan = planGroupAssignment(entries, groupCount);
+
+    // CHECKED BEFORE ANYTHING IS WRITTEN, and the order is the point. A group of
+    // one has nobody to play, so the event would hand that entrant no matches at
+    // all and then rank them first on a record of nothing. Refusing AFTER the
+    // group_number writes would leave the event carrying a half-applied
+    // assignment it never asked for — a refusal has to leave the row exactly as
+    // it found it. The plan is enough to count sizes; no write is needed to know.
+    const planned = new Array<number>(groupCount).fill(0);
+    for (const g of plan.values()) planned[g - 1]!++;
+    const short = planned
+      .map((size, i) => ({ size, number: i + 1 }))
+      .filter(g => g.size < 2);
+    if (short.length > 0) {
+      throw new ExpectedError(
+        `Group ${short.map(g => String.fromCharCode(64 + g.number)).join(', ')} ` +
+        `${short.length === 1 ? 'has' : 'have'} fewer than 2 entries, so nobody there would have a match. ` +
+        'Lower the group count or move somebody across.',
+      );
+    }
+
+    const newlyAssigned = entries.filter(e => e.group !== plan.get(e.id));
+    if (newlyAssigned.length > 0) {
+      const table = doubles ? 'tournament_pairs' : 'tournament_participants';
+      const { failures } = await settleWrites(
+        newlyAssigned.map(e => [
+          `${table}.group_number for ${e.id}`,
+          adminClient.from(table).update({ group_number: plan.get(e.id)! }).eq('id', e.id),
+        ] as const),
+      );
+      // The in-memory plan is what the fixtures below are built from, so a
+      // group that never reached the table would leave the standings
+      // partitioning one way and the schedule another. Nothing has been created
+      // yet — the delete is still ahead — so refusing costs only a re-press.
+      assertWritesSucceeded('Assigning the groups for this round robin', failures);
+    }
+    for (const e of entries) e.group = plan.get(e.id)!;
+  } else {
+    for (const e of entries) e.group = 1;
+  }
+
+  const groups: Array<{ number: number; entries: typeof entries }> = [];
+  for (let g = 1; g <= Math.max(1, groupCount); g++) {
+    groups.push({ number: g, entries: entries.filter(e => e.group === g) });
+  }
+
   // Delete any existing matches
   await adminClient.from('tournament_matches').delete().eq('event_id', eventId);
 
-  // Circle method for round robin scheduling
-  // If odd number of participants, add a phantom (BYE)
-  const isOdd = N % 2 !== 0;
-  const paddedEntries = [...entries];
-  if (isOdd) {
-    paddedEntries.push({ id: 'BYE', seed: null });
-  }
-
-  const numRounds = paddedEntries.length - 1;
-  const halfSize = paddedEntries.length / 2;
+  // ONE SHARED ROUND NUMBERING ACROSS THE GROUPS, and one shared
+  // bracket_position within each round. 00081 put a UNIQUE index on
+  // (event_id, round_number, bracket_position) WHERE NOT is_third_place, so
+  // running the circle method per group and letting each start its positions at
+  // 0 would collide on the second group's very first fixture. Positions are
+  // therefore handed out by a per-round counter that spans every group.
+  //
+  // Rounds are shared rather than offset because Round 1 of group A and Round 1
+  // of group B genuinely are the same round — they are played at the same time,
+  // on different courts — and because the event page already groups its match
+  // list by round_number. Groups of different sizes simply stop contributing
+  // once their own circle runs out.
+  const positionInRound = new Map<number, number>();
+  const roundsByGroup = groups.map(g => ({ number: g.number, rounds: circleMethodRounds(g.entries) }));
+  const numRounds = roundsByGroup.reduce((max, g) => Math.max(max, g.rounds.length), 0);
   let matchNumber = 1;
 
-  // Circle method: fix first player, rotate the rest
-  const indices = paddedEntries.map((_, i) => i);
-
   for (let round = 0; round < numRounds; round++) {
-    const roundMatchPositions: Array<[number, number]> = [];
+    for (const group of roundsByGroup) {
+      for (const [home, away] of group.rounds[round] ?? []) {
+        const pos = positionInRound.get(round) ?? 0;
+        positionInRound.set(round, pos + 1);
 
-    for (let i = 0; i < halfSize; i++) {
-      const home = indices[i]!;
-      const away = indices[paddedEntries.length - 1 - i]!;
-      if (paddedEntries[home]!.id !== 'BYE' && paddedEntries[away]!.id !== 'BYE') {
-        roundMatchPositions.push([home, away]);
+        const insertData: Record<string, unknown> = {
+          event_id: eventId,
+          round_number: round + 1,
+          // The group is on the entries, not in the name, so RoundRobinTab's
+          // existing "one heading per round_number" rendering keeps working and
+          // the group is shown per fixture instead.
+          round_name: `Round ${round + 1}`,
+          bracket_position: pos,
+          match_number: matchNumber++,
+          status: 'pending',
+        };
+
+        if (doubles) {
+          insertData.pair_a_id = home.id;
+          insertData.pair_b_id = away.id;
+        } else {
+          insertData.participant_a_id = home.id;
+          insertData.participant_b_id = away.id;
+        }
+
+        await adminClient.from('tournament_matches').insert(insertData);
       }
     }
-
-    for (let pos = 0; pos < roundMatchPositions.length; pos++) {
-      const [homeIdx, awayIdx] = roundMatchPositions[pos]!;
-      const insertData: Record<string, unknown> = {
-        event_id: eventId,
-        round_number: round + 1,
-        round_name: `Round ${round + 1}`,
-        bracket_position: pos,
-        match_number: matchNumber++,
-        status: 'pending',
-      };
-
-      if (doubles) {
-        insertData.pair_a_id = paddedEntries[homeIdx]!.id;
-        insertData.pair_b_id = paddedEntries[awayIdx]!.id;
-      } else {
-        insertData.participant_a_id = paddedEntries[homeIdx]!.id;
-        insertData.participant_b_id = paddedEntries[awayIdx]!.id;
-      }
-
-      await adminClient.from('tournament_matches').insert(insertData);
-    }
-
-    // Rotate: keep index 0 fixed, rotate the rest
-    const last = indices.pop()!;
-    indices.splice(1, 0, last);
   }
 
   // Update event status
@@ -970,7 +1163,18 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
     event_id: eventId,
     action: 'round_robin_generated',
     performed_by: admin.id,
-    details: { participants: N, rounds: numRounds, redrawn_live: event.status === 'live' },
+    details: {
+      participants: N,
+      rounds: numRounds,
+      redrawn_live: event.status === 'live',
+      // Recorded even when it is 1, so a fixture list can always be explained
+      // from its own audit row without re-reading an event that may since have
+      // been edited.
+      group_count: groupCount,
+      ...(groupCount >= 2
+        ? { group_sizes: groups.map(g => g.entries.length), matches: matchNumber - 1 }
+        : {}),
+    },
   });
 
   revalidateEventPaths(event.tournament_id, eventId);

@@ -14,6 +14,9 @@ import {
   updateParticipantSeed,
   updatePairSeed,
   clearSeeds,
+  assignEventGroups,
+  updateParticipantGroup,
+  updatePairGroup,
   withdrawParticipant,
   withdrawPair,
   autoPairWaitingEntrants,
@@ -23,7 +26,8 @@ import { participantControls, type DrawCapabilities } from '@/lib/participant-co
 import { nextPowerOf2, pickOne, isOutOfEvent } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil, UserMinus, Unlink, Users, Replace, Shuffle } from 'lucide-react';
+import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil, UserMinus, Unlink, Users, Replace, Shuffle, LayoutGrid } from 'lucide-react';
+import { groupLabel } from './RoundRobinTab';
 import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';
 import type { EventWaiverStatus } from '@badminton/shared';
 import { WaiverState } from './WaiverState';
@@ -163,6 +167,60 @@ function SeedCell({
   );
 }
 
+/**
+ * Which group one entry is in, as a picker (00106).
+ *
+ * A SELECT AND NOT A NUMBER BOX, unlike SeedCell next to it, because the range
+ * is tiny and closed — there are group_count groups and no other legal value —
+ * so a free-text field could only ever produce a refusal the picker prevents.
+ * It is also how the override is discovered: a dropdown showing "A" says there
+ * are other letters, where "#3" says nothing at all.
+ */
+function GroupCell({
+  entryId,
+  groupNumber,
+  groupCount,
+  canEdit,
+  onSave,
+}: {
+  entryId: string;
+  groupNumber: number | null;
+  groupCount: number;
+  canEdit: boolean;
+  onSave: (id: string, group: number) => Promise<void>;
+}) {
+  const [saving, setSaving] = useState(false);
+
+  if (!canEdit) {
+    return (
+      <span className="text-sm font-mono text-[var(--text-muted)]">
+        {groupNumber != null ? groupLabel(groupNumber) : '—'}
+      </span>
+    );
+  }
+
+  return (
+    <select
+      value={groupNumber ?? ''}
+      disabled={saving}
+      aria-label="Group"
+      onChange={async (e) => {
+        const next = Number(e.target.value);
+        if (!next || next === groupNumber) return;
+        setSaving(true);
+        await onSave(entryId, next);
+        setSaving(false);
+      }}
+      className="text-sm font-mono bg-[var(--bg-elevated)] border border-[var(--border)] rounded-[6px] px-1.5 py-0.5 text-[var(--text-primary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] disabled:opacity-50"
+    >
+      {groupNumber == null && <option value="">—</option>}
+      {Array.from({ length: groupCount }, (_, i) => i + 1).map((g) => (
+        <option key={g} value={g}>{groupLabel(g)}</option>
+      ))}
+    </select>
+  );
+}
+
 export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoubles, capabilities, waiverStates }: Props) {
   const [addOpen, setAddOpen] = useState(false);
   // Doubles adds a PAIR — two named people, one entry — so it keeps two
@@ -242,6 +300,22 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     { status: event.status as string, drawLocked },
     capabilities,
   );
+
+  // GROUPS (00106). Structural reads, following max_events_per_player: the
+  // columns are not in the generated Database type until the migration has been
+  // run and the types regenerated against the database it changed.
+  const groupCount = (event as { group_count?: number | null }).group_count ?? 1;
+  const isGroupStage = groupCount >= 2;
+  // OFFERED ONLY WHERE IT WOULD WORK. Both group writes refuse once the
+  // fixtures exist, so the status is the honest proxy for it here — this tab is
+  // not handed the match list, and a control that always refuses is the dead
+  // invitation the rest of this file's gating exists to remove. The capabilities
+  // are the ones the actions themselves re-check: dealing the whole field is
+  // draw generation, moving one entry is setting one seed.
+  const groupsEditable = isGroupStage && !drawLocked
+    && (event.status === 'registration' || event.status === 'checkin');
+  const showAssignGroups = groupsEditable && capabilities.generate;
+  const canEditGroup = groupsEditable && controls.editSeed;
 
   async function handleAddPair(e: React.FormEvent) {
     e.preventDefault();
@@ -566,6 +640,28 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     }
   }
 
+  // The group actions return ActionResult rather than throwing: every refusal
+  // they carry is a sentence the exec has to act on ("the fixtures have already
+  // been generated"), and Next redacts thrown server-action errors in
+  // production.
+  async function handleAssignGroups() {
+    setLoading(true);
+    const res = await assignEventGroups(event.id);
+    if (res.ok) {
+      toast(`Dealt into ${groupCount} groups by seed`, 'success');
+      router.refresh();
+    } else {
+      toast(res.error, 'error');
+    }
+    setLoading(false);
+  }
+
+  async function handleGroupSave(id: string, group: number) {
+    const res = isDoubles ? await updatePairGroup(id, group) : await updateParticipantGroup(id, group);
+    if (res.ok) router.refresh();
+    else toast(res.error, 'error');
+  }
+
   /**
    * The two ways a formed pair comes apart, offered next to Remove.
    *
@@ -718,6 +814,15 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               <ArrowUpDown className="w-3.5 h-3.5 mr-1" /> Auto-Seed
             </Button>
           )}
+          {/* Deals the WHOLE field serpentine by seed, discarding any hand
+              placement — which is why it is a separate press and not something
+              Generate does silently. Generate only fills in entries that have
+              no group at all. */}
+          {showAssignGroups && (
+            <Button size="sm" variant="ghost" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={handleAssignGroups} loading={loading}>
+              <LayoutGrid className="w-3.5 h-3.5 mr-1" /> Assign Groups
+            </Button>
+          )}
           {showAddButton && (
             <Button size="sm" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={() => { setAddMode(controls.add ? 'pair' : 'solo'); setAddOpen(true); }}>
               <Plus className="w-3.5 h-3.5 mr-1" /> Add {isDoubles ? 'Entry' : 'Player'}
@@ -762,6 +867,11 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                   <span className="ml-1 text-[10px] text-[var(--text-muted)] normal-case font-normal">(click to edit)</span>
                 )}
               </th>
+              {/* Only on a group stage. A "Group" column full of dashes on an
+                  ordinary round robin reads as an unfinished setup step. */}
+              {isGroupStage && (
+                <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3 w-20">Group</th>
+              )}
               <th className="text-left text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider px-4 py-3">
                 {isDoubles ? 'Pair' : 'Player'}
               </th>
@@ -792,6 +902,17 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                       onSave={handleSeedSave}
                     />
                   </td>
+                  {isGroupStage && (
+                    <td className="px-4 py-3">
+                      <GroupCell
+                        entryId={pair.id}
+                        groupNumber={(pair as { group_number?: number | null }).group_number ?? null}
+                        groupCount={groupCount}
+                        canEdit={canEditGroup}
+                        onSave={handleGroupSave}
+                      />
+                    </td>
+                  )}
                   <td className="px-4 py-3">
                     <span className="text-sm font-medium text-[var(--text-primary)]">
                       {pair.pair_name ?? `${pair.player1?.full_name} / ${pair.player2?.full_name}`}
@@ -846,6 +967,17 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                         onSave={handleSeedSave}
                       />
                     </td>
+                    {isGroupStage && (
+                      <td className="px-4 py-3">
+                        <GroupCell
+                          entryId={p.id}
+                          groupNumber={(p as { group_number?: number | null }).group_number ?? null}
+                          groupCount={groupCount}
+                          canEdit={canEditGroup}
+                          onSave={handleGroupSave}
+                        />
+                      </td>
+                    )}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2.5">
                         <AvatarChip name={player?.full_name ?? ''} src={player?.avatar_url} size="sm" id={player?.id} />
