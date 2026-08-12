@@ -17,6 +17,9 @@ import {
   computeRoundRobinStandings,
   settleWrites,
   assertWritesSucceeded,
+  drawWithinTiers,
+  makeDrawRng,
+  newDrawSeed,
 } from './_internal';
 
 // Block (re)generating a draw once any match has a recorded result —
@@ -439,7 +442,17 @@ async function createThirdPlaceMatch(
   return created.id;
 }
 
-async function generateSingleEliminationBracketImpl(eventId: string, includeThirdPlace: boolean) {
+/**
+ * @param drawSeed The seed the draw is made from. Defaulted rather than
+ * required so every caller gets a fresh draw without having to think about it;
+ * a caller that passes one gets that exact bracket back, which is what makes a
+ * draw reproducible from its audit row.
+ */
+async function generateSingleEliminationBracketImpl(
+  eventId: string,
+  includeThirdPlace: boolean,
+  drawSeed: number = newDrawSeed(),
+) {
   const admin = await requireCapability('tournaments.draw.generate.write');
   const adminClient = createAdminClient();
 
@@ -526,6 +539,37 @@ async function generateSingleEliminationBracketImpl(eventId: string, includeThir
     entries.sort((a, b) => (a.seed ?? 999) - (b.seed ?? 999));
   }
 
+  // ------------------------------------------------------------
+  // MAKE THE DRAW. Seeding put the field in order; this decides the bracket.
+  // ------------------------------------------------------------
+  //
+  // SEEDING AND DRAWING ARE TWO STEPS, and only now are they written as two.
+  // The seed numbers persisted above are the SEEDING — the rating order, the
+  // exec's hand-set order, the pool's finishing order — and they are left
+  // exactly as they were. What follows shuffles the entrants within their
+  // seeding tiers to produce this particular bracket, which is why pressing
+  // Regenerate now yields a different draw off an unchanged field.
+  //
+  // TWO FIELDS ARE NOT DRAWN, and both are somebody having already said where
+  // people go:
+  //
+  //   * seeding_method = 'manual'. An exec who hand-set every seed asked for
+  //     the draw those seeds describe, and has to keep getting it. This is the
+  //     opt-out, and it is the only one.
+  //   * A pool-seeded event. buildFieldFromPool refuses a half-played pool
+  //     precisely so the bracket matches what everyone just played for;
+  //     re-drawing the qualifiers would put the pool's third finisher into the
+  //     second seed's half on a coin flip, which is the outcome pool seeding
+  //     exists to prevent. seeding_method is not even consulted on that path,
+  //     so there would be no opt-out to offer.
+  //
+  // Every other event — which today is all ten of them on staging, all 'elo' —
+  // is drawn.
+  const drawIsRandomised = !seededFromPool && event.seeding_method !== 'manual';
+  if (drawIsRandomised) {
+    entries = drawWithinTiers(entries, makeDrawRng(drawSeed));
+  }
+
   const bracketSize = nextPowerOf2(N);
   const totalRounds = Math.log2(bracketSize);
   const numByes = bracketSize - N;
@@ -561,10 +605,12 @@ async function generateSingleEliminationBracketImpl(eventId: string, includeThir
   // stops two entries sharing a seed — there is no unique index on
   // seed_number in either table, and the seed cell is hand-editable.
   //
-  // `entries` is already in the order the draw wants (sorted by seed, or by
-  // rating when auto-seeding), so the rank IS the index. For a contiguous
-  // 1..N field this places every entrant exactly where the old line placed
-  // them; it differs only where the old line was wrong.
+  // `entries` is already in the order the draw wants — sorted by seed, or by
+  // rating when auto-seeding, and then drawn within its tiers just above — so
+  // the rank IS the index. `seed` on the slot is therefore the DRAW rank the
+  // entrant was placed at, not the seed number stored against them; nothing
+  // downstream reads it, and it is kept only because the slot's shape is what
+  // the round-one loop below matches on.
   const bracketSlots: Array<{ id: string; seed: number } | null> = new Array(bracketSize).fill(null);
   for (let pos = 0; pos < bracketSize; pos++) {
     const rank = seedPositions[pos]!;
@@ -748,6 +794,14 @@ async function generateSingleEliminationBracketImpl(eventId: string, includeThir
       // in the audit trail months later — it is the only case where the matches
       // this deleted had already been published to the people playing them.
       redrawn_live: event.status === 'live',
+      // THE SEED THIS BRACKET WAS DRAWN FROM, and the reason the feature needed
+      // no schema change. A draw that cannot be explained is a draw an exec
+      // cannot defend when a player asks why they got that half — so the seed
+      // goes in the audit trail, where re-running generation with it reproduces
+      // the identical bracket from the identical field. `null` when the draw was
+      // not randomised, which says so rather than implying a seed nobody used.
+      draw_seed: drawIsRandomised ? drawSeed : null,
+      draw_randomised: drawIsRandomised,
       // Recorded because a pool-seeded draw is not reproducible from the event
       // row alone — the pool can be edited afterwards.
       ...(seededFromPool
@@ -794,6 +848,16 @@ async function generateSingleEliminationBracketImpl(eventId: string, includeThir
 // ============================================================
 // Bracket Generation — Round Robin
 // ============================================================
+//
+// DELIBERATELY NOT RANDOMISED, and this is the note saying so rather than an
+// omission. The circle method emits the COMPLETE set of pairings: everybody
+// plays everybody, so there is no draw to make and nothing a shuffle could
+// change about who meets whom. All it could reorder is the round each fixture
+// falls in, which is a scheduling question (courts, rest between matches), not
+// a fairness one — and re-rolling the order of an event that is already live
+// would move people's matches around for no gain. A round robin's "Regenerate"
+// producing the same fixture list is the correct answer, not the bug the
+// knockout path had.
 
 async function generateRoundRobinMatchesImpl(eventId: string) {
   const admin = await requireCapability('tournaments.draw.generate.write');

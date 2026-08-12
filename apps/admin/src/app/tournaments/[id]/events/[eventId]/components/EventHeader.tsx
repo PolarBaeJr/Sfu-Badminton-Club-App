@@ -97,6 +97,10 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
   // Same rule the server applies: the format is editable until a draw exists.
   const settingsEditable = totalMatches === 0 && (status === 'registration' || status === 'checkin');
   const seededFromPool = Boolean(event.seeded_from_event_id);
+  // Mirrors generateSingleEliminationBracketImpl exactly. Kept in step by the
+  // dialog reading the same two fields the generator reads — a third rule here
+  // would be a promise about the draw that the server does not keep.
+  const drawIsRandomised = !seededFromPool && event.seeding_method !== 'manual';
 
   async function handleAction() {
     setLoading(true);
@@ -200,6 +204,30 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
             {' '}Nothing that has been played is touched: if any result, walkover or forfeit has been
             recorded, this is refused rather than done. Byes do not count as played.
           </p>
+          {/* WHAT "REGENERATE" ACTUALLY DOES, which is the thing the club owner
+              could not tell from pressing it: the draw is DRAWN AGAIN, at
+              random within the seeding tiers, so a second press really does
+              give a different bracket. It used to be a pure function of the
+              seeds and produced an identical draw every time — "regenerate draw
+              doesnt change anything" was an accurate bug report. The two cases
+              that still redraw identically say so here rather than leave the
+              exec pressing the button a third time to find out. */}
+          {format !== 'round_robin' && (
+            drawIsRandomised ? (
+              <p>
+                The draw is made again rather than rebuilt the same way. Seeds 1 and 2 stay at
+                opposite ends and every seeding tier keeps one place in each half, quarter or
+                eighth — but who lands where inside a tier is drawn at random, so this gives a
+                genuinely different bracket without weakening the seeding.
+              </p>
+            ) : (
+              <p>
+                {seededFromPool
+                  ? 'This event is seeded from a pool, so the draw follows the pool standings exactly and will come out the same unless a pool result has changed.'
+                  : 'This event uses manual seeding, so the draw follows the seed numbers exactly and will come out the same unless a seed has changed.'}
+              </p>
+            )
+          )}
           {thirdPlaceApplies && (
             <ThirdPlaceChoice
               defaultChecked={hasThirdPlace}
