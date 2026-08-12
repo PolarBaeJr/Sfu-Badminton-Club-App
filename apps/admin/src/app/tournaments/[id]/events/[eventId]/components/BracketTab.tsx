@@ -25,7 +25,11 @@ const CARD_H = 100;               // fixed outer height of one match card
 const CARD_GAP = 16;              // gap between sibling cards in the first round
 const PITCH = CARD_H + CARD_GAP;  // centre-to-centre distance in the first round
 const COL_W = 244;                // width of a round column
-const LINK_W = 40;                // width of the connector gutter between rounds
+const LINK_W = 76;                // width of the connector gutter between rounds
+                                  // Widened from 40: rounds sat close enough that a
+                                  // quarter-final card and the semi it feeds read as
+                                  // one block, and the elbow between them had no room
+                                  // to be seen as a join rather than a border.
 const HEAD_H = 34;                // round heading block; keeps gutters in step
 const META_H = 20;                // card meta strip (match number / court)
 const FOOT_H = 26;                // card footer strip (status / score button)
@@ -353,7 +357,13 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles }: P
                       <span
                         aria-hidden="true"
                         className="absolute border-t border-dashed border-[var(--border-hover)]"
-                        style={{ left: -(LINK_W / 2) - COL_W / 2, top: -riserH, width: COL_W / 2 }}
+                        // Stops at the semi-final column's right edge rather than
+                        // reaching COL_W/2 back underneath it. The long reach made
+                        // the line appear to emerge from the middle of the lower
+                        // semi's card, which reads as "M6 feeds this" — the exact
+                        // claim the dashes exist to avoid, since BOTH beaten
+                        // semi-finalists play in it.
+                        style={{ left: -LINK_W, top: -riserH, width: LINK_W / 2 }}
                       />
                       <MatchCard
                         m={thirdPlace}
