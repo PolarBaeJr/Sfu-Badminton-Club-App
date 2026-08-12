@@ -19,6 +19,7 @@ import {
   OPEN_MATCH_STATUSES,
   sortStandings,
   qualificationOrder,
+  snakeGroupAssignment,
   resolveEventWaiverText,
   screenForEventWaiver,
   eventWaiverRefusal,
@@ -743,6 +744,105 @@ export function drawWithinTiers<T>(entries: readonly T[], rng: () => number): T[
     }
   }
   return drawn;
+}
+
+// ============================================================
+// Assigning a field into groups (00106)
+// ============================================================
+
+/** Everything group assignment needs to know about one entry. */
+export type GroupCandidate = {
+  id: string;
+  seed: number | null;
+  /** Rating, the fallback ordering when nobody has been seeded. */
+  elo: number;
+  group: number | null;
+};
+
+/**
+ * The order the field is dealt into groups in — best first.
+ *
+ * SEEDS FIRST, THEN RATING, AND THE FALLBACK IS THE POINT. The round-robin
+ * generator reads its field ordered by seed_number and — unlike the knockout
+ * generator, which auto-seeds by Elo before it draws — never assigns one. A
+ * round-robin event can therefore reach group assignment with every seed NULL,
+ * at which point "serpentine by seed" is serpentine by whatever order Postgres
+ * felt like returning, which is not balanced at all. That is the exact failure
+ * the format exists to avoid, arrived at silently.
+ *
+ * So an unseeded field falls back to rating, mirroring what the knockout path
+ * has always done. A PARTIALLY seeded field puts the seeded entrants first in
+ * seed order and the rest behind them by rating, because an exec who seeded the
+ * top four and left the rest meant those four to be the top four.
+ */
+export function seedingOrderForGroups<T extends GroupCandidate>(entries: readonly T[]): T[] {
+  return [...entries].sort((a, b) => {
+    if (a.seed != null && b.seed != null) return a.seed - b.seed;
+    if (a.seed != null) return -1;
+    if (b.seed != null) return 1;
+    return b.elo - a.elo;
+  });
+}
+
+/**
+ * Decide which group every entry belongs to.
+ *
+ * THREE CASES, AND ONLY ONE OF THEM DEALS THE WHOLE FIELD:
+ *
+ *   * Nothing assigned yet (or `reassignAll`) — serpentine by seed over the
+ *     entire field. This is what the Assign Groups button does.
+ *   * Some assigned, some not — the assigned ones are LEFT ALONE and the rest
+ *     go into whichever group is currently smallest. This is what happens when
+ *     somebody enters after the groups were drawn: re-dealing the field would
+ *     silently undo an exec's hand-placement, which is the one thing an
+ *     override has to survive.
+ *   * All assigned — nothing to do, and the returned map still names every
+ *     entry so the caller can write it back idempotently.
+ *
+ * A group number outside 1..groupCount counts as unassigned. It can only come
+ * from group_count having been lowered after the fact, and leaving it would put
+ * somebody in a group that no longer exists.
+ */
+export function planGroupAssignment<T extends GroupCandidate>(
+  entries: readonly T[],
+  groupCount: number,
+  opts?: { reassignAll?: boolean },
+): Map<string, number> {
+  const ordered = seedingOrderForGroups(entries);
+  const out = new Map<string, number>();
+  if (groupCount < 2) {
+    for (const e of ordered) out.set(e.id, 1);
+    return out;
+  }
+
+  const keep = opts?.reassignAll
+    ? new Map<string, number>()
+    : new Map(
+        ordered
+          .filter((e) => e.group != null && e.group >= 1 && e.group <= groupCount)
+          .map((e) => [e.id, e.group as number]),
+      );
+
+  if (keep.size === 0) {
+    const plan = snakeGroupAssignment(ordered.length, groupCount);
+    ordered.forEach((e, i) => out.set(e.id, plan[i]!));
+    return out;
+  }
+
+  const counts = new Array<number>(groupCount).fill(0);
+  for (const g of keep.values()) counts[g - 1]!++;
+
+  for (const e of ordered) {
+    const kept = keep.get(e.id);
+    if (kept != null) { out.set(e.id, kept); continue; }
+    // Smallest group wins; ties go to the lowest number so the result does not
+    // depend on how Array.prototype behaves at equal values.
+    let pick = 0;
+    for (let g = 1; g < groupCount; g++) if (counts[g]! < counts[pick]!) pick = g;
+    counts[pick]!++;
+    out.set(e.id, pick + 1);
+  }
+  return out;
 }
 
 // ============================================================
