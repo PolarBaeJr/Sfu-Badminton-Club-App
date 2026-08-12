@@ -19,6 +19,7 @@ import { isWaivedFee } from '@/lib/fee-status';
 import { CreateSessionForm, SessionCardMenu, AttendanceDialog, CheckinQrDialog } from './actions';
 import { SessionTable, type SessionRow } from './session-table';
 import { TonightCheckin, DoorFeed, type DoorFeedEntry } from './tonight';
+import { TurnoutPanel, type TurnoutNight } from './turnout-panel';
 
 // ---------------------------------------------------------------------------
 // Formatters. All wall-clock reasoning on this page is club-local: the club is
@@ -490,6 +491,23 @@ export default async function SessionsPage({
     : null;
   const noShows = (attendanceRows ?? []).filter((r) => r.status === 'no_show').length;
 
+  // ---- the turnout series -------------------------------------------------
+  // FOLDED FROM ROWS ALREADY ON THE PAGE, and costing no query: `sessions` and
+  // `attendanceMap` are both fetched above under `sessions.page` for the table
+  // and the stat strip. The panel takes every session in scope and decides for
+  // itself which are drawable — a night that has not happened yet and a night
+  // with no roll taken are excluded for different reasons and it says which.
+  //
+  // Every status is passed through, not just the arrivals: the second bucket is
+  // "marked and did not come", so the panel needs the whole roll to have a
+  // denominator at all.
+  const turnoutNights: TurnoutNight[] = (sessions ?? []).map((s) => ({
+    id: s.id as string,
+    date: s.date as string,
+    track: (s.track as string | null) ?? null,
+    statuses: (attendanceMap[s.id as string] ?? []).map((a) => a.status),
+  }));
+
   const week = weekOfSeason(scopedSeason?.start_date ?? null, today);
   const eyebrow = week ? `Schedule · Week ${week}` : 'Schedule';
 
@@ -574,6 +592,17 @@ export default async function SessionsPage({
         <Stat label="Avg attendance" value={avgAttendance ?? '—'} href="#earlier" />
         <Stat label="No-shows · term" value={noShows} href="#earlier" />
       </div>
+
+      {/* Directly under the strip, and full width. Two of the four cells above
+          are a mean and a term total, and this is the shape behind both — a
+          reader who has just seen "AVG 15" is exactly the reader asking whether
+          it is fifteen every week or twenty falling to ten. Full width because
+          ten ticks with a weekday under each do not fit in the door column. */}
+      <TurnoutPanel
+        nights={turnoutNights}
+        today={today}
+        seasonName={scopedSeason?.name ?? null}
+      />
 
       <div className="grid gap-5 items-start lg:grid-cols-[2fr_1fr]">
         {/* Left: the schedule. */}
