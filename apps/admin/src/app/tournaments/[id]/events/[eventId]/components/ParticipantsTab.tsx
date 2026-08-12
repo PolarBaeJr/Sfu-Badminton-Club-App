@@ -1012,7 +1012,21 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
 
         {activeEntries.length === 0 && (
           <div className="p-8 text-center text-sm text-[var(--text-muted)]">
-            No {isDoubles ? 'pairs' : 'participants'} yet. Add some to get started.
+            {/* A POOL-SEEDED EVENT IS NOT WAITING FOR YOU. Its field is built by
+                buildFieldFromPool when the draw is generated, not when the event
+                is created — so it sits at zero entrants all through registration,
+                which is correct and looked exactly like a feature that had
+                silently failed. "Add some to get started" was actively wrong
+                advice here: entering people by hand is the one thing that does
+                NOT need doing. */}
+            {event.seeded_from_event_id ? (
+              <>
+                This event&rsquo;s field comes from its pool. The qualifiers are promoted
+                automatically when you generate the draw — there is nothing to add here.
+              </>
+            ) : (
+              <>No {isDoubles ? 'pairs' : 'participants'} yet. Add some to get started.</>
+            )}
           </div>
         )}
       </div>

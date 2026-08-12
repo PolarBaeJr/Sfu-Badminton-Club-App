@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Select, Input } from '@badminton/ui';
-import { TOURNAMENT_EVENT_TYPE_LABELS } from '@badminton/shared';
+import { TOURNAMENT_EVENT_TYPE_LABELS, isDoublesEvent } from '@badminton/shared';
 import { createTournamentEvent } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
@@ -29,7 +29,27 @@ export function CreateEventButton({ tournamentId, siblings = [] }: { tournamentI
   const router = useRouter();
 
   // A round robin has no draw to seed, so the pool picker is meaningless there.
-  const seedableSiblings = format === 'round_robin' ? [] : siblings;
+  //
+  // AND ONLY POOLS THAT COULD ACTUALLY SEED THIS EVENT. The picker used to
+  // offer every sibling, so a men's SINGLES knockout could be pointed at a
+  // men's DOUBLES pool — buildFieldFromPool refuses that ("A doubles event
+  // cannot be seeded from a singles pool, or the other way round"), but not
+  // until the draw is generated. The exec sets the event up, sees "Seeded from
+  // pool by points" on the header, waits for the pool to finish, presses
+  // Generate on the day, and only then finds out it was never going to work.
+  // Two filters, both matching what the server will insist on:
+  //   * round_robin only — standings come from pool play; a bracket has none.
+  //   * same doubles-ness — singles standings are participant rows and doubles
+  //     standings are pair rows, and there is no sensible way to carry one into
+  //     the other.
+  const seedableSiblings =
+    format === 'round_robin'
+      ? []
+      : siblings.filter(
+          (s) =>
+            s.format === 'round_robin' &&
+            isDoublesEvent(s.event_type as TournamentEventType) === isDoublesEvent(eventType),
+        );
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
