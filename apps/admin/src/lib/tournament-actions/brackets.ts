@@ -71,12 +71,22 @@ function assertNotFinalised(event: Record<string, unknown>, action: string) {
  * sweep records real ones (setEventStatus -> forfeitOutOfEventEntries).
  */
 async function assertNoResultsEntered(adminClient: ReturnType<typeof createAdminClient>, eventId: string) {
-  const { count } = await adminClient
+  const { count, error } = await adminClient
     .from('tournament_matches')
     .select('id', { count: 'exact', head: true })
     .eq('event_id', eventId)
     .in('status', ['completed', 'walkover', 'disputed'])
     .not('is_bye', 'is', true);
+  // THE ERROR WAS DISCARDED, AND THIS GUARD FAILS OPEN WITHOUT IT. supabase-js
+  // resolves rather than rejects on a PostgREST error and leaves `count` null,
+  // so `(count ?? 0) > 0` reads a failed read as "no results" and generation
+  // walks straight into `.delete().eq('event_id', eventId)` — erasing matches
+  // that carry real scores and real Elo. A guard whose failure mode is the
+  // exact destruction it exists to prevent has to say so out loud.
+  if (error) {
+    Sentry.captureException(error);
+    throw new Error(`Could not check whether this event has results yet, so the draw was left alone: ${error.message}`);
+  }
   if ((count ?? 0) > 0) {
     throw new Error('Results have already been entered for this event — regenerating would erase them. Void those matches first if you really need to reset the draw.');
   }

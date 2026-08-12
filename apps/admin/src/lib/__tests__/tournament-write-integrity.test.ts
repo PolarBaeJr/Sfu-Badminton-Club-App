@@ -1766,6 +1766,71 @@ describe('regenerating a draw that already exists', () => {
     expect(seeded).not.toContain('p-3');
     expect(byes()).toHaveLength(1);
   });
+
+  /**
+   * A POOL-SEEDED EVENT'S FIELD ARRIVES AT GENERATION, so regenerating one runs
+   * the promotion a second time. buildFieldFromPool inserts a qualifier only
+   * when it is not already entered here — `existing`, keyed by player id (or an
+   * order-independent pair key) — and the whole point of that lookup is this
+   * case. Reading the code says it holds; this makes it a fact, because a
+   * duplicate promotion would enter the same person twice, hand them two slots
+   * in the draw, and be invisible until somebody counted the entry list.
+   */
+  it('promotes each pool qualifier ONCE, however many times the draw is redone', async () => {
+    // A finished 4-player pool ('e0'), and a bracket that seeds from it ('e1')
+    // with nobody entered yet — the shape the feature exists for.
+    store.db.tournament_events!.push({
+      id: 'e0', tournament_id: 't1', status: 'completed', event_type: 'mens_singles',
+      format: 'round_robin', match_format: 'best_of_3_to_21', elo_multiplier: 1,
+      placement_bonus_enabled: false,
+    });
+    Object.assign(event(), {
+      status: 'checkin', draw_locked: false,
+      seeded_from_event_id: 'e0', seed_by: 'wins', max_participants: 4,
+    });
+    const pool = ['a', 'b', 'c', 'd'];
+    store.db.tournament_participants = pool.map((k, i) => ({
+      id: `q-${k}`, event_id: 'e0', player_id: `pl-${k}`, elo_before: 1200,
+      elo_after: 1200 + (3 - i) * 10, elo_change: null, seed_number: null,
+      final_position: null, points: null, status: 'checked_in',
+    }));
+    // Every pairing played, decided in entry order so the standings are a
+    // strict a > b > c > d. buildFieldFromPool refuses a half-finished pool, so
+    // nothing may be left pending.
+    let n = 0;
+    store.db.tournament_matches = [];
+    for (let i = 0; i < pool.length; i++) {
+      for (let j = i + 1; j < pool.length; j++) {
+        store.db.tournament_matches.push({
+          id: `pm-${++n}`, event_id: 'e0', status: 'completed', is_bye: false,
+          is_third_place: false, round_number: 1, bracket_position: n,
+          participant_a_id: `q-${pool[i]}`, participant_b_id: `q-${pool[j]}`,
+          winner_participant_id: `q-${pool[i]}`, loser_participant_id: `q-${pool[j]}`,
+          winner_to_match_id: null, winner_to_position: null,
+          scores: [{ a: 21, b: 10 }, { a: 21, b: 12 }], elo_snapshot: null, notes: null,
+        });
+      }
+    }
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    const afterFirst = store.db.tournament_participants!.filter((p) => p.event_id === 'e1');
+    expect(afterFirst).toHaveLength(4);
+    // Promoted in the pool's finishing order — the whole reason this path skips
+    // the Elo re-sort.
+    expect(afterFirst.map((p) => p.player_id)).toEqual(['pl-a', 'pl-b', 'pl-c', 'pl-d']);
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    const afterSecond = store.db.tournament_participants!.filter((p) => p.event_id === 'e1');
+    // The assertion. Four qualifiers, four entries, twice.
+    expect(afterSecond).toHaveLength(4);
+    expect(afterSecond.map((p) => p.id).sort()).toEqual(afterFirst.map((p) => p.id).sort());
+    // And the redrawn bracket is a real 4-draw over exactly those entries.
+    const drawn = store.db.tournament_matches!
+      .filter((m) => m.event_id === 'e1' && m.round_number === 1)
+      .flatMap((m) => [m.participant_a_id, m.participant_b_id]);
+    expect(drawn.filter(Boolean).sort()).toEqual(afterSecond.map((p) => p.id).sort());
+  });
 });
 
 describe('third-place playoff', () => {
