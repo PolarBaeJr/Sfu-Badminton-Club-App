@@ -1179,6 +1179,149 @@ async function splitPairImpl(
   };
 }
 
+/**
+ * SWAP ONE HALF OF A FORMED PAIR FOR SOMEBODY ELSE.
+ *
+ * "we should also be allowed to edit pairs" — the club owner, and the case is
+ * "Priya is injured, Sam is taking her place". Done as unpair-then-pair that is
+ * three operations with a durable middle state in which two people who ARE
+ * entered look like they are not on a team; done here it is one.
+ *
+ * TWO CAPABILITIES, BOTH REQUIRED, and deliberately a conjunction rather than a
+ * new key. A swap genuinely is a removal and an addition fused — it takes one
+ * member off a team and puts another on — so asking only one of them would make
+ * this the way a holder of `pairs.add.write` does `pairs.remove.write`'s job, or
+ * the reverse. Nothing is widened: anybody who could already do it in three
+ * steps can do it in one, and nobody else can.
+ *
+ * THE INCOMING PLAYER MUST ALREADY BE IN THE POOL, which is what makes the swap
+ * neutral for the entry cap, the fee ledger and the event waiver all at once —
+ * one member in, one out, both already entered. See 00103's header for why the
+ * alternative (swapping in a stranger) would mean re-implementing the whole
+ * entry path inside the function whose job is atomicity.
+ */
+export async function swapPairMember(
+  pairId: string,
+  outgoingPlayerId: string,
+  incomingPlayerId: string,
+): Promise<ActionResult<{ pairName: string }>> {
+  return runAction(() => swapPairMemberImpl(pairId, outgoingPlayerId, incomingPlayerId));
+}
+
+async function swapPairMemberImpl(
+  pairId: string,
+  outgoingPlayerId: string,
+  incomingPlayerId: string,
+): Promise<{ pairName: string }> {
+  // Both, in the order the operation performs them. requireCapability takes one
+  // capability, so this is two calls rather than a new kind of gate.
+  await requireCapability('tournaments.draw.pairs.remove.write');
+  const admin = await requireCapability('tournaments.draw.pairs.add.write');
+  const adminClient = createAdminClient();
+
+  const { data: pair } = await adminClient.from('tournament_pairs')
+    .select('id, event_id, player1_id, player2_id, event:tournament_events(id, status, tournament_id, draw_locked)')
+    .eq('id', pairId)
+    .maybeSingle();
+  if (!pair) throw new ExpectedError('Pair not found');
+
+  const event = (Array.isArray(pair.event) ? pair.event[0] : pair.event) as {
+    id: string; status: string; tournament_id: string; draw_locked: boolean;
+  } | null;
+  if (!event) throw new ExpectedError('Pair is not attached to an event');
+
+  if (outgoingPlayerId !== pair.player1_id && outgoingPlayerId !== pair.player2_id) {
+    throw new ExpectedError('That player is not in this pair.');
+  }
+  // Same window pairing and unpairing have: while the entry list is still being
+  // assembled. The function refuses anything later on the stronger test of
+  // whether the pair is actually in a match.
+  if (event.status !== 'registration' && event.status !== 'checkin') {
+    throw new ExpectedError(
+      'The draw already exists, so this team cannot be changed. Regenerate the bracket, or withdraw the pair.',
+    );
+  }
+  if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before making changes.');
+  await assertTournamentNotSuspended(adminClient, event.tournament_id);
+
+  // RECOMPUTED, NEVER CARRIED OVER. A swap that kept the old combined_elo seeds
+  // the draw off somebody who is no longer on the team, and one that kept the
+  // old pair_name puts their name on the bracket. Both come from here rather
+  // than from plpgsql, for the reason 00070 gives about the rating arithmetic.
+  const partnerId = pair.player1_id === outgoingPlayerId ? pair.player2_id : pair.player1_id;
+  const [{ data: ratings }, { data: players }] = await Promise.all([
+    adminClient.from('ratings').select('player_id, doubles_elo').in('player_id', [partnerId, incomingPlayerId]),
+    adminClient.from('players').select('id, full_name').in('id', [partnerId, incomingPlayerId]),
+  ]);
+  const nameFor = (id: string) => players?.find((p) => p.id === id)?.full_name ?? '';
+  const eloFor = (id: string) => ratings?.find((r) => r.player_id === id)?.doubles_elo ?? 400;
+
+  // The pair keeps its column ORDER, so the name reads the way the row does.
+  const newPlayer1 = pair.player1_id === outgoingPlayerId ? incomingPlayerId : pair.player1_id;
+  const newPlayer2 = pair.player2_id === outgoingPlayerId ? incomingPlayerId : pair.player2_id;
+  const pairName = `${nameFor(newPlayer1)} / ${nameFor(newPlayer2)}`;
+  const combinedElo = calculateTeamRating([eloFor(newPlayer1), eloFor(newPlayer2)]);
+
+  const { error } = await adminClient.rpc('swap_tournament_pair_member', {
+    p_pair_id: pairId,
+    p_outgoing_player_id: outgoingPlayerId,
+    p_incoming_player_id: incomingPlayerId,
+    p_pair_name: pairName,
+    p_combined_elo: combinedElo,
+    p_added_by: admin.id,
+  });
+  if (error) {
+    // 23503 the pair is in the draw, 23505 already on another team, 23514 every
+    // other refusal, P0002 not found. All four carry sentences an exec can act
+    // on, so they are passed through rather than replaced.
+    if (['23503', '23505', '23514', 'P0002'].includes(error.code ?? '')) {
+      throw new ExpectedError(error.message);
+    }
+    Sentry.captureException(error);
+    throw new Error(error.message);
+  }
+
+  // NOTHING IS INVOICED AND NOTHING IS REFUNDED. Both members already have their
+  // one club_fees row for this tournament — the incoming one because they had to
+  // be in the pool to be swapped in, the outgoing one because they were on a
+  // team. This call is therefore a no-op by the schema's own key
+  // (tournament_id, player_id), and it is here so that the guarantee is stated
+  // where a future edit would break it rather than only in a comment.
+  await ensureEntryFees(adminClient, event.tournament_id, [incomingPlayerId]);
+
+  await logAudit(adminClient, {
+    tournament_id: event.tournament_id,
+    event_id: event.id,
+    action: 'pair_member_swapped',
+    performed_by: admin.id,
+    details: {
+      pair_id: pairId,
+      outgoing_player_id: outgoingPlayerId,
+      incoming_player_id: incomingPlayerId,
+      partner_player_id: partnerId,
+      pair_name: pairName,
+    },
+  });
+
+  // THE SAME PUSH A PAIRING GIVES, AND NOT A NEW BLOCK. addPairToEvent does not
+  // refuse an unsigned entrant — the club owner's rule is permissive at entry and
+  // strict at participation, and the hard blocks are check-in and draw
+  // generation, both of which screen this pair as it now stands. Refusing a swap
+  // on a signature that a plain unpair-and-re-pair would not be refused on would
+  // just teach execs to take the longer route.
+  //
+  // The incoming member was already asked when they entered the pool; this is
+  // the second nudge, and it is worth it because they have just been given a
+  // team and a reason to care.
+  const { unsigned, tournamentName } = await unsignedAmong(
+    adminClient, event.tournament_id, [incomingPlayerId],
+  );
+  await notifyEventWaiverRequired(adminClient, event.tournament_id, tournamentName, unsigned);
+
+  revalidateEventPaths(event.tournament_id, event.id);
+  return { pairName };
+}
+
 export async function removePairFromEvent(pairId: string) {
   const admin = await requireCapability('tournaments.draw.pairs.remove.write');
   const adminClient = createAdminClient();

@@ -9,6 +9,7 @@ import {
   removePairFromEvent,
   unpairEntry,
   withdrawPairMember,
+  swapPairMember,
   autoSeedEventByElo,
   updateParticipantSeed,
   updatePairSeed,
@@ -21,7 +22,7 @@ import { participantControls, type DrawCapabilities } from '@/lib/participant-co
 import { nextPowerOf2, pickOne, isOutOfEvent } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil, UserMinus, Unlink, Users } from 'lucide-react';
+import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil, UserMinus, Unlink, Users, Replace } from 'lucide-react';
 import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';
 import type { EventWaiverStatus } from '@badminton/shared';
 import { WaiverState } from './WaiverState';
@@ -176,6 +177,11 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   const [selectedUnpaired, setSelectedUnpaired] = useState<string[]>([]);
   // The pair whose halves are being offered a withdrawal, or null.
   const [splitting, setSplitting] = useState<PairWithPlayers | null>(null);
+  // The pair being edited, and which half is on the way out. Two steps in one
+  // dialog: pick who is leaving, then pick who takes their place.
+  const [swapping, setSwapping] = useState<PairWithPlayers | null>(null);
+  const [outgoingId, setOutgoingId] = useState<string>('');
+  const [incomingId, setIncomingId] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const { toast } = useToast();
@@ -409,6 +415,42 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     setActionLoading(null);
   }
 
+  /**
+   * REPLACE ONE HALF OF A TEAM — "Priya is injured, Sam is taking her place".
+   *
+   * One server action and one transaction, not unpair-then-pair: done in three
+   * steps there is a durable middle state where two people who ARE entered look
+   * like they are not on a team.
+   *
+   * The incoming member is picked from the WAITING LIST and nowhere else. That
+   * is what keeps the swap neutral — they already entered, so they are already
+   * invoiced, have already been asked for the event waiver and already hold one
+   * of their allowed entries. Somebody who has not entered is added to the
+   * waiting list first, which is the step that does all three.
+   */
+  async function handleSwap() {
+    if (!swapping || !outgoingId || !incomingId) return;
+    setLoading(true);
+    const res = await swapPairMember(swapping.id, outgoingId, incomingId);
+    if (!res.ok) {
+      toast(res.error, 'error');
+      setLoading(false);
+      return;
+    }
+    toast(`Team is now ${res.data.pairName}`, 'success');
+    setSwapping(null);
+    setOutgoingId('');
+    setIncomingId('');
+    router.refresh();
+    setLoading(false);
+  }
+
+  function openSwap(pair: PairWithPlayers) {
+    setSwapping(pair);
+    setOutgoingId('');
+    setIncomingId('');
+  }
+
   async function handleAutoSeed() {
     setLoading(true);
     try {
@@ -446,6 +488,16 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     if (isOutOfEvent(pair.status)) return null;
     return (
       <>
+        {/* Offered even when the waiting list is empty, and that is deliberate:
+            the refusal names the step that fixes it ("add them to the waiting
+            list first"), which is a better answer than a button that is not
+            there for a reason nobody can see. */}
+        {controls.swapMember && (
+          <Button size="sm" variant="ghost" onClick={() => openSwap(pair)} aria-label={`Swap a player in ${pair.pair_name ?? 'this pair'}`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
+            <Replace className="w-3.5 h-3.5 mr-1" />
+            <span className="text-xs">Swap</span>
+          </Button>
+        )}
         {controls.unpair && (
           <Button size="sm" variant="ghost" onClick={() => handleUnpair(pair)} loading={actionLoading === pair.id} aria-label={`Unpair ${pair.pair_name ?? 'this pair'}`} className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none">
             <Unlink className="w-3.5 h-3.5 mr-1" />
@@ -507,7 +559,8 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   // A doubles pair row can offer up to three things now, and the Actions column
   // has to be drawn if ANY of them is on offer — actionsColumn alone follows
   // remove and withdraw, which is what it was written for.
-  const showPairActions = controls.actionsColumn || (isDoubles && (controls.unpair || controls.withdrawMember));
+  const showPairActions = controls.actionsColumn
+    || (isDoubles && (controls.unpair || controls.withdrawMember || controls.swapMember));
   // The Add button opens a dialog that may offer either route, so it appears
   // for a holder of either key. Which panels are inside it is decided again.
   const showAddButton = controls.add || (isDoubles && controls.addSolo);
@@ -847,6 +900,84 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
           </table>
         </div>
       )}
+
+      {/*
+        EDIT A TEAM — swap one half for somebody on the waiting list.
+
+        Two choices in one dialog, in the order the exec thinks about them:
+        who is leaving, then who takes their place. The whole thing is one
+        server action and one transaction, so there is no moment where the team
+        is dissolved.
+      */}
+      <Dialog open={swapping !== null} onClose={() => setSwapping(null)} title="Swap a player">
+        {swapping && (
+          <div className="space-y-4">
+            <div>
+              <p className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-2">Who is leaving the team?</p>
+              <div className="space-y-1.5">
+                {[
+                  { id: swapping.player1_id, name: swapping.player1?.full_name ?? 'Player 1' },
+                  { id: swapping.player2_id, name: swapping.player2?.full_name ?? 'Player 2' },
+                ].map((half) => (
+                  <button
+                    key={half.id}
+                    type="button"
+                    onClick={() => setOutgoingId(half.id)}
+                    aria-pressed={outgoingId === half.id}
+                    className={`w-full text-left text-sm px-3 py-2 rounded-lg border transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none ${outgoingId === half.id ? 'border-[var(--color-accent)] bg-[var(--bg-elevated)] text-[var(--text-primary)]' : 'border-[var(--border)] text-[var(--text-muted)]'}`}
+                  >
+                    {half.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <p className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-2">Who takes their place?</p>
+              {activeUnpaired.length === 0 ? (
+                // Not a dead end — it names the step that makes the swap
+                // possible, which is the same sentence the server refuses with.
+                <p className="text-sm text-[var(--text-muted)]">
+                  Nobody is waiting for a partner. Add the incoming player with
+                  “Add Entry → Without a partner” first — that is what charges them
+                  and asks for the event waiver — then swap them in.
+                </p>
+              ) : (
+                <PlayerPicker
+                  label="From the waiting list"
+                  value={incomingId}
+                  onChange={setIncomingId}
+                  players={activeUnpaired.map((p) => ({
+                    id: p.player_id,
+                    name: unpairedName(p),
+                    avatarUrl: p.player?.avatar_url,
+                  }))}
+                />
+              )}
+            </div>
+
+            <p className="text-sm text-[var(--text-muted)]">
+              The player leaving goes back to waiting for a partner — they keep their entry fee,
+              their event waiver and their place in the tournament. The team&apos;s seed does not move,
+              but its combined rating is recalculated.
+            </p>
+
+            {/* Extra clearance: the picker's list is fixed-positioned below the
+                field and a short one can sit over these buttons. */}
+            <div className="flex gap-2 pt-6">
+              <Button
+                className="flex-1"
+                loading={loading}
+                disabled={!outgoingId || !incomingId}
+                onClick={handleSwap}
+              >
+                Swap
+              </Button>
+              <Button variant="ghost" type="button" onClick={() => setSwapping(null)}>Cancel</Button>
+            </div>
+          </div>
+        )}
+      </Dialog>
 
       {/*
         ONE HALF OF A PAIR HAS PULLED OUT — which one?
