@@ -102,10 +102,15 @@ export default async function EventDetailPage({
   const allMatches = matches as Array<Record<string, unknown>>;
 
   const currentPlayer = await getCurrentPlayer();
-  let playerRegistration: { status: string } | null = null;
+  let playerRegistration: { status: string; partnerName?: string | null } | null = null;
   let playerParticipantId: string | null = null;
 
-  if (currentPlayer && !doubles) {
+  // READ FOR DOUBLES TOO, since 00102. This was `!doubles` on the grounds that a
+  // doubles entrant had no participant row — true until a member could enter
+  // without a partner. Left as it was, somebody who self-entered would come back
+  // to a page still offering them Register, and the second press would fail
+  // "Already registered".
+  if (currentPlayer) {
     const regRes = await supabase
       .from('tournament_participants')
       .select('id, status')
@@ -116,6 +121,27 @@ export default async function EventDetailPage({
     if (reg) {
       playerRegistration = { status: reg.status };
       playerParticipantId = reg.id;
+    }
+
+    // And the other way to be in a doubles event: on a formed team. The partner's
+    // NAME, because a member who agreed to play with whoever they were given
+    // wants exactly one thing off this page — who that turned out to be.
+    if (doubles) {
+      const pairRes = await supabase
+        .from('tournament_pairs')
+        .select('status, player1_id, player2_id, player1:players!tournament_pairs_player1_id_fkey(full_name), player2:players!tournament_pairs_player2_id_fkey(full_name)')
+        .eq('event_id', eventId)
+        .or(`player1_id.eq.${currentPlayer.id},player2_id.eq.${currentPlayer.id}`)
+        .limit(1);
+      const mine = (pairRes.data ?? [])[0] as Record<string, unknown> | undefined;
+      if (mine) {
+        const partnerEmbed = mine.player1_id === currentPlayer.id ? mine.player2 : mine.player1;
+        const one = Array.isArray(partnerEmbed) ? partnerEmbed[0] : partnerEmbed;
+        playerRegistration = {
+          status: mine.status as string,
+          partnerName: (one as { full_name?: string | null } | null)?.full_name ?? null,
+        };
+      }
     }
   }
 

@@ -112,9 +112,66 @@ describe('spotsLeft', () => {
     expect(spotsLeft([a, b], [])).toBeNull();
   });
 
-  it('refuses for a doubles event — a member has no way to take that place', () => {
-    const d = event({ event_type: 'open_doubles', max_participants: 8 });
-    expect(spotsLeft([d], [])).toBeNull();
+  // WAS: "refuses for a doubles event — a member has no way to take that
+  // place". Since 00102 a member CAN take it: they enter the pool on their own
+  // and an exec pairs them. So the number has to be real — and it has to be the
+  // number the server enforces, or the badge promises a place registerForEvent
+  // then refuses.
+  it('counts a doubles event in TEAMS, because that is what the cap counts', () => {
+    const d = event({ id: 'dbl', event_type: 'open_doubles', max_participants: 8 });
+    expect(spotsLeft([d], [], [])).toBe(8);
+    // Three formed teams take three of the eight.
+    expect(spotsLeft([d], [], [
+      { event_id: 'dbl', status: 'registered' },
+      { event_id: 'dbl', status: 'registered' },
+      { event_id: 'dbl', status: 'checked_in' },
+    ])).toBe(5);
+  });
+
+  it('counts two people waiting for a partner as one doubles spot', () => {
+    const d = event({ id: 'dbl', event_type: 'open_doubles', max_participants: 8 });
+    expect(spotsLeft([d], [
+      { event_id: 'dbl', status: 'registered' },
+      { event_id: 'dbl', status: 'registered' },
+    ], [])).toBe(7);
+  });
+
+  it('rounds a LONE waiting person up to a whole spot — they still need a court', () => {
+    const d = event({ id: 'dbl', event_type: 'open_doubles', max_participants: 8 });
+    expect(spotsLeft([d], [{ event_id: 'dbl', status: 'registered' }], [])).toBe(7);
+    // …and the second person to enter takes none, because they fill the slot
+    // the first one opened. This is the one place the badge does not tick down
+    // on every entry, and it is the same arithmetic the action applies.
+    expect(spotsLeft([d], [
+      { event_id: 'dbl', status: 'registered' },
+      { event_id: 'dbl', status: 'registered' },
+    ], [])).toBe(7);
+  });
+
+  it('agrees with the admin capacity check for a mixed field', () => {
+    // Six teams and three people waiting = 6 + ceil(3/2) = 8 slots taken.
+    const d = event({ id: 'dbl', event_type: 'open_doubles', max_participants: 10 });
+    const pairs = Array.from({ length: 6 }, () => ({ event_id: 'dbl', status: 'registered' }));
+    const waiting = Array.from({ length: 3 }, () => ({ event_id: 'dbl', status: 'registered' }));
+    expect(spotsLeft([d], waiting, pairs)).toBe(2);
+  });
+
+  it('ignores withdrawn entries on BOTH sides of a doubles field', () => {
+    const d = event({ id: 'dbl', event_type: 'open_doubles', max_participants: 8 });
+    expect(spotsLeft([d], [
+      { event_id: 'dbl', status: 'registered' },
+      { event_id: 'dbl', status: 'withdrawn' },
+    ], [
+      { event_id: 'dbl', status: 'registered' },
+      { event_id: 'dbl', status: 'disqualified' },
+    ])).toBe(6);
+  });
+
+  it('does not let another event’s rows count against this one', () => {
+    const d = event({ id: 'dbl', event_type: 'open_doubles', max_participants: 8 });
+    expect(spotsLeft([d], [{ event_id: 'other', status: 'registered' }], [
+      { event_id: 'other', status: 'registered' },
+    ])).toBe(8);
   });
 
   it('refuses when the event carries no cap', () => {
@@ -144,12 +201,28 @@ describe('soleEnterableEvent', () => {
     expect(soleEnterableEvent([event({ id: 'x' })])?.id).toBe('x');
   });
 
-  it('declines when a doubles event is the only one open — it is admin managed', () => {
-    expect(soleEnterableEvent([event({ event_type: 'womens_doubles' })])).toBeNull();
+  // WAS: "declines when a doubles event is the only one open — it is admin
+  // managed". It no longer is. The CTA this feeds is a LINK to the tournament
+  // page, so naming the doubles event here cannot route anybody past the
+  // consent copy — that lives in the button's own dialog on the page they land
+  // on, and registerForEvent refuses without the acknowledgement regardless.
+  it('names a doubles event now that a member can enter one alone', () => {
+    expect(soleEnterableEvent([event({ id: 'd', event_type: 'womens_doubles' })])?.id).toBe('d');
   });
 
   it('declines when there is a choice to make', () => {
     expect(soleEnterableEvent([event({ id: 'a' }), event({ id: 'b' })])).toBeNull();
+    // Including a choice between the two disciplines, which is the common shape.
+    expect(soleEnterableEvent([
+      event({ id: 'a' }),
+      event({ id: 'b', event_type: 'mixed_doubles' }),
+    ])).toBeNull();
+  });
+
+  it('declines when the only doubles event is not taking entries', () => {
+    expect(soleEnterableEvent([
+      event({ id: 'd', event_type: 'mixed_doubles', status: 'checkin' }),
+    ])).toBeNull();
   });
 });
 
