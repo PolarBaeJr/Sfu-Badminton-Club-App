@@ -20,7 +20,7 @@ import { getDashboardFinances } from '@/lib/dashboard-finance';
 import { getOutstandingClubFees } from '@/lib/fees-outstanding';
 import { clubWeek } from '@/lib/club-week';
 import { ActionLink } from './action-link';
-import { money } from '@/components/dashboard/charts';
+import { money } from '@/components/charts';
 import {
   ClubFeePanel,
   ExpensePanel,

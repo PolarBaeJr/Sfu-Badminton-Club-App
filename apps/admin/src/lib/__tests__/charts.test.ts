@@ -1,12 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildBars,
+  buildColumns,
+  buildHistogram,
   buildRunningAreaPath,
   buildRunningPath,
   buildRunningTotal,
+  buildSplit,
   computeRunningScale,
   type ChartBox,
-} from '../dashboard-charts';
+} from '../charts';
 
 // THE CHARTS' ARITHMETIC, WHICH IS THE ONLY PART OF A CHART A TEST CAN SEE.
 //
@@ -212,5 +215,127 @@ describe('buildBars', () => {
 
   it('has no rows for no parts', () => {
     expect(buildBars([])).toEqual([]);
+  });
+});
+
+describe('buildColumns', () => {
+  // ORDER IS THE POINT. Columns are for categories whose sequence means
+  // something — a run of session dates, a bracket — so nothing here sorts.
+  it('keeps the order it was given and scales against the tallest total', () => {
+    const columns = buildColumns([
+      { label: '4 AUG', value: 15, under: 3 },
+      { label: '6 AUG', value: 16, under: 2 },
+      { label: '11 AUG', value: 16, under: 2 },
+    ]);
+
+    expect(columns.map((c) => c.label)).toEqual(['4 AUG', '6 AUG', '11 AUG']);
+    expect(columns.map((c) => c.total)).toEqual([18, 18, 18]);
+    expect(columns[0]!.pct).toBeCloseTo((15 / 18) * 100, 5);
+    expect(columns[0]!.underPct).toBeCloseTo((3 / 18) * 100, 5);
+  });
+
+  // A session nobody has checked into yet is a real answer, and the honest
+  // drawing of it is an empty tick with "0" printed under it — not a stub that
+  // implies somebody came.
+  it('draws nothing at all for a column of zero', () => {
+    const columns = buildColumns([
+      { label: 'a', value: 16 },
+      { label: 'b', value: 0 },
+    ]);
+    expect(columns[1]!.pct).toBe(0);
+  });
+
+  it('gives every column zero height when the whole set is zero', () => {
+    expect(
+      buildColumns([{ label: 'a', value: 0 }, { label: 'b', value: 0 }]).map((c) => c.pct),
+    ).toEqual([0, 0]);
+  });
+
+  it('has no columns for no parts', () => {
+    expect(buildColumns([])).toEqual([]);
+  });
+});
+
+describe('buildHistogram', () => {
+  it('bins values into equal-width bands over their own range', () => {
+    const h = buildHistogram([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], 5);
+    expect(h.bins.map((b) => b.count)).toEqual([2, 2, 2, 2, 2]);
+    expect(h.min).toBe(0);
+    expect(h.max).toBe(9);
+    expect(h.total).toBe(10);
+    expect(h.peak).toBe(2);
+  });
+
+  // Without the clamp the best-rated member lands one bin past the last and
+  // gets a private band nobody else can reach.
+  it('clamps the top value into the last bin rather than past it', () => {
+    const h = buildHistogram([100, 200], 4);
+    expect(h.bins[3]!.count).toBe(1);
+    expect(h.bins.reduce((n, b) => n + b.count, 0)).toBe(2);
+  });
+
+  // A brand-new club, or day one of a season: everybody on the starting rating.
+  // There is no range to divide, so they go in the middle rather than being
+  // piled at an arbitrary end.
+  it('puts a flat field in the middle bin', () => {
+    const h = buildHistogram([400, 400, 400], 5);
+    expect(h.bins.map((b) => b.count)).toEqual([0, 0, 3, 0, 0]);
+  });
+
+  // THE SECOND LADDER BUG, and it is a different one from the moiré. A plain
+  // floor makes bins of 1, 2, 3 and 4 against a peak of 30 draw identically, so
+  // the thin tail — which is most of a ladder — becomes a straight line. Range
+  // compression gives every distinct count its own height.
+  it('gives distinct counts distinct heights instead of pinning them to a floor', () => {
+    const values = [
+      ...Array(30).fill(50),
+      ...Array(1).fill(10),
+      ...Array(2).fill(20),
+      ...Array(3).fill(30),
+    ];
+    const h = buildHistogram(values, 5);
+    const occupied = h.bins.filter((b) => b.count > 0).map((b) => b.pct);
+    expect(new Set(occupied).size).toBe(occupied.length);
+    expect(Math.min(...occupied)).toBeGreaterThan(0);
+  });
+
+  // An EMPTY bin draws nothing. The floor is for "somebody is here".
+  it('draws no bar for an empty bin', () => {
+    const h = buildHistogram([0, 9], 3);
+    expect(h.bins[1]!.count).toBe(0);
+    expect(h.bins[1]!.pct).toBe(0);
+  });
+
+  it('is an absent distribution rather than a flat one when nobody is in it', () => {
+    const h = buildHistogram([], 4);
+    expect(h.total).toBe(0);
+    expect(h.bins).toHaveLength(4);
+    expect(h.bins.every((b) => b.count === 0 && b.pct === 0)).toBe(true);
+  });
+});
+
+describe('buildSplit', () => {
+  it('divides a real total into shares that sum to it', () => {
+    const split = buildSplit([
+      { label: 'Collected', value: 15500 },
+      { label: 'Still owed', value: 246500 },
+    ]);
+    expect(split.total).toBe(262000);
+    expect(split.segments.map((s) => s.pct).reduce((a, b) => a + b, 0)).toBeCloseTo(100, 5);
+    expect(split.segments[0]!.pct).toBeCloseTo((15500 / 262000) * 100, 5);
+  });
+
+  // "Nothing has happened yet" and "it divided evenly" are different states. An
+  // even division would claim a shape over an empty ledger.
+  it('gives zero-width segments for a zero total, never an even division', () => {
+    const split = buildSplit([{ label: 'a', value: 0 }, { label: 'b', value: 0 }]);
+    expect(split.total).toBe(0);
+    expect(split.segments.map((s) => s.pct)).toEqual([0, 0]);
+  });
+
+  it('clamps a negative part rather than letting it shrink the total', () => {
+    const split = buildSplit([{ label: 'a', value: -100 }, { label: 'b', value: 100 }]);
+    expect(split.total).toBe(100);
+    expect(split.segments[0]!.pct).toBe(0);
   });
 });

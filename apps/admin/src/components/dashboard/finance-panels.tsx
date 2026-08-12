@@ -3,12 +3,13 @@ import { Card } from '@badminton/ui';
 import { formatExpenseCategory, formatOtherIncomeCategory } from '@badminton/shared';
 import {
   buildBars,
+  buildSplit,
   buildRunningAreaPath,
   buildRunningPath,
   buildRunningTotal,
   computeRunningScale,
   type Payment,
-} from '@/lib/dashboard-charts';
+} from '@/lib/charts';
 import type { LedgerRead } from '@/lib/season-income';
 import type { SeasonExpenses } from '@/lib/season-finance';
 import {
@@ -17,9 +18,10 @@ import {
   ChartNote,
   RUNNING_BOX,
   RunningTotalChart,
+  SplitBar,
   clubDayOf,
   money,
-} from './charts';
+} from '@/components/charts';
 
 /**
  * THE FINANCE PANELS OF THE DASHBOARD, ONE PER CAPABILITY.
@@ -39,14 +41,15 @@ import {
  * viewer holding a single ledger read cannot reconstruct a total out of the
  * panels they were given.
  *
- * WHAT A SECOND AREA WOULD NEED. LedgerChartPanel below is the reusable half
- * and it is not about money: it takes dated amounts, labelled parts and a tone.
- * An attendance panel is `{ at, cents: 1 }` per check-in with `format` set to a
- * plain count, plus a fetch gated on the capability that owns session data.
- * What is missing today is that capability, not this component — `sessions.page`
- * is the only key the sessions area has, and it is one of the gates that keeps
- * a person OFF the narrowed landing, so a sessions-scoped viewer already lands
- * on the ordinary dashboard. See the note beside hasTiles in dashboard/page.tsx.
+ * WHAT A SECOND AREA WOULD NEED, AND WHERE IT WOULD LIVE. Not here. The shapes
+ * these panels are made of are in @/components/charts and the maths is in
+ * @/lib/charts, both area-agnostic and both meant for /fees, /sessions,
+ * /players, /seasons, /tournaments, /ratings and /audit as much as for this
+ * page. THIS file is the money-specific composition: which tone, which label,
+ * which sentence when the ledger is empty. An attendance panel is the same four
+ * primitives with a different fetch in front of them and a different set of
+ * words around them, and it belongs beside its own screen or beside this one —
+ * never inside the primitives.
  */
 
 /** The season a panel is reporting on, as the page already holds it. */
@@ -252,10 +255,15 @@ export function OtherIncomePanel({
  * "fees by kind" chart under this capability would hand a dues reader two of
  * somebody else's books, which is the leak the per-ledger reads exist to stop.
  *
- * The two bars are NOT slices of one whole and are not drawn as such: collected
- * is money that arrived, outstanding is the price list multiplied by the
- * members who have not paid. They share a scale so the comparison is honest and
- * each carries its own figure.
+ * THIS ONE IS A REAL PART-OF-A-WHOLE, unlike the net position beside it.
+ * Collected plus outstanding IS a quantity: the season's billable total, the
+ * price list across every member who owes. So it is drawn as one track divided,
+ * which answers "how far through collection are we" at a glance in a way two
+ * bars on a shared scale do not. Income and expenditure sum to nothing at all,
+ * which is why that pair stays as bars — see the note on buildSplit.
+ *
+ * The percentages are of that billable total and are printed beside each
+ * figure, so nobody has to measure a 6% sliver by eye.
  */
 export function ClubFeePanel({
   season,
@@ -266,36 +274,42 @@ export function ClubFeePanel({
   collectedCents: number | null;
   outstandingCents: number | null;
 }) {
-  const bars =
+  const split =
     collectedCents === null || outstandingCents === null
-      ? []
-      : buildBars([
-          { label: 'Collected', cents: collectedCents },
-          { label: 'Still owed', cents: outstandingCents },
+      ? null
+      : buildSplit([
+          { label: 'Collected', value: collectedCents },
+          { label: 'Still owed', value: outstandingCents },
         ]);
 
   return (
     <Card padding={false}>
       <PanelHead title={season ? `${season.name} · Season dues` : 'Season dues'} />
       <div className="px-4 py-4">
-        {!season || collectedCents === null || outstandingCents === null ? (
+        {!season || !split ? (
           // Rendered for the CAPABILITY rather than for the season, so somebody
           // whose only panel this is cannot be handed a blank page in the gap
           // between two terms.
           <ChartNote>No season is active, so there is nothing to collect for yet.</ChartNote>
-        ) : collectedCents === 0 && outstandingCents === 0 ? (
+        ) : split.total === 0 ? (
           <ChartNote>
             {season.name} has no dues on it — nobody has paid and nobody is billable yet.
           </ChartNote>
         ) : (
-          <Link href="/fees" className="block">
-            <div className="space-y-4">
-              {/* Two tones, and they are the two the console already uses for
-                  this pair on the stat strip above: money in is success, money
-                  still owed is the warning tone. */}
-              <BarRows rows={bars.slice(0, 1)} tone="var(--color-success)" />
-              <BarRows rows={bars.slice(1)} tone="var(--color-warning)" />
-            </div>
+          <Link href="/fees" className="block space-y-4">
+            <ChartFigure
+              label="Billable this season"
+              value={money(split.total)}
+              sub={`${Math.round(split.segments[0]!.pct)}% of the term's dues are in.`}
+            />
+            {/* Two tones, and they are the two the console already uses for this
+                pair: money in is success, money still owed is the warning tone —
+                the same tone the Fees outstanding stat cell turns above. */}
+            <SplitBar
+              split={split}
+              tones={['var(--color-success)', 'var(--color-warning)']}
+              format={money}
+            />
           </Link>
         )}
       </div>

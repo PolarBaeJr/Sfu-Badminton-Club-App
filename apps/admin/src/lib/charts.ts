@@ -1,5 +1,11 @@
-// The arithmetic behind the dashboard's charts, kept apart from the components
-// that draw them.
+// THE ADMIN CONSOLE'S CHART ARITHMETIC. Shared, and not the dashboard's.
+//
+// The console is bare figures — stat strips, tables and counts — and this
+// module plus ../components/charts is the whole of what any screen needs to
+// draw one. /fees, /sessions, /players, /seasons, /tournaments, /ratings and
+// /audit are all expected to import from here; the dashboard is simply the
+// first caller. Nothing below is dashboard-specific and nothing below should
+// become so.
 //
 // THERE IS NO CHART LIBRARY IN THE ADMIN APP AND NONE IS BEING ADDED. The
 // player app reached the same conclusion for /my-stats (see its
@@ -10,13 +16,30 @@
 // are pure functions so the lie can be caught by a test instead of by the
 // treasurer.
 //
-// NOTHING HERE KNOWS ABOUT MONEY, LEDGERS OR CAPABILITIES. It takes dated
-// amounts and labelled parts and returns coordinates. That is deliberate: the
-// second area to want a chart on this page (attendance per session, say) is
-// meant to be a gated fetch plus a panel, not a rewrite of the drawing code.
-// The permission decisions live with the other gates in dashboard/page.tsx and
-// must never migrate in here, or there would be two disagreeing answers to who
+// FOUR SHAPES, AND THEY ARE THE WHOLE VOCABULARY:
+//
+//   TIME SERIES        buildRunningTotal + computeRunningScale + the two paths.
+//                      Money across a term, matches across a season, joins
+//                      across a term. Anything cumulative and dated.
+//   CATEGORICAL        buildBars — one labelled part per row, measured against
+//                      the largest. Spend by category, entries per event.
+//   DISTRIBUTION       buildHistogram — equal-width bins over a numeric range.
+//                      The ladder, and any other "shape of the field" question.
+//   PART OF A WHOLE    buildSplit — segments of a total that is genuinely known.
+//                      Collected against outstanding, confirmed against pending.
+//
+// NOTHING HERE KNOWS ABOUT MONEY, LEDGERS, MEMBERS OR CAPABILITIES. It takes
+// dated amounts, labelled parts and numbers, and returns coordinates. That is
+// what makes a new chart a gated fetch plus a panel rather than a rewrite. The
+// permission decisions live with the gates on the page that fetches, and must
+// never migrate in here — there would then be two disagreeing answers to who
 // may see the club's books.
+//
+// WHAT THIS MODULE DELIBERATELY DOES NOT DO: it does not smooth, it does not
+// interpolate, it does not extrapolate past the last real value, and every
+// function that could draw a shape over nothing returns an empty result or null
+// instead so the caller has to say something honest. A chart with invented data
+// in it is worse than no chart.
 
 // ============================================================
 // A running total over the term
@@ -274,4 +297,223 @@ export function buildBars(parts: readonly BarPart[]): BarRow[] {
     ...part,
     pct: peak <= 0 ? 0 : Math.max(0, Math.min(100, (part.cents / peak) * 100)),
   }));
+}
+
+// ============================================================
+// Columns — one value per category, in a fixed reading order
+// ============================================================
+
+/** One column: a category, its value, and an optional second line under it. */
+export interface ColumnPart {
+  /** The axis label under the column. Kept short — it is set at 10px. */
+  label: string;
+  value: number;
+  /** A second value stacked UNDER the first, in the same column. Optional. */
+  under?: number;
+  /** A caption for the tick, e.g. the session's track. */
+  note?: string;
+}
+
+export interface Column extends ColumnPart {
+  /** 0–100: the height of `value` as a share of the tallest column's total. */
+  pct: number;
+  /** 0–100: the height of `under` on the same scale, stacked beneath. */
+  underPct: number;
+  /** value + (under ?? 0) — what the column's full height represents. */
+  total: number;
+}
+
+/**
+ * COLUMNS, MEASURED AGAINST THE TALLEST TOTAL.
+ *
+ * For "a value per thing, in an order that means something": turnout per
+ * session across a term, entries per event, matches per week. Use this rather
+ * than buildBars when the ORDER of the categories carries meaning (a sequence
+ * of dates, a bracket) — rows sorted largest-first destroy that, columns keep
+ * it.
+ *
+ * `under` exists for the one composition that is honest without a denominator:
+ * two parts of the same observed quantity, stacked (turned up / did not turn
+ * up). It is NOT a way to draw a category breakdown as a stack — three or more
+ * stacked segments in one column cannot be compared by eye and each loses its
+ * figure. If you have three categories, you have three charts or a bar row set.
+ *
+ * EMPTY IN, EMPTY OUT. No parts gives no columns, and an all-zero set gives
+ * columns of zero height rather than a floor: an empty tick with its figure
+ * printed under it is the truth, and a minimum-height stub is a shape standing
+ * for nothing. Contrast bandHeight() in the player app's ladder.ts, which DOES
+ * compress a range onto a floor — that is right for a histogram, where the
+ * question is the shape of a distribution, and wrong here, where the question
+ * is what each column's number is.
+ */
+export function buildColumns(parts: readonly ColumnPart[]): Column[] {
+  const totals = parts.map((p) => Math.max(0, p.value) + Math.max(0, p.under ?? 0));
+  const peak = totals.reduce((max, t) => (t > max ? t : max), 0);
+  return parts.map((part, i) => ({
+    ...part,
+    total: totals[i]!,
+    pct: peak <= 0 ? 0 : Math.max(0, Math.min(100, (Math.max(0, part.value) / peak) * 100)),
+    underPct:
+      peak <= 0 ? 0 : Math.max(0, Math.min(100, (Math.max(0, part.under ?? 0) / peak) * 100)),
+  }));
+}
+
+// ============================================================
+// Distribution — the shape of a field of numbers
+// ============================================================
+
+export interface HistogramBin {
+  /** Inclusive lower edge of the bin. */
+  from: number;
+  /** Exclusive upper edge, except for the last bin, which includes its top. */
+  to: number;
+  count: number;
+  /** 0–100, the bar's height. See the range-compression note below. */
+  pct: number;
+}
+
+export interface Histogram {
+  bins: HistogramBin[];
+  min: number;
+  max: number;
+  /** The fullest bin's count. */
+  peak: number;
+  /** How many values were binned. */
+  total: number;
+}
+
+/** Below this, a bin with anybody in it would be invisible. */
+const MIN_BIN_HEIGHT = 14;
+
+/**
+ * EQUAL-WIDTH BINS OVER A RANGE OF NUMBERS — the shape of the field.
+ *
+ * For the ladder (how the club's ratings are spread), and for any other
+ * "distribution of a number across members" question.
+ *
+ * BINS, NEVER ONE MARK PER MEMBER, and this is transcribed from a bug the
+ * player app already paid for (see ladderHistogram in
+ * apps/player/src/lib/ladder.ts). Its first version drew a 1px rule per member:
+ * at ninety members across a 316px card those rules land on fractional pixels,
+ * most render sub-visible, and the survivors beat into a striped moiré — which
+ * reads as EMPTY RATING BANDS THAT ARE NOT EMPTY. A bar per bin is wide enough
+ * to draw honestly at any width the console gives it.
+ *
+ * TRANSCRIBED RATHER THAN IMPORTED, deliberately and with a cost. ladder.ts
+ * lives in apps/player/src and the admin tsconfig has no path to it; importing
+ * across apps would be a new cross-app dependency for one function. The honest
+ * alternative is moving it to packages/shared, which is a change to the player
+ * app's ladder screen and belongs to whoever owns that screen. Until then this
+ * is a second implementation of the same idea, and the two are allowed to
+ * differ: this one is admin-side and knows nothing about "me".
+ *
+ * TWO GUARDS, both of which draw a lie without them:
+ *
+ *   - The top value would land one bin PAST the last on its own, giving the
+ *     best-rated member a private bin nobody else can reach. Clamped in.
+ *   - A flat field — a brand-new club, or day one of a season where everybody
+ *     is on the starting rating — has no range to divide. Everyone goes in the
+ *     MIDDLE bin rather than being piled at an arbitrary end.
+ *
+ * HEIGHTS ARE RANGE-COMPRESSED, NOT CLAMPED, and that is the second bug from
+ * the same file. A plain `max(floor, count/peak)` keeps the smallest bin
+ * visible and flattens everything underneath it: against a peak of 30, bins of
+ * 1, 2, 3 and 4 all pin to the floor and draw identically, so the thin tail —
+ * which is most of a ladder — becomes a straight line. Mapping 1..peak onto
+ * floor..100 gives every distinct count a distinct height. An EMPTY bin still
+ * draws nothing at all; the floor is for "somebody is here", not for "here".
+ */
+export function buildHistogram(values: readonly number[], binCount: number): Histogram {
+  const n = Math.max(1, Math.floor(binCount));
+  if (values.length === 0) {
+    return {
+      bins: Array.from({ length: n }, () => ({ from: 0, to: 0, count: 0, pct: 0 })),
+      min: 0,
+      max: 0,
+      peak: 0,
+      total: 0,
+    };
+  }
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min;
+  const middle = Math.floor((n - 1) / 2);
+  const binOf = (v: number) =>
+    span <= 0 ? middle : Math.min(n - 1, Math.floor(((v - min) / span) * n));
+
+  const counts = new Array<number>(n).fill(0);
+  for (const v of values) counts[binOf(v)]! += 1;
+  const peak = Math.max(...counts);
+
+  return {
+    min,
+    max,
+    peak,
+    total: values.length,
+    bins: counts.map((count, i) => ({
+      from: span <= 0 ? min : min + (span * i) / n,
+      to: span <= 0 ? max : min + (span * (i + 1)) / n,
+      count,
+      pct:
+        count <= 0
+          ? 0
+          : peak <= 1
+            ? 100
+            : MIN_BIN_HEIGHT + (100 - MIN_BIN_HEIGHT) * ((count - 1) / (peak - 1)),
+    })),
+  };
+}
+
+// ============================================================
+// Part of a whole
+// ============================================================
+
+export interface SplitPart {
+  label: string;
+  value: number;
+}
+
+export interface SplitSegment extends SplitPart {
+  /** 0–100, this part's share of the total. The segments sum to 100. */
+  pct: number;
+}
+
+export interface Split {
+  segments: SplitSegment[];
+  total: number;
+}
+
+/**
+ * SEGMENTS OF A TOTAL THAT IS GENUINELY KNOWN.
+ *
+ * Collected against still owed; confirmed against pending against disputed;
+ * turned up against did not. The rule for reaching for this instead of
+ * buildBars is one question: IS THE SUM OF THESE PARTS A REAL QUANTITY? Dues
+ * collected plus dues outstanding is the season's billable total, so it is.
+ * Income and expenditure sum to nothing at all, so that pair is bars on a
+ * shared scale and never a split — drawing it as one would be a chart of a
+ * number that does not exist.
+ *
+ * The total is computed from the parts and returned, so the caller prints it
+ * rather than carrying a second figure that could disagree.
+ *
+ * A ZERO TOTAL GIVES ZERO-WIDTH SEGMENTS, not an even division. "Nothing has
+ * happened yet" and "it divided evenly" are different states, and the caller is
+ * expected to say the first in words — every panel in this console owes an
+ * empty state rather than an empty shape.
+ *
+ * Negative parts are clamped to zero. Nothing this draws can go negative today,
+ * so a negative here is data nobody anticipated, and the figure beside the
+ * segment still tells the truth.
+ */
+export function buildSplit(parts: readonly SplitPart[]): Split {
+  const total = parts.reduce((sum, p) => sum + Math.max(0, p.value), 0);
+  return {
+    total,
+    segments: parts.map((part) => ({
+      ...part,
+      pct: total <= 0 ? 0 : (Math.max(0, part.value) / total) * 100,
+    })),
+  };
 }
