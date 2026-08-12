@@ -44,6 +44,16 @@ const makeClient = vi.hoisted(() => () => {
     let cols = '*';
     let op: Op = 'select';
     let payload: Row = {};
+    // `.select(cols, { count: 'exact', head: true })`. An UPDATE already
+    // reported its count here, because "matched no rows is a success" is the
+    // whole reason this harness exists — but a SELECT did not, so every guard
+    // that counts rows and refuses (assertNoResultsEntered, the go-live "no
+    // bracket" check, the entry-cap checks) read `undefined`, took the
+    // `(count ?? 0) > 0` branch as false, and was VACUOUS in every test that
+    // reached it. A guard that cannot fail in the harness is a guard the
+    // harness is not testing.
+    let countExact = false;
+    let head = false;
 
     // PostgREST spells a list literal `("a","b")`.
     const parseList = (raw: unknown): unknown[] =>
@@ -110,11 +120,20 @@ const makeClient = vi.hoisted(() => () => {
         store.db[table] = (store.db[table] ?? []).filter((r) => !matching().includes(r));
         return { data: null, error: null };
       }
-      return { data: matching().map(embed), error: null };
+      const rows = matching();
+      // head:true asks PostgREST for the count and no body, so `data` is null —
+      // a caller that reads `data` off a head request must see nothing there.
+      if (countExact) return { data: head ? null : rows.map(embed), error: null, count: rows.length };
+      return { data: rows.map(embed), error: null };
     };
 
     const api = {
-      select(c: string) { cols = c; if (op === 'select') op = 'select'; return api; },
+      select(c: string, opts?: { count?: string; head?: boolean }) {
+        cols = c;
+        countExact = opts?.count === 'exact';
+        head = opts?.head === true;
+        return api;
+      },
       update(p: Row) { op = 'update'; payload = p; return api; },
       insert(p: Row) { op = 'insert'; payload = p; return api; },
       delete() { op = 'delete'; return api; },
@@ -1613,6 +1632,139 @@ describe('generating a draw with a third-place playoff', () => {
     expect(store.db.tournament_matches).toHaveLength(1);
     const audit = store.db.tournament_audit_log!.find((r) => r.action === 'bracket_generated')!;
     expect((audit.details as Row).third_place_match).toBe('skipped_no_semi_finals');
+  });
+});
+
+// ============================================================
+// Regenerating a draw that already exists
+// ============================================================
+//
+// The exec-facing gap the club owner hit: "once the bracket is generated theres
+// no way to regenerate a bracket." The BUTTON was the missing part
+// (participant-controls.ts / EventHeader), but opening that door made a
+// second-press path reachable for the first time, and it did not work.
+describe('regenerating a draw that already exists', () => {
+  function seedField(n: number) {
+    store.db.tournament_matches = [];
+    store.db.tournament_participants = Array.from({ length: n }, (_, i) => ({
+      id: `p-${i}`, event_id: 'e1', player_id: `pl-${i}`, elo_before: 1500 - i * 10,
+      elo_after: null, elo_change: null, seed_number: i + 1,
+      final_position: null, points: null, status: 'checked_in',
+    }));
+    Object.assign(event(), { status: 'checkin', draw_locked: false });
+  }
+  const byes = () => store.db.tournament_matches!.filter((m) => m.is_bye);
+  const playoffs = () => store.db.tournament_matches!.filter((m) => m.is_third_place);
+
+  it('lets a draw WITH BYES be redrawn — a bye is not a result', async () => {
+    // THE BUG THIS FEATURE WOULD HAVE SHIPPED WITH. Generation writes
+    // status:'completed' onto every bye, and assertNoResultsEntered counted
+    // exactly that set of statuses, so any field that is not a power of two
+    // produced a draw the guard then called "results already entered" — about
+    // matches with no score, no Elo and no opponent to void. Three of the four
+    // staging events sitting at bracket_generated have byes and nothing else
+    // completed, so this was three refusals out of four.
+    //
+    // Five entries: an 8-slot draw with 3 byes.
+    seedField(5);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    expect(byes().length).toBeGreaterThan(0);
+    expect(event().status).toBe('bracket_generated');
+    const firstIds = store.db.tournament_matches!.map((m) => m.id);
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    expect(res.ok).toBe(true);
+    // Genuinely rebuilt, not left alone: every match is a new row.
+    const secondIds = store.db.tournament_matches!.map((m) => m.id);
+    expect(secondIds.some((id) => firstIds.includes(id))).toBe(false);
+    expect(event().status).toBe('bracket_generated');
+  });
+
+  it('still refuses once a real result is in, and names why', async () => {
+    // The other half of the same assertion: excluding byes must not have made
+    // the guard vacuous. A played match is exactly what regeneration would
+    // erase, and it is the reason the guard exists.
+    seedField(4);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    const semi = store.db.tournament_matches!.find((m) => m.round_number === 1)!;
+    Object.assign(semi, { status: 'completed', is_bye: false });
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/Results have already been entered/);
+    // Refused before the delete — the draw people are reading is still there.
+    expect(store.db.tournament_matches!.length).toBeGreaterThan(0);
+  });
+
+  it('refuses to redraw a FINALISED knockout event', async () => {
+    // 1922133 wired assertNotFinalised into the round-robin generator and not
+    // this one. It matters more here, if anything: finalizeEvent reads
+    // final_position off the bracket, so a completed knockout event whose
+    // matches had all been voided could be redrawn on top of a placement-bonus
+    // ledger that had already paid the old finishers.
+    seedField(4);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    Object.assign(event(), { status: 'completed' });
+    // Voided, so assertNoResultsEntered has nothing to object to — which is
+    // precisely the hole: this used to be the way past the block.
+    for (const m of store.db.tournament_matches!) Object.assign(m, { status: 'voided', is_bye: false });
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/finalised/);
+  });
+
+  it('refuses to redraw a locked draw', async () => {
+    seedField(4);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    Object.assign(event(), { draw_locked: true });
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/Draw is locked/);
+  });
+
+  it('takes the third-place choice made at THIS regeneration, in both directions', async () => {
+    // The choice is not stored on tournament_events — the generated match IS
+    // the record — so the redraw has to be told, every time. A regenerate that
+    // reused a stale flag would silently drop or add a bronze match that nobody
+    // chose, which is why the confirm dialog asks again and pre-ticks from the
+    // draw that exists.
+    seedField(4);
+    expect((await generateSingleEliminationBracket('e1', true)).ok).toBe(true);
+    expect(playoffs()).toHaveLength(1);
+
+    // Drop it.
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    expect(playoffs()).toHaveLength(0);
+
+    // And add it back.
+    expect((await generateSingleEliminationBracket('e1', true)).ok).toBe(true);
+    expect(playoffs()).toHaveLength(1);
+  });
+
+  it('redraws from the field as it is NOW, not the one the first draw saw', async () => {
+    // The usual reason to redraw. A withdrawal between bracket_generated and
+    // going live is not forfeited (participants.ts defers that to go-live
+    // precisely so the draw can be regenerated without it), so the entry is
+    // still sitting in the bracket until somebody redraws.
+    seedField(4);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    expect(store.db.tournament_matches!.filter((m) => m.round_number === 1)).toHaveLength(2);
+
+    Object.assign(participant('p-3'), { status: 'withdrawn' });
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    // Three left, so a 4-slot draw with one bye — and the withdrawn entry is in
+    // none of it.
+    const seeded = store.db.tournament_matches!.flatMap((m) => [m.participant_a_id, m.participant_b_id]);
+    expect(seeded).not.toContain('p-3');
+    expect(byes()).toHaveLength(1);
   });
 });
 
