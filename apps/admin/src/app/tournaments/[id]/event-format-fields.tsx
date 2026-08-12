@@ -3,6 +3,7 @@
 import { Input, Select } from '@badminton/ui';
 import {
   TOURNAMENT_MATCH_FORMAT_LABELS,
+  TOURNAMENT_FORMAT_RULES,
   CUSTOM_FORMAT_BOUNDS,
   TOURNAMENT_EVENT_TYPE_LABELS,
   describeMatchShape,
@@ -80,6 +81,16 @@ export function EventFormatFields({
 }) {
   const set = (patch: Partial<EventFormatValues>) => onChange({ ...value, ...patch });
   const { minGames, maxGames, minPoints, maxPoints } = CUSTOM_FORMAT_BOUNDS;
+
+  // A UI-only sentinel. It is never stored and never sent — match_format keeps
+  // its four values, so this cannot collide with one.
+  const CUSTOM = '__custom__';
+  // Custom is not a stored flag but a FACT ABOUT THE ROW: an override exists.
+  // Derived rather than held in state so an event loaded for editing opens on
+  // whichever control matches what is actually saved, with no way for a
+  // remembered toggle to disagree with the data.
+  const isCustom = value.gamesPerMatch !== '' || value.pointsPerGame !== '';
+
   const isRoundRobin = format === 'round_robin';
   const groups = value.groupCount === '' ? 0 : Number(value.groupCount);
 
@@ -93,38 +104,69 @@ export function EventFormatFields({
 
   return (
     <>
+      {/* ONE QUESTION, ONE CONTROL. This used to be a preset dropdown AND two
+          always-visible override boxes, which is the data model (00046: the
+          enum, plus nullable columns that win when set) shown literally rather
+          than the question an exec is actually answering. Nothing on screen
+          said the boxes beat the dropdown — you had to infer it from the hint
+          underneath. Now the shape is picked once; the numbers appear only if
+          the answer is "something else".
+
+          matchFormat is still written on the custom path, because the column is
+          NOT NULL and 00046 keeps the enum as the fallback the whole codebase
+          coalesces through. It is simply no longer what the exec is choosing. */}
       <Select
         label="Match Format"
-        value={value.matchFormat}
-        onChange={(e) => set({ matchFormat: e.target.value as TournamentMatchFormat })}
-        options={Object.entries(TOURNAMENT_MATCH_FORMAT_LABELS).map(([v, label]) => ({ value: v, label }))}
+        value={isCustom ? CUSTOM : value.matchFormat}
+        onChange={(e) => {
+          const picked = e.target.value;
+          if (picked === CUSTOM) {
+            // Seeded from the preset that was showing, not left blank: an exec
+            // picking Custom wants to ADJUST the shape they were looking at,
+            // and two empty boxes make them retype what they already had. The
+            // preset's own numbers are always in bounds and always odd.
+            const rules = TOURNAMENT_FORMAT_RULES[value.matchFormat];
+            set({ gamesPerMatch: String(rules.bestOf), pointsPerGame: String(rules.target) });
+          } else {
+            // Back to a preset means the overrides must GO, not merely be
+            // hidden — a stale value left in state would still be written and
+            // would silently beat the preset just chosen.
+            set({ matchFormat: picked as TournamentMatchFormat, gamesPerMatch: '', pointsPerGame: '' });
+          }
+        }}
+        options={[
+          ...Object.entries(TOURNAMENT_MATCH_FORMAT_LABELS).map(([v, label]) => ({ value: v, label })),
+          { value: CUSTOM, label: 'Custom…' },
+        ]}
       />
 
-      <div className="grid grid-cols-2 gap-3">
-        <Input
-          label="Games (optional)"
-          type="number"
-          min={minGames}
-          max={maxGames}
-          step={2}
-          value={value.gamesPerMatch}
-          onChange={(e) => set({ gamesPerMatch: e.target.value })}
-          placeholder="Preset"
-        />
-        <Input
-          label="Points (optional)"
-          type="number"
-          min={minPoints}
-          max={maxPoints}
-          value={value.pointsPerGame}
-          onChange={(e) => set({ pointsPerGame: e.target.value })}
-          placeholder="Preset"
-        />
-      </div>
-      <p className="text-xs text-[var(--text-muted)] -mt-2">
-        Played as <span className="font-medium text-[var(--text-primary)]">{effective}</span>. Leave both blank to use the
-        preset; games must be odd.
-      </p>
+      {isCustom && (
+        <>
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              label="Games"
+              type="number"
+              min={minGames}
+              max={maxGames}
+              step={2}
+              value={value.gamesPerMatch}
+              onChange={(e) => set({ gamesPerMatch: e.target.value })}
+            />
+            <Input
+              label="Points"
+              type="number"
+              min={minPoints}
+              max={maxPoints}
+              value={value.pointsPerGame}
+              onChange={(e) => set({ pointsPerGame: e.target.value })}
+            />
+          </div>
+          <p className="text-xs text-[var(--text-muted)] -mt-2">
+            Played as <span className="font-medium text-[var(--text-primary)]">{effective}</span>. Games must be odd — an
+            even best-of cannot be decided.
+          </p>
+        </>
+      )}
 
       {/* GROUPS. Round robin only, because a bracket cannot be partitioned —
           the server refuses it and 00106 has a CHECK constraint for it, so
