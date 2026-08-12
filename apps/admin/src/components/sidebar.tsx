@@ -211,7 +211,11 @@ export function Sidebar({
             className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors whitespace-nowrap"
           >
             <LogOut className="w-4 h-4" />
-            <span className="hidden md:inline">Sign out</span>
+            {/* Always labelled. This was `hidden md:inline`, which left an
+                unexplained icon on a narrow window — and the console is used on
+                a phone at the door, which is exactly where a bare glyph is
+                least guessable. The owner could not find how to sign out. */}
+            <span>Sign out</span>
           </button>
         </div>
       </div>

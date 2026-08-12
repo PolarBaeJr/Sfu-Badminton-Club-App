@@ -492,9 +492,17 @@ export default async function DashboardPage() {
     supabase,
     season && { id: season.id, name: season.name },
     {
-      expenses: showExpenses && !hasTiles,
+      // NOT `&& !hasTiles`. These two used to be, which wired both ledger
+      // charts to the narrowed landing only — so the people most likely to
+      // want them, the officers who can see everything, were the one group
+      // that never got them. The owner spotted it: Money out rendered for a
+      // finance-scoped exec and vanished for an admin.
+      //
+      // The capability is the whole gate. Whether the viewer also has tiles
+      // says nothing about whether they may see the club's books.
+      expenses: showExpenses,
       clubFees: showClubFees,
-      otherIncome: showOtherIncome && !hasTiles,
+      otherIncome: showOtherIncome,
     },
   );
 
