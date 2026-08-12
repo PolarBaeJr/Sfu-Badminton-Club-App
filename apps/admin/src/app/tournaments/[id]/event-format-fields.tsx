@@ -9,8 +9,10 @@ import {
   describeMatchShape,
   isPoolToBracket,
   playsRoundRobin,
+  knockoutLadderShape,
+  POOL_LADDER_SHAPE,
 } from '@badminton/shared';
-import type { TournamentMatchFormat, SeedBy, TournamentEventType } from '@badminton/shared';
+import type { TournamentMatchFormat, SeedBy, TournamentEventType, RoundShape } from '@badminton/shared';
 
 // The format + stage half of the event form. Both the create dialog and the
 // edit dialog need exactly these five fields and the same rules about how they
@@ -170,6 +172,47 @@ export function EventFormatFields({
           matchFormat is still written on the custom path, because the column is
           NOT NULL and 00046 keeps the enum as the fallback the whole codebase
           coalesces through. It is simply no longer what the exec is choosing. */}
+      {/* A POOL_TO_BRACKET EVENT HAS NO SINGLE MATCH FORMAT, so it must not be
+          asked for one. Every match on this format is stamped with its own
+          shape at generation — knockoutLadder() covers every round plus the
+          third-place playoff, and the pool gets POOL_LADDER_SHAPE — so the
+          event-level value is never consulted. Offering the control anyway
+          showed "Best of 3 to 21" above a first round that is actually played
+          to 11: a field that reads as the answer and decides nothing.
+
+          match_format is still SENT, because the column is NOT NULL. It is
+          simply no longer presented as a choice. */}
+      {poolToBracket ? (
+        <div className="border border-[var(--border)] rounded-[8px] p-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+            Played to
+          </p>
+          <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+            {[
+              ['Pool', POOL_LADDER_SHAPE],
+              ['First rounds', knockoutLadderShape(3)],
+              ['Quarter-final', knockoutLadderShape(2)],
+              ['Semi-final', knockoutLadderShape(1)],
+              ['Final & third place', knockoutLadderShape(0)],
+            ].map(([label, shape]) => (
+              <div key={label as string} className="contents">
+                <dt className="text-[var(--text-muted)]">{label as string}</dt>
+                <dd className="text-[var(--text-primary)]">
+                  {describeMatchShape({
+                    match_format: 'best_of_3_to_21',
+                    games_per_match: (shape as RoundShape).games_per_match,
+                    points_per_game: (shape as RoundShape).points_per_game,
+                  })}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          <p className="mt-2 text-xs text-[var(--text-muted)]">
+            The default ladder. Any round can be changed from the event page before it is played.
+          </p>
+        </div>
+      ) : (
+        <>
       <Select
         label="Match Format"
         value={isCustom ? CUSTOM : value.matchFormat}
@@ -220,6 +263,8 @@ export function EventFormatFields({
             Played as <span className="font-medium text-[var(--text-primary)]">{effective}</span>. Games must be odd — an
             even best-of cannot be decided.
           </p>
+        </>
+      )}
         </>
       )}
 

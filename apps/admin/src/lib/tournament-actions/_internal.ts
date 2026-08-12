@@ -1925,9 +1925,14 @@ export async function computeRoundRobinStandings(eventId: string, seedBy: SeedBy
   // results than the ratings were, and nothing said so.
   let entries: Array<{ id: string; name: string; out: boolean; group: number | null }> = [];
   if (doubles) {
-    const { data: pairs } = await adminClient.from('tournament_pairs')
+    const { data: pairs, error: pairsError } = await adminClient.from('tournament_pairs')
       .select('id, pair_name, status, group_number')
       .eq('event_id', eventId);
+    // THROWN, NOT SWALLOWED. A failed read and an empty event are not the same
+    // fact, and `?? []` made them indistinguishable — which is exactly how a
+    // broken embed presented itself as "this pool has no finishers" instead of
+    // as an error naming the column it could not resolve.
+    if (pairsError) throw new Error(`Could not read this event's pairs: ${pairsError.message}`);
     entries = (pairs ?? []).map(p => ({
       id: p.id,
       name: p.pair_name ?? 'Unnamed',
@@ -1935,9 +1940,24 @@ export async function computeRoundRobinStandings(eventId: string, seedBy: SeedBy
       group: (p as { group_number?: number | null }).group_number ?? null,
     }));
   } else {
-    const { data: participants } = await adminClient.from('tournament_participants')
-      .select('id, status, group_number, player:players(full_name)')
+    const { data: participants, error: participantsError } = await adminClient.from('tournament_participants')
+      // THE FK IS NAMED, and it has to be. tournament_participants has THREE
+      // foreign keys to players — player_id, added_by and checked_in_by — so a
+      // bare `players(...)` embed is ambiguous, and PostgREST answers an
+      // ambiguous embed with an ERROR and no rows rather than picking one.
+      //
+      // supabase-js resolves rather than rejects on that, so `data` came back
+      // null, `(participants ?? [])` turned it into an empty list, and the
+      // standings came out EMPTY for every singles round robin — surfacing as
+      // "the round robin has no finishers to seed the knockout from" on an
+      // event with eighteen checked-in players and thirty-two played matches.
+      // Pre-existing; it took a singles pool actually reaching the seeding step
+      // to run this line at all.
+      .select('id, status, group_number, player:players!tournament_participants_player_id_fkey(full_name)')
       .eq('event_id', eventId);
+    if (participantsError) {
+      throw new Error(`Could not read this event's entrants: ${participantsError.message}`);
+    }
     entries = (participants ?? []).map(p => ({
       id: p.id,
       name: ((p.player as unknown as Record<string, unknown>)?.full_name as string) ?? 'Unknown',
