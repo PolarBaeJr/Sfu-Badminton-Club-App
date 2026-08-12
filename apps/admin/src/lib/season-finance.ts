@@ -71,6 +71,24 @@ export interface SeasonFinances {
    * owner asked for.
    */
   netCents: number;
+  /**
+   * EVERY MOVEMENT OF THE CLUB'S MONEY, SIGNED AND DATED — income positive,
+   * spending negative — for the net position across the term.
+   *
+   * Costs nothing: both halves were already fetched for the totals above, and
+   * both queries filter `paid_at is not null`, so cumulating this list ends at
+   * exactly `netCents`. The curve's last point IS the headline rather than
+   * agreeing with it by luck.
+   *
+   * THE NOTE BELOW USED TO SAY THE OPPOSITE, and it was right at the time: the
+   * expense payments were kept out of this object because "they belong to the
+   * expense panel and to nothing the net position shows". The net position
+   * shows one now. What has NOT changed is the rule underneath that note — this
+   * list is untagged, so a holder of `fees.netposition.read` gets the club's
+   * net over time and cannot recover any individual ledger from it. See the
+   * note on SeasonIncome.payments.
+   */
+  netPayments: { at: string; cents: number }[];
 }
 
 /**
@@ -253,15 +271,24 @@ export async function getSeasonFinances(
     getSeasonExpenses(supabase, season),
   ]);
 
-  // The two expense fields SeasonFinances declares, named one at a time rather
-  // than spread. getSeasonExpenses now also returns the dated payments and the
-  // unreimbursed debt, which belong to the expense panel and to nothing the net
-  // position shows; spreading them would put a list of every payment the club
-  // made into the RSC payload of two pages that never draw one.
+  // Named one field at a time rather than spread. getSeasonExpenses also
+  // returns the unreimbursed debt and what execs fronted, which belong to the
+  // expense panel and to nothing the net position shows — spreading it would
+  // hand every caller of this function fields it has no business drawing.
+  //
+  // The dated payments ARE taken, and signed as they are taken: SPENDING IS
+  // NEGATIVE, which is the whole of the arithmetic behind the net curve. Doing
+  // it here rather than at the panel is the same rule the rest of this file
+  // follows — the last time a surface did its own sums over the club's money it
+  // disagreed with reality for months.
   return {
     income,
     expenseCents: expenses.expenseCents,
     expensesByCategory: expenses.expensesByCategory,
     netCents: income.totalCents - expenses.expenseCents,
+    netPayments: [
+      ...income.payments,
+      ...expenses.payments.map((p) => ({ at: p.at, cents: -p.cents })),
+    ],
   };
 }

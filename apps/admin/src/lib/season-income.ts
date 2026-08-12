@@ -56,6 +56,28 @@ export interface SeasonIncome {
   reinstatementCents: number;
   /** Donations, grants, socials — 00073. */
   otherCents: number;
+  /**
+   * EVERY INCOME LEDGER'S DATED AMOUNTS, MERGED AND UNLABELLED.
+   *
+   * The rows were always fetched — each of the four reads below returns a whole
+   * LedgerRead and this function used to take `.total` and drop the dates on
+   * the floor — so carrying them costs no query. What they are for is the net
+   * position across the term, which is the only chart in the console that
+   * spans every book.
+   *
+   * MERGED ON PURPOSE, AND THIS IS A PERMISSION PROPERTY RATHER THAN TIDINESS.
+   * A caller holding `fees.netposition.read` may see the club's total, not its
+   * individual ledgers — entry money answers to `tournaments.fees.read` and
+   * reinstatements to `fees.reinstatements.read`. A list tagged by ledger would
+   * hand that caller the itemised books through the back door, so there are no
+   * tags: what comes out is dated money, and which shelf it came off is not
+   * recoverable from it.
+   *
+   * The set is exactly the set the four totals are taken over — every query
+   * here filters `paid_at is not null` — so a running total built from this
+   * ends at `totalCents` and cannot drift from the figure printed beside it.
+   */
+  payments: LedgerPayment[];
 }
 
 /** Only the id is needed now that all three ledgers carry a real season key. */
@@ -226,15 +248,14 @@ async function feeLedger(
  * would hand a dues reader two books that are somebody else's — and the
  * dashboard's fee chart is labelled "season dues" for that reason rather than
  * out of caution.
+ *
+ * A `total`-ONLY TWIN OF THIS USED TO SIT HERE (getClubFeeIncome), and
+ * getOtherIncome beside it. Both are gone: every caller wants the dates too —
+ * the panels chart them, and getSeasonIncome now merges them into the net
+ * position — so the pair had become two names for one read whose only
+ * difference was how much of the answer they threw away. `.total` is a field on
+ * what comes back.
  */
-export async function getClubFeeIncome(
-  supabase: SupabaseClient,
-  season: SeasonWindow,
-): Promise<number> {
-  return (await feeLedger(supabase, season, 'dues')).total;
-}
-
-/** The dues ledger with its dates, for the caller that draws a chart of it. */
 export async function getClubFeeLedger(
   supabase: SupabaseClient,
   season: SeasonWindow,
@@ -244,7 +265,7 @@ export async function getClubFeeLedger(
 
 /**
  * The other-income ledger on its own — donations, grants, socials (00073).
- * Same reason as getClubFeeIncome above, and the same paid_at rule.
+ * Same reason as getClubFeeLedger above, and the same paid_at rule.
  *
  * `category` is selected here and not for club_fees because other_income
  * actually has the column — sponsorships, grants and socials are different
@@ -264,13 +285,6 @@ export async function getOtherIncomeLedger(
   );
 }
 
-export async function getOtherIncome(
-  supabase: SupabaseClient,
-  season: SeasonWindow,
-): Promise<number> {
-  return (await getOtherIncomeLedger(supabase, season)).total;
-}
-
 export async function getSeasonIncome(
   supabase: SupabaseClient,
   season: SeasonWindow,
@@ -280,16 +294,27 @@ export async function getSeasonIncome(
   // cannot overlap and cannot leave a paid fee out: the only way a row escapes
   // all three is a fourth fee_type, which the CHECK forbids. That is what makes
   // "counted exactly once" a property of the schema rather than a hope.
-  const [clubCents, tournamentCents, reinstatementCents, otherCents] = await Promise.all([
-    getClubFeeIncome(supabase, season),
-    feeLedger(supabase, season, 'tournament').then((l) => l.total),
-    feeLedger(supabase, season, 'reinstatement').then((l) => l.total),
+  // THE WHOLE LedgerRead IS KEPT NOW, not just its total. Every one of these
+  // reads already returned the dated rows behind its figure and this function
+  // dropped them; keeping them is what lets the net position be drawn across
+  // the term without a single extra round trip. Nothing about WHAT is fetched
+  // changed — see the note on `payments` above for why the four are then merged
+  // into one untagged list.
+  const [club, tournament, reinstatement, other] = await Promise.all([
+    getClubFeeLedger(supabase, season),
+    feeLedger(supabase, season, 'tournament'),
+    feeLedger(supabase, season, 'reinstatement'),
 
     // 00073. season_id is NOT NULL here, so unlike fees there is no "attached
     // to no season" row to worry about — but the paid_at rule is the same, so a
     // row recorded before the money actually arrived stays out.
-    getOtherIncome(supabase, season),
+    getOtherIncomeLedger(supabase, season),
   ]);
+
+  const clubCents = club.total;
+  const tournamentCents = tournament.total;
+  const reinstatementCents = reinstatement.total;
+  const otherCents = other.total;
 
   return {
     clubCents,
@@ -297,5 +322,6 @@ export async function getSeasonIncome(
     reinstatementCents,
     otherCents,
     totalCents: clubCents + tournamentCents + reinstatementCents + otherCents,
+    payments: [...club.payments, ...tournament.payments, ...reinstatement.payments, ...other.payments],
   };
 }

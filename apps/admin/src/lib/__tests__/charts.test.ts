@@ -8,6 +8,7 @@ import {
   buildRunningTotal,
   buildSplit,
   computeRunningScale,
+  computeSignedRunningScale,
   type ChartBox,
 } from '../charts';
 
@@ -148,6 +149,117 @@ describe('computeRunningScale', () => {
 
     expect(Number.isFinite(scale.y(0))).toBe(true);
     expect(Number.isFinite(scale.x('2026-09-08'))).toBe(true);
+  });
+});
+
+// THE NET POSITION IS THE ONE SERIES THAT CAN GO BELOW ZERO, and every
+// assertion here is about the lie the unsigned scale would tell if it were
+// used for it. That lie is not hypothetical: computeRunningScale clamps at
+// zero, so a club that spent the term underwater would draw as a flat line
+// along the baseline reading "we broke even all term".
+describe('computeSignedRunningScale', () => {
+  const underwater = [
+    { day: '2026-09-01', cents: 20000, count: 1 },
+    { day: '2026-09-15', cents: -30000, count: 2 },
+    { day: '2026-10-01', cents: -5000, count: 1 },
+  ];
+
+  // The whole reason this function exists, stated against its sibling.
+  it('separates negative days that the unsigned scale collapses onto the floor', () => {
+    const unsigned = computeRunningScale(underwater, BOX)!;
+    const signed = computeSignedRunningScale(underwater, BOX)!;
+
+    // Unsigned: -30000 and -5000 are two different states of the club's money
+    // and land on exactly the same pixel.
+    expect(unsigned.y(-30000)).toBe(unsigned.y(-5000));
+    // Signed: the worse day is lower on the screen than the better one.
+    expect(signed.y(-30000)).toBeGreaterThan(signed.y(-5000));
+    expect(signed.y(-5000)).toBeGreaterThan(signed.y(20000));
+  });
+
+  // Below the rule must LOOK below the rule. A negative value drawn at or above
+  // the zero line is the same lie in a different place.
+  it('puts every negative day below the break-even rule and every positive above', () => {
+    const scale = computeSignedRunningScale(underwater, BOX)!;
+    const zero = scale.y(0);
+
+    expect(scale.y(-30000)).toBeGreaterThan(zero);
+    expect(scale.y(-5000)).toBeGreaterThan(zero);
+    expect(scale.y(20000)).toBeLessThan(zero);
+    // And zero is genuinely inside the box rather than clamped to an edge.
+    expect(zero).toBeGreaterThan(BOX.padY);
+    expect(zero).toBeLessThan(BOX.height - BOX.padY);
+  });
+
+  // A term that never went into the red must not be redrawn on a domain that
+  // reserves half the box for a state it was never in — the curve would be
+  // squashed into the top half for no reason.
+  it('is the unsigned scale exactly when the series never goes negative', () => {
+    const positive = [
+      { day: '2026-09-01', cents: 20000, count: 1 },
+      { day: '2026-09-15', cents: 56000, count: 2 },
+    ];
+    const unsigned = computeRunningScale(positive, BOX)!;
+    const signed = computeSignedRunningScale(positive, BOX)!;
+
+    expect(signed.minCents).toBe(0);
+    expect(signed.maxCents).toBe(unsigned.maxCents);
+    expect(signed.y(0)).toBeCloseTo(unsigned.y(0), 6);
+    expect(signed.y(56000)).toBeCloseTo(unsigned.y(56000), 6);
+  });
+
+  // ZERO IS ALWAYS IN THE DOMAIN. A term entirely in the red still has to show
+  // the line it is under — "how far below break-even" is the whole content of
+  // the chart, and a domain fitted to the data alone would put the worst day at
+  // the floor and the least-bad day at the ceiling and say nothing about which
+  // side of the line either was on.
+  it('keeps break-even on the chart for a term that was never above it', () => {
+    const scale = computeSignedRunningScale(
+      [
+        { day: '2026-09-01', cents: -8000, count: 1 },
+        { day: '2026-09-15', cents: -42000, count: 3 },
+      ],
+      BOX,
+    )!;
+
+    expect(scale.maxCents).toBe(0);
+    expect(scale.y(0)).toBe(BOX.padY);
+    expect(scale.y(-42000)).toBeGreaterThan(scale.y(-8000));
+    expect(scale.y(-42000)).toBeLessThanOrEqual(BOX.height - BOX.padY);
+  });
+
+  // The same refusal as the unsigned scale: one day is a dot, and a dot
+  // stretched across the box reads as a flat line.
+  it('refuses to scale fewer than two days', () => {
+    expect(computeSignedRunningScale([], BOX)).toBeNull();
+    expect(computeSignedRunningScale([{ day: '2026-09-04', cents: -900, count: 2 }], BOX)).toBeNull();
+  });
+
+  // A season that netted exactly zero on every day has no range to divide.
+  it('does not divide by zero for a season that broke even every day', () => {
+    const scale = computeSignedRunningScale(
+      [
+        { day: '2026-09-01', cents: 0, count: 2 },
+        { day: '2026-09-08', cents: 0, count: 2 },
+      ],
+      BOX,
+    )!;
+
+    expect(Number.isFinite(scale.y(0))).toBe(true);
+    expect(Number.isFinite(scale.y(-1))).toBe(true);
+  });
+
+  // The step path and the wash both open at y(0), so they follow a signed scale
+  // with no change — which is why this is a new scale and not a new chart.
+  it('draws a path that opens at break-even and dips below it', () => {
+    const scale = computeSignedRunningScale(underwater, BOX)!;
+    const d = buildRunningPath(underwater, scale);
+
+    expect(d.startsWith(`M${scale.x('2026-09-01')},`)).toBe(true);
+    // The opening move is a vertical from break-even to the first value, so the
+    // floor of the path is the zero rule and not the bottom of the box.
+    expect(d).toContain(`,${Math.round(scale.y(0) * 100) / 100} V`);
+    expect(buildRunningAreaPath(underwater, scale).endsWith('Z')).toBe(true);
   });
 });
 

@@ -14,6 +14,7 @@ import { FeeActions, AddManualFee, RemoveManualFee } from './fee-actions';
 import { ReinstatementsCard } from './reinstatements-card';
 import { LedgerCard } from './ledger-card';
 import { NetPositionStrip } from './net-position-strip';
+import { NetPositionChart } from './net-position-chart';
 import { CollectionCharts } from './collection-charts';
 import { CardHeading } from './card-heading';
 
@@ -408,6 +409,13 @@ export default async function FeesPage({
           null rather than unrendered for an exec — there is nothing to leak
           because nothing was fetched. */}
       {finances && <NetPositionStrip finances={finances} seasonName={season.name} />}
+
+      {/* And the same question over time. The strip answers it for this
+          instant; a club that is $40 up having been $600 down in October is in
+          a different position from one drifting steadily downwards, and the two
+          print the same three figures. Same object, same capability, no extra
+          query — the dated rows were already fetched for the totals. */}
+      {finances && <NetPositionChart finances={finances} seasonName={season.name} />}
 
       {/* Tabs. Plain links, matching /players?tab= — the page is an async
           server component, so a client tab control would mean shipping every

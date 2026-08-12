@@ -3,7 +3,10 @@ import { createElement as h } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { CollectionCharts } from '@/app/fees/collection-charts';
 import { LedgerCharts } from '@/app/fees/ledger-charts';
+import { NetPositionChart } from '@/app/fees/net-position-chart';
 import { SeasonTrendPanel } from '@/app/seasons/trend-panel';
+import { buildRunningTotal } from '@/lib/charts';
+import { clubDayOf } from '@/components/charts';
 
 /**
  * THE CHART PANELS ON /fees AND /seasons, RENDERED.
@@ -222,6 +225,89 @@ describe('LedgerCharts', () => {
         rows: [{ amount_cents: 8500, category: 'food', paid_at: null, paid_by: null, reimbursed_at: null }],
       }),
     ).toBe('');
+  });
+});
+
+// A term the club paid for before the money came in: three hundred dollars of
+// court rental in July against dues that arrive from August onwards. It is the
+// ordinary shape of a season, and it means the net position spends part of the
+// term BELOW zero — which is the case the whole signed scale exists for.
+const NET_PAYMENTS = [
+  { at: '2026-07-22T18:00:00Z', cents: -30000 },
+  { at: '2026-08-01T19:00:00Z', cents: 5000 },
+  { at: '2026-08-14T19:00:00Z', cents: 20000 },
+  { at: '2026-09-02T19:00:00Z', cents: 9000 },
+];
+
+const FINANCES = {
+  income: {
+    clubCents: 34000,
+    tournamentCents: 0,
+    reinstatementCents: 0,
+    otherCents: 0,
+    totalCents: 34000,
+    payments: [],
+  },
+  expenseCents: 30000,
+  expensesByCategory: [{ category: 'court_rental', cents: 30000 }],
+  netCents: 4000,
+  netPayments: NET_PAYMENTS,
+};
+
+describe('NetPositionChart', () => {
+  // THE INVARIANT THE WHOLE PANEL RESTS ON. The curve's last point has to BE
+  // the headline figure, not merely agree with it — both come from rows filtered
+  // `paid_at is not null`, so cumulating the signed list must land on netCents.
+  // A curve whose end disagrees with the number beside it is worse than no
+  // curve.
+  it('ends the curve on exactly the net the strip prints', () => {
+    const points = buildRunningTotal(NET_PAYMENTS, clubDayOf);
+    expect(points[points.length - 1]!.cents).toBe(FINANCES.netCents);
+  });
+
+  it('draws the term and names how far into the red it went', () => {
+    const out = html(NetPositionChart, { finances: FINANCES, seasonName: 'Fall 2026' });
+    expect(out).toContain('<svg');
+    expect(out).toContain('The rule is break-even');
+    // $300 out before a penny came in — the low point, and a figure a reader
+    // cannot recover from a deliberately unlabelled axis.
+    expect(out).toContain('lowest point was $300.00 in the red');
+  });
+
+  it('says nothing about the red for a term that never went into it', () => {
+    const out = html(NetPositionChart, {
+      finances: {
+        ...FINANCES,
+        netPayments: [
+          { at: '2026-08-01T19:00:00Z', cents: 5000 },
+          { at: '2026-08-14T19:00:00Z', cents: 20000 },
+        ],
+        netCents: 25000,
+      },
+      seasonName: 'Fall 2026',
+    });
+    expect(out).toContain('<svg');
+    expect(out).not.toContain('lowest point');
+  });
+
+  it('refuses a line through one day', () => {
+    const out = html(NetPositionChart, {
+      finances: { ...FINANCES, netPayments: [{ at: '2026-08-01T19:00:00Z', cents: 5000 }] },
+      seasonName: 'Fall 2026',
+    });
+    expect(out).toContain('landed on one day');
+    expect(out).not.toContain('<svg');
+  });
+
+  // Distinct from the one-day case: nothing at all has been recorded, and
+  // telling somebody their payments all landed on one day would be a small lie.
+  it('tells an untouched season apart from a one-day one', () => {
+    const out = html(NetPositionChart, {
+      finances: { ...FINANCES, netPayments: [], netCents: 0 },
+      seasonName: 'Fall 2027',
+    });
+    expect(out).toContain('no position to plot');
+    expect(out).not.toContain('landed on one day');
   });
 });
 
