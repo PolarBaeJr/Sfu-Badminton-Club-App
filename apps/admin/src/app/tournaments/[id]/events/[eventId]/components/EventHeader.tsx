@@ -266,7 +266,13 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
           </div>
         </div>
 
-        <div className="flex gap-2">
+        {/* items-start, because the children are not the same shape. Lock Draw
+            is a bare Button; Regenerate and the primary action are each a column
+            of button-plus-hint. Flex stretches by default, so the bare button
+            grew to the height of a neighbour's button AND its caption — which is
+            why Lock Draw stood taller than Finalize Tournament with a gap of
+            dead border underneath it. */}
+        <div className="flex items-start gap-2">
           {settingsEditable && (
             <Button
               variant="ghost"
