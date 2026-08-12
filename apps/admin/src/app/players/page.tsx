@@ -454,6 +454,12 @@ export default async function PlayersPage({
           tabLabel={tabs.find((t) => t.id === tab)?.label ?? tab}
           tabTotal={tabs.find((t) => t.id === tab)?.count ?? rows.length}
           joins={(countRows ?? [])
+            // `players.created_at` is NOT NULL DEFAULT now(), so this drops
+            // nothing today and is kept only so a schema change cannot put an
+            // undated member on a time axis. It matters that it is dead: the
+            // headline figure below is the CLUB's size and the chart's own axis
+            // counts the members plotted, and a filter that bit would print two
+            // different numbers on one card.
             .filter((p) => p.created_at)
             // One member, valued at one — see the note in roster-charts.tsx on
             // why the field is called `cents`.

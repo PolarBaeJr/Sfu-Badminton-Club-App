@@ -95,7 +95,14 @@ export function RosterCharts({
   joins: readonly Payment[];
   /** The club's size, as the page's eyebrow already prints it. */
   totalMembers: number;
-  /** True when the count query hit its row cap and the curve is short. */
+  /**
+   * True when the count query hit its row cap and the curve is short.
+   *
+   * The rows that go missing are NOT the earliest ones: that query orders by
+   * `full_name`, so past the cap the members dropped are scattered across the
+   * club's whole history. The note this flag renders therefore claims only that
+   * some are absent, and never that the start of the line is.
+   */
   capped: boolean;
 }) {
   // SEGMENTS THAT NOBODY IS IN ARE DROPPED, not drawn at zero width. On the
@@ -201,8 +208,8 @@ export function RosterCharts({
               </p>
               {capped && (
                 <p className="text-xs text-[var(--text-muted)]">
-                  The roster read stops at 5,000 members, so the earliest joins may be missing
-                  from the start of the line.
+                  The roster read stops at 5,000 members, so some members are missing from
+                  the line.
                 </p>
               )}
             </>
