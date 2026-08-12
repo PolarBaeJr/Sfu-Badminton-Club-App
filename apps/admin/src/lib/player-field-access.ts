@@ -24,9 +24,26 @@ import {
   type PermissionsInput,
 } from './permissions';
 
-// THE HARD FLOOR. Refused to anyone who is not `role === 'admin'`, under all
-// circumstances, and NOT reachable by any capability — not even by granting
-// one deliberately.
+// THE HARD FLOOR. Refused HERE to anyone who is not `role === 'admin'`, under
+// all circumstances, and reachable through this guard by no capability — not
+// even by granting one deliberately.
+//
+// "HERE" BECAME LOAD-BEARING IN 00105, so it is worth being exact. One capability
+// now reaches three of these columns — `players.consoleaccess.write`, the club
+// owner's "also make role change a permission" — and it does NOT do so through
+// this function. It is read in one place, setConsoleAccess, which writes the
+// three level markers itself under checks this guard does not have: grant
+// closure on the target's whole resolved set both before and after the change, a
+// refusal to touch anybody who is already an admin, a refusal to hand out the
+// admin level at all, and a refusal to act on your own row.
+//
+// NOTHING BELOW MOVED, and that is the point of doing it that way rather than
+// teaching this function about the capability. updatePlayer() is the other
+// caller — the member Edit dialog — and it has none of those checks, so a
+// capability-aware floor would have let anybody holding players.update.write
+// alongside the console capability mint an executive from the roster screen with
+// no closure test anywhere. The floor is what stops that, and it stops it by
+// staying exactly as it is.
 //
 // Not belt-and-braces given the capability system, but the thing that system
 // cannot express. Grant closure bounds what one person may hand another, and it
