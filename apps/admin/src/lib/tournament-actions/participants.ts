@@ -1349,8 +1349,14 @@ export async function removePairFromEvent(pairId: string) {
   if (!pair) throw new Error('Pair not found');
 
   const event = pair.event as Record<string, unknown>;
-  if (event.status !== 'registration') {
-    throw new Error('Cannot remove pairs after registration closes');
+  // THROUGH CHECK-IN, matching removeParticipantFromEvent. Half the fix is no
+  // fix: singles removal was opened first and a doubles event's entries are
+  // PAIRS, so the dead end survived untouched on exactly the events that had
+  // the pool feature that made it easy to reach. Withdrawal still only begins
+  // once a draw exists, so without this a doubles event at `checkin` has no
+  // exit at all.
+  if (event.status !== 'registration' && event.status !== 'checkin') {
+    throw new ExpectedError('Pairs can only be removed before the draw is generated.');
   }
   if (event.draw_locked) throw new Error('Draw is locked. Unlock it before making changes.');
 
