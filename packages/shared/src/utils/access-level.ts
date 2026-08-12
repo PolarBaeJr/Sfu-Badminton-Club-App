@@ -151,6 +151,50 @@ export const CAPABILITIES = [
   // role, is_exec, is_trainer and the three permission_* columns — is a hard
   // floor that no capability reaches; see player-field-access.ts.
   'players.privilegedfields.write',
+  // GIVING SOMEBODY THE CONSOLE, OR TAKING IT AWAY — the club owner's "also
+  // make role change a permission".
+  //
+  // THE ONE DOOR IN THE HARD FLOOR, AND IT IS DELIBERATELY NARROW. `role`,
+  // `is_exec` and `is_trainer` stay on PLAYER_FIELD_FLOOR and stay unreachable
+  // through updatePlayer(), so the member Edit dialog is admin-only exactly as
+  // it was. This capability is read in ONE place — setConsoleAccess — where the
+  // act is bounded by grant closure on both sides: what the target holds now
+  // must be inside the actor's own set, and what they would hold afterwards
+  // must be too.
+  //
+  // IT CAN NEVER MINT AN ADMIN. `access === 'admin'`, and any change to a
+  // person who is ALREADY an admin, still require isAdminActor(). If a
+  // capability could hand out the admin level, holding it would be equivalent
+  // to being an admin and the floor above would be decorative. The docblock on
+  // setConsoleAccess makes that argument and this change narrows it rather than
+  // overturning it: handing out the top LEVEL is still the act the capability
+  // system cannot express.
+  //
+  // CLOSURE DOES THE GRADUATING, so this is one capability rather than two. An
+  // unrestricted exec resolves to EXEC_BASELINE's 73 capabilities and an
+  // unrestricted trainer to TRAINER_BASELINE's 3 — so a holder whose own set is
+  // trainer-sized may promote somebody to varsity trainer and is refused when
+  // they try to promote to executive, with no second capability needed to say
+  // so. A separate `…consoleaccess.trainer.write` would gate the same function
+  // at the same line and would be a tick box the enforcement does not honour.
+  //
+  // IN THE `players` AREA RATHER THAN `permissions`, for two reasons. The first
+  // is that `permissions.write` is the vocabulary's only bare `<area>.write`,
+  // so every `permissions.<x>.write` would have it as a strict prefix at the
+  // same mode — the shape the no-prefix rule refuses, and refuses for exactly
+  // this hazard: a coarse `permissions.write` reading as though it implied the
+  // finer console act. The second is that it belongs here anyway. What this
+  // writes is three columns on a PLAYER row, beside players.privilegedfields.write
+  // which is the other slice off the same floor. An area is not a file — see
+  // `legal.reacceptance.write` in actions/settings.ts and the whole of
+  // `challenges` in actions/matches.ts.
+  //
+  // THE COST OF THAT PLACEMENT, stated rather than discovered: the resolver
+  // prunes any capability whose area page is absent, so a holder needs
+  // `players.page` as well or this evaporates. That is surfaced rather than
+  // silent — baselineCapabilityRefusal() names the missing page, and the editor
+  // refuses the save in the same words.
+  'players.consoleaccess.write',
 
   // ---- seasons -----------------------------------------------------------
   'seasons.page',
@@ -743,16 +787,43 @@ const OFFERABLE_BEYOND_EXEC: readonly Capability[] = [
   // the permissions of each preassigned role" came out of wanting Finance to see
   // money IN as well as out — today it stops at the expense ledger, because that
   // is where execs stopped. These are the four remaining READS on /fees plus the
-  // net position: seeing the club's books, and not one write among them.
+  // net position: seeing the club's books.
   //
-  // Reads only, deliberately. Handing out `fees.clubfees.markpaid.write` or the
-  // reinstatement write is moving money, which is a bigger decision than showing
-  // a number, and it is not the one that was asked for. When it is asked for it
-  // is four more lines here and a diff somebody reads.
+  // Money is READ-ONLY here, deliberately. Handing out
+  // `fees.clubfees.markpaid.write` or the reinstatement write is MOVING money,
+  // which is a bigger decision than showing a number, and it is not the one that
+  // was asked for. When it is asked for it is four more lines here and a diff
+  // somebody reads.
   'fees.clubfees.read',
   'fees.otherincome.read',
   'fees.reinstatements.read',
   'fees.netposition.read',
+
+  // THE FIRST WRITE ON THIS LIST, and the second thing the club owner asked
+  // for: "also make role change a permission." Giving somebody the console —
+  // making them an executive or a varsity trainer — was admin-only by an
+  // explicit isAdminActor() check inside setConsoleAccess, and it is now a
+  // capability like any other.
+  //
+  // IT HAS TO BE HERE OR THE FEATURE IS A DECORATION. Check 5 of
+  // setPlayerPermissions refuses any stored grant outside this list, and both
+  // editors BUILD their tick boxes by iterating it — so a capability that is not
+  // here cannot be granted, cannot be put in a baseline, and cannot even be
+  // rendered. `players.privilegedfields.write` is the proof case: its own
+  // comment says it is "handed out per person once the editor exists", and check
+  // 5 has quietly made that false since the day it was written.
+  //
+  // WHAT BOUNDS IT IS NOT THIS LIST. A ceiling only says an admin MAY offer it.
+  // What stops the person who receives it from manufacturing access is grant
+  // closure inside setConsoleAccess, which is checked in both directions — the
+  // target's set before the change and their set after it must BOTH be inside
+  // the actor's own — plus two admin-only branches that no capability opens:
+  // making somebody an ADMIN, and changing anybody who already is one.
+  //
+  // So the widening is real and it is the one that was asked for: an exec may be
+  // given the ability to make somebody a varsity trainer without also being made
+  // an admin. It cannot be given the ability to make an admin.
+  'players.consoleaccess.write',
 ];
 
 // DELIBERATELY STILL OUT OF REACH, and each for its own reason:
@@ -763,9 +834,15 @@ const OFFERABLE_BEYOND_EXEC: readonly Capability[] = [
 //     set, so it is not unbounded escalation; it is still the single most
 //     consequential capability there is, and it must be a per-person act.
 //   * `players.privilegedfields.write` — the grantable EDGE of the hard floor
-//     (player-field-access.ts). The floor itself is unreachable by construction,
-//     no capability names it; this is the nearest thing to it and stays a
-//     per-person grant.
+//     (player-field-access.ts). Every field on the floor is still unreachable
+//     THROUGH updatePlayer(), which is where that guard stands and which has not
+//     moved; this is the nearest thing to it and stays a per-person grant.
+//
+//     `players.consoleaccess.write` is the one capability that reaches three of
+//     those columns, and it is offerable above. It does NOT weaken this line: it
+//     opens role/is_exec/is_trainer in ONE action, setConsoleAccess, which
+//     closure-checks the target's set on both sides and still refuses the admin
+//     level outright. The Edit dialog is exactly as admin-only as it was.
 //   * `players.remove.write` / `players.merge.write` / `players.deletion.cancel.write`
 //     / `players.reliability.write` — destructive or identity-altering roster
 //     work that stood behind getAdminPlayer().
