@@ -12,6 +12,8 @@ import {
   type LastChange,
 } from './ratings-aside';
 import { PROVISIONAL_THRESHOLD } from '@badminton/shared/src/utils/constants';
+import { getKFactor, type RatingSettings } from '@badminton/shared/src/elo/engine';
+import type { KFactors } from './k-factor-panel';
 
 // Split out of /settings, which is trainer-level so everyone can enrol their own
 // passkeys. Platform configuration had no business living behind that gate.
@@ -92,6 +94,7 @@ export default async function RatingsPage() {
               ladder={ladder}
               lastActivation={lastActivation}
               lastChange={lastChange}
+              kFactors={kFactorsOf(settings)}
             />
           }
         />
@@ -106,6 +109,35 @@ export default async function RatingsPage() {
 }
 
 type Db = ReturnType<typeof createAdminClient>;
+
+/**
+ * The four K-factors as this club has them configured right now.
+ *
+ * RESOLVED THROUGH getKFactor RATHER THAN READ OFF THE ROW, so the fallback for
+ * an unset or non-positive value has one implementation instead of two that can
+ * drift — the engine already treats a K of 0 as unset because a zero K would
+ * freeze every rating. Reading `value.singles_k_established` directly and
+ * defaulting to 48 here would put a number on screen that the engine would not
+ * actually use.
+ *
+ * `matchesPlayed` is left undefined on purpose: this asks what the provisional
+ * and established K-factors ARE, not which one a particular member is on. The
+ * head counts beside them answer that, and they are counted with the same
+ * threshold-or-flag rule the engine branches on (see loadLadder).
+ *
+ * No fetch. `settings` is the rating section of the platform_settings read the
+ * form above already made, under `platform.page`.
+ */
+function kFactorsOf(settings: PlatformSetting[]): KFactors {
+  const defaults = (settings.find((s) => s.key === 'rating_defaults')?.value ??
+    null) as RatingSettings | null;
+  return {
+    singlesProvisional: getKFactor('singles', true, undefined, defaults),
+    singlesEstablished: getKFactor('singles', false, undefined, defaults),
+    doublesProvisional: getKFactor('doubles', true, undefined, defaults),
+    doublesEstablished: getKFactor('doubles', false, undefined, defaults),
+  };
+}
 
 /** The placement-match count as it is configured right now. */
 function thresholdOf(settings: PlatformSetting[]): number {

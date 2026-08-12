@@ -3,6 +3,7 @@ import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { PageHeader } from '@badminton/ui';
 import Link from 'next/link';
 import { AuditList, type AuditLogRow } from './audit-list';
+import { AuditActivityChart } from './activity-chart';
 import { SeasonSelect } from '@/components/season-select';
 import { resolveSeasonScope } from '@/components/season-scope';
 
@@ -144,6 +145,12 @@ export default async function AuditPage({
         sub="Who did what, when, and the reason they typed."
         watermark="A"
       />
+
+      {/* Above the list and outside it: the shape of the whole scope is what
+          makes it navigation, and a chart sitting UNDER the tab filter while
+          ignoring it would read as a bug. Folds the rows already fetched — no
+          query of its own. See ./activity-chart.tsx. */}
+      <AuditActivityChart logs={rows} scopeLabel={scopeLabel} />
 
       <AuditList
         logs={withSubjects}
