@@ -7,6 +7,8 @@ import {
   CUSTOM_FORMAT_BOUNDS,
   TOURNAMENT_EVENT_TYPE_LABELS,
   describeMatchShape,
+  isPoolToBracket,
+  playsRoundRobin,
 } from '@badminton/shared';
 import type { TournamentMatchFormat, SeedBy, TournamentEventType } from '@badminton/shared';
 
@@ -86,9 +88,19 @@ export const EMPTY_FORMAT_VALUES: EventFormatValues = {
   qualifiersPerGroup: '2',
 };
 
-/** Server-action payload. Blank inputs become NULL, which means "use the enum". */
-export function toFormatPayload(v: EventFormatValues) {
+/**
+ * Server-action payload. Blank inputs become NULL, which means "use the enum".
+ *
+ * `format` is passed so the qualifier count can be sent for a pool_to_bracket
+ * event whether or not it has groups: a flat pool IS one group there, and
+ * "how many qualify" is the number the knockout is built from. On the other two
+ * formats the rule is unchanged — the number is only sent when there is
+ * something for it to qualify out of, so a leftover cannot be read later as a
+ * choice nobody made.
+ */
+export function toFormatPayload(v: EventFormatValues, format?: string) {
   const groups = v.groupCount === '' ? null : Number(v.groupCount);
+  const qualifiersMeanSomething = isPoolToBracket(format) || (groups !== null && groups > 1);
   return {
     match_format: v.matchFormat,
     games_per_match: v.gamesPerMatch === '' ? null : Number(v.gamesPerMatch),
@@ -96,9 +108,7 @@ export function toFormatPayload(v: EventFormatValues) {
     seeded_from_event_id: v.seededFrom === '' ? null : v.seededFrom,
     seed_by: v.seededFrom === '' ? null : v.seedBy,
     group_count: groups,
-    // Same rule seed_by follows: only sent when there is something for it to
-    // qualify out of, so a leftover number cannot be read later as a choice.
-    qualifiers_per_group: groups !== null && groups > 1
+    qualifiers_per_group: qualifiersMeanSomething
       ? (v.qualifiersPerGroup === '' ? null : Number(v.qualifiersPerGroup))
       : null,
   };
@@ -132,7 +142,11 @@ export function EventFormatFields({
   // remembered toggle to disagree with the data.
   const isCustom = value.gamesPerMatch !== '' || value.pointsPerGame !== '';
 
-  const isRoundRobin = format === 'round_robin';
+  // playsRoundRobin, not `=== 'round_robin'`: a pool_to_bracket event plays a
+  // round robin first and can split it into groups exactly as a standalone one
+  // can. 00107 relaxes 00106's CHECK to allow it.
+  const isRoundRobin = playsRoundRobin(format);
+  const poolToBracket = isPoolToBracket(format);
   const groups = value.groupCount === '' ? 0 : Number(value.groupCount);
 
   // Preview the shape that will actually be played, so an exec can see at a
@@ -225,13 +239,15 @@ export function EventFormatFields({
               placeholder="One pool"
             />
             <Input
-              label="Advance Per Group"
+              // A flat pool_to_bracket pool is ONE group, so the same field is
+              // "how many qualify" — which is why it stays enabled there.
+              label={poolToBracket && groups < 2 ? 'How Many Qualify' : 'Advance Per Group'}
               type="number"
               min={1}
               max={16}
               value={value.qualifiersPerGroup}
               onChange={(e) => set({ qualifiersPerGroup: e.target.value })}
-              disabled={groups < 2}
+              disabled={!poolToBracket && groups < 2}
             />
           </div>
           <p className="text-xs text-[var(--text-muted)] -mt-2">
@@ -240,7 +256,17 @@ export function EventFormatFields({
                 {groups} groups, each a round robin of its own. The field is dealt out serpentine by seed so the strong
                 entrants are spread across them, and the top{' '}
                 <span className="font-medium text-[var(--text-primary)]">{value.qualifiersPerGroup || '2'}</span> of each
-                group go into whichever bracket seeds from this event — group winners first, then runners-up.
+                group{' '}
+                {poolToBracket
+                  ? 'go into this event\u2019s own knockout \u2014 group winners first, then runners-up, and group-mates kept apart in round one.'
+                  : 'go into whichever bracket seeds from this event \u2014 group winners first, then runners-up.'}
+              </>
+            ) : poolToBracket ? (
+              <>
+                One pool where everybody plays everybody, and the top{' '}
+                <span className="font-medium text-[var(--text-primary)]">{value.qualifiersPerGroup || '4'}</span> go
+                straight into this event&rsquo;s knockout in finishing order. Set a group count instead if the field is
+                too big for one pool.
               </>
             ) : (
               <>Leave blank for one pool where everybody plays everybody. Two or more makes this a group stage: far fewer

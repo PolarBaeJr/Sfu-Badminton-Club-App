@@ -385,7 +385,7 @@ import {
   enterMatchResult, editMatchResult, enterWalkover, voidMatch, undoMatchResult,
 } from '../tournament-actions/results';
 import { finalizeEvent, applyPlacementBonuses } from '../tournament-actions/finalize';
-import { generateSingleEliminationBracket, generateRoundRobinMatches } from '../tournament-actions/brackets';
+import { generateSingleEliminationBracket, generateRoundRobinMatches, setRoundMatchShape } from '../tournament-actions/brackets';
 import { updateTournamentEvent } from '../tournament-actions/events';
 import { withdrawParticipant } from '../tournament-actions/participants';
 import {
@@ -3067,5 +3067,370 @@ describe('changing a resolved result', () => {
 
     expect(res.ok).toBe(true);
     expect(match(THIRD).winner_participant_id).toBe('p-dan');
+  });
+});
+
+// ============================================================
+// One event, two phases (00107)
+// ============================================================
+//
+// The two-event pool→bracket path is exercised by the two describe blocks
+// above and is deliberately untouched by any of this. What follows is the
+// THIRD format: a round robin and a knockout inside one event row, with the
+// matches told apart by `phase`.
+
+describe('a round robin and a knockout in one event', () => {
+  function poolToBracketField(n: number, opts: { groups?: number; qualifiers?: number } = {}) {
+    store.db.tournament_matches = [];
+    store.db.tournament_participants = Array.from({ length: n }, (_, i) => ({
+      id: `p-${i}`, event_id: 'e1', player_id: `pl-${i}`, elo_before: 1500 - i * 10,
+      elo_after: null, elo_change: null, seed_number: i + 1, group_number: null,
+      final_position: null, points: null, status: 'checked_in',
+      // Stamped once, at the door, and asserted below to be exactly what it was
+      // after the knockout is drawn — "seeding shouldn't require a new checkin".
+      checked_in_at: '2026-08-12T09:00:00.000Z', checked_in_by: 'admin-1',
+    }));
+    store.db.ratings = Array.from({ length: n }, (_, i) => ({
+      player_id: `pl-${i}`, singles_elo: 1500 - i * 10, singles_provisional: false, singles_matches_played: 30,
+    }));
+    store.db.reliability_metrics = Array.from({ length: n }, (_, i) => ({ player_id: `pl-${i}`, matches_completed: 5 }));
+    Object.assign(event(), {
+      status: 'checkin', draw_locked: false, format: 'pool_to_bracket',
+      seed_by: 'wins',
+      group_count: opts.groups ?? null,
+      qualifiers_per_group: opts.qualifiers ?? (opts.groups ? 2 : 4),
+    });
+  }
+
+  const matchesIn = (phase: string) =>
+    store.db.tournament_matches!.filter((m) => m.event_id === 'e1' && m.phase === phase);
+
+  /** Play out every pool fixture, lower index wins, so the seeding order holds. */
+  function playThePool() {
+    Object.assign(event(), { status: 'pool_live' });
+    for (const m of matchesIn('pool')) {
+      const a = m.participant_a_id as string;
+      const b = m.participant_b_id as string;
+      const aWins = Number(a.slice(2)) < Number(b.slice(2));
+      Object.assign(m, {
+        status: 'completed',
+        winner_participant_id: aWins ? a : b,
+        loser_participant_id: aWins ? b : a,
+        scores: [{ a: aWins ? 11 : 4, b: aWins ? 4 : 11 }],
+      });
+    }
+  }
+
+  it('generates the POOL first, and labels it', async () => {
+    poolToBracketField(6);
+
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+
+    // 6 entrants, one flat pool: 15 fixtures, every one of them a pool match.
+    expect(matchesIn('pool')).toHaveLength(15);
+    expect(matchesIn('bracket')).toHaveLength(0);
+    expect(event().status).toBe('pool_generated');
+  });
+
+  it('refuses to draw the knockout before the pool has been played', async () => {
+    poolToBracketField(6);
+
+    // Straight from check-in: there is no pool at all yet.
+    const early = await generateSingleEliminationBracket('e1', false);
+    expect(early.ok).toBe(false);
+    expect(early.ok === false && early.error).toMatch(/round robin/i);
+
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+    Object.assign(event(), { status: 'pool_live' });
+
+    // Pool exists but nothing has been played.
+    const halfway = await generateSingleEliminationBracket('e1', false);
+    expect(halfway.ok).toBe(false);
+    expect(halfway.ok === false && halfway.error).toMatch(/have not been played/i);
+    expect(matchesIn('bracket')).toHaveLength(0);
+  });
+
+  // THE FAILURE 00107 EXISTS TO PREVENT. Without a phase discriminator the
+  // knockout's round 1 position 0 collides with the pool's, as a unique
+  // violation part-way through generation on the day.
+  it('puts the two phases at the same round and position without colliding', async () => {
+    poolToBracketField(6);
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+    playThePool();
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    const key = (m: Row) => `${m.round_number}:${m.bracket_position}`;
+    const poolKeys = new Set(matchesIn('pool').map(key));
+    const bracketKeys = matchesIn('bracket').filter((m) => !m.is_third_place).map(key);
+    // They genuinely overlap — that is the point — and each phase is
+    // internally unique, which is what the index actually guards.
+    expect(bracketKeys.some((k) => poolKeys.has(k))).toBe(true);
+    expect(new Set(bracketKeys).size).toBe(bracketKeys.length);
+    expect(new Set(matchesIn('pool').map(key)).size).toBe(matchesIn('pool').length);
+  });
+
+  // WHERE THE ONE-EVENT FORMAT IS SIMPLER THAN THE TWO-EVENT ONE.
+  it('qualifies by re-seeding rows that already exist — nothing is promoted', async () => {
+    poolToBracketField(6);
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+    playThePool();
+
+    const idsBefore = store.db.tournament_participants!.map((p) => p.id).sort();
+    const checkedInBefore = store.db.tournament_participants!.map((p) => p.checked_in_at);
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    // Not one new entry row, and not one new check-in.
+    expect(store.db.tournament_participants!.map((p) => p.id).sort()).toEqual(idsBefore);
+    expect(store.db.tournament_participants!.map((p) => p.checked_in_at)).toEqual(checkedInBefore);
+    // The top 4 of the pool are the field; the other two are not in the draw.
+    const drawn = new Set(
+      matchesIn('bracket').flatMap((m) => [m.participant_a_id, m.participant_b_id]).filter(Boolean),
+    );
+    expect(drawn).toEqual(new Set(['p-0', 'p-1', 'p-2', 'p-3']));
+  });
+
+  it('keeps the played-out pool when the knockout is drawn, and when it is redrawn', async () => {
+    poolToBracketField(6);
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+    playThePool();
+    const poolIds = matchesIn('pool').map((m) => m.id).sort();
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    expect(matchesIn('pool').map((m) => m.id).sort()).toEqual(poolIds);
+
+    // A REDRAW OF THE KNOCKOUT IS NOT BLOCKED BY THE POOL'S RESULTS, and does
+    // not delete them. Unfiltered, assertNoResultsEntered would have counted
+    // fifteen played pool matches and refused — offering the exec the one
+    // remedy (void them) that destroys the round robin they just ran.
+    const redraw = await generateSingleEliminationBracket('e1', false);
+    expect(redraw.ok).toBe(true);
+    expect(matchesIn('pool').map((m) => m.id).sort()).toEqual(poolIds);
+    expect(matchesIn('bracket').filter((m) => !m.is_third_place)).toHaveLength(3);
+  });
+
+  it('refuses to rebuild the pool once the knockout has been drawn from it', async () => {
+    poolToBracketField(6);
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+    playThePool();
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    const res = await generateRoundRobinMatches('e1');
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/knockout has already been drawn/i);
+    expect(matchesIn('pool')).toHaveLength(15);
+  });
+
+  it('composes with groups, keeping group-mates apart in round one', async () => {
+    // 8 entrants, 4 groups of 2, top 1 of each — 4 qualifiers, one semi-final
+    // round and a final.
+    poolToBracketField(8, { groups: 4, qualifiers: 1 });
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+    // A group of 2 is one fixture, so four groups is four pool matches.
+    expect(matchesIn('pool')).toHaveLength(4);
+    playThePool();
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    const groupOf = (id: string | null) =>
+      store.db.tournament_participants!.find((p) => p.id === id)?.group_number ?? null;
+    const roundOne = matchesIn('bracket').filter((m) => m.round_number === 1 && !m.is_third_place);
+    expect(roundOne).toHaveLength(2);
+    for (const m of roundOne) {
+      expect(groupOf(m.participant_a_id as string)).not.toBe(groupOf(m.participant_b_id as string));
+    }
+  });
+
+  // ============================================================
+  // The ladder (00108)
+  // ============================================================
+
+  it('plays the pool to 11', async () => {
+    poolToBracketField(6);
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+    for (const m of matchesIn('pool')) {
+      expect(m.games_per_match).toBe(1);
+      expect(m.points_per_game).toBe(11);
+    }
+  });
+
+  it('plays the knockout 11s, 15s, 21s, best of 3 — anchored on the final', async () => {
+    // 16 entrants in 8 groups of 2, top 1 each: an 8-slot knockout, so
+    // quarter-final, semi-final, final.
+    poolToBracketField(16, { groups: 8, qualifiers: 1 });
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+    playThePool();
+
+    expect((await generateSingleEliminationBracket('e1', true)).ok).toBe(true);
+
+    const shapeOfRound = (r: number) => {
+      const m = matchesIn('bracket').find((x) => x.round_number === r && !x.is_third_place)!;
+      return { games_per_match: m.games_per_match, points_per_game: m.points_per_game };
+    };
+    expect(shapeOfRound(1)).toEqual({ games_per_match: 1, points_per_game: 15 }); // quarter-final
+    expect(shapeOfRound(2)).toEqual({ games_per_match: 1, points_per_game: 21 }); // semi-final
+    expect(shapeOfRound(3)).toEqual({ games_per_match: 3, points_per_game: 21 }); // final
+
+    // The playoff shares round_number with the final and is not in the round
+    // sequence, so it needs its own answer — and it is the final's.
+    const playoff = matchesIn('bracket').find((m) => m.is_third_place)!;
+    expect(playoff.games_per_match).toBe(3);
+    expect(playoff.points_per_game).toBe(21);
+  });
+
+  it('leaves an ordinary round robin and an ordinary knockout with no shape and no phase', async () => {
+    // THE UNTOUCHED-BEHAVIOUR ASSERTION. Both other formats must keep writing
+    // matches that carry neither a phase nor a per-round shape, so every one of
+    // them resolves to exactly the event shape it resolves to today.
+    poolToBracketField(6);
+    Object.assign(event(), { format: 'round_robin', group_count: null, qualifiers_per_group: null });
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+    for (const m of store.db.tournament_matches!) {
+      expect(m.phase ?? null).toBeNull();
+      expect(m.games_per_match ?? null).toBeNull();
+      expect(m.points_per_game ?? null).toBeNull();
+    }
+    expect(event().status).toBe('bracket_generated');
+
+    poolToBracketField(4);
+    Object.assign(event(), { format: 'single_elimination', group_count: null, qualifiers_per_group: null });
+    expect((await generateSingleEliminationBracket('e1', true)).ok).toBe(true);
+    for (const m of store.db.tournament_matches!) {
+      expect(m.phase ?? null).toBeNull();
+      expect(m.games_per_match ?? null).toBeNull();
+      expect(m.points_per_game ?? null).toBeNull();
+    }
+    expect(event().status).toBe('bracket_generated');
+  });
+
+  // ============================================================
+  // Elo and final_position across both phases
+  // ============================================================
+
+  it('rates a pool match at the shorter shape it was actually played to', async () => {
+    poolToBracketField(6);
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+    Object.assign(event(), { status: 'pool_live' });
+
+    const m = matchesIn('pool')[0]!;
+    // eventIsPlaying has to accept pool_live here, or no pool score can ever be
+    // recorded — the single condition that would kill the format outright.
+    const res = await enterMatchResult(m.id as string, [{ a: 11, b: 4 }], 'a', false);
+    expect(res.ok).toBe(true);
+
+    const rated = match(m.id as string);
+    expect(rated.status).toBe('completed');
+    const snap = rated.elo_snapshot as { entries: Array<{ delta: number }> };
+    expect(snap.entries).toHaveLength(2);
+    // A game to 11 is weighted (11/21) x 1.0 by derivedFormatWeight, so the
+    // delta is well below what the event's best-of-3-to-21 default would give.
+    const moved = Math.abs(snap.entries[0]!.delta);
+    expect(moved).toBeGreaterThan(0);
+    expect(moved).toBeLessThan(18);
+  });
+
+  it('finishes the non-qualifiers behind every qualifier, in the pool order', async () => {
+    poolToBracketField(6);
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+    playThePool();
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    // Play the knockout out, lower index wins again. THE SCORELINE FOLLOWS THE
+    // ROUND'S OWN SHAPE — the semi-final is one game to 21 and the final is
+    // best of 3, so a single game would not clinch the final and the server
+    // would (correctly) refuse it. That is the ladder being enforced.
+    Object.assign(event(), { status: 'live' });
+    for (const round of [1, 2]) {
+      for (const m of matchesIn('bracket').filter((x) => x.round_number === round)) {
+        const a = m.participant_a_id as string | null;
+        const b = m.participant_b_id as string | null;
+        if (!a || !b) continue;
+        const aWins = Number(a.slice(2)) < Number(b.slice(2));
+        const target = (m.points_per_game as number | null) ?? 21;
+        const game = { a: aWins ? target : target - 11, b: aWins ? target - 11 : target };
+        const needed = Math.floor((((m.games_per_match as number | null) ?? 1)) / 2) + 1;
+        const scores = Array.from({ length: needed }, () => game);
+        expect((await enterMatchResult(m.id as string, scores, aWins ? 'a' : 'b', false)).ok).toBe(true);
+      }
+    }
+
+    await finalizeEvent('e1');
+
+    const posOf = (id: string) => participant(id).final_position as number;
+    // The bracket decides the top: 1st, 2nd, and joint 3rd for the two beaten
+    // semi-finalists.
+    expect(posOf('p-0')).toBe(1);
+    expect(posOf('p-1')).toBe(2);
+    expect(posOf('p-2')).toBe(3);
+    expect(posOf('p-3')).toBe(3);
+    // EVERY NON-QUALIFIER IS BEHIND EVERY QUALIFIER, and they are ordered by
+    // the pool table among themselves. Started from max(assigned) + 1 rather
+    // than from the number of qualifiers, so nobody is placed level with
+    // somebody who won a knockout match.
+    expect(posOf('p-4')).toBe(4);
+    expect(posOf('p-5')).toBe(5);
+    // Nobody is left without a placing, which is what would happen to the whole
+    // pool if the knockout rule ran on its own.
+    for (const p of store.db.tournament_participants!) {
+      expect(p.final_position).not.toBeNull();
+      expect(p.points).toBeGreaterThan(0);
+    }
+  });
+
+  // ============================================================
+  // Setting what a round is played to (00108)
+  // ============================================================
+
+  it('sets a whole round at once, and refuses one that has a result', async () => {
+    poolToBracketField(6);
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+
+    const roundOne = () => matchesIn('pool').filter((m) => m.round_number === 1);
+    expect(roundOne().length).toBeGreaterThan(1);
+
+    const set = await setRoundMatchShape('e1', { phase: 'pool', roundNumber: 1 }, { games_per_match: 1, points_per_game: 15 });
+    expect(set.ok).toBe(true);
+    for (const m of roundOne()) {
+      expect(m.games_per_match).toBe(1);
+      expect(m.points_per_game).toBe(15);
+    }
+    // ...and only that round.
+    for (const m of matchesIn('pool').filter((m) => m.round_number === 2)) {
+      expect(m.points_per_game).toBe(11);
+    }
+
+    // Clearing puts the columns back to NULL rather than writing the event's
+    // current numbers out, so the round keeps following the event afterwards.
+    expect((await setRoundMatchShape('e1', { phase: 'pool', roundNumber: 1 }, null)).ok).toBe(true);
+    for (const m of roundOne()) {
+      expect(m.games_per_match ?? null).toBeNull();
+      expect(m.points_per_game ?? null).toBeNull();
+    }
+
+    // A ROUND WITH A RESULT IS REFUSED. Changing it would re-judge a recorded
+    // score and re-weight the rating it already earned, both silently.
+    Object.assign(roundOne()[0]!, { status: 'completed' });
+    const refused = await setRoundMatchShape('e1', { phase: 'pool', roundNumber: 1 }, { games_per_match: 1, points_per_game: 21 });
+    expect(refused.ok).toBe(false);
+    expect(refused.ok === false && refused.error).toMatch(/already ha[sv]e? a result/i);
+  });
+
+  it('addresses the third-place playoff separately from the final', async () => {
+    poolToBracketField(8, { groups: 4, qualifiers: 1 });
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+    playThePool();
+    expect((await generateSingleEliminationBracket('e1', true)).ok).toBe(true);
+
+    const finalRound = Math.max(...matchesIn('bracket').map((m) => m.round_number as number));
+    expect((await setRoundMatchShape('e1', { phase: 'bracket', roundNumber: null, thirdPlace: true }, { games_per_match: 1, points_per_game: 15 })).ok).toBe(true);
+
+    const playoff = matchesIn('bracket').find((m) => m.is_third_place)!;
+    const theFinal = matchesIn('bracket').find((m) => m.round_number === finalRound && !m.is_third_place)!;
+    expect(playoff.points_per_game).toBe(15);
+    // The final shares its round_number with the playoff and must NOT have
+    // moved — matching on the number alone would have swept it in.
+    expect(theFinal.points_per_game).toBe(21);
+    expect(theFinal.games_per_match).toBe(3);
   });
 });

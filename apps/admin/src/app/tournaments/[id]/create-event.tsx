@@ -2,7 +2,14 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Select, Input } from '@badminton/ui';
-import { TOURNAMENT_EVENT_TYPE_LABELS, isDoublesEvent } from '@badminton/shared';
+import {
+  TOURNAMENT_EVENT_TYPE_LABELS,
+  TOURNAMENT_EVENT_FORMAT_LABELS,
+  TOURNAMENT_EVENT_FORMAT_HINTS,
+  isDoublesEvent,
+  isPoolToBracket,
+  playsRoundRobin,
+} from '@badminton/shared';
 import { createTournamentEvent } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
@@ -53,8 +60,13 @@ export function CreateEventButton({ tournamentId, siblings = [] }: { tournamentI
   //   * same doubles-ness — singles standings are participant rows and doubles
   //     standings are pair rows, and there is no sensible way to carry one into
   //     the other.
+  //
+  // AND NONE AT ALL FOR pool_to_bracket (00107). That format plays its own pool
+  // inside this one event, so an external link would be a second, contradictory
+  // field for the same bracket — the server refuses it outright, and offering
+  // the picker would be an invitation to be refused.
   const seedableSiblings =
-    format === 'round_robin'
+    playsRoundRobin(format)
       ? []
       : siblings.filter(
           (s) =>
@@ -69,7 +81,10 @@ export function CreateEventButton({ tournamentId, siblings = [] }: { tournamentI
       const res = await createTournamentEvent(tournamentId, {
         event_type: eventType,
         format,
-        ...toFormatPayload(format === 'round_robin' ? { ...formatValues, seededFrom: '' } : formatValues),
+        ...toFormatPayload(
+          playsRoundRobin(format) ? { ...formatValues, seededFrom: '' } : formatValues,
+          format,
+        ),
         max_participants: maxParticipants ? Number(maxParticipants) : undefined,
         seeding_method: seedingMethod,
         elo_multiplier: Number(eloMultiplier) || 1.25,
@@ -104,12 +119,23 @@ export function CreateEventButton({ tournamentId, siblings = [] }: { tournamentI
           <Select
             label="Format"
             value={format}
-            onChange={(e) => setFormat(e.target.value as TournamentEventFormat)}
-            options={[
-              { value: 'single_elimination', label: 'Single Elimination' },
-              { value: 'round_robin', label: 'Round Robin' },
-            ]}
+            onChange={(e) => {
+              const next = e.target.value as TournamentEventFormat;
+              setFormat(next);
+              // The qualifier count means different things on the two pool
+              // shapes, so the default follows the format rather than being
+              // left at whatever the last one wanted: 2 out of each of several
+              // groups is the usual group stage, 2 out of one flat pool is a
+              // final and nothing else. Matches normalizeGroupShape server-side.
+              if (isPoolToBracket(next) && formatValues.groupCount === '') {
+                setFormatValues({ ...formatValues, qualifiersPerGroup: '4' });
+              }
+            }}
+            options={Object.entries(TOURNAMENT_EVENT_FORMAT_LABELS).map(([value, label]) => ({ value, label }))}
           />
+          <p className="text-xs text-[var(--text-muted)] -mt-2">
+            {TOURNAMENT_EVENT_FORMAT_HINTS[format]}
+          </p>
           <EventFormatFields value={formatValues} onChange={setFormatValues} siblings={seedableSiblings} format={format} />
           <Input
             label="Max Participants (optional)"

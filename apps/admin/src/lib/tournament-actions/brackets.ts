@@ -4,8 +4,20 @@ import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { runAction, type ActionResult } from '../action-result';
-import { isDoublesEvent, nextPowerOf2, getRoundName, ExpectedError, RESULT_MATCH_STATUSES } from '@badminton/shared';
-import type { SeedBy } from '@badminton/shared';
+import {
+  isDoublesEvent,
+  nextPowerOf2,
+  getRoundName,
+  ExpectedError,
+  RESULT_MATCH_STATUSES,
+  isPoolToBracket,
+  phaseValueFor,
+  knockoutLadder,
+  POOL_LADDER_SHAPE,
+  isPlayedMatch,
+  CUSTOM_FORMAT_BOUNDS,
+} from '@badminton/shared';
+import type { SeedBy, TournamentMatchPhase } from '@badminton/shared';
 import {
   requireCapability,
   revalidateEventPaths,
@@ -75,8 +87,21 @@ function assertNotFinalised(event: Record<string, unknown>, action: string) {
  * A walkover is still a result and still blocks: it is rated, and the go-live
  * sweep records real ones (setEventStatus -> forfeitOutOfEventEntries).
  */
-async function assertNoResultsEntered(adminClient: ReturnType<typeof createAdminClient>, eventId: string) {
-  const { count, error } = await adminClient
+async function assertNoResultsEntered(
+  adminClient: ReturnType<typeof createAdminClient>,
+  eventId: string,
+  // WHICH HALF IS BEING REBUILT (00107). null for the two single-phase formats,
+  // where it is the whole event exactly as before.
+  //
+  // THIS IS THE GUARD THAT WOULD OTHERWISE MAKE THE FORMAT UNUSABLE. A
+  // pool-to-bracket event reaches its knockout with a full pool of RESULTS
+  // sitting in this same table, so an unfiltered count would refuse to generate
+  // the bracket — "9 matches in this event have a result" — and offer the exec
+  // the one remedy that destroys the pool they just played. The bracket phase
+  // is empty at that moment; only its own results may block rebuilding it.
+  phase: TournamentMatchPhase | null,
+) {
+  let q = adminClient
     .from('tournament_matches')
     .select('id', { count: 'exact', head: true })
     .eq('event_id', eventId)
@@ -86,6 +111,8 @@ async function assertNoResultsEntered(adminClient: ReturnType<typeof createAdmin
     // rather than shared because it has to be expressed as a PostgREST filter.
     .in('status', [...RESULT_MATCH_STATUSES])
     .not('is_bye', 'is', true);
+  if (phase) q = q.eq('phase', phase);
+  const { count, error } = await q;
   // THE ERROR WAS DISCARDED, AND THIS GUARD FAILS OPEN WITHOUT IT. supabase-js
   // resolves rather than rejects on a PostgREST error and leaves `count` null,
   // so `(count ?? 0) > 0` reads a failed read as "no results" and generation
@@ -134,8 +161,38 @@ async function assertNoResultsEntered(adminClient: ReturnType<typeof createAdmin
  * `completed` is not handled here because assertNotFinalised has already
  * refused it, and no other status can reach a generator with a draw to replace.
  */
-function statusAfterDraw(event: Record<string, unknown>): 'live' | 'bracket_generated' {
+/**
+ * THE POOL HALF HAS ITS OWN PAIR OF STATES (00107), and the rule above applies
+ * to it unchanged: generating the pool of an event whose pool is already
+ * RUNNING must not un-start it. `pool_generated` and `pool_live` are written on
+ * no other format, so the two-format behaviour here is the untouched branch.
+ */
+function statusAfterDraw(
+  event: Record<string, unknown>,
+  phase: TournamentMatchPhase | null,
+): 'live' | 'bracket_generated' | 'pool_live' | 'pool_generated' {
+  if (phase === 'pool') return event.status === 'pool_live' ? 'pool_live' : 'pool_generated';
   return event.status === 'live' ? 'live' : 'bracket_generated';
+}
+
+/**
+ * Delete the matches of ONE phase, leaving the other half alone.
+ *
+ * The single most destructive line in this module used to be
+ * `.delete().eq('event_id', eventId)`, and it was correct while an event had
+ * one draw. On a pool-to-bracket event it would take the played-out pool with
+ * it every time the knockout was regenerated. `.is('phase', null)` is not used
+ * for the other two formats: their matches all carry NULL, so the unfiltered
+ * delete is already exactly right and adding a filter would only create a way
+ * for a stray row to survive a rebuild.
+ */
+async function deletePhaseMatches(
+  adminClient: ReturnType<typeof createAdminClient>,
+  eventId: string,
+  phase: TournamentMatchPhase | null,
+) {
+  const q = adminClient.from('tournament_matches').delete().eq('event_id', eventId);
+  await (phase ? q.eq('phase', phase) : q);
 }
 
 // ============================================================
@@ -383,6 +440,132 @@ async function buildFieldFromPool(
   return { entries, promoted, skipped, groupCount: srcGroupCount };
 }
 
+/**
+ * How many entries get out of this event's OWN pool (00107).
+ *
+ * A flat pool is one group, so `qualifiers_per_group` says it either way and
+ * there is no second column to disagree with. Defaults mirror
+ * normalizeGroupShape in events.ts: 2 out of each of several groups, 4 out of a
+ * single flat pool.
+ */
+function ownPoolCapacity(event: Record<string, unknown>): number {
+  const groupCount = (event.group_count as number | null) ?? 1;
+  const perGroup = (event.qualifiers_per_group as number | null) ?? (groupCount >= 2 ? 2 : 4);
+  return groupCount >= 2 ? groupCount * perGroup : perGroup;
+}
+
+/**
+ * Build the knockout's field from THIS EVENT'S OWN pool (00107).
+ *
+ * THIS IS WHERE THE ONE-EVENT FORMAT IS GENUINELY SIMPLER THAN THE TWO-EVENT
+ * ONE, and it is worth being explicit about what disappears. buildFieldFromPool
+ * above has to PROMOTE: read the source event, check it belongs to the same
+ * tournament, check it is the same discipline, look every finisher up by an
+ * order-independent player key, reuse an existing entry or INSERT a new one,
+ * carry the rating across, and skip anyone who withdrew from the destination.
+ * Every one of those steps exists because the qualifier's row in the bracket is
+ * a DIFFERENT ROW from their row in the pool.
+ *
+ * Here it is the same row. tournament_participants / tournament_pairs are not
+ * per-phase; they are per-event, and both phases are this event. So qualifying
+ * is writing a seed number onto rows that are already there:
+ *
+ *   * nothing is inserted, so there is no duplicate-entry failure mode;
+ *   * there is no second event, so there is no cross-discipline and no
+ *     cross-tournament check to get wrong;
+ *   * CHECK-IN HAPPENS ONCE. The two-event path had to stamp checked_in_at onto
+ *     the rows it created, because they were new rows that had never checked in
+ *     — which is precisely the thing the club owner objected to. Here the
+ *     entrant checked in this morning and has been playing ever since.
+ *
+ * The ORDER is qualificationOrder's when the pool has groups and sortStandings'
+ * when it is flat — computeRoundRobinStandings already picks between them — so
+ * the seeding tiers the draw shuffles within are the ones 00106 built.
+ */
+async function buildFieldFromOwnPool(
+  adminClient: ReturnType<typeof createAdminClient>,
+  event: Record<string, unknown>,
+  doubles: boolean,
+): Promise<{ entries: FieldEntry[]; groupCount: number; poolSize: number }> {
+  const eventId = event.id as string;
+  // Always populated on this format (events.ts), which is what closes the
+  // documented seed_by trap: the order that decides who qualifies and the order
+  // finalizeEvent ranks the non-qualifiers by are read from the same column.
+  const seedBy = ((event.seed_by as SeedBy | null) ?? 'wins') as SeedBy;
+
+  // Same definition of "played out" the two-event path uses, so an exec cannot
+  // be told the pool is finished by one screen and unfinished by another.
+  const { data: poolMatches } = await adminClient.from('tournament_matches')
+    .select('status, is_bye, participant_a_id, participant_b_id, pair_a_id, pair_b_id')
+    .eq('event_id', eventId)
+    .eq('phase', 'pool');
+  if (!poolMatches || poolMatches.length === 0) {
+    throw new ExpectedError('The round robin has not been generated yet, so there is nothing to seed the knockout from.');
+  }
+  const unplayed = poolMatches.filter((m) => {
+    if (['completed', 'walkover', 'voided'].includes(m.status as string) || m.is_bye) return false;
+    return doubles ? (m.pair_a_id || m.pair_b_id) : (m.participant_a_id || m.participant_b_id);
+  });
+  if (unplayed.length > 0) {
+    throw new ExpectedError(
+      `${unplayed.length} round-robin match(es) have not been played. Seeding the knockout off a half-finished pool would `
+      + 'produce the wrong draw — finish the round robin first.',
+    );
+  }
+
+  const standings = await computeRoundRobinStandings(eventId, seedBy);
+  if (standings.length === 0) throw new ExpectedError('The round robin has no finishers to seed the knockout from.');
+
+  // The rating each entry carries into the knockout. Read rather than defaulted
+  // because a doubles pair's combined_elo and a singles entry's elo_after are
+  // what an unseeded draw would sort by, and because the audit row is more
+  // useful when the field it describes is the real one.
+  const eloOf = new Map<string, number>();
+  if (doubles) {
+    const { data: pairs } = await adminClient.from('tournament_pairs')
+      .select('id, combined_elo').eq('event_id', eventId);
+    for (const p of pairs ?? []) eloOf.set(p.id, p.combined_elo ?? 400);
+  } else {
+    const { data: parts } = await adminClient.from('tournament_participants')
+      .select('id, elo_before, elo_after').eq('event_id', eventId);
+    // elo_after is where the pool left them, with elo_before as the fallback for
+    // an entry that somehow played nothing.
+    for (const p of parts ?? []) eloOf.set(p.id, p.elo_after ?? p.elo_before ?? 400);
+  }
+
+  const capacity = Math.min(ownPoolCapacity(event), standings.length);
+  const entries: FieldEntry[] = standings.slice(0, capacity).map((standing, i) => ({
+    id: standing.id,
+    seed: i + 1,
+    elo: eloOf.get(standing.id) ?? 400,
+    group: (standing as { group?: number | null }).group ?? null,
+    groupRank: (standing as { groupRank?: number | null }).groupRank ?? null,
+  }));
+
+  if (entries.length < 2) {
+    throw new ExpectedError('The round robin produced fewer than 2 available finishers, which is not a knockout.');
+  }
+
+  // Persist the qualification order as the seed numbers. Same reasoning as the
+  // two-event path: the in-memory order is what builds the bracket, so a seed
+  // that never reached the table leaves the stored seeding disagreeing with the
+  // draw it produced. Nothing has been created yet, so throwing costs a re-press.
+  const table = doubles ? 'tournament_pairs' : 'tournament_participants';
+  const { failures } = await settleWrites(
+    entries.map(e => [
+      `${table}.seed_number for ${e.id}`,
+      adminClient.from(table).update({ seed_number: e.seed }).eq('id', e.id),
+    ] as const),
+  );
+  assertWritesSucceeded('Seeding the knockout from the round-robin standings', failures);
+
+  return {
+    entries,
+    groupCount: (event.group_count as number | null) ?? 1,
+    poolSize: standings.length,
+  };
+}
+
 // ============================================================
 // Bracket Generation — Single Elimination
 // ============================================================
@@ -435,6 +618,14 @@ async function createThirdPlaceMatch(
   eventId: string,
   totalRounds: number,
   semiFinalIds: string[],
+  phase: TournamentMatchPhase | null,
+  // THE PLAYOFF NEEDS ITS OWN ANSWER (00108). It shares round_number with the
+  // final and is held out of the round sequence by every index and every
+  // reader, so a plan keyed by round number would have had no key for it and it
+  // would have fallen back to the event default — the wrong shape, silently.
+  // The shape lives on the row, so it is simply passed in, and it is the
+  // final's: "third place games best to 3 21s".
+  shape: { games_per_match: number; points_per_game: number } | null,
 ): Promise<string | null> {
   if (totalRounds < 2 || semiFinalIds.length !== 2) return null;
 
@@ -446,6 +637,7 @@ async function createThirdPlaceMatch(
   // nothing: winner_to_match_id stays null.
   const { data: created, error } = await adminClient.from('tournament_matches').insert({
     event_id: eventId,
+    phase,
     round_number: totalRounds,
     round_name: THIRD_PLACE_ROUND_NAME,
     bracket_position: 1,
@@ -453,6 +645,7 @@ async function createThirdPlaceMatch(
     winner_to_match_id: null,
     winner_to_position: null,
     status: 'pending',
+    ...(shape ?? {}),
   }).select('id').single();
 
   if (error || !created) {
@@ -501,7 +694,21 @@ async function generateSingleEliminationBracketImpl(
   // could be redrawn on top of a ledger that had already paid the old finishers.
   assertNotFinalised(event, 'regenerated');
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
-  await assertNoResultsEntered(adminClient, eventId);
+
+  // WHICH HALF THIS BUILDS. null on the two single-phase formats, where every
+  // filter keyed off it below is a no-op and the behaviour is the untouched one.
+  const phase = phaseValueFor(event.format as string, 'bracket');
+  const ownPool = isPoolToBracket(event.format as string);
+  // The knockout may not be drawn before the pool has been played. The field
+  // check inside buildFieldFromOwnPool says so precisely; this says so early,
+  // and stops an exec at `checkin` being told about pool matches that do not
+  // exist yet.
+  if (ownPool && (event.status === 'registration' || event.status === 'checkin')) {
+    throw new ExpectedError(
+      'This event plays a round robin first. Generate the round robin and play it out, then the knockout is drawn from its standings.',
+    );
+  }
+  await assertNoResultsEntered(adminClient, eventId, phase);
 
   const doubles = isDoublesEvent(event.event_type);
 
@@ -516,12 +723,25 @@ async function generateSingleEliminationBracketImpl(
   // A pool-seeded event takes its field and its order from the pool, so the
   // Elo/seed_number path below must not run — it would re-sort the draw by
   // rating and throw away the result everyone just played for.
-  const seededFromPool = Boolean(event.seeded_from_event_id);
+  //
+  // TRUE FOR BOTH POOL SHAPES. A pool_to_bracket event takes its field and its
+  // order from its OWN pool, and everything downstream that keys off "the field
+  // came from a pool" — do not re-seed by rating, draw within qualification
+  // tiers rather than seeding bands, notify the drawn field only — is the same
+  // question for both. The difference between them is only WHERE the standings
+  // come from, which is the branch immediately below and nowhere else.
+  const seededFromPool = Boolean(event.seeded_from_event_id) || ownPool;
   let poolPromoted = 0;
   let poolSkipped = 0;
   let poolGroupCount = 1;
+  let ownPoolSize = 0;
 
-  if (seededFromPool) {
+  if (ownPool) {
+    const field = await buildFieldFromOwnPool(adminClient, event, doubles);
+    entries = field.entries;
+    poolGroupCount = field.groupCount;
+    ownPoolSize = field.poolSize;
+  } else if (event.seeded_from_event_id) {
     const field = await buildFieldFromPool(adminClient, event, doubles, admin.id);
     entries = field.entries;
     poolPromoted = field.promoted;
@@ -693,8 +913,20 @@ async function generateSingleEliminationBracketImpl(
     }
   }
 
-  // Delete any existing matches for this event
-  await adminClient.from('tournament_matches').delete().eq('event_id', eventId);
+  // Delete the existing matches OF THIS PHASE. On a pool_to_bracket event the
+  // played-out pool sits in the same table and must survive a redraw of the
+  // knockout — see deletePhaseMatches.
+  await deletePhaseMatches(adminClient, eventId, phase);
+
+  // THE ROUND LADDER (00108). Stamped onto the rows as they are created rather
+  // than stored as a plan on the event, so there is nothing that can disagree
+  // with the matches — see the migration header. Applied to the pool_to_bracket
+  // format only: giving every existing single_elimination event a ladder the
+  // next time its draw was regenerated would silently change the shape of
+  // matches an exec never asked to change. The per-round control (see
+  // setRoundMatchShape) is offered on every knockout, so this is a default, not
+  // a restriction.
+  const ladder = ownPool ? knockoutLadder(totalRounds) : null;
 
   // Create all match shells from final backwards to round 1
   // matchesByRound[roundNumber] = array of match IDs in bracket_position order
@@ -715,6 +947,7 @@ async function generateSingleEliminationBracketImpl(
 
       const { data: match, error } = await adminClient.from('tournament_matches').insert({
         event_id: eventId,
+        phase,
         round_number: round,
         round_name: roundName,
         bracket_position: pos,
@@ -722,6 +955,10 @@ async function generateSingleEliminationBracketImpl(
         winner_to_match_id: nextMatchId,
         winner_to_position: nextMatchPosition,
         status: 'pending',
+        // The round's own shape when there is a ladder; nothing at all when
+        // there is not, so the columns stay NULL and the event decides exactly
+        // as it always has.
+        ...(ladder?.byRound.get(round) ?? {}),
       }).select('id').single();
 
       if (error) {
@@ -814,7 +1051,10 @@ async function generateSingleEliminationBracketImpl(
   // already playable rather than one with a dangling playoff. matchesByRound
   // holds only the main draw, so the semi-final round is unambiguous.
   const thirdPlaceId = includeThirdPlace
-    ? await createThirdPlaceMatch(adminClient, eventId, totalRounds, matchesByRound[totalRounds - 1] ?? [])
+    ? await createThirdPlaceMatch(
+        adminClient, eventId, totalRounds, matchesByRound[totalRounds - 1] ?? [],
+        phase, ladder?.thirdPlace ?? null,
+      )
     : null;
 
   // Assign match numbers for remaining rounds — collect all (id, number) pairs
@@ -846,7 +1086,7 @@ async function generateSingleEliminationBracketImpl(
 
   // Update event status
   await adminClient.from('tournament_events')
-    .update({ status: statusAfterDraw(event), updated_at: new Date().toISOString() })
+    .update({ status: statusAfterDraw(event, phase), updated_at: new Date().toISOString() })
     .eq('id', eventId);
 
   await logAudit(adminClient, {
@@ -886,14 +1126,29 @@ async function generateSingleEliminationBracketImpl(
         : {}),
       // Recorded because a pool-seeded draw is not reproducible from the event
       // row alone — the pool can be edited afterwards.
-      ...(seededFromPool
+      ...(ownPool
         ? {
-            seeded_from_event_id: event.seeded_from_event_id,
+            // No seeded_from_event_id and no promotion counts, because there is
+            // no second event and nothing was promoted — the qualifiers are the
+            // same rows that played the pool. What is worth recording is how
+            // many finished and how many got out.
+            phase: 'bracket',
+            seeded_from_own_pool: true,
             seed_by: event.seed_by ?? 'wins',
-            promoted_from_pool: poolPromoted,
-            qualifiers_skipped: poolSkipped,
+            pool_finishers: ownPoolSize,
+            qualified: N,
+            round_ladder: ladder
+              ? [...ladder.byRound.entries()].map(([round, sh]) => ({ round, ...sh }))
+              : null,
           }
-        : {}),
+        : event.seeded_from_event_id
+          ? {
+              seeded_from_event_id: event.seeded_from_event_id,
+              seed_by: event.seed_by ?? 'wins',
+              promoted_from_pool: poolPromoted,
+              qualifiers_skipped: poolSkipped,
+            }
+          : {}),
     },
   });
 
@@ -989,7 +1244,24 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
   if (!event) throw new Error('Event not found');
   if (event.draw_locked) throw new Error('Draw is locked. Unlock it before generating matches.');
   assertNotFinalised(event, 'regenerated');
-  await assertNoResultsEntered(adminClient, eventId);
+
+  // THE POOL HALF OF A POOL-TO-BRACKET EVENT (00107). Same generator, same
+  // circle method, same group handling — what differs is that its matches are
+  // labelled, its own results are the only ones that can block a rebuild, and
+  // it leaves the event in the pool pair of states rather than the knockout's.
+  const phase = phaseValueFor(event.format as string, 'pool');
+  // ONCE THE KNOCKOUT IS DRAWN THE POOL IS HISTORY. Rebuilding it then would
+  // delete the fixtures the bracket's seeding was read off and leave the two
+  // halves describing different events — and the bracket cannot be un-drawn to
+  // repair it, because it may already have results. Refused rather than
+  // repaired.
+  if (phase && ['bracket_generated', 'live', 'completed'].includes(event.status as string)) {
+    throw new ExpectedError(
+      'The knockout has already been drawn from this round robin, so the round robin can no longer be rebuilt. '
+      + 'Void the knockout matches and regenerate the knockout if the standings have changed.',
+    );
+  }
+  await assertNoResultsEntered(adminClient, eventId, phase);
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
   const doubles = isDoublesEvent(event.event_type);
@@ -1102,8 +1374,8 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
     groups.push({ number: g, entries: entries.filter(e => e.group === g) });
   }
 
-  // Delete any existing matches
-  await adminClient.from('tournament_matches').delete().eq('event_id', eventId);
+  // Delete any existing matches OF THIS PHASE — see deletePhaseMatches.
+  await deletePhaseMatches(adminClient, eventId, phase);
 
   // ONE SHARED ROUND NUMBERING ACROSS THE GROUPS, and one shared
   // bracket_position within each round. 00081 put a UNIQUE index on
@@ -1130,6 +1402,12 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
 
         const insertData: Record<string, unknown> = {
           event_id: eventId,
+          phase,
+          // THE POOL IS PLAYED TO 11 (00108) — "we play round robin 11s". Only
+          // on the pool_to_bracket format, for the same reason the knockout
+          // ladder is: an ordinary round robin that has always been played at
+          // its event shape must keep being played at it.
+          ...(phase === 'pool' ? POOL_LADDER_SHAPE : {}),
           round_number: round + 1,
           // The group is on the entries, not in the name, so RoundRobinTab's
           // existing "one heading per round_number" rendering keeps working and
@@ -1155,7 +1433,7 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
 
   // Update event status
   await adminClient.from('tournament_events')
-    .update({ status: statusAfterDraw(event), updated_at: new Date().toISOString() })
+    .update({ status: statusAfterDraw(event, phase), updated_at: new Date().toISOString() })
     .eq('id', eventId);
 
   await logAudit(adminClient, {
@@ -1166,7 +1444,8 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
     details: {
       participants: N,
       rounds: numRounds,
-      redrawn_live: event.status === 'live',
+      redrawn_live: event.status === 'live' || event.status === 'pool_live',
+      ...(phase ? { phase } : {}),
       // Recorded even when it is 1, so a fixture list can always be explained
       // from its own audit row without re-reading an event that may since have
       // been edited.
@@ -1256,4 +1535,164 @@ export async function unlockDraw(eventId: string) {
   });
 
   revalidateEventPaths(event.tournament_id, eventId);
+}
+
+// ============================================================
+// The shape one ROUND is played to (00108)
+// ============================================================
+//
+// "we play round robin 11s then play single elim first round 11s, quarter 15s
+// semis 21s finals and third place games best to 3 21s".
+//
+// PER ROUND, NOT PER MATCH, because that is the unit the club thinks in — "the
+// quarter-finals" is a thing an exec says, "match 6" is not — and because a
+// draw in which two quarter-finals were played to different lengths is not a
+// format, it is a mistake. The round is addressed by its NUMBER within a phase,
+// with the third-place playoff addressed separately (it shares round_number
+// with the final and is not part of the round sequence; see 00080).
+//
+// AFTER GENERATION, NOT AT CREATION. A round has no identity until the draw
+// exists: whether round 2 is the quarter-final or the semi-final depends on how
+// many entries turned up, and the club names rounds by what they are ("quarter
+// final"), not by their index. The default ladder is applied at generation for
+// exactly this reason — it is anchored from the final backwards, which is only
+// knowable once the size is — and this action is how any of it is changed.
+//
+// A ROUND WITH A RESULT IN IT IS REFUSED, NOT SILENTLY RE-JUDGED. Changing the
+// shape under a recorded score would re-decide whether that score was ever
+// legal, and would change the Elo weight the match was rated at without
+// reversing the delta already applied. Both are silent. isPlayedMatch is the
+// same definition assertNoResultsEntered uses, so byes do not block.
+
+/** Clearing every override on a round: back to whatever the event says. */
+export type RoundShapeInput = {
+  games_per_match: number;
+  points_per_game: number;
+} | null;
+
+async function setRoundMatchShapeImpl(
+  eventId: string,
+  target: { phase: TournamentMatchPhase | null; roundNumber: number | null; thirdPlace: boolean },
+  shape: RoundShapeInput,
+) {
+  // NO NEW CAPABILITY. This is the event's match format, addressed one round at
+  // a time, so it is governed by the capability that already owns the event's
+  // format.
+  const admin = await requireCapability('tournaments.manage.event.update.write');
+  const adminClient = createAdminClient();
+
+  const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
+  if (!event) throw new Error('Event not found');
+  await assertTournamentNotSuspended(adminClient, event.tournament_id);
+  assertNotFinalised(event, 'changed');
+
+  if (shape) {
+    const { minGames, maxGames, minPoints, maxPoints } = CUSTOM_FORMAT_BOUNDS;
+    // The same sentences normalizeTypedFormat gives for the event-level fields,
+    // so a bad number reads the same wherever it is typed. The CHECK constraint
+    // in 00108 is the real enforcement; this is what the exec sees.
+    if (!Number.isInteger(shape.games_per_match) || shape.games_per_match < minGames
+      || shape.games_per_match > maxGames || shape.games_per_match % 2 === 0) {
+      throw new ExpectedError(`Games per match must be an odd number between ${minGames} and ${maxGames} — an even best-of cannot be decided.`);
+    }
+    if (!Number.isInteger(shape.points_per_game) || shape.points_per_game < minPoints || shape.points_per_game > maxPoints) {
+      throw new ExpectedError(`Points per game must be between ${minPoints} and ${maxPoints}.`);
+    }
+  }
+
+  // Which rows. The third-place playoff is addressed on its own because it
+  // shares round_number with the final — matching on the number alone would
+  // sweep it into the final's change, which is right by default and wrong the
+  // moment somebody wants them different.
+  let q = adminClient.from('tournament_matches')
+    .select('id, status, is_bye, round_name')
+    .eq('event_id', eventId);
+  if (target.phase) q = q.eq('phase', target.phase);
+  else q = q.is('phase', null);
+  // `.not('is_third_place','is',true)` rather than `.eq(false)`, matching
+  // assertNoResultsEntered's treatment of is_bye: the negative form is
+  // null-safe, and a row written before 00080 added the column with a default
+  // must not silently drop out of its own round.
+  if (target.thirdPlace) q = q.eq('is_third_place', true);
+  else q = q.not('is_third_place', 'is', true).eq('round_number', target.roundNumber!);
+
+  const { data: matches, error: readError } = await q;
+  // The error is not discarded, for the same reason assertNoResultsEntered does
+  // not discard its own: supabase-js resolves rather than rejects on a
+  // PostgREST error, so a failed read would look like "this round has no
+  // matches" and the update below would silently do nothing while reporting
+  // success.
+  if (readError) {
+    Sentry.captureException(readError);
+    throw new Error(`Could not read this round's matches, so nothing was changed: ${readError.message}`);
+  }
+  if (!matches || matches.length === 0) {
+    throw new ExpectedError('That round has no matches. Generate the draw first.');
+  }
+
+  const played = matches.filter(m => isPlayedMatch(m as { status?: string | null; is_bye?: boolean | null }));
+  if (played.length > 0) {
+    const n = played.length;
+    throw new ExpectedError(
+      `${n} match${n === 1 ? '' : 'es'} in this round already ${n === 1 ? 'has' : 'have'} a result, `
+      + 'and changing what the round is played to would re-judge scores that are already recorded and re-weight the ratings they earned. '
+      + `Void ${n === 1 ? 'it' : 'them'} first if the round really has to change. Byes do not count towards this.`,
+    );
+  }
+
+  const patch = shape
+    ? { games_per_match: shape.games_per_match, points_per_game: shape.points_per_game }
+    // NULL rather than the event's current numbers, so "use the event default"
+    // keeps meaning that afterwards: written out as values, the round would
+    // silently stop following an event whose format was later changed.
+    : { games_per_match: null, points_per_game: null };
+
+  const { failures } = await settleWrites(
+    matches.map(m => [
+      `tournament_matches shape for ${m.id}`,
+      adminClient.from('tournament_matches').update(patch).eq('id', m.id),
+    ] as const),
+  );
+  // A HALF-APPLIED ROUND IS THE ONE OUTCOME THAT MUST NOT BE QUIET: two
+  // quarter-finals to 15 and two to 21 is a draw nobody can referee, and
+  // nothing on the page would show it. Re-running is the whole remedy — the
+  // write is absolute and no result can exist in this round.
+  assertWritesSucceeded('Setting the shape of this round', failures);
+
+  await logAudit(adminClient, {
+    tournament_id: event.tournament_id,
+    event_id: eventId,
+    action: 'round_shape_set',
+    performed_by: admin.id,
+    details: {
+      phase: target.phase,
+      round_number: target.thirdPlace ? null : target.roundNumber,
+      third_place: target.thirdPlace,
+      round_name: matches[0]?.round_name ?? null,
+      matches: matches.length,
+      ...(shape ?? { cleared: true }),
+    },
+  });
+
+  revalidateEventPaths(event.tournament_id, eventId);
+}
+
+/**
+ * Set (or clear) what one round of a draw is played to.
+ *
+ * @param roundNumber the round within `phase`, or null when `thirdPlace` is set
+ * @param shape null clears the override so the round follows the event again
+ */
+export async function setRoundMatchShape(
+  eventId: string,
+  target: { phase: TournamentMatchPhase | null; roundNumber: number | null; thirdPlace?: boolean },
+  shape: RoundShapeInput,
+): Promise<ActionResult<void>> {
+  return runAction(async () => {
+    await setRoundMatchShapeImpl(
+      eventId,
+      { phase: target.phase, roundNumber: target.roundNumber, thirdPlace: target.thirdPlace === true },
+      shape,
+    );
+  });
 }

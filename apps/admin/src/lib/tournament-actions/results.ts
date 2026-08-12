@@ -5,8 +5,22 @@ import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { runAction, type ActionResult } from '../action-result';
 import { recomputeEventStandings } from './finalize';
-import { isDoublesEvent, getEventRules, describeMatchShape, isLegalGameScore, isLegalGameCount, ExpectedError } from '@badminton/shared';
-import type { TournamentEventType, TournamentMatchFormat, EventMatchShape } from '@badminton/shared';
+import {
+  isDoublesEvent,
+  getEventRules,
+  describeMatchShape,
+  isLegalGameScore,
+  isLegalGameCount,
+  ExpectedError,
+  eventIsPlaying,
+  resolveMatchShape,
+} from '@badminton/shared';
+import type {
+  TournamentEventType,
+  TournamentMatchFormat,
+  EventMatchShape,
+  MatchShapeOverride,
+} from '@badminton/shared';
 import {
   requireCapability,
   revalidateEventPaths,
@@ -227,7 +241,11 @@ function matchSlotFilter<T extends { eq(column: string, value: string): T }>(
 // can only be changed once the event is genuinely under way; 'completed' is
 // allowed too so a finished event can still be fixed.
 function assertEventResultsMutable(event: Record<string, unknown>, action: string) {
-  if (event.status !== 'live' && event.status !== 'completed') {
+  // eventIsPlaying, not `=== 'live'` (00107). A pool_to_bracket event plays its
+  // round robin at `pool_live`, and every corrective action — void, restore,
+  // slot editing — has to reach those matches on the day exactly as it reaches
+  // a knockout's. For the other two formats eventIsPlaying IS `=== 'live'`.
+  if (!eventIsPlaying(event.status as string) && event.status !== 'completed') {
     throw new ExpectedError(`Start the event before ${action}.`);
   }
 }
@@ -258,7 +276,15 @@ async function enterMatchResultImpl(
   // one step BEFORE the event goes live (registration -> checkin ->
   // bracket_generated -> live). Without this, results could be recorded — and
   // Elo applied — for a tournament that had not started.
-  if (event.status !== 'live') {
+  //
+  // eventIsPlaying, NOT `=== 'live'` (00107). THIS IS THE ONE-WORD CONDITION
+  // THAT WOULD HAVE KILLED THE POOL-TO-BRACKET FORMAT END TO END: its round
+  // robin is played at `pool_live`, so left as it was, every pool score anybody
+  // tried to enter would have come back "Start the event before entering
+  // results" on an event that was visibly running. No type check and no test of
+  // the generators would have caught it. For the other two formats
+  // eventIsPlaying is exactly `=== 'live'`.
+  if (!eventIsPlaying(event.status as string)) {
     throw new ExpectedError(
       event.status === 'completed'
         ? 'This event is finished. Edit the result instead of entering a new one.'
@@ -269,8 +295,14 @@ async function enterMatchResultImpl(
   // The event's typed shape wins over the match_format enum when it has one
   // (00046) — a pool run at 1 game to 15 must reject a 21-19 that the enum
   // fallback would have waved through.
-  const shape = event as unknown as EventMatchShape;
-  const matchFormat = event.match_format as TournamentMatchFormat;
+  //
+  // AND THE MATCH'S OWN SHAPE WINS OVER THE EVENT'S (00108). A draw played
+  // 11s / 15s / 21s / best-of-3 as it narrows has a different legal-score rule
+  // in every round, and this is the call site that decides. ScoreEntryDialog
+  // resolves the same way from the same function, so the dialog and the server
+  // cannot disagree about whether 21-19 is a possible first-round game.
+  const shape = resolveMatchShape(match as MatchShapeOverride, event as unknown as EventMatchShape);
+  const matchFormat = shape.match_format as TournamentMatchFormat;
   const games = shape.games_per_match ?? null;
   const points = shape.points_per_game ?? null;
   const shapeLabel = describeMatchShape(shape);
@@ -473,7 +505,15 @@ async function enterWalkoverImpl(
   // one step BEFORE the event goes live (registration -> checkin ->
   // bracket_generated -> live). Without this, results could be recorded — and
   // Elo applied — for a tournament that had not started.
-  if (event.status !== 'live') {
+  //
+  // eventIsPlaying, NOT `=== 'live'` (00107). THIS IS THE ONE-WORD CONDITION
+  // THAT WOULD HAVE KILLED THE POOL-TO-BRACKET FORMAT END TO END: its round
+  // robin is played at `pool_live`, so left as it was, every pool score anybody
+  // tried to enter would have come back "Start the event before entering
+  // results" on an event that was visibly running. No type check and no test of
+  // the generators would have caught it. For the other two formats
+  // eventIsPlaying is exactly `=== 'live'`.
+  if (!eventIsPlaying(event.status as string)) {
     throw new ExpectedError(
       event.status === 'completed'
         ? 'This event is finished. Edit the result instead of entering a new one.'

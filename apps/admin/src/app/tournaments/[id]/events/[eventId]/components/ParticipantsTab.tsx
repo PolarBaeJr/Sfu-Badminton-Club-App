@@ -23,7 +23,7 @@ import {
 } from '@/lib/tournament-actions';
 import { summarizeBulk } from '@/lib/bulk-add';
 import { participantControls, type DrawCapabilities } from '@/lib/participant-controls';
-import { nextPowerOf2, pickOne, isOutOfEvent } from '@badminton/shared';
+import { nextPowerOf2, pickOne, isOutOfEvent, eventIsPlaying } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil, UserMinus, Unlink, Users, Replace, Shuffle, LayoutGrid } from 'lucide-react';
@@ -283,10 +283,16 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   const withdrawnSolo = (isDoubles ? unpaired : participants).filter((p) => isOutOfEvent(p.status));
   const withdrawnCount = withdrawnPairs.length + withdrawnSolo.length;
 
+  // A pool_to_bracket event's entry list feeds a ROUND ROBIN first, not a
+  // bracket (00107), so it shows no draw size here at all — the knockout's
+  // field is decided by the pool, and quoting a 32-slot bracket for 24 entrants
+  // would describe an event that never happens. The header shows the real
+  // figure once the qualifiers are known.
+  const showsBracketSize = event.format === 'single_elimination';
   const bracketSize = nextPowerOf2(activeEntries.length);
   const byes = bracketSize - activeEntries.length;
   const drawLocked = event.draw_locked as boolean;
-  const eventLive = event.status === 'live';
+  const eventLive = eventIsPlaying(event.status);
   // WHAT IS ON SCREEN, decided by status AND capability together.
   //
   // This was a single `event.status === 'registration'`, so every control here
@@ -779,8 +785,8 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
                 {' '}+ {activeUnpaired.length} waiting for a partner
               </span>
             )}
-            {event.format !== 'round_robin' && ` → ${bracketSize}-slot bracket`}
-            {byes > 0 && event.format !== 'round_robin' && (
+            {showsBracketSize && ` → ${bracketSize}-slot bracket`}
+            {byes > 0 && showsBracketSize && (
               <span className="text-[var(--color-warning)]"> ({byes} skip{byes > 1 ? 's' : ''})</span>
             )}
           </span>
@@ -832,7 +838,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
       </div>
 
       {/* Skip preview */}
-      {byes > 0 && event.format !== 'round_robin' && (
+      {byes > 0 && showsBracketSize && (
         <div className="flex items-center gap-2 p-3 rounded-lg bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/20">
           <AlertTriangle className="w-4 h-4 text-[var(--color-warning)] flex-shrink-0" />
           <span className="text-sm text-[var(--color-warning)]">

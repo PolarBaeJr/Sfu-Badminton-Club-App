@@ -3,6 +3,8 @@
 import { useState, useMemo } from 'react';
 import { Badge } from '@badminton/ui';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
+import { RoundShapeControl } from './RoundShapeControl';
+import { eventIsPlaying } from '@badminton/shared';
 import { Trophy } from 'lucide-react';
 import { getName } from './entry-name';
 import type {
@@ -20,6 +22,12 @@ interface Props {
   participants: ParticipantWithPlayer[];
   pairs: PairWithPlayers[];
   isDoubles: boolean;
+  /**
+   * 'pool' when this is the round-robin half of a pool_to_bracket event, null
+   * on an ordinary round robin whose matches carry no phase (00107). It is what
+   * the per-round shape control addresses its rounds within.
+   */
+  phase?: 'pool' | null;
 }
 
 /** Group 1 is "A". Numbers on a scoresheet read as seeds; letters read as groups. */
@@ -30,10 +38,15 @@ export function groupLabel(groupNumber: number): string {
   return groupNumber >= 1 && groupNumber <= 26 ? String.fromCharCode(64 + groupNumber) : String(groupNumber);
 }
 
-export function RoundRobinTab({ event, matches, participants, pairs, isDoubles }: Props) {
+export function RoundRobinTab({ event, matches, participants, pairs, isDoubles, phase = null }: Props) {
   const [scoreMatch, setScoreMatch] = useState<TournamentMatchRow | null>(null);
   const allMatches = matches;
-  const isLive = event.status === 'live' || event.status === 'bracket_generated';
+  // eventIsPlaying covers `pool_live` as well as `live` (00107), which is when
+  // the round robin of a pool_to_bracket event is actually being played — the
+  // Score button has to be there then or the format cannot record anything. The
+  // pre-start statuses are kept alongside it exactly as before, so scores can
+  // still be typed in from a drawn-but-not-started event.
+  const isLive = eventIsPlaying(event.status) || event.status === 'bracket_generated' || event.status === 'pool_generated';
 
   const entries = useMemo<Array<ParticipantWithPlayer | PairWithPlayers>>(
     () => (isDoubles ? pairs : participants),
@@ -221,9 +234,17 @@ export function RoundRobinTab({ event, matches, participants, pairs, isDoubles }
         {/* Matches by Round */}
         {roundNumbers.map((roundNum) => (
           <div key={roundNum} className="space-y-2">
-            <h3 className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider">
-              {rounds[roundNum]?.[0]?.round_name ?? `Round ${roundNum}`}
-            </h3>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider">
+                {rounds[roundNum]?.[0]?.round_name ?? `Round ${roundNum}`}
+              </h3>
+              <RoundShapeControl
+                event={event}
+                matches={rounds[roundNum] ?? []}
+                phase={phase}
+                roundNumber={roundNum}
+              />
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               {(rounds[roundNum] ?? []).map((m) => {
                 const aId = isDoubles ? m.pair_a_id : m.participant_a_id;

@@ -5,7 +5,14 @@ import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
 import { revalidatePath } from 'next/cache';
 import { runAction, type ActionResult } from '../action-result';
-import { CUSTOM_FORMAT_BOUNDS, ExpectedError } from '@badminton/shared';
+import {
+  CUSTOM_FORMAT_BOUNDS,
+  ExpectedError,
+  isPoolToBracket,
+  playsRoundRobin,
+  statusStepsFor,
+  currentPhase,
+} from '@badminton/shared';
 import type {
   TournamentEventType,
   TournamentEventFormat,
@@ -70,12 +77,24 @@ function normalizeGroupShape(
   if (q !== null && (q < 1 || q > 16)) {
     throw new ExpectedError('Qualifiers per group must be between 1 and 16.');
   }
-  if (g !== null && g > 1 && format !== 'round_robin') {
+  if (g !== null && g > 1 && !playsRoundRobin(format)) {
     throw new ExpectedError('Only a round robin can be split into groups. A single-elimination event is one bracket.');
   }
   // Stored only when it means something, exactly as seed_by is: a
   // qualifiers-per-group left behind on a flat round robin is a stale choice
   // waiting to be read the day somebody sets a group count.
+  //
+  // A POOL-TO-BRACKET EVENT ALWAYS MEANS SOMETHING BY IT (00107), including
+  // with no groups at all: its bracket phase is seeded out of its own pool, so
+  // "how many qualify" has to be recorded whether the pool is flat or split.
+  // A flat pool IS one group, so the same column says it — there is no second
+  // column that could disagree, which is the whole reason not to add one.
+  // The default differs because the question differs: 2 out of each of several
+  // groups is the usual group stage, whereas 2 out of one flat pool is a final
+  // and nothing else, so a flat pool defaults to a 4-strong knockout.
+  if (isPoolToBracket(format)) {
+    return { group_count: g, qualifiers_per_group: q ?? (g !== null && g > 1 ? 2 : 4) };
+  }
   return { group_count: g, qualifiers_per_group: g !== null && g > 1 ? (q ?? 2) : null };
 }
 
@@ -124,6 +143,16 @@ async function createTournamentEventImpl(
 
   const typedFormat = normalizeTypedFormat(config.games_per_match, config.points_per_game);
   const groupShape = normalizeGroupShape(config.format, config.group_count, config.qualifiers_per_group);
+  // A pool_to_bracket event seeds from ITSELF — that is the format — so an
+  // external source would be a second, contradictory field for the same
+  // bracket. Refused rather than ignored: silently dropping a link the exec set
+  // is how an event ends up drawn from a pool nobody expected.
+  if (config.seeded_from_event_id && isPoolToBracket(config.format)) {
+    throw new ExpectedError(
+      'A Round Robin + Knockout event already plays its own pool, so it cannot also be seeded from another one. '
+      + 'Use Single Elimination if the field is meant to come from a separate pool event.',
+    );
+  }
   if (config.seeded_from_event_id) {
     await assertSeedSourceUsable(adminClient, tournamentId, null, config.seeded_from_event_id);
   }
@@ -137,7 +166,18 @@ async function createTournamentEventImpl(
     seeded_from_event_id: config.seeded_from_event_id ?? null,
     // seed_by is only read when a source is set; storing it without one would
     // leave a stale choice behind if a source is added later.
-    seed_by: config.seeded_from_event_id ? (config.seed_by ?? 'wins') : null,
+    //
+    // A POOL-TO-BRACKET EVENT ALWAYS SETS IT (00107), and that is the fix for
+    // the documented trap: assignPositionsAndPoints calls
+    // computeRoundRobinStandings with no seedBy, so it defaults to 'wins',
+    // while the bracket is seeded by seed_by. Across TWO events those can
+    // disagree and final_position — which drives the placement-bonus ledger —
+    // then comes from a different order than the draw did. Here there is ONE
+    // row, so the column is always populated and both readers pass it. The
+    // two-event path is deliberately left exactly as it is.
+    seed_by: (config.seeded_from_event_id || isPoolToBracket(config.format))
+      ? (config.seed_by ?? 'wins')
+      : null,
     ...groupShape,
     max_participants: config.max_participants ?? null,
     seeding_method: config.seeding_method ?? 'elo',
@@ -331,25 +371,52 @@ export async function setEventStatus(eventId: string, status: TournamentEventSta
   if (!event) throw new Error('Event not found');
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
-  // Validate status transitions
-  const validTransitions: Record<string, string[]> = {
-    registration: ['checkin'],
-    checkin: ['bracket_generated'],
-    bracket_generated: ['live'],
-    live: ['completed'],
-  };
-
-  if (!validTransitions[event.status]?.includes(status)) {
+  // Validate status transitions.
+  //
+  // DERIVED FROM statusStepsFor RATHER THAN WRITTEN OUT (00107), so the stepper
+  // the exec looks at and the transitions the server allows are the same list.
+  // A pool_to_bracket event has two more steps in the middle; every other
+  // format's path is character for character what it was.
+  //
+  // Still forward-only and still one step at a time — that property is what
+  // stops a redraw sending a running event backwards, and it now also stops a
+  // pool being skipped: `checkin -> live` is not a transition on this format.
+  const steps = statusStepsFor(event.format as string);
+  const here = steps.indexOf(event.status as TournamentEventStatus);
+  if (here < 0 || steps[here + 1] !== status) {
     throw new Error(`Invalid transition from ${event.status} to ${status}`);
   }
 
-  // Guard: do not go live unless a bracket exists.
-  if (status === 'live') {
-    const { count: matchCount } = await adminClient.from('tournament_matches')
+  // Guard: do not start a phase that has no matches.
+  //
+  // COUNTED WITHIN THE PHASE (00107). A pool_to_bracket event reaching `live`
+  // already has a pool's worth of completed matches sitting in the same table,
+  // so an unfiltered count would say "a draw exists" for a knockout that was
+  // never generated, and the event would go live with nothing to play. The two
+  // other formats have one phase and their matches carry phase NULL, so the
+  // filter below is a no-op for them.
+  const startingPhase = currentPhase(event.format as string, status);
+  // `bracket_generated` is on this list for a pool_to_bracket event only, and
+  // for a reason the other two formats never have: on them that status is
+  // written by the generator itself and is unreachable any other way, whereas
+  // here it is also the step AFTER `pool_live`, so calling this action directly
+  // could mark an event "bracket generated" with no bracket. The `live` guard
+  // would eventually catch it, but an event should not be able to sit in a
+  // state that is a lie about its own rows in the meantime.
+  const startsAPhase = status === 'live' || status === 'pool_live'
+    || (status === 'bracket_generated' && isPoolToBracket(event.format as string));
+  if (startsAPhase) {
+    let q = adminClient.from('tournament_matches')
       .select('*', { count: 'exact', head: true })
       .eq('event_id', eventId);
+    if (startingPhase) q = q.eq('phase', startingPhase);
+    const { count: matchCount } = await q;
     if (!matchCount || matchCount === 0) {
-      throw new Error('Cannot go live — no bracket has been generated for this event');
+      throw new Error(
+        startingPhase === 'pool'
+          ? 'Cannot start the pool — no fixtures have been generated for it'
+          : 'Cannot go live — no bracket has been generated for this event',
+      );
     }
   }
 
@@ -368,8 +435,16 @@ export async function setEventStatus(eventId: string, status: TournamentEventSta
   // properly (a walkover is rated, and rating anything before the event starts
   // is exactly what the result actions refuse to do), so settle them here
   // rather than let a live event open with matches nobody can play.
+  //
+  // RUN AT BOTH pool_live AND live ON A POOL-TO-BRACKET EVENT, and that is not
+  // a double forfeit. forfeitOpenMatchesForEntry only touches matches that are
+  // still OPEN, so by the time the knockout starts every pool match it already
+  // settled is completed or walked over and is skipped. What the second run
+  // catches is the people who left BETWEEN the pool ending and the knockout
+  // starting — they are in the bracket (the field is fixed when it is drawn)
+  // and nothing else would ever forfeit them out of it.
   let sweep = { forfeited: 0, unresolved: 0 };
-  if (status === 'live') {
+  if (status === 'live' || status === 'pool_live') {
     sweep = await forfeitOutOfEventEntries(
       adminClient,
       eventId,

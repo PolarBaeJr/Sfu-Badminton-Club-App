@@ -341,17 +341,27 @@ export const TOURNAMENT_MATCH_FORMAT_LABELS: Record<TournamentMatchFormat, strin
   one_game_11: '1 Game to 11',
 };
 
+// The two pool statuses (00107) appear only on a pool_to_bracket event, and
+// they are labelled for the PHASE rather than for the mechanism — an exec
+// reading the stepper needs "Pool Live", not a second thing called "Live".
 export const TOURNAMENT_EVENT_STATUS_LABELS: Record<TournamentEventStatus, string> = {
   registration: 'Registration',
   checkin: 'Check-In',
+  pool_generated: 'Pool Drawn',
+  pool_live: 'Pool Live',
   bracket_generated: 'Bracket Generated',
   live: 'Live',
   completed: 'Completed',
 };
 
+// The pool pair borrow the colours of the knockout pair they mirror, so the
+// stepper reads as two passes of the same shape rather than as seven unrelated
+// states. Both are lightened a step so the two halves are still tellable apart.
 export const TOURNAMENT_EVENT_STATUS_COLORS: Record<TournamentEventStatus, string> = {
   registration: '#3B82F6',
   checkin: '#F59E0B',
+  pool_generated: '#A78BFA',
+  pool_live: '#34D399',
   bracket_generated: '#8B5CF6',
   live: '#10B981',
   completed: '#6B7280',

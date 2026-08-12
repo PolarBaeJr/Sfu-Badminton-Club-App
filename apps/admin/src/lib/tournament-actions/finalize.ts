@@ -2,7 +2,16 @@
 
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
-import { isDoublesEvent, clampElo, placementBonusFor, ExpectedError } from '@badminton/shared';
+import {
+  isDoublesEvent,
+  clampElo,
+  placementBonusFor,
+  ExpectedError,
+  endsInKnockout,
+  isPoolToBracket,
+  phaseValueFor,
+} from '@badminton/shared';
+import type { SeedBy } from '@badminton/shared';
 import { getTournamentBonusSettings } from '../platform-settings';
 import {
   requireCapability,
@@ -288,14 +297,30 @@ async function assignPositionsAndPoints(
   // written as one parallel batch of UPDATEs.
   const positionMap = new Map<string, number>();
 
-  if (event.format === 'single_elimination') {
-    const { data: matches } = await adminClient.from('tournament_matches')
+  // WHICH RULE DECIDES THE PLACINGS. A pool_to_bracket event ends in a knockout
+  // and is placed by it, exactly as a single_elimination event is — the pool
+  // decided who got in, not who won. What it adds is everyone the knockout did
+  // not contain; see the non-qualifier pass below.
+  const knockout = endsInKnockout(event.format as string);
+  const poolToBracket = isPoolToBracket(event.format as string);
+  const bracketPhase = phaseValueFor(event.format as string, 'bracket');
+
+  if (knockout) {
+    // PHASE-FILTERED (00107), and this is not optional. The pool's matches sit
+    // in this same table on a pool_to_bracket event, and every one of them has
+    // a round_number in the same range as the bracket's. Unfiltered, the
+    // `totalRounds = max(round_number)` line below would be computed over a
+    // mixture of two draws and the "loser of the final is 2nd" rule would be
+    // applied to a round-robin fixture.
+    let matchQuery = adminClient.from('tournament_matches')
       // The SLOTS come back too, so the winner can be checked against them
       // below rather than taken on trust.
       .select('id, round_number, is_third_place, winner_pair_id, loser_pair_id, winner_participant_id, loser_participant_id, participant_a_id, participant_b_id, pair_a_id, pair_b_id')
       .eq('event_id', eventId)
       .in('status', ['completed', 'walkover'])
       .order('round_number', { ascending: false });
+    if (bracketPhase) matchQuery = matchQuery.eq('phase', bracketPhase);
+    const { data: matches } = await matchQuery;
 
     // Every position, point and placement bonus below is read off winner_* and
     // loser_*, and nothing had ever checked that those two are the players who
@@ -378,6 +403,41 @@ async function assignPositionsAndPoints(
         if (m.round_number === totalRounds && winnerId) positionMap.set(winnerId, 1);
       }
     }
+
+    // ------------------------------------------------------------
+    // EVERYONE THE KNOCKOUT DID NOT CONTAIN (00107)
+    // ------------------------------------------------------------
+    //
+    // On a pool_to_bracket event most of the field never enters the bracket,
+    // and without this they would finish the event with final_position NULL —
+    // no placing, no tournament points, and invisible to every results screen,
+    // having played a full round robin. They are ordered among themselves by
+    // the pool table, and they finish BEHIND every qualifier.
+    //
+    // THE START IS max(assigned) + 1, NOT (number of qualifiers) + 1. Knockout
+    // placings are not dense: an 8-slot draw awards 1, 2, 3, 3 and then 5 to
+    // all four first-round losers, so the highest number a qualifier holds is
+    // bracketSize/2 + 1 and can exceed the size of the field. Starting from the
+    // count would place a non-qualifier level with, or ahead of, somebody who
+    // won a knockout match.
+    //
+    // THE ORDER COMES FROM event.seed_by, WHICH IS THE DOCUMENTED TRAP CLOSED.
+    // assignPositionsAndPoints has always called computeRoundRobinStandings
+    // with no seedBy — defaulting to 'wins' — while the bracket was seeded by
+    // seed_by, and across TWO events those can disagree, so final_position (and
+    // therefore the placement-bonus ledger) could be computed from a different
+    // order than the draw was. Here there is ONE row: the same column decides
+    // who qualified and how the rest are ranked, so they cannot disagree. The
+    // two-event path's call below is deliberately left exactly as it was.
+    if (poolToBracket) {
+      const seedBy = ((event.seed_by as SeedBy | null) ?? 'wins') as SeedBy;
+      const poolStandings = await computeRoundRobinStandings(eventId, seedBy);
+      let next = positionMap.size > 0 ? Math.max(...positionMap.values()) + 1 : 1;
+      for (const s of poolStandings) {
+        if (!s || positionMap.has(s.id)) continue;
+        positionMap.set(s.id, next++);
+      }
+    }
   } else {
     // Round robin: compute standings and assign positions
     const standings = await computeRoundRobinStandings(eventId);
@@ -402,8 +462,16 @@ async function assignPositionsAndPoints(
 
   // Assign points based on format. Compute (id → points) in memory then issue
   // one parallel batch of UPDATEs.
+  //
+  // A pool_to_bracket event is scored on POSITION, like the knockout it ends
+  // in, and not on the round robin's 3-per-win. Everybody in it now has a
+  // final_position — the qualifiers from the bracket, the rest from the pool
+  // table — so the position ladder covers the whole field, and it is the one
+  // that reflects what the event was actually for. It also keeps the pool from
+  // outscoring the knockout: five pool wins would be 16 points on the
+  // round-robin rule, more than the 10 a beaten quarter-finalist takes.
   const pointsMap = new Map<string, number>();
-  if (event.format === 'single_elimination') {
+  if (knockout) {
     // Position-based points: 1st=100, 2nd=75, 3rd-4th=50, 5th-8th=25, else 10
     const { data: allEntries } = await adminClient.from(table)
       .select('id, final_position')

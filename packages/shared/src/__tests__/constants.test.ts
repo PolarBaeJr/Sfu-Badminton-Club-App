@@ -121,7 +121,14 @@ describe('TOURNAMENT_MATCH_FORMAT_LABELS', () => {
 });
 
 describe('TOURNAMENT_EVENT_STATUS_LABELS', () => {
-  const allStatuses: TournamentEventStatus[] = ['registration', 'checkin', 'bracket_generated', 'live', 'completed'];
+  // The two pool statuses (00107) belong to the pool_to_bracket format and are
+  // written on no other. They are listed here for the same reason the other
+  // five are: the point of these two tests is that the label and colour maps
+  // are EXHAUSTIVE over the union type, so a status added without a label is
+  // caught here rather than as a blank chip on the event page.
+  const allStatuses: TournamentEventStatus[] = [
+    'registration', 'checkin', 'pool_generated', 'pool_live', 'bracket_generated', 'live', 'completed',
+  ];
 
   it('has an entry for every TournamentEventStatus value', () => {
     for (const status of allStatuses) {
@@ -137,7 +144,14 @@ describe('TOURNAMENT_EVENT_STATUS_LABELS', () => {
 });
 
 describe('TOURNAMENT_EVENT_STATUS_COLORS', () => {
-  const allStatuses: TournamentEventStatus[] = ['registration', 'checkin', 'bracket_generated', 'live', 'completed'];
+  // The two pool statuses (00107) belong to the pool_to_bracket format and are
+  // written on no other. They are listed here for the same reason the other
+  // five are: the point of these two tests is that the label and colour maps
+  // are EXHAUSTIVE over the union type, so a status added without a label is
+  // caught here rather than as a blank chip on the event page.
+  const allStatuses: TournamentEventStatus[] = [
+    'registration', 'checkin', 'pool_generated', 'pool_live', 'bracket_generated', 'live', 'completed',
+  ];
 
   it('has a color entry for every TournamentEventStatus value', () => {
     for (const status of allStatuses) {

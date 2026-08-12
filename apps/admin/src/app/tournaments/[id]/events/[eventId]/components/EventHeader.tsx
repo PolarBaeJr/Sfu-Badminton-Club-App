@@ -8,6 +8,12 @@ import {
   TOURNAMENT_EVENT_STATUS_COLORS,
   nextPowerOf2,
   describeMatchShape,
+  TOURNAMENT_EVENT_FORMAT_LABELS,
+  isPoolToBracket,
+  endsInKnockout,
+  playsRoundRobin,
+  statusStepsFor,
+  currentPhase,
 } from '@badminton/shared';
 import type { TournamentEventType, TournamentEventStatus } from '@badminton/shared';
 import {
@@ -43,15 +49,18 @@ interface Props {
    * EventControlCenter for why the two counts must stay apart.
    */
   playedMatches: number;
+  /** How many matches the CURRENT phase holds — what a redraw would replace. */
+  phaseMatches: number;
+  /** How many matches the POOL half holds, and how many are decided. */
+  poolTotal: number;
+  poolDecided: number;
   /** Only `generate` is read here; the rest belong to the participants tab. */
   drawCapabilities: DrawCapabilities;
   /** Does the draw that exists right now carry a 3rd place playoff match? */
   hasThirdPlace: boolean;
 }
 
-const STATUS_STEPS: TournamentEventStatus[] = ['registration', 'checkin', 'bracket_generated', 'live', 'completed'];
-
-export function EventHeader({ tournament, event, siblingEvents, isDoubles, totalEntries, checkedIn, totalMatches, completedMatches, playedMatches, drawCapabilities, hasThirdPlace }: Props) {
+export function EventHeader({ tournament, event, siblingEvents, isDoubles, totalEntries, checkedIn, totalMatches, completedMatches, playedMatches, phaseMatches, poolTotal, poolDecided, drawCapabilities, hasThirdPlace }: Props) {
   const [loading, setLoading] = useState(false);
   const [lockLoading, setLockLoading] = useState(false);
   const [regenLoading, setRegenLoading] = useState(false);
@@ -88,23 +97,51 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
   const status = event.status as TournamentEventStatus;
   const eventType = event.event_type as TournamentEventType;
   const format = event.format as string;
+  // The stepper's steps come from the SAME function setEventStatus derives its
+  // transition table from, so the progress bar and the server cannot disagree
+  // about what happens next.
+  const STATUS_STEPS = statusStepsFor(format);
+  const poolToBracket = isPoolToBracket(format);
+  const phaseNow = currentPhase(format, status);
   const currentStepIdx = STATUS_STEPS.indexOf(status);
-  const bracketSize = nextPowerOf2(totalEntries);
-  const byes = bracketSize - totalEntries;
+  const groupCount = (event.group_count as number | null) ?? 1;
+  const qualifiersPerGroup = (event.qualifiers_per_group as number | null) ?? (groupCount >= 2 ? 2 : 4);
+  // THE KNOCKOUT'S FIELD IS THE QUALIFIERS, NOT THE ENTRY LIST (00107). Sizing
+  // it from totalEntries would tell an exec running 24 people in 4 groups that
+  // they were about to get a 32-slot bracket with 24 byes, when what the format
+  // actually produces is an 8-slot draw. A flat pool is one group, so the same
+  // two numbers describe both shapes.
+  const fieldSize = poolToBracket
+    ? Math.min(groupCount >= 2 ? groupCount * qualifiersPerGroup : qualifiersPerGroup, totalEntries)
+    : totalEntries;
+  const bracketSize = nextPowerOf2(fieldSize);
+  const byes = bracketSize - fieldSize;
   // Offered only where it means something: a knockout draw. A round robin
   // already produces a full ordering, and a 2-entry draw is a final with no
   // semi-finals to lose.
-  const thirdPlaceApplies = format !== 'round_robin' && bracketSize >= 4;
-  // ...and at the moment the draw is generated, which is now two moments: the
-  // first press at check-in, and a redraw once a bracket exists.
-  const offerThirdPlace = status === 'checkin' && thirdPlaceApplies;
+  // endsInKnockout, not `!== 'round_robin'`: a pool_to_bracket event ends in a
+  // knockout and wants a playoff exactly as a single-elimination one does.
+  const thirdPlaceApplies = endsInKnockout(format) && bracketSize >= 4;
+  // ...and at the moment the draw is generated, which is now three moments: the
+  // first press at check-in, the press that draws a pool_to_bracket event's
+  // knockout out of its finished pool, and a redraw once a bracket exists.
+  const offerThirdPlace = thirdPlaceApplies
+    && (poolToBracket ? status === 'pool_live' : status === 'checkin');
   // Same rule the server applies: the format is editable until a draw exists.
   const settingsEditable = totalMatches === 0 && (status === 'registration' || status === 'checkin');
   const seededFromPool = Boolean(event.seeded_from_event_id);
   // Mirrors generateSingleEliminationBracketImpl exactly. Kept in step by the
   // dialog reading the same two fields the generator reads — a third rule here
   // would be a promise about the draw that the server does not keep.
-  const drawIsRandomised = !seededFromPool && event.seeding_method !== 'manual';
+  //
+  // A pool_to_bracket event is pool-seeded from its OWN pool, so it is drawn on
+  // the same terms: not at all when the pool is flat (the finishing order is a
+  // total order everybody played for), and within qualification tiers when it
+  // has groups.
+  const ownPoolSeeded = poolToBracket;
+  const drawIsRandomised = poolToBracket
+    ? groupCount >= 2 && event.seeding_method !== 'manual'
+    : !seededFromPool && event.seeding_method !== 'manual';
 
   async function handleAction() {
     setLoading(true);
@@ -113,7 +150,11 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
         await setEventStatus(event.id as string, 'checkin');
         toast('Check-in opened', 'success');
       } else if (status === 'checkin') {
-        const res = format === 'round_robin'
+        // WHICH HALF IS BUILT FIRST. playsRoundRobin covers both round_robin and
+        // pool_to_bracket, because the first thing a pool_to_bracket event
+        // builds IS a round robin — same action, same generator; the server
+        // labels its matches and leaves the event in the pool states.
+        const res = playsRoundRobin(format)
           ? await generateRoundRobinMatches(event.id as string)
           // A pool-seeded draw's size is only known server-side, so the flag is
           // passed as ticked and the server skips it if the resulting draw turns
@@ -125,7 +166,18 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
         // draw — and the exec needs to read which one, so the message is shown
         // rather than swallowed by a generic failure toast.
         if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
-        toast('Bracket generated', 'success');
+        toast(poolToBracket ? 'Round robin generated' : 'Bracket generated', 'success');
+      } else if (status === 'pool_generated') {
+        await setEventStatus(event.id as string, 'pool_live');
+        toast('Round robin is live!', 'success');
+      } else if (status === 'pool_live') {
+        // THE ONE PRESS THE WHOLE FORMAT EXISTS FOR: the pool is played out and
+        // the qualifiers go into a knockout without re-entering anything and
+        // without checking in again. The server refuses if a single pool match
+        // is still open, and says which.
+        const res = await generateSingleEliminationBracket(event.id as string, offerThirdPlace && thirdPlace);
+        if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
+        toast('Knockout drawn from the round-robin standings', 'success');
       } else if (status === 'bracket_generated') {
         await setEventStatus(event.id as string, 'live');
         toast('Tournament is live!', 'success');
@@ -183,9 +235,12 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
       message: (
         <div className="space-y-3">
           <p>
-            The {totalMatches === 1 ? 'one match' : `${totalMatches} matches`} in the current draw
-            {' '}are deleted and a new draw is built from the {totalEntries === 1 ? 'entry' : `${totalEntries} entries`}
-            {' '}in the event right now. Match numbers, courts and who plays whom all change, so anyone
+            The {phaseMatches === 1 ? 'one match' : `${phaseMatches} matches`} in
+            {' '}{phaseNow === 'pool' ? 'the round robin' : 'the current draw'}
+            {' '}are deleted and a new draw is built from{' '}
+            {phaseNow === 'bracket' && poolToBracket
+              ? 'the round-robin standings as they stand now'
+              : `the ${totalEntries === 1 ? 'entry' : `${totalEntries} entries`} in the event right now`}. Match numbers, courts and who plays whom all change, so anyone
             who has already been told their first-round opponent will have the wrong one.
           </p>
           {/* THE LIVE PARAGRAPH SAYS THE TWO THINGS THE EXEC CANNOT SEE FROM THE
@@ -206,6 +261,7 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
           <p>
             Everyone in the new draw is notified that the bracket has been published, again.
             {seededFromPool && ' The field is re-read from the pool standings, so a pool result edited since the first draw is picked up.'}
+            {phaseNow === 'pool' && ' The knockout has not been drawn yet, so nothing downstream depends on these fixtures.'}
             {' '}Nothing that has been played is touched: if any result, walkover or forfeit has been
             recorded, this is refused rather than done. Byes do not count as played.
           </p>
@@ -217,11 +273,12 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
               doesnt change anything" was an accurate bug report. The two cases
               that still redraw identically say so here rather than leave the
               exec pressing the button a third time to find out. */}
-          {format !== 'round_robin' && (
-            seededFromPool ? (
+          {endsInKnockout(format) && phaseNow !== 'pool' && (
+            (seededFromPool || ownPoolSeeded) ? (
               <p>
-                This event is seeded from a pool, so the draw follows the pool standings exactly
-                and will come out the same unless a pool result has changed.
+                {ownPoolSeeded && groupCount >= 2
+                  ? 'This knockout is seeded from this event\u2019s own group stage. Group winners stay in the top tier and runners-up in the next, but who meets whom inside a tier is drawn again \u2014 and group-mates are kept apart in round one where the field allows it.'
+                  : 'This event is seeded from a pool, so the draw follows the pool standings exactly and will come out the same unless a pool result has changed.'}
               </p>
             ) : (
               <DrawModeChoice
@@ -254,7 +311,7 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
     // 'random', and that loses nothing today: nothing anywhere reads the
     // difference between those two, both mean "drawn", and 'elo' is the default
     // every event in the club already carries.
-    const modeShouldChange = !seededFromPool && format !== 'round_robin'
+    const modeShouldChange = !seededFromPool && !poolToBracket && endsInKnockout(format)
       && regenExactDraw.current === drawIsRandomised;
     if (modeShouldChange) {
       const modeRes = await updateTournamentEvent(event.id as string, {
@@ -264,7 +321,11 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
     }
     // Dispatched on format exactly as handleAction does — a round robin sitting
     // at bracket_generated has its own delete-and-rebuild and no playoff.
-    const res = format === 'round_robin'
+    // WHICH HALF IS REBUILT is decided by the phase the event is IN, not by its
+    // format alone — a pool_to_bracket event redraws its pool while the pool is
+    // the current phase and its knockout once the knockout is. The server makes
+    // the same decision from the same status and deletes only that half.
+    const res = (phaseNow === 'pool' || format === 'round_robin')
       ? await generateRoundRobinMatches(event.id as string)
       // Same reasoning as the check-in press: `thirdPlaceApplies` gates the
       // CHECKBOX, not the request, and createThirdPlaceMatch skips a draw with
@@ -278,16 +339,25 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
 
   const actionLabel: Record<string, string> = {
     registration: 'Open Check-In',
-    checkin: 'Generate Bracket',
-    bracket_generated: 'Start Tournament',
+    checkin: poolToBracket ? 'Generate Round Robin' : 'Generate Bracket',
+    pool_generated: 'Start Round Robin',
+    // THE BUTTON SAYS WHAT IT DOES. "Next Step" on the one press the format
+    // exists for would leave the exec guessing whether it starts the knockout
+    // or ends the event.
+    pool_live: 'Draw the Knockout',
+    bracket_generated: poolToBracket ? 'Start Knockout' : 'Start Tournament',
     live: 'Finalize Tournament',
   };
 
   // A pool-seeded event usually has NOBODY entered yet — its field arrives at
   // generation, promoted from the pool. Gating on checked-in entries would make
   // the one button that can fill it permanently unpressable.
+  const poolOutstanding = Math.max(0, poolTotal - poolDecided);
   const actionDisabled =
     (status === 'checkin' && checkedIn < 2 && !seededFromPool)
+    // The knockout cannot be drawn out of a half-played pool — the server
+    // refuses, and it should not take a click to find that out.
+    || (status === 'pool_live' && poolOutstanding > 0)
     // Finalizing refuses unless every match is decided (finalize.ts), and it
     // refused AFTER the click — an exec pressed the one obvious button at the
     // end of an event and got an error for a state the page already knew about.
@@ -300,6 +370,8 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
   const actionHint =
     status === 'checkin' && checkedIn < 2 && !seededFromPool
       ? 'At least two players must be checked in'
+      : status === 'pool_live' && poolOutstanding > 0
+        ? `${poolOutstanding} round-robin match${poolOutstanding === 1 ? '' : 'es'} still to be played`
       : status === 'live' && completedMatches < totalMatches
         ? `${totalMatches - completedMatches} match${totalMatches - completedMatches === 1 ? '' : 'es'} still to be decided`
         : undefined;
@@ -333,7 +405,16 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
             >
               <span className="sr-only">Event status: </span>{TOURNAMENT_EVENT_STATUS_LABELS[status]}
             </span>
-            <Badge variant="default">{format === 'round_robin' ? 'Round Robin' : 'Single Elimination'}</Badge>
+            <Badge variant="default">
+              {TOURNAMENT_EVENT_FORMAT_LABELS[format as keyof typeof TOURNAMENT_EVENT_FORMAT_LABELS] ?? format}
+            </Badge>
+            {poolToBracket && (
+              <Badge variant="default">
+                {groupCount >= 2
+                  ? `${groupCount} groups, top ${qualifiersPerGroup} each`
+                  : `Top ${qualifiersPerGroup} qualify`}
+              </Badge>
+            )}
             <Badge variant="default">{describeMatchShape(event as unknown as TournamentEventRow)}</Badge>
             {seededFromPool && (
               <Badge variant="default">
@@ -362,7 +443,7 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
               Settings
             </Button>
           )}
-          {['bracket_generated', 'live'].includes(status) && (
+          {['pool_generated', 'pool_live', 'bracket_generated', 'live'].includes(status) && (
             <Button
               variant="ghost"
               loading={lockLoading}
@@ -518,7 +599,14 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
         <StatCard
           icon={<BarChart3 className="w-4 h-4" />}
           label="Bracket Info"
-          value={format === 'round_robin' ? `${totalEntries} entries` : `${bracketSize}-slot${byes > 0 ? ` (${byes} skip${byes > 1 ? 's' : ''})` : ''}`}
+          value={
+            // Before the knockout is drawn there is no bracket size to report —
+            // the field is decided by the pool, not by how many entered — so a
+            // pool_to_bracket event shows what it is playing right now.
+            (poolToBracket && phaseNow !== 'bracket') || format === 'round_robin'
+              ? `${totalEntries} entries`
+              : `${bracketSize}-slot${byes > 0 ? ` (${byes} skip${byes > 1 ? 's' : ''})` : ''}`
+          }
           color="var(--color-warning)"
         />
       </div>
