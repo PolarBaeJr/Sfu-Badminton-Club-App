@@ -415,7 +415,14 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
                   : `Top ${qualifiersPerGroup} qualify`}
               </Badge>
             )}
-            <Badge variant="default">{describeMatchShape(event as unknown as TournamentEventRow)}</Badge>
+            {/* NOT ON A POOL_TO_BRACKET EVENT. Every match there carries its
+                own shape from the round ladder, so the event-level value is
+                never played to — the badge announced "Best of 3 to 21" above a
+                first round played to 11. The Bracket tab's "Played to" strip is
+                where the real shapes live. */}
+            {!isPoolToBracket(event.format as string) && (
+              <Badge variant="default">{describeMatchShape(event as unknown as TournamentEventRow)}</Badge>
+            )}
             {seededFromPool && (
               <Badge variant="default">
                 Seeded from pool by {(event.seed_by as string) === 'points' ? 'points' : 'wins'}

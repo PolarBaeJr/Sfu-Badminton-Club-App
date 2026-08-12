@@ -2,7 +2,8 @@ import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { Card, Badge, PageHeader } from '@badminton/ui';
 import { TournamentCheckinQr } from './checkin-qr';
-import { formatDate, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS, describeMatchShape, loadTournamentEntryCounts } from '@badminton/shared';
+import { formatDate, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS, TOURNAMENT_EVENT_FORMAT_LABELS, describeMatchShape, loadTournamentEntryCounts } from '@badminton/shared';
+import type { TournamentEventFormat } from '@badminton/shared';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Users, Calendar, Zap, Crown, Plus, Swords, DollarSign } from 'lucide-react';
 import Link from 'next/link';
@@ -196,7 +197,12 @@ export default async function TournamentDetailPage({ params }: { params: Promise
                     </span>
                   </div>
                   <div className="flex items-center gap-3 text-sm text-[var(--text-muted)]">
-                    <span className="capitalize">{ev.format.replace('_', ' ')}</span>
+                    {/* The LABEL, not the enum. `.replace('_',' ')` replaces
+                        only the FIRST underscore, so pool_to_bracket rendered
+                        as "Pool To_bracket" — and even fixed it would say
+                        "Pool To Bracket" rather than the name the rest of the
+                        console uses. */}
+                    <span>{TOURNAMENT_EVENT_FORMAT_LABELS[ev.format as TournamentEventFormat] ?? ev.format}</span>
                     <span>&middot;</span>
                     <span className="flex items-center gap-1">
                       <Users className="w-3.5 h-3.5" />

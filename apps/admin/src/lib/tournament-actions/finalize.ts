@@ -177,7 +177,7 @@ export async function applyPlacementBonuses(eventId: string) {
     }
   } else {
     const { data: participants } = await adminClient.from('tournament_participants')
-      .select('id, player_id, final_position, elo_change')
+      .select('id, player_id, final_position, elo_change, elo_after')
       .eq('event_id', eventId)
       .not('final_position', 'is', null);
 
@@ -214,10 +214,27 @@ export async function applyPlacementBonuses(eventId: string) {
         if (!ledger.creditedParticipants.has(p.id)) {
           participantTargets.push(p.id);
           const prevChange = (p.elo_change as number | null) ?? 0;
+          // elo_after MOVES WITH elo_change, and it did not before. The bonus
+          // was credited to the rating and to elo_change but never to the
+          // snapshot, so the results table showed a player's rating BEFORE
+          // their bonus while reporting a change that included it: "1114 ->
+          // 1190 (+108)" for somebody actually sitting on 1222. The ladder was
+          // right; the row describing it was not.
+          //
+          // Clamped the same way the rating is, so the snapshot cannot claim a
+          // number the rating bounds would have refused. Null elo_after means
+          // this entry was never rated (no matches played), and adding a bonus
+          // to nothing would invent a rating — left alone.
+          const prevAfter = p.elo_after as number | null;
           writes.push([
             `tournament_participants.elo_change for ${p.id}`,
             adminClient.from('tournament_participants')
-              .update({ elo_change: prevChange + p.bonus })
+              .update({
+                elo_change: prevChange + p.bonus,
+                ...(prevAfter === null || prevAfter === undefined
+                  ? {}
+                  : { elo_after: clampElo(prevAfter + p.bonus, bounds) }),
+              })
               .eq('id', p.id),
           ]);
         }
