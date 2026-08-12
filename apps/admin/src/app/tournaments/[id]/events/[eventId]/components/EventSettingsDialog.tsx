@@ -32,6 +32,11 @@ export function EventSettingsDialog({
     pointsPerGame: event.points_per_game?.toString() ?? '',
     seededFrom: event.seeded_from_event_id ?? '',
     seedBy: (event.seed_by as SeedBy | null) ?? 'wins',
+    // Structural reads, following max_events_per_player's precedent: 00106's
+    // columns are not in the generated Database type until the migration has
+    // been run and the types regenerated from the database it changed.
+    groupCount: (event as { group_count?: number | null }).group_count?.toString() ?? '',
+    qualifiersPerGroup: (event as { qualifiers_per_group?: number | null }).qualifiers_per_group?.toString() ?? '2',
   });
   const [maxParticipants, setMaxParticipants] = useState(event.max_participants?.toString() ?? '');
   const [loading, setLoading] = useState(false);
@@ -62,7 +67,7 @@ export function EventSettingsDialog({
   return (
     <Dialog open onClose={onClose} title="Event Settings">
       <form onSubmit={handleSave} className="space-y-4">
-        <EventFormatFields value={values} onChange={setValues} siblings={seedableSiblings} />
+        <EventFormatFields value={values} onChange={setValues} siblings={seedableSiblings} format={event.format} />
         <Input
           label={values.seededFrom === '' ? 'Max Participants (optional)' : 'Bracket Size (how many qualify)'}
           type="number"

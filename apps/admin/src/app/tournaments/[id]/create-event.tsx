@@ -79,7 +79,7 @@ export function CreateEventButton({ tournamentId, siblings = [] }: { tournamentI
               { value: 'round_robin', label: 'Round Robin' },
             ]}
           />
-          <EventFormatFields value={formatValues} onChange={setFormatValues} siblings={seedableSiblings} />
+          <EventFormatFields value={formatValues} onChange={setFormatValues} siblings={seedableSiblings} format={format} />
           <Input
             label="Max Participants (optional)"
             type="number"

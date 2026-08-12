@@ -139,7 +139,10 @@ export default async function EventPage({
     canEditEvent
       ? supabase
           .from('tournament_events')
-          .select('id, event_type, format')
+          // group_count so the picker can say "Group Stage (4)" rather than
+          // "Round Robin" — the two seed very differently and an exec choosing
+          // between two round-robin siblings has to be able to tell them apart.
+          .select('id, event_type, format, group_count')
           .eq('tournament_id', tournamentId)
           .neq('id', eventId)
           .order('created_at')
