@@ -628,6 +628,123 @@ export function getStandardSeedPositions(bracketSize: number): number[] {
 }
 
 // ============================================================
+// Drawing the seeds — randomised WITHIN tiers, never across them
+// ============================================================
+//
+// "REGENERATE DRAW DOESNT CHANGE ANYTHING", and it followed from the design.
+// Placement is a pure function of the sorted field against
+// getStandardSeedPositions, so the same entrants with the same seeds always
+// produced a byte-identical bracket. Pressing the button twice was a no-op the
+// exec had no way to tell apart from a bug.
+//
+// The answer is the one real tournaments use: the seeds are not POSITIONS, they
+// are TIERS, and the draw is made at random within each tier.
+//
+//   * Seeds 1 and 2 go to opposite ends. Fixed, never drawn.
+//   * Seeds 3-4 are drawn into the two remaining half-brackets, one each.
+//   * Seeds 5-8 into the four remaining quarters, one each.
+//   * 9-16 into the eighths, and so on — every band is a power of two.
+//   * Everyone below the last full band is, in effect, unseeded: they are one
+//     large band and are drawn at random into whatever is left.
+//
+// The invariant that survives is the entire reason seeding exists: two entrants
+// of the same tier can never meet before the round their tier implies. Seeds 1
+// and 2 not before the final, 1-4 not before the semis, 1-8 not before the
+// quarters.
+//
+// WHY THIS IS SAFE, stated as the argument rather than as a hope. The bands are
+// exactly [1,1], [2,2], [3,4], [5,8], [9,16] ..., so the union of every band up
+// to and including [2^(k-1)+1, 2^k] is precisely {1..2^k}. Permuting within
+// bands therefore maps {1..2^k} onto itself for every k. getStandardSeedPositions
+// already places ranks 1..2^k one per sub-bracket of size B/2^k; a permutation
+// of that set can only ever reshuffle which of those sub-brackets each one gets,
+// never put two of them in the same one. The separation is preserved by
+// construction, not by luck — and draw-randomisation.test.ts proves it over
+// thousands of draws anyway.
+
+/**
+ * mulberry32 — a tiny, fast, well-distributed 32-bit PRNG.
+ *
+ * Deliberately NOT Math.random. A draw made from a recorded seed can be
+ * reproduced and explained months later ("here is the seed, here is the same
+ * bracket"); a draw made from Math.random can only be asserted. The seed is
+ * written into the bracket_generated audit row, which is why no schema change
+ * was needed for reproducibility — see generateSingleEliminationBracketImpl.
+ */
+export function makeDrawRng(seed: number): () => number {
+  // >>> 0 keeps the state an unsigned 32-bit int through every step, which is
+  // what the algorithm is defined over; a negative or fractional seed would
+  // otherwise walk a different (and much worse) state space.
+  let a = seed >>> 0;
+  return function next() {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** A fresh unsigned 32-bit draw seed. The only entropy in the whole feature. */
+export function newDrawSeed(): number {
+  return Math.floor(Math.random() * 4294967296) >>> 0;
+}
+
+/**
+ * The seeding tiers, as [firstRank, lastRank] pairs covering 1..count.
+ *
+ * The last band is clipped to the field, so a 6-entry field's bands are
+ * [1,1], [2,2], [3,4], [5,6] — the 5-8 band exists but only two people are in
+ * it, and they are drawn between themselves.
+ */
+export function seedTierBands(count: number): Array<[number, number]> {
+  const bands: Array<[number, number]> = [];
+  if (count < 1) return bands;
+  bands.push([1, 1]);
+  let lo = 2;
+  let size = 1;
+  while (lo <= count) {
+    const hi = Math.min(lo + size - 1, count);
+    bands.push([lo, hi]);
+    lo += size;
+    size *= 2;
+  }
+  return bands;
+}
+
+/**
+ * Draw the field: shuffle the entrants within each seeding tier.
+ *
+ * `entries` must already be in seeding order (rank 1 first) — the caller sorts
+ * it by seed, or auto-seeds it by rating, before getting here. The returned
+ * array is the DRAW order: index i is the entrant who will be placed at the
+ * standard bracket position for rank i+1.
+ *
+ * THIS SHUFFLES ENTRANTS WITHIN AN INDEX RANGE, NOT RANKS BETWEEN POSITIONS,
+ * and the difference is what keeps the byes where they belong. A field of N in
+ * a bracket of B has B-N empty ranks, and they are always the LAST ones — which
+ * is exactly what puts the byes on the top seeds. Permuting rank-slots instead
+ * would let an empty rank move up inside the band it shares with real
+ * entrants: a 5-entry draw could hand seed 4 a bye while seed 1 played, which
+ * is not a draw, it is a favour. Shuffling the array leaves the tail empty by
+ * construction, and the bye-placement test asserts it over many iterations.
+ */
+export function drawWithinTiers<T>(entries: readonly T[], rng: () => number): T[] {
+  const drawn = [...entries];
+  for (const [lo, hi] of seedTierBands(drawn.length)) {
+    // Fisher-Yates over [lo-1, hi-1] inclusive. A one-member band (seeds 1 and
+    // 2, and a clipped final band with a single occupant) has nothing to swap.
+    for (let i = hi - 1; i > lo - 1; i--) {
+      const j = lo - 1 + Math.floor(rng() * (i - (lo - 1) + 1));
+      const tmp = drawn[i]!;
+      drawn[i] = drawn[j]!;
+      drawn[j] = tmp;
+    }
+  }
+  return drawn;
+}
+
+// ============================================================
 // Elo Integration
 // ============================================================
 

@@ -142,19 +142,45 @@ async function updateTournamentEventImpl(
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
 
+  /**
+   * THE SEEDING METHOD IS NOT A FORMAT, and gating it like one made the draw's
+   * only opt-out unreachable at the exact moment an exec wants it.
+   *
+   * Since the draw is made at random within the seeding tiers, `manual` is what
+   * an exec picks when they have hand-set every seed and want the bracket those
+   * numbers describe, redraw after redraw. They discover they want it by
+   * pressing Regenerate and seeing a draw move — which is to say, AFTER a draw
+   * exists, at which point both gates below refuse and the remedy on offer
+   * ("void the matches first") is the very thing they were trying to avoid
+   * doing twice.
+   *
+   * It is safe to let through because it changes nothing about the matches that
+   * exist: unlike the match format or the pool it seeds from, it is read once,
+   * by the NEXT generation, and generation has its own guards (a finalised
+   * event refuses, an event with results refuses). Only on its own, though —
+   * bundled with a format change it would carry that change past the gate.
+   */
+  const seedingMethodOnly = Object.keys(updates).length === 1 && 'seeding_method' in updates;
+
   // The old gate was status === 'registration', which locked the match format
   // the moment check-in opened — the exact point at which an exec discovers the
   // day is running late and wants to shorten the games. What actually must not
   // change is a format the draw has already been played under, so the gate is
   // now the existence of matches: no bracket, still editable.
-  const { count: matchCount } = await adminClient.from('tournament_matches')
-    .select('id', { count: 'exact', head: true })
-    .eq('event_id', eventId);
-  if ((matchCount ?? 0) > 0) {
-    throw new ExpectedError('This event already has a draw. Regenerate it after voiding the matches if the format really has to change.');
-  }
-  if (event.status !== 'registration' && event.status !== 'checkin') {
-    throw new ExpectedError('Can only update events before the draw is made');
+  if (!seedingMethodOnly) {
+    const { count: matchCount } = await adminClient.from('tournament_matches')
+      .select('id', { count: 'exact', head: true })
+      .eq('event_id', eventId);
+    if ((matchCount ?? 0) > 0) {
+      throw new ExpectedError('This event already has a draw. Regenerate it after voiding the matches if the format really has to change.');
+    }
+    if (event.status !== 'registration' && event.status !== 'checkin') {
+      throw new ExpectedError('Can only update events before the draw is made');
+    }
+  } else if (event.status === 'completed') {
+    // A finalised event's draw can never be rebuilt (assertNotFinalised), so
+    // changing how the next one would be made is a setting with no next one.
+    throw new ExpectedError('This event has been finalised, so how its draw is made can no longer be changed.');
   }
 
   const patch: Record<string, unknown> = { ...updates };

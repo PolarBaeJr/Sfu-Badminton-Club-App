@@ -91,9 +91,15 @@ export function CreateEventButton({ tournamentId, siblings = [] }: { tournamentI
             label="Seeding Method"
             value={seedingMethod}
             onChange={(e) => setSeedingMethod(e.target.value as TournamentSeedingMethod)}
+            // "Manual" is the one option that changes how the DRAW is made and
+            // not just how the seeds are worked out: every other method has the
+            // bracket drawn at random within its seeding tiers, so a redraw
+            // gives a different draw, while manual places the field exactly
+            // where its seed numbers say and redraws identically. The label has
+            // to say so — it is the only opt-out, and it is invisible otherwise.
             options={[
               { value: 'elo', label: 'Auto-seed by Elo' },
-              { value: 'manual', label: 'Manual Seeding' },
+              { value: 'manual', label: 'Manual — draw follows the seeds exactly' },
               { value: 'random', label: 'Random' },
             ]}
           />
