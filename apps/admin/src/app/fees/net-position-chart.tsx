@@ -52,14 +52,21 @@ export function NetPositionChart({
   // beside it says which side today is on.
   const tone = inTheRed ? 'var(--color-danger)' : 'var(--color-success)';
 
-  // THE LOW POINT IS WORTH NAMING. It is the thing a reader reaches for once
-  // they can see the shape ("how bad did it get"), and reading it off a curve
-  // whose axis is deliberately unlabelled is guesswork. Taken from the plotted
+  // THE LOW POINT IS WORTH NAMING. It is what a reader reaches for once they
+  // can see the shape ("how bad did it get"), and reading it off a curve whose
+  // axis is deliberately unlabelled is guesswork. Taken from the plotted
   // points, so it is a day the club actually had.
   const trough = points.reduce(
     (low, p) => (p.cents < low.cents ? p : low),
     points[0] ?? { day: '', cents: 0, count: 0 },
   );
+  // UNLESS THE LOW POINT IS TODAY, in which case it is the net position — the
+  // figure already printed in the strip above and read out in this chart's own
+  // label. A club still at its worst day is told that by the curve ending at
+  // its floor; saying it again in words, once with a minus sign and once
+  // without, is the restatement three other charts were cut for.
+  const namedTrough =
+    trough.cents < 0 && trough.day !== points[points.length - 1]?.day ? trough : null;
 
   return (
     <Card padding={false}>
@@ -86,8 +93,7 @@ export function NetPositionChart({
                 is. Without this the reader has a line and no legend for it. */}
             <p className="text-xs text-[var(--text-muted)]">
               The rule is break-even. Below it the club has spent more than it has taken in.
-              {trough.cents < 0 &&
-                ` The lowest point was ${money(trough.cents)} in the red.`}
+              {namedTrough && ` The lowest point was ${money(namedTrough.cents)} in the red.`}
             </p>
           </div>
         ) : (

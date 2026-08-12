@@ -290,6 +290,26 @@ describe('NetPositionChart', () => {
     expect(out).not.toContain('lowest point');
   });
 
+  // A club still AT its worst day. The low point is then the net position — the
+  // figure already in the strip above and in this chart's own label — and
+  // saying it again in words, once with a minus sign and once without, is the
+  // restatement three other charts on these two pages were cut for.
+  it('does not name the low point when the low point is today', () => {
+    const out = html(NetPositionChart, {
+      finances: {
+        ...FINANCES,
+        netPayments: [
+          { at: '2026-08-01T19:00:00Z', cents: 5000 },
+          { at: '2026-08-14T19:00:00Z', cents: -30000 },
+        ],
+        netCents: -25000,
+      },
+      seasonName: 'Fall 2026',
+    });
+    expect(out).toContain('The rule is break-even');
+    expect(out).not.toContain('lowest point');
+  });
+
   it('refuses a line through one day', () => {
     const out = html(NetPositionChart, {
       finances: { ...FINANCES, netPayments: [{ at: '2026-08-01T19:00:00Z', cents: 5000 }] },
