@@ -40,8 +40,14 @@ export function EventSettingsDialog({
     // A flat pool_to_bracket pool defaults to 4 qualifiers rather than 2, since
     // "top 2 of one pool" is a final and nothing else. Same default the server
     // applies (normalizeGroupShape).
+    // Parenthesised deliberately: `x ?? 0 > 1` parses as `x ?? (0 > 1)`, which
+    // reads a group count of exactly 1 — a flat pool spelt out rather than left
+    // blank — as a group STAGE and defaults it to 2. Only reachable when the
+    // column is NULL, which the server never leaves it on this format, but a
+    // fallback that is wrong in one case is worse than no fallback.
     qualifiersPerGroup: (event as { qualifiers_per_group?: number | null }).qualifiers_per_group?.toString()
-      ?? (isPoolToBracket(event.format) && !((event as { group_count?: number | null }).group_count ?? 0 > 1) ? '4' : '2'),
+      ?? (isPoolToBracket(event.format)
+        && (((event as { group_count?: number | null }).group_count ?? 1) <= 1) ? '4' : '2'),
   });
   const [maxParticipants, setMaxParticipants] = useState(event.max_participants?.toString() ?? '');
   const [loading, setLoading] = useState(false);
