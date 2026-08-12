@@ -19,6 +19,7 @@ import {
   type TournamentData,
   type WaiverTemplateContext,
 } from './actions';
+import { EntriesByEvent } from './entries-by-event';
 import { PastSeasonNotice, resolveSeasonScope } from '@/components/season-scope';
 import { SeasonSelect } from '@/components/season-select';
 import {
@@ -660,6 +661,20 @@ export default async function TournamentsPage({
                     </div>
                   </>
                 )}
+
+                {/* THE SAME NUMBER, BROKEN UP. The headline is the tournament's
+                    whole field; this is which of its events that field is
+                    actually in, which is the difference between "9 of 24" and
+                    "the doubles has nobody in it". Same rows, same capability,
+                    no extra query — see ./entries-by-event.tsx. */}
+                <div className="mt-4 border-t border-[var(--border)] pt-4">
+                  <Micro className="mb-3 block">Entries by event</Micro>
+                  <EntriesByEvent
+                    events={featuredEvents}
+                    participants={participants}
+                    pairs={pairs}
+                  />
+                </div>
 
                 <div className="mt-4 border-t border-[var(--border)] pt-4">
                   {canSeeFees ? (

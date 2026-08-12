@@ -1,4 +1,5 @@
 import { AvatarChip } from '@badminton/ui';
+import { KFactorPanel, type KFactors } from './k-factor-panel';
 
 // The right-hand column of /ratings: what these settings reach, and who last
 // moved them.
@@ -76,10 +77,18 @@ export function RatingsAside({
   ladder,
   lastActivation,
   lastChange,
+  kFactors,
 }: {
   ladder: LadderShape;
   lastActivation: LastActivation;
   lastChange: LastChange;
+  /**
+   * The four live K-factors, resolved from platform_settings by the page. The
+   * aside is only rendered for a `platform.page` holder, so these are always
+   * available here — it is the ladder COUNTS that can be withheld, which is why
+   * the chart lives inside the ladder's own `ok` branch below.
+   */
+  kFactors: KFactors;
 }) {
   return (
     <div className="flex flex-col gap-5 xl:sticky xl:top-5 xl:self-start">
@@ -121,6 +130,20 @@ export function RatingsAside({
                 </dd>
               </div>
             </dl>
+
+            {/* THE REACH OF THE KNOBS, drawn from the same three counts printed
+                above joined to the K-factors the form is editing. Inside the
+                ladder's `ok` branch on purpose: the counts are the withheld
+                thing, so there is one decision about them and not two. */}
+            <div className="border-t border-[var(--line)] px-4 py-4">
+              <h3 className={`${MONO_LABEL} tracking-[.16em] pb-3`}>What each K-factor reaches</h3>
+              <KFactorPanel
+                total={ladder.total}
+                singlesProvisional={ladder.singlesProvisional}
+                doublesProvisional={ladder.doublesProvisional}
+                k={kFactors}
+              />
+            </div>
           </>
         )}
 
