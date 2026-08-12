@@ -5,6 +5,8 @@ import {
   wouldExceedCapacity,
   unpairedDrawRefusal,
   stillInEvent,
+  planAutoPairs,
+  type AutoPairCandidate,
 } from '../doubles-pool';
 import {
   countEventEntriesPerPlayer,
@@ -416,5 +418,254 @@ describe('max_participants across the pool', () => {
         }
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AUTO PAIR
+// ---------------------------------------------------------------------------
+
+const C = (playerId: string, rating: number): AutoPairCandidate => ({ playerId, rating });
+
+/** Every player id the plan accounts for, paired or not. */
+function seated(plan: ReturnType<typeof planAutoPairs>): string[] {
+  return [...plan.pairs.flat(), ...(plan.leftOver ? [plan.leftOver] : [])].sort();
+}
+
+describe('planAutoPairs — balanced teams, deterministically', () => {
+  it('folds an even list strongest-with-weakest', () => {
+    // 100/70/50/20 → the fold is (100,20) and (70,50), NOT (100,70) and
+    // (50,20). That is the whole strategy choice: both teams here come to 120,
+    // where pairing adjacent would have made a 170 and a 70 and decided the
+    // first round before it was played.
+    const plan = planAutoPairs([C('a', 100), C('b', 70), C('c', 50), C('d', 20)]);
+    expect(plan.pairs).toEqual([['a', 'd'], ['b', 'c']]);
+    expect(plan.leftOver).toBeNull();
+  });
+
+  it('makes the teams closer than pairing adjacent would', () => {
+    // The property the strategy exists for, asserted rather than illustrated:
+    // the spread of combined ratings is no wider than the adjacent strategy's.
+    const people = [C('a', 100), C('b', 70), C('c', 50), C('d', 20)];
+    const spread = (teams: number[]) => Math.max(...teams) - Math.min(...teams);
+
+    const ratingOf = new Map(people.map((p) => [p.playerId, p.rating]));
+    const folded = planAutoPairs(people).pairs.map(([x, y]) => ratingOf.get(x)! + ratingOf.get(y)!);
+
+    const sorted = [...people].sort((x, y) => y.rating - x.rating);
+    const adjacent = [sorted[0]!.rating + sorted[1]!.rating, sorted[2]!.rating + sorted[3]!.rating];
+
+    expect(spread(folded)).toBeLessThan(spread(adjacent));
+  });
+
+  it('leaves exactly one person waiting on an odd list, and it is the median', () => {
+    // Five people: the fold works inward from both ends and the middle is what
+    // it reaches last. Nobody is silently dropped — leftOver is a value the
+    // caller has to say something about.
+    const plan = planAutoPairs([C('a', 90), C('b', 80), C('c', 70), C('d', 60), C('e', 50)]);
+    expect(plan.pairs).toEqual([['a', 'e'], ['b', 'd']]);
+    expect(plan.leftOver).toBe('c');
+    expect(seated(plan)).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
+
+  it('accounts for every single person, at every size', () => {
+    // The property that makes "3 pairs made, 2 still waiting" addable up: no
+    // input is ever lost, and none is used twice.
+    for (let n = 0; n <= 9; n++) {
+      const people = Array.from({ length: n }, (_, i) => C(`p${i}`, 100 - i * 7));
+      const plan = planAutoPairs(people);
+      expect(seated(plan)).toEqual(people.map((p) => p.playerId).sort());
+      expect(plan.pairs.length).toBe(Math.floor(n / 2));
+      expect(plan.leftOver === null).toBe(n % 2 === 0);
+    }
+  });
+
+  it('pairs nobody when one person is waiting, and does not invent a partner', () => {
+    const plan = planAutoPairs([C('lonely', 500)]);
+    expect(plan.pairs).toEqual([]);
+    expect(plan.leftOver).toBe('lonely');
+  });
+
+  it('pairs nobody, and leaves nobody, on an empty list', () => {
+    expect(planAutoPairs([])).toEqual({ pairs: [], leftOver: null });
+  });
+
+  it('is deterministic whatever order the rows arrive in', () => {
+    // THE REASON THIS TEST EXISTS. PostgREST returns tied rows in whatever
+    // order Postgres picks, and an exec who unpairs everybody and presses the
+    // button again must get the same teams — a different answer reads as a
+    // broken button. Six people, five shuffles, one answer.
+    const people = [C('a', 90), C('b', 80), C('c', 70), C('d', 60), C('e', 50), C('f', 40)];
+    const expected = planAutoPairs(people);
+    const shuffles = [
+      [5, 4, 3, 2, 1, 0],
+      [2, 0, 4, 1, 5, 3],
+      [1, 3, 5, 0, 2, 4],
+      [4, 5, 0, 3, 1, 2],
+      [3, 1, 2, 5, 4, 0],
+    ];
+    for (const order of shuffles) {
+      expect(planAutoPairs(order.map((i) => people[i]!))).toEqual(expected);
+    }
+  });
+
+  it('is deterministic when everybody has the SAME rating', () => {
+    // The case rating alone cannot order, and it is not rare: `elo_before ?? 400`
+    // and the pool's own COALESCE(..., 400) put every new entrant on exactly
+    // 400. player_id is the tiebreaker, so the answer is stable and is also the
+    // one a human would predict — alphabetical, folded.
+    const flat = [C('dave', 400), C('alice', 400), C('carol', 400), C('bob', 400)];
+    const plan = planAutoPairs(flat);
+    expect(plan.pairs).toEqual([['alice', 'dave'], ['bob', 'carol']]);
+    expect(planAutoPairs([...flat].reverse())).toEqual(plan);
+  });
+
+  it('does not mutate the list it was given', () => {
+    const people = [C('a', 10), C('b', 90)];
+    const before = people.map((p) => p.playerId);
+    planAutoPairs(people);
+    expect(people.map((p) => p.playerId)).toEqual(before);
+  });
+
+  it('never pairs anybody with themselves', () => {
+    // pair_tournament_entrants raises on p1 = p2, so a plan that produced one
+    // would be a guaranteed refusal rather than a bad team.
+    for (let n = 0; n <= 9; n++) {
+      const plan = planAutoPairs(Array.from({ length: n }, (_, i) => C(`p${i}`, 400)));
+      for (const [x, y] of plan.pairs) expect(x).not.toBe(y);
+    }
+  });
+});
+
+describe('auto pair is cap-neutral and fee-neutral, by construction', () => {
+  // The claim the brief asks to be PROVED rather than assumed, and the proof is
+  // stronger than a spot check: auto pair only ever pairs people who are
+  // ALREADY in the pool, so both halves are `alreadyUnpaired` on every call,
+  // so addPairToEvent's discount — `(counts.get(half) ?? 0) - 1` — always
+  // applies. Pairing therefore cannot move anybody's entry count at all, and
+  // the cap can never bite on an operation that added nobody to the tournament.
+  it('spends no new entry-cap slot when two pool entrants become a pair', () => {
+    const before = countEventEntriesPerPlayer(
+      [
+        { player_id: ALICE, status: 'registered' } as EntryCapParticipantRow,
+        { player_id: BOB, status: 'registered' } as EntryCapParticipantRow,
+      ],
+      [],
+    );
+
+    // The promotion, exactly as pair_tournament_entrants performs it: the two
+    // pool rows are deleted and one pair row is inserted, in one transaction.
+    const after = countEventEntriesPerPlayer(
+      [],
+      [{ player1_id: ALICE, player2_id: BOB, status: 'registered' } as EntryCapPairRow],
+    );
+
+    expect(after.get(ALICE)).toBe(before.get(ALICE));
+    expect(after.get(BOB)).toBe(before.get(BOB));
+    expect(after.get(ALICE)).toBe(1);
+  });
+
+  it('holds for a whole waiting list folded at once', () => {
+    // Six people in, three teams out, and not one entry count moves — so an
+    // event at a per-member cap of 1 can still be auto-paired end to end.
+    const people = [ALICE, BOB, CARA, DAN, 'erin', 'frank'];
+    const before = countEventEntriesPerPlayer(
+      people.map((id) => ({ player_id: id, status: 'registered' }) as EntryCapParticipantRow),
+      [],
+    );
+
+    const plan = planAutoPairs(people.map((id, i) => C(id, 100 - i * 10)));
+    expect(plan.pairs).toHaveLength(3);
+    expect(plan.leftOver).toBeNull();
+
+    const after = countEventEntriesPerPlayer(
+      [],
+      plan.pairs.map(([x, y]) => ({ player1_id: x, player2_id: y, status: 'registered' }) as EntryCapPairRow),
+    );
+
+    for (const id of people) {
+      expect(after.get(id)).toBe(before.get(id));
+      // …and nobody is at a cap of 1 afterwards who was not before it.
+      expect(isAtEntryCap(after.get(id) ?? 0, 1)).toBe(isAtEntryCap(before.get(id) ?? 0, 1));
+    }
+  });
+
+  it('is fee-neutral because the fee row is keyed on (tournament, player)', () => {
+    // club_fees_tournament_player_key (00094). The row a solo entry created IS
+    // the row the pair would write, and ensureEntryFees skips anybody who
+    // already has one — so a promoted entrant cannot be invoiced twice. Pinned
+    // as the key's shape rather than as a call count: it is the schema that
+    // makes the double-invoice unreachable, not the application code.
+    const feeKey = (tournamentId: string, playerId: string) => `${tournamentId}:${playerId}`;
+    const ledger = new Set<string>();
+
+    // Both entered alone…
+    ledger.add(feeKey('t1', ALICE));
+    ledger.add(feeKey('t1', BOB));
+    expect(ledger.size).toBe(2);
+
+    // …then auto pair puts them together, and ensureEntryFees runs for both.
+    ledger.add(feeKey('t1', ALICE));
+    ledger.add(feeKey('t1', BOB));
+    expect(ledger.size).toBe(2);
+  });
+
+  it('is slot-neutral for the whole fold, so a full event can still be paired', () => {
+    // doublesDrawSlots already promises this per pair; here it is across a
+    // batch. Six waiting in an event capped at 3 teams: before and after are
+    // both 3, so wouldEexceedCapacity refuses nothing.
+    const before = doublesDrawSlots(0, 6);
+    const after = doublesDrawSlots(3, 0);
+    expect(before).toBe(3);
+    expect(after).toBe(3);
+    expect(wouldExceedCapacity(before, after, 3)).toBe(false);
+  });
+});
+
+describe('auto pair and the event waiver', () => {
+  it('does not screen out an unsigned entrant — pairing has never required a signature', () => {
+    // THE PREMISE THIS PINS, because it is the one a later reader is most
+    // likely to "fix" the wrong way. pair_tournament_entrants has no waiver
+    // check, and addPairToEvent calls unsignedAmong/notifyEventWaiverRequired —
+    // which NOTIFY. assertEventWaiverSigned appears at exactly two call sites,
+    // both check-in. So an unsigned entrant is pairable, and auto pair must not
+    // be stricter than the manual button beside it.
+    //
+    // The screening below is what auto pair does with the result: it REPORTS.
+    const acceptances: AcceptedEventWaiver[] = [
+      { player_id: ALICE, waiver_hash: 'h1', accepted_at: '2026-01-01T00:00:00Z' },
+    ];
+    const { allowed, blocked } = screenForEventWaiver(
+      [
+        { id: ALICE, members: [{ id: ALICE, name: 'Alice' }] },
+        { id: BOB, members: [{ id: BOB, name: 'Bob' }] },
+      ],
+      'h1',
+      acceptances,
+    );
+
+    // Bob is named so the exec can chase the signature…
+    expect(blocked.map((b) => b.id)).toEqual([BOB]);
+    expect(allowed).toEqual([ALICE]);
+    // …but the PLAN does not care, which is the actual assertion: both of them
+    // are still paired.
+    const plan = planAutoPairs([C(ALICE, 400), C(BOB, 400)]);
+    expect(plan.pairs).toEqual([[ALICE, BOB]]);
+    expect(plan.leftOver).toBeNull();
+  });
+
+  it('pairs everybody even when NOBODY has signed', () => {
+    // The gate names this case. Under the real behaviour the answer is "all
+    // pairs made, all flagged" — not zero pairs.
+    const plan = planAutoPairs([C(ALICE, 400), C(BOB, 400), C(CARA, 400), C(DAN, 400)]);
+    expect(plan.pairs).toHaveLength(2);
+
+    const { blocked, allowed } = screenForEventWaiver(
+      [ALICE, BOB, CARA, DAN].map((id) => ({ id, members: [{ id, name: id }] })),
+      'h1',
+      [],
+    );
+    expect(allowed).toEqual([]);
+    expect(blocked).toHaveLength(4);
   });
 });

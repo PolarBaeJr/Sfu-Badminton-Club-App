@@ -102,6 +102,81 @@ export function wouldExceedCapacity(
   return slotsAfter > max && slotsAfter > slotsBefore;
 }
 
+// ---------------------------------------------------------------------------
+// AUTO PAIR — turning a waiting list into teams in one press
+// ---------------------------------------------------------------------------
+// An exec pairs entrants two at a time by ticking checkboxes. With six people
+// waiting that is three round trips of hand-picking, on the day of an event.
+//
+// THE STRATEGY IS BALANCED TEAMS: the sorted list is FOLDED, so the strongest
+// player partners the weakest, the second strongest the second weakest, and so
+// on. The alternative — pairing adjacent by rating, so similar players play
+// together — was rejected, and the two produce very different draws:
+//
+//   adjacent  makes every TEAM internally similar and the FIELD lopsided. The
+//             top two players form one team that outclasses the bracket, and
+//             the first round is decided before it is played.
+//   folded    makes every TEAM's combined rating close to every other's, which
+//             is the number the bracket is actually seeded on (combined_elo).
+//
+// For a club draw the second is the better shape: it is a social event where
+// the point is competitive matches, not an accurate ranking of the entrants.
+// It also mixes strong players with weak ones, which is how a club gets its
+// beginners playing with its regulars instead of beside them.
+//
+// DETERMINISM IS A REQUIREMENT, not a nicety: the exec may press this, look at
+// the result, unpair everybody and press it again, and getting a different
+// answer the second time reads as a broken button. Rating alone does NOT order
+// this list — `elo_before ?? 400` and the pool's own COALESCE(..., 400) mean a
+// whole cohort of new entrants sits at exactly 400 — so player_id is the
+// tiebreaker, and the sort happens HERE rather than in the query. PostgREST
+// returns tied rows in whatever order Postgres picks, so ordering in SQL would
+// leave the fold reading a list that is only mostly sorted.
+
+/** One person waiting for a partner, and the rating they are folded on. */
+export interface AutoPairCandidate {
+  playerId: string;
+  /** doubles_elo, or the 400 default the pool itself uses. */
+  rating: number;
+}
+
+export interface AutoPairPlan {
+  /** Teams to form, strongest-with-weakest. */
+  pairs: Array<[string, string]>;
+  /**
+   * The one person an odd-sized list cannot seat, or null.
+   *
+   * It is the MEDIAN entrant, and that falls out of the fold rather than being
+   * chosen: pairing inward from both ends leaves the middle. Leaving out the
+   * WEAKEST instead would have been a judgement about who matters least, made
+   * silently by a button — this way the leftover is whoever the arithmetic
+   * happens to reach last. They stay in the pool either way, and the caller
+   * says so out loud rather than dropping them.
+   */
+  leftOver: string | null;
+}
+
+/**
+ * Fold a waiting list into balanced teams. Pure, total, and deterministic for
+ * any input order — the test pins that by shuffling.
+ */
+export function planAutoPairs(candidates: readonly AutoPairCandidate[]): AutoPairPlan {
+  const sorted = [...candidates].sort(
+    (a, b) => b.rating - a.rating || (a.playerId < b.playerId ? -1 : a.playerId > b.playerId ? 1 : 0),
+  );
+
+  const pairs: Array<[string, string]> = [];
+  let strongest = 0;
+  let weakest = sorted.length - 1;
+  while (strongest < weakest) {
+    pairs.push([sorted[strongest]!.playerId, sorted[weakest]!.playerId]);
+    strongest += 1;
+    weakest -= 1;
+  }
+
+  return { pairs, leftOver: strongest === weakest ? sorted[strongest]!.playerId : null };
+}
+
 /**
  * What the exec is told when a draw is asked for with people still loose.
  *

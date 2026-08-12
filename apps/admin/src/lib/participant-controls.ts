@@ -99,6 +99,17 @@ export interface ParticipantControls {
   removeSolo: boolean;
   /** Put two unpaired entrants together. */
   pair: boolean;
+  /**
+   * Pair the WHOLE waiting list in one press.
+   *
+   * DELIBERATELY THE SAME GATE AS `pair`, and it is a separate field only so
+   * the tab does not have to know that. Auto pair is the same act in bulk — it
+   * calls the same server action once per pair — so it asks the same capability
+   * and obeys the same statuses. A key of its own would let the club hand out
+   * "may pair six people" separately from "may pair two", which is not a
+   * distinction anybody has asked for and not one the actions could enforce.
+   */
+  autoPair: boolean;
   /** Split a formed pair back into two unpaired entrants. */
   unpair: boolean;
   /** One half of a formed pair has pulled out; the other returns to the pool. */
@@ -156,6 +167,8 @@ export function participantControls(
 
   const remove = open && can.remove;
   const withdraw = exitable && can.exit;
+  // One expression, two controls: see ParticipantControls.autoPair.
+  const pair = pairingOpen && can.add;
 
   return {
     add: open && can.add,
@@ -167,7 +180,8 @@ export function participantControls(
     actionsColumn: remove || withdraw,
     addSolo: open && can.soloAdd,
     removeSolo: open && can.soloRemove,
-    pair: pairingOpen && can.add,
+    pair,
+    autoPair: pair,
     unpair: pairingOpen && can.remove,
     withdrawMember: pairingOpen && can.exit,
     swapMember: pairingOpen && can.add && can.remove,

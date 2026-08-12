@@ -16,13 +16,14 @@ import {
   clearSeeds,
   withdrawParticipant,
   withdrawPair,
+  autoPairWaitingEntrants,
 } from '@/lib/tournament-actions';
 import { summarizeBulk } from '@/lib/bulk-add';
 import { participantControls, type DrawCapabilities } from '@/lib/participant-controls';
 import { nextPowerOf2, pickOne, isOutOfEvent } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil, UserMinus, Unlink, Users, Replace } from 'lucide-react';
+import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil, UserMinus, Unlink, Users, Replace, Shuffle } from 'lucide-react';
 import type { TournamentEventRow, ParticipantWithPlayer, PairWithPlayers } from '@/lib/tournament-types';
 import type { EventWaiverStatus } from '@badminton/shared';
 import { WaiverState } from './WaiverState';
@@ -175,6 +176,10 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   const [addMode, setAddMode] = useState<'pair' | 'solo'>('pair');
   // The unpaired entrants ticked for pairing. Exactly two makes a team.
   const [selectedUnpaired, setSelectedUnpaired] = useState<string[]>([]);
+  // Its own flag rather than sharing `loading` with "Pair selected": both
+  // buttons sit in the same header, and one spinner on both would say the wrong
+  // one is working.
+  const [autoPairing, setAutoPairing] = useState(false);
   // The pair whose halves are being offered a withdrawal, or null.
   const [splitting, setSplitting] = useState<PairWithPlayers | null>(null);
   // The pair being edited, and which half is on the way out. Two steps in one
@@ -344,6 +349,58 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     setSelectedUnpaired([]);
     router.refresh();
     setLoading(false);
+  }
+
+  /**
+   * PAIR THE WHOLE WAITING LIST.
+   *
+   * CONFIRMED, unlike "Pair selected" beside it, and the difference is real:
+   * that button acts on two people the exec has just ticked and can see, this
+   * one decides who plays with whom for the entire event in a single press. The
+   * confirm names the count so what is about to happen is on screen before it
+   * happens. NO TYPED REASON, though — the neighbouring pairing actions were
+   * checked rather than assumed: addPairToEvent's audit row ('pair_added')
+   * records player ids and whether they were promoted from the pool, and has no
+   * reason field to fill in. Demanding one here would be a heavier ceremony
+   * than the act it audits.
+   *
+   * THE RESULT IS NEVER REPORTED AS A BARE SUCCESS. Each pair is its own
+   * transaction, so a later one can fail after earlier ones committed — the
+   * toast says how many were made and how many people are still waiting.
+   */
+  async function handleAutoPair() {
+    const count = activeUnpaired.length;
+    const willPair = Math.floor(count / 2);
+    const ok = await confirm({
+      title: `Pair ${willPair === 1 ? 'the 2 people' : `${willPair * 2} people`} waiting?`,
+      message: count % 2 === 0
+        ? `${willPair} ${willPair === 1 ? 'team' : 'teams'} will be formed, strongest player with weakest so the teams are evenly matched. You can unpair any of them afterwards.`
+        : `${willPair} ${willPair === 1 ? 'team' : 'teams'} will be formed, strongest player with weakest so the teams are evenly matched. ${count} is an odd number, so one person will still be waiting. You can unpair any of them afterwards.`,
+      confirmLabel: 'Auto pair',
+    });
+    if (!ok) return;
+
+    setAutoPairing(true);
+    const res = await autoPairWaitingEntrants(event.id);
+    if (!res.ok) {
+      toast(res.error, 'error');
+      setAutoPairing(false);
+      return;
+    }
+
+    const { pairsMade, stillWaiting, stillWaitingReason, unsignedNotice } = res.data;
+    const made = `${pairsMade} ${pairsMade === 1 ? 'pair' : 'pairs'} made`;
+    const left = stillWaiting > 0
+      ? `, ${stillWaiting} ${stillWaiting === 1 ? 'person' : 'people'} still waiting. ${stillWaitingReason}`
+      : '';
+    // Anything short of a clean sweep is a warning, not a success: the exec has
+    // something left to do and the toast has to look like it.
+    const clean = pairsMade > 0 && stillWaiting === 0;
+    toast(`${made}${left}${unsignedNotice ? ` ${unsignedNotice}` : ''}`, clean && !unsignedNotice ? 'success' : 'error');
+
+    setSelectedUnpaired([]);
+    router.refresh();
+    setAutoPairing(false);
   }
 
   async function handleUnpair(pair: PairWithPlayers) {
