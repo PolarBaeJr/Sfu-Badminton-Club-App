@@ -190,9 +190,6 @@ export const sessionIntentSchema = z.enum(['going', 'declined']);
 
 export const tournamentCreateSchema = z.object({
   name: z.string().min(2),
-  scope: z.enum(['open', 'eligible_only']),
-  type: z.enum(['internal', 'open_official', 'invitational']),
-  format: z.enum(['singles', 'doubles', 'mixed_event']),
   // .min(1), because `tournaments.start_date` is NOT NULL and a blank date
   // input posts "" rather than being absent. Without this the empty string
   // passes validation, reaches Postgres, and comes back as
@@ -203,9 +200,6 @@ export const tournamentCreateSchema = z.object({
   // it is start_date, the required one, that had no floor.
   start_date: z.string().min(1),
   end_date: z.string().optional(),
-  // Upper bound matters: bracket_size feeds nextPowerOf2 bracket generation,
-  // so an unbounded value is a DoS lever into a very expensive insert loop.
-  bracket_size: z.number().int().min(2).max(128).default(8),
   event_multiplier: z.number().min(1).max(2).default(1.15),
   placement_bonus_enabled: z.boolean().default(true),
   // Which membership groups may register. Defaults to all three so a tournament

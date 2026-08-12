@@ -46,9 +46,6 @@ export type ResultStatus =
 
 export type SessionStatus = 'open' | 'closed';
 
-export type TournamentScope = 'open' | 'eligible_only';
-export type TournamentType = 'internal' | 'open_official' | 'invitational';
-export type TournamentFormat = 'singles' | 'doubles' | 'mixed_event';
 export type TournamentStatus = 'draft' | 'active' | 'completed' | 'archived';
 
 export type DisputeReason =
@@ -313,12 +310,9 @@ export interface Tournament {
   id: string;
   season_id: string | null;
   name: string;
-  scope: TournamentScope;
-  type: TournamentType;
-  format: TournamentFormat;
   start_date: string;
   end_date: string | null;
-  bracket_size: number;
+  /** Default Elo multiplier for events created here — see 00108. */
   event_multiplier: number;
   placement_bonus_enabled: boolean;
   status: TournamentStatus;

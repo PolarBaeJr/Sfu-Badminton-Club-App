@@ -17,7 +17,21 @@ import {
   type SiblingEvent,
 } from './event-format-fields';
 
-export function CreateEventButton({ tournamentId, siblings = [] }: { tournamentId: string; siblings?: SiblingEvent[] }) {
+export function CreateEventButton({
+  tournamentId,
+  siblings = [],
+  // The TOURNAMENT's multiplier, used as this event's starting value. Before
+  // 00108 that number was shown to players as "1.15x MULTIPLIER" while every
+  // event was created at 1.25 and the rating maths only ever read the EVENT —
+  // so the figure on the page was not the one applied to anyone's rating.
+  // Seeding from it here is what makes the display honest; the event's own
+  // value still decides, so an exec can still differ one event deliberately.
+  defaultEloMultiplier,
+}: {
+  tournamentId: string;
+  siblings?: SiblingEvent[];
+  defaultEloMultiplier?: number | null;
+}) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [eventType, setEventType] = useState<TournamentEventType>('mens_singles');
@@ -25,7 +39,7 @@ export function CreateEventButton({ tournamentId, siblings = [] }: { tournamentI
   const [formatValues, setFormatValues] = useState<EventFormatValues>(EMPTY_FORMAT_VALUES);
   const [maxParticipants, setMaxParticipants] = useState('');
   const [seedingMethod, setSeedingMethod] = useState<TournamentSeedingMethod>('elo');
-  const [eloMultiplier, setEloMultiplier] = useState('1.25');
+  const [eloMultiplier, setEloMultiplier] = useState(String(defaultEloMultiplier ?? 1.25));
   const { toast } = useToast();
   const router = useRouter();
 

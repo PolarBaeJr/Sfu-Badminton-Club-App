@@ -11,12 +11,8 @@ import { MoreVertical } from 'lucide-react';
 export interface TournamentData {
   id: string;
   name: string;
-  scope: string;
-  type: string;
-  format: string;
   start_date: string;
   end_date: string | null;
-  bracket_size: number | null;
   event_multiplier: number;
   placement_bonus_enabled: boolean;
   waiver_text: string | null;
@@ -50,12 +46,8 @@ function TournamentFormDialog({
   const isEdit = !!tournament;
   const [loading, setLoading] = useState(false);
   const [name, setName] = useState(tournament?.name ?? '');
-  const [scope, setScope] = useState(tournament?.scope ?? 'open');
-  const [type, setType] = useState(tournament?.type ?? 'internal');
-  const [format, setFormat] = useState(tournament?.format ?? 'singles');
   const [startDate, setStartDate] = useState(tournament?.start_date ?? '');
   const [endDate, setEndDate] = useState(tournament?.end_date ?? '');
-  const [bracketSize, setBracketSize] = useState(tournament?.bracket_size ?? 8);
   const [eventMultiplier, setEventMultiplier] = useState(tournament?.event_multiplier ?? 1.15);
   const [placementBonus, setPlacementBonus] = useState(tournament?.placement_bonus_enabled ?? true);
   const [waiverText, setWaiverText] = useState(tournament?.waiver_text ?? '');
@@ -87,12 +79,8 @@ function TournamentFormDialog({
     try {
       const data = {
         name,
-        scope,
-        type,
-        format,
         start_date: startDate,
         end_date: endDate || undefined,
-        bracket_size: bracketSize,
         allowed_memberships: allowedMemberships,
         event_multiplier: eventMultiplier,
         placement_bonus_enabled: placementBonus,
@@ -135,8 +123,7 @@ function TournamentFormDialog({
       onClose();
       if (!isEdit) {
         setName(''); setStartDate(''); setEndDate('');
-        setScope('open'); setType('internal'); setFormat('singles');
-        setBracketSize(8); setEventMultiplier(1.15); setPlacementBonus(true);
+        setEventMultiplier(1.15); setPlacementBonus(true);
         setWaiverText('');
       }
       router.refresh();
@@ -180,50 +167,7 @@ function TournamentFormDialog({
             })}
           </div>
         </fieldset>
-        <div className="grid grid-cols-2 gap-4">
-          <Select
-            label="Scope"
-            value={scope}
-            onChange={(e) => setScope(e.target.value)}
-            options={[
-              { value: 'open', label: 'Open' },
-              { value: 'eligible_only', label: 'Eligible Only' },
-            ]}
-          />
-          <Select
-            label="Type"
-            value={type}
-            onChange={(e) => setType(e.target.value)}
-            options={[
-              { value: 'internal', label: 'Internal' },
-              { value: 'open_official', label: 'Open Official' },
-              { value: 'invitational', label: 'Invitational' },
-            ]}
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-4">
-          <Select
-            label="Format"
-            value={format}
-            onChange={(e) => setFormat(e.target.value)}
-            options={[
-              { value: 'singles', label: 'Singles' },
-              { value: 'doubles', label: 'Doubles' },
-              { value: 'mixed_event', label: 'Mixed Event' },
-            ]}
-          />
-          <Select
-            label="Bracket Size"
-            value={String(bracketSize)}
-            onChange={(e) => setBracketSize(Number(e.target.value))}
-            options={[
-              { value: '4', label: '4 players' },
-              { value: '8', label: '8 players' },
-              { value: '16', label: '16 players' },
-              { value: '32', label: '32 players' },
-            ]}
-          />
-        </div>
+
         <div className="grid grid-cols-2 gap-4">
           <DatePicker label="Start Date" value={startDate} onChange={setStartDate} required />
           <DatePicker label="End Date" value={endDate} onChange={setEndDate} />
