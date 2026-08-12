@@ -46,10 +46,18 @@ function makeClient(rows: Record<string, { amount_cents: number | null }[]>) {
   return { supabase: client as unknown as SupabaseClient, tables };
 }
 
+// The rows carry their dates and categories now, because the panels draw
+// charts of them. That is the same read it always was — no ledger gained a
+// query, each gained columns — and the assertions below check the thing that
+// matters about it: the figure and the series come from ONE read, so the last
+// point of a chart cannot disagree with the number printed beside it.
 const LEDGERS = {
-  club_expenses: [{ amount_cents: 8400 }, { amount_cents: 1600 }],
-  club_fees: [{ amount_cents: 2000 }],
-  other_income: [{ amount_cents: 15000 }],
+  club_expenses: [
+    { amount_cents: 8400, category: 'shuttles', paid_at: '2026-09-04T18:00:00+00:00', paid_by: 'exec-1', reimbursed_at: null },
+    { amount_cents: 1600, category: 'food', paid_at: '2026-09-11T18:00:00+00:00', paid_by: null, reimbursed_at: null },
+  ],
+  club_fees: [{ amount_cents: 2000, paid_at: '2026-09-02T18:00:00+00:00' }],
+  other_income: [{ amount_cents: 15000, category: 'grant', paid_at: '2026-09-03T18:00:00+00:00' }],
   tournament_fees: [{ amount_cents: 500 }],
   reinstatement_fees: [{ amount_cents: 2500 }],
 };
@@ -68,10 +76,51 @@ describe('the dashboard finance fetch', () => {
     });
 
     expect(tables).toEqual(['club_expenses']);
-    expect(finances?.expenseCents).toBe(10000);
-    // Not zero — nothing was asked for, so there is no figure to have.
-    expect(finances?.clubFeeCents).toBeNull();
-    expect(finances?.otherIncomeCents).toBeNull();
+    expect(finances?.expenses?.expenseCents).toBe(10000);
+    // Not an empty ledger — nothing was asked for, so there is no book to have.
+    expect(finances?.clubFees).toBeNull();
+    expect(finances?.otherIncome).toBeNull();
+  });
+
+  // THE CHART AND THE FIGURE ARE THE SAME READ. Both come back from the one
+  // query above, so the running total's last point is the headline by
+  // construction. A second query for the series is the thing this asserts
+  // against: it could return a different set of rows and put two numbers that
+  // disagree on the same card.
+  it('returns the dated rows behind the expense figure, from that one read', async () => {
+    const { supabase, tables } = makeClient(LEDGERS);
+
+    const finances = await getDashboardFinances(supabase, SEASON, {
+      expenses: true,
+      clubFees: false,
+      otherIncome: false,
+    });
+
+    expect(tables).toEqual(['club_expenses']);
+    const payments = finances?.expenses?.payments ?? [];
+    expect(payments.map((p) => p.cents)).toEqual([8400, 1600]);
+    expect(payments.reduce((n, p) => n + p.cents, 0)).toBe(finances?.expenses?.expenseCents);
+    expect(finances?.expenses?.expensesByCategory).toEqual([
+      { category: 'shuttles', cents: 8400 },
+      { category: 'food', cents: 1600 },
+    ]);
+  });
+
+  // MONEY THE CLUB OWES ITS OWN EXECS: a paid row somebody fronted that has not
+  // been paid back. `paid_by` is required, not just a null reimbursed_at — a
+  // court booking on the club's own card has nobody to reimburse, and counting
+  // it would report a debt to a person who does not exist.
+  it('counts only fronted, unreimbursed rows as owed back', async () => {
+    const { supabase } = makeClient(LEDGERS);
+
+    const finances = await getDashboardFinances(supabase, SEASON, {
+      expenses: true,
+      clubFees: false,
+      otherIncome: false,
+    });
+
+    expect(finances?.expenses?.owedToExecsCount).toBe(1);
+    expect(finances?.expenses?.owedToExecsCents).toBe(8400);
   });
 
   it('reads only the club fee ledger for somebody who may only see club fees', async () => {
@@ -84,8 +133,14 @@ describe('the dashboard finance fetch', () => {
     });
 
     expect(tables).toEqual(['club_fees']);
-    expect(finances?.clubFeeCents).toBe(2000);
-    expect(finances?.expenseCents).toBeNull();
+    expect(finances?.clubFees?.total).toBe(2000);
+    expect(finances?.expenses).toBeNull();
+    // club_fees has no category column, so the dues ledger has no breakdown —
+    // and an invented "other" bucket holding the whole thing would draw a
+    // one-bar chart that says nothing. Splitting it by fee_type instead is not
+    // an option either: entry money and reinstatements are separate
+    // capabilities' books.
+    expect(finances?.clubFees?.byCategory).toEqual([]);
   });
 
   it('reads only the other-income ledger for somebody who may only see it', async () => {
@@ -98,7 +153,10 @@ describe('the dashboard finance fetch', () => {
     });
 
     expect(tables).toEqual(['other_income']);
-    expect(finances?.otherIncomeCents).toBe(15000);
+    expect(finances?.otherIncome?.total).toBe(15000);
+    // other_income DOES carry a category, and unlike club_fees' fee_type every
+    // one of them is the same permission — so this ledger gets a breakdown.
+    expect(finances?.otherIncome?.byCategory).toEqual([{ category: 'grant', cents: 15000 }]);
   });
 
   // Even holding all three tiles' reads is not the net position, which is its

@@ -84,6 +84,33 @@ describe('the narrowed dashboard', () => {
     expect(hasTiles('exec', 'internal')).toBe(true);
   });
 
+  // WHICH FEE CHARTS CAN EVER APPEAR ON THE NARROWED LANDING — and it is two of
+  // the four, by construction rather than by choice. `fees.clubfees.read` and
+  // `fees.netposition.read` are both TILE_GATES, so anybody holding either is
+  // already on the ordinary dashboard and their panels live in its right rail.
+  // The narrowed branch can only ever draw the expense ledger and other income.
+  //
+  // This is not a style rule. The narrowed landing used to carry a "Club fees"
+  // tile gated on fees.clubfees.read that could never render, for exactly this
+  // reason; a chart added there under either capability below would be the same
+  // dead code, and one added there under a capability NOT in TILE_GATES would
+  // give a narrowed person a panel AND the signpost.
+  it('can never reach the narrowed landing holding the dues or net-position read', () => {
+    for (const capability of ['fees.clubfees.read', 'fees.netposition.read'] as Capability[]) {
+      expect(TILE_GATES).toContain(capability);
+    }
+  });
+
+  // And the two that CAN. Both are absent from TILE_GATES, so holding one takes
+  // nobody off the narrowed landing — which is what makes an expense chart
+  // there reachable for the Finance role at all.
+  it('draws the expense and other-income ledgers there, which no tile claims', () => {
+    for (const capability of ['fees.expenses.read', 'fees.otherincome.read'] as Capability[]) {
+      expect(TILE_GATES).not.toContain(capability);
+    }
+    expect(permits('exec', resolvePermissions('finance', [], []), 'fees.expenses.read')).toBe(true);
+  });
+
   it('points the Finance role at the money section', () => {
     expect(signpost('exec', 'finance')).toEqual(['/fees', '/settings']);
   });

@@ -20,9 +20,15 @@ import { getDashboardFinances } from '@/lib/dashboard-finance';
 import { getOutstandingClubFees } from '@/lib/fees-outstanding';
 import { clubWeek } from '@/lib/club-week';
 import { ActionLink } from './action-link';
-
-/** Money, formatted the way the finance cards on /fees format it. */
-const money = (cents: number) => `$${(Math.abs(cents) / 100).toFixed(2)}`;
+import { money } from '@/components/charts';
+import {
+  ClubFeePanel,
+  ExpensePanel,
+  NetPositionPanel,
+  OtherIncomePanel,
+} from '@/components/dashboard/finance-panels';
+import { getLadderSpread } from '@/lib/dashboard-ladder';
+import { LadderPanel } from '@/components/dashboard/ladder-panel';
 
 /** A club-local wall clock reading of an instant — "19:00", never "02:00Z". */
 const clubTime = (at: Date) =>
@@ -163,8 +169,11 @@ export default async function DashboardPage() {
   // which also decides whether the season's PRICE LIST is selected at all —
   // see the season query below.
   const showClubFees = permits(level, permissions, 'fees.clubfees.read');
-  // The ledgers underneath, one capability each, for the narrowed landing at
-  // the bottom. Each gates its own fetch inside getDashboardFinances().
+  // The ledgers underneath, one capability each. Each gates its own fetch
+  // inside getDashboardFinances(), and each draws a chart of ITS OWN BOOK and
+  // no other: somebody holding one of these must not be able to reconstruct a
+  // figure from the ones they were not given, or the dashboard becomes a way
+  // around /fees.
   const showExpenses = permits(level, permissions, 'fees.expenses.read');
   const showOtherIncome = permits(level, permissions, 'fees.otherincome.read');
   // An affordance rather than data: it opens /fees, where the form lives and
@@ -197,6 +206,18 @@ export default async function DashboardPage() {
   const hasTiles =
     canReadRoster || canApprove || showDisputes || showWalkovers || showMatches
     || showSessions || showTournaments || showChallenges || showFinances || showClubFees;
+
+  // WHICH FEE CAPABILITIES CAN ACTUALLY REACH THE NARROWED LANDING, and it is
+  // not all four. `fees.clubfees.read` and `fees.netposition.read` are both
+  // terms of hasTiles above, so anybody holding either lands on the ORDINARY
+  // dashboard by construction and their charts belong there — the dues panel
+  // and the net-position panel are in the right rail. The two that survive into
+  // the narrowed branch are the expense ledger (the Finance role's whole claim
+  // on the money area) and other income.
+  //
+  // The old narrowed landing had a "Club fees" tile behind showClubFees, which
+  // for this reason could never render: hasTiles was already true for anyone
+  // who would have seen it.
 
   // Where such a person CAN go. Derived from the nav list through the same
   // canAccess() the sidebar and the middleware use, so a section added later
@@ -365,6 +386,15 @@ export default async function DashboardPage() {
       : noRows<{ document: string; version: string; reacceptance_required_since: string | null }>(),
   ]);
 
+  // ---- players.read, again ------------------------------------------------
+  // The ladder's shape. Same capability as the roster counts above and the same
+  // rule: the gate is the fetch, so a viewer without players.read has no
+  // ratings in their payload at all rather than a hidden card. Kept out of the
+  // Promise.all above only because it is a helper rather than a query builder;
+  // it is one round trip either way and both branches are already awaited
+  // before the first byte of markup.
+  const ladder = canReadRoster ? await getLadderSpread(supabase) : null;
+
   // ------------------------------------------------------------------------
   // TONIGHT — one query, two answers
   //
@@ -442,22 +472,31 @@ export default async function DashboardPage() {
     seasonNetCents = finances.netCents;
   }
 
-  // The narrowed landing's own figures: one query per ledger this person may
-  // read and none at all for the ledgers they may not, decided inside
-  // getDashboardFinances. Nothing is fetched when the ordinary dashboard
-  // rendered.
+  // The per-ledger charts' rows: one query per ledger this person may read AND
+  // will actually be shown, and none at all for the rest, decided inside
+  // getDashboardFinances.
+  //
+  // `&& !hasTiles` on two of the three is not a second permission check — it is
+  // WHERE THE PANEL IS DRAWN. The expense and other-income panels belong to the
+  // narrowed landing, so fetching their rows for an admin whose dashboard is
+  // full of panels would be a query nobody renders and a ledger in the payload
+  // for no reason. The dues panel is the mirror image: showClubFees is a term of
+  // hasTiles, so its panel is an ordinary-dashboard panel and its fetch is
+  // conditioned on the capability alone.
   //
   // The season goes in rather than being looked up again in there — it was
   // fetched above for the header eyebrow before either branch of this page
   // decided anything, so re-selecting it was a round trip for a row already in
   // hand. `null` (no active term) still means no ledgers and no figures.
-  const ledgers = hasTiles
-    ? null
-    : await getDashboardFinances(supabase, season && { id: season.id, name: season.name }, {
-        expenses: showExpenses,
-        clubFees: showClubFees,
-        otherIncome: showOtherIncome,
-      });
+  const ledgers = await getDashboardFinances(
+    supabase,
+    season && { id: season.id, name: season.name },
+    {
+      expenses: showExpenses && !hasTiles,
+      clubFees: showClubFees,
+      otherIncome: showOtherIncome && !hasTiles,
+    },
+  );
 
   // ------------------------------------------------------------------------
   // SHAPING
@@ -563,7 +602,12 @@ export default async function DashboardPage() {
   // results, tonight, joiners and net-position cards each render their own
   // empty state instead of disappearing.
   const hasLeft = canApprove || showMatches;
-  const hasRight = showSessions || canReadRoster || showTournaments || showChallenges || showFinances;
+  // showClubFees joins this list because the dues panel is now a card in the
+  // rail rather than only a cell in the strip. It was already a term of
+  // hasTiles, so nothing about who lands where has moved.
+  const hasRight =
+    showSessions || canReadRoster || showTournaments || showChallenges || showFinances
+    || showClubFees;
 
   return (
     <div className="space-y-6">
@@ -984,79 +1028,89 @@ export default async function DashboardPage() {
 
               {/* NET POSITION. In, out, and whether the club is in the
                   positives — the question the club owner actually asks; income
-                  alone reads like good news no matter what has been spent.
+                  alone reads like good news no matter what has been spent. The
+                  two figures under the headline are now BARS on a shared scale
+                  as well as numbers, which is the whole difference between
+                  "$155.00 in · $564.00 out" and seeing at a glance that the
+                  term is running at a loss.
                   Rendered for the capability rather than for the season, so
                   somebody whose only panel this is cannot be handed a blank
                   page in the gap between two terms. */}
               {showFinances && (
-                <Card padding={false}>
-                  <div className="border-b border-[var(--border)] px-4 py-3">
-                    <h2 className={SECTION}>{season ? `${season.name} · Net position` : 'Net position'}</h2>
-                  </div>
-                  {season ? (
-                    <Link href="/fees" className="block px-4 py-4 hover:bg-[var(--surface-2)] transition-colors">
-                      <p
-                        className={`font-mono text-[32px] font-bold leading-none tracking-tight ${
-                          seasonNetCents < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--color-success)]'
-                        }`}
-                      >
-                        <Atomic>{`${seasonNetCents < 0 ? '-' : ''}${money(seasonNetCents)}`}</Atomic>
-                      </p>
-                      <p className={`mt-3 ${MICRO}`}>
-                        <Atomic>{money(seasonIncomeCents)}</Atomic> in · <Atomic>{money(seasonExpenseCents)}</Atomic> out
-                      </p>
-                    </Link>
-                  ) : (
-                    <p className="px-4 py-4 text-sm text-[var(--text-muted)]">
-                      No season is active, so there is nothing to add up yet.
-                    </p>
-                  )}
-                </Card>
+                <NetPositionPanel
+                  season={season && { id: season.id, name: season.name }}
+                  incomeCents={seasonIncomeCents}
+                  expenseCents={seasonExpenseCents}
+                  netCents={seasonNetCents}
+                />
+              )}
+
+              {/* SEASON DUES — collected against still owed, on one scale.
+                  Behind fees.clubfees.read, which is the capability that owns
+                  BOTH halves: the collected figure is that ledger summed, and
+                  the outstanding figure is the season's price list against the
+                  members who have not paid. Neither is fetched without it.
+                  Dues only, never split by fee_type — entry money and
+                  reinstatements are separate capabilities' books. */}
+              {showClubFees && (
+                <ClubFeePanel
+                  season={season && { id: season.id, name: season.name }}
+                  collectedCents={ledgers?.clubFees?.total ?? null}
+                  outstandingCents={outstandingCents}
+                />
               )}
             </div>
           )}
         </div>
       )}
 
+      {/* THE LADDER'S SHAPE. Full width rather than in the rail: a distribution
+          is read across, and fourteen bins in a 1fr column are three pixels
+          each. Behind players.read, which is in TRAINER_BASELINE — so this is
+          the one chart on the page every console user sees. */}
+      {ladder && <LadderPanel spread={ladder} />}
+
       {/* THE NARROWED LANDING. Every panel above belongs to a capability this
           person does not hold, so rather than a header over an empty page they
-          get the money they may see, the one thing they may file, and a list of
-          the doors that will actually open. */}
+          get CHARTS OF THE BOOKS THEY MAY SEE, the one thing they may file, and
+          — as a footer, not as the page — the doors that will actually open.
+          It used to be that signpost and nothing else, under the heading
+          "Nothing here needs you", which was the club owner's complaint: the
+          finance exec can see the club's entire spend, and the screen she lands
+          on told her there was nothing for her.
+
+          Each panel is present only because its own read was held and its own
+          query ran. A null ledger here means nothing was fetched, not that a
+          card was hidden. */}
       {!hasTiles && (
         <div className="space-y-5">
-          {/* Each figure is present only because its own read was held and its
-              own query ran; a null here means nothing was fetched, not that a
-              card was hidden. */}
-          {ledgers && (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              {ledgers.expenseCents !== null && (
-                <Card>
-                  <p className={MICRO}>{ledgers.season.name} · Expenses</p>
-                  <p className="font-mono text-2xl font-bold text-[var(--color-danger)]">
-                    <Atomic>{`-${money(ledgers.expenseCents)}`}</Atomic>
-                  </p>
-                  <p className="mt-1 text-xs text-[var(--text-muted)]">Money the club has spent this season</p>
-                </Card>
+          {/* One column at a time: these panels carry a chart each, and a chart
+              320 units wide squeezed into a third of a laptop is a texture. Two
+              across on a wide screen, stacked on a phone. */}
+          {ledgers && (ledgers.expenses || ledgers.otherIncome) && (
+            <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-2">
+              {ledgers.expenses && (
+                <ExpensePanel season={ledgers.season} expenses={ledgers.expenses} />
               )}
-              {ledgers.clubFeeCents !== null && (
-                <Card>
-                  <p className={MICRO}>{ledgers.season.name} · Club fees</p>
-                  <p className="font-mono text-2xl font-bold text-[var(--color-success)]">
-                    <Atomic>{money(ledgers.clubFeeCents)}</Atomic>
-                  </p>
-                  <p className="mt-1 text-xs text-[var(--text-muted)]">Season dues collected</p>
-                </Card>
-              )}
-              {ledgers.otherIncomeCents !== null && (
-                <Card>
-                  <p className={MICRO}>{ledgers.season.name} · Other income</p>
-                  <p className="font-mono text-2xl font-bold text-[var(--color-success)]">
-                    <Atomic>{money(ledgers.otherIncomeCents)}</Atomic>
-                  </p>
-                  <p className="mt-1 text-xs text-[var(--text-muted)]">Donations, grants and socials</p>
-                </Card>
+              {ledgers.otherIncome && (
+                <OtherIncomePanel season={ledgers.season} ledger={ledgers.otherIncome} />
               )}
             </div>
+          )}
+
+          {/* NO SEASON, BUT STILL A LEDGER READ. getDashboardFinances returns
+              null between terms because every book is keyed by season_id, and a
+              person whose only panel is a ledger chart would otherwise get the
+              signpost alone again — the exact screen this branch replaced. Said
+              in words instead, and it is the same sentence the net-position and
+              dues panels give for the same state. */}
+          {!ledgers && (showExpenses || showOtherIncome) && (
+            <Card>
+              <p className="text-sm text-[var(--text-muted)]">
+                No season is active, so there is nothing to add up yet. The club&apos;s books
+                are kept per term, and this fills in as soon as one is running.
+              </p>
+            </Card>
           )}
 
           {/* Offered on the write alone, with no season and no ledger behind
@@ -1078,28 +1132,50 @@ export default async function DashboardPage() {
             </Link>
           )}
 
-          {openSections.length > 0 && (
-            <Card>
-              <EmptyState
-                title="Nothing here needs you"
-                description="Your console access covers part of the club's work. These are the sections you can open."
-                action={
-                  <div className="flex flex-wrap justify-center gap-2">
-                    {openSections.map(({ href, label, icon: Icon }) => (
-                      <Link
-                        key={href}
-                        href={href}
-                        className="inline-flex min-h-[44px] items-center gap-2 border border-[var(--border)] bg-[var(--bg-elevated)] px-3 text-sm text-[var(--text-secondary)] transition-colors hover:border-[var(--border-hover)] hover:text-[var(--text-primary)]"
-                      >
-                        <Icon className="h-4 w-4" />
-                        {label}
-                      </Link>
-                    ))}
-                  </div>
-                }
-              />
-            </Card>
-          )}
+          {/* THE SIGNPOST, DEMOTED TO A FOOTER.
+              Still derived from the nav list through the same canAccess() the
+              sidebar and the middleware use. It keeps EmptyState's full voice
+              only when it is the whole page — somebody granted nothing but
+              /settings has no chart and no ledger, and for them "there is
+              nothing here" IS the honest answer. Above a chart it would
+              contradict the chart, so it becomes a hairline row of doors. */}
+          {openSections.length > 0 &&
+            (ledgers || canAddExpense ? (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-3 border-t border-[var(--border)] pt-5">
+                <span className={MICRO}>Also open to you</span>
+                {openSections.map(({ href, label, icon: Icon }) => (
+                  <Link
+                    key={href}
+                    href={href}
+                    className="inline-flex min-h-[44px] items-center gap-2 border border-[var(--border)] bg-[var(--bg-elevated)] px-3 text-sm text-[var(--text-secondary)] transition-colors hover:border-[var(--border-hover)] hover:text-[var(--text-primary)]"
+                  >
+                    <Icon className="h-4 w-4" />
+                    {label}
+                  </Link>
+                ))}
+              </div>
+            ) : (
+              <Card>
+                <EmptyState
+                  title="Nothing here needs you"
+                  description="Your console access covers part of the club's work. These are the sections you can open."
+                  action={
+                    <div className="flex flex-wrap justify-center gap-2">
+                      {openSections.map(({ href, label, icon: Icon }) => (
+                        <Link
+                          key={href}
+                          href={href}
+                          className="inline-flex min-h-[44px] items-center gap-2 border border-[var(--border)] bg-[var(--bg-elevated)] px-3 text-sm text-[var(--text-secondary)] transition-colors hover:border-[var(--border-hover)] hover:text-[var(--text-primary)]"
+                        >
+                          <Icon className="h-4 w-4" />
+                          {label}
+                        </Link>
+                      ))}
+                    </div>
+                  }
+                />
+              </Card>
+            ))}
         </div>
       )}
     </div>
