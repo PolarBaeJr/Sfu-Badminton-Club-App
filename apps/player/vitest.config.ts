@@ -9,6 +9,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    // See the file: supabase-js will not construct without a global WebSocket,
+    // which Node 20 (CI) lacks and Node 22+ (dev) has.
+    setupFiles: ['./vitest.setup.ts'],
   },
   resolve: {
     alias: {
