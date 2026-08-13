@@ -75,34 +75,47 @@ export async function autoSeedEventByElo(eventId: string) {
 
   const doubles = isDoublesEvent(event.event_type);
 
-  if (doubles) {
-    const { data: pairs } = await adminClient.from('tournament_pairs')
-      .select('id, combined_elo')
-      .eq('event_id', eventId)
-      .not('status', 'in', '("withdrawn","disqualified")')
-      .order('combined_elo', { ascending: false, nullsFirst: false });
+  // ONE ROUND TRIP PER ENTRANT, NOT ONE AFTER ANOTHER. This used to `await`
+  // inside the loop, so a 32-entry draw was 32 sequential hops to the database
+  // and the wall clock was N x latency. The ordering work is not the cost and
+  // never was — `.order()` is a single indexed scan inside Postgres. The cost
+  // is the trips.
+  //
+  // AND THE WRITES ARE CHECKED NOW. Every update's result was discarded, so a
+  // failure was silent: an exec pressed Auto-Seed, saw no error, and got a
+  // half-seeded field where some entrants kept a stale seed and others had
+  // none. Seeds decide the draw, so half-applied is worse than refused —
+  // settleWrites collects the failures and assertWritesSucceeded turns any into
+  // one message naming what did not land.
+  //
+  // Deliberately NOT a bulk upsert. PostgREST would send {id, seed_number} as an
+  // INSERT ... ON CONFLICT, and Postgres evaluates the insert tuple before it
+  // detects the conflict — so every NOT NULL column without a default (event_id,
+  // player_id) would have to be round-tripped and written back, turning a
+  // one-column update into a full-row rewrite. A single UPDATE ... FROM (VALUES)
+  // would be one trip, but it needs SQL this client cannot send: that is a
+  // database function and a migration, and it is not worth one at club sizes.
+  const table = doubles ? 'tournament_pairs' : 'tournament_participants';
+  const ratingColumn = doubles ? 'combined_elo' : 'elo_before';
 
-    if (pairs) {
-      for (let i = 0; i < pairs.length; i++) {
-        await adminClient.from('tournament_pairs')
-          .update({ seed_number: i + 1 })
-          .eq('id', pairs[i]!.id);
-      }
-    }
-  } else {
-    const { data: participants } = await adminClient.from('tournament_participants')
-      .select('id, elo_before')
-      .eq('event_id', eventId)
-      .not('status', 'in', '("withdrawn","disqualified")')
-      .order('elo_before', { ascending: false, nullsFirst: false });
+  const { data: entries, error: readError } = await adminClient.from(table)
+    .select(`id, ${ratingColumn}`)
+    .eq('event_id', eventId)
+    .not('status', 'in', '("withdrawn","disqualified")')
+    .order(ratingColumn, { ascending: false, nullsFirst: false });
 
-    if (participants) {
-      for (let i = 0; i < participants.length; i++) {
-        await adminClient.from('tournament_participants')
-          .update({ seed_number: i + 1 })
-          .eq('id', participants[i]!.id);
-      }
-    }
+  // A failed READ used to fall through as `if (entries)` and seed nobody, which
+  // reads to the exec as "auto-seed did nothing" rather than as an error.
+  if (readError) throw new Error(`Could not read this event's entrants: ${readError.message}`);
+
+  if (entries && entries.length > 0) {
+    const { failures } = await settleWrites(
+      entries.map((entry, i) => [
+        `${table}.seed_number for ${entry.id}`,
+        adminClient.from(table).update({ seed_number: i + 1 }).eq('id', entry.id),
+      ]),
+    );
+    assertWritesSucceeded('Auto-seed', failures);
   }
 
   await logAudit(adminClient, {

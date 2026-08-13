@@ -387,6 +387,7 @@ import {
 import { finalizeEvent, applyPlacementBonuses } from '../tournament-actions/finalize';
 import { generateSingleEliminationBracket, generateRoundRobinMatches, setRoundMatchShape } from '../tournament-actions/brackets';
 import { updateTournamentEvent } from '../tournament-actions/events';
+import { autoSeedEventByElo } from '../tournament-actions/seeding';
 import { withdrawParticipant } from '../tournament-actions/participants';
 import {
   settleWrites, assertWritesSucceeded, reverseEloSnapshot, undoDecidedResult,
@@ -3436,5 +3437,71 @@ describe('a round robin and a knockout in one event', () => {
     // moved — matching on the number alone would have swept it in.
     expect(theFinal.points_per_game).toBe(21);
     expect(theFinal.games_per_match).toBe(3);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// AUTO-SEED
+// ---------------------------------------------------------------------------
+// Nothing covered this action at all, and it was changed twice: the per-entrant
+// updates now run together rather than one awaiting the next, and their results
+// are checked instead of discarded. Both are invisible to a suite that never
+// calls it, so the suite called it.
+describe('auto-seeding by rating', () => {
+  function field(elos: Array<number | null>, statuses: string[] = []) {
+    store.db.tournament_matches = [];
+    store.db.tournament_participants = elos.map((elo, i) => ({
+      id: `p-${i}`, event_id: 'e1', player_id: `pl-${i}`, elo_before: elo,
+      elo_after: null, elo_change: null, seed_number: null,
+      final_position: null, points: null, status: statuses[i] ?? 'checked_in',
+    }));
+    Object.assign(event(), { status: 'registration', draw_locked: false });
+  }
+  const seeds = () => store.db.tournament_participants!
+    .map((p) => [p.id, p.seed_number] as const)
+    .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+
+  it('numbers the field from the strongest down', async () => {
+    field([1200, 1400, 1300]);
+    await autoSeedEventByElo('e1');
+    // p-1 (1400) then p-2 (1300) then p-0 (1200) — the seed is a RANK, not the
+    // row order the field happened to be read in.
+    expect(seeds()).toEqual([['p-0', 3], ['p-1', 1], ['p-2', 2]]);
+  });
+
+  it('leaves withdrawn entrants out, so the seeds stay contiguous', async () => {
+    field([1400, 1300, 1200], ['checked_in', 'withdrawn', 'checked_in']);
+    await autoSeedEventByElo('e1');
+    // 1 and 2, not 1 and 3: a withdrawal must not leave a hole for the draw to
+    // place a bye against.
+    expect(seeds()).toEqual([['p-0', 1], ['p-1', null], ['p-2', 2]]);
+  });
+
+  it('puts an unrated entrant last rather than first', async () => {
+    field([1200, null, 1400]);
+    await autoSeedEventByElo('e1');
+    expect(seeds()).toEqual([['p-0', 2], ['p-1', 3], ['p-2', 1]]);
+  });
+
+  it('REFUSES rather than half-seeding when a write fails', async () => {
+    field([1400, 1300, 1200]);
+    // The behaviour the old code could not have: every update's result was
+    // discarded, so this failure returned success and left a field where one
+    // entrant kept no seed while the others were renumbered around them. Seeds
+    // decide the draw, so a partial application is worse than a refusal.
+    store.faults.push({
+      table: 'tournament_participants',
+      op: 'update',
+      message: 'connection reset',
+      when: ({ filters }) => filters.some(([col, v]) => col === 'id' && v === 'p-1'),
+    });
+    await expect(autoSeedEventByElo('e1')).rejects.toThrow(/Auto-seed/);
+  });
+
+  it('refuses on a locked draw', async () => {
+    field([1400, 1300]);
+    Object.assign(event(), { draw_locked: true });
+    await expect(autoSeedEventByElo('e1')).rejects.toThrow(/locked/i);
   });
 });
