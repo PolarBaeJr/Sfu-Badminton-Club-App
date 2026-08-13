@@ -9,6 +9,7 @@ import { AttendanceGrid } from '@/components/my-stats/attendance-grid';
 import { SeasonPick } from '@/components/my-stats/season-pick';
 import { seasonPickerOptions, type HistorySeason } from '@/lib/season-history';
 import { PastSeasonStats } from './past-season';
+import { LiveRating } from '@/components/live-rating';
 
 // The rating line, the form strip and the history table all read one window of
 // the member's matches. 200 is a season and a half of heavy play — deep enough
@@ -396,6 +397,13 @@ async function CurrentSeasonStats() {
 
   return (
     <div data-screen-label="My Stats">
+      {/* Every figure on this screen hangs off one `ratings` row, and a member
+          reads it hardest in the minutes after a match they did not enter the
+          result for. Mounted HERE rather than in MyStatsPage above, because
+          that wrapper also dispatches to PastSeasonStats for `?season=`, and a
+          finished term reads season_final_ratings — an archived row that cannot
+          move and has no live version to wait for. */}
+      <LiveRating playerId={player.id} />
       <PageHeader
         title="My stats"
         sub={activeSeason ? activeSeason.name : undefined}
