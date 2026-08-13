@@ -80,6 +80,7 @@ export function useLiveMatches({
   channel: channelName,
   playerId,
   challengeIds,
+  withMatch = false,
   clubMatches = false,
   enabled = true,
 }: {
@@ -90,8 +91,22 @@ export function useLiveMatches({
    *  The only per-member key available: `match_participants` and
    *  `challenge_participants` carry `player_id` and `matches` does not. */
   playerId?: string;
-  /** The challenges this surface is actually showing, watched by id. */
+  /** The challenges this surface is actually showing, watched by id.
+   *
+   *  KEEP THIS LIST SHORT AND LIVE. Every id costs a listener (two with
+   *  `withMatch`), they all share one socket, and Realtime caps how many
+   *  postgres_changes bindings a connection will accept — past the cap the
+   *  extras are simply not delivered, which is this whole file's failure mode
+   *  wearing a different hat. The list page reads up to 200 challenges and
+   *  passes only the NON-TERMINAL ones for that reason: a completed, rejected,
+   *  expired or cancelled challenge cannot move again, so watching it buys
+   *  nothing and spends the budget that the live ones need. */
   challengeIds?: string[];
+  /** Also watch the match each of those challenges produced. True only where a
+   *  SCORELINE is drawn — the list shows challenge status and no scores, so it
+   *  would otherwise open a second listener per row to learn something it does
+   *  not print. Mirrors live-tournament.tsx's `draw` flag. */
+  withMatch?: boolean;
   /** Watch every club match, unfiltered. True only for /feed, which draws the
    *  whole club's last fifteen results and would be wrong to filter. */
   clubMatches?: boolean;
@@ -202,18 +217,21 @@ export function useLiveMatches({
         nudge,
       );
 
-      // The match that came out of it. `matches.challenge_id` is what makes a
-      // per-challenge scope expressible at all on this table.
-      channel.on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'matches',
-          filter: `challenge_id=eq.${challengeId}`,
-        },
-        nudge,
-      );
+      // The match that came out of it, where a scoreline is actually drawn.
+      // `matches.challenge_id` is what makes a per-challenge scope expressible
+      // at all on this table — there is no player column to filter on.
+      if (withMatch) {
+        channel.on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'matches',
+            filter: `challenge_id=eq.${challengeId}`,
+          },
+          nudge,
+        );
+      }
     }
 
     if (clubMatches) {
@@ -240,7 +258,7 @@ export function useLiveMatches({
       clearTimeout(timer);
       void supabase.removeChannel(channel);
     };
-  }, [channelName, playerId, key, clubMatches, enabled, router]);
+  }, [channelName, playerId, key, withMatch, clubMatches, enabled, router]);
 }
 
 /**
@@ -270,16 +288,22 @@ export function LiveMyStats({ playerId }: { playerId: string }) {
 }
 
 /**
- * The challenge LIST. The viewer's own participant rows are enough here: a new
- * challenge naming them arrives as an INSERT, and their own response as an
- * UPDATE. The other party's response is picked up by watching the listed
- * challenges themselves, which is why the ids are passed too.
+ * The challenge LIST. The viewer's own participant rows are enough for half of
+ * it: a new challenge naming them arrives as an INSERT, and their own response
+ * as an UPDATE. The other party's response is not — that moves the challenge
+ * row and leaves theirs alone — which is why the ids are passed too.
+ *
+ * NO `withMatch`. This screen prints challenge status and never a scoreline,
+ * so a listener on the resulting match would double the binding count to learn
+ * something the page does not draw. A completed challenge shows up as
+ * `challenges.status` moving, which the id listeners already hear.
  */
 export function LiveChallenges({
   playerId,
   challengeIds,
 }: {
   playerId: string;
+  /** The LIVE ones only — see the note on `challengeIds` in the hook. */
   challengeIds: string[];
 }) {
   useLiveMatches({ channel: 'challenges-list', playerId, challengeIds });

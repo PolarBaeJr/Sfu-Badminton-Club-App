@@ -83,9 +83,13 @@ export function ChallengeDetailActions({
   // The hook is called HERE, above the early return, because hooks must run
   // unconditionally — which also means a member in bad standing still gets a
   // live page even though they get no controls.
+  // `withMatch` because this is the screen that draws the scoreline, the
+  // per-game lines and each side's rating swing — all of which live on
+  // `matches` and its children. One challenge, so it is two bindings.
   useLiveMatches({
     channel: `challenge-${challengeId}`,
     challengeIds: [challengeId],
+    withMatch: true,
     enabled: !showSubmit && !showDispute && !showWalkover,
   });
 

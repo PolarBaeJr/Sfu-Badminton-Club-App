@@ -296,12 +296,24 @@ export default async function ChallengesPage() {
           one moves `challenges.status` and leaves this member's participant
           row untouched, so the listed challenges are watched by id as well.
 
-          The ids come from `all`, which is every challenge this member is in
-          after ordering — not just the ones a given section drew — so a
-          challenge moving between the incoming, active and archived sections
-          is still heard. The hook depends on the JOINED string, not the array
-          identity. */}
-      <LiveChallenges playerId={player.id} challengeIds={all.map((row) => row.c.id)} />
+          THE LIVE ONES ONLY, and that is a budget decision rather than a
+          tidiness one. The query above reads up to 200 challenge rows, every
+          id costs a postgres_changes binding, they all share one socket, and
+          Realtime caps the bindings a connection will accept — past the cap
+          the extras are silently not delivered, which is exactly the failure
+          this whole mechanism is prone to. incoming/active/outgoing is the
+          non-terminal set (partitionChallenges), and a completed, rejected,
+          expired or cancelled challenge cannot move again, so it is watched
+          for nothing. Deduped because `active` and `outgoing` overlap: a
+          challenge this member issued and the opponent accepted is in both.
+
+          The hook depends on the JOINED string, not the array identity. */}
+      <LiveChallenges
+        playerId={player.id}
+        challengeIds={Array.from(
+          new Set([...incoming, ...active, ...outgoing].map((row) => row.c.id)),
+        )}
+      />
       <PageHeader
         title="Challenges"
         sub="Issue, accept, and track challenges. Whatever is waiting on you sits at the top — answer it so the queue clears."
