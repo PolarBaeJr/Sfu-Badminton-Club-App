@@ -59,13 +59,30 @@
 -- RLS, so the question each time is "does this hand out something a query would
 -- not". All four answer no, and the structural reason is the same one that
 -- makes them publishable where `players` is not: NO COLUMN OF ANY OF THESE FOUR
--- IS WITHHELD FROM `authenticated` BY A COLUMN-LEVEL GRANT. That was checked
--- against information_schema.column_privileges — zero withheld columns across
--- all four — and re-checked against the migrations: the only column-grant
--- surgery in this schema is 00032 on `players` and 00111 on
--- `players.competition_category`. The only REVOKEs touching `matches` and
--- `match_participants` are 00072's TRUNCATE, REFERENCES and TRIGGER, which are
--- not SELECT privileges and have nothing to do with what replication streams.
+-- IS WITHHELD FROM `authenticated` BY A COLUMN-LEVEL GRANT.
+--
+-- HOW THAT WAS ESTABLISHED, by two different methods, said precisely because
+-- this is the load-bearing claim of the whole file. For `matches` and
+-- `match_participants` it was QUERIED: information_schema.column_privileges on
+-- the live database returns zero withheld columns for either (the same check
+-- also cleared `match_games`, which is not published here for other reasons).
+-- For `challenges` and `challenge_participants` it was NOT queried — it is
+-- inferred from the migrations, which is weaker and is flagged as such: no
+-- GRANT or REVOKE statement anywhere in this directory names either table, and
+-- the only column-grant surgery in the entire schema is 00032 on `players` and
+-- 00111 on `players.competition_category`. If that inference is ever worth
+-- hardening, the query is
+--
+--   SELECT table_name, column_name, privilege_type
+--     FROM information_schema.column_privileges
+--    WHERE grantee = 'authenticated'
+--      AND table_name IN ('challenges', 'challenge_participants');
+--
+-- and what it should show is a table-level grant with no per-column rows.
+--
+-- The only REVOKEs touching `matches` and `match_participants` are 00072's
+-- TRUNCATE, REFERENCES and TRIGGER, which are not SELECT privileges and have
+-- nothing to do with what replication streams.
 --
 --   matches. RLS enabled (00005:33). SELECT policy matches_select,
 --     `FOR SELECT TO authenticated USING (TRUE)` (00005:164). Every signed-in

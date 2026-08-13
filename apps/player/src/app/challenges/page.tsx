@@ -301,11 +301,22 @@ export default async function ChallengesPage() {
           id costs a postgres_changes binding, they all share one socket, and
           Realtime caps the bindings a connection will accept — past the cap
           the extras are silently not delivered, which is exactly the failure
-          this whole mechanism is prone to. incoming/active/outgoing is the
-          non-terminal set (partitionChallenges), and a completed, rejected,
-          expired or cancelled challenge cannot move again, so it is watched
-          for nothing. Deduped because `active` and `outgoing` overlap: a
-          challenge this member issued and the opponent accepted is in both.
+          this whole mechanism is prone to. So: everything except `archived`,
+          because a completed, rejected, expired or cancelled challenge cannot
+          move again and is watched for nothing.
+
+          THAT IS NOT A GUARANTEE partitionChallenges MAKES. `incoming` and
+          `outgoing` are explicitly filtered on non-terminal status, but
+          `active` is only `status in (accepted, partially_confirmed)` with no
+          such guard — it holds no terminal rows today because neither of those
+          two statuses is terminal, which is a fact about that list and not
+          about the function. Adding a terminal status to it would quietly put
+          dead challenges back on this socket. Harmless if it happens (a
+          wasted binding, not a wrong render), and written down so it is not a
+          surprise.
+
+          Deduped because `active` and `outgoing` overlap: a challenge this
+          member issued and the opponent accepted is in both.
 
           The hook depends on the JOINED string, not the array identity. */}
       <LiveChallenges

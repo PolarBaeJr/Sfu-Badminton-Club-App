@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase-browser';
 
@@ -124,7 +124,27 @@ export function useLiveMatches({
   // without anybody forgetting a cleanup.
   const key = (challengeIds ?? []).join(',');
 
+  // A PARKED SOCKET IS NOT A PAUSED ONE. `enabled: false` removes the channel;
+  // re-enabling opens a NEW one, and a fresh .subscribe() delivers only what
+  // happens from that moment. Everything that changed while the dialog was
+  // open is simply gone — there is no replay and no catch-up, so "the next
+  // event will sort it out" is only true if there IS a next event. A member
+  // who opened the submit dialog, typed for two minutes while their opponent
+  // confirmed the match, then cancelled, would otherwise sit on a stale page
+  // indefinitely.
+  //
+  // So the transition matters, not just the state: refresh ONCE on
+  // false -> true. A ref rather than state because this must not itself cause
+  // a render, and it starts at the initial `enabled` so a surface that mounts
+  // enabled (which is all of them but the challenge page) does not fire a
+  // redundant refresh over its own first paint.
+  const wasEnabled = useRef(enabled);
+
   useEffect(() => {
+    const missedSomething = enabled && !wasEnabled.current;
+    wasEnabled.current = enabled;
+    if (missedSomething) router.refresh();
+
     if (!enabled) return;
     // Nothing asked for means no socket at all, rather than an empty channel
     // kept open for the life of the page.
@@ -166,7 +186,15 @@ export function useLiveMatches({
     // sentence for the same family of reason, since the guard scans for the
     // quoted form and would otherwise open a scan position on a comment.
 
-    if (playerId) {
+    // SKIPPED WHEN THE WHOLE CLUB IS ALREADY BEING WATCHED. An unfiltered
+    // `matches` listener is a strict superset of this one for wake-up
+    // purposes: every write that touches a participant row touches the match
+    // in the same transaction — apply_match_result UPDATEs each participant
+    // and then `matches` itself, adminCreateMatch INSERTs the match first —
+    // so this binding could only ever fire alongside one that already did.
+    // /feed is the only surface where both would be asked for, and it pays a
+    // binding for nothing if this is not skipped.
+    if (playerId && !clubMatches) {
       // THE MEMBER'S OWN MATCHES, and the only way to express that. `matches`
       // has no player column, so "a match I was in" is not a filter that can
       // be written against it — it can only be written against the join table.
@@ -184,7 +212,16 @@ export function useLiveMatches({
         },
         nudge,
       );
+    }
 
+    // A SEPARATE BLOCK, and not merely for tidiness: this one is NOT skipped
+    // when the club is being watched. `matches` and `challenge_participants`
+    // have no write path in common — a challenge is issued, accepted and
+    // rejected without any match existing yet — so an unfiltered `matches`
+    // listener is not a superset of this one the way it is of the participant
+    // listener above. /feed needs exactly this: it draws the viewer's own
+    // pending challenges beneath the club river.
+    if (playerId) {
       // A CHALLENGE ISSUED TO THEM arrives as an INSERT of their own
       // participant row, which routes because an INSERT's tuple is the new
       // row. Their own accept or reject is an UPDATE of the same row.

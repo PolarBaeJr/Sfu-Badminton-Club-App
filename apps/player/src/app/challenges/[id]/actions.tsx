@@ -77,8 +77,14 @@ export function ChallengeDetailActions({
   // page underneath and can take away the very button the typing was heading
   // for, and the `standing.ok` early return below would unmount the lot. An
   // `enabled` flag is the answer the door list already uses for the same
-  // problem: no dialog open, no socket, nothing to interrupt. Closing the
-  // dialog re-subscribes and the next event catches up.
+  // problem: no dialog open, no socket, nothing to interrupt.
+  //
+  // Closing the dialog does NOT replay what was missed — a new subscription
+  // delivers only what happens after it — so the hook refreshes once on the
+  // re-enable itself rather than waiting for a next event that may never
+  // come. See the `wasEnabled` note in live-matches.tsx. That refresh lands
+  // after the dialog is shut, which is precisely when there is no longer any
+  // typing to disturb.
   //
   // The hook is called HERE, above the early return, because hooks must run
   // unconditionally — which also means a member in bad standing still gets a
