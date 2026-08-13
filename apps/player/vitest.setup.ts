@@ -11,6 +11,12 @@
 // ran UNCACHED — a Turbo cache hit had been hiding it. That is the worst shape
 // a test failure can have: environment-dependent AND intermittent.
 //
+// The repo has since moved to Node 24, which HAS the global, so the guard below
+// is false and this block no-ops. It is kept, not deleted: it costs nothing when
+// the global exists, and it is the only thing standing between a contributor on
+// an older Node and the same baffling error. The real fix for the drift that
+// caused this is the pin — .nvmrc + engines.node + engine-strict — not the stub.
+//
 // A stub rather than a real polyfill, deliberately. Nothing under test opens a
 // socket; the constructor merely has to exist. Importing a polyfill would pull
 // a runtime dependency into the test path to satisfy a check that never fires.
