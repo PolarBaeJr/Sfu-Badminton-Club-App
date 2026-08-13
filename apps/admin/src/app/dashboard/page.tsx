@@ -114,12 +114,6 @@ type TonightSession = {
   start_time: string | null;
   end_time: string | null;
   status: string;
-  // Resolved by the database at write time (00110); the DOORS line below is
-  // derived from these so it shows the same edge session_checkin_open()
-  // enforces. ends_at is null exactly for the start-time-only shape, whose
-  // close comes from the runtime duration setting instead.
-  starts_at: string | null;
-  ends_at: string | null;
 };
 
 export default async function DashboardPage({
@@ -424,7 +418,7 @@ export default async function DashboardPage({
   const { data: nextSession } = showSessions
     ? await supabase
         .from('sessions')
-        .select('id, name, location, date, start_time, end_time, status, starts_at, ends_at')
+        .select('id, name, location, date, start_time, end_time, status')
         .gte('date', week.today)
         .order('date', { ascending: true })
         .order('start_time', { ascending: true, nullsFirst: false })

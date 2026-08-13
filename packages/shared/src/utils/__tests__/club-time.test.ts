@@ -72,11 +72,6 @@ describe('wallClockToUtc against tzdata 2026b fixtures', () => {
   });
 
   it('reads no timezone data at all on or after the pin', () => {
-    // The host's own answer, whatever tzdata it carries. On Node 20/22 and on
-    // pre-2026b Node 24/26 this is an hour later than the fixture above; the
-    // assertion is only that our result does not track it.
-    const hostOffsetMinutes = -new Date('2026-12-01T19:30:00Z').getTimezoneOffset();
-    void hostOffsetMinutes; // host TZ is irrelevant by construction
     const pinned = wallClockToUtc(2026, 12, 1, 19, 30);
     expect(pinned.toISOString()).toBe('2026-12-02T02:30:00.000Z');
     // -07:00 exactly: the wall clock read as UTC, plus seven hours.

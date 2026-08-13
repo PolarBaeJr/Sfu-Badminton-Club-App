@@ -2,32 +2,34 @@ import { NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '@/lib/supabase-server';
 import { remindSessionGoers } from '@/lib/session-reminders';
-import { getReminderLeadMinutes, REMINDER_LEAD_MAX_MINUTES } from '@badminton/shared';
+import {
+  getReminderLeadMinutes,
+  REMINDER_LEAD_MAX_MINUTES,
+  CLUB_TIMEZONE,
+  wallClockToUtc,
+} from '@badminton/shared';
 
 export const dynamic = 'force-dynamic';
 
-const CLUB_TZ = 'America/Vancouver';
+const CLUB_TZ = CLUB_TIMEZONE;
 
 // sessions.date is a DATE and start_time a TIME, both meaning club-local wall
-// clock. Comparing them to "now" needs the real UTC instant, and the offset
-// changes with daylight saving — so resolve it for that specific date rather
-// than assuming a fixed -7/-8.
+// clock. Deciding whether a player's chosen lead time has come due needs the
+// real UTC instant of that wall clock.
 //
-// The trick: read the naive stamp as if it were UTC, ask Intl what that instant
-// looks like in the club's zone, and the difference is the offset to subtract.
+// This used to carry its own single-pass Intl converter. It does not any more,
+// for a reason this job is uniquely exposed to: from 2026-11-01 British
+// Columbia stops changing its clocks (tzdata 2026b), and asking Intl on a Node
+// that predates that release — production is Node 20, tzdata 2025c — returns an
+// offset an hour off for every session past that date. Five are already
+// booked. Every reminder for them would have gone out an hour late.
+// wallClockToUtc pins that era to a literal offset instead of asking, so this
+// is correct without waiting for a Node upgrade, and there is one
+// implementation of the rule rather than two.
 function clubTimeToUtc(date: string, time: string): Date {
-  const naive = new Date(`${date}T${time.slice(0, 8).padEnd(8, ':00')}Z`);
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: CLUB_TZ, hour12: false,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-  }).formatToParts(naive).reduce<Record<string, number>>((acc, p) => {
-    if (p.type !== 'literal') acc[p.type] = Number(p.value);
-    return acc;
-  }, {});
-  const g = (k: string) => parts[k] ?? 0;
-  const asZone = Date.UTC(g('year'), g('month') - 1, g('day'), g('hour') % 24, g('minute'), g('second'));
-  return new Date(naive.getTime() - (asZone - naive.getTime()));
+  const [y, mo, d] = date.split('-').map(Number) as [number, number, number];
+  const [h, mi] = time.split(':').map(Number) as [number, number];
+  return wallClockToUtc(y, mo, d, h, mi);
 }
 
 // Reminds each player who RSVP'd "going" the interval before start that THEY

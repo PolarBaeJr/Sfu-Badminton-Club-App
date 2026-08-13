@@ -33,11 +33,16 @@ async function performCheckIn(
 
   const { data: session } = await supabase
     .from('sessions')
-    // starts_at/ends_at are the instants the database resolved (00110) and are
-    // what the RLS gate compares NOW() against. Selecting them means the
-    // message this action shows is derived from the same values the gate will
-    // use, not from a second conversion that could disagree with it.
-    .select('date, start_time, end_time, status, starts_at, ends_at')
+    // Deliberately NOT selecting starts_at/ends_at (00110), even though this is
+    // the call site closest to the gate. Naming a column PostgREST does not
+    // know yet is a 42703, which arrives here as `session == null` and turns
+    // into "This session is closed" for every member in the club — and the
+    // migration is applied by hand, so the app can be deployed first. The
+    // wall-clock path below reaches the same answer: getCheckinWindow uses the
+    // same pinned resolver the database does. The sessions LIST pages select
+    // '*' and so pick the instants up automatically once they exist, with no
+    // such hazard.
+    .select('date, start_time, end_time, status')
     .eq('id', sessionId)
     .single();
 

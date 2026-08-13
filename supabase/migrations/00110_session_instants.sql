@@ -226,3 +226,9 @@ GRANT EXECUTE ON FUNCTION session_checkin_open(UUID) TO authenticated;
 
 -- attendance_insert is NOT redefined. It calls session_checkin_open(session_id)
 -- and that signature is unchanged, so the policy keeps working as written.
+
+-- PostgREST caches the schema, and until it reloads it will reject
+-- select=...,starts_at with a 400 rather than returning the column. Supabase's
+-- DDL event trigger normally does this on its own; one explicit NOTIFY costs
+-- nothing and closes the window.
+NOTIFY pgrst, 'reload schema';
