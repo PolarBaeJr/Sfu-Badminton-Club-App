@@ -964,8 +964,11 @@ async function setMatchEntryImpl(
 //
 // EXEC OR ADMIN, not admin-only, and that is a deliberate deviation worth
 // stating. Every other corrective action in this module — void, undo, restore,
-// slot editing, double no-show — sits in EXEC_BASELINE, and the tournament
-// desk runs as exec, not admin. An admin-only override would mean the person
+// slot editing, double no-show — sits in EXEC_ASSIGNABLE and in
+// ROLE_DEFAULTS.tournaments, and the tournament desk runs as exec, not admin.
+// (They were in EXEC_BASELINE, held by every officer, until that list narrowed
+// to reads; the desk now needs the Tournaments job assigned, which is the same
+// authority named rather than assumed.) An admin-only override would mean the person
 // standing at the desk at 9pm with a wrong scoreline on the board cannot fix it,
 // which is the situation this was asked for. What makes the override safe is not
 // a narrower role but that it is EXPLICIT and AUDITED: it demands a typed

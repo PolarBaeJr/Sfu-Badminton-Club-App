@@ -127,11 +127,38 @@ describe('getAuthenticatedAdmin', () => {
 });
 
 describe('requireCapability', () => {
+  // THE CAPABILITY MOVED, BECAUSE THE BASELINE DID. This asked for
+  // `players.approve.write` and an unrestricted exec no longer holds it — the
+  // exec baseline is twelve READS now, and every write arrives by assignment.
+  // Asking for the roster read instead keeps the assertion about what it was
+  // always about (the level's own baseline admits its holder) and stops it
+  // silently testing an assignment path it does not set up.
   it('admits somebody whose level baseline holds the capability', async () => {
     state.user = { id: 'user-1' };
     state.player = { id: 'exec-1', role: 'player', is_exec: true };
-    await expect(requireCapability('players.approve.write')).resolves.toEqual(state.player);
+    await expect(requireCapability('players.read')).resolves.toEqual(state.player);
     expect(sentrySetUser).toHaveBeenCalledWith({ id: 'exec-1' });
+  });
+
+  // ...AND THE OTHER HALF, WHICH THE BASELINE USED TO COVER FOR FREE. A write is
+  // now reached through a permission_role, so the gate has to admit on the
+  // RESOLVED set and not on the level. This is the case the narrowing turns into
+  // the ordinary one: nearly every officer doing nearly every job.
+  it('admits an exec who was ASSIGNED the capability, though no baseline holds it', async () => {
+    state.user = { id: 'user-1' };
+    state.player = {
+      id: 'exec-1',
+      role: 'player',
+      is_exec: true,
+      permission_role: 'internal',
+      permission_grants: [],
+      permission_revokes: [],
+    };
+    await expect(requireCapability('players.approve.write')).resolves.toEqual(state.player);
+    // ...and the same officer, unassigned, is refused it. Same person, same
+    // level, same capability — the assignment is the whole difference.
+    state.player = { id: 'exec-1', role: 'player', is_exec: true };
+    await expect(requireCapability('players.approve.write')).rejects.toThrow();
   });
 
   // THE ORDER, pinned. The capability is checked BEFORE the passkey gate,
@@ -151,6 +178,13 @@ describe('requireCapability', () => {
   // what the three level gates used to say — an ordinary member turned away
   // from exec work is told about exec, not about admin. All three come from
   // the same caller, so only the CAPABILITY decides which message appears.
+  //
+  // UNCHANGED, AND THAT IS THE POINT OF READING denialFor's MIDDLE BRANCH FROM
+  // EXEC_ASSIGNABLE. `players.approve.write` left the exec BASELINE and is still
+  // exec-tier work: the level a member needs before an admin can give it to them
+  // is exec, so "Admin or exec access required" is the same true answer it was.
+  // Read from the narrowed baseline the branch would have missed, and this
+  // member would have been told to go and become an admin.
   it('spells the refusal by the lowest level that holds the capability', async () => {
     state.user = { id: 'user-1' };
     state.player = { id: 'member-1', role: 'player' };
@@ -188,7 +222,7 @@ describe('requireCapability', () => {
   // access required" is false for somebody who IS an exec — they would read it
   // as a bug and ask an admin to check a flag that is already set. The three
   // level messages above stay exactly as they were for everybody else, which is
-  // why this branch is behind the restricted check rather than replacing them.
+  // why this branch is asked FIRST rather than replacing them.
   it('keeps the level messages for a capability no level below admin holds', async () => {
     state.user = { id: 'user-1' };
     state.player = {
@@ -199,6 +233,26 @@ describe('requireCapability', () => {
       permission_grants: [],
       permission_revokes: [],
     };
+    await expect(requireCapability('audit.page')).rejects.toThrow('Admin access required');
+  });
+
+  // THE REFUSAL AN UNRESTRICTED OFFICER MEETS, WHICH IS NOW THE COMMONEST ONE IN
+  // THE CONSOLE AND USED TO BE UNREACHABLE. denialFor's first branch was guarded
+  // by `kind === 'restricted'` on the argument that an unrestricted person's set
+  // IS their baseline, so they could only ever be refused genuinely admin-only
+  // work. The narrowed baseline retires that argument: Gloria and every other
+  // officer with no permission_role is unrestricted AND refused sixty-one
+  // writes, and the old fall-through told them "Admin access required" — which
+  // is false, and false in the one direction that stops them asking for the
+  // thing that would fix it.
+  it('tells an UNRESTRICTED officer it is their permissions, not their level', async () => {
+    state.user = { id: 'user-1' };
+    state.player = { id: 'exec-1', role: 'player', is_exec: true };
+    await expect(requireCapability('players.approve.write')).rejects.toThrow(
+      'Your permissions do not include this. Ask an admin.',
+    );
+    // ...and it is still the LEVEL for work no permission can reach, so the
+    // change did not swallow the three level messages.
     await expect(requireCapability('audit.page')).rejects.toThrow('Admin access required');
   });
 });

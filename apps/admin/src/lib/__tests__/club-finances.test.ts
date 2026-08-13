@@ -22,7 +22,13 @@ type Op = 'select' | 'insert' | 'update' | 'delete';
 const store = vi.hoisted(() => ({
   db: {} as Record<string, Row[]>,
   seq: 0,
-  actor: { id: 'admin-1', role: 'admin' } as { id: string; role: string; is_exec?: boolean },
+  actor: { id: 'admin-1', role: 'admin' } as { id: string; role: string; is_exec?: boolean;
+    // The three permission columns, because the gate mock resolves them now —
+    // an officer's writes come from a permission_role, not from is_exec.
+    permission_role?: string;
+    permission_grants?: string[];
+    permission_revokes?: string[];
+  },
   /** Makes the next delete match nothing, without removing the row. */
   swallowDeletes: false,
   /** Same, for updates: PostgREST cannot tell "matched nothing" from success. */
@@ -117,16 +123,30 @@ vi.mock('../supabase-server', () => ({ createAdminClient: makeClient }));
 // createAdminClient() is service-role and bypasses RLS — the route map only
 // decides who may open a page, and a server action can be invoked without ever
 // loading one.
+// TWO THINGS MOVED HERE WHEN THE EXEC BASELINE NARROWED, and both make this
+// mock a CLOSER copy of the real requireCapability rather than a looser one.
+//
+//   * It resolves the actor's STORED permissions instead of forcing UNRESTRICTED.
+//     An officer's writes arrive from a permission_role now, so a mock that
+//     ignores the role can only ever model an officer who has been given
+//     nothing — and every action below is one somebody was given a job to do.
+//     permissionsOf() is the same function the real gate calls.
+//   * The wording reads from EXEC_ASSIGNABLE, mirroring denialFor() in
+//     supabase-server.ts for the same reason it does: "Exec or admin access
+//     required" answers what LEVEL would have been enough, and these are still
+//     exec-tier acts even though an exec no longer holds them by default.
 vi.mock('../actions/_shared', async () => {
-  const { accessLevelFor, permits, EXEC_BASELINE, UNRESTRICTED } = await import('../permissions');
+  const { accessLevelFor, permissionsOf, permits, EXEC_ASSIGNABLE } =
+    await import('../permissions');
   return {
     requireCapability: async (capability: Capability) => {
-      if (!permits(accessLevelFor(store.actor), UNRESTRICTED, capability)) {
+      const level = accessLevelFor(store.actor);
+      if (!permits(level, permissionsOf(store.actor), capability)) {
         // The wording the old two-gate mock used, kept so the assertions below
-        // still read as prose. Which of the two you get is now decided by the
-        // baseline rather than by which helper the action happened to call.
+        // still read as prose. Which of the two you get is decided by whether
+        // the capability is exec-tier work at all.
         throw new Error(
-          EXEC_BASELINE.includes(capability)
+          EXEC_ASSIGNABLE.includes(capability)
             ? 'Exec or admin access required'
             : 'Admin access required',
         );
@@ -150,7 +170,20 @@ const ADMIN = { id: 'admin-1', role: 'admin' };
 // Real uuids, unlike the actor ids above: paid_by is validated as a uuid before
 // the write, so a placeholder string would fail validation and the access-check
 // assertions would pass for the wrong reason.
-const EXEC = { id: '44444444-4444-4444-8444-444444444444', role: 'player', is_exec: true };
+// THE OFFICER WHO FILES AN EXPENSE, WHICH IS NOW AN OFFICER WITH THE FINANCE
+// JOB. This was a bare `is_exec` row because `fees.expenses.add.write` was in
+// the exec baseline; the baseline is twelve reads now, so the club owner's
+// "allow execs to add expenses too" is expressed by ASSIGNING Finance rather
+// than by being an officer at all. Finance's three capabilities are exactly the
+// Expenses tab, so every refusal asserted below is unchanged.
+const EXEC = {
+  id: '44444444-4444-4444-8444-444444444444',
+  role: 'player',
+  is_exec: true,
+  permission_role: 'finance',
+  permission_grants: [],
+  permission_revokes: [],
+};
 const OTHER_EXEC = '33333333-3333-4333-8333-333333333333';
 /** A member who is neither exec nor admin — nobody who can buy for the club. */
 const MEMBER = '55555555-5555-4555-8555-555555555555';
@@ -262,7 +295,7 @@ describe('addOtherIncome / addExpense', () => {
   // "allow execs to add expenses too". An exec who buys shuttles at the door
   // has to be able to record it, or the club never learns the money went out
   // and the exec is never paid back.
-  it('lets an exec record an expense', async () => {
+  it('lets an exec with the Finance job record an expense', async () => {
     store.actor = { ...EXEC };
 
     await addExpense({ season_id: SEASON, category: 'shuttles', description: '6 tubes', amount_cents: 8400 });

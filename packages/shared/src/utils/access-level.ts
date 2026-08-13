@@ -171,12 +171,20 @@ export const CAPABILITIES = [
   // system cannot express.
   //
   // CLOSURE DOES THE GRADUATING, so this is one capability rather than two. An
-  // unrestricted exec resolves to EXEC_BASELINE's 73 capabilities and an
-  // unrestricted trainer to TRAINER_BASELINE's 3 — so a holder whose own set is
-  // trainer-sized may promote somebody to varsity trainer and is refused when
-  // they try to promote to executive, with no second capability needed to say
-  // so. A separate `…consoleaccess.trainer.write` would gate the same function
-  // at the same line and would be a tick box the enforcement does not honour.
+  // unrestricted exec resolves to EXEC_BASELINE and an unrestricted trainer to
+  // TRAINER_BASELINE's 3 — so a holder whose own set is trainer-sized may
+  // promote somebody to varsity trainer and is refused when they try to promote
+  // to executive, with no second capability needed to say so. A separate
+  // `…consoleaccess.trainer.write` would gate the same function at the same line
+  // and would be a tick box the enforcement does not honour.
+  //
+  // THE NARROWED BASELINE MADE THAT GRADUATION EASIER RATHER THAN HARDER, and
+  // it is worth saying so where somebody will read it. Promoting to executive
+  // used to require an actor holding all 73; it now requires one holding the
+  // twelve READS the baseline is, because that is all the promotion confers.
+  // The writes arrive afterwards, from a role or a grant, and each of those is
+  // closure-checked on its own — so the check moved from one big test to the
+  // several small ones that match what is actually being handed over.
   //
   // IN THE `players` AREA RATHER THAN `permissions`, for two reasons. The first
   // is that `permissions.write` is the vocabulary's only bare `<area>.write`,
@@ -392,17 +400,20 @@ export function pageOf(capability: Capability): Capability {
 // ---------------------------------------------------------------------------
 // BASELINES — what a level holds when nobody has narrowed or composed it
 // ---------------------------------------------------------------------------
-// THE DEPLOY-DAY GUARANTEE. Every row ships unrestricted, so every exec resolves
-// to EXEC_BASELINE and every trainer to TRAINER_BASELINE. These two lists are
-// therefore not a design — they are a TRANSCRIPTION of what those levels could
-// do the day before this shipped, and each entry was checked against the gate
-// function that used to stand there (getExecOrAdmin = exec, getAdminPlayer =
-// admin only). The capability-equivalence test writes the same fact out a second
-// time, by hand, from the call sites; if the two derivations ever disagree,
+// Every row ships unrestricted, so every exec resolves to EXEC_BASELINE and
+// every trainer to TRAINER_BASELINE.
+//
+// TRAINER_BASELINE IS STILL A TRANSCRIPTION of what that level could do the day
+// capabilities shipped, checked entry by entry against the gate that used to
+// stand there (getExecOrAdmin = exec, getAdminPlayer = admin only). EXEC_BASELINE
+// WAS ONE AND IS NOT ANY MORE: the transcription moved to EXEC_ASSIGNABLE, kept
+// verbatim, and this list narrowed to twelve reads. The capability-equivalence
+// test still writes the historic fact out a second time by hand from the call
+// sites — it now compares that write-down against EXEC_ASSIGNABLE, and asserts
+// separately that no LEVEL's baseline reaches past it. If those disagree,
 // somebody has widened a level.
 //
-// "Unrestricted" is the LEVEL's baseline, not everything. An unrestricted exec
-// holds 72 capabilities, not 117.
+// "Unrestricted" is the LEVEL's baseline, not everything.
 //
 // EVERY AREA A BASELINE REACHES CARRIES THAT AREA'S `.page`. Not a style rule:
 // the resolver prunes any capability whose area page is missing, so a baseline
@@ -417,130 +428,64 @@ export const TRAINER_BASELINE: readonly Capability[] = [
   // The read is here because a trainer browses the roster today. It is the whole
   // reason they have a console at all, and leaving it out would have made
   // gating the roster fetch a change that took the section away from a level.
+  //
+  // THIS IS NO LONGER INSIDE EXEC_BASELINE, and that is a real consequence of
+  // the narrowing rather than an oversight. `players.page` and `players.read`
+  // are in both; `players.editor.varsitynotes.write` is a WRITE, so it left the
+  // exec floor with every other write and the trainer level is now the smaller
+  // set that is NOT contained in the larger one.
+  //
+  // WHY THAT MATTERS AND WHERE IT BITES: accessLevelFor() resolves is_exec
+  // BEFORE is_trainer and returns ONE level, so a row carrying both flags
+  // resolves to 'exec' and holds EXEC_BASELINE only — losing the note that is
+  // the trainer's entire job. It is latent rather than live because every writer
+  // of these columns is mutually exclusive (see fromRoleValue in the admin app's
+  // console-access.ts: 'executive' writes is_trainer FALSE), so only a legacy or
+  // hand-rolled row can be both. The containment is pinned in capabilities.test.ts
+  // as the exact one-capability hole it now is, so it cannot silently grow, and
+  // the containment that DOES survive — the trainer level inside EXEC_ASSIGNABLE
+  // — is pinned beside it.
   'players.page',
   'players.read',
   'players.editor.varsitynotes.write',
 ];
 
 export const EXEC_BASELINE: readonly Capability[] = [
-  // Roster. Approve, add, edit, ban, reinstate, require a re-signature, and
-  // write coaching notes. NOT: cancelling a deletion, removing, merging,
-  // adjusting reliability, or any privileged field — all of those stood behind
-  // getAdminPlayer().
+  // READ EVERYTHING, WRITE NOTHING — the club owner's instruction, and a
+  // deliberate reversal of what this list used to be.
   //
-  // The read is here as well as the page for the same reason it is in the
-  // trainer baseline: an exec browses the roster today, and the fetch behind it
-  // is now asked for separately.
-  'players.page',
-  'players.read',
-  'players.approve.write',
-  'players.create.write',
-  'players.update.write',
-  'players.waiver.resign.write',
-  'players.ban.write',
-  'players.reinstate.write',
-  'players.editor.varsitynotes.write',
-
-  // Seasons, except setting the fees — money has always been admin work.
-  'seasons.page',
-  'seasons.create.write',
-  'seasons.activate.write',
-  'seasons.end.write',
-
-  // Sessions, all of them.
-  'sessions.page',
-  'sessions.reminders.write',
-  'sessions.create.write',
-  'sessions.update.write',
-  'sessions.archive.write',
-  'sessions.checkin.token.write',
-  'sessions.attendance.write',
-  'sessions.delete.write',
-
-  // Ladder matches, all of them. Challenges are NOT here: both challenge
-  // actions live in the same file and both stood behind getAdminPlayer().
-  'matches.page',
-  'matches.void.write',
-  'matches.convert.write',
-  'matches.create.write',
-
-  // Announcements, all of them.
+  // It was a TRANSCRIPTION: 73 capabilities copied from what `is_exec` could do
+  // the day before the permission system shipped, so that deploying it took
+  // nothing away from anybody. That was right for a migration and wrong as a
+  // steady state — it meant every officer held every write in eight areas, all
+  // 39 tournament capabilities among them, whether or not they had ever run a
+  // tournament.
+  //
+  // The baseline is now the floor: an officer can SEE the club's business and
+  // change none of it. Writes arrive by assignment — a permission_role (the
+  // four VP jobs, editable since 00104) or an explicit grant on one person — so
+  // authority is something somebody was given rather than something everybody
+  // inherited.
+  //
+  // Areas absent here (ratings, audit, permissions, accounts) were already
+  // admin-only and stay that way. Nothing below widens anything.
+  //
+  // THE COST, STATED PLAINLY: on the deploy that ships this, every exec who has
+  // not been assigned a role loses every write they had. That is the point
+  // rather than a side-effect, and it wants somebody on /permissions the same
+  // day.
   'announcements.page',
-  'announcements.create.write',
-  'announcements.update.write',
-  'announcements.delete.write',
-
-  // Tournaments: the whole of manage, draw and results. Entry fees are the one
-  // group execs never reached — /tournaments/<id>/fees was the single
-  // admin-only sub-route under an exec-allowed section, and it stays out of
-  // reach because `tournaments.fees.read` is not here, not because the page is.
-  'tournaments.page',
-  'tournaments.manage.create.write',
-  'tournaments.manage.update.write',
-  'tournaments.manage.status.write',
-  'tournaments.manage.suspend.write',
-  'tournaments.manage.resume.write',
-  'tournaments.manage.archive.write',
-  'tournaments.manage.delete.write',
-  'tournaments.manage.event.create.write',
-  'tournaments.manage.event.update.write',
-  'tournaments.manage.event.delete.write',
-  'tournaments.manage.event.status.write',
-  'tournaments.draw.participants.add.write',
-  'tournaments.draw.participants.remove.write',
-  'tournaments.draw.checkin.token.write',
-  'tournaments.draw.checkin.mark.write',
-  'tournaments.draw.noshow.write',
-  'tournaments.draw.exit.write',
-  'tournaments.draw.pairs.add.write',
-  'tournaments.draw.pairs.remove.write',
-  'tournaments.draw.seed.set.write',
-  'tournaments.draw.seed.auto.write',
-  'tournaments.draw.seed.clear.write',
-  'tournaments.draw.generate.write',
-  'tournaments.draw.lock.write',
-  'tournaments.draw.unlock.write',
-  // The waiver state of a draw. An exec who runs check-in must be able to see
-  // who has signed, because check-in now refuses an unsigned entrant — a gate
-  // whose reason the officer at the door cannot see is a gate they will work
-  // around. No predecessor: nothing read this table before.
-  'tournaments.draw.waivers.read',
-  // Who is at the per-tournament event cap. An exec who adds entrants is the
-  // person the cap refuses, and a refusal they cannot see coming is one they
-  // will read as a bug. Same door as the waiver state, same answer.
-  'tournaments.draw.entrycounts.read',
-  'tournaments.results.enter.write',
-  'tournaments.results.walkover.write',
-  'tournaments.results.void.write',
-  'tournaments.results.unvoid.write',
-  'tournaments.results.undo.write',
-  'tournaments.results.edit.write',
-  'tournaments.results.entry.write',
-  'tournaments.results.doublenoshow.write',
-  // Placement bonuses, standings and finalising an event are exec work because
-  // an exec who enters results already moves Elo on every match; finalising
-  // applies the same authority once more. The admin/exec line on ratings is
-  // about HAND-EDITING a rating, not about the engine applying one.
-  'tournaments.results.bonuses.write',
-  'tournaments.results.standings.write',
-  'tournaments.results.finalize.write',
-
-  // Money: the Expenses tab and nothing else on /fees. The club owner's rule
-  // was "execs can add expenses", not "execs can see the books" — club fees,
-  // other income, reinstatements and the net position stayed admin-only, and
-  // /fees enforced that by skipping their FETCHES rather than hiding cards.
-  //
-  // The read is here as well as the page because an exec sees the expense
-  // LEDGER today, not just the form. Dropping it would be the change this task
-  // is forbidden to make.
   'fees.page',
   'fees.expenses.read',
-  'fees.expenses.add.write',
-
-  // Legal: open the documents and require a re-signature. Editing the text is
-  // admin work.
   'legal.page',
-  'legal.reacceptance.write',
+  'matches.page',
+  'players.page',
+  'players.read',
+  'seasons.page',
+  'sessions.page',
+  'tournaments.page',
+  'tournaments.draw.entrycounts.read',
+  'tournaments.draw.waivers.read',
 ];
 
 const BASELINES: Record<AccessLevel, ReadonlySet<Capability>> = {
@@ -561,12 +506,21 @@ const BASELINES: Record<AccessLevel, ReadonlySet<Capability>> = {
 // not reach the books, and a purely additive role would need a dozen
 // hand-written revokes to achieve that.
 //
-// EVERY ROLE IS A SUBSET OF EXEC_BASELINE, pinned by a test, and that is the
+// EVERY ROLE IS A SUBSET OF EXEC_ASSIGNABLE, pinned by a test, and that is the
 // whole property this table is built to have: a role is bounded by what execs
 // could already do, so nothing beyond today's scope for an area (the club's
 // books, reinstatements, the net position) can arrive from choosing a word. It
 // is handed over per person by an explicit grant, which is a reviewed act with
 // an audit row.
+//
+// IT USED TO BE STATED AGAINST EXEC_BASELINE, and the constant it names moved
+// rather than the property. While the baseline WAS the historic 73, "inside the
+// exec baseline" and "inside what an exec could already do" were the same
+// sentence. Narrowing the baseline to twelve reads split them, and it is the
+// second one this bound has always meant — so it now names EXEC_ASSIGNABLE,
+// which is that same historic 73 preserved verbatim. Restating it against the
+// twelve would have made every VP role exceed its own bound and refused the
+// mechanism the narrowing depends on.
 //
 // THAT IS A BOUND, NOT A DIRECTION, and the difference started mattering when
 // trainers became composable. While roles were exec-only the two were the same
@@ -580,12 +534,27 @@ const BASELINES: Record<AccessLevel, ReadonlySet<Capability>> = {
 // exec baseline.
 //
 // The four lists are NOT a new design. They are the old SECTION_PORTFOLIO map —
-// the four VP jobs, each owning a set of sections — intersected with
-// EXEC_BASELINE, and they still partition it exactly: finance had /fees,
-// tournaments had /tournaments /matches /sessions, internal had /players
-// /seasons, external had /legal /announcements. Deriving them that way rather
-// than writing four fresh lists is what makes "assigning a role does the same
-// thing the portfolio did" a fact instead of a hope.
+// the four VP jobs, each owning a set of sections — intersected with the
+// historic exec set, and they still partition EXEC_ASSIGNABLE exactly, 3 + 51 +
+// 13 + 6 + 0 = 73: finance had /fees, tournaments had /tournaments /matches
+// /sessions, internal had /players /seasons, external had /legal /announcements.
+// Deriving them that way rather than writing four fresh lists is what makes
+// "assigning a role does the same thing the portfolio did" a fact instead of a
+// hope.
+//
+// THE PARTITION IS NOW LOAD-BEARING TWICE OVER. It was the proof that a role
+// hands out nothing an exec did not already have; since the baseline narrowed it
+// is ALSO the proof that the four roles between them can restore every write an
+// officer just lost — an exact partition means no capability fell into the gap
+// between the floor and the jobs that are supposed to hand it back.
+//
+// WHAT A ROLE DOES NOT DO IS ADD TO THE FLOOR. A role REPLACES the base, so an
+// officer assigned Tournaments holds the 51 tournament capabilities and NOT the
+// roster read the bare baseline gave them. "Every officer can read everything"
+// is therefore a statement about UNASSIGNED officers only; the moment somebody
+// is given a job, their reads narrow to that job unless the reads are granted
+// back. That is the pre-existing shape of a role and not something this change
+// introduced, but the narrowing is what makes it visible.
 //
 // EVERY ROLE CARRIES THE PAGE FOR EVERY AREA IT TOUCHES. That is now an
 // invariant of the resolver rather than a courtesy: a capability whose area page
@@ -749,18 +718,23 @@ export const ROLE_DEFAULTS: Record<PermissionRole, readonly Capability[]> = {
   custom: [],
 };
 
-// WHAT THE EDITOR MAY HAND OUT — the exec baseline PLUS one named widening.
+// WHAT THE EDITOR MAY HAND OUT — the historic exec set PLUS one named widening.
 //
 // THIS USED TO BE `= EXEC_BASELINE`, AND THE SPLIT IS THE POINT. The constant
 // was doing two jobs that finally pulled apart:
 //
-//   * EXEC_BASELINE is a TRANSCRIPTION — what an unrestricted exec could do the
-//     day composition shipped. It is pinned twice (here and, independently, by
-//     capability-equivalence.test.ts deriving it from the call sites), and the
+//   * EXEC_ASSIGNABLE is a TRANSCRIPTION — what an unrestricted exec could do
+//     the day composition shipped. It is pinned twice (here and, independently,
+//     by capability-equivalence.test.ts deriving it from the call sites), and the
 //     club owner has said it must not grow: "exec baseline shouldn't really be
 //     too much". Growing it would hand every exec in the club something no exec
 //     ever had, with nobody choosing it. It does not move, in this change or any
 //     other, and nothing below touches it.
+//
+//     (It was called EXEC_BASELINE when this was written, and the rename is the
+//     whole of the second split: the baseline became a read-only FLOOR of twelve
+//     and the transcription kept the 73 under the new name. EDITOR_OFFERABLE is
+//     unchanged as a set and in order — the same 73 + the same five below.)
 //
 //   * EDITOR_OFFERABLE is a CEILING — the most anybody may be composed UP to by
 //     an admin. Grant closure already stops a non-admin handing out what they do
@@ -852,8 +826,100 @@ const OFFERABLE_BEYOND_EXEC: readonly Capability[] = [
 //     `legal.waivertemplate.write`, `audit.page`, `ratings.page`,
 //     `accounts.page`, `platform.*` — admin work today, unasked for, and each
 //     its own small reviewable diff when it is wanted.
+
+// WHAT AN EXEC MAY BE COMPOSED UP TO — the 73 capabilities EXEC_BASELINE used
+// to hold before it became read-only.
+//
+// This list is not a grant. Nobody holds it by default; it is the set an admin
+// may ASSIGN, whether through one of the four VP roles or an explicit grant on
+// one person. It is the old transcription, preserved verbatim: what `is_exec`
+// could do the day composition shipped, checked entry by entry against the gate
+// that used to stand at each call site.
+//
+// IT HAD TO BECOME ITS OWN CONSTANT the moment the baseline narrowed. While
+// EDITOR_OFFERABLE spread EXEC_BASELINE, the floor and the ceiling were the same
+// list, so making officers read-only by default ALSO made those writes
+// unassignable — every VP role would have exceeded the ceiling and been refused,
+// and the very mechanism the narrowing depends on would have stopped working.
+// Floor and ceiling are different questions and now have different answers.
+export const EXEC_ASSIGNABLE: readonly Capability[] = [
+  'players.page',
+  'players.read',
+  'players.approve.write',
+  'players.create.write',
+  'players.update.write',
+  'players.waiver.resign.write',
+  'players.ban.write',
+  'players.reinstate.write',
+  'players.editor.varsitynotes.write',
+  'seasons.page',
+  'seasons.create.write',
+  'seasons.activate.write',
+  'seasons.end.write',
+  'sessions.page',
+  'sessions.reminders.write',
+  'sessions.create.write',
+  'sessions.update.write',
+  'sessions.archive.write',
+  'sessions.checkin.token.write',
+  'sessions.attendance.write',
+  'sessions.delete.write',
+  'matches.page',
+  'matches.void.write',
+  'matches.convert.write',
+  'matches.create.write',
+  'announcements.page',
+  'announcements.create.write',
+  'announcements.update.write',
+  'announcements.delete.write',
+  'tournaments.page',
+  'tournaments.manage.create.write',
+  'tournaments.manage.update.write',
+  'tournaments.manage.status.write',
+  'tournaments.manage.suspend.write',
+  'tournaments.manage.resume.write',
+  'tournaments.manage.archive.write',
+  'tournaments.manage.delete.write',
+  'tournaments.manage.event.create.write',
+  'tournaments.manage.event.update.write',
+  'tournaments.manage.event.delete.write',
+  'tournaments.manage.event.status.write',
+  'tournaments.draw.participants.add.write',
+  'tournaments.draw.participants.remove.write',
+  'tournaments.draw.checkin.token.write',
+  'tournaments.draw.checkin.mark.write',
+  'tournaments.draw.noshow.write',
+  'tournaments.draw.exit.write',
+  'tournaments.draw.pairs.add.write',
+  'tournaments.draw.pairs.remove.write',
+  'tournaments.draw.seed.set.write',
+  'tournaments.draw.seed.auto.write',
+  'tournaments.draw.seed.clear.write',
+  'tournaments.draw.generate.write',
+  'tournaments.draw.lock.write',
+  'tournaments.draw.unlock.write',
+  'tournaments.draw.waivers.read',
+  'tournaments.draw.entrycounts.read',
+  'tournaments.results.enter.write',
+  'tournaments.results.walkover.write',
+  'tournaments.results.void.write',
+  'tournaments.results.unvoid.write',
+  'tournaments.results.undo.write',
+  'tournaments.results.edit.write',
+  'tournaments.results.entry.write',
+  'tournaments.results.doublenoshow.write',
+  'tournaments.results.bonuses.write',
+  'tournaments.results.standings.write',
+  'tournaments.results.finalize.write',
+  'fees.page',
+  'fees.expenses.read',
+  'fees.expenses.add.write',
+  'legal.page',
+  'legal.reacceptance.write',
+];
+
 export const EDITOR_OFFERABLE: readonly Capability[] = [
-  ...EXEC_BASELINE,
+  ...EXEC_ASSIGNABLE,
   ...OFFERABLE_BEYOND_EXEC,
 ];
 
@@ -923,10 +989,12 @@ export type CustomBaseline = {
 //
 // WHAT THAT BUYS, AND IT IS THE REASON TO PREFER IT: ROLE_DEFAULTS STOPS BEING
 // EDITED, SO ITS TWO STRUCTURAL INVARIANTS SURVIVE LITERALLY. Every role is
-// still inside EXEC_BASELINE, and the four still partition it exactly, because
+// still inside EXEC_ASSIGNABLE, and the four still partition it exactly, because
 // the constant is now a frozen transcription of what shipped and the club's
 // edits land in the table instead. The partition test was expected to die; it
-// does not, and that is the strongest evidence this is the right shape.
+// does not, and that is the strongest evidence this is the right shape. (Both
+// invariants named EXEC_BASELINE until that constant narrowed to a read-only
+// floor; the historic set they have always meant is EXEC_ASSIGNABLE.)
 //
 // The security property those tests carried moves to WRITE TIME, where it now
 // has to be: baselineCapabilityRefusal() closure-checks an edit against the

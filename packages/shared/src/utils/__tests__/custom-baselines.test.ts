@@ -8,6 +8,7 @@ import {
   BASELINE_NAME_MAX,
   CAPABILITIES,
   EDITOR_OFFERABLE,
+  EXEC_ASSIGNABLE,
   EXEC_BASELINE,
   TRAINER_BASELINE,
   UNRESTRICTED,
@@ -24,7 +25,12 @@ import {
 
 const held = (...capabilities: Capability[]) => new Set<Capability>(capabilities);
 const ALL = new Set<Capability>(CAPABILITIES);
-const EXEC = new Set<Capability>(EXEC_BASELINE);
+// AN AUTHOR WHOSE OWN SET IS THE HISTORIC EXEC ONE. Deliberately
+// EXEC_ASSIGNABLE and not EXEC_BASELINE: this stands in for a fully-composed
+// officer in the closure tests below, and the narrowed floor would make that a
+// twelve-capability author who is refused almost everything — which would still
+// pass, vacuously, while testing nothing about where the line falls.
+const EXEC = new Set<Capability>(EXEC_ASSIGNABLE);
 
 describe('naming a baseline', () => {
   it('refuses an empty name, and a name of nothing but space', () => {
@@ -100,13 +106,13 @@ describe('what may go in a baseline', () => {
   // the EDITOR_OFFERABLE cap an admin could author a baseline containing
   // permissions.write, which setPlayerPermissions would then refuse to assign —
   // an authorable, unassignable baseline with no explanation on either screen.
-  it('caps an admin at the exec baseline', () => {
+  it('caps an admin at the ceiling, above which even they cannot author', () => {
     expect(baselineCapabilityRefusal(['permissions.page', 'permissions.write'], ALL))
       .toMatch(/admin-only/);
     expect(baselineCapabilityRefusal(['audit.page'], ALL)).toMatch(/admin-only/);
   });
 
-  it('accepts anything inside the exec baseline for an admin', () => {
+  it('accepts anything inside the ceiling for an admin', () => {
     expect(baselineCapabilityRefusal([...EDITOR_OFFERABLE], ALL)).toBeNull();
   });
 
@@ -219,8 +225,12 @@ describe('what may go in a baseline', () => {
     // that the widest composition is a set somebody enumerated, not "everything"
     // — so it is restated as the gap: the four finance reads and, since 00105,
     // the console-access write. Nothing else.
+    // MEASURED AGAINST EXEC_ASSIGNABLE, NOT THE FLOOR. "The gap" means what the
+    // ceiling added beyond what an exec could already do; the narrowed baseline
+    // would make it sixty-six entries and this assertion would stop naming the
+    // five capabilities somebody actually enumerated, which is its whole job.
     const beyond = [...composed].filter(
-      (capability) => !(EXEC_BASELINE as readonly Capability[]).includes(capability),
+      (capability) => !(EXEC_ASSIGNABLE as readonly Capability[]).includes(capability),
     );
     expect(beyond.sort()).toEqual([
       'fees.clubfees.read',
@@ -233,6 +243,13 @@ describe('what may go in a baseline', () => {
     // ...and an uncomposed trainer is untouched by any of this.
     expect([...effectiveCapabilities('trainer', UNRESTRICTED)].sort())
       .toEqual([...TRAINER_BASELINE].sort());
+
+    // NOR IS AN UNCOMPOSED EXEC, WHICH IS NOW A MUCH SMALLER CLAIM AND WORTH
+    // MAKING HERE. The widest thing an admin may author is 78 capabilities; the
+    // most an officer holds without anybody authoring anything is twelve reads.
+    // The gap between those two numbers is the whole of this change.
+    expect([...effectiveCapabilities('exec', UNRESTRICTED)].sort())
+      .toEqual([...EXEC_BASELINE].sort());
   });
 });
 

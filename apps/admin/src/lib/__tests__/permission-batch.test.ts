@@ -12,7 +12,7 @@ import {
   type Draft,
   type PendingEdits,
 } from '../permission-batch';
-import { EXEC_BASELINE, ROLE_DEFAULTS, type Capability } from '../permissions';
+import { CAPABILITIES, EXEC_BASELINE, ROLE_DEFAULTS, type Capability } from '../permissions';
 
 // EDITING SEVERAL PEOPLE BEFORE SAVING ANY OF THEM.
 //
@@ -49,7 +49,17 @@ const draft = (over: Partial<Draft> = {}): Draft => ({
 /** Every capability an unrestricted exec holds — what a level default resolves to. */
 const BASELINE = [...EXEC_BASELINE];
 const FINANCE = [...ROLE_DEFAULTS.finance];
-const admin = { id: 'admin', held: new Set<Capability>(BASELINE) };
+
+// THE ACTOR'S OWN SET, AND IT IS NOW `CAPABILITIES` RATHER THAN THE EXEC
+// BASELINE. The fixture is called `admin` and closure measures an edit against
+// what the ACTOR holds — an admin holds everything, by level. It was written as
+// EXEC_BASELINE only because that constant used to be the widest set anybody
+// handed out, so the two coincided. They stopped coinciding when the baseline
+// narrowed to twelve reads, and left as it was this fixture would have refused
+// the admin every write in the club: three tests below assert an edit is
+// ALLOWED, and they would have been passing for the wrong reason or failing for
+// a reason that has nothing to do with batching.
+const admin = { id: 'admin', held: new Set<Capability>(CAPABILITIES) };
 
 describe('who has something queued', () => {
   it('leaves out anybody with no entry at all', () => {
@@ -104,14 +114,30 @@ describe('the counts across everybody', () => {
     chen: draft({ role: 'custom', grants: BASELINE as Capability[] }),
   };
 
+  // ALICE NOW GAINS SOMETHING, WHICH SHE DID NOT BEFORE, and that inversion is
+  // the narrowing showing up in the arithmetic rather than a fixture drifting.
+  // Narrowing an unrestricted officer to Finance used to be pure subtraction —
+  // the baseline contained the role — so `gaining` was empty by construction.
+  // The baseline is twelve reads now and Finance carries a WRITE the baseline
+  // does not, so assigning a role both takes and gives. Derived from the two
+  // constants rather than hard-coded, so the next edit to either keeps this
+  // honest.
   it('adds up what each edit does to the person', () => {
+    const inFinance = new Set<Capability>(FINANCE);
+    const inBaseline = new Set<Capability>(BASELINE);
+    const kept = BASELINE.filter((c) => inFinance.has(c));
+    const gained = FINANCE.filter((c) => !inBaseline.has(c));
+    expect(gained).toEqual(['fees.expenses.add.write']);
+
     const entries = pendingEntries(people, pending);
     const [alice, ben] = entries;
     expect(entries).toHaveLength(3);
-    expect(alice?.gaining).toEqual([]);
-    expect(alice?.losing).toHaveLength(BASELINE.length - FINANCE.length);
+    expect(alice?.gaining).toEqual(gained);
+    expect(alice?.losing).toHaveLength(BASELINE.length - kept.length);
     expect(ben).toMatchObject({ gaining: ['announcements.page'], losing: [], changes: 1 });
-    expect(totalChanges(entries)).toBe(BASELINE.length - FINANCE.length + 1);
+    expect(totalChanges(entries)).toBe(
+      BASELINE.length - kept.length + gained.length + 1,
+    );
   });
 
   // A person can be queued and change nothing about themselves. The bar has to
@@ -269,7 +295,8 @@ describe('refusing an edit before anything is written', () => {
 
   it('refuses editing somebody who already holds more than the actor does', () => {
     const actor = { id: 'treasurer', held: new Set<Capability>(FINANCE) };
-    // On their level default, so they hold the whole exec baseline.
+    // On their level default, so they hold the whole exec baseline — which is
+    // twelve reads now, and still reaches past a treasurer's three.
     expect(localRefusal(exec(), draft({ role: 'finance' }), actor)).toMatch(/they already hold/);
   });
 

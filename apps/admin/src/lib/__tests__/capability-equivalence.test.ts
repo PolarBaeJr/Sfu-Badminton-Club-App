@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { CAPABILITIES, EXEC_BASELINE, TRAINER_BASELINE, UNRESTRICTED, permits, type Capability } from '../permissions';
+import {
+  CAPABILITIES,
+  EXEC_ASSIGNABLE,
+  EXEC_BASELINE,
+  TRAINER_BASELINE,
+  UNRESTRICTED,
+  permits,
+  type Capability,
+} from '../permissions';
 
 // THE CAPABILITY-EQUIVALENCE PROOF.
 //
@@ -8,6 +16,44 @@ import { CAPABILITIES, EXEC_BASELINE, TRAINER_BASELINE, UNRESTRICTED, permits, t
 // member — so that property is GONE, and this table is the thing that replaces
 // it. The route matrix in ./permissions.test.ts is not enough on its own: it
 // proves which SECTIONS open, and access is now decided per action.
+//
+// ---------------------------------------------------------------------------
+// WHAT THIS FILE ASSERTS AFTER THE EXEC BASELINE NARROWED, AND WHY IT IS STILL
+// THE SECOND DERIVATION RATHER THAN A FIXTURE
+// ---------------------------------------------------------------------------
+// The table below was written by hand from the call sites and has never been
+// derived from the constants — that is the entire reason it is worth having, and
+// nothing about the narrowing changes it. What DID change is which claim the
+// table supports.
+//
+// IT USED TO SAY: an unrestricted holder of each level gets EXACTLY what the old
+// gate gave. That was a MIGRATION-DAY claim — "deploying capabilities took
+// nothing away from anybody" — and it was true for as long as the exec baseline
+// was a transcription of `getExecOrAdmin`. The club owner has now deliberately
+// taken things away: an officer with no permission_role writes nothing. So the
+// equality is false BY DESIGN for the exec column, and asserting it would be
+// asserting the change did not happen.
+//
+// IT NOW SAYS TWO THINGS INSTEAD, and between them they are strictly stronger
+// than the one they replace:
+//
+//   1. NOBODY GAINED ANYTHING — the durable half, kept as an IMPLICATION rather
+//      than an equality. If an unrestricted exec holds a capability, the row for
+//      it must say an exec held it before. Widening still fails this; narrowing
+//      does not. admin and trainer keep the EQUALITY, because neither of those
+//      baselines moved and there is no reason to weaken them.
+//
+//   2. THE HISTORIC SET IS EXEC_ASSIGNABLE — the exec column of this table,
+//      compared set-for-set against that constant. This is the two-independent-
+//      write-downs check, unchanged in kind and merely repointed at the constant
+//      that now claims to be the transcription. EXEC_ASSIGNABLE's own comment
+//      says it is "the old transcription, preserved verbatim"; this is where
+//      that sentence is checked against something other than itself.
+//
+// SO THE TEST DID NOT LOSE ITS MEANING, IT SPLIT INTO ITS TWO HALVES. The
+// equality was doing both jobs at once because the two sets happened to
+// coincide. They no longer coincide, and each half is now stated where it is
+// actually true.
 //
 // WRITTEN OUT BY HAND, one row per capability, and the third column is not
 // reasoning about names — it is a transcription of WHICH GATE FUNCTION STOOD AT
@@ -266,9 +312,27 @@ describe('capability equivalence — nobody gained anything', () => {
   });
 
   for (const row of TODAY) {
-    it(`${row.capability} — admin=${row.admin} exec=${row.exec} trainer=${row.trainer} (was ${row.was})`, () => {
+    it(`${row.capability} — admin=${row.admin} exec≤${row.exec} trainer=${row.trainer} (was ${row.was})`, () => {
       expect(permits('admin', UNRESTRICTED, row.capability)).toBe(row.admin);
-      expect(permits('exec', UNRESTRICTED, row.capability)).toBe(row.exec);
+      // THE EXEC COLUMN IS AN UPPER BOUND NOW, NOT AN EQUALITY, and this one
+      // line is the whole of the change to this file. The expectation moved
+      // because the club owner narrowed the exec baseline on purpose: 61 of
+      // these rows say `exec: T` and describe a gate that admitted an exec
+      // before capabilities existed, and an unrestricted exec no longer passes
+      // any of them. Asserting equality would assert the narrowing did not
+      // happen.
+      //
+      // WHAT SURVIVES IS THE DIRECTION THAT MATTERS. "Nobody gained anything"
+      // is an implication, and it is the half a widening breaks: if permits()
+      // ever says yes where this table says no, somebody has handed a level
+      // something no gate ever gave it, and this fails. A narrowing is silent
+      // here on purpose — it is caught, exactly, by the set comparison against
+      // EXEC_BASELINE further down, which is where the twelve are pinned.
+      if (permits('exec', UNRESTRICTED, row.capability)) {
+        expect(row.exec, `${row.capability} reaches an exec who never had it`).toBe(true);
+      }
+      // Trainer keeps the EQUALITY: TRAINER_BASELINE did not move, so there is
+      // nothing to weaken and every reason not to.
       expect(permits('trainer', UNRESTRICTED, row.capability)).toBe(row.trainer);
       // Nobody without a console level holds anything, ever.
       expect(permits(null, UNRESTRICTED, row.capability)).toBe(false);
@@ -278,7 +342,16 @@ describe('capability equivalence — nobody gained anything', () => {
   // The levels were a ladder and the sets have to keep that shape: a capability
   // a trainer holds must be one an exec holds, and one an exec holds must be
   // one an admin holds.
-  it('never gives a lower level something a higher one lacks', () => {
+  //
+  // THIS IS A CLAIM ABOUT THE TABLE — the HISTORIC answers — and it still holds
+  // of them exactly. It is NOT a claim about today's baselines, and the two came
+  // apart when the exec baseline narrowed: a trainer now holds
+  // `players.editor.varsitynotes.write` and an unrestricted exec does not. That
+  // is pinned, with the reasoning and the two possible repairs, in
+  // packages/shared/src/utils/__tests__/capabilities.test.ts. It is left out of
+  // this file deliberately: this table's job is to say what the gates used to
+  // do, and the gates did give it to both.
+  it('never gives a lower level something a higher one lacked', () => {
     for (const row of TODAY) {
       if (row.trainer) expect(row.exec, row.capability).toBe(true);
       if (row.exec) expect(row.admin, row.capability).toBe(true);
@@ -292,13 +365,46 @@ describe('capability equivalence — nobody gained anything', () => {
   });
 
   // The two independent write-downs, compared. This table was assembled from
-  // the call sites; EXEC_BASELINE and TRAINER_BASELINE were assembled from the
+  // the call sites; EXEC_ASSIGNABLE and TRAINER_BASELINE were assembled from the
   // areas. If they ever disagree, somebody has moved a boundary.
-  it('agrees with the baselines, which were written down separately', () => {
+  //
+  // THE EXEC HALF NOW NAMES EXEC_ASSIGNABLE, and that is a repointing at the
+  // constant which inherited the claim rather than a weakening. What this table
+  // records is WHAT AN EXEC COULD DO BEFORE CAPABILITIES EXISTED; that fact did
+  // not change when the baseline narrowed, it moved constants. EXEC_ASSIGNABLE's
+  // docblock asserts in prose that it is "the old transcription, preserved
+  // verbatim" — this line is the only place in the codebase where that sentence
+  // is checked against a derivation somebody made from the call sites instead of
+  // from the constant itself.
+  it('agrees with the assignable set and the trainer baseline, written down separately', () => {
     const execFromTable = TODAY.filter((r) => r.exec).map((r) => r.capability).sort();
     const trainerFromTable = TODAY.filter((r) => r.trainer).map((r) => r.capability).sort();
-    expect(execFromTable).toEqual([...EXEC_BASELINE].sort());
+    expect(execFromTable).toEqual([...EXEC_ASSIGNABLE].sort());
     expect(trainerFromTable).toEqual([...TRAINER_BASELINE].sort());
+  });
+
+  // AND THE NARROWING, DERIVED FROM THE SAME TABLE. The implication in the
+  // per-row cases is deliberately silent about a baseline that SHRINKS, so the
+  // shrink is pinned here instead — from the call-site table rather than from
+  // the constant, which is what keeps this file a second derivation rather than
+  // a restatement of access-level.ts.
+  //
+  // TWO PROPERTIES, AND THE CLUB OWNER ASKED FOR BOTH. Every capability an
+  // unrestricted officer still holds is one an exec held before ("nothing
+  // widened"), and not one of them is a write ("they can see everything and
+  // change nothing").
+  it('leaves an unrestricted exec a strict, WRITE-FREE subset of what execs had', () => {
+    const historic = new Set(TODAY.filter((r) => r.exec).map((r) => r.capability));
+    const today = CAPABILITIES.filter((c) => permits('exec', UNRESTRICTED, c));
+
+    for (const capability of today) {
+      expect(historic.has(capability), `${capability} was never exec work`).toBe(true);
+    }
+    expect(today.filter((c) => c.endsWith('.write'))).toEqual([]);
+    expect(today.length).toBeLessThan(historic.size);
+    // Belt: the same answer the constant gives, so a divergence between the
+    // resolver and the list it is built from fails here too.
+    expect([...today].sort()).toEqual([...EXEC_BASELINE].sort());
   });
 
   // Type-level belt: every capability named above is a member of the union, so

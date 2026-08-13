@@ -12,8 +12,10 @@
 //  - admin    role = 'admin'. Superuser BY LEVEL: permits() short-circuits
 //             before any set is consulted, so a capability added next year is
 //             automatically theirs.
-//  - exec     is_exec. EXEC_BASELINE — the roster, matches, sessions,
-//             tournaments, seasons, announcements, and filing an expense.
+//  - exec     is_exec. EXEC_BASELINE — eight section pages and four reads, and
+//             NOT ONE WRITE. An officer with no permission_role can see the
+//             club's business and change none of it; the writes they used to
+//             hold by level are in EXEC_ASSIGNABLE and arrive by assignment.
 //  - trainer  is_trainer. TRAINER_BASELINE — reading the roster and writing
 //             varsity notes, and that is the whole level. See
 //             ./player-field-access.ts, where their writable field set is EMPTY.
@@ -81,6 +83,7 @@ export {
   BUILTIN_PERMISSION_ROLES,
   CAPABILITIES,
   EDITOR_OFFERABLE,
+  EXEC_ASSIGNABLE,
   EXEC_BASELINE,
   PERMISSION_ROLES,
   PERMISSION_ROLE_LABELS,

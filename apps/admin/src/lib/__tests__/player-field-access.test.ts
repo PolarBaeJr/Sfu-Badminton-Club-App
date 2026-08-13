@@ -11,7 +11,17 @@ import type { Capability } from '../permissions';
 // early when auth.uid() IS NULL, and these actions all run on the service-role
 // client.
 
-type Actor = { id: string; role: string; is_exec?: boolean; is_trainer?: boolean };
+type Actor = {
+  id: string;
+  role: string;
+  is_exec?: boolean;
+  is_trainer?: boolean;
+  // The three permission columns. The gate mock resolves them now, because an
+  // officer's writes arrive from a permission_role rather than from `is_exec`.
+  permission_role?: string;
+  permission_grants?: string[];
+  permission_revokes?: string[];
+};
 
 const state = vi.hoisted(() => ({
   // Who is calling. The actor row carries the same markers the real one does —
@@ -32,19 +42,36 @@ vi.mock('@sentry/nextjs', () => ({ captureException: () => {} }));
 // The REAL gate: permits() against the real baselines, with the same denial
 // wording the live one produces. A varsity trainer is turned away HERE, before
 // any payload is inspected — the field guard is the second line, not the first.
+// IT READS THE ACTOR'S STORED PERMISSIONS NOW, NOT JUST THEIR LEVEL, which is
+// what the real requireCapability has always done and what this mock could get
+// away with skipping only while an officer's writes came from their level. They
+// come from a permission_role since the baseline narrowed to twelve reads, so a
+// mock forcing UNRESTRICTED would model an officer nobody has given a job to —
+// and every exec case in this file is about somebody doing the roster job.
+//
+// The wording is denialFor()'s FOUR branches in the order it asks them, not
+// three of them — including the one that answers first. A console user refused
+// something the ceiling allows is told it is their permissions rather than their
+// level, and that is now the commonest refusal in the app; a mock that skipped
+// it would assert wording the shipped function no longer produces, in the one
+// file that claims to copy it.
 vi.mock('../actions/_shared', async () => {
   const {
-    accessLevelFor, permits, UNRESTRICTED, EXEC_BASELINE, TRAINER_BASELINE,
+    accessLevelFor, permissionsOf, permits,
+    EDITOR_OFFERABLE, EXEC_ASSIGNABLE, TRAINER_BASELINE,
   } = await import('../permissions');
   return {
     requireCapability: async (capability: Capability) => {
-      if (!permits(accessLevelFor(state.actor), UNRESTRICTED, capability)) {
+      const level = accessLevelFor(state.actor);
+      if (!permits(level, permissionsOf(state.actor), capability)) {
         throw new Error(
-          TRAINER_BASELINE.includes(capability)
-            ? 'Admin console access required'
-            : EXEC_BASELINE.includes(capability)
-              ? 'Admin or exec access required'
-              : 'Admin access required',
+          level !== null && EDITOR_OFFERABLE.includes(capability)
+            ? 'Your permissions do not include this. Ask an admin.'
+            : TRAINER_BASELINE.includes(capability)
+              ? 'Admin console access required'
+              : EXEC_ASSIGNABLE.includes(capability)
+                ? 'Admin or exec access required'
+                : 'Admin access required',
         );
       }
       return state.actor;
@@ -80,7 +107,29 @@ beforeEach(() => {
   state.updates = [];
 });
 
-const asExec = () => { state.actor = { id: 'exec-1', role: 'player', is_exec: true }; };
+// AN OFFICER DOING THE ROSTER JOB, which is what every `asExec()` case in this
+// file has always been about. The row grew a permission_role because the exec
+// baseline is twelve reads now: `players.update.write` and the rest of roster
+// management arrive from ROLE_DEFAULTS.internal rather than from `is_exec`. The
+// FIELD-LEVEL boundary this suite exists to pin — status yes, ratings no,
+// role/is_exec/is_trainer never — is decided by assertPlayerFieldAccess on the
+// resolved LEVEL and is completely untouched by the role.
+const asExec = () => {
+  state.actor = {
+    id: 'exec-1',
+    role: 'player',
+    is_exec: true,
+    permission_role: 'internal',
+    permission_grants: [],
+    permission_revokes: [],
+  };
+};
+// ...AND THE OFFICER NOBODY HAS ASSIGNED ANYTHING TO, who is the new default on
+// production and the reason the narrowing needs somebody on /permissions the
+// same day. Used by the case below that pins what they can no longer do.
+const asUnassignedExec = () => {
+  state.actor = { id: 'exec-0', role: 'player', is_exec: true };
+};
 const asAdmin = () => { state.actor = { id: 'admin-1', role: 'admin' }; };
 // A PURE varsity trainer: no exec marker, not an admin.
 const asTrainer = () => { state.actor = { id: 'trainer-1', role: 'player', is_trainer: true }; };
@@ -88,7 +137,15 @@ const asTrainer = () => { state.actor = { id: 'trainer-1', role: 'player', is_tr
 // composition rule: they get exec powers, because the restriction follows the
 // level a person resolves to, not the flag in isolation.
 const asExecTrainer = () => {
-  state.actor = { id: 'exec-trainer-1', role: 'player', is_exec: true, is_trainer: true };
+  state.actor = {
+    id: 'exec-trainer-1',
+    role: 'player',
+    is_exec: true,
+    is_trainer: true,
+    permission_role: 'internal',
+    permission_grants: [],
+    permission_revokes: [],
+  };
 };
 
 describe('updatePlayer field-level access', () => {
@@ -237,11 +294,19 @@ describe('createPlayer field-level access', () => {
 // Players READ-ONLY — they are there to find the person they are writing about.
 // Their writable set on a player record is EMPTY.
 describe('varsity trainer cannot touch player records', () => {
+  // THE WORDING CHANGED AND THE REFUSAL DID NOT. This asserted the message
+  // contained 'exec', because a trainer meeting `players.update.write` used to
+  // be told "Admin or exec access required" — the level that held it. Nobody
+  // holds it by level any more, so denialFor answers the true question instead:
+  // a trainer CAN be composed to hold roster writes (they have been composable
+  // since 00090), so the thing standing between them and this action is their
+  // permissions, and that is what they are told. The assertion follows the
+  // message rather than the message being kept to suit the assertion.
   it('is turned away by updatePlayer before any field is even looked at', async () => {
     asTrainer();
     const res = await updatePlayer('player-9', { status: 'competitive', reason: 'Trying it on' });
     expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.error).toContain('exec');
+    if (!res.ok) expect(res.error).toBe('Your permissions do not include this. Ask an admin.');
     expect(state.updates).toEqual([]);
   });
 
@@ -297,6 +362,18 @@ describe('varsity trainer cannot touch player records', () => {
   });
 });
 
+// THE COMPOSITION, AND THE ONE PLACE THE NARROWING COSTS SOMETHING. accessLevelFor
+// resolves is_exec BEFORE is_trainer and returns ONE level, so this row is an
+// 'exec' and holds the exec baseline — which used to contain the trainer's whole
+// level and no longer does. `players.editor.varsitynotes.write` is a write, so it
+// left the floor with the other sixty, and a row carrying both flags now LOSES
+// the note unless a role or a grant brings it back. The `internal` role above is
+// exactly that repair, and the case below asserts it works.
+//
+// It is latent rather than live because fromRoleValue() writes the two flags
+// mutually exclusively, so only a legacy row can be both — see the pinned hole in
+// packages/shared/src/utils/__tests__/capabilities.test.ts, where the reasoning
+// and the two possible fixes are set out.
 describe('trainer composes with exec', () => {
   it('an exec who is also a trainer keeps every exec power', async () => {
     asExecTrainer();

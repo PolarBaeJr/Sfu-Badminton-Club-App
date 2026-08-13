@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { Capability } from '../permissions';
+import { EXEC_BASELINE, type Capability } from '../permissions';
 
 // GRANT CLOSURE — the primary defence, and what makes permissions.write safe to
 // hand to somebody who is not an admin.
@@ -502,7 +502,18 @@ describe('setPlayerPermissions — the shape of what gets stored', () => {
     expect(before.permission_role).toBeNull();
     // Unrestricted before, so the resolved set is the whole exec baseline —
     // which the triple on its own says nothing about.
-    expect((before.effective as string[]).length).toBe(73);
+    //
+    // 73 BECAME 12 BECAUSE THE BASELINE ITSELF DID, and it is worth noticing
+    // that this assertion still earns its place at the smaller number. The
+    // audit row records what somebody actually held, and "unrestricted" is a
+    // word whose meaning moved under every row already written; the resolved
+    // set is the only thing in the log that does not depend on which deploy is
+    // reading it. Asserted against the constant rather than the literal 12, so
+    // the next narrowing does not need a fixture edit to stay honest.
+    expect((before.effective as string[]).length).toBe(EXEC_BASELINE.length);
+    // ...and this edit GAINS them a write, which is the shape almost every
+    // permissions edit has now: the baseline is reads, the role brings the work.
+    expect((before.effective as string[])).not.toContain('fees.expenses.add.write');
     expect(after.permission_role).toBe('finance');
     expect(after.permission_grants).toEqual(['players.page']);
     expect((after.effective as string[]).sort()).toEqual([

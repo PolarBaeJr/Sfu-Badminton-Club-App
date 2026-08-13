@@ -159,7 +159,10 @@ export default async function SessionsPage({
   //
   // EXEC_BASELINE holds `fees.expenses.read` and NOT `fees.clubfees.read`, so
   // an exec on the door sees no fee badges. That is the intended answer, not an
-  // oversight: "may file an expense" was never "may see who has not paid".
+  // oversight: "may see the expense ledger" was never "may see who has not
+  // paid". Unchanged by the baseline narrowing — the expense READ is one of the
+  // twelve that survived, and the club-fee read was never reachable below admin
+  // except by an explicit grant.
   const showFees = may('fees.clubfees.read');
 
   const supabase = createAdminClient();

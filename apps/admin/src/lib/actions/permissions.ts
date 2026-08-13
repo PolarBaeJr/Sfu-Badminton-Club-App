@@ -235,8 +235,9 @@ async function applyPlayerPermissions(
   // through the console; it can only be a row that predates the migration.
   //
   // REFUSING THE VALUE HERE WAS TRIED AND REJECTED. It is not an escalation —
-  // the seeded defaults are inside EXEC_BASELINE, and checks 3-5 below run on
-  // the RESOLVED result regardless, so nothing can be gained by naming one. What
+  // the seeded defaults are inside EXEC_ASSIGNABLE, the historic exec set, and
+  // checks 3-5 below run on the RESOLVED result regardless, so nothing can be
+  // gained by naming one. What
   // it would be is incoherent: a second Finance that does not follow the Finance
   // the club edited.
   //
@@ -529,9 +530,15 @@ async function applyPlayerPermissions(
  * the LEVEL BASELINES rather than a delta: what the target holds now must be
  * inside the actor's own set, and what they would hold after the change must be
  * too. That is also what graduates exec from trainer without a second
- * capability — promoting somebody to executive hands them EXEC_BASELINE's 73
- * capabilities, so only an actor holding all 73 may do it, while a trainer-sized
- * actor can still promote somebody to varsity trainer.
+ * capability — promoting somebody to executive hands them EXEC_BASELINE, so only
+ * an actor holding all of it may do it, while a trainer-sized actor can still
+ * promote somebody to varsity trainer.
+ *
+ * THAT BAR DROPPED FROM 73 CAPABILITIES TO 12 when the exec baseline became
+ * read-only, and it dropped for the right reason: the promotion now confers
+ * twelve reads and no writes, so the closure test measures what is actually
+ * being handed over. The writes follow separately, through setPlayerPermissions,
+ * where each is closure-checked on its own.
  */
 export async function setConsoleAccess(
   playerId: string,
@@ -735,8 +742,9 @@ async function setConsoleAccessImpl(playerId: string, access: ExecRole, rawReaso
   // ------------------------------------------------------------------
   // The same rule setPlayerPermissions applies to a capability set, applied to
   // the set a LEVEL resolves to. Nobody hands out what they do not hold, and
-  // giving somebody the console is the largest single grant there is: an
-  // unrestricted executive holds all 73 of EXEC_BASELINE.
+  // giving somebody the console is still the largest single grant there is,
+  // though it is a smaller one than it was: an unrestricted executive holds
+  // EXEC_BASELINE, which is twelve reads rather than the historic 73.
   //
   // BOTH DIRECTIONS, and both before any write.
   //

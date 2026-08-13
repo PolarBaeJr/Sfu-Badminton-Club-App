@@ -3,6 +3,7 @@ import {
   AREAS,
   CAPABILITIES,
   EDITOR_OFFERABLE,
+  EXEC_ASSIGNABLE,
   EXEC_BASELINE,
   TRAINER_BASELINE,
   PERMISSION_ROLES,
@@ -196,10 +197,16 @@ describe('CAPABILITY_GATES', () => {
 // ---------------------------------------------------------------------------
 // The baselines
 // ---------------------------------------------------------------------------
-// Pinned LITERALLY, because these two lists are the deploy-day guarantee. They
-// are a transcription of what an exec and a trainer could do the day before
-// capabilities existed, and the only way to notice one drifting is to have
+// Pinned LITERALLY, because the only way to notice one drifting is to have
 // written it down twice.
+//
+// THERE ARE THREE LISTS HERE NOW, NOT TWO, AND THE SPLIT IS THE WHOLE CHANGE.
+// TRAINER_BASELINE and EXEC_ASSIGNABLE are the transcription — what a trainer
+// and an exec could do the day before capabilities existed. EXEC_BASELINE used
+// to be the second of those and is now something else entirely: the read-only
+// FLOOR an officer holds before anybody assigns them anything. The literal pin
+// that follows the 73 moved WITH the transcription, to EXEC_ASSIGNABLE, and a
+// new literal pin was written for the twelve.
 
 describe('baselines', () => {
   it('gives a trainer exactly the roster, its page, and varsity notes', () => {
@@ -210,8 +217,39 @@ describe('baselines', () => {
     ]);
   });
 
-  it('gives an exec exactly 73 capabilities, pinned one by one', () => {
+  // THE FLOOR, PINNED ONE BY ONE — the club owner's "everyone can read things,
+  // but cant write it", written down so that a single write appearing here is a
+  // diff somebody has to read. Eight pages and four reads; the only two reads
+  // that are not an area's page are the expense ledger and the two tournament
+  // reads that were never anything but reads.
+  it('gives an exec exactly 12 capabilities, all of them reads, pinned one by one', () => {
     expect([...EXEC_BASELINE]).toEqual([
+      'announcements.page',
+      'fees.page',
+      'fees.expenses.read',
+      'legal.page',
+      'matches.page',
+      'players.page',
+      'players.read',
+      'seasons.page',
+      'sessions.page',
+      'tournaments.page',
+      'tournaments.draw.entrycounts.read',
+      'tournaments.draw.waivers.read',
+    ]);
+    expect(EXEC_BASELINE.length).toBe(12);
+    // The property the list exists to have, asserted as a property rather than
+    // read off the list above: NOT ONE WRITE.
+    expect(EXEC_BASELINE.filter((c) => c.endsWith('.write'))).toEqual([]);
+  });
+
+  // THE TRANSCRIPTION, UNMOVED. This literal list is the one that used to be
+  // asserted against EXEC_BASELINE, character for character and in the same
+  // order — it is repointed rather than rewritten, because the SET did not
+  // change, only which constant holds it. That is the anti-widening claim: what
+  // an admin may hand out is exactly what an exec used to hold by default.
+  it('leaves exactly 73 capabilities assignable, pinned one by one', () => {
+    expect([...EXEC_ASSIGNABLE]).toEqual([
       'players.page',
       'players.read',
       'players.approve.write',
@@ -286,7 +324,21 @@ describe('baselines', () => {
       'legal.page',
       'legal.reacceptance.write',
     ]);
-    expect(EXEC_BASELINE.length).toBe(73);
+    expect(EXEC_ASSIGNABLE.length).toBe(73);
+    // NOBODY HOLDS IT BY DEFAULT, which is the difference between this list and
+    // the one above. It is a ceiling on what may be assigned, never a grant.
+    expect(effectiveCapabilities('exec', UNRESTRICTED).size).toBe(EXEC_BASELINE.length);
+  });
+
+  // THE FLOOR IS INSIDE THE TRANSCRIPTION, which is the narrowing stated as an
+  // inclusion. If this ever fails, the "baseline" has grown something no exec
+  // held before capabilities existed — the one direction it must never move.
+  it('keeps the exec baseline strictly inside what an exec may be assigned', () => {
+    const assignable = new Set<Capability>(EXEC_ASSIGNABLE);
+    for (const capability of EXEC_BASELINE) {
+      expect(assignable.has(capability), `${capability} is not historic exec work`).toBe(true);
+    }
+    expect(EXEC_BASELINE.length).toBeLessThan(EXEC_ASSIGNABLE.length);
   });
 
   // THE INVARIANT, CHECKED AGAINST THE BASELINES THEMSELVES. A baseline is fed
@@ -294,8 +346,8 @@ describe('baselines', () => {
   // here would not be pruned — it would be a level quietly holding writes in a
   // section it cannot open, which is the shape of bug this suite exists to make
   // impossible to ship.
-  it('carries the page for every area either baseline reaches', () => {
-    for (const list of [EXEC_BASELINE, TRAINER_BASELINE]) {
+  it('carries the page for every area any of the three lists reaches', () => {
+    for (const list of [EXEC_BASELINE, EXEC_ASSIGNABLE, TRAINER_BASELINE]) {
       const held = new Set<Capability>(list);
       for (const capability of list) {
         expect(held.has(pageOf(capability)), `${capability} without its area page`).toBe(true);
@@ -303,19 +355,62 @@ describe('baselines', () => {
     }
   });
 
-  it('keeps both baselines inside the vocabulary, with no duplicates', () => {
-    for (const list of [EXEC_BASELINE, TRAINER_BASELINE]) {
+  it('keeps all three lists inside the vocabulary, with no duplicates', () => {
+    for (const list of [EXEC_BASELINE, EXEC_ASSIGNABLE, TRAINER_BASELINE]) {
       expect(new Set(list).size).toBe(list.length);
       for (const capability of list) expect(isCapability(capability)).toBe(true);
     }
   });
 
-  // A trainer's level is a strict subset of an exec's — that was true of the
-  // rungs and it has to stay true of the sets, or "exec" would stop meaning
-  // "everything a trainer has, and more".
-  it('keeps the trainer baseline inside the exec baseline', () => {
+  // -------------------------------------------------------------------------
+  // THE LADDER, AND THE ONE RUNG THE NARROWING BROKE
+  // -------------------------------------------------------------------------
+  // THIS USED TO BE ONE ASSERTION: "keeps the trainer baseline inside the exec
+  // baseline", whose comment said a trainer's level is a strict subset of an
+  // exec's, "or 'exec' would stop meaning 'everything a trainer has, and more'".
+  //
+  // WHAT IT WAS ACTUALLY PROTECTING is accessLevelFor(), which resolves is_exec
+  // BEFORE is_trainer and returns ONE level. A row carrying both flags is
+  // therefore an 'exec' and holds the exec baseline and nothing else — which was
+  // free while that baseline contained the trainer's, and is not free now. The
+  // containment was the thing making the collapse lossless.
+  //
+  // IT NO LONGER HOLDS, AT EXACTLY ONE CAPABILITY. `players.page` and
+  // `players.read` are in the new twelve; `players.editor.varsitynotes.write` is
+  // a write, so it left with every other write. The hole is pinned LITERALLY
+  // below rather than the assertion being deleted or quietly repointed, because
+  // a one-capability hole that nobody notices growing to five is precisely the
+  // failure this suite exists to make impossible.
+  //
+  // IT IS LATENT RATHER THAN LIVE, and that is why the recommendation is to
+  // record it rather than widen the baseline back. Every writer of these columns
+  // is mutually exclusive — fromRoleValue() in the admin app writes
+  // `is_trainer: false` for 'executive' and `is_exec: false` for 'trainer', and
+  // both the member Edit dialog and /permissions go through it — so only a
+  // legacy row or a hand-rolled admin payload can be both. The two repairs, if a
+  // row is ever found: put the varsity note back in EXEC_BASELINE (one line, but
+  // it hands every officer a write the club owner did not ask for), or stop
+  // accessLevelFor() collapsing the two flags (correct, and a change to the
+  // resolver rather than to a list).
+  it('leaves exactly the varsity note outside the exec baseline — a REGRESSION, pinned so it cannot grow', () => {
     const exec = new Set<Capability>(EXEC_BASELINE);
-    for (const capability of TRAINER_BASELINE) expect(exec.has(capability)).toBe(true);
+    const outside = TRAINER_BASELINE.filter((capability) => !exec.has(capability));
+    expect(outside).toEqual(['players.editor.varsitynotes.write']);
+  });
+
+  // AND THE CONTAINMENT THAT DOES SURVIVE, which is the one worth having: a
+  // trainer's whole level is inside what an exec may be ASSIGNED. So promoting a
+  // varsity trainer to executive-with-the-internal-role takes nothing from them,
+  // and the ladder still holds everywhere authority is handed over deliberately.
+  // It fails only where a single row silently claims two jobs at once.
+  it('keeps the trainer baseline inside what an exec may be assigned', () => {
+    const assignable = new Set<Capability>(EXEC_ASSIGNABLE);
+    for (const capability of TRAINER_BASELINE) {
+      expect(assignable.has(capability), capability).toBe(true);
+    }
+    // ...and the role that owns the roster is where it actually lands, so the
+    // repair is a real assignment rather than a theoretical one.
+    expect(ROLE_DEFAULTS.internal).toContain('players.editor.varsitynotes.write');
   });
 
   // The four VP jobs, and `custom` — which is not a fifth job but the empty
@@ -335,11 +430,20 @@ describe('baselines', () => {
 // ---------------------------------------------------------------------------
 // ROLE_DEFAULTS
 // ---------------------------------------------------------------------------
-// THE PROPERTY THESE TESTS EXIST FOR: a role can never put somebody outside the
-// exec baseline. Everything below is a way of writing that down so it cannot be
-// lost by accident — the subset assertion is the security one, and the literal
-// pinning is what makes a change to a role a reviewed diff rather than a
-// discovery six months later.
+// THE PROPERTY THESE TESTS EXIST FOR: a role can never put somebody outside
+// what an exec could already do. Everything below is a way of writing that down
+// so it cannot be lost by accident — the subset assertion is the security one,
+// and the literal pinning is what makes a change to a role a reviewed diff
+// rather than a discovery six months later.
+//
+// THE CONSTANT THESE TWO NAME MOVED FROM EXEC_BASELINE TO EXEC_ASSIGNABLE, and
+// the property did not. While the baseline WAS the historic 73, "inside the exec
+// baseline" and "inside what an exec could already do" were the same sentence
+// written two ways; narrowing the baseline to twelve reads split them, and it is
+// the second one these have always meant. Stating them against the twelve would
+// have been a different and false claim — every VP role would exceed its own
+// bound, and the assignment mechanism the narrowing depends on would be the
+// thing these tests refused.
 //
 // It used to be stated as "assigning a role is never itself a widening", which
 // was the same claim only while roles were exec-only: the role was a subset of
@@ -351,14 +455,17 @@ describe('baselines', () => {
 // what it buys had to move from a direction to a ceiling.
 
 describe('ROLE_DEFAULTS', () => {
-  // The one that matters. A role that reached beyond the exec baseline would
+  // The one that matters. A role that reached beyond the historic exec set would
   // let "pick Finance from a dropdown" hand out something no exec ever had,
   // with no grant to review and no audit row saying what it was.
-  it('keeps every role inside the exec baseline, so a role can never exceed it', () => {
-    const exec = new Set<Capability>(EXEC_BASELINE);
+  it('keeps every role inside what an exec may be assigned, so a role can never exceed it', () => {
+    const assignable = new Set<Capability>(EXEC_ASSIGNABLE);
     for (const role of PERMISSION_ROLES) {
       for (const capability of ROLE_DEFAULTS[role]) {
-        expect(exec.has(capability), `${role} grants ${capability}, which no exec holds`).toBe(true);
+        expect(
+          assignable.has(capability),
+          `${role} grants ${capability}, which no exec ever held`,
+        ).toBe(true);
       }
     }
   });
@@ -395,9 +502,22 @@ describe('ROLE_DEFAULTS', () => {
   // THE DERIVATION, WRITTEN DOWN. The four roles are the old SECTION_PORTFOLIO
   // map — finance owned /fees, tournaments owned /tournaments /matches
   // /sessions, internal owned /players /seasons, external owned /legal
-  // /announcements — intersected with the exec baseline. So they partition it
-  // exactly, and that is not a coincidence to be preserved for its own sake: it
-  // is the assertion that assigning a role does what assigning a portfolio did.
+  // /announcements — intersected with the historic exec set. So they partition
+  // it exactly, and that is not a coincidence to be preserved for its own sake:
+  // it is the assertion that assigning a role does what assigning a portfolio
+  // did.
+  //
+  // IT STILL HOLDS EXACTLY, AND AGAINST EXEC_ASSIGNABLE — the same 73 the
+  // baseline used to be, so nothing about the partition itself moved: 3 + 51 +
+  // 13 + 6 + 0 = 73, checked below rather than asserted in prose.
+  //
+  // IT ALSO GAINED A SECOND JOB THE DAY THE BASELINE NARROWED. It was the proof
+  // that a role hands out nothing an exec did not already have. It is now ALSO
+  // the proof that the four roles between them hand BACK every write the
+  // narrowing took away: an exact partition means no capability fell into the
+  // gap between the read-only floor and the jobs that are meant to restore it.
+  // A merely-inside-the-ceiling check would have let one go missing silently,
+  // and the person who noticed would be an officer who could not do their job.
   //
   // The arithmetic moved by exactly one when page keys arrived: finance went
   // from two entries to three, because /fees was the one section whose page key
@@ -416,10 +536,29 @@ describe('ROLE_DEFAULTS', () => {
   // an empty base was the right shape for it: a hand-picked set had to be
   // storable without claiming a slice of the partition that some VP job already
   // owns.
-  it('partitions the exec baseline exactly, as the four portfolios did', () => {
+  it('partitions what an exec may be assigned, exactly, as the four portfolios did', () => {
     const fromRoles = PERMISSION_ROLES.flatMap((role) => [...ROLE_DEFAULTS[role]]);
     expect(new Set(fromRoles).size, 'two roles claim the same capability').toBe(fromRoles.length);
-    expect([...fromRoles].sort()).toEqual([...EXEC_BASELINE].sort());
+    expect([...fromRoles].sort()).toEqual([...EXEC_ASSIGNABLE].sort());
+    // The arithmetic, so "exactly" is a sum somebody can check rather than a
+    // word: finance 3, tournaments 51, internal 13, external 6, custom 0.
+    expect(PERMISSION_ROLES.map((role) => ROLE_DEFAULTS[role].length)).toEqual([3, 51, 13, 6, 0]);
+    expect(fromRoles.length).toBe(73);
+  });
+
+  // THE OTHER HALF OF THE PARTITION, AND IT IS NEW. The four roles cover the
+  // ceiling; this says they also cover everything an officer LOST. Every write
+  // that left EXEC_BASELINE is in exactly one VP job, so "assign them a role" is
+  // a complete answer to "they cannot do their job any more" — there is no write
+  // that requires a hand-picked grant merely because the roles forgot it.
+  it('hands back, through the four roles, every write the baseline gave up', () => {
+    const floor = new Set<Capability>(EXEC_BASELINE);
+    const lost = EXEC_ASSIGNABLE.filter((capability) => !floor.has(capability));
+    expect(lost.length).toBe(61);
+    const fromRoles = new Set(PERMISSION_ROLES.flatMap((role) => [...ROLE_DEFAULTS[role]]));
+    for (const capability of lost) {
+      expect(fromRoles.has(capability), `${capability} is in no VP job`).toBe(true);
+    }
   });
 
   // Pinned literally, because the club's answer to "what does the treasurer
@@ -499,29 +638,53 @@ describe('ROLE_DEFAULTS', () => {
 // wants the exec baseline NOT to grow and Finance to exceed it, and both are
 // true only once the ceiling is its own list.
 //
-// EXEC_BASELINE ITSELF DID NOT MOVE, and that is asserted below rather than
+// THE TRANSCRIPTION ITSELF DID NOT MOVE, and that is asserted below rather than
 // assumed. The widening is four READS on /fees, enumerated in access-level.ts
 // and pinned entry-by-entry in editable-roles.test.ts.
+//
+// THE CONSTANT IT SPREADS IS NOW EXEC_ASSIGNABLE, and this whole block is
+// repointed for that reason and no other. `EDITOR_OFFERABLE = EXEC_BASELINE +
+// widening` became `EXEC_ASSIGNABLE + widening` when the baseline narrowed —
+// which changed the NAME of the first summand and nothing else, because
+// EXEC_ASSIGNABLE holds the old EXEC_BASELINE verbatim and in order. The set
+// this constant denotes is byte-for-byte what it denoted before, which is the
+// whole anti-widening claim, and stating these against the twelve would have
+// asserted the opposite of what they exist to assert.
 
 describe('EDITOR_OFFERABLE', () => {
-  it('contains the exec baseline, in order, and then the widening', () => {
-    expect([...EDITOR_OFFERABLE].slice(0, EXEC_BASELINE.length)).toEqual([...EXEC_BASELINE]);
+  it('contains everything assignable, in order, and then the widening', () => {
+    expect([...EDITOR_OFFERABLE].slice(0, EXEC_ASSIGNABLE.length)).toEqual([...EXEC_ASSIGNABLE]);
   });
 
-  // THE EXEC TRANSCRIPTION IS UNCHANGED. The whole risk of splitting the two
+  // THE EXEC TRANSCRIPTION IS UNCHANGED. The whole risk of splitting the
   // constants is that a widening lands in the wrong one and reaches every exec
   // in the club without anybody choosing it.
-  it('leaves the exec baseline exactly as it was', () => {
-    expect(EXEC_BASELINE.length).toBe(73);
+  it('leaves the assignable set exactly as it was', () => {
+    expect(EXEC_ASSIGNABLE.length).toBe(73);
     const offerableOnly = [...EDITOR_OFFERABLE].filter(
-      (capability) => !new Set<Capability>(EXEC_BASELINE).has(capability),
+      (capability) => !new Set<Capability>(EXEC_ASSIGNABLE).has(capability),
     );
     for (const capability of offerableOnly) {
       expect(
-        (EXEC_BASELINE as readonly Capability[]).includes(capability),
-        `${capability} leaked into the exec baseline`,
+        (EXEC_ASSIGNABLE as readonly Capability[]).includes(capability),
+        `${capability} leaked into the assignable set`,
       ).toBe(false);
     }
+  });
+
+  // AND THE SECOND CONSTANT, GUARDED FROM THE OTHER DIRECTION. Now that there is
+  // a floor as well as a ceiling, the mistake to catch is a widening landing in
+  // the FLOOR — where it would reach every officer in the club by level, with
+  // nobody choosing it. The floor holds no write at all, so the cheapest way to
+  // say that is to say it again here, at the constant that bounds handing out.
+  it('never lets the widening reach the exec baseline', () => {
+    const floor = new Set<Capability>(EXEC_BASELINE);
+    const assignable = new Set<Capability>(EXEC_ASSIGNABLE);
+    for (const capability of EDITOR_OFFERABLE) {
+      if (assignable.has(capability)) continue;
+      expect(floor.has(capability), `${capability} reached the exec baseline`).toBe(false);
+    }
+    expect(EXEC_BASELINE.filter((c) => c.endsWith('.write'))).toEqual([]);
   });
 
   // Named one by one so that opening any of them is a diff somebody has to
@@ -824,8 +987,29 @@ describe('varsity notes', () => {
     expect(permits('trainer', UNRESTRICTED, VARSITY)).toBe(true);
   });
 
-  it('is held by an unrestricted exec, exactly as it was before', () => {
-    expect(permits('exec', UNRESTRICTED, VARSITY)).toBe(true);
+  // THE EXPECTATION FLIPPED, AND IT IS THE NARROWING ITSELF. This test used to
+  // read "is held by an unrestricted exec, exactly as it was before" and assert
+  // TRUE. The varsity note is a WRITE, so it left the exec floor with all sixty
+  // others: an officer with no permission_role can find the player and read the
+  // roster, and cannot write about them.
+  //
+  // IT IS NOT A LOSS FOR TRAINERS — the case above still passes and is the level
+  // that owns this capability. What it IS, is the one place the trainer level is
+  // no longer inside the exec level; see the pinned hole in `baselines` above.
+  it('is NOT held by an unrestricted exec any more — the write left the floor', () => {
+    expect(permits('exec', UNRESTRICTED, VARSITY)).toBe(false);
+    // The two roster READS did not: an officer can still find the person, which
+    // is what makes assigning the note afterwards a coherent act rather than a
+    // second thing they also have to be given.
+    expect(permits('exec', UNRESTRICTED, 'players.page')).toBe(true);
+    expect(permits('exec', UNRESTRICTED, 'players.read')).toBe(true);
+  });
+
+  // ...and it comes back with the job that owns it. This is the whole mechanism
+  // in three lines: the write is not gone, it is assigned.
+  it('is held again by an exec given the role that owns the roster', () => {
+    const internal = resolvePermissions('internal', [], []);
+    expect(permits('exec', internal, VARSITY)).toBe(true);
   });
 
   it('is NOT held by an exec narrowed to finance', () => {
