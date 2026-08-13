@@ -19,6 +19,7 @@ import { Trophy, Users, Zap, ArrowLeft, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 import { EventRegistrationButton } from './EventRegistrationButton';
 import { FeedbackForm } from './feedback-form';
+import { LiveTournament } from '../live-tournament';
 
 /**
  * The teams this member is in, across these events, and WHO WITH.
@@ -149,6 +150,19 @@ export default async function TournamentDetailPage({ params }: { params: Promise
 
   return (
     <div data-screen-label="Tournament">
+      {/* The event list below prints each event's status and its entry count,
+          and both move while a member is looking at them — an exec generating
+          a draw, closing check-in or finalising an event, and every other
+          member registering.
+
+          `draw` STAYS FALSE. This page never reads tournament_matches; the
+          brackets are one level down. Watching matches here would wake the
+          overview for every score in every event it is only summarising. */}
+      <LiveTournament
+        channel={`player-tournament-${id}`}
+        tournamentId={id}
+        eventIds={(events ?? []).map((e) => e.id as string)}
+      />
       <div className="page-header" style={{ marginBottom: 18 }}>
         <Link href="/tournaments" className="row press" style={{ gap: 8, fontSize: 13, color: 'var(--mute)' }}>
           <ArrowLeft size={16} />

@@ -70,7 +70,14 @@ describe('every table the player app subscribes to is published to Realtime', ()
   it('finds the subscriptions at all', () => {
     // If the extraction above silently stopped matching, every assertion below
     // would pass over an empty list.
-    expect(subscribed.length).toBeGreaterThanOrEqual(3);
+    //
+    // A FLOOR, RAISED WHENEVER SUBSCRIPTIONS ARE ADDED, and worth raising: it
+    // was 3 while the app had 3, and it is the only thing standing between a
+    // silently broken extraction and a suite that passes over nothing. The
+    // count today is 8 — ratings on /leaderboard, announcements and
+    // announcement_reads in the nav, ratings again in live-rating.tsx, and the
+    // four tournament tables in live-tournament.tsx.
+    expect(subscribed.length).toBeGreaterThanOrEqual(8);
     expect(new Set(subscribed.map((s) => s.table))).toContain('announcements');
   });
 
@@ -89,5 +96,33 @@ describe('every table the player app subscribes to is published to Realtime', ()
     // 00096 is applied. If somebody deletes the ALTER without deleting the
     // listener, this is the test that says so.
     expect(publishedTables()).toContain('announcement_reads');
+  });
+
+  it('publishes the four tables a tournament draw moves through', () => {
+    // The bracket's own case, named rather than left to the loop: an entrant
+    // watching a draw from courtside is the reader least able to tell a live
+    // screen from a dead one, because a round that has not been played and a
+    // round whose result never arrived look identical. All four are inert
+    // until 00113 is applied.
+    const published = publishedTables();
+    for (const table of [
+      'tournament_events',
+      'tournament_matches',
+      'tournament_participants',
+      'tournament_pairs',
+    ]) {
+      expect(published, `${table} is subscribed but not published`).toContain(table);
+    }
+  });
+
+  it('still names ratings, which is what makes a member their own live rating', () => {
+    // /my-stats and /feed watch the viewer's own row. Unlike every other entry
+    // here this one needed no migration — 00036 published `ratings` for the
+    // leaderboard years earlier — so the usual "somebody forgot the ALTER"
+    // failure cannot happen to it. What CAN happen is somebody deciding the
+    // leaderboard no longer needs it and removing the table from 00036, which
+    // would take these two screens down with it silently.
+    expect(publishedTables()).toContain('ratings');
+    expect(subscribed.map((s) => s.file)).toContain('components/live-rating.tsx');
   });
 });

@@ -25,6 +25,7 @@ import Link from 'next/link';
 import { FadeIn } from '@/components/motion-wrapper';
 import { EventActions } from './EventActions';
 import { ParticipantsList, type ParticipantEntry } from './ParticipantsList';
+import { LiveTournament } from '../../../live-tournament';
 
 /**
  * Bracket geometry — one source of truth for the card size, the column offsets
@@ -298,6 +299,22 @@ export default async function EventDetailPage({
 
   return (
     <div className="space-y-5 pb-28 px-4 sm:px-0">
+      {/* THE SCREEN THIS WHOLE CHANGE IS FOR. An entrant sits courtside with
+          this page open waiting to learn whether their next match is ready, and
+          every write that could tell them is made by an exec at the scoring
+          table — so until now the answer only arrived if they thought to pull
+          to refresh.
+
+          `draw` is TRUE here and nowhere else on the player side: this is the
+          one player screen that reads tournament_matches. One eventId, so the
+          match filter is this event's and a score in the men's singles does not
+          wake somebody watching the mixed doubles. */}
+      <LiveTournament
+        channel={`player-tournament-event-${eventId}`}
+        tournamentId={tournamentId}
+        eventIds={[eventId]}
+        draw
+      />
       <Link
         href={`/tournaments/${tournamentId}`}
         aria-label="Back to tournament"

@@ -9,6 +9,7 @@ import { ArrowLeft, Users, Calendar, Zap, Crown, Plus, Swords, DollarSign } from
 import Link from 'next/link';
 import { CreateEventButton } from './create-event';
 import { TournamentStatusControls } from './tournament-status-controls';
+import { LiveTournament } from '../live-tournament';
 
 export default async function TournamentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -102,6 +103,22 @@ export default async function TournamentDetailPage({ params }: { params: Promise
 
   return (
     <div className="space-y-6">
+      {/* The event cards below carry a status chip and an entry count each, and
+          a tournament is run by more than one exec: the one on this page is
+          usually NOT the one generating draws and closing check-in two courts
+          away. Mounted at page level, outside every Card and every
+          ResponsiveTable — that component renders its rows twice, a table and a
+          stack of cards with one CSS-hidden, so a subscriber placed inside one
+          would open two channels for one screen.
+
+          `draw` STAYS FALSE. This page never reads tournament_matches; the
+          brackets are one level down. Watching matches here would wake the
+          overview for every score in every event it is only summarising. */}
+      <LiveTournament
+        channel={`admin-tournament-${id}`}
+        tournamentId={id}
+        eventIds={(events ?? []).map((ev) => ev.id as string)}
+      />
       {/* Back link */}
       <Link href="/tournaments" className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--color-accent)] transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none rounded">
         <ArrowLeft className="w-4 h-4" />
