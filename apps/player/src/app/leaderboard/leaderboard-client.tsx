@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { getPostHogClient } from '@/lib/posthog';
 import { createClient } from '@/lib/supabase-browser';
-import { Search, Crosshair, Trophy } from 'lucide-react';
+import { Search, Crosshair, Trophy, ArrowDownToLine } from 'lucide-react';
 import { AvatarChip, PageHeader, normalizeSearchQuery } from '@badminton/ui';
 import { getWinRate, getWinRateNumeric } from '@badminton/shared';
 import { useStanding } from '@/components/standing-provider';
@@ -18,6 +18,10 @@ import {
   formatStreak,
   ladderHistogram,
   bandHeight,
+  extendLadderWindow,
+  ladderWindowIncluding,
+  LADDER_WINDOW_STEP,
+  LADDER_WINDOW_LOOKAHEAD_PX,
 } from '@/lib/ladder';
 
 type Ratings = {
@@ -101,6 +105,9 @@ function firstName(name: string): string {
   return name.trim().split(/\s+/)[0] || name;
 }
 
+/** The id put on the viewer's own row, so "jump to my row" can scroll to it. */
+const MY_ROW_ID = 'my-ladder-row';
+
 function LadderRow({
   player,
   rank,
@@ -109,6 +116,7 @@ function LadderRow({
   isTpts,
   canChallenge,
   onChallenge,
+  domId,
 }: {
   player: LeaderboardEntry;
   /** Position on the ladder, 1-based — not the row's index in a filtered list. */
@@ -118,6 +126,8 @@ function LadderRow({
   isTpts: boolean;
   canChallenge: boolean;
   onChallenge: (id: string) => void;
+  /** Set only on the viewer's own row, so "jump to me" has something to find. */
+  domId?: string;
 }) {
   const value = metricOf(player, isDoubles, isTpts);
   const { wins, losses } = recordOf(player, isDoubles);
@@ -136,7 +146,7 @@ function LadderRow({
     .join(' · ');
 
   return (
-    <div className={'ladder-row' + (isMe ? ' me' : '')}>
+    <div id={domId} className={'ladder-row' + (isMe ? ' me' : '')}>
       <Link href={`/leaderboard/${player.id}`} className="lr-main press">
         <span className="lr-rank" data-medal={rank <= 3 ? rank : undefined}>
           {rank}
@@ -289,6 +299,61 @@ export default function LeaderboardClient({
     );
   }, [ranked, searchQuery]);
 
+  // ---------------------------------------------------------------------
+  // THE RENDERED WINDOW
+  // ---------------------------------------------------------------------
+  // `visible` is the whole ladder after filtering and searching; `windowed` is
+  // the slice of it that is actually in the DOM. Staging has a hundred rated
+  // members and a real club has more, and every one of them used to be four
+  // grid cells on first paint.
+  //
+  // SLICED AFTER THE SEARCH, NOT BEFORE, and that is the entire reason search
+  // still works across the whole list: `visible` has already been filtered and
+  // already carries each row's true rank, so a name at rank 300 is found by the
+  // search and then rendered as row one of the results. The count below reads
+  // `visible.length`, not `windowed.length`, for the same reason.
+  const [shown, setShown] = useState(LADDER_WINDOW_STEP);
+
+  // RESET ON WHAT THE READER CHANGED, AND ONLY THAT. Not on `players`: the
+  // realtime subscription above calls router.refresh() every time anybody's
+  // rating moves, which replaces initialPlayers wholesale, and collapsing the
+  // window there would yank somebody back to row 25 while they were reading
+  // row 80 because a match finished on the other side of the club.
+  useEffect(() => {
+    setShown(LADDER_WINDOW_STEP);
+  }, [searchQuery, activeTab, sortBy]);
+
+  const windowed = useMemo(() => visible.slice(0, shown), [visible, shown]);
+  const hasMore = shown < visible.length;
+
+  // The sentinel sits under the last rendered row. rootMargin extends the
+  // observer's box BELOW the viewport, so the next batch is appended while the
+  // sentinel is still off screen — the reader never arrives at a boundary and
+  // waits for it. `root` is deliberately unset: the ladder card is
+  // `overflow: hidden`, not a scroller, so the viewport is what scrolls.
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = sentinelRef.current;
+    if (!node || !hasMore) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setShown((n) => extendLadderWindow(n, visible.length));
+        }
+      },
+      { rootMargin: `0px 0px ${LADDER_WINDOW_LOOKAHEAD_PX}px 0px` },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+    // `shown` IS A DEPENDENCY ON PURPOSE, so the observer is rebuilt after each
+    // batch. IntersectionObserver only calls back when a threshold is CROSSED,
+    // and one batch of rows is shorter than the lookahead margin — so a sentinel
+    // that is still inside the margin after appending would sit there
+    // intersecting and never fire again, and the list would stall a screen short
+    // of where the reader is. Re-observing re-evaluates immediately, which fills
+    // the lookahead and then stops, because `hasMore` goes false at the end.
+  }, [hasMore, visible.length, shown]);
+
   // Everything about YOU is measured against the whole field, never against
   // what the search box has left on screen. Your rank does not change because
   // you typed someone else's name.
@@ -297,6 +362,44 @@ export default function LeaderboardClient({
     [ranked, meId]
   );
   const me = meIndex >= 0 ? ranked[meIndex] : null;
+
+  // ---------------------------------------------------------------------
+  // GETTING TO YOUR OWN ROW WHEN IT IS BELOW THE WINDOW
+  // ---------------------------------------------------------------------
+  // A member ranked 80th no longer has their row on the page, and the one thing
+  // a ladder must never do is hide the reader from themselves.
+  //
+  // A CONTROL, NOT A BIGGER INITIAL WINDOW. Setting `shown` to cover meIndex on
+  // load would make a member ranked 300th render three hundred rows, which is
+  // the cost this whole change exists to remove. So the window grows once, when
+  // they ask, and the page scrolls to them.
+  //
+  // MEASURED IN `visible`, NOT IN `ranked`. meIndex is a position in the full
+  // field and the window slices the SEARCHED list; with a search active the two
+  // differ, and extending to meIndex + 1 would render the wrong rows entirely.
+  // -1 means their row is not in the current list at all — searched out, or a
+  // tab they are not on — and the control is not offered.
+  const myWindowIndex = useMemo(
+    () => (meId === null ? -1 : visible.findIndex((v) => v.player.id === meId)),
+    [visible, meId],
+  );
+  const myRowIsHidden = myWindowIndex >= shown;
+  const scrollToMeRef = useRef(false);
+
+  function jumpToMyRow() {
+    setShown((n) => ladderWindowIncluding(myWindowIndex, n, visible.length));
+    scrollToMeRef.current = true;
+  }
+
+  // The scroll has to wait for the row to exist, so it happens after the render
+  // that `shown` triggered rather than in the click handler. Same
+  // `block: 'center'` the sessions deep link uses, so the row lands where a
+  // reader looks rather than jammed under the header.
+  useEffect(() => {
+    if (!scrollToMeRef.current) return;
+    scrollToMeRef.current = false;
+    document.getElementById(MY_ROW_ID)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [shown]);
   const myElo = me?.ratings ? (isDoubles ? me.ratings.doubles_elo : me.ratings.singles_elo) : null;
   const aboveMe = meIndex > 0 ? ranked[meIndex - 1] : null;
   const aboveMeElo = aboveMe?.ratings ? (isDoubles ? aboveMe.ratings.doubles_elo : aboveMe.ratings.singles_elo) : null;
@@ -327,8 +430,17 @@ export default function LeaderboardClient({
     <div data-screen-label="Leaderboard">
       <PageHeader eyebrow="LADDER" title="Ranks" sub="Where you sit against everyone." />
 
-      {/* Controls stack above the content on a phone rather than crowding the
-          header: the format rail first, then search and sort on one line. */}
+      {/* THE FORMAT RAIL STAYS HERE, ABOVE BOTH COLUMNS, and the search and
+          sort no longer do.
+
+          The rail changes what the whole page is about — the "Your position"
+          card switches between your singles and doubles rating with it, and the
+          Top 3 changes too — so it belongs to the page. Search and sort belong
+          to the LADDER: they filter and order that one list and nothing else,
+          and sitting up here they floated over the position card as much as
+          over the thing they control. They have moved into the ladder card's
+          own head, which is also what keeps them with the ladder when the two
+          columns stack on a phone — no media query, just the same column. */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
         {/* aria-pressed rather than role="tab": these chips re-filter the page
             in place, there is no tabpanel for a tab to control, and claiming
@@ -345,32 +457,6 @@ export default function LeaderboardClient({
               {t.label}
             </button>
           ))}
-        </div>
-        <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
-          <div className="search-pill ranks-search">
-            <Search size={14} className="text-[var(--mute)]" />
-            <input
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Name or @handle"
-              aria-label="Search leaderboard"
-            />
-          </div>
-          {!isTpts && (
-            <div className="ranks-rail" role="group" aria-label="Sort ladder by">
-              {sortOptions.map((s) => (
-                <button
-                  key={s.id}
-                  className={'filter-chip' + (sortBy === s.id ? ' active' : '')}
-                  onClick={() => setSortBy(s.id)}
-                  type="button"
-                  aria-pressed={sortBy === s.id}
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
       </div>
 
@@ -536,14 +622,85 @@ export default function LeaderboardClient({
               className="card-head"
               style={{ padding: '20px 20px 14px', borderBottom: '1px solid var(--line)', marginBottom: 0 }}
             >
+              {/* ONE 100%-WIDTH CHILD, still. .card-head is flex/space-between
+                  /wrap, so adding the controls as a SIBLING of this div would
+                  let them wrap around the title unpredictably at some widths.
+                  They go inside it instead, under the title they belong to. */}
               <div style={{ width: '100%' }}>
                 <h3 className="card-title">{activeLabel} · Full ladder</h3>
+                {/* "Sorted by ELO" is gone: the sort chips are now two lines
+                    below and say the same thing, and a page that states its
+                    sort order twice at once invites the two to disagree.
+                    The COUNT stays, and it counts against `ranked` — the field
+                    this tab actually shows — rather than against every rated
+                    member in the club. `players.length` was the whole roster,
+                    so a competitive-only tab read "12 of 100" when its ladder
+                    had 12 rows in it and the denominator meant nothing.
+
+                    Both numbers are the WHOLE list, never the rendered window:
+                    that is what makes the search honest when only 25 rows are
+                    in the DOM. */}
                 <div className="card-sub">
-                  Sorted by {isTpts ? 'points' : sortBy === 'win_rate' ? 'win rate' : 'ELO'} · {visible.length} of {players.length}
+                  {visible.length} of {ranked.length}
                 </div>
                 {/* One line, so a ladder with no Challenge control reads as an
                     account state rather than a broken page. */}
                 <StandingNote standing={standing} activity="Challenges" style={{ marginTop: 6 }} />
+
+                {/* SEARCH AND SORT, the controls for THIS list, sitting on it.
+                    They filter and order the ladder below and nothing else, and
+                    they travel with it into the single column on a phone. */}
+                <div className="row" style={{ gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
+                  <div className="search-pill ranks-search">
+                    <Search size={14} className="text-[var(--mute)]" />
+                    <input
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Name or @handle"
+                      aria-label="Search leaderboard"
+                    />
+                  </div>
+                  {!isTpts && (
+                    <div className="ranks-rail" role="group" aria-label="Sort ladder by">
+                      {sortOptions.map((s) => (
+                        <button
+                          key={s.id}
+                          className={'filter-chip' + (sortBy === s.id ? ' active' : '')}
+                          onClick={() => setSortBy(s.id)}
+                          type="button"
+                          aria-pressed={sortBy === s.id}
+                        >
+                          {s.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* YOUR ROW, WHEN THE LADDER HAS NOT RENDERED THAT FAR YET.
+
+                    ON THE LADDER RATHER THAN ON THE "YOUR POSITION" CARD, which
+                    was the obvious home for it: that card is hidden on the
+                    Tournament points tab and for anybody with no rating, and
+                    those are readers who can be a long way down a list too. Here
+                    it exists wherever the ladder does.
+
+                    Offered only when the row is genuinely outside the window — a
+                    member in the top 25 can already see themselves, and a
+                    control that scrolls somewhere visible is noise. It grows the
+                    window to reach them and then scrolls; it never shrinks it,
+                    so a second press does nothing rather than something odd. */}
+                {myRowIsHidden && (
+                  <button
+                    className="btn"
+                    type="button"
+                    style={{ marginTop: 12 }}
+                    onClick={jumpToMyRow}
+                  >
+                    <ArrowDownToLine size={14} /> Go to my row · #{visible[myWindowIndex]?.rank}
+                  </button>
+                )}
+
                 {/* A row list has no <th> to say what "18–6 · 75% · W3" is. */}
                 <div className="ladder-key" style={{ marginTop: 10 }}>
                   <span>#</span>
@@ -563,22 +720,49 @@ export default function LeaderboardClient({
                 </div>
               </div>
             ) : (
-              <div className="ladder-list">
-                {visible.map(({ player: p, rank }) => (
-                  <LadderRow
-                    key={p.id}
-                    player={p}
-                    rank={rank}
-                    isMe={p.id === meId}
-                    isDoubles={isDoubles}
-                    isTpts={isTpts}
-                    // Same gate as before. Your own row is excluded because
-                    // there is no such thing as challenging yourself.
-                    canChallenge={standing.ok && p.id !== meId}
-                    onChallenge={goChallenge}
-                  />
-                ))}
-              </div>
+              <>
+                <div className="ladder-list">
+                  {/* `windowed`, not `visible` — the DOM holds a slice. The rank
+                      on each row is still the ladder position it carried before
+                      any filtering, so windowing changes what is drawn and
+                      nothing about what anything means. */}
+                  {windowed.map(({ player: p, rank }) => (
+                    <LadderRow
+                      key={p.id}
+                      player={p}
+                      rank={rank}
+                      isMe={p.id === meId}
+                      domId={p.id === meId ? MY_ROW_ID : undefined}
+                      isDoubles={isDoubles}
+                      isTpts={isTpts}
+                      // Same gate as before. Your own row is excluded because
+                      // there is no such thing as challenging yourself.
+                      canChallenge={standing.ok && p.id !== meId}
+                      onChallenge={goChallenge}
+                    />
+                  ))}
+                </div>
+                {/* THE SENTINEL, and the fallback for a browser without an
+                    observer or with JavaScript-driven scrolling disabled: the
+                    same element is a real button, so the ladder is never a dead
+                    end. aria-live tells a screen reader the list grew, which a
+                    silently appended batch would not. */}
+                {hasMore && (
+                  <div
+                    ref={sentinelRef}
+                    style={{ padding: '14px 20px 18px', textAlign: 'center' }}
+                    aria-live="polite"
+                  >
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => setShown((n) => extendLadderWindow(n, visible.length))}
+                    >
+                      Show more · {visible.length - shown} left
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>

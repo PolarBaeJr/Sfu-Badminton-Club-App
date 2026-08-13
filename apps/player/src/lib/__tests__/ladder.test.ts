@@ -8,6 +8,9 @@ import {
   ladderHistogram,
   bandHeight,
   MIN_BAND_HEIGHT,
+  extendLadderWindow,
+  ladderWindowIncluding,
+  LADDER_WINDOW_STEP,
 } from '../ladder';
 
 describe('topPercentile', () => {
@@ -192,5 +195,77 @@ describe('ladderHistogram', () => {
   it('is an empty set of bands for an empty field', () => {
     const h = ladderHistogram([], 0, 3);
     expect(h).toEqual({ min: 0, max: 0, buckets: [0, 0, 0], peak: 0, meBucket: null });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE RENDERED WINDOW
+// ---------------------------------------------------------------------------
+// The Ranks page renders a slice of the ladder and extends it as the reader
+// scrolls. What is pinned here is the arithmetic only — that the window never
+// overshoots the list, never shrinks, and always leaves something below the row
+// it was asked to reach.
+
+describe('extendLadderWindow', () => {
+  it('adds one step at a time', () => {
+    expect(extendLadderWindow(25, 200, 25)).toBe(50);
+    expect(extendLadderWindow(50, 200, 25)).toBe(75);
+  });
+
+  it('stops exactly at the end of the list and stays there', () => {
+    // The sentinel unmounts at the end, but the "Show more" button on it is
+    // real and a fast double press must not run the count past the data.
+    expect(extendLadderWindow(90, 100, 25)).toBe(100);
+    expect(extendLadderWindow(100, 100, 25)).toBe(100);
+  });
+
+  it('handles a list shorter than one step', () => {
+    expect(extendLadderWindow(3, 3, 25)).toBe(3);
+    expect(extendLadderWindow(0, 0, 25)).toBe(0);
+  });
+
+  it('always moves forward, even if somebody passes a nonsense step', () => {
+    // A step of zero would make the sentinel fire forever without ever adding a
+    // row — an infinite loop of observer callbacks, not merely a slow list.
+    expect(extendLadderWindow(10, 100, 0)).toBeGreaterThan(10);
+    expect(extendLadderWindow(10, 100, -5)).toBeGreaterThan(10);
+  });
+
+  it('uses the shared step by default', () => {
+    expect(extendLadderWindow(0, 1000)).toBe(LADDER_WINDOW_STEP);
+  });
+});
+
+describe('ladderWindowIncluding', () => {
+  it('rounds up to a whole step, so the row is never the last one rendered', () => {
+    // The member who has just jumped to their own rank is exactly the one who
+    // wants to see who is below them. Index 79 is the 80th row, so a window of
+    // 80 would put them flush against the bottom; it goes to 100.
+    expect(ladderWindowIncluding(79, 25, 300, 25)).toBe(100);
+    expect(ladderWindowIncluding(0, 25, 300, 25)).toBe(25);
+  });
+
+  it('never renders past the end of the list', () => {
+    expect(ladderWindowIncluding(97, 25, 98, 25)).toBe(98);
+  });
+
+  it('never shrinks a window that is already big enough', () => {
+    // Pressing "go to my row" twice must do nothing the second time, not
+    // collapse the page back to a smaller slice under the reader.
+    expect(ladderWindowIncluding(10, 200, 300, 25)).toBe(200);
+    expect(ladderWindowIncluding(-1, 75, 300, 25)).toBe(75);
+  });
+
+  it('leaves the window alone for an empty list', () => {
+    expect(ladderWindowIncluding(0, 25, 0, 25)).toBe(25);
+  });
+
+  it('always produces a window that actually contains the row', () => {
+    // The property the control depends on, over every position in a long list.
+    for (const total of [1, 24, 25, 26, 100, 301]) {
+      for (let i = 0; i < total; i++) {
+        expect(ladderWindowIncluding(i, LADDER_WINDOW_STEP, total)).toBeGreaterThan(i);
+      }
+    }
   });
 });

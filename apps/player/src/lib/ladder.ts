@@ -160,3 +160,76 @@ export function ladderHistogram(
     meBucket: meValue === undefined ? null : bucketOf(meValue),
   };
 }
+
+// ---------------------------------------------------------------------------
+// THE RENDERED WINDOW — how much of the ladder is in the DOM
+// ---------------------------------------------------------------------------
+// The Ranks page renders the WHOLE ladder. get_leaderboard() returns every
+// rated member in one call and the component mapped all of them, so staging's
+// hundred members are a hundred rows of four grid cells each on first paint,
+// and a real club is worse.
+//
+// BE CLEAR ABOUT WHAT THIS BUYS AND WHAT IT DOES NOT. The rows are already
+// fetched — one RPC, no pagination — so windowing saves DOM nodes, style
+// recalculation and layout, and saves NOTHING on the network. That is still the
+// expensive half on a phone, but it is not "the page loads less data" and
+// should not be described as if it were.
+//
+// THE FETCH IS DELIBERATELY LEFT WHOLE. Search runs over every member, the
+// "your position" card is computed from the full field, the histogram needs
+// every rating and the count says "N of M" — all four read the complete list,
+// so paginating the query would mean either four extra round trips or four
+// screens that quietly describe a subset. The data contract stays; only the
+// rendering is windowed.
+
+/** Rows added each time the sentinel comes into view. */
+export const LADDER_WINDOW_STEP = 25;
+
+/**
+ * How far BELOW the viewport the sentinel starts loading, in CSS pixels.
+ *
+ * A ladder row is about 60px tall, so this is roughly a dozen rows of warning —
+ * the "load ten ahead" the club owner asked for. It is a distance rather than a
+ * row count because that is what IntersectionObserver's rootMargin takes, and
+ * quoting it in rows here is what keeps the number honest when somebody changes
+ * the row's padding.
+ */
+export const LADDER_WINDOW_LOOKAHEAD_PX = 800;
+
+/** The window after one more extension, never past the end of the list. */
+export function extendLadderWindow(
+  shown: number,
+  total: number,
+  step: number = LADDER_WINDOW_STEP,
+): number {
+  return Math.min(total, shown + Math.max(1, step));
+}
+
+/**
+ * The smallest window that would put row `index` on screen.
+ *
+ * This is what "jump to my row" needs, and it is NOT the initial window: a
+ * member ranked 300th must not make the page render three hundred rows on load,
+ * which is the whole thing being removed. They press a control and the window
+ * grows once, to them.
+ *
+ * ROUNDED UP TO A WHOLE STEP so the target is never the very last row rendered.
+ * A row with nothing under it reads as the bottom of the ladder, and the person
+ * who just jumped to their own rank is precisely the one who wants to see who
+ * is below them.
+ *
+ * NEVER SHRINKS. `index` outside the list, or already inside the window, leaves
+ * the window exactly as it is — pressing the control twice does nothing the
+ * second time rather than collapsing the page.
+ */
+export function ladderWindowIncluding(
+  index: number,
+  shown: number,
+  total: number,
+  step: number = LADDER_WINDOW_STEP,
+): number {
+  if (index < 0 || total <= 0) return shown;
+  const whole = Math.max(1, step);
+  const needed = Math.ceil((index + 1) / whole) * whole;
+  return Math.min(total, Math.max(shown, needed));
+}
