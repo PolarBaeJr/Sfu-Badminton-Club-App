@@ -1427,6 +1427,7 @@ export type Database = {
           banned_at: string | null
           banned_by: string | null
           bio: string | null
+          competition_category: string | null
           created_at: string
           deletion_requested_at: string | null
           display_name: string | null
@@ -1472,6 +1473,7 @@ export type Database = {
           banned_at?: string | null
           banned_by?: string | null
           bio?: string | null
+          competition_category?: string | null
           created_at?: string
           deletion_requested_at?: string | null
           display_name?: string | null
@@ -1517,6 +1519,7 @@ export type Database = {
           banned_at?: string | null
           banned_by?: string | null
           bio?: string | null
+          competition_category?: string | null
           created_at?: string
           deletion_requested_at?: string | null
           display_name?: string | null

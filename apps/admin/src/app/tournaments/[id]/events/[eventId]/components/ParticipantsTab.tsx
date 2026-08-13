@@ -23,7 +23,7 @@ import {
 } from '@/lib/tournament-actions';
 import { summarizeBulk } from '@/lib/bulk-add';
 import { participantControls, type DrawCapabilities } from '@/lib/participant-controls';
-import { nextPowerOf2, pickOne, isOutOfEvent, eventIsPlaying } from '@badminton/shared';
+import { nextPowerOf2, pickOne, isOutOfEvent, eventIsPlaying, categoryRequiredBy, type TournamentEventType } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import { Plus, Trash2, ArrowUpDown, AlertTriangle, XCircle, Pencil, UserMinus, Unlink, Users, Replace, Shuffle, LayoutGrid } from 'lucide-react';
@@ -232,6 +232,16 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   // takes both — a formed team, or a person who will be given a partner — and
   // they are different actions asking different capabilities.
   const [addMode, setAddMode] = useState<'pair' | 'solo'>('pair');
+  // 00111 — the exec's way past a competition-category refusal, for the social
+  // event where the club has agreed to it.
+  //
+  // AN EXPLICIT, UNCHECKED CHOICE MADE BEFORE THE ADD, not a retry offered
+  // after one. A refusal the app immediately offers to undo teaches the exec to
+  // press through it without reading; a box they have to reach for is a
+  // decision. Reset every time the dialog opens, so an override can never
+  // outlive the one add it was meant for, and shown only on an event that has a
+  // rule to override.
+  const [ignoreCategories, setIgnoreCategories] = useState(false);
   // The unpaired entrants ticked for pairing. Exactly two makes a team.
   const [selectedUnpaired, setSelectedUnpaired] = useState<string[]>([]);
   // Its own flag rather than sharing `loading` with "Pair selected": both
@@ -288,6 +298,11 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   // field is decided by the pool, and quoting a 32-slot bracket for 24 entrants
   // would describe an event that never happens. The header shows the real
   // figure once the qualifiers are known.
+  // 00111 — does this event have a competition-category rule at all? Open
+  // Singles and Open Doubles do not, and their dialogs must not raise the
+  // subject: an override control on an event with nothing to override is an
+  // invitation to a question nobody asked.
+  const gendered = categoryRequiredBy(event.event_type as TournamentEventType) !== null;
   const showsBracketSize = event.format === 'single_elimination';
   const bracketSize = nextPowerOf2(activeEntries.length);
   const byes = bracketSize - activeEntries.length;
@@ -332,7 +347,9 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     // production's redaction of thrown Server Action errors. The entry-cap
     // refusal names which half of the pair is at their limit, and that sentence
     // is the whole reason the exec can fix it on the spot.
-    const res = await addPairToEvent(event.id, playerId, player2Id);
+    const res = await addPairToEvent(event.id, playerId, player2Id, {
+      allowCategoryMismatch: ignoreCategories,
+    });
     if (!res.ok) {
       toast(res.error, 'error');
       setLoading(false);
@@ -355,7 +372,9 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     // a 60-player field took long enough that it read as a hang.
     let outcome: { succeeded: string[]; failures: { id: string; message: string }[] };
     try {
-      const result = await addParticipantsToEvent(event.id, playerIds);
+      const result = await addParticipantsToEvent(event.id, playerIds, {
+        allowCategoryMismatch: ignoreCategories,
+      });
       outcome = { succeeded: result.added, failures: result.failures };
     } catch (err) {
       // A throw here is a whole-batch refusal (locked draw, wrong status, a race
@@ -601,7 +620,9 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
   async function handleSwap() {
     if (!swapping || !outgoingId || !incomingId) return;
     setLoading(true);
-    const res = await swapPairMember(swapping.id, outgoingId, incomingId);
+    const res = await swapPairMember(swapping.id, outgoingId, incomingId, {
+      allowCategoryMismatch: ignoreCategories,
+    });
     if (!res.ok) {
       toast(res.error, 'error');
       setLoading(false);
@@ -619,6 +640,9 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
     setSwapping(pair);
     setOutgoingId('');
     setIncomingId('');
+    // Same reset the Add dialog does: an override never survives the dialog it
+    // was ticked in.
+    setIgnoreCategories(false);
   }
 
   async function handleAutoSeed() {
@@ -830,7 +854,7 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
             </Button>
           )}
           {showAddButton && (
-            <Button size="sm" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={() => { setAddMode(controls.add ? 'pair' : 'solo'); setAddOpen(true); }}>
+            <Button size="sm" className="focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none" onClick={() => { setAddMode(controls.add ? 'pair' : 'solo'); setIgnoreCategories(false); setAddOpen(true); }}>
               <Plus className="w-3.5 h-3.5 mr-1" /> Add {isDoubles ? 'Entry' : 'Player'}
             </Button>
           )}
@@ -1352,6 +1376,23 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               </p>
             )}
 
+            {/* 00111 — the same override the Add dialog offers, on the only
+                other path that FORMS a team. Mixed Doubles is the only event
+                whose rule a swap can break, so it is the only one that shows
+                this: replacing one half can make a team the event's own name
+                says is impossible, out of two additions that were each fine. */}
+            {gendered && (
+              <label className="flex items-start gap-2 text-sm text-[var(--text-muted)] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={ignoreCategories}
+                  onChange={(e) => setIgnoreCategories(e.target.checked)}
+                  className="mt-0.5 accent-[var(--color-accent)]"
+                />
+                <span>Ignore competition categories for this swap.</span>
+              </label>
+            )}
+
             {/* Extra clearance: the picker's list is fixed-positioned below the
                 field and a short one can sit over these buttons. */}
             <div className="flex gap-2 pt-6">
@@ -1461,6 +1502,27 @@ export function ParticipantsTab({ event, participants, pairs, allPlayers, isDoub
               onChange={setPlayerIds}
               players={playerOptions}
             />
+          )}
+          {/* 00111 — offered only on an event that HAS a category rule, so an
+              Open event's dialog never mentions categories at all. It says what
+              it does and not who it is about: the box never names anybody's
+              declared category, and neither does the refusal it gets past. */}
+          {gendered && (
+            <label className="flex items-start gap-2 text-sm text-[var(--text-muted)] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={ignoreCategories}
+                onChange={(e) => setIgnoreCategories(e.target.checked)}
+                className="mt-0.5 accent-[var(--color-accent)]"
+              />
+              <span>
+                Ignore competition categories for this entry.
+                <span className="block text-[var(--text-muted)]">
+                  Only for an event the club has agreed to run that way. Members who have
+                  declared nothing are admitted either way.
+                </span>
+              </span>
+            </label>
           )}
           {/* Extra clearance: the picker's list is fixed-positioned below the
               field, so a short one can still sit over these buttons. */}

@@ -138,6 +138,15 @@ export interface AutoPairCandidate {
   playerId: string;
   /** doubles_elo, or the 400 default the pool itself uses. */
   rating: number;
+  /**
+   * The member's declared competition category (00111), or null for undeclared
+   * — which is most of the club and is not a problem here.
+   *
+   * READ ONLY BY `eligible` BELOW, and only in a MIXED event. It is not sorted
+   * on, not reported, and never reaches a screen: what the exec is shown is who
+   * is still waiting, not what anybody declared.
+   */
+  category?: 'mens' | 'womens' | null;
 }
 
 export interface AutoPairPlan {
@@ -152,29 +161,130 @@ export interface AutoPairPlan {
    * silently by a button — this way the leftover is whoever the arithmetic
    * happens to reach last. They stay in the pool either way, and the caller
    * says so out loud rather than dropping them.
+   *
+   * NULL WHENEVER `unpairable` IS NON-EMPTY. "An odd number cannot be paired up
+   * completely" is a true sentence only about a fold that ran out of people; if
+   * somebody was set aside for having no eligible partner, that is the real
+   * reason and it belongs in the other field.
    */
   leftOver: string | null;
+  /**
+   * People no remaining entrant may legally partner — a MIXED-EVENT outcome and
+   * empty in every other case.
+   *
+   * A pool of three men and one woman yields exactly one mixed team, and these
+   * are the two who have nobody to play with. They stay in the pool, named, so
+   * the exec can find them a partner or move them to Open Doubles; the one thing
+   * this must never do is empty the waiting list by forming a pair the event's
+   * own rules refuse.
+   */
+  unpairable: readonly string[];
+}
+
+export interface AutoPairOptions {
+  /**
+   * Which pairs the event permits, or omitted for "any two people" — the
+   * unrestricted fold every event except Mixed Doubles uses.
+   *
+   * Passed as a PREDICATE rather than as an event type so this module keeps
+   * knowing nothing about competition categories; the rule itself lives in
+   * competition-category.ts and is handed in by the caller.
+   */
+  eligible?: (a: AutoPairCandidate, b: AutoPairCandidate) => boolean;
 }
 
 /**
  * Fold a waiting list into balanced teams. Pure, total, and deterministic for
  * any input order — the test pins that by shuffling.
+ *
+ * WITH AN `eligible` PREDICATE the fold still runs strongest-to-weakest, but the
+ * strongest player takes the WEAKEST PARTNER THEY ARE ALLOWED, scanning inward
+ * from the end of the list rather than taking whoever is there. That keeps the
+ * balancing intent — the same reason the plain fold exists — under a constraint
+ * that can rule the natural partner out. When nobody left is allowed, the
+ * player is set aside rather than mispaired, and the fold carries on with the
+ * rest: one impossible person must not cost everybody else their team.
+ *
+ * WITH NO INCOMPATIBILITY EVER ENCOUNTERED the constrained fold produces
+ * exactly the plain fold's answer, which is why `leftOver` still means what it
+ * always meant and the existing callers did not have to learn a new shape.
  */
-export function planAutoPairs(candidates: readonly AutoPairCandidate[]): AutoPairPlan {
+export function planAutoPairs(
+  candidates: readonly AutoPairCandidate[],
+  options?: AutoPairOptions,
+): AutoPairPlan {
   const sorted = [...candidates].sort(
     (a, b) => b.rating - a.rating || (a.playerId < b.playerId ? -1 : a.playerId > b.playerId ? 1 : 0),
   );
 
-  const pairs: Array<[string, string]> = [];
-  let strongest = 0;
-  let weakest = sorted.length - 1;
-  while (strongest < weakest) {
-    pairs.push([sorted[strongest]!.playerId, sorted[weakest]!.playerId]);
-    strongest += 1;
-    weakest -= 1;
+  const eligible = options?.eligible;
+  if (!eligible) {
+    const pairs: Array<[string, string]> = [];
+    let strongest = 0;
+    let weakest = sorted.length - 1;
+    while (strongest < weakest) {
+      pairs.push([sorted[strongest]!.playerId, sorted[weakest]!.playerId]);
+      strongest += 1;
+      weakest -= 1;
+    }
+    return {
+      pairs,
+      leftOver: strongest === weakest ? sorted[strongest]!.playerId : null,
+      unpairable: [],
+    };
   }
 
-  return { pairs, leftOver: strongest === weakest ? sorted[strongest]!.playerId : null };
+  // O(n^2) by construction, and knowingly: this is a club waiting list of tens,
+  // the scan reads as the sentence above, and a cleverer partition would have to
+  // re-derive the category rule this module deliberately does not know.
+  const pool = [...sorted];
+  const pairs: Array<[string, string]> = [];
+  const setAside: string[] = [];
+  while (pool.length > 1) {
+    const strongest = pool.shift()!;
+    let partnerIndex = -1;
+    for (let i = pool.length - 1; i >= 0; i -= 1) {
+      if (eligible(strongest, pool[i]!)) {
+        partnerIndex = i;
+        break;
+      }
+    }
+    if (partnerIndex === -1) {
+      setAside.push(strongest.playerId);
+      continue;
+    }
+    const partner = pool.splice(partnerIndex, 1)[0]!;
+    pairs.push([strongest.playerId, partner.playerId]);
+  }
+
+  // The residue. With nobody set aside this is the plain fold's median and it
+  // keeps the plain fold's sentence; with somebody set aside the count is not
+  // why anyone is still here, so it joins them.
+  if (setAside.length === 0) {
+    return { pairs, leftOver: pool.length === 1 ? pool[0]!.playerId : null, unpairable: [] };
+  }
+  const unpairable = pool.length === 1 ? [...setAside, pool[0]!.playerId] : setAside;
+  return { pairs, leftOver: null, unpairable };
+}
+
+/**
+ * What the exec is told about people auto pair had to leave in the pool because
+ * the event's own rule allows them no partner.
+ *
+ * NAMES THEM AND OFFERS BOTH REMEDIES, like unpairedDrawRefusal below, because
+ * both are real and neither is obvious: find them a partner from the other
+ * category, or move them to an event that does not have the rule. It says
+ * nothing about what anybody declared — the exec needs to know who is stuck,
+ * not why each of them is.
+ */
+export function unpairableNotice(names: readonly string[]): string {
+  if (names.length === 0) return '';
+  const one = names.length === 1;
+  return (
+    `${names.join(', ')} ${one ? 'is' : 'are'} still waiting — this event pairs across categories and ` +
+    `there ${one ? 'was nobody' : 'were not enough people'} left to partner ${one ? 'them' : 'them all'}. ` +
+    'Pair them by hand, or move them to an Open event.'
+  );
 }
 
 /**

@@ -17,6 +17,8 @@ import {
   handleError,
   isHandleTakenError,
   HANDLE_TAKEN_MESSAGE,
+  toCompetitionCategory,
+  type CompetitionCategory,
   type LegalAcceptanceInput,
   type WaiverDocument,
 } from '@badminton/shared';
@@ -32,8 +34,33 @@ export async function updateProfile(data: {
   bio?: string;
   hide_from_leaderboard?: boolean;
   show_activity_status?: boolean;
+  competition_category?: CompetitionCategory | null;
 }): Promise<ActionResult> {
   return runAction(() => updateProfileImpl(data));
+}
+
+/**
+ * The signed-in member's own competition category (00111).
+ *
+ * A SERVER ACTION RATHER THAN A BROWSER READ, and that is the access control
+ * rather than a style choice. `authenticated` has no SELECT grant on the
+ * column, deliberately: the players_select policy admits any member to any
+ * approved member's ROW, so the per-column grants are the only thing standing
+ * between a private field and the whole club — and granting SELECT so that the
+ * settings page could read it directly would publish everybody's category to
+ * everybody. See 00111.
+ *
+ * requirePlayer() resolves the caller from their verified session and reads
+ * their row with the service-role key, so there is no parameter for whose
+ * category this is and no way to ask for somebody else's.
+ */
+export async function getMyCompetitionCategory(): Promise<ActionResult<CompetitionCategory | null>> {
+  return runAction(async () => {
+    const player = await requirePlayer();
+    return toCompetitionCategory(
+      (player as { competition_category?: unknown }).competition_category,
+    );
+  });
 }
 
 // Per-category push AND email preferences (players.notification_preferences
@@ -100,6 +127,7 @@ async function updateProfileImpl(data: {
   bio?: string;
   hide_from_leaderboard?: boolean;
   show_activity_status?: boolean;
+  competition_category?: CompetitionCategory | null;
 }) {
   parseOrThrow(profileSchema, data);
   const player = await requirePlayer();
@@ -132,6 +160,13 @@ async function updateProfileImpl(data: {
   if (data.bio !== undefined) update.bio = data.bio;
   if (data.hide_from_leaderboard !== undefined) update.hide_from_leaderboard = data.hide_from_leaderboard;
   if (data.show_activity_status !== undefined) update.show_activity_status = data.show_activity_status;
+  // 00111 — the competition category, and THE ONLY WRITE PATH IT HAS. It is not
+  // in adminPlayerUpdateSchema and not in ADMIN_ONLY_PLAYER_FIELDS, so nobody
+  // but the member reaches this column. `null` is a real value here — clearing
+  // the declaration is the member withdrawing it, and it has to be possible.
+  if (data.competition_category !== undefined) {
+    update.competition_category = data.competition_category;
+  }
 
   const { error } = await supabase
     .from('players')

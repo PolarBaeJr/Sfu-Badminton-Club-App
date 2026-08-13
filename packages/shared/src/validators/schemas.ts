@@ -42,6 +42,15 @@ export const profileSchema = z.object({
   bio: z.string().max(500).optional(),
   hide_from_leaderboard: z.boolean().optional(),
   show_activity_status: z.boolean().optional(),
+  // 00111 — which tournament draw this member competes in. THE MEMBER'S OWN
+  // SCHEMA IS THE ONLY ONE THAT ACCEPTS IT: adminPlayerUpdateSchema deliberately
+  // does not, so the console cannot set somebody's category for them, and a test
+  // pins that absence because it is the whole access rule.
+  //
+  // `null` is a value a member may SEND, not just one they may leave out —
+  // clearing the field back to undeclared has to be possible, and `.optional()`
+  // alone would make "unset it" indistinguishable from "did not touch it".
+  competition_category: z.enum(['mens', 'womens']).nullable().optional(),
 });
 
 // Optional custom shape: "best of X games to Y points". When set these win over

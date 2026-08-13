@@ -3,8 +3,8 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Input, Textarea, Switch, Select, PageHeader, Dialog } from '@badminton/ui';
-import { updateProfile, updateNotificationPreferences, deleteMyAccount } from '@/lib/actions';
-import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, normalizeEmailPreferences, emailPreferenceKey, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, clearHostOnlyAuthCookies, hasConsoleAccess, getAccountStanding, normalizeHandle, handleError, formatMemberCode, HANDLE_MAX_LENGTH, HANDLE_TAKEN_MESSAGE, type NotificationCategory } from '@badminton/shared';
+import { updateProfile, updateNotificationPreferences, deleteMyAccount, getMyCompetitionCategory } from '@/lib/actions';
+import { NOTIFICATION_CATEGORIES, normalizeNotificationPreferences, normalizeEmailPreferences, emailPreferenceKey, joinName, getReminderLeadMinutes, REMINDER_LEAD_MIN_MINUTES, REMINDER_LEAD_MAX_MINUTES, clearHostOnlyAuthCookies, hasConsoleAccess, getAccountStanding, normalizeHandle, handleError, formatMemberCode, HANDLE_MAX_LENGTH, HANDLE_TAKEN_MESSAGE, COMPETITION_CATEGORY_CHOICES, toCompetitionCategory, type CompetitionCategory, type NotificationCategory } from '@badminton/shared';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -76,6 +76,10 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [theme, setThemeState] = useState<Theme>('dark');
+  // 00111 — which tournament draw this member competes in. '' is undeclared,
+  // which is where every member starts and where they may stay: it is the
+  // stored NULL, not a sentinel this form invents.
+  const [competitionCategory, setCompetitionCategory] = useState<CompetitionCategory | ''>('');
   const [showOnLeaderboard, setShowOnLeaderboard] = useState(true);
   const [showActivity, setShowActivity] = useState(true);
   const [pushEnabled, setPushEnabled] = useState(false);
@@ -137,6 +141,15 @@ export default function SettingsPage() {
         .select('handle, member_code')
         .eq('user_id', user.id)
         .maybeSingle();
+      // NOT read here at all. competition_category (00111) has no SELECT grant
+      // for `authenticated` — on purpose, because players_select admits any
+      // member to any approved member's row, so a grant would hand everybody's
+      // category to everybody. The member's own value comes back through a
+      // server action that reads it with the service-role key for the caller
+      // and nobody else. Adding the column to the select above would not leak
+      // anything by itself; it would simply return nothing, and the grant that
+      // "fixed" it would be the leak.
+      const mine = await getMyCompetitionCategory();
       if (data) {
         setPlayerId(data.id);
         setAvatarUrl(data.avatar_url);
@@ -144,6 +157,7 @@ export default function SettingsPage() {
         setLastName(data.last_name || '');
         setHandle(identity?.handle || '');
         setMemberCode(identity?.member_code ?? null);
+        setCompetitionCategory(mine.ok ? (mine.data ?? '') : '');
         setPhone(data.phone || '');
         setBio(data.bio || '');
         setShowOnLeaderboard(!data.hide_from_leaderboard);
@@ -217,6 +231,9 @@ export default function SettingsPage() {
         handle,
         phone: phone || undefined,
         bio: bio || undefined,
+        // Always sent, and null when cleared, for the handle's reason above:
+        // withdrawing a declaration has to be an edit the form can save.
+        competition_category: competitionCategory === '' ? null : competitionCategory,
         hide_from_leaderboard: !showOnLeaderboard,
         show_activity_status: showActivity,
       });
@@ -406,6 +423,32 @@ export default function SettingsPage() {
                   As an exec, your bio is shown publicly on the club&apos;s exec page.
                 </p>
               )}
+              {/* 00111 — THE ONLY PLACE THIS VALUE APPEARS ON A SCREEN, and it
+                  is the member's own. It is not on the roster, not on the
+                  ladder, not on the public profile, and no admin screen renders
+                  it: the console reads it inside the entry actions and shows
+                  only the consequence.
+
+                  Phrased as the EVENTS it opens rather than as a fact about the
+                  member, because that is all it is used for. "Prefer not to say"
+                  is first and is the state every member is in until they change
+                  it — Open Singles and Open Doubles stay available either way,
+                  so nothing on this page is a gate on the rest of the app. */}
+              <div>
+                <Select
+                  label="Tournament events"
+                  value={competitionCategory}
+                  onChange={(e) => setCompetitionCategory(
+                    toCompetitionCategory(e.target.value) ?? '',
+                  )}
+                  options={COMPETITION_CATEGORY_CHOICES.map((c) => ({ value: c.value, label: c.label }))}
+                />
+                <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                  Which category you enter at club tournaments. Only you and the
+                  tournament desk see this, and Open events are open to everyone
+                  whatever you choose.
+                </p>
+              </div>
               <button
                 type="submit"
                 disabled={loading}

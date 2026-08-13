@@ -4,6 +4,7 @@ import {
   countDoublesField,
   wouldExceedCapacity,
   unpairedDrawRefusal,
+  unpairableNotice,
   stillInEvent,
   planAutoPairs,
   type AutoPairCandidate,
@@ -429,7 +430,11 @@ const C = (playerId: string, rating: number): AutoPairCandidate => ({ playerId, 
 
 /** Every player id the plan accounts for, paired or not. */
 function seated(plan: ReturnType<typeof planAutoPairs>): string[] {
-  return [...plan.pairs.flat(), ...(plan.leftOver ? [plan.leftOver] : [])].sort();
+  return [
+    ...plan.pairs.flat(),
+    ...(plan.leftOver ? [plan.leftOver] : []),
+    ...plan.unpairable,
+  ].sort();
 }
 
 describe('planAutoPairs — balanced teams, deterministically', () => {
@@ -487,7 +492,17 @@ describe('planAutoPairs — balanced teams, deterministically', () => {
   });
 
   it('pairs nobody, and leaves nobody, on an empty list', () => {
-    expect(planAutoPairs([])).toEqual({ pairs: [], leftOver: null });
+    expect(planAutoPairs([])).toEqual({ pairs: [], leftOver: null, unpairable: [] });
+  });
+
+  it('reports nobody unpairable when no rule was handed in', () => {
+    // The unrestricted fold cannot produce this outcome — everybody may partner
+    // everybody — so the field is empty at every size, and "still waiting"
+    // continues to mean exactly what it meant before 00111.
+    for (let n = 0; n <= 9; n++) {
+      expect(planAutoPairs(Array.from({ length: n }, (_, i) => C(`p${i}`, 100 - i))).unpairable)
+        .toEqual([]);
+    }
   });
 
   it('is deterministic whatever order the rows arrive in', () => {
@@ -534,6 +549,152 @@ describe('planAutoPairs — balanced teams, deterministically', () => {
       const plan = planAutoPairs(Array.from({ length: n }, (_, i) => C(`p${i}`, 400)));
       for (const [x, y] of plan.pairs) expect(x).not.toBe(y);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AUTO PAIR UNDER AN EVENT RULE (00111) — Mixed Doubles
+// ---------------------------------------------------------------------------
+// The pool is filled BEFORE anybody is paired (00102), so this is the moment a
+// mixed event can be handed a set of people it cannot legally seat. What the
+// planner must never do is empty the waiting list by forming a team the event
+// forbids; what it must not do either is refuse the whole batch because one
+// person has nobody to play with.
+
+const M = (playerId: string, rating: number, category: 'mens' | 'womens' | null): AutoPairCandidate =>
+  ({ playerId, rating, category });
+
+/** The Mixed Doubles rule, restated here rather than imported, on purpose:
+ *  this file tests the FOLD under an arbitrary predicate, and the rule itself is
+ *  competition-category.test.ts's business. */
+const crossCategory = {
+  eligible: (a: AutoPairCandidate, b: AutoPairCandidate) =>
+    a.category == null || b.category == null || a.category !== b.category,
+};
+
+describe('planAutoPairs under an eligibility rule', () => {
+  it('pairs across categories, still strongest-with-weakest', () => {
+    // Sorted: m1(100) w1(90) w2(60) m2(50). The unrestricted fold would give
+    // (m1,m2) and (w1,w2) — two teams the event refuses. Constrained, the
+    // strongest takes the WEAKEST PARTNER HE IS ALLOWED, which is w2.
+    const plan = planAutoPairs(
+      [M('m1', 100, 'mens'), M('w1', 90, 'womens'), M('w2', 60, 'womens'), M('m2', 50, 'mens')],
+      crossCategory,
+    );
+    expect(plan.pairs).toEqual([['m1', 'w2'], ['w1', 'm2']]);
+    expect(plan.leftOver).toBeNull();
+    expect(plan.unpairable).toEqual([]);
+  });
+
+  it('never proposes a pair the rule forbids, at any size or shape', () => {
+    // The one invariant that actually matters: whatever the pool looks like, no
+    // team comes out of here that addPairToEvent would then refuse.
+    const categories: Array<'mens' | 'womens' | null> = ['mens', 'womens', null];
+    for (let n = 0; n <= 8; n++) {
+      for (let seed = 0; seed < 12; seed++) {
+        const people = Array.from({ length: n }, (_, i) =>
+          M(`p${i}`, 100 - i * 3, categories[(i * 7 + seed) % 3]!));
+        const plan = planAutoPairs(people, crossCategory);
+        const by = new Map(people.map((p) => [p.playerId, p]));
+        for (const [x, y] of plan.pairs) {
+          expect(crossCategory.eligible(by.get(x)!, by.get(y)!)).toBe(true);
+        }
+        expect(seated(plan)).toEqual(people.map((p) => p.playerId).sort());
+      }
+    }
+  });
+
+  it('forms every team it can and leaves the rest named, on an unbalanced pool', () => {
+    // Three men and one woman. Exactly one mixed team exists; the other two men
+    // have nobody, and they stay in the pool where the exec can find them a
+    // partner rather than being paired with each other.
+    const plan = planAutoPairs(
+      [M('m1', 100, 'mens'), M('m2', 80, 'mens'), M('m3', 60, 'mens'), M('w1', 40, 'womens')],
+      crossCategory,
+    );
+    expect(plan.pairs).toEqual([['m1', 'w1']]);
+    expect([...plan.unpairable].sort()).toEqual(['m2', 'm3']);
+    expect(plan.leftOver).toBeNull();
+  });
+
+  it('pairs an undeclared entrant with anybody, because nothing rules it out', () => {
+    // The console's line everywhere in 00111: an undeclared half cannot make a
+    // pair PROVABLY wrong, so it does not stop one being formed.
+    const plan = planAutoPairs(
+      [M('m1', 100, 'mens'), M('u1', 90, null), M('m2', 80, 'mens'), M('u2', 70, null)],
+      crossCategory,
+    );
+    expect(plan.unpairable).toEqual([]);
+    expect(plan.pairs.length).toBe(2);
+  });
+
+  it('still calls an odd list odd when nobody was refused a partner', () => {
+    // Two men and a woman. The fold seats one team and reaches the end with one
+    // person left, having set nobody aside — so that person is the plain fold's
+    // median and keeps its sentence ("an odd number cannot be paired up
+    // completely"), not the harder one about having no eligible partner.
+    const plan = planAutoPairs(
+      [M('m1', 100, 'mens'), M('w1', 90, 'womens'), M('m2', 80, 'mens')],
+      crossCategory,
+    );
+    expect(plan.pairs).toEqual([['m1', 'w1']]);
+    expect(plan.leftOver).toBe('m2');
+    expect(plan.unpairable).toEqual([]);
+  });
+
+  it('agrees with the unrestricted fold whenever the rule refuses nobody', () => {
+    // The claim that let `leftOver` keep its old meaning: with a predicate that
+    // is always true, the constrained scan and the plain fold are the same
+    // function. If that ever stops holding, every existing caller has silently
+    // changed behaviour.
+    for (let n = 0; n <= 9; n++) {
+      const people = Array.from({ length: n }, (_, i) => M(`p${i}`, 100 - i * 5, null));
+      expect(planAutoPairs(people, { eligible: () => true })).toEqual(planAutoPairs(people));
+    }
+  });
+
+  it('is deterministic under the rule, whatever order the rows arrive in', () => {
+    const people = [
+      M('a', 90, 'mens'), M('b', 80, 'womens'), M('c', 70, 'mens'),
+      M('d', 60, 'mens'), M('e', 50, 'womens'), M('f', 40, 'mens'),
+    ];
+    const expected = planAutoPairs(people, crossCategory);
+    for (const order of [[5, 4, 3, 2, 1, 0], [2, 0, 4, 1, 5, 3], [3, 1, 2, 5, 4, 0]]) {
+      expect(planAutoPairs(order.map((i) => people[i]!), crossCategory)).toEqual(expected);
+    }
+  });
+
+  it('does not mutate the list it was given', () => {
+    const people = [M('a', 10, 'mens'), M('b', 90, 'womens')];
+    const before = people.map((p) => p.playerId);
+    planAutoPairs(people, crossCategory);
+    expect(people.map((p) => p.playerId)).toEqual(before);
+  });
+});
+
+describe('unpairableNotice', () => {
+  it('says nothing when nobody was left behind', () => {
+    expect(unpairableNotice([])).toBe('');
+  });
+
+  it('names one person, and offers both remedies', () => {
+    const notice = unpairableNotice(['Sam Reed']);
+    expect(notice).toContain('Sam Reed');
+    expect(notice).toContain('is still waiting');
+    expect(notice).toContain('Pair them by hand');
+    expect(notice).toContain('Open');
+  });
+
+  it('names several, and reads as a sentence about all of them', () => {
+    const notice = unpairableNotice(['Sam Reed', 'Alex Chan']);
+    expect(notice).toContain('Sam Reed, Alex Chan');
+    expect(notice).toContain('are still waiting');
+  });
+
+  // It reports WHO is stuck, never WHAT anybody declared — the whole read model
+  // of 00111 is that no screen shows a member's category.
+  it('discloses nobody’s competition category', () => {
+    expect(unpairableNotice(['Sam Reed', 'Alex Chan'])).not.toMatch(/\bmens\b|\bwomens\b/i);
   });
 });
 

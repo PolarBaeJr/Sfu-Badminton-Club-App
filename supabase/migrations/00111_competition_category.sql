@@ -1,0 +1,226 @@
+-- ============================================================
+-- 00111_competition_category.sql — the one fact a gendered event
+-- needs, and nothing more
+-- ============================================================
+-- "control the entry" — the club owner, about tournament events.
+--
+-- tournament_events.event_type has admitted 'mens_singles', 'womens_singles',
+-- 'mixed_doubles' and 'womens_doubles' since 00001. Nothing has ever enforced
+-- them, because there was no column on players to enforce them AGAINST: as of
+-- this migration `players` has 43 columns and not one of them says anything
+-- about who may enter a gendered draw. On production every officer sits in the
+-- test tournament's womens_singles, the men included, and the app is right to
+-- allow it — it has no basis on which to refuse.
+--
+-- That was tolerable while an exec typed every entrant in by hand. 00102 ended
+-- it: a doubles event is now a POOL a member joins THEMSELVES, and a label that
+-- nothing checks is not a category, it is a caption.
+--
+-- ------------------------------------------------------------
+-- WHAT THIS COLUMN IS, AND THE THREE THINGS IT IS NOT
+-- ------------------------------------------------------------
+-- It is a COMPETITION CATEGORY: which draw this member competes in. It is the
+-- same field a badminton federation collects on an entry form, and it is
+-- answerable by anybody, about themselves, without reference to who they are.
+--
+-- It is NOT a gender identity field. Nothing reads it as a description of the
+-- person, nothing displays it as one, and no part of the app asks the member
+-- what their gender is. The distinction is not cosmetic: an identity field
+-- would have to be right about people, and this one only has to be right about
+-- draws. A club that stores the narrower fact cannot leak the wider one.
+--
+-- It is NOT a sex field, and nothing verifies it. There is no evidence column,
+-- no approval step and no exec write path. The member declares it and the
+-- member changes it.
+--
+-- It is NOT an eligibility flag per event. That was the obvious alternative --
+-- a join table of (player, event_type) rows an exec ticks -- and it is worse in
+-- both directions: it makes the club decide each member's eligibility one event
+-- at a time (which is the judgement this design exists to avoid making), and it
+-- stores the same fact once per event instead of once per member.
+--
+-- ------------------------------------------------------------
+-- TWO VALUES, AND WHY THERE IS NO THIRD
+-- ------------------------------------------------------------
+-- 'mens' and 'womens'. An enum of exactly two is a decision and it is made
+-- here, on purpose, on this ground: THE VALUES NAME DRAWS, NOT PEOPLE. The club
+-- runs mens_* and womens_* events; there is no third draw, so a third value
+-- would be a category with no event in it.
+--
+-- A 'non_binary' value is therefore NOT inclusion, it is exclusion with a
+-- friendly name: it would read as the app inviting a member to identify
+-- themselves and then refusing them every gendered event on the strength of the
+-- answer. The design instead says: the field asks which of the two draws you
+-- enter, anybody may answer either, nothing is checked against anything, and
+-- the open_singles / open_doubles events are open to everybody including the
+-- members who leave it NULL. A member who does not want to be sorted plays open
+-- events and is never asked again.
+--
+-- ------------------------------------------------------------
+-- NULL IS "NOT DECLARED", AND IT IS ALSO "PREFER NOT TO SAY"
+-- ------------------------------------------------------------
+-- There is deliberately no 'declined' or 'prefer_not_to_say' value. The only
+-- question any code asks this column is "is there a declared category to check
+-- this entry against", and a declined answer and an unanswered one answer that
+-- question identically. A separate value would store the difference between two
+-- states nothing distinguishes -- while recording, permanently and legibly,
+-- that a named member was asked and refused. That is a worse thing to hold than
+-- the category itself.
+--
+-- So NULL, and NULL for every row that exists. NOTHING IS BACKFILLED and there
+-- is no DEFAULT: every current member is undeclared, which is true, and none of
+-- them is locked out of anything (see the entry rules below). A guessed
+-- backfill from names is the one thing that would make this migration harmful.
+--
+-- ------------------------------------------------------------
+-- WHO CAN READ IT -- AND WHY THERE IS NO SELECT GRANT
+-- ------------------------------------------------------------
+-- THE GRANT BELOW IS UPDATE ONLY. NOTHING GRANTS `authenticated` SELECT ON
+-- THIS COLUMN, and that is the single most load-bearing line in this migration.
+--
+-- The reason is the RLS policy, which is wider than it looks:
+--
+--     players_select  SELECT  {authenticated}
+--       USING (status <> 'pending_approval' OR user_id = auth.uid()
+--              OR is_admin(auth.uid()))
+--
+-- That is not "your own row". Any signed-in member may SELECT any approved
+-- member's row; what stops them reading anything sensitive is the COLUMN
+-- grants, which is why 00032 revoked the blanket SELECT and 00092 had to
+-- re-grant `handle` and `member_code` one column at a time. So a
+-- `GRANT SELECT (competition_category) TO authenticated` -- the obvious
+-- companion to the UPDATE, and the thing a later migration will be tempted to
+-- add so the settings page "just works" -- would publish every member's
+-- declared category to every other member in the club. There is no policy to
+-- fix afterwards; the grant IS the control.
+--
+-- The member still sees their own, through a SERVER ACTION
+-- (getMyCompetitionCategory, apps/player/src/lib/actions/profile.ts) that reads
+-- it with the service-role key filtered to the caller's own id. Mediating the
+-- read costs one round trip and buys the guarantee that widening
+-- players_select later cannot widen this.
+--
+-- THE UPDATE GRANT IS SAFE ON ITS OWN. players_update_own restricts UPDATE to
+-- `user_id = auth.uid()`, so the grant lets a member set their own value and
+-- nobody else's, and UPDATE does not imply SELECT: the write reaches the row
+-- through `id`, which is granted, and asks for nothing back.
+--
+-- EVERYWHERE ELSE THE COLUMN IS SIMPLY ABSENT:
+--
+--   * get_leaderboard() (00092) returns a fixed 16-column list and this is not
+--     in it, so the ladder cannot show it;
+--   * get_exec_members() (00100) likewise;
+--   * players_self is a view frozen at 00032's column list, so it does not
+--     carry this column and must not be re-created to;
+--   * the player app never does players.select('*') as the member -- checked;
+--     getCurrentPlayer's `select('*')` is service-role and filtered to the
+--     caller's own user_id;
+--   * NO ADMIN SCREEN RENDERS IT. The console reads it only inside the entry
+--     and pairing actions, and what it shows the exec is the CONSEQUENCE ("2
+--     still waiting -- no eligible partner"), never the value. A refusal names
+--     the event the person is not eligible for, never the category they are.
+--
+-- It is not in ADMIN_ONLY_PLAYER_FIELDS (apps/admin/src/lib/player-field-access
+-- .ts) and it must not be. That file is WRITE authorization, and its floor is
+-- "admin by level, unconditionally" -- exactly the wrong shape for a field
+-- whose whole point is that only the member sets it. What actually stops the
+-- console writing it is that adminPlayerUpdateSchema does not accept the key;
+-- a test pins that, because it is a load-bearing absence.
+--
+-- ------------------------------------------------------------
+-- REFUSE OR WARN — THE ASYMMETRY, AND WHERE IT COMES FROM
+-- ------------------------------------------------------------
+-- SELF-ENTRY REFUSES, INCLUDING ON "UNDECLARED". A member entering a gendered
+-- event themselves must have declared the category that event is for. This is
+-- the only rule that closes the hole 00102 opened, and its cost is one control
+-- in Settings; the member can also enter any open event, and an exec can still
+-- add them.
+--
+-- EXEC ENTRY REFUSES ONLY ON CONTRADICTION -- a declared category that is not
+-- the event's -- and passes an undeclared member straight through. That is not
+-- a softening invented here; it is the rule the membership gate already
+-- follows, in the player app's own words (tournament-actions.ts:118-124):
+--
+--     "Admin-added participants deliberately skip this: adding someone by hand
+--      in the admin app is an explicit override, not a loophole."
+--
+-- And it is the only version that can ship: EVERY member is undeclared on the
+-- day this applies, so a rule that refused the undeclared would refuse every
+-- exec add to every gendered event in the club until the whole roster had
+-- filled in a form.
+--
+-- THE CONTRADICTION IS OVERRIDABLE, by an explicit argument the exec-facing
+-- dialog sets after saying who and why -- for the social event the owner will
+-- eventually want it for. It mints NO CAPABILITY: overriding is part of adding,
+-- it is available to exactly the holders of tournaments.draw.participants.add
+-- .write and tournaments.draw.pairs.add.write who could add the person anyway,
+-- and the added_by column already names who did it. Self-entry has no such
+-- argument and never sends one.
+--
+-- ------------------------------------------------------------
+-- MIXED DOUBLES IS A RULE ABOUT THE PAIR
+-- ------------------------------------------------------------
+-- A mixed pair must be one 'mens' and one 'womens'. A half whose category is
+-- NULL cannot make the pair provably wrong, so it does not refuse it -- the
+-- same "contradiction only" line the exec path draws everywhere else.
+--
+-- Since 00102 pairing happens AFTER entry, so the rule is applied twice: at
+-- pairing (addPairToEvent, swapPairMember, and auto pair) and never at pool
+-- entry, EXCEPT that self-entry into a mixed pool requires SOME declaration --
+-- an undeclared entrant in a mixed pool is a person auto pair cannot place.
+--
+-- AUTO PAIR CANNOT PRODUCE AN INELIGIBLE PAIR. planAutoPairs folds
+-- strongest-with-weakest; in a mixed event the fold is restricted to
+-- cross-category partners, so an unbalanced pool (three 'mens', one 'womens')
+-- forms the one valid team it can and LEAVES the remainder in the pool with the
+-- reason -- the shape autoPairWaitingEntrants already reports for every other
+-- partial batch. It never forms an invalid pair to empty the list, and it never
+-- refuses the whole batch because one person has nobody to play with.
+--
+-- ------------------------------------------------------------
+-- WHY THE DATABASE DOES NOT ENFORCE THE ENTRY RULE
+-- ------------------------------------------------------------
+-- 00098's reasoning, unchanged and for the same two reasons. The rule spans
+-- players, tournament_events and two entry tables, so a trigger would read
+-- three of them on every insert; and the refusal has to NAME THE PERSON and
+-- OFFER THE REMEDY ("declare your category in Settings", "or enter Open
+-- Singles"), which a raised SQLSTATE cannot carry. The CHECK below is the only
+-- invariant the database owns: the value itself is one of the two.
+
+ALTER TABLE public.players
+  ADD COLUMN IF NOT EXISTS competition_category TEXT;
+
+ALTER TABLE public.players
+  DROP CONSTRAINT IF EXISTS players_competition_category_check;
+ALTER TABLE public.players
+  ADD CONSTRAINT players_competition_category_check
+  CHECK (competition_category IS NULL OR competition_category IN ('mens', 'womens'));
+
+-- The member's own write, and nothing more. Mirrors 00092's per-column grant
+-- for `handle` in form; the deliberate difference is that 00092 granted SELECT
+-- and this grants UPDATE, for the reason set out above.
+GRANT UPDATE (competition_category) ON public.players TO authenticated;
+
+COMMENT ON COLUMN public.players.competition_category IS
+  'Which tournament draw this member competes in: ''mens'', ''womens'', or NULL for undeclared (which also covers "prefer not to say" — nothing distinguishes them, so nothing stores the difference). SELF-DECLARED AND SELF-EDITED ONLY: written by the player app''s updateProfile, via profileSchema, under the per-column UPDATE grant plus players_update_own. NOT accepted by adminPlayerUpdateSchema and NOT in ADMIN_ONLY_PLAYER_FIELDS — the console cannot set it, deliberately. `authenticated` HAS NO SELECT GRANT ON THIS COLUMN AND MUST NOT BE GIVEN ONE: players_select admits any member to any approved member''s row, so a SELECT grant would publish every member''s category to the whole club. The member reads their own through the getMyCompetitionCategory server action (service role, filtered to the caller); the entry actions read it with the service-role key. NOT a gender identity or sex field, and never displayed: no screen in either app renders another person''s value, only the eligibility consequence. The entry rules built on it live in packages/shared/src/utils/competition-category.ts and are applied in all five entry paths (player self-entry, admin add-one, add-many, add-pair, swap-pair-member) plus auto pair. Open events (open_singles, open_doubles) ignore it entirely.';
+
+-- ------------------------------------------------------------
+-- WHAT THIS MIGRATION DELIBERATELY DOES NOT TOUCH
+-- ------------------------------------------------------------
+-- THE CAPABILITY VOCABULARY. No capability is minted: the override rides on
+-- tournaments.draw.participants.add.write / tournaments.draw.pairs.add.write,
+-- which the exec doing the adding already holds. 00098 shows what a new one
+-- costs — players_permission_vocabulary_check and
+-- permission_baselines_vocabulary_check both rewritten in full, and
+-- capability-storage.test.ts reading both as text — and none of that is paid
+-- here because none of it is needed.
+--
+-- guard_player_privileged_columns (00093). The guard exists to stop a member
+-- writing columns only an admin may set. This column is the opposite case: the
+-- member is the only one who may set it, and RLS already confines their UPDATE
+-- to their own row. Adding it to the guard would forbid the one write the
+-- column exists for.
+--
+-- get_leaderboard(), get_exec_members(). Both return fixed column lists and
+-- neither gains one. That is what keeps the field off the ladder and off the
+-- public exec page — see WHO CAN READ IT above.
