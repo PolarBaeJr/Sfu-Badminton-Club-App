@@ -199,14 +199,28 @@ export default async function SessionsPage({
   // in the table with no filter at all, which meant the term's no-show count —
   // and the average this page now prints — were computed over the club's entire
   // history while claiming to describe one season.
-  const { data: attendanceRows } = sessionIds.length
+  // The embed NAMES ITS CONSTRAINT. session_attendance has two foreign keys to
+  // players — player_id and marked_by — so a bare `players(...)` is ambiguous
+  // and PostgREST answers 300 Multiple Choices rather than picking one. That
+  // failure is invisible from here: supabase-js resolves instead of rejecting,
+  // so `data` was null and `?? []` below turned it into "nobody attended". The
+  // whole door list, the turnout panel and the checked-in-today stat all read
+  // this map, so every one of them silently showed an empty club.
+  const { data: attendanceRows, error: attendanceError } = sessionIds.length
     ? await supabase
         .from('session_attendance')
         .select(
-          'session_id, player_id, checked_in_at, status, marked_by, marked_at, players(full_name, avatar_url)',
+          'session_id, player_id, checked_in_at, status, marked_by, marked_at, players!session_attendance_player_id_fkey(full_name, avatar_url)',
         )
         .in('session_id', sessionIds)
-    : { data: [] };
+    : { data: [], error: null };
+
+  // Deliberately not thrown: a broken read must not take the sessions page down
+  // at the door. But it must never be silent again either — the bug above cost
+  // a live debugging session precisely because nothing anywhere said "300".
+  if (attendanceError) {
+    console.error('[sessions] attendance read failed:', attendanceError.message);
+  }
 
   const { data: rsvpRows } = sessionIds.length
     ? await supabase
