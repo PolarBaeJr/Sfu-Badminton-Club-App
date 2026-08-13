@@ -6,6 +6,7 @@ import { tallyGames } from '@badminton/shared';
 import { acceptChallenge, rejectChallenge, submitMatchResult, confirmMatchResult, disputeMatchResult, reportWalkover, cancelChallenge } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { useStanding } from '@/components/standing-provider';
+import { useLiveMatches } from '@/components/live-matches';
 import { useRouter } from 'next/navigation';
 
 interface Props {
@@ -58,6 +59,35 @@ export function ChallengeDetailActions({
   // Dispute state
   const [disputeReason, setDisputeReason] = useState('');
   const [disputeCategory, setDisputeCategory] = useState('score_wrong');
+
+  // THE OTHER SIDE OF THIS CHALLENGE, LIVE.
+  //
+  // This is the screen where the opponent is waiting: one player submits the
+  // scoreline and the other has this page open, needing to be asked to confirm
+  // it. revalidatePath covers the submitter, so before this the person being
+  // asked had to reload to find out there was anything to answer.
+  //
+  // PARKED WHILE A DIALOG IS OPEN, which is the whole reason this call lives
+  // in here rather than as a component on page.tsx. The three dialogs below
+  // hold the only uncommitted input in this app that a refresh could disturb —
+  // a half-typed scoreline (`games`, held as strings so a cleared field stays
+  // cleared) and a half-written dispute reason. React does preserve that state
+  // across router.refresh(), because Dialog is open-prop controlled and this
+  // component keeps its identity; but the refresh would still re-render the
+  // page underneath and can take away the very button the typing was heading
+  // for, and the `standing.ok` early return below would unmount the lot. An
+  // `enabled` flag is the answer the door list already uses for the same
+  // problem: no dialog open, no socket, nothing to interrupt. Closing the
+  // dialog re-subscribes and the next event catches up.
+  //
+  // The hook is called HERE, above the early return, because hooks must run
+  // unconditionally — which also means a member in bad standing still gets a
+  // live page even though they get no controls.
+  useLiveMatches({
+    channel: `challenge-${challengeId}`,
+    challengeIds: [challengeId],
+    enabled: !showSubmit && !showDispute && !showWalkover,
+  });
 
   // Derived team labels from participants
   const teamA = participants.filter((p) => p.team_side === 'a');

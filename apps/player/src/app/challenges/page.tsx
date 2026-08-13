@@ -12,6 +12,7 @@ import { redirect } from 'next/navigation';
 import { Plus, ChevronRight, Swords, CalendarClock, Hourglass } from 'lucide-react';
 import { PageHeader, AvatarChip } from '@badminton/ui';
 import { StandingNote } from '@/components/standing-notice';
+import { LiveChallenges } from '@/components/live-matches';
 import { getChallengeRules } from '@/lib/challenge-settings';
 import {
   expiryState,
@@ -289,6 +290,18 @@ export default async function ChallengesPage() {
 
   return (
     <div data-screen-label="Challenges">
+      {/* Both halves of "somebody else acted on my challenge". A challenge
+          ISSUED to this member arrives as an INSERT of their own
+          challenge_participants row; the OTHER party accepting or rejecting
+          one moves `challenges.status` and leaves this member's participant
+          row untouched, so the listed challenges are watched by id as well.
+
+          The ids come from `all`, which is every challenge this member is in
+          after ordering — not just the ones a given section drew — so a
+          challenge moving between the incoming, active and archived sections
+          is still heard. The hook depends on the JOINED string, not the array
+          identity. */}
+      <LiveChallenges playerId={player.id} challengeIds={all.map((row) => row.c.id)} />
       <PageHeader
         title="Challenges"
         sub="Issue, accept, and track challenges. Whatever is waiting on you sits at the top — answer it so the queue clears."

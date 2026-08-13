@@ -74,10 +74,22 @@ describe('every table the player app subscribes to is published to Realtime', ()
     // A FLOOR, RAISED WHENEVER SUBSCRIPTIONS ARE ADDED, and worth raising: it
     // was 3 while the app had 3, and it is the only thing standing between a
     // silently broken extraction and a suite that passes over nothing. The
-    // count today is 8 — ratings on /leaderboard, announcements and
-    // announcement_reads in the nav, ratings again in live-rating.tsx, and the
-    // four tournament tables in live-tournament.tsx.
-    expect(subscribed.length).toBeGreaterThanOrEqual(8);
+    // count today is 13 — ratings on /leaderboard, announcements and
+    // announcement_reads in the nav, ratings again in live-rating.tsx, the
+    // four tournament tables in live-tournament.tsx, and five in
+    // live-matches.tsx: match_participants, challenge_participants,
+    // challenges, and `matches` twice over (the per-challenge filter and
+    // /feed's unfiltered club river).
+    //
+    // WHAT THIS FLOOR CANNOT DO, written down because it is easy to over-trust.
+    // It is a `>=`, so it catches a subscription DELETED and not one that has
+    // gone INVISIBLE to the scan: prose wedged between a postgres_changes
+    // literal and its config object hides that subscription from this file
+    // while every other occurrence keeps the count up. That is exactly the
+    // mistake 5d100de made, it is why every live-* component carries a comment
+    // saying not to do it, and it is why the assertions below name their
+    // tables instead of trusting the loop.
+    expect(subscribed.length).toBeGreaterThanOrEqual(13);
     expect(new Set(subscribed.map((s) => s.table))).toContain('announcements');
   });
 
@@ -96,6 +108,44 @@ describe('every table the player app subscribes to is published to Realtime', ()
     // 00096 is applied. If somebody deletes the ALTER without deleting the
     // listener, this is the test that says so.
     expect(publishedTables()).toContain('announcement_reads');
+  });
+
+  it('publishes the four tables a club match moves through', () => {
+    // The member's own case, named rather than left to the loop above. Two
+    // people play, ONE submits the score, and the other is on a different
+    // phone waiting to be asked to confirm it — so every one of these
+    // listeners exists for somebody who wrote nothing and whom
+    // revalidatePath therefore never reaches. All four are inert until 00114
+    // is applied. If somebody deletes an ALTER without deleting the listener,
+    // this is the test that says so.
+    //
+    // `matches` is the one to look at hardest: /feed subscribes to it
+    // UNFILTERED, and /feed is the only page in the app no write path
+    // revalidates at all, so if that ALTER goes the club river is not merely
+    // slow, it is permanently frozen for everyone.
+    const published = publishedTables();
+    for (const table of ['matches', 'match_participants', 'challenges', 'challenge_participants']) {
+      expect(published, `${table} is subscribed but not published`).toContain(table);
+    }
+  });
+
+  it('never publishes players, whatever else it publishes', () => {
+    // NOT A SUBSCRIPTION CHECK — the inverse, and the only assertion in this
+    // file that would still matter if every listener were deleted tomorrow.
+    //
+    // 00032 did not change the players_select RLS policy. It REVOKED
+    // table-level SELECT and re-granted a column whitelist, and POSTGRES
+    // LOGICAL REPLICATION DOES NOT HONOUR COLUMN-LEVEL GRANTS. So adding
+    // `players` to this publication would stream `email` and `phone` to every
+    // subscriber whose row filter passes — the exact columns 00032 exists to
+    // withhold — through a channel that never consults the grant. No
+    // subscription-side filtering could contain it: any member can open their
+    // own socket and ask for anything.
+    //
+    // Every live-* component in this app is refresh-only so that names stay
+    // server-rendered and this line can stay true. It is cheap to assert and
+    // the failure it guards against is silent, permanent and unrecallable.
+    expect(publishedTables()).not.toContain('players');
   });
 
   it('publishes the four tables a tournament draw moves through', () => {

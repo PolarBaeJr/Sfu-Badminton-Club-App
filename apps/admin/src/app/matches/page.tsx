@@ -6,6 +6,7 @@ import { MATCH_FORMAT_LABELS, formatDateTime, unwrap } from '@badminton/shared';
 import { SearchableTable } from '@/components/searchable-table';
 import { MatchActions } from './actions';
 import { CreateMatchForm } from './create-match';
+import { LiveMatches } from './live-matches';
 import {
   Plus,
   AlertTriangle,
@@ -271,6 +272,15 @@ export default async function MatchesPage() {
 
   return (
     <div className="space-y-8">
+      {/* The ledger, live. Members submit and confirm results from their phones
+          all through a session and every one of those writes belongs in this
+          list; revalidatePath only ever covered the exec who wrote something
+          here. Mounted as a SIBLING of the table rather than inside it —
+          SearchableTable renders through ResponsiveTable, which mounts the
+          card list and the table both and hides one with CSS, so anything
+          passed in as a row child is instantiated twice and would open two
+          channels on one topic. See live-matches.tsx. */}
+      <LiveMatches />
       {/* Page Header */}
       <PageHeader
         title="Matches"

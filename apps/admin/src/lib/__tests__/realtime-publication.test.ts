@@ -88,9 +88,16 @@ describe('every table the admin app subscribes to is published to Realtime', () 
     // it guards fails.
     //
     // A FLOOR, RAISED WHENEVER SUBSCRIPTIONS ARE ADDED. It was 1 while the
-    // console had one; the console now has the door and the four tournament
-    // tables in live-tournament.tsx.
-    expect(subscribed.length).toBeGreaterThanOrEqual(5);
+    // console had one, then 5 with the door and the four tournament tables in
+    // live-tournament.tsx; 7 now that the matches ledger watches `matches`.
+    //
+    // WHAT THIS FLOOR CANNOT DO. It is a `>=`, so it catches a subscription
+    // DELETED and not one that has gone INVISIBLE to the scan — prose wedged
+    // between a postgres_changes literal and its config object hides that
+    // subscription from this file while other occurrences keep the count up.
+    // That is why the assertions below name their tables rather than trusting
+    // the loop, and why every live-* component carries a comment about it.
+    expect(subscribed.length).toBeGreaterThanOrEqual(7);
     expect(new Set(subscribed.map((s) => s.table))).toContain('session_attendance');
   });
 
@@ -127,5 +134,37 @@ describe('every table the admin app subscribes to is published to Realtime', () 
     ]) {
       expect(published, `${table} is subscribed but not published`).toContain(table);
     }
+  });
+
+  it('publishes matches, which is what makes the club ledger live', () => {
+    // The console's club-play case, named rather than left to the loop. Unlike
+    // the door and the tournament screens, most of the writes this listener
+    // exists for are not made by an exec at all: members submit and confirm
+    // results from their phones all evening and every one of them lands in the
+    // ledger /matches draws. revalidatePath has never covered any of them.
+    //
+    // Inert until 00114 is applied. If somebody deletes the ALTER without
+    // deleting the listener, this is the test that says so — and the failure
+    // is invisible from the screen, because an exec watching a list that has
+    // quietly stopped updating cannot tell it from a quiet night.
+    expect(publishedTables()).toContain('matches');
+  });
+
+  it('never publishes players, whatever else it publishes', () => {
+    // NOT A SUBSCRIPTION CHECK — the inverse, and the only assertion in this
+    // file that would still matter if every listener were deleted tomorrow.
+    // Deliberately duplicated from the player app's guard, on the same
+    // reasoning the header gives for duplicating the whole file: each app's
+    // suite defends its own tree, and this migration set is edited from both.
+    //
+    // 00032 did not change the players_select RLS policy. It REVOKED
+    // table-level SELECT and re-granted a column whitelist, and POSTGRES
+    // LOGICAL REPLICATION DOES NOT HONOUR COLUMN-LEVEL GRANTS. Publishing
+    // `players` would stream `email` and `phone` to every subscriber whose row
+    // filter passes, through a channel that never consults the grant, and no
+    // subscription-side filtering could contain it — any member can open their
+    // own socket. Cheap to assert; silent, permanent and unrecallable to get
+    // wrong.
+    expect(publishedTables()).not.toContain('players');
   });
 });

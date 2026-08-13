@@ -10,6 +10,7 @@ import { SeasonPick } from '@/components/my-stats/season-pick';
 import { seasonPickerOptions, type HistorySeason } from '@/lib/season-history';
 import { PastSeasonStats } from './past-season';
 import { LiveRating } from '@/components/live-rating';
+import { LiveMyStats } from '@/components/live-matches';
 
 // The rating line, the form strip and the history table all read one window of
 // the member's matches. 200 is a season and a half of heavy play — deep enough
@@ -120,11 +121,32 @@ async function CurrentSeasonStats() {
       .or(`player_a_id.eq.${player.id},player_b_id.eq.${player.id}`)
       .order('total_matches', { ascending: false })
       .limit(10),
+    // BEST PARTNERS, AND THIS QUERY HAS NEVER RETURNED A ROW UNTIL NOW.
+    //
+    // It asked for `player_id`, `total_matches` and an embed named
+    // `partnership_stats_partner_id_fkey`. None of the three exists: the table
+    // is (player_a_id, player_b_id, matches_played, ...) with a CHECK that
+    // player_a_id < player_b_id, and its only two foreign keys are
+    // partnership_stats_player_a_id_fkey and _player_b_id_fkey (00001:513,
+    // confirmed against packages/shared/src/types/database.gen.ts, which is
+    // generated from the live database). PostgREST rejected it, the promise in
+    // this Promise.all resolved with an error rather than throwing, `partners`
+    // fell back to [], and `partners.length > 0` hid the card — so the failure
+    // rendered as "this member has no regular partners" for every member of
+    // the club, forever. Fixed here rather than left, because a live listener
+    // on a card that cannot draw is a listener that does nothing.
+    //
+    // Same a/b shape as the head-to-head query above: the member may be on
+    // either side of the pair, so both constraints are named and the render
+    // picks whichever one is not them. Naming them is not optional — two
+    // foreign keys to `players` from one table make a bare embed ambiguous,
+    // and PostgREST answers 300 while supabase-js resolves rather than
+    // rejects, which is how an empty club went unnoticed for months.
     supabase
       .from('partnership_stats')
-      .select('id, wins, losses, win_rate, total_matches, partner:players!partnership_stats_partner_id_fkey(id, full_name, avatar_url)')
-      .eq('player_id', player.id)
-      .gte('total_matches', 3)
+      .select('id, player_a_id, player_b_id, wins, losses, win_rate, matches_played, a:players!partnership_stats_player_a_id_fkey(id, full_name, avatar_url), b:players!partnership_stats_player_b_id_fkey(id, full_name, avatar_url)')
+      .or(`player_a_id.eq.${player.id},player_b_id.eq.${player.id}`)
+      .gte('matches_played', 3)
       .order('win_rate', { ascending: false })
       .limit(5),
     supabase
@@ -404,6 +426,19 @@ async function CurrentSeasonStats() {
           finished term reads season_final_ratings — an archived row that cannot
           move and has no live version to wait for. */}
       <LiveRating playerId={player.id} />
+      {/* LiveRating above covers ONE row — `ratings` — which is the header's
+          three readouts and the streak strip. Everything else on this screen
+          is derived from the member's matches: the history table, the rating
+          chart, the form strip, head-to-head and best partners. None of it
+          moved when a match of theirs was confirmed by somebody else.
+
+          Filtered to their own participant rows, which is the only per-member
+          key that exists here — `matches` has no player column. Mounted beside
+          LiveRating and for the same reason it is: not in MyStatsPage above,
+          because that wrapper also dispatches to PastSeasonStats for
+          `?season=`, and a finished term reads archived rows that cannot
+          move. */}
+      <LiveMyStats playerId={player.id} />
       <PageHeader
         title="My stats"
         sub={activeSeason ? activeSeason.name : undefined}
@@ -797,7 +832,12 @@ async function CurrentSeasonStats() {
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {partners.map((p) => {
-                  const partnerRaw = p.partner as unknown;
+                  // Whichever side of the pair is not the viewer. The CHECK
+                  // constraint orders the two ids, so which column a member
+                  // lands in is an accident of their uuid and not something
+                  // the render may assume.
+                  const isA = p.player_a_id === player.id;
+                  const partnerRaw = isA ? p.b : p.a;
                   const partner = (Array.isArray(partnerRaw) ? partnerRaw[0] : partnerRaw) as { id: string; full_name: string; avatar_url?: string | null } | null;
                   if (!partner) return null;
                   return (
@@ -809,7 +849,13 @@ async function CurrentSeasonStats() {
                           {p.wins}W–{p.losses}L
                         </div>
                       </div>
-                      <span className="tag tag-gold">{Math.round((p.win_rate ?? 0) * 100)}%</span>
+                      {/* NOT `* 100`. update_partnership_stats stores this
+                          already scaled — `… / matches_played * 100` at
+                          00003:797 — so the old multiply would have printed
+                          8500% for a partnership that wins 85% of its
+                          matches. It never showed, because the query above
+                          never returned a row. */}
+                      <span className="tag tag-gold">{Math.round(p.win_rate ?? 0)}%</span>
                     </div>
                   );
                 })}
