@@ -97,7 +97,13 @@ export function ColumnChart({
   return (
     <div className="flex items-end gap-2" style={{ minHeight: height + 34 }}>
       {columns.map((column) => (
-        <div key={column.label} className="flex min-w-0 flex-1 flex-col items-center gap-1.5">
+        // A COLUMN IS CAPPED, and it has to be. `flex-1` alone divides the row
+        // between however many columns exist, so ONE column takes the entire
+        // width — a club with a single term rendered its match count as a
+        // wall of colour spanning the panel, which reads as a progress bar
+        // rather than as one bar in a series. The cap only binds when there
+        // are few columns; past about eight the flex share is already smaller.
+        <div key={column.label} className="flex min-w-0 max-w-[7rem] flex-1 flex-col items-center gap-1.5">
           <span className="font-mono text-[11px] font-medium text-[var(--text-primary)]">
             {format(column.value)}
           </span>
