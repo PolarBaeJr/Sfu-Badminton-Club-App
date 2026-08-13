@@ -27,8 +27,8 @@
 -- SUCCEEDS and then never fires: .subscribe() resolves, the callback simply
 -- never runs, nothing errors anywhere. That is not hypothetical — it is what
 -- 00036 was written to fix after the leaderboard and the announcements badge
--- shipped "live" and were silently static for months, and 00112 is the third
--- entry against the same rule. Until this is applied all four screens behave
+-- shipped "live" and were silently static for months, with 00096 and 00112
+-- following for the same reason. Until this is applied all four screens behave
 -- exactly as they did before: correct on load, correct after the viewer's own
 -- write, stale otherwise.
 --
@@ -99,8 +99,9 @@
 --
 -- CONSIDERED AND LEFT OUT
 -- -----------------------
--- The house rule from 00036 stands and this is the fourth entry against it:
--- publish only what the UI actually listens to.
+-- The house rule from 00036 stands, and this file is the largest single test
+-- of it so far — four tables at once against the four that 00036, 00096 and
+-- 00112 added between them: publish only what the UI actually listens to.
 --
 --   * players — must NEVER be published, and the usual one-line warning
 --     understates it. 00032 did not change the players_select RLS policy at

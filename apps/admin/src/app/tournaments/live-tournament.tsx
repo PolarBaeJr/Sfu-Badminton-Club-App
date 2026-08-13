@@ -57,6 +57,18 @@ import { createClient } from '@/lib/supabase-browser';
  * 00036 was written to fix, and 00112 the most recent repeat. Until the owner
  * runs 00113 this component does nothing whatsoever.
  *
+ * THE SCORING EXEC GETS THESE TOO, and that is checked rather than assumed.
+ * enterMatchResult writes tournament_matches three times or more, so the
+ * browser that entered the score also receives a refresh ~700ms after the one
+ * ScoreEntryDialog already fires — landing, quite routinely, while that exec is
+ * opening the next match's dialog. It is harmless here because nothing on this
+ * screen is re-keyed by data: EventControlCenter renders each tab with no `key`
+ * at all, the tabs key their rows on `m.id` / `e.id` / `s.id`, and the dialog's
+ * open state (`scoreMatch`) lives in BracketTab and RoundRobinTab, which
+ * router.refresh() re-renders without remounting. A half-typed score survives.
+ * The same check on /sessions is what put stable keys in SessionTable, and it
+ * has to be redone by anyone who adds a `key` derived from match data here.
+ *
  * THE OTHER WAY THIS CAN GO QUIET, which no test can see: the console's pages
  * read with createAdminClient() (service role, RLS bypassed) while this
  * subscribes with the browser anon client, which is subject to the four
