@@ -98,7 +98,7 @@ export default async function SeasonsPage() {
   // (that is `fees.clubfees.read`) or platform_settings (`platform.page`).
   const viewer = await requireCapability('seasons.page');
   const level = accessLevelFor(viewer);
-  const permissions = permissionsOf(viewer);
+  const permissions = permissionsOf(accessLevelFor(viewer), viewer);
   const may = (capability: Capability) => permits(level, permissions, capability);
 
   const canCreate = may('seasons.create.write');

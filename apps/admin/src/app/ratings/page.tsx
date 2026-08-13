@@ -49,7 +49,7 @@ import type { KFactors } from './k-factor-panel';
 export default async function RatingsPage() {
   const viewer = await requireCapability('ratings.page');
   const level = accessLevelFor(viewer);
-  const permissions = permissionsOf(viewer);
+  const permissions = permissionsOf(accessLevelFor(viewer), viewer);
   const can = (capability: Capability) => permits(level, permissions, capability);
 
   const canReadSettings = can('platform.page');

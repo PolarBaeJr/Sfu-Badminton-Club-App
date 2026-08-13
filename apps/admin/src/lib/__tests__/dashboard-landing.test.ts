@@ -44,17 +44,24 @@ const TILE_GATES: Capability[] = [
 
 const LEVELS: AccessLevel[] = ['admin', 'exec', 'trainer'];
 
+const resolved = (level: AccessLevel, role: string | null, revokes: string[] = []) =>
+  role === null ? UNRESTRICTED : resolvePermissions(level, role, [], revokes);
+
 /** The page's `hasTiles`: does ANY panel of the ordinary dashboard render? */
-const hasTiles = (level: AccessLevel, role: string | null) =>
-  TILE_GATES.some((capability) =>
-    permits(level, role === null ? UNRESTRICTED : resolvePermissions(role, [], []), capability),
-  );
+const hasTiles = (level: AccessLevel, role: string | null, revokes: string[] = []) =>
+  TILE_GATES.some((capability) => permits(level, resolved(level, role, revokes), capability));
 
 /** What the signpost lists — the page drops /dashboard, being that page. */
-const signpost = (level: AccessLevel, role: string | null) =>
-  openableSections(level, role === null ? UNRESTRICTED : resolvePermissions(role, [], []))
+const signpost = (level: AccessLevel, role: string | null, revokes: string[] = []) =>
+  openableSections(level, resolved(level, role, revokes))
     .map((item) => item.href)
     .filter((href) => href !== '/dashboard');
+
+/** Every section page, which is how an admin closes a section that the floor opens. */
+const ALL_PAGES = [
+  'announcements.page', 'fees.page', 'legal.page', 'matches.page',
+  'players.page', 'seasons.page', 'sessions.page', 'tournaments.page',
+];
 
 describe('the narrowed dashboard', () => {
   // THE DEPLOY-DAY GUARANTEE for this page: nothing new renders for anybody who
@@ -66,15 +73,36 @@ describe('the narrowed dashboard', () => {
     }
   });
 
-  // The exec this whole task is about.
-  it('fires for the Finance role, whose every panel is somebody else\'s', () => {
-    expect(hasTiles('exec', 'finance')).toBe(false);
+  // THESE TWO USED TO EXPECT `false` — "fires for the Finance role, whose every
+  // panel is somebody else's", and the same for External — and they now expect
+  // the opposite, because ASSIGNING A ROLE NO LONGER NARROWS ANYBODY'S READS.
+  //
+  // The club owner ruled that the level's baseline is a floor under every role,
+  // and four of the eleven TILE_GATES are in it: `players.read`, `matches.page`,
+  // `sessions.page`, `tournaments.page`. So an officer given the Finance job
+  // still sees the roster count, the ladder and the tournament panels — the
+  // ordinary dashboard, not the signpost. That is the ruling working, not the
+  // branch rotting: a treasurer who could see nothing but a list of links was
+  // the thing the ruling was made to stop.
+  it('no longer fires for a role, because the floor keeps four tile gates', () => {
+    for (const role of ['finance', 'external', 'tournaments', 'internal', 'custom']) {
+      expect(hasTiles('exec', role), role).toBe(true);
+    }
+    for (const capability of ['players.read', 'matches.page', 'sessions.page', 'tournaments.page']) {
+      expect(TILE_GATES).toContain(capability);
+    }
   });
 
-  // And for the External role, which reaches announcements and the legal
-  // documents — neither of which the dashboard has ever had a panel for.
-  it('fires for the External role too', () => {
-    expect(hasTiles('exec', 'external')).toBe(false);
+  // AND THE BRANCH IS NOT DEAD — its trigger moved from "assigned" to
+  // "deliberately narrowed", which is a better trigger and the only one left.
+  // A person only lands here because an admin revoked their reads by hand,
+  // which is exactly the state the page's copy describes.
+  it('fires for somebody whose reads were REVOKED, which is the only way now', () => {
+    expect(hasTiles('exec', 'external', ALL_PAGES)).toBe(false);
+    expect(hasTiles('exec', 'custom', ALL_PAGES)).toBe(false);
+    // A trainer too: their floor holds players.read, so the same rule applies.
+    expect(hasTiles('trainer', 'custom')).toBe(true);
+    expect(hasTiles('trainer', 'custom', ['players.page'])).toBe(false);
   });
 
   // The two roles that still land on a populated page, so the branch stays as
@@ -108,21 +136,36 @@ describe('the narrowed dashboard', () => {
     for (const capability of ['fees.expenses.read', 'fees.otherincome.read'] as Capability[]) {
       expect(TILE_GATES).not.toContain(capability);
     }
-    expect(permits('exec', resolvePermissions('finance', [], []), 'fees.expenses.read')).toBe(true);
+    expect(permits('exec', resolvePermissions('exec', 'finance', [], []), 'fees.expenses.read'))
+      .toBe(true);
   });
 
-  it('points the Finance role at the money section', () => {
-    expect(signpost('exec', 'finance')).toEqual(['/fees', '/settings']);
+  // THE SIGNPOST USED TO BE THE INTERESTING PART OF A ROLE and is now the same
+  // list for every one of them: the floor opens all eight sections, so which job
+  // somebody holds changes what they can DO there and not what they can reach.
+  // Pinned as one assertion across every role rather than three role-shaped ones
+  // that would each look like a decision about that role.
+  it('opens every section for an officer, whichever role they hold', () => {
+    const everything = [
+      '/matches', '/tournaments', '/sessions', '/announcements',
+      '/seasons', '/fees', '/players', '/legal', '/settings',
+    ];
+    for (const role of ['finance', 'external', 'tournaments', 'internal', 'custom', null]) {
+      expect(signpost('exec', role), String(role)).toEqual(everything);
+    }
   });
 
-  it('points the External role at both of its sections', () => {
-    expect(signpost('exec', 'external')).toEqual(['/announcements', '/legal', '/settings']);
+  // ...and a REVOKE is what narrows it, which is the mechanism that replaced
+  // "pick a role" as the way somebody ends up on this page.
+  it('narrows to what is left when the section pages are revoked', () => {
+    expect(signpost('exec', 'external', ALL_PAGES.filter((p) => p !== 'announcements.page')))
+      .toEqual(['/announcements', '/settings']);
   });
 
-  // A hand-picked person with nothing granted still gets a link rather than a
+  // A hand-picked person with everything revoked still gets a link rather than a
   // blank card: /settings belongs to no area and every console user keeps it,
   // so the signpost can never itself be empty.
-  it('still names a door for somebody granted nothing at all', () => {
-    expect(signpost('exec', 'custom')).toEqual(['/settings']);
+  it('still names a door for somebody revoked down to nothing at all', () => {
+    expect(signpost('exec', 'custom', ALL_PAGES)).toEqual(['/settings']);
   });
 });

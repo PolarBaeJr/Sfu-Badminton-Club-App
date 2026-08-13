@@ -511,7 +511,7 @@ export function PermissionEditor({
   // edited at all.
   const before = effectiveCapabilities(
     selectedLevel,
-    resolvePermissions(seededRole, selected?.grants ?? [], selected?.revokes ?? []),
+    resolvePermissions(selectedLevel, seededRole, selected?.grants ?? [], selected?.revokes ?? []),
   );
 
   // Every reason this person's permissions cannot be edited, in the order they
@@ -560,7 +560,7 @@ export function PermissionEditor({
   // itself. Computed by the SAME effectiveCapabilities the gates call, on the
   // SAME resolver — not by a second reading of the ticks on screen, which is
   // how an editor comes to show one thing while the console does another.
-  const permissions = resolvePermissions(role, grants, revokes);
+  const permissions = resolvePermissions(selectedLevel, role, grants, revokes);
   const effective = effectiveCapabilities(selectedLevel, permissions);
 
   function stateOf(capability: Capability): CellState {

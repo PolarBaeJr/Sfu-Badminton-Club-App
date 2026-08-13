@@ -86,7 +86,7 @@ vi.mock('../actions/_shared', async () => {
   return {
     requireCapability: async (capability: Capability) => {
       const level = accessLevelFor(store.actor);
-      if (!permits(level, permissionsOf(store.actor), capability)) {
+      if (!permits(level, permissionsOf(level, store.actor), capability)) {
         throw new Error(`Missing capability: ${capability}`);
       }
       return store.actor;
@@ -183,12 +183,20 @@ beforeEach(() => {
         permission_role: 'custom',
         permission_grants: [...EDITOR_OFFERABLE],
       }),
-      // A composed exec holding a TRAINER-sized set plus the console
-      // capability. The point of the pair: the same capability, two different
-      // ceilings, because closure — not a second capability — is what decides
-      // which levels they may hand out.
+      // A composed TRAINER holding the console capability. The point of the
+      // pair: the same capability, two different ceilings, because closure — not
+      // a second capability — is what decides which levels they may hand out.
+      //
+      // IT WAS `is_exec: true` AND HAD TO STOP BEING, which is the level floor
+      // showing up in a fixture. The row was trainer-SIZED only because a role
+      // replaced the base; now the level's baseline is a floor under every
+      // composition, so an exec is never trainer-sized — this row would hold all
+      // twelve exec reads and could promote somebody to executive, which is the
+      // exact thing the next test says it must not do. A varsity trainer is what
+      // the comment always described, and composable trainers (00090) make it a
+      // state the club can actually be in.
       person(SMALL_HOLDER, {
-        is_exec: true,
+        is_trainer: true,
         permission_role: 'custom',
         permission_grants: [...TRAINER_BASELINE, CONSOLE_CAP],
       }),
@@ -393,9 +401,11 @@ describe('closure decides which levels a holder may hand out', () => {
   });
 
   // THE GRADUATION, AND IT IS WHY THIS IS ONE CAPABILITY RATHER THAN TWO.
-  // Promoting to executive hands over EXEC_BASELINE's 73 capabilities; this
-  // holder has four. Nothing about the capability says "trainer only" — the
-  // baselines do.
+  // Promoting to executive hands over EXEC_BASELINE — twelve reads, down from
+  // the historic 73, so the bar is LOWER than it was. This holder still does not
+  // clear it: their four are the trainer floor plus the console capability, and
+  // the exec floor contains eight section pages they have never held. Nothing
+  // about the capability says "trainer only" — the baselines do.
   it('refuses the same holder making an executive', async () => {
     store.actor = rowFor(SMALL_HOLDER);
     const res = await setConsoleAccess(MEMBER, 'executive', WHY);
@@ -436,8 +446,12 @@ describe('closure decides which levels a holder may hand out', () => {
     });
     store.actor = rowFor(SMALL_HOLDER);
 
-    // The composition holds two fees capabilities this holder does not, so the
-    // BEFORE test refuses them...
+    // The target is an EXEC, so before the move they hold the exec floor plus
+    // their composition — and this holder, a trainer, holds neither. The BEFORE
+    // test refuses them, and would do so on the floor alone: closure got easier
+    // WITHIN a level (everybody shares a floor, so it cancels) and no easier
+    // across one, which is the direction that matters.
+    //
     const refused = await setConsoleAccess(TARGET_EXEC, 'trainer', WHY);
     expect(refused.ok).toBe(false);
     expect(errorOf(refused)).toMatch(/^You cannot change this person's console access/);

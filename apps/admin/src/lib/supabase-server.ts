@@ -10,9 +10,9 @@ import {
   atLeast,
   permissionsOf,
   permits,
-  EXEC_BASELINE,
+  EDITOR_OFFERABLE,
+  EXEC_ASSIGNABLE,
   TRAINER_BASELINE,
-  UNRESTRICTED,
   type AccessLevel,
   type Capability,
   type Permissions,
@@ -161,7 +161,7 @@ async function getAuthenticatedConsolePlayer(
   // has always been told "admin access required" rather than being sent to
   // enrol a passkey first, and swapping the order would change what every
   // refused caller sees.
-  const denial = authorize(accessLevelFor(player), permissionsOf(player));
+  const denial = authorize(accessLevelFor(player), permissionsOf(accessLevelFor(player), player));
   if (denial !== null) {
     Sentry.setUser(null);
     throw new ExpectedError(denial);
@@ -192,25 +192,41 @@ export async function getAuthenticatedAdmin(options: { skipPasskey?: boolean } =
 // gates used to produce — which is what keeps this refactor invisible from the
 // outside as well as from the inside.
 //
-// THE NARROWED CASE IS ANSWERED FIRST, and it has to be: a restricted exec
-// refused players.approve.write holds the exec level, so "admin or exec access
-// required" is not merely unhelpful, it is false — they would read it as a bug
-// and ask an admin to check a flag that is already set. Their level is not the
-// problem; their permissions are, and only an admin can change them.
+// THE PERMISSIONS CASE IS ANSWERED FIRST, and it has to be: an exec refused
+// players.approve.write holds the exec level, so "admin or exec access required"
+// is not merely unhelpful, it is false — they would read it as a bug and ask an
+// admin to check a flag that is already set. Their level is not the problem;
+// their permissions are, and only an admin can change them.
 //
-// Unreachable before anything is stored, because an unrestricted person's set
-// IS their level baseline, so the three level messages below still cover every
-// refusal the console can produce today.
-function denialFor(
-  level: AccessLevel | null,
-  permissions: Permissions,
-  capability: Capability,
-): string {
-  if (permissions.kind === 'restricted' && permits(level, UNRESTRICTED, capability)) {
+// IT USED TO BE BEHIND `kind === 'restricted'` AND CANNOT BE ANY MORE. That
+// guard rested on an argument the narrowed exec baseline retired: "unreachable
+// before anything is stored, because an unrestricted person's set IS their level
+// baseline". True while the baseline was the historic 73 — an unrestricted exec
+// was refused only genuinely admin-only work. Now the baseline is twelve reads,
+// so the commonest refusal in the console is an UNRESTRICTED officer meeting a
+// write that an admin could hand them this afternoon, and the old fall-through
+// told them "Admin access required" — which is false, and false in the one
+// direction that stops them asking for the thing that would fix it.
+//
+// SO THE QUESTION IS THE CEILING, NOT THE BASELINE. EDITOR_OFFERABLE is exactly
+// "what somebody below admin may be given", which is what makes "ask an admin"
+// the true answer; anything outside it is admin work no permission expresses,
+// and the three level messages still cover that. Only somebody who already holds
+// a console level gets the permissions wording — a member with no level is told
+// about the level, exactly as before.
+//
+// The LEVEL messages read from EXEC_ASSIGNABLE rather than EXEC_BASELINE for the
+// same reason: they answer "what would have been enough", and for exec-tier work
+// the answer is still the exec level, plus the assignment that now comes with it.
+// The stored set is no longer an argument: every branch below now turns on the
+// LEVEL and the capability alone, because "could an admin give you this?" is a
+// question about the ceiling and not about what you happen to hold.
+function denialFor(level: AccessLevel | null, capability: Capability): string {
+  if (level !== null && EDITOR_OFFERABLE.includes(capability)) {
     return 'Your permissions do not include this. Ask an admin.';
   }
   if (TRAINER_BASELINE.includes(capability)) return 'Admin console access required';
-  if (EXEC_BASELINE.includes(capability)) return 'Admin or exec access required';
+  if (EXEC_ASSIGNABLE.includes(capability)) return 'Admin or exec access required';
   return 'Admin access required';
 }
 
@@ -237,7 +253,7 @@ export async function requireCapability(
 ) {
   return getAuthenticatedConsolePlayer(
     (level, permissions) =>
-      permits(level, permissions, capability) ? null : denialFor(level, permissions, capability),
+      permits(level, permissions, capability) ? null : denialFor(level, capability),
     options,
   );
 }

@@ -97,7 +97,7 @@ vi.mock('../actions/_shared', async () => {
   return {
     requireCapability: async (capability: Capability) => {
       const level = accessLevelFor(store.actor);
-      if (!permits(level, permissionsOf(store.actor), capability)) {
+      if (!permits(level, permissionsOf(level, store.actor), capability)) {
         throw new Error('Admin access required');
       }
       return store.actor;
@@ -373,16 +373,29 @@ describe('handing a baseline to somebody', () => {
     expect(rowFor(EXEC_B).permission_baseline_id).toBeNull();
   });
 
+  // A WIDENING STILL, AND NOW A SMALLER ONE, because the trainer keeps their own
+  // three underneath it. That is the 00090 repair arriving here as well: a
+  // varsity trainer handed the Socials job is still a varsity trainer.
   it('composes a trainer with one, which is a widening and is allowed', async () => {
     const id = await seedBaseline('Socials VP', SOCIALS);
     const result = await setPlayerPermissions(TRAINER, {
       role: 'custom', grants: SOCIALS, revokes: [], baselineId: id,
     });
     expect(result.ok).toBe(true);
-    const { accessLevelFor, effectiveCapabilities, permissionsOf } = await import('../permissions');
+    const { accessLevelFor, effectiveCapabilities, permissionsOf, TRAINER_BASELINE } =
+      await import('../permissions');
     const row = rowFor(TRAINER);
-    const set = effectiveCapabilities(accessLevelFor(row), permissionsOf(row));
-    expect([...set].sort()).toEqual([...SOCIALS].sort());
+    const set = effectiveCapabilities(
+      accessLevelFor(row),
+      permissionsOf(accessLevelFor(row), row),
+    );
+    expect([...set].sort()).toEqual(
+      [...new Set([...TRAINER_BASELINE, ...SOCIALS])].sort(),
+    );
+    // The floor is the TRAINER's, never the exec's — the whole reason the level
+    // is an argument to the resolver rather than a constant inside it.
+    expect([...set]).not.toContain('fees.page');
+    expect([...set]).not.toContain('tournaments.page');
   });
 
   it('refuses one on an admin, whose stored set is never consulted', async () => {
@@ -469,8 +482,10 @@ describe('editing a baseline', () => {
     await setPlayerPermissions(EXEC_A, {
       role: 'custom', grants: SOCIALS, revokes: [], baselineId: id,
     });
-    // EXEC_B holds the whole exec baseline and this baseline; an actor narrowed
-    // to the socials job cannot reach them.
+    // EXEC_B holds the whole exec baseline and this baseline; an actor who is
+    // only a TRAINER cannot reach them — the exec floor alone is out of their
+    // reach, which is closure staying strict ACROSS levels while it relaxed
+    // within one.
     await setPlayerPermissions(EXEC_B, {
       role: 'custom', grants: SOCIALS, revokes: [], baselineId: id,
     });
@@ -488,7 +503,11 @@ describe('editing a baseline', () => {
 
     const result = await updatePermissionBaseline(id, 'Socials lead', SOCIALS, 'tidying up');
     expect(result.ok).toBe(false);
-    expect(result.ok === false && result.error).toMatch(/players\.page|players\.read/);
+    // The named capability moved from the two roster reads to whatever the exec
+    // floor holds that a trainer does not, and asserting the SHAPE of the
+    // refusal rather than one capability is what keeps this about the rule.
+    expect(result.ok === false && result.error).toMatch(/they hold .*which you do not/);
+    expect(result.ok === false && result.error).toMatch(/fees\.page|tournaments\.page/);
     // Not renamed, so the refusal happened before the baseline row was touched.
     expect(baselines()[0]!.name).toBe('Socials VP');
     expect(rowFor(EXEC_B).permission_grants).toEqual(

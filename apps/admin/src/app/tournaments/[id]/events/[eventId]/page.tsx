@@ -42,7 +42,7 @@ export default async function EventPage({
   // not move in either direction.
   const viewer = await requireCapability('tournaments.page');
   const level = accessLevelFor(viewer);
-  const permissions = permissionsOf(viewer);
+  const permissions = permissionsOf(accessLevelFor(viewer), viewer);
   const may = (capability: Capability) => permits(level, permissions, capability);
 
   const supabase = createAdminClient();

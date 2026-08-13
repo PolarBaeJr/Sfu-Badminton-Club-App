@@ -56,15 +56,17 @@ import { settingsForSection } from '@/lib/platform-setting-sections';
 // hidden card whose query still ran ships officer emails into the RSC payload
 // for anyone with devtools — the same reasoning as /fees and dashboard/page.tsx.
 //
-// None of the three is in EXEC_BASELINE, and EDITOR_OFFERABLE is EXEC_BASELINE,
-// so today only an admin holds any of them and both withheld branches are
-// unreachable. They are written anyway, for the reason /ratings gives for
+// None of the three is in EDITOR_OFFERABLE — the ceiling on what anybody below
+// admin may be composed up to — so today only an admin holds any of them and
+// both withheld branches are unreachable. (That constant used to be an alias of
+// EXEC_BASELINE, which is why this note named the baseline; the baseline has
+// since narrowed to twelve reads and the ceiling is its own list.) They are written anyway, for the reason /ratings gives for
 // platform.page: the route map decides who may OPEN a section, and a page that
 // re-checks what it draws does not have to be re-audited when that changes.
 export default async function AccountsPage() {
   const viewer = await requireCapability('accounts.page');
   const viewerLevel = accessLevelFor(viewer);
-  const viewerPermissions = permissionsOf(viewer);
+  const viewerPermissions = permissionsOf(accessLevelFor(viewer), viewer);
   const showOfficers = permits(viewerLevel, viewerPermissions, 'permissions.page');
   const showPlatformSettings = permits(viewerLevel, viewerPermissions, 'platform.page');
 

@@ -33,7 +33,13 @@ const store = vi.hoisted(() => ({
   seq: 0,
   // Who is signed in. Read by the mocked auth helpers below; isAdminActor is
   // NOT mocked, because "is this caller an admin" is the logic under test.
-  actor: { id: 'admin-1', role: 'admin' } as { id: string; role: string; is_exec?: boolean },
+  actor: { id: 'admin-1', role: 'admin' } as { id: string; role: string; is_exec?: boolean;
+    // The three permission columns, because the gate mock resolves them now —
+    // an officer's writes come from a permission_role, not from is_exec.
+    permission_role?: string;
+    permission_grants?: string[];
+    permission_revokes?: string[];
+  },
 }));
 
 const makeClient = vi.hoisted(() => () => {
@@ -104,16 +110,30 @@ vi.mock('../supabase-server', () => ({ createAdminClient: makeClient }));
 // action names is exactly what decides whether an exec can record money —
 // players.reinstate.write is in EXEC_BASELINE and fees.reinstatements.write is
 // not, and this suite is where that difference is checked.
+// TWO THINGS MOVED HERE WHEN THE EXEC BASELINE NARROWED, and both make this
+// mock a CLOSER copy of the real requireCapability rather than a looser one.
+//
+//   * It resolves the actor's STORED permissions instead of forcing UNRESTRICTED.
+//     An officer's writes arrive from a permission_role now, so a mock that
+//     ignores the role can only ever model an officer who has been given
+//     nothing — and every action below is one somebody was given a job to do.
+//     permissionsOf() is the same function the real gate calls.
+//   * The wording reads from EXEC_ASSIGNABLE, mirroring denialFor() in
+//     supabase-server.ts for the same reason it does: "Exec or admin access
+//     required" answers what LEVEL would have been enough, and these are still
+//     exec-tier acts even though an exec no longer holds them by default.
 vi.mock('../actions/_shared', async () => {
-  const { accessLevelFor, permits, EXEC_BASELINE, UNRESTRICTED } = await import('../permissions');
+  const { accessLevelFor, permissionsOf, permits, EXEC_ASSIGNABLE } =
+    await import('../permissions');
   return {
     requireCapability: async (capability: Capability) => {
-      if (!permits(accessLevelFor(store.actor), UNRESTRICTED, capability)) {
+      const level = accessLevelFor(store.actor);
+      if (!permits(level, permissionsOf(level, store.actor), capability)) {
         // The wording the old two-gate mock used, kept so the assertions below
-        // still read as prose. Which of the two you get is now decided by the
-        // baseline rather than by which helper the action happened to call.
+        // still read as prose. Which of the two you get is decided by whether
+        // the capability is exec-tier work at all.
         throw new Error(
-          EXEC_BASELINE.includes(capability)
+          EXEC_ASSIGNABLE.includes(capability)
             ? 'Exec or admin access required'
             : 'Admin access required',
         );
@@ -126,7 +146,21 @@ vi.mock('../actions/_shared', async () => {
 import { reinstatePlayer, recordReinstatementPayment } from '../actions/reinstatement';
 
 const PLAYER = '11111111-1111-4111-8111-111111111111';
-const EXEC = { id: 'exec-1', role: 'player', is_exec: true };
+// THE OFFICER WHO DOES THIS JOB, WHICH IS NOW AN OFFICER WITH A ROLE. This was
+// a bare `is_exec` row, because `players.reinstate.write` was in the exec
+// baseline and every officer held it. The baseline is twelve reads now, so an
+// unassigned officer cannot unban anybody and this suite would have been
+// asserting the refusal of a member of staff rather than the behaviour of the
+// fee row. `internal` is the VP job that owns the roster and carries
+// players.reinstate.write; nothing else about the fixture changed.
+const EXEC = {
+  id: 'exec-1',
+  role: 'player',
+  is_exec: true,
+  permission_role: 'internal',
+  permission_grants: [],
+  permission_revokes: [],
+};
 const ADMIN = { id: 'admin-1', role: 'admin' };
 
 // Reinstatements live in club_fees now (00094), tagged fee_type

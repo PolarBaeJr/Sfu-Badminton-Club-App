@@ -176,7 +176,7 @@ async function applyPlayerPermissions(
   next: PermissionsPayload,
 ) {
   const actorLevel = accessLevelFor(actor);
-  const actorSet = effectiveCapabilities(actorLevel, permissionsOf(actor));
+  const actorSet = effectiveCapabilities(actorLevel, permissionsOf(actorLevel, actor));
 
   // Before anything is read and long before anything is written. The reason is
   // a property of the REQUEST, so refusing it early keeps a reasonless call
@@ -235,8 +235,9 @@ async function applyPlayerPermissions(
   // through the console; it can only be a row that predates the migration.
   //
   // REFUSING THE VALUE HERE WAS TRIED AND REJECTED. It is not an escalation —
-  // the seeded defaults are inside EXEC_BASELINE, and checks 3-5 below run on
-  // the RESOLVED result regardless, so nothing can be gained by naming one. What
+  // the seeded defaults are inside EXEC_ASSIGNABLE, the historic exec set, and
+  // checks 3-5 below run on the RESOLVED result regardless, so nothing can be
+  // gained by naming one. What
   // it would be is incoherent: a second Finance that does not follow the Finance
   // the club edited.
   //
@@ -381,7 +382,7 @@ async function applyPlayerPermissions(
   //    reaching into the permissions of somebody who holds more than they do —
   //    which they could otherwise do purely by narrowing them, without granting
   //    anything at all.
-  const before = effectiveCapabilities(targetLevel, permissionsOf(target));
+  const before = effectiveCapabilities(targetLevel, permissionsOf(targetLevel, target));
   const outOfReach = missingFrom(actorSet, [...before]);
   if (outOfReach.length > 0) {
     throw new ExpectedError(
@@ -394,7 +395,7 @@ async function applyPlayerPermissions(
   //    nothing above would have looked at them.
   const after = effectiveCapabilities(
     targetLevel,
-    resolvePermissions(role, storedGrants, revokes),
+    resolvePermissions(targetLevel, role, storedGrants, revokes),
   );
   const wouldExceed = missingFrom(actorSet, [...after]);
   if (wouldExceed.length > 0) {
@@ -529,9 +530,15 @@ async function applyPlayerPermissions(
  * the LEVEL BASELINES rather than a delta: what the target holds now must be
  * inside the actor's own set, and what they would hold after the change must be
  * too. That is also what graduates exec from trainer without a second
- * capability — promoting somebody to executive hands them EXEC_BASELINE's 73
- * capabilities, so only an actor holding all 73 may do it, while a trainer-sized
- * actor can still promote somebody to varsity trainer.
+ * capability — promoting somebody to executive hands them EXEC_BASELINE, so only
+ * an actor holding all of it may do it, while a trainer-sized actor can still
+ * promote somebody to varsity trainer.
+ *
+ * THAT BAR DROPPED FROM 73 CAPABILITIES TO 12 when the exec baseline became
+ * read-only, and it dropped for the right reason: the promotion now confers
+ * twelve reads and no writes, so the closure test measures what is actually
+ * being handed over. The writes follow separately, through setPlayerPermissions,
+ * where each is closure-checked on its own.
  */
 export async function setConsoleAccess(
   playerId: string,
@@ -632,7 +639,7 @@ async function setConsoleAccessImpl(playerId: string, access: ExecRole, rawReaso
   // closure has in setPlayerPermissions, and for the same reason: a set that
   // could be influenced from outside makes every check below check a number the
   // attacker chose.
-  const actorSet = effectiveCapabilities(actorLevel, permissionsOf(actor));
+  const actorSet = effectiveCapabilities(actorLevel, permissionsOf(actorLevel, actor));
 
   // THE LINE THAT DOES NOT MOVE. A capability may hand out `executive` and
   // `trainer`; the admin level stays admin-only, because a capability that could
@@ -735,8 +742,9 @@ async function setConsoleAccessImpl(playerId: string, access: ExecRole, rawReaso
   // ------------------------------------------------------------------
   // The same rule setPlayerPermissions applies to a capability set, applied to
   // the set a LEVEL resolves to. Nobody hands out what they do not hold, and
-  // giving somebody the console is the largest single grant there is: an
-  // unrestricted executive holds all 73 of EXEC_BASELINE.
+  // giving somebody the console is still the largest single grant there is,
+  // though it is a smaller one than it was: an unrestricted executive holds
+  // EXEC_BASELINE, which is twelve reads rather than the historic 73.
   //
   // BOTH DIRECTIONS, and both before any write.
   //
@@ -745,11 +753,18 @@ async function setConsoleAccessImpl(playerId: string, access: ExecRole, rawReaso
   // keeps the stored composition and resolves through it, and every other move
   // drops it and resolves to the new level's baseline. Reading the wrong one
   // here would make the check wrong in exactly the case it matters.
-  const before = effectiveCapabilities(targetLevel, permissionsOf(target));
+  const before = effectiveCapabilities(targetLevel, permissionsOf(targetLevel, target));
   const nextLevel = accessLevelFor(fromRoleValue(access));
+  // THE FLOOR IS RESOLVED AT `nextLevel`, NOT AT `targetLevel`, and the explicit
+  // parameter is what made that decidable rather than accidental. The only move
+  // that keeps a composition is executive-to-trainer, and it is exactly the move
+  // where the floor underneath it CHANGES — from the exec baseline to the
+  // trainer one. Resolving the surviving composition at the old level would have
+  // computed `after` with eight section pages the person is about to stop
+  // holding, and check 2 below would then demand the actor hold them.
   const after = effectiveCapabilities(
     nextLevel,
-    clears ? UNRESTRICTED : permissionsOf(target),
+    clears ? UNRESTRICTED : permissionsOf(nextLevel, target),
   );
 
   // THE TWO LOCALS ARE NAMED `level*` ON PURPOSE. The blocks below are the same

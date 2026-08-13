@@ -149,7 +149,7 @@ export default async function DashboardPage({
   // ------------------------------------------------------------------------
   const viewer = await getAuthenticatedConsoleUser();
   const level = accessLevelFor(viewer);
-  const permissions = permissionsOf(viewer);
+  const permissions = permissionsOf(accessLevelFor(viewer), viewer);
 
   // Sections. `canAccess` asks the same question the sidebar and the middleware
   // ask, through the same helper, so a panel here can never link somewhere that
@@ -201,12 +201,13 @@ export default async function DashboardPage({
   // broken.
   //
   // EVERYTHING IN THE NARROWED LANDING RENDERS ONLY WHEN THIS IS FALSE,
-  // deliberately. An unrestricted exec holds fees.expenses.read — it is in
-  // EXEC_BASELINE — so a tile gated on the capability alone would appear for
-  // every exec and admin in the club. There is no capability that separates the
-  // Finance role from an ordinary exec inside the fees area (ROLE_DEFAULTS
-  // .finance IS that subset of the baseline), so the second condition can only
-  // be "no panel of the ordinary dashboard is yours". It is a pure function of
+  // deliberately. An unrestricted exec holds fees.expenses.read — it is one of
+  // the twelve reads still in EXEC_BASELINE — so a tile gated on the capability
+  // alone would appear for every exec and admin in the club. There is no
+  // capability that separates the Finance role from an ordinary exec inside the
+  // fees area (ROLE_DEFAULTS.finance is those two reads plus the one write the
+  // baseline gave up), so the second condition can only be "no panel of the
+  // ordinary dashboard is yours". It is a pure function of
   // level and permissions, decided before the first query, and no unrestricted
   // level can reach it.
   //

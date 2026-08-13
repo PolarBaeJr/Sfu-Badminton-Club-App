@@ -73,7 +73,7 @@ export default async function FeesPage({
   // only; every ledger on it is asked for separately below.
   const viewer = await requireCapability('fees.page');
   const level = accessLevelFor(viewer);
-  const permissions = permissionsOf(viewer);
+  const permissions = permissionsOf(accessLevelFor(viewer), viewer);
   const may = (capability: Capability) => permits(level, permissions, capability);
   // THE FIVE READS. Each one gates a FETCH, never a panel — see the note on
   // '/fees' in lib/permissions.ts. The level is no longer consulted anywhere on

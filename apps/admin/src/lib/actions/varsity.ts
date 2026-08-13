@@ -14,10 +14,23 @@ import { parseOrThrow, varsityNoteSchema, type VarsityNoteInput } from '@badmint
 // finance had to be kept out. Two axes, one door, hand-assembled.
 //
 // One capability answers both. players.editor.varsitynotes.write is in
-// TRAINER_BASELINE and in EXEC_BASELINE, and admins hold it by level — three
-// baseline entries and no composition. The resolver never learns that trainers
-// exist; the level enters once, at permits(), choosing which baseline an
-// unrestricted person holds.
+// TRAINER_BASELINE and admins hold it by level, and no composition is needed.
+// The resolver never learns that trainers exist; the level enters once, at
+// permits(), choosing which baseline an unrestricted person holds.
+//
+// IT IS NO LONGER IN THE EXEC BASELINE, and that is the one place the narrowing
+// costs somebody something. It is a WRITE, so it left with the other sixty when
+// EXEC_BASELINE became twelve reads: an officer nobody has assigned anything to
+// can open the roster and read it and cannot write a note. It is in
+// EXEC_ASSIGNABLE and in ROLE_DEFAULTS.internal, so an officer who is supposed
+// to do this work is given the roster job and holds it again.
+//
+// THE CASE THAT ACTUALLY BITES IS A ROW CARRYING BOTH FLAGS. accessLevelFor()
+// resolves is_exec before is_trainer and returns ONE level, so an exec who is
+// also a trainer is an 'exec' and loses the note the trainer flag was for. Only
+// a legacy or hand-rolled row can be both — fromRoleValue() writes them mutually
+// exclusively — and the hole is pinned, with both repairs, in
+// packages/shared/src/utils/__tests__/capabilities.test.ts.
 import { requireCapability } from './_shared';
 
 export async function createVarsityNote(input: VarsityNoteInput) {

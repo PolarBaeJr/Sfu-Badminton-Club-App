@@ -49,7 +49,7 @@ import { BaselineManager, type BaselineRow } from './baseline-manager';
 // payload to render a list that starts out hidden.
 export default async function PermissionsPage() {
   const viewer = await requireCapability('permissions.page');
-  const viewerSet = effectiveCapabilities(accessLevelFor(viewer), permissionsOf(viewer));
+  const viewerSet = effectiveCapabilities(accessLevelFor(viewer), permissionsOf(accessLevelFor(viewer), viewer));
   const adminClient = createAdminClient();
 
   // All three permission columns, together. Selecting permission_role without

@@ -24,7 +24,7 @@ export default async function MatchesPage() {
   // form's own action re-checks. Skipping the query rather than the form is the
   // rule: `players` is handed straight to a client component, so it crosses to
   // the browser whether or not anything is drawn with it.
-  const canCreate = permits(accessLevelFor(viewer), permissionsOf(viewer), 'matches.create.write');
+  const canCreate = permits(accessLevelFor(viewer), permissionsOf(accessLevelFor(viewer), viewer), 'matches.create.write');
   const supabase = createAdminClient();
 
   const matches = unwrap(

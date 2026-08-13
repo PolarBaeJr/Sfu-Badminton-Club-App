@@ -10,7 +10,9 @@ import {
   BUILTIN_PERMISSION_ROLES,
   CAPABILITIES,
   EDITOR_OFFERABLE,
+  EXEC_ASSIGNABLE,
   EXEC_BASELINE,
+  TRAINER_BASELINE,
   PERMISSION_ROLES,
   PERMISSION_ROLE_LABELS,
   ROLE_DEFAULTS,
@@ -37,13 +39,25 @@ import {
 //      value is being trustworthy.
 //
 //   3. THE CEILING IS STILL A CEILING. EDITOR_OFFERABLE stopped being an alias
-//      of EXEC_BASELINE so the owner's request is expressible at all; this pins
-//      exactly how far it moved and, more importantly, what it still refuses.
+//      of the historic exec set so the owner's request is expressible at all;
+//      this pins exactly how far it moved and, more importantly, what it still
+//      refuses.
 //
-// The two invariants in capabilities.test.ts — every role inside EXEC_BASELINE,
-// and the four partitioning it exactly — are NOT touched by this feature and are
-// NOT relaxed. They survive because ROLE_DEFAULTS stopped being edited. The last
-// describe() below says so in a form that fails if anybody edits it anyway.
+// The two invariants in capabilities.test.ts — every role inside the historic
+// exec set, and the four partitioning it exactly — are NOT touched by this
+// feature and are NOT relaxed. They survive because ROLE_DEFAULTS stopped being
+// edited. The last describe() below says so in a form that fails if anybody
+// edits it anyway.
+//
+// EVERY ASSERTION IN THIS FILE THAT NAMED EXEC_BASELINE NOW NAMES
+// EXEC_ASSIGNABLE, AND NOT ONE OF THEM CHANGED WHAT IT CLAIMS. This file was
+// written when EXEC_BASELINE was the historic 73 and EDITOR_OFFERABLE spread it;
+// the baseline has since narrowed to twelve reads and the 73 moved, verbatim and
+// in order, to EXEC_ASSIGNABLE, which is what EDITOR_OFFERABLE spreads now. So
+// "the exec baseline" in each comment below meant "what an exec could already
+// do", and that is the constant the assertions follow. Left pointing at the
+// twelve, every one of them would have been a different and much weaker claim:
+// "the ceiling adds 66 things" instead of "the ceiling adds five, named".
 
 const MIGRATION = readFileSync(
   join(__dirname, '../../../../../supabase/migrations/00104_editable_builtin_roles.sql'),
@@ -53,18 +67,31 @@ const MIGRATION = readFileSync(
 // ---------------------------------------------------------------------------
 // THE CEILING
 // ---------------------------------------------------------------------------
-describe('EDITOR_OFFERABLE, now that it is not EXEC_BASELINE', () => {
+describe('EDITOR_OFFERABLE, now that it is not the exec baseline', () => {
   // The exec transcription must not move, and this is the local half of the
   // guard — capability-equivalence.test.ts derives the same list independently
   // from the call sites, which is the half that cannot be fooled by editing a
   // constant and its test together.
-  it('leaves the exec baseline exactly where it was', () => {
-    expect(EXEC_BASELINE.length).toBe(73);
+  //
+  // 73 IS STILL 73; ONLY THE CONSTANT HOLDING IT IS NAMED DIFFERENTLY. Asserting
+  // `EXEC_BASELINE.length === 12` here would have pinned the floor while
+  // claiming to guard the transcription, which is the exact substitution this
+  // assertion exists to catch.
+  it('leaves the assignable set exactly where it was', () => {
+    expect(EXEC_ASSIGNABLE.length).toBe(73);
   });
 
-  it('contains the whole exec baseline, so nothing composable was withdrawn', () => {
+  // AND THE FLOOR, WHICH IS THE THING THAT DID MOVE, pinned next to it so the
+  // two are read together. Nobody should be able to change one and have the
+  // other's assertion cover for them.
+  it('leaves the exec baseline a read-only floor of twelve', () => {
+    expect(EXEC_BASELINE.length).toBe(12);
+    expect(EXEC_BASELINE.filter((c) => c.endsWith('.write'))).toEqual([]);
+  });
+
+  it('contains the whole assignable set, so nothing composable was withdrawn', () => {
     const offerable = new Set<Capability>(EDITOR_OFFERABLE);
-    for (const capability of EXEC_BASELINE) {
+    for (const capability of EXEC_ASSIGNABLE) {
       expect(offerable.has(capability), capability).toBe(true);
     }
   });
@@ -73,7 +100,12 @@ describe('EDITOR_OFFERABLE, now that it is not EXEC_BASELINE', () => {
   // the owner asked Finance to be able to see — and, since 00105, one write. If
   // this list grows, this assertion is the diff somebody has to read.
   it('adds exactly the four finance reads and the console-access write', () => {
-    const exec = new Set<Capability>(EXEC_BASELINE);
+    // AGAINST EXEC_ASSIGNABLE, because "added" means "beyond what an exec could
+    // already do". Measured against the narrowed floor instead, this list would
+    // be 66 entries long and would stop being the reviewable diff it exists to
+    // be — the five below would be lost among sixty-one writes that are not
+    // widenings at all, merely capabilities that now arrive by assignment.
+    const exec = new Set<Capability>(EXEC_ASSIGNABLE);
     const added = [...EDITOR_OFFERABLE].filter((capability) => !exec.has(capability));
     expect(added.sort()).toEqual([
       'fees.clubfees.read',
@@ -90,7 +122,10 @@ describe('EDITOR_OFFERABLE, now that it is not EXEC_BASELINE', () => {
   // stayed out — so it is asserted where it is actually true, over the `fees`
   // half, rather than weakened into nothing.
   it('adds no fees WRITE, so seeing the books is not moving the money', () => {
-    const exec = new Set<Capability>(EXEC_BASELINE);
+    // EXEC_ASSIGNABLE for the same reason as above: `fees.expenses.add.write` is
+    // historic exec work, not a widening, and against the floor it would fail
+    // this assertion while nothing had actually been opened up.
+    const exec = new Set<Capability>(EXEC_ASSIGNABLE);
     for (const capability of EDITOR_OFFERABLE) {
       if (exec.has(capability)) continue;
       if (!capability.startsWith('fees.')) continue;
@@ -103,7 +138,9 @@ describe('EDITOR_OFFERABLE, now that it is not EXEC_BASELINE', () => {
   // the ceiling is what bounds an ADMIN, whom grant closure cannot bound, so
   // every write on it is a thing an admin may hand to somebody who is not one.
   it('adds exactly one write, and it is the console-access one', () => {
-    const exec = new Set<Capability>(EXEC_BASELINE);
+    // EXEC_ASSIGNABLE: "one write" counts writes the CEILING added, and all
+    // sixty-one writes an exec used to hold by default are still inside it.
+    const exec = new Set<Capability>(EXEC_ASSIGNABLE);
     const writes = [...EDITOR_OFFERABLE].filter(
       (capability) => !exec.has(capability) && capability.endsWith('.write'),
     );
@@ -180,9 +217,15 @@ describe('teaching Finance to see money in as well as out', () => {
   });
 
   it('was refused before the ceiling moved, and the refusal is what moved', () => {
-    // The old ceiling, reconstructed rather than remembered: EXEC_BASELINE is
+    // The old ceiling, reconstructed rather than remembered: EXEC_ASSIGNABLE is
     // what EDITOR_OFFERABLE used to be, and three of the six are outside it.
-    const oldCeiling = new Set<Capability>(EXEC_BASELINE);
+    //
+    // IT IS THE ASSIGNABLE SET AND NOT THE FLOOR. The ceiling before 00104 was
+    // the historic 73 — which is now EXEC_ASSIGNABLE and was then called
+    // EXEC_BASELINE. Reconstructing it from today's twelve would put
+    // `fees.expenses.add.write` in the refused list, and that capability was
+    // never refused by the old ceiling: it is the one money write execs had.
+    const oldCeiling = new Set<Capability>(EXEC_ASSIGNABLE);
     const wouldHaveBeenRefused = MONEY_IN.filter((c) => !oldCeiling.has(c));
     expect(wouldHaveBeenRefused.sort()).toEqual([
       'fees.clubfees.read',
@@ -299,10 +342,22 @@ describe('the resolver is untouched by this feature', () => {
     'resolves a copied %s to exactly the set that was copied',
     (role) => {
       const copied = [...ROLE_DEFAULTS[role]].sort();
-      const resolved = resolvePermissions('custom', copied, []);
+      // AT A REAL LEVEL, WITH THE FLOOR, because that is what a holder gets and
+      // the claim being made is about holders. The equivalence is unaffected by
+      // the floor — it lands identically on both sides — and asserting it at
+      // `null` to keep the old literal would have tested a person who cannot
+      // sign in.
+      const resolved = resolvePermissions('exec', 'custom', copied, []);
       expect(resolved.kind).toBe('restricted');
       if (resolved.kind !== 'restricted') return;
-      expect([...resolved.capabilities].sort()).toEqual(copied);
+      expect([...resolved.capabilities].sort()).toEqual(
+        [...new Set<Capability>([...EXEC_BASELINE, ...copied])].sort(),
+      );
+      // ...and it is the same set the ROLE itself resolves to, which is the
+      // equivalence 00104's data conversion actually rests on.
+      const asRole = resolvePermissions('exec', role, [], []);
+      if (asRole.kind !== 'restricted') return;
+      expect([...resolved.capabilities].sort()).toEqual([...asRole.capabilities].sort());
     },
   );
 
@@ -316,8 +371,13 @@ describe('the resolver is untouched by this feature', () => {
       const extra = ['legal.page', 'legal.reacceptance.write'];
       const revokes = [...ROLE_DEFAULTS[role]].slice(0, 1);
 
-      const asRole = resolvePermissions(role, extra, revokes);
+      // BOTH SIDES AT THE SAME LEVEL, so the floor lands on both and the
+      // equivalence is tested rather than the floor. Two different levels here
+      // would make this pass or fail for a reason that has nothing to do with
+      // the conversion.
+      const asRole = resolvePermissions('exec', role, extra, revokes);
       const asCopy = resolvePermissions(
+        'exec',
         'custom',
         [...new Set([...ROLE_DEFAULTS[role], ...extra])].sort(),
         revokes,
@@ -332,11 +392,23 @@ describe('the resolver is untouched by this feature', () => {
 
   // The widened ceiling did not teach the resolver a new rule either: a money
   // read still needs its area page, exactly like everything else.
+  //
+  // ASSERTED AT THE TRAINER LEVEL NOW, because that is where the rule is still
+  // reachable. An exec's floor carries `fees.page`, so this grant is no longer
+  // pruned for them — not because the invariant was relaxed, but because the
+  // condition it catches ("holds something in an area they cannot open") cannot
+  // arise for somebody who can open every section. A trainer's floor is the
+  // roster and nothing else, so the rule fires there exactly as it always did.
   it('still prunes a widened capability whose area page is absent', () => {
-    const resolved = resolvePermissions('custom', ['fees.netposition.read'], []);
+    const resolved = resolvePermissions('trainer', 'custom', ['fees.netposition.read'], []);
     expect(resolved.kind).toBe('restricted');
     if (resolved.kind !== 'restricted') return;
-    expect([...resolved.capabilities]).toEqual([]);
+    expect([...resolved.capabilities].sort()).toEqual([...TRAINER_BASELINE].sort());
+
+    // ...and for an exec it survives, on the floor's own `fees.page`.
+    const asExec = resolvePermissions('exec', 'custom', ['fees.netposition.read'], []);
+    if (asExec.kind !== 'restricted') return;
+    expect([...asExec.capabilities]).toContain('fees.netposition.read');
   });
 });
 
@@ -374,19 +446,27 @@ describe('the four built-in roles', () => {
 // to hand-editing the constant, because at that point the seed and the rows
 // disagree and "reset to shipped default" starts lying.
 describe('ROLE_DEFAULTS is a frozen seed, so its invariants still hold literally', () => {
-  it('keeps every role inside the exec baseline', () => {
-    const exec = new Set<Capability>(EXEC_BASELINE);
+  // BOTH RESTATEMENTS FOLLOW THE ORIGINALS TO EXEC_ASSIGNABLE. They exist to
+  // fail if somebody hand-edits ROLE_DEFAULTS, and that job is unchanged; the
+  // set they compare against is the same 73 under a new name. Pointing them at
+  // the twelve would have made them assert that the four VP jobs hand out
+  // nothing but reads, which is the opposite of what the roles are for.
+  it('keeps every role inside what an exec may be assigned', () => {
+    const assignable = new Set<Capability>(EXEC_ASSIGNABLE);
     for (const role of PERMISSION_ROLES) {
       for (const capability of ROLE_DEFAULTS[role]) {
-        expect(exec.has(capability), `${role} seeds ${capability}, which no exec holds`).toBe(true);
+        expect(
+          assignable.has(capability),
+          `${role} seeds ${capability}, which no exec ever held`,
+        ).toBe(true);
       }
     }
   });
 
-  it('still partitions the exec baseline exactly', () => {
+  it('still partitions the assignable set exactly', () => {
     const fromRoles = PERMISSION_ROLES.flatMap((role) => [...ROLE_DEFAULTS[role]]);
     expect(new Set(fromRoles).size, 'two roles claim the same capability').toBe(fromRoles.length);
-    expect([...fromRoles].sort()).toEqual([...EXEC_BASELINE].sort());
+    expect([...fromRoles].sort()).toEqual([...EXEC_ASSIGNABLE].sort());
   });
 
   // AND THE PART THAT IS GENUINELY NEW. The security property those tests

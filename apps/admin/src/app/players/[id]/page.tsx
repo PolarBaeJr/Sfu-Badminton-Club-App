@@ -35,7 +35,7 @@ export default async function PlayerDetailPage({
   // EXCEPT the varsity notes panel — which is the only reason they are here.
   const viewer = await getAuthenticatedConsoleUser();
   const level = accessLevelFor(viewer);
-  const permissions = permissionsOf(viewer);
+  const permissions = permissionsOf(accessLevelFor(viewer), viewer);
   const isAdmin = level === 'admin';
   // Ask for the capability the edit form's Save invokes, not for a level —
   // anyone holding only players.read sees this page exactly as a trainer does,

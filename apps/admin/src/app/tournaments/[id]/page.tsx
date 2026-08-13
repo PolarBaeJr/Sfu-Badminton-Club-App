@@ -18,11 +18,11 @@ export default async function TournamentDetailPage({ params }: { params: Promise
   // capability in its own group — execs run tournaments but not entry money —
   // so ask for the read the linked PAGE requires rather than for a level.
   const viewer = await requireCapability('tournaments.page');
-  const canSeeFees = permits(accessLevelFor(viewer), permissionsOf(viewer), 'tournaments.fees.read');
+  const canSeeFees = permits(accessLevelFor(viewer), permissionsOf(accessLevelFor(viewer), viewer), 'tournaments.fees.read');
   // Who is at the per-member event cap. Its own capability, and its own fetch —
   // the entry-count read below is skipped entirely when this is false, so the
   // gate withholds the query rather than only hiding its output.
-  const canSeeEntryCounts = permits(accessLevelFor(viewer), permissionsOf(viewer), 'tournaments.draw.entrycounts.read');
+  const canSeeEntryCounts = permits(accessLevelFor(viewer), permissionsOf(accessLevelFor(viewer), viewer), 'tournaments.draw.entrycounts.read');
 
   const { data: tournament } = await supabase.from('tournaments').select('*').eq('id', id).single();
   if (!tournament) notFound();
