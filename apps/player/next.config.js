@@ -4,7 +4,19 @@ const securityHeaders = [
   { key: 'X-Frame-Options', value: 'DENY' },
   { key: 'X-XSS-Protection', value: '1; mode=block' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+  // camera=(self), not camera=(). This app scans QR codes in-browser — the
+  // session check-in button and the tournament door scanner both call
+  // getUserMedia — and `camera=()` is a platform-level veto that denies them
+  // before the user is ever asked. It shipped that way, which means the
+  // tournament in-app scanner has been dead on Chrome/Android since it landed;
+  // Safari's thinner Permissions-Policy support is why an iPhone-heavy club
+  // never reported it.
+  //
+  // `self` grants nothing: the browser still prompts and the member still has
+  // to allow it. It only restores our own origin's right to ask. Third parties
+  // remain excluded, and nothing can frame us anyway (X-Frame-Options: DENY).
+  // microphone and geolocation stay fully denied.
+  { key: 'Permissions-Policy', value: 'camera=(self), microphone=(), geolocation=()' },
   { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
 ];
 
