@@ -134,7 +134,13 @@ export function SessionCard({
           {showWindowLabel && <span className="sess-window">{windowLabel}</span>}
           {/* Once attendance is on the record the RSVP is moot — showing both
               would let the card say "Checked In" and "Not going" at once. */}
-          {!attendanceRecorded && <RsvpButtons sessionId={session.id} myIntent={myIntent} />}
+          {/* Demoted once the door is actually open: at that point the primary
+              action on the card is checking in, and a pair of equally loud RSVP
+              pills beside it was most of why this row read as five competing
+              buttons. See RsvpButtons for which of the two answers survives. */}
+          {!attendanceRecorded && (
+            <RsvpButtons sessionId={session.id} myIntent={myIntent} demoted={canCheckIn} />
+          )}
           <AddToCalendarButton
             name={session.name ?? 'Practice Session'}
             date={session.date}

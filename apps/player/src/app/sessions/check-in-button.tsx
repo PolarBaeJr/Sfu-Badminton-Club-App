@@ -163,18 +163,26 @@ export function CheckInButton({ sessionId, myStatus, canCheckIn, windowLabel, my
 
       {/* Supplement mode keeps the direct action ON THE CARD, one tap, exactly
           where it has always been. Buried inside the scanner dialog it would
-          have cost a tap and a camera prompt to reach — and the note above this
-          component in session-card says check-in "must not move further from
-          their thumb than it was". Under REQUIRE_SCAN_TO_CHECK_IN this is gone
-          and the scan is the only way in. */}
+          have cost a tap AND a camera permission prompt to reach — a member who
+          only wants to tap check-in must never have to meet that prompt — and
+          the note above this component in session-card says check-in "must not
+          move further from their thumb than it was". Under
+          REQUIRE_SCAN_TO_CHECK_IN this is gone and the scan is the only way in.
+
+          It is a text control, not a bordered button, and that is the whole
+          point of the change: as `btn btn-ghost btn-sm` it sat beside the solid
+          red primary in a different type treatment (uppercase letterspaced
+          against title-case bold) and read as a second, competing check-in. One
+          primary per card. The 44px floor lives in .sess-textlink, so demoting
+          the LOOK did not shrink the target. */}
       {!REQUIRE_SCAN_TO_CHECK_IN && (
         <button
           type="button"
           onClick={handleCheckIn}
           disabled={loading}
-          className="btn btn-ghost btn-sm rounded-[8px] whitespace-nowrap"
+          className="sess-textlink"
         >
-          Check in
+          Check in without scanning
         </button>
       )}
 

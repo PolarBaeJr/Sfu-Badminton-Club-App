@@ -3665,3 +3665,269 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px 12px;
 }
+
+/* ════════════════════════════════════════════════════════════
+   SCHEDULE — THE MONTH GRID AND THE ACTION RAIL  (/sessions)
+
+   Appended block: every selector here is later in source order
+   than the SCHEDULE block near the top, so it wins without
+   anything above having to move.
+
+   The screen swapped columns. The month calendar is the main
+   column; the upcoming session cards — with their full action
+   set — are the rail beside it. Two things follow, and they are
+   the whole of this block:
+
+   1. ORDER. The DOM order is upcoming → calendar → the rest, and
+      that IS the phone's order. Nothing below 1101px reorders
+      anything, so on a phone the check-in button is the first
+      thing under the page header, exactly where it was. Every
+      placement rule lives in the single ≥1101px query below; if
+      the mobile order ever breaks, it broke there.
+
+   2. WIDTH. The rail is now the column that holds buttons, which
+      is the thing a rail is worst at. Two answers: the split is
+      opened from 2.4fr/1fr to 1.9fr/1fr (≈350px of rail at the
+      1101px floor, up from ≈300px), and inside it the card's
+      controls STACK rather than shrink. Nothing is made smaller
+      to fit, nothing truncates, and every target keeps its 44px.
+   ════════════════════════════════════════════════════════════ */
+
+/* The 44px floor on the card's controls, at EVERY width — not
+   inside the desktop query, because the control that was missing
+   it is missing it on the phone too. CheckInButton and
+   RsvpButtons already carry min-h-[44px] in their own classes;
+   AddToCalendarButton's trigger is `px-3 py-1.5 text-xs`, about
+   30px tall, and has been under the floor since it was written.
+   Stated here rather than in the component so the rule holds for
+   anything that lands in this row later. */
+.sess-actions button { min-height: 44px; }
+
+/* The RSVP pair's wrapper. It was three inline `style={{display:
+   'flex'}}` objects — inline styles beat a stylesheet, so the
+   stacking rule below could never have reached them. Same
+   declarations it had; now overridable. */
+.sess-rsvp { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* A control that is real but must not compete. Used by the
+   direct "Check in without scanning" (the primary is the solid
+   red Scan button beside it) and by the RSVP answers once
+   check-in has opened. Text, not a bordered button — but the
+   full 44px of target, which is the point: what is demoted is
+   the WEIGHT, never the size of the thing you are aiming at. */
+.sess-textlink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 6px;
+  background: transparent;
+  border: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--mute);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--line-2);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color .15s;
+}
+.sess-textlink:hover:not(:disabled) { color: var(--ink); text-decoration-color: currentColor; }
+.sess-textlink:disabled { opacity: .55; cursor: not-allowed; }
+
+/* ── The calendar itself ────────────────────────────────── */
+
+.cal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
+}
+.cal-title {
+  font-family: var(--display); font-size: 22px; font-weight: 600;
+  letter-spacing: -.01em; line-height: 1.1; margin: 0;
+}
+.cal-nav { display: flex; align-items: center; gap: 8px; }
+.cal-nav button {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 44px; min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.cal-nav button:hover:not(:disabled) { background: var(--surface-2); color: var(--ink); }
+/* A dead arrow is a boundary, not a broken button — it is the
+   edge of the data this page actually loaded. The note under the
+   grid says so in words. */
+.cal-nav button:disabled { opacity: .35; cursor: not-allowed; }
+
+/* Seven columns cannot be narrower than a session's name and
+   still be worth printing, so on a phone the grid keeps its
+   width and scrolls sideways INSIDE this box. The page body
+   never scrolls horizontally. */
+.cal-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+.cal-dow {
+  display: grid; grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 1px; padding: 0 0 6px;
+}
+.cal-dow span {
+  font-family: var(--mono); font-size: 10px; font-weight: 500;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--mute);
+  padding-left: 8px;
+}
+
+/* Hairlines via the grid's own gap over a --line background —
+   one rule instead of a border on every cell, and no doubled
+   edges. */
+.cal-grid {
+  display: grid; grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 1px; background: var(--line);
+  border: 1px solid var(--line);
+}
+.cal-cell {
+  background: var(--bg);
+  min-height: 106px; padding: 8px;
+  display: flex; flex-direction: column; gap: 4px;
+  min-width: 0;
+}
+/* A day with a night on it is lifted onto the card surface — the
+   same --surface every .session-card and .card-base already uses,
+   so "something is happening here" is legible from across the
+   room without a new colour entering the page. */
+.cal-cell.has-sessions { background: var(--surface); }
+.cal-daynum {
+  font-family: var(--mono); font-size: 12px; color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+/* The leading/trailing days of the neighbouring months: kept
+   visible so the weeks read as weeks, but pushed back hard
+   enough that nobody reads them as this month. */
+.cal-cell.is-out .cal-daynum { color: var(--line-2); }
+/* Today gets the accent, matching .sched-day.is-today and
+   .session-card.is-next — --red is already this page's word for
+   "the one you are deciding about now". */
+.cal-cell.is-today { box-shadow: inset 0 0 0 2px var(--red); }
+.cal-cell.is-today .cal-daynum { color: var(--red); font-weight: 700; }
+
+/* One night inside a cell. .tag / .tag-win supply the colours —
+   the same green as the "N OPEN" pill and the same grey as a
+   closed row in Past sessions. This only re-shapes them into a
+   full-width single line. */
+.cal-ev {
+  display: block;
+  width: 100%;
+  min-height: 22px;
+  padding: 4px 6px;
+  font-size: 10px;
+  line-height: 1.3;
+  text-align: left;
+  min-width: 0;
+}
+.cal-ev-name {
+  display: block;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+a.cal-ev:hover { filter: brightness(1.15); }
+/* A night this member has already said yes to. A spine, the same
+   device .session-card.is-next uses, rather than a fourth colour. */
+.cal-ev.is-mine { box-shadow: inset 2px 0 0 var(--red); }
+
+.cal-foot {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--mute);
+  margin: 10px 0 0;
+}
+
+@media (max-width: 760px) {
+  /* Enough width for a name to survive; below this the columns
+     would be ~50px and every cell would ellipsis to nothing. */
+  .cal-dow, .cal-grid { min-width: 620px; }
+  .cal-cell { min-height: 88px; }
+  .cal-title { font-size: 19px; }
+}
+
+/* The secondary rail on a phone, when everything in it is
+   desktop-only. Not `.wide-desktop-only`, which sets
+   `display: block` and would flatten .wide-rail's flex column at
+   the width it matters. */
+.sched-rail-hidden-phone { display: none; }
+@media (min-width: 1101px) {
+  .sched-rail-hidden-phone { display: flex; }
+}
+
+/* ── ≥1101px: the only place this screen states a placement ── */
+@media (min-width: 1101px) {
+  /* Wider rail than the house 2.4/1: it is holding a stack of
+     buttons now, not a list of figures. */
+  .sched-wide { grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr); }
+
+  /* Source order is the phone's; these three rules are what turn
+     it back into calendar-left, cards-right. The calendar spans
+     both rows so the two rail halves stack beside it. */
+  .sched-wide > .sched-cal          { grid-column: 1; grid-row: 1 / span 2; }
+  .sched-wide > .sched-rail-primary { grid-column: 2; grid-row: 1; }
+  .sched-wide > .sched-rail-more    { grid-column: 2; grid-row: 2; }
+
+  /* The day grouping has to survive the move: SessionCard prints
+     no date of its own, so .sched-day-date is the ONLY place the
+     date appears. What cannot survive is the 132px date rail —
+     in a ~350px column it would leave the card 190px. So the
+     rail takes the phone's arrangement (a baseline-aligned line
+     over the cards) at a width where the phone's media query no
+     longer applies. */
+  .sched-rail-primary .sched-day { grid-template-columns: 1fr; gap: 10px; }
+  .sched-rail-primary .sched-day + .sched-day { margin-top: 18px; padding-top: 18px; }
+  .sched-rail-primary .sched-day-rail { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .sched-rail-primary .sched-day-label { font-size: 17px; }
+  .sched-rail-primary .sched-day-date { margin-top: 0; }
+  .sched-rail-primary .session-card { padding: 16px; }
+
+  /* THE CRAMPING, ANSWERED. The card's `1fr auto` split puts the
+     actions in a column of their own beside the text; at 350px
+     that column is where labels wrap mid-word. Instead the card
+     stacks — text over controls — and the controls stack too,
+     one full-width row each. Nothing shrinks and nothing
+     truncates; the card just gets taller, which is the one
+     dimension a rail has to spare. */
+  .sched-rail-primary .session-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    align-items: stretch;
+  }
+  .sched-rail-primary .sess-actions {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+  /* Direct children only, and never the scanner dialog. That
+     dialog is rendered by CheckInButton as a sibling INSIDE
+     .sess-actions: a blanket descendant rule would stretch its
+     close X across the modal. `> div >` stops one level short of
+     the dialog's own buttons, which sit three deep. */
+  .sched-rail-primary .sess-actions > button,
+  .sched-rail-primary .sess-actions > span,
+  .sched-rail-primary .sess-actions > div:not([role='dialog']) { width: 100%; }
+  .sched-rail-primary .sess-actions .sess-rsvp {
+    flex-direction: column;
+    align-items: stretch;
+    flex-wrap: nowrap;
+  }
+  .sched-rail-primary .sess-actions > button,
+  .sched-rail-primary .sess-actions > div:not([role='dialog']) > button {
+    width: 100%;
+    justify-content: center;
+  }
+  /* The attendance chip CheckInButton swaps itself for, and the
+     RSVP state chips beside their one remaining action. */
+  .sched-rail-primary .sess-actions > .chip,
+  .sched-rail-primary .sess-actions > .sess-rsvp > .chip { justify-content: center; }
+  /* "Opens at 6:30 PM" fits on one line at this width, but a
+     longer label must wrap rather than run out of the card. */
+  .sched-rail-primary .sess-window { white-space: normal; text-align: center; }
+}
