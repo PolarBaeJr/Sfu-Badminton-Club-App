@@ -141,3 +141,144 @@ export function describeMyState(
 export function isAttendanceRecorded(status: AttendanceStatus | null | undefined): boolean {
   return status === 'checked_in' || status === 'present' || status === 'no_show' || status === 'excused';
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// MONTH GRID
+//
+// The /sessions main column is a month calendar, and every date on it is
+// resolved HERE, on the server, for the same reason the day headings are: the
+// month nav is a client component, and a browser that re-derived "today" or
+// re-walked the grid from its own clock could disagree with the schedule
+// beside it. The client is handed finished cells and only picks which month
+// to show.
+//
+// All arithmetic goes through addDaysISO / Date.UTC, never a local-time Date
+// constructor. That is what makes 2026-11-01 — the day British Columbia's
+// winter fall-back disappears (CLUB_PERMANENT_OFFSET_FROM in
+// session-window.ts) — a non-event here: a grid anchored at UTC midnight and
+// advanced in whole 86_400_000ms steps never consults tzdata at all, so it
+// cannot double-count or drop a day across that boundary no matter which
+// tzdata release the host happens to carry.
+// ───────────────────────────────────────────────────────────────────────────
+
+const MONTHS_FULL = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+/** Sunday-first column headers, matching the grid built below. */
+export const CALENDAR_WEEKDAYS = WEEKDAYS;
+
+/** The 'YYYY-MM' bucket a club-local date falls in. */
+export function monthKeyOf(dateISO: string): string {
+  return dateISO.slice(0, 7);
+}
+
+/**
+ * Every 'YYYY-MM' from `loISO`'s month to `hiISO`'s month, inclusive.
+ *
+ * Returns a single month when both fall in the same one, and an empty list
+ * when hi precedes lo — which callers treat as "nothing to navigate". The 600
+ * iteration cap is a guard against one bad date in the data turning a season
+ * into a fifty-year walk, not a policy; no real season comes near it.
+ */
+export function monthKeysBetween(loISO: string, hiISO: string): string[] {
+  const hi = monthKeyOf(hiISO);
+  let y = Number(loISO.slice(0, 4));
+  let m = Number(loISO.slice(5, 7));
+  const keys: string[] = [];
+  for (let guard = 0; guard < 600; guard += 1) {
+    const key = `${y}-${String(m).padStart(2, '0')}`;
+    if (key > hi) break;
+    keys.push(key);
+    m += 1;
+    if (m > 12) {
+      m = 1;
+      y += 1;
+    }
+  }
+  return keys;
+}
+
+export interface CalendarCell<T> {
+  dateISO: string;
+  /** Day of the month, as shown in the corner of the cell. */
+  day: number;
+  /** False for the leading/trailing days borrowed from the neighbouring months. */
+  inMonth: boolean;
+  isToday: boolean;
+  sessions: T[];
+}
+
+export interface CalendarMonth<T> {
+  /** 'YYYY-MM' — the key the client navigates by. */
+  key: string;
+  /** "August 2026". */
+  label: string;
+  weeks: CalendarCell<T>[][];
+}
+
+/**
+ * One Sunday-first month grid — 4 to 6 whole weeks — with each session filed
+ * under its club-local date.
+ *
+ * Sessions attach ONLY to days inside the month. The leading and trailing
+ * cells exist to square the grid off; hanging a session on one of them would
+ * print the same night in two different months, and anyone counting "how many
+ * nights in September" would count it twice.
+ */
+export function buildCalendarMonth<T extends { date: string }>(
+  monthKey: string,
+  sessions: readonly T[],
+  todayISO: string
+): CalendarMonth<T> {
+  const y = Number(monthKey.slice(0, 4));
+  const m = Number(monthKey.slice(5, 7));
+
+  // getUTCDay on a UTC-midnight anchor: 0 = Sunday, which is column 0.
+  const leading = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
+  // Day 0 of the NEXT month is the last day of this one.
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const weekCount = Math.ceil((leading + daysInMonth) / 7);
+  const firstCell = addDaysISO(`${monthKey}-01`, -leading);
+
+  const byDate = new Map<string, T[]>();
+  for (const session of sessions) {
+    if (monthKeyOf(session.date) !== monthKey) continue;
+    const bucket = byDate.get(session.date);
+    if (bucket) bucket.push(session);
+    else byDate.set(session.date, [session]);
+  }
+
+  const weeks: CalendarCell<T>[][] = [];
+  for (let w = 0; w < weekCount; w += 1) {
+    const week: CalendarCell<T>[] = [];
+    for (let d = 0; d < 7; d += 1) {
+      const dateISO = addDaysISO(firstCell, w * 7 + d);
+      week.push({
+        dateISO,
+        day: Number(dateISO.slice(8, 10)),
+        inMonth: monthKeyOf(dateISO) === monthKey,
+        isToday: dateISO === todayISO,
+        sessions: byDate.get(dateISO) ?? [],
+      });
+    }
+    weeks.push(week);
+  }
+
+  return { key: monthKey, label: `${MONTHS_FULL[m - 1] ?? monthKey} ${y}`, weeks };
+}
+
+/**
+ * The month the calendar opens on: today's, clamped into the navigable range.
+ * A member reading this page over the summer break — after the season's last
+ * night — lands on the last month that has anything in it, rather than on an
+ * empty August with both arrows dead.
+ */
+export function initialMonthIndex(monthKeys: readonly string[], todayISO: string): number {
+  if (monthKeys.length === 0) return 0;
+  const today = monthKeyOf(todayISO);
+  const exact = monthKeys.indexOf(today);
+  if (exact >= 0) return exact;
+  return today < (monthKeys[0] as string) ? 0 : monthKeys.length - 1;
+}

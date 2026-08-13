@@ -3,18 +3,31 @@ import { useState } from 'react';
 import { setSessionIntent } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { useStanding } from '@/components/standing-provider';
+import { REQUIRE_SCAN_TO_CHECK_IN } from '@/lib/checkin-scan';
 
 interface RsvpButtonsProps {
   sessionId: string;
   myIntent: 'going' | 'declined' | null;
+  /**
+   * Check-in is open for this session RIGHT NOW.
+   *
+   * When it is, the RSVP is largely spent: "Going" is a promise about a night
+   * the member could simply check in to, and the check-in button is the thing
+   * on the card the doorway queue is waiting for. So the pills demote to text
+   * controls, and the bare "Going" action retires entirely — see the branch
+   * below for why "Can't make it" does not.
+   */
+  demoted?: boolean;
 }
 
+// `rounded-xl` is deliberate-looking but compiles to nothing: tailwind.config
+// zeroes the whole borderRadius scale for the sharp-cornered reference design.
+// Left as-is rather than "fixed" to a literal radius — a rounded RSVP pill
+// beside a square .session-card would be the odd one out.
 const base = 'press rounded-xl px-4 py-2 text-sm font-semibold min-h-[44px] whitespace-nowrap disabled:opacity-60 disabled:cursor-not-allowed';
-const goingActive = 'btn-primary-cta text-white';
-const declinedActive = 'bg-[var(--bg-card)] border border-[var(--line)] text-[var(--text-muted)]';
 const inactive = 'bg-transparent border border-[var(--line)] text-[var(--text-muted)] opacity-70';
 
-export function RsvpButtons({ sessionId, myIntent }: RsvpButtonsProps) {
+export function RsvpButtons({ sessionId, myIntent, demoted = false }: RsvpButtonsProps) {
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
   const standing = useStanding();
@@ -50,17 +63,19 @@ export function RsvpButtons({ sessionId, myIntent }: RsvpButtonsProps) {
     }
   }
 
+  // The pill treatment while the night is still ahead; a quiet text control
+  // once check-in has opened and the card already carries a primary. Both
+  // clear the 44px floor — .sess-textlink sets its own min-height, which is
+  // the point of demoting the LOOK rather than the size.
+  const actionClass = demoted ? 'sess-textlink' : `${base} ${inactive}`;
+
   // Going — show the state and only the option to switch to Not going (the
   // "Going" action button is redundant once you're going).
   if (myIntent === 'going') {
     return (
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <div className="sess-rsvp">
         <span className="chip chip-success">Going</span>
-        <button
-          onClick={() => choose('declined')}
-          disabled={loading}
-          className={`${base} ${inactive}`}
-        >
+        <button onClick={() => choose('declined')} disabled={loading} className={actionClass}>
           Can&apos;t make it
         </button>
       </div>
@@ -68,29 +83,54 @@ export function RsvpButtons({ sessionId, myIntent }: RsvpButtonsProps) {
   }
 
   // Declined ("Not going") — surface only the option to switch to Going; no
-  // check-in and no other actions.
+  // check-in and no other actions. This one survives demotion: with the intent
+  // set to declined, CheckInButton returns null, so this button is the ONLY
+  // way back into the night.
   if (myIntent === 'declined') {
     return (
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <div className="sess-rsvp">
         <span className="chip">Not going</span>
-        <button
-          onClick={() => choose('going')}
-          disabled={loading}
-          className={`${base} ${inactive}`}
-        >
+        <button onClick={() => choose('going')} disabled={loading} className={actionClass}>
           Going
         </button>
       </div>
     );
   }
 
+  // No answer yet, and check-in is open. "Going" is dropped rather than
+  // demoted: with a live check-in button an arm's length away, saying you
+  // intend to come is a strictly weaker version of coming, and it was the
+  // fifth control competing on this row. "Can't make it" stays because it is
+  // the one thing check-in cannot express — it tells the exec to stop
+  // expecting you, which nothing else on the card does.
+  //
+  // That argument holds only while REQUIRE_SCAN_TO_CHECK_IN is false, and the
+  // flag is the reason this is a condition rather than a deletion. Its own
+  // comment puts it plainly: with scanning optional, "tapping the button works
+  // from the bus", so a member who has not arrived can already express Going by
+  // simply checking in. Flip the flag and they cannot — check-in then needs the
+  // door code, and dropping this button would leave someone half an hour out
+  // with no way to say they are coming at all. So under the flag "Going"
+  // survives, quietly. (`REQUIRE_SCAN_TO_CHECK_IN` is annotated `: boolean`
+  // precisely so this branch keeps type-checking while it is false.)
+  if (demoted) {
+    return (
+      <div className="sess-rsvp">
+        {REQUIRE_SCAN_TO_CHECK_IN && (
+          <button onClick={() => choose('going')} disabled={loading} className="sess-textlink">
+            Going
+          </button>
+        )}
+        <button onClick={() => choose('declined')} disabled={loading} className="sess-textlink">
+          Can&apos;t make it
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-      <button
-        onClick={() => choose('going')}
-        disabled={loading}
-        className={`${base} ${myIntent === 'going' ? goingActive : inactive}`}
-      >
+    <div className="sess-rsvp">
+      <button onClick={() => choose('going')} disabled={loading} className={`${base} ${inactive}`}>
         Going
       </button>
       <button

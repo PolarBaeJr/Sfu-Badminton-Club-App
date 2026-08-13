@@ -17,11 +17,15 @@ import { Calendar } from 'lucide-react';
 import { PageHeader } from '@badminton/ui';
 import { SessionCard } from './session-card';
 import { DeepLinkScroll } from './deep-link-scroll';
+import { MonthCalendar, type CalendarEvent } from './month-calendar';
 import {
+  CALENDAR_WEEKDAYS,
+  buildCalendarMonth,
   clubDateISO,
-  dayHeading,
   describeMyState,
   groupSessionsByDay,
+  initialMonthIndex,
+  monthKeysBetween,
   tallyBySession,
   type MyState,
 } from '@/lib/schedule';
@@ -61,13 +65,14 @@ export default async function SessionsPage() {
   //
   // The season's name is selected as well: it is the difference between an
   // empty schedule that reads as a bug and one that names the term it is empty
-  // for.
+  // for. Its start/end dates are what the calendar's month nav is bounded to —
+  // they say how far the loaded data is trustworthy.
   const { data: activeSeason } = await supabase
-    .from('seasons').select('id, name').eq('active_flag', true).maybeSingle();
+    .from('seasons').select('id, name, start_date, end_date').eq('active_flag', true).maybeSingle();
   const inActiveSeason = <T extends { or: (f: string) => T }>(q: T): T =>
     activeSeason ? q.or(`season_id.eq.${activeSeason.id},season_id.is.null`) : q;
 
-  const [{ data: openSessions }, { data: closedSessions }, { data: myAttendance }, { data: attendanceRows }, { data: myRsvp }, { data: goingRows }] = await Promise.all([
+  const [{ data: openSessions }, { data: closedSessions }, { data: calendarSessions }, { data: myAttendance }, { data: attendanceRows }, { data: myRsvp }, { data: goingRows }] = await Promise.all([
     inActiveSeason(
       supabase
         .from('sessions')
@@ -84,6 +89,21 @@ export default async function SessionsPage() {
     )
       .order('date', { ascending: false })
       .limit(10),
+    // The calendar's own query, and the reason it is not assembled from the two
+    // above: `closedSessions` is .limit(10), so a month grid built out of them
+    // would print an August with two nights in it when the club played eight —
+    // an empty-looking month that is a lie rather than an absence. This selects
+    // EVERY session in the loaded scope, so the months the nav can reach are
+    // exactly the months whose contents are complete.
+    //
+    // No status filter: the session_status enum is ('open','closed') and
+    // nothing else (00001_schema.sql:88), so "all of them" is those two.
+    inActiveSeason(
+      supabase
+        .from('sessions')
+        .select('id, name, date, start_time, status')
+        .in('track', [player.status, 'all'])
+    ).order('date', { ascending: true }).order('start_time', { ascending: true, nullsFirst: false }),
     supabase
       .from('session_attendance')
       .select('session_id, status')
@@ -132,8 +152,8 @@ export default async function SessionsPage() {
   const nextSessionId = (upcoming.find((s) => s.date >= todayISO) ?? upcoming[0])?.id as string | undefined;
 
   // The upcoming nights the member has already committed to. It answers "what
-  // have I said yes to?" without opening a card — as a count in the sub-line,
-  // and as the actual list in the side rail.
+  // have I said yes to?" without opening a card — as the count in the Upcoming
+  // sub-line, and as the accent on those nights' cells in the month grid.
   const myUpcoming = upcoming.filter((s) => {
     const state = describeMyState(myStatusBySession.get(s.id), myIntentBySession.get(s.id));
     return state === 'going' || state === 'checked_in' || state === 'attended';
@@ -155,6 +175,55 @@ export default async function SessionsPage() {
       .map((r) => r.session_id as string),
   );
   const attendedRecently = closed.filter((s) => attendedIds.has(s.id as string)).length;
+
+  // ── THE MONTH GRID ────────────────────────────────────────────────────────
+  //
+  // Bounded, not paged. `calendarSessions` is everything this page loaded —
+  // the active season plus any session with no season on it — and the nav is
+  // limited to exactly the months that range covers. The alternative was
+  // fetching per month on demand, which buys a member the ability to walk into
+  // last spring; the cost is a second round trip and a screen that can show a
+  // blank month while it waits. Bounding is the honest, cheap answer: an arrow
+  // that stops means "there is no more", and that is true here.
+  //
+  // The span is the widest of the season's own start/end and the dates of the
+  // sessions actually returned. Both halves matter: end_date is nullable so a
+  // running term is bounded by its last night, and a season-less session can
+  // sit outside the term's dates entirely. With no active season the filter is
+  // skipped upstream, so the sessions ARE the only bound there is.
+  const calendar = calendarSessions ?? [];
+  const spanBounds = [
+    ...(activeSeason?.start_date ? [activeSeason.start_date as string] : []),
+    ...(activeSeason?.end_date ? [activeSeason.end_date as string] : []),
+    ...calendar.map((s) => s.date as string),
+  ].sort();
+  const spanFrom = spanBounds[0];
+  const spanTo = spanBounds[spanBounds.length - 1];
+  // Nothing loaded at all: show this month, empty and honestly so, rather than
+  // no calendar. The empty state in the rail says which of the two reasons.
+  const monthKeys =
+    spanFrom && spanTo ? monthKeysBetween(spanFrom, spanTo) : monthKeysBetween(todayISO, todayISO);
+
+  // Only the open nights have a card in the rail, so only they are worth a
+  // jump link. A closed night's cell stays plain text rather than an anchor
+  // that scrolls nowhere.
+  const openIds = new Set(upcoming.map((s) => s.id as string));
+  const calendarEvents: CalendarEvent[] = calendar.map((s) => {
+    const state = describeMyState(
+      myStatusBySession.get(s.id as string),
+      myIntentBySession.get(s.id as string),
+    );
+    return {
+      id: s.id as string,
+      date: s.date as string,
+      name: (s.name as string | null) ?? 'Practice Session',
+      status: s.status as string,
+      timeLabel: s.start_time ? formatTime(s.start_time as string) : null,
+      mine: state === 'going' || state === 'checked_in' || state === 'attended',
+      linkable: openIds.has(s.id as string),
+    };
+  });
+  const calendarMonths = monthKeys.map((key) => buildCalendarMonth(key, calendarEvents, todayISO));
 
   return (
     <div data-screen-label="Schedule" className="wide-page">
@@ -182,20 +251,25 @@ export default async function SessionsPage() {
         style={{ marginBottom: 20 }}
       />
 
-      {/* The nights on the calendar down the left; everything that is about the
-          MEMBER rather than about the calendar down the right. Below 1101px the
-          rail unstacks under the schedule and the order is the phone's:
-          upcoming first, then what you have said yes to, then the rules, then
-          what has already happened.
+      {/* THE SHAPE OF THIS SCREEN, and the one rule that decides it.
+          -------------------------------------------------------------------
+          The month grid is the main column on a laptop and the upcoming cards
+          are the rail beside it. But the DOM order is upcoming → calendar →
+          everything else, and NOTHING reorders below 1101px. That is
+          deliberate and it is the safety property of the whole layout: on a
+          phone, a month grid stacked above the action cards would push Check
+          In below the fold, which is the single worst outcome this page has.
+          Because the source order already is the phone's order, "check-in
+          first at 390px" follows from the markup and needs no media query to
+          be true — the ≥1101px block in globals.css is the only place any
+          placement is stated, and it is the only place that can break it.
 
-          The rail is rendered unconditionally, which is also the fix for the
-          empty season. It used to hold only the closed sessions, so a brand new
-          term left the Upcoming <section> as the only child of .sched-wide —
-          and that selector capped it at 1100px with no auto margin, i.e. a
-          narrow column pinned hard left with the right half of the monitor
-          black. There is now always something true to put beside it. */}
+          Three grid children, not two: the rail is split so the calendar can
+          sit BETWEEN what's next and what's finished on a phone, while on a
+          laptop the two halves stack in the same right-hand column. */}
       <div className="sched-wide">
-        <section className="reveal reveal-1">
+        <aside className="wide-rail sched-rail-primary reveal reveal-1">
+          <section>
           <div className="card-head">
             <div>
               <h2 className="card-title">Upcoming</h2>
@@ -278,66 +352,38 @@ export default async function SessionsPage() {
               ))}
             </div>
           )}
+          </section>
+        </aside>
+
+        {/* THE MONTH ------------------------------------------------- */}
+        {/* The shape of the term, which the day-by-day list beside it cannot
+            show: a member asking "are we playing the week after reading
+            break?" was previously scrolling a flat list to find out.
+
+            "You're in for" used to live in the rail here and has been folded
+            away rather than moved. It existed because the rail had nothing in
+            it and the schedule was a column away; now the member's own cards
+            ARE the rail, and a list of the same nights directly above them
+            would be a second copy of the thing it points at. What it actually
+            carried survives in two places that cost no space: the count in the
+            Upcoming sub-line ("you're in for 3"), and the accent on those
+            nights' cells in the grid. */}
+        <section className="sched-cal reveal reveal-2" aria-label="Month calendar">
+          <MonthCalendar
+            months={calendarMonths}
+            initialIndex={initialMonthIndex(monthKeys, todayISO)}
+            weekdays={CALENDAR_WEEKDAYS}
+            rangeLabel={activeSeason ? activeSeason.name : null}
+          />
         </section>
 
-        <aside className="wide-rail reveal reveal-2">
-          {/* YOU'RE IN FOR ------------------------------------------- */}
-          {/* Derived entirely from data already on this page: the open sessions
-              and this member's own RSVP / attendance rows. No capacity, no
-              "spots left" and no waitlist position — none of those columns
-              exist, so none of them are claimed here.
-
-              Desktop only, like the two cards under it. On a phone this is a
-              second copy of information the session cards a thumb-flick above
-              already carry, on a screen whose rule is bigger targets and fewer
-              of them; on a laptop it is the column that was empty. Nothing is
-              taken AWAY from the phone — every card in this rail is new. */}
-          <div className="card-base wide-desktop-only">
-            <div className="wide-cap">You&apos;re in for</div>
-            {myUpcomingCount === 0 ? (
-              <p className="wide-note">
-                {upcomingCount === 0
-                  ? 'Nothing to say yes to yet. Once the exec posts a night it shows up here the moment you RSVP.'
-                  : 'You have not RSVP’d to anything yet. Going tells the exec to expect you; it is not the same as checking in on the night.'}
-              </p>
-            ) : (
-              <div style={{ marginTop: 10 }}>
-                {myUpcoming.slice(0, 5).map((s) => {
-                  const heading = dayHeading(s.date as string, todayISO);
-                  const state = describeMyState(
-                    myStatusBySession.get(s.id as string),
-                    myIntentBySession.get(s.id as string),
-                  );
-                  return (
-                    <a key={s.id as string} href={`#session-${s.id}`} className="wide-item">
-                      <div className="wide-item-title">
-                        {s.name ?? 'Practice Session'}
-                      </div>
-                      {/* The absolute date, not a bare weekday. Closing a
-                          session is a manual admin action with no cron behind
-                          it, so a night the exec forgot to close is still
-                          'open' and still sorts in here — "Tuesday" would read
-                          as the Tuesday coming. Only today and tomorrow, which
-                          cannot be stale, get a relative word. */}
-                      <div className="wide-item-sub">
-                        {heading.isToday || heading.isTomorrow ? heading.label : heading.dateLabel} ·{' '}
-                        {s.location}
-                        {state === 'checked_in' || state === 'attended' ? ' · checked in' : ''}
-                      </div>
-                    </a>
-                  );
-                })}
-                {myUpcomingCount > 5 && (
-                  <div className="wide-item-sub" style={{ marginTop: 10 }}>
-                    {/* Not "below" — the schedule is beside this list on a
-                        laptop and above it on a phone. */}
-                    +{myUpcomingCount - 5} more on the schedule
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
+        {/* Hidden outright on a phone when the only thing that would render in
+            it is nothing: every card below except Past sessions is
+            desktop-only, so with no closed nights this aside would be an
+            invisible grid child paying a 20px gap under the calendar. */}
+        <aside
+          className={`wide-rail sched-rail-more reveal reveal-3${closed.length === 0 ? ' sched-rail-hidden-phone' : ''}`}
+        >
           {/* THE CHECK-IN WINDOW -------------------------------------- */}
           {/* The live platform_settings row this page already fetched, not the
               TypeScript fallback — these are the same two numbers
