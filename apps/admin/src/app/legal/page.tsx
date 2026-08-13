@@ -25,7 +25,7 @@ import { EventWaiverTemplateForm } from './event-waiver-template-form';
 export default async function LegalPage() {
   const viewer = await requireCapability('legal.page');
   const level = accessLevelFor(viewer);
-  const permissions = permissionsOf(viewer);
+  const permissions = permissionsOf(accessLevelFor(viewer), viewer);
   const canEdit = permits(level, permissions, 'legal.documents.write');
   // Forcing the whole club to re-sign is the loudest thing this page does, and
   // it is a separate capability from editing the text and from reading it.

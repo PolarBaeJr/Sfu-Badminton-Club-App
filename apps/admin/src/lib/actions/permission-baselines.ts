@@ -97,7 +97,10 @@ async function actorContext() {
   const actor = await requireCapability('permissions.write');
   return {
     actor,
-    held: effectiveCapabilities(accessLevelFor(actor), permissionsOf(actor)),
+    held: effectiveCapabilities(
+      accessLevelFor(actor),
+      permissionsOf(accessLevelFor(actor), actor),
+    ),
     adminClient: createAdminClient(),
   };
 }
@@ -334,7 +337,7 @@ async function updateImpl(
         `${nameOfPerson(holder)} is an admin, so nothing stored on them is ever consulted. Clear their permissions first.`,
       );
     }
-    const theirs = effectiveCapabilities(level, permissionsOf(holder));
+    const theirs = effectiveCapabilities(level, permissionsOf(level, holder));
     const outOfReach = [...theirs].filter((capability) => !held.has(capability));
     if (outOfReach.length > 0) {
       throw new ExpectedError(

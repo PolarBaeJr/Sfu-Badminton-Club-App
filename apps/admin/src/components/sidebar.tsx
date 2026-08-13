@@ -155,7 +155,9 @@ export function Sidebar({
   //
   // Still cosmetic, not a boundary: the middleware and every server action gate
   // independently. This just stops the UI advertising doors that won't open.
-  const permissions = access.permissions ? permissionsOf(access.permissions) : UNRESTRICTED;
+  const permissions = access.permissions
+    ? permissionsOf(access.level, access.permissions)
+    : UNRESTRICTED;
   const visibleItems = NAV_SECTIONS.map((section) =>
     section.items.filter(
       (item) => accessLoaded && canAccess(access.level, permissions, item.href),

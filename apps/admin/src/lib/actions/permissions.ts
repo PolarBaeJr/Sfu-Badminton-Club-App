@@ -176,7 +176,7 @@ async function applyPlayerPermissions(
   next: PermissionsPayload,
 ) {
   const actorLevel = accessLevelFor(actor);
-  const actorSet = effectiveCapabilities(actorLevel, permissionsOf(actor));
+  const actorSet = effectiveCapabilities(actorLevel, permissionsOf(actorLevel, actor));
 
   // Before anything is read and long before anything is written. The reason is
   // a property of the REQUEST, so refusing it early keeps a reasonless call
@@ -382,7 +382,7 @@ async function applyPlayerPermissions(
   //    reaching into the permissions of somebody who holds more than they do —
   //    which they could otherwise do purely by narrowing them, without granting
   //    anything at all.
-  const before = effectiveCapabilities(targetLevel, permissionsOf(target));
+  const before = effectiveCapabilities(targetLevel, permissionsOf(targetLevel, target));
   const outOfReach = missingFrom(actorSet, [...before]);
   if (outOfReach.length > 0) {
     throw new ExpectedError(
@@ -395,7 +395,7 @@ async function applyPlayerPermissions(
   //    nothing above would have looked at them.
   const after = effectiveCapabilities(
     targetLevel,
-    resolvePermissions(role, storedGrants, revokes),
+    resolvePermissions(targetLevel, role, storedGrants, revokes),
   );
   const wouldExceed = missingFrom(actorSet, [...after]);
   if (wouldExceed.length > 0) {
@@ -639,7 +639,7 @@ async function setConsoleAccessImpl(playerId: string, access: ExecRole, rawReaso
   // closure has in setPlayerPermissions, and for the same reason: a set that
   // could be influenced from outside makes every check below check a number the
   // attacker chose.
-  const actorSet = effectiveCapabilities(actorLevel, permissionsOf(actor));
+  const actorSet = effectiveCapabilities(actorLevel, permissionsOf(actorLevel, actor));
 
   // THE LINE THAT DOES NOT MOVE. A capability may hand out `executive` and
   // `trainer`; the admin level stays admin-only, because a capability that could
@@ -753,11 +753,18 @@ async function setConsoleAccessImpl(playerId: string, access: ExecRole, rawReaso
   // keeps the stored composition and resolves through it, and every other move
   // drops it and resolves to the new level's baseline. Reading the wrong one
   // here would make the check wrong in exactly the case it matters.
-  const before = effectiveCapabilities(targetLevel, permissionsOf(target));
+  const before = effectiveCapabilities(targetLevel, permissionsOf(targetLevel, target));
   const nextLevel = accessLevelFor(fromRoleValue(access));
+  // THE FLOOR IS RESOLVED AT `nextLevel`, NOT AT `targetLevel`, and the explicit
+  // parameter is what made that decidable rather than accidental. The only move
+  // that keeps a composition is executive-to-trainer, and it is exactly the move
+  // where the floor underneath it CHANGES — from the exec baseline to the
+  // trainer one. Resolving the surviving composition at the old level would have
+  // computed `after` with eight section pages the person is about to stop
+  // holding, and check 2 below would then demand the actor hold them.
   const after = effectiveCapabilities(
     nextLevel,
-    clears ? UNRESTRICTED : permissionsOf(target),
+    clears ? UNRESTRICTED : permissionsOf(nextLevel, target),
   );
 
   // THE TWO LOCALS ARE NAMED `level*` ON PURPOSE. The blocks below are the same

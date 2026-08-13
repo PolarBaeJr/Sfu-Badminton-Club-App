@@ -168,7 +168,11 @@ export async function middleware(request: NextRequest) {
         // gave on its own.
         const row = access as (PermissionsInput & { level: string | null }) | null;
         accessLevel = (row?.level as AccessLevel | null) ?? null;
-        permissions = permissionsOf(row);
+        // The LEVEL the same row carried, so the middleware floors on exactly
+        // what every server action floors on. A gate that resolved a different
+        // baseline from the action behind it is a nav that hides sections the
+        // page would serve.
+        permissions = permissionsOf(accessLevel, row);
       }
 
       // TWO DIFFERENT REFUSALS, because they are two different facts about the

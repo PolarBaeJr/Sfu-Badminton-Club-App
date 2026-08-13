@@ -149,7 +149,7 @@ export default async function DashboardPage({
   // ------------------------------------------------------------------------
   const viewer = await getAuthenticatedConsoleUser();
   const level = accessLevelFor(viewer);
-  const permissions = permissionsOf(viewer);
+  const permissions = permissionsOf(accessLevelFor(viewer), viewer);
 
   // Sections. `canAccess` asks the same question the sidebar and the middleware
   // ask, through the same helper, so a panel here can never link somewhere that

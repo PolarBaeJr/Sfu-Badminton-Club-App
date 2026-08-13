@@ -141,7 +141,7 @@ vi.mock('../actions/_shared', async () => {
   return {
     requireCapability: async (capability: Capability) => {
       const level = accessLevelFor(store.actor);
-      if (!permits(level, permissionsOf(store.actor), capability)) {
+      if (!permits(level, permissionsOf(level, store.actor), capability)) {
         // The wording the old two-gate mock used, kept so the assertions below
         // still read as prose. Which of the two you get is decided by whether
         // the capability is exec-tier work at all.

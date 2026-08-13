@@ -101,7 +101,7 @@ vi.mock('../actions/_shared', async () => {
   return {
     requireCapability: async (capability: Capability) => {
       const level = accessLevelFor(store.actor);
-      if (!permits(level, permissionsOf(store.actor), capability)) {
+      if (!permits(level, permissionsOf(level, store.actor), capability)) {
         throw new Error('Admin access required');
       }
       return store.actor;
@@ -119,6 +119,7 @@ import {
   BUILTIN_BASELINE_IDS,
   BUILTIN_PERMISSION_ROLES,
   EDITOR_OFFERABLE,
+  EXEC_BASELINE,
   PERMISSION_ROLE_LABELS,
   ROLE_DEFAULTS,
 } from '../permissions';
@@ -329,7 +330,13 @@ describe('an edit reaches everybody holding the role', () => {
     )!;
     expect(row).toBeTruthy();
     expect(row.reason).toBe(REASON);
-    expect((row.new_value as Row).effective).toEqual([...MONEY_IN].sort());
+    // THE FLOOR IS IN THE AUDIT ROW. `effective` records what the person
+    // actually holds, and since the club owner's ruling that is the edited
+    // baseline UNDER-pinned by the exec floor. Derived from the constant rather
+    // than written out, so the literal cannot drift from the list it describes.
+    expect((row.new_value as Row).effective).toEqual(
+      [...new Set([...EXEC_BASELINE, ...MONEY_IN])].sort(),
+    );
   });
 
   // VALIDATE EVERY HOLDER, THEN WRITE — held for the batch nobody chose.

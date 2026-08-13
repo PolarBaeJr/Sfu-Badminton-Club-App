@@ -63,7 +63,7 @@ vi.mock('../actions/_shared', async () => {
   return {
     requireCapability: async (capability: Capability) => {
       const level = accessLevelFor(state.actor);
-      if (!permits(level, permissionsOf(state.actor), capability)) {
+      if (!permits(level, permissionsOf(level, state.actor), capability)) {
         throw new Error(
           level !== null && EDITOR_OFFERABLE.includes(capability)
             ? 'Your permissions do not include this. Ask an admin.'

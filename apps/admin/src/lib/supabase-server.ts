@@ -161,7 +161,7 @@ async function getAuthenticatedConsolePlayer(
   // has always been told "admin access required" rather than being sent to
   // enrol a passkey first, and swapping the order would change what every
   // refused caller sees.
-  const denial = authorize(accessLevelFor(player), permissionsOf(player));
+  const denial = authorize(accessLevelFor(player), permissionsOf(accessLevelFor(player), player));
   if (denial !== null) {
     Sentry.setUser(null);
     throw new ExpectedError(denial);

@@ -90,7 +90,10 @@ export type OfficerAccessSummary = {
 export function officerAccessSummary(officers: readonly OfficerInput[]): OfficerAccessSummary {
   const sets = officers
     .filter((person) => isInGoodStanding(person))
-    .map((person) => effectiveCapabilities(accessLevelFor(person), permissionsOf(person)));
+    .map((person) => effectiveCapabilities(
+      accessLevelFor(person),
+      permissionsOf(accessLevelFor(person), person),
+    ));
 
   const rows = DANGEROUS_CAPABILITIES.map((capability) => ({
     capability,

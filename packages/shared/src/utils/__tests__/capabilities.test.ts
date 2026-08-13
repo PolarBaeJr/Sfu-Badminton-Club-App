@@ -494,8 +494,21 @@ describe('ROLE_DEFAULTS', () => {
       }
       // ...and the resolver agrees, which is the assertion that matters: an
       // unadjusted role must survive its own invariant intact.
-      const resolved = resolvePermissions(role, [], []);
+      //
+      // RESOLVED AT NO LEVEL, ON PURPOSE. This is a claim about the ROLE — that
+      // its own capabilities are self-supporting and none of them is pruned —
+      // and a floor underneath would supply the eight section pages and make it
+      // pass for a role that carried none of its own. `null` is the only reading
+      // that still tests the list rather than the baseline.
+      const resolved = resolvePermissions(null, role, [], []);
       expect(RESTRICTED(resolved), role).toEqual([...list].sort());
+
+      // ...and at a real level it is the floor UNDER the role, never instead of
+      // it: the club owner's "all roles should have the baseline".
+      const asExec = resolvePermissions('exec', role, [], []);
+      expect(RESTRICTED(asExec), role).toEqual(
+        [...new Set<Capability>([...EXEC_BASELINE, ...list])].sort(),
+      );
     }
   });
 
@@ -784,27 +797,46 @@ const RESTRICTED = (permissions: ReturnType<typeof resolvePermissions>) => {
   return [...permissions.capabilities].sort();
 };
 
+// EVERY CASE BELOW RUNS AT THE `exec` LEVEL, and that is new. resolvePermissions
+// took no level until the club owner ruled that "baseline is the baseline,
+// unless i manually remove it all roles should have the baseline" — the level's
+// baseline is a FLOOR under every composition. So the resolver's answers now
+// carry that floor, and these expectations carry it too rather than being run at
+// a level with no floor in order to keep the old numbers. Run at `null` they
+// would all still pass, unchanged, and would be testing a state no console user
+// is ever in.
 describe('resolvePermissions', () => {
   it('treats an absent role as unrestricted, DELTAS AND ALL', () => {
     // The decisive case: if an absent role meant an empty base, adding the
     // first grant to an unrestricted exec would flip their base from the whole
     // exec baseline to zero — a grant that removes fifty-odd capabilities, one
     // click, silent.
-    expect(resolvePermissions(null, [], [])).toEqual(UNRESTRICTED);
-    expect(resolvePermissions(null, ['audit.page'], [])).toEqual(UNRESTRICTED);
+    expect(resolvePermissions('exec', null, [], [])).toEqual(UNRESTRICTED);
+    expect(resolvePermissions('exec', null, ['audit.page'], [])).toEqual(UNRESTRICTED);
     // And a revoke stored while the role is NULL stays dormant rather than
     // biting — it must not remove anything now, nor wake up later without
     // somebody choosing a role.
-    expect(resolvePermissions(null, [], ['players.page'])).toEqual(UNRESTRICTED);
-    expect(resolvePermissions('', [], [])).toEqual(UNRESTRICTED);
+    expect(resolvePermissions('exec', null, [], ['players.page'])).toEqual(UNRESTRICTED);
+    expect(resolvePermissions('exec', '', [], [])).toEqual(UNRESTRICTED);
   });
+
+  /** The exec floor, sorted — under everything in this block. */
+  const FLOOR = [...EXEC_BASELINE].sort();
+  const withFloor = (...extra: string[]) => [...new Set([...FLOOR, ...extra])].sort();
+  const less = (drop: string[], ...extra: string[]) =>
+    withFloor(...extra).filter((capability) => !drop.includes(capability));
 
   // audit.page survives a lone grant with no role behind it because a page
   // requires only ITSELF — that is what makes it the thing you hand somebody
   // first, and the reason every stock grant in this suite is one.
+  //
+  // "NO DEFAULTS" STILL MEANS NO DEFAULTS. The floor is not a default of the
+  // role; it is what the LEVEL carries. So an unrecognised role contributing
+  // nothing is visible as the answer being the floor plus the delta and not one
+  // capability more.
   it('gives an unrecognised role no defaults, but still applies the deltas', () => {
-    const resolved = resolvePermissions('treasurer', ['audit.page'], []);
-    expect(RESTRICTED(resolved)).toEqual(['audit.page']);
+    const resolved = resolvePermissions('exec', 'treasurer', ['audit.page'], []);
+    expect(RESTRICTED(resolved)).toEqual(withFloor('audit.page'));
   });
 
   // Every case below uses `finance`, whose defaults are the Finances page and
@@ -812,21 +844,57 @@ describe('resolvePermissions', () => {
   // as the delta under test. Deliberately not an empty-base role: a resolver
   // test against a role that gives nothing would pass identically if the base
   // were dropped on the floor.
-  const FINANCE_BASE = ['fees.expenses.add.write', 'fees.expenses.read', 'fees.page'];
+  //
+  // TWO OF ITS THREE ARE IN THE FLOOR TOO now (`fees.page`, `fees.expenses.read`),
+  // so what the ROLE still contributes by itself is the one write. Derived
+  // rather than written out, so this stays true if either list is edited.
+  const FINANCE_BASE = withFloor('fees.expenses.add.write');
+
+  it('puts the level baseline under the role, which is the floor', () => {
+    const resolved = resolvePermissions('exec', 'finance', [], []);
+    expect(RESTRICTED(resolved)).toEqual(FINANCE_BASE);
+    // The role REPLACED the base before this change, so a treasurer held three
+    // capabilities and could open nothing else at all. They hold thirteen now.
+    expect(RESTRICTED(resolved)).toHaveLength(13);
+    for (const capability of EXEC_BASELINE) {
+      expect(RESTRICTED(resolved), capability).toContain(capability);
+    }
+  });
 
   it('lets a revoke beat a grant of the same capability', () => {
-    const resolved = resolvePermissions('finance', ['audit.page'], ['audit.page']);
+    const resolved = resolvePermissions('exec', 'finance', ['audit.page'], ['audit.page']);
     expect(RESTRICTED(resolved)).toEqual(FINANCE_BASE);
   });
 
   it('lets a revoke reach into the role’s own defaults', () => {
-    const resolved = resolvePermissions('finance', [], ['fees.expenses.add.write']);
-    expect(RESTRICTED(resolved)).toEqual(['fees.expenses.read', 'fees.page']);
+    const resolved = resolvePermissions('exec', 'finance', [], ['fees.expenses.add.write']);
+    expect(RESTRICTED(resolved)).toEqual(less(['fees.expenses.add.write']));
+  });
+
+  // THE SENTENCE THE WHOLE ORDERING RESTS ON: "unless i manually remove it". A
+  // floor that could not be revoked would not be a floor, it would be a grant
+  // nobody could take back — and every narrowing an admin had already made would
+  // be silently undone by this change, with the revoke still shown as saved.
+  it('lets a revoke reach into the FLOOR itself', () => {
+    const resolved = resolvePermissions('exec', 'finance', [], ['players.read']);
+    expect(RESTRICTED(resolved)).not.toContain('players.read');
+    // The page it hangs off survives — a revoke takes what it names.
+    expect(RESTRICTED(resolved)).toContain('players.page');
+  });
+
+  // AND THE WHOLE FLOOR AT ONCE, which is the only way below it. A person whose
+  // every baseline read has been revoked holds nothing at all, exactly as the
+  // admin who did that would expect.
+  it('lets an admin revoke somebody below the floor entirely', () => {
+    const resolved = resolvePermissions('exec', 'custom', [], [...EXEC_BASELINE]);
+    expect(RESTRICTED(resolved)).toEqual([]);
   });
 
   it('drops an element the vocabulary no longer has, without throwing', () => {
-    const resolved = resolvePermissions('finance', ['players.write', 'audit.page'], ['nonsense']);
-    expect(RESTRICTED(resolved)).toEqual([...FINANCE_BASE, 'audit.page'].sort());
+    const resolved = resolvePermissions(
+      'exec', 'finance', ['players.write', 'audit.page'], ['nonsense'],
+    );
+    expect(RESTRICTED(resolved)).toEqual(withFloor('fees.expenses.add.write', 'audit.page'));
   });
 
   // WRITE WITHOUT READ IS THE POINT, and this is the test that says so. The old
@@ -834,65 +902,159 @@ describe('resolvePermissions', () => {
   // rule is ".page would be required to have .write, but .read isnt required",
   // so somebody handed the Finances page and the ability to file an expense
   // keeps it while holding no view of the ledger at all.
+  //
+  // THE READ BEING REVOKED IS A FLOOR READ NOW, which makes this a second
+  // witness for the ordering above: it can only disappear because the merge
+  // happens before the subtraction.
   it('keeps a write with no read of its own', () => {
     const resolved = resolvePermissions(
+      'exec',
       'finance',
       ['fees.reinstatements.write'],
       ['fees.expenses.read'],
     );
-    expect(RESTRICTED(resolved)).toEqual([
-      'fees.expenses.add.write',
-      'fees.page',
-      'fees.reinstatements.write',
-    ]);
+    expect(RESTRICTED(resolved)).toEqual(
+      less(['fees.expenses.read'], 'fees.expenses.add.write', 'fees.reinstatements.write'),
+    );
+    expect(RESTRICTED(resolved)).not.toContain('fees.expenses.read');
   });
 
   // Revoking a read takes that read and NOTHING ELSE. This is the exact case
   // the old `write ⊆ read` prune existed for, inverted deliberately.
   it('leaves the write behind when the matching read is revoked', () => {
     const resolved = resolvePermissions(
+      'exec',
       'finance',
       ['fees.otherincome.read', 'fees.otherincome.add.write'],
       ['fees.otherincome.read'],
     );
-    expect(RESTRICTED(resolved)).toEqual([...FINANCE_BASE, 'fees.otherincome.add.write'].sort());
+    expect(RESTRICTED(resolved)).toEqual(
+      withFloor('fees.expenses.add.write', 'fees.otherincome.add.write'),
+    );
   });
 
-  // THE ONE INVARIANT, in the direction it exists for. A grant in an area whose
-  // page the person does not hold is pruned — a control on a screen they cannot
-  // reach is not access, it is a promise the route gate would refuse.
-  it('prunes a granted capability whose area page is not held', () => {
-    const resolved = resolvePermissions('finance', ['players.approve.write'], []);
-    expect(RESTRICTED(resolved)).toEqual(FINANCE_BASE);
+  // -------------------------------------------------------------------------
+  // THE PAGE INVARIANT, AND WHAT THE FLOOR DID TO IT
+  // -------------------------------------------------------------------------
+  // THIS USED TO BE ONE TEST — `prunes a granted capability whose area page is
+  // not held` — and its expectation has genuinely inverted for an exec. The
+  // floor carries all eight section pages, so THERE IS NO AREA AN EXEC HOLDS A
+  // CAPABILITY IN AND CANNOT OPEN, and nothing granted to one is pruned any
+  // more. That is not the invariant being defeated: "everyone can read things"
+  // is exactly the statement that every section page is held, so the condition
+  // this rule existed to catch can no longer arise at that level.
+  //
+  // Written as two tests rather than one relaxed one, because the rule still
+  // fires in both of the places it can: at the TRAINER level, whose floor is the
+  // roster and nothing else, and through a REVOKE at any level.
+  it('no longer prunes an exec’s grant, because the floor opens every section', () => {
+    const resolved = resolvePermissions('exec', 'finance', ['players.approve.write'], []);
+    expect(RESTRICTED(resolved)).toEqual(withFloor(
+      'fees.expenses.add.write',
+      'players.approve.write',
+    ));
+    // The page that saves it is the FLOOR's, not one the grant or the role
+    // carried — which is the whole reason the answer moved.
+    expect(ROLE_DEFAULTS.finance).not.toContain('players.page');
+    expect(EXEC_BASELINE).toContain('players.page');
+  });
+
+  it('still prunes a TRAINER’s grant in an area their floor does not open', () => {
+    const resolved = resolvePermissions('trainer', 'custom', ['sessions.attendance.write'], []);
+    expect(RESTRICTED(resolved)).toEqual([...TRAINER_BASELINE].sort());
     // ...and it is the PAGE that was missing, not the capability: hand that over
     // and the write comes with it.
-    const withPage = resolvePermissions('finance', ['players.page', 'players.approve.write'], []);
+    const withPage = resolvePermissions(
+      'trainer', 'custom', ['sessions.page', 'sessions.attendance.write'], [],
+    );
     expect(RESTRICTED(withPage)).toEqual(
-      [...FINANCE_BASE, 'players.page', 'players.approve.write'].sort(),
+      [...TRAINER_BASELINE, 'sessions.page', 'sessions.attendance.write'].sort(),
     );
   });
 
   // REVOKING THE PAGE CLOSES THE WHOLE AREA, reads and writes alike, including
-  // the ones the ROLE gave and neither array names. This is why the invariant
-  // runs after subtraction rather than before: pruning first would leave the
-  // ledger and its controls standing behind a door that had just been shut.
-  it('takes every capability in an area with that area’s page', () => {
+  // the ones the FLOOR and the ROLE gave and neither array names. This is why
+  // the invariant runs after subtraction rather than before: pruning first would
+  // leave the ledger and its controls standing behind a door that had just been
+  // shut.
+  //
+  // IT IS ALSO THE PROOF THAT THE FLOOR IS MERGED BEFORE THE REVOKES, and that
+  // is now the most load-bearing thing this test does. `fees.page` is in the
+  // floor. Had the baseline been unioned in AFTERWARDS — inside
+  // effectiveCapabilities, which is where the level already enters and where it
+  // would have cost no call-site churn at all — the revoke would have run first,
+  // the union would have put `fees.page` straight back, and a deliberate closure
+  // of the section would have done nothing whatever.
+  it('takes every capability in an area with that area’s page, floor included', () => {
     const resolved = resolvePermissions(
+      'exec',
       'finance',
       ['fees.clubfees.read', 'fees.clubfees.waive.write'],
       ['fees.page'],
     );
-    expect(RESTRICTED(resolved)).toEqual([]);
+    // NOT empty any more: closing /fees closes /fees, and leaves the seven other
+    // sections the floor opens exactly as they were.
+    expect(RESTRICTED(resolved).filter((c) => c.startsWith('fees.'))).toEqual([]);
+    expect(RESTRICTED(resolved)).toEqual(less(['fees.page', 'fees.expenses.read']));
   });
 
   it('is pure — the same inputs give the same answer and nothing is mutated', () => {
     const grants = ['audit.page'];
     const revokes: string[] = [];
-    const first = RESTRICTED(resolvePermissions('finance', grants, revokes));
-    const second = RESTRICTED(resolvePermissions('finance', grants, revokes));
+    const first = RESTRICTED(resolvePermissions('exec', 'finance', grants, revokes));
+    const second = RESTRICTED(resolvePermissions('exec', 'finance', grants, revokes));
     expect(first).toEqual(second);
     expect(grants).toEqual(['audit.page']);
     expect(revokes).toEqual([]);
+  });
+
+  // -------------------------------------------------------------------------
+  // THE FLOOR IS THE LEVEL'S, NOT THE EXEC'S
+  // -------------------------------------------------------------------------
+  // The mistake this guards against is `EXEC_BASELINE` hard-coded where
+  // `BASELINES[level]` belongs. It would pass every exec case above, and it
+  // would hand a varsity trainer the club's books, its ladder and its whole
+  // tournament calendar the moment anybody composed them.
+  it('floors a trainer on the TRAINER baseline, never the exec one', () => {
+    const resolved = resolvePermissions('trainer', 'custom', [], []);
+    expect(RESTRICTED(resolved)).toEqual([...TRAINER_BASELINE].sort());
+    for (const capability of EXEC_BASELINE) {
+      if ((TRAINER_BASELINE as readonly Capability[]).includes(capability)) continue;
+      expect(RESTRICTED(resolved), capability).not.toContain(capability);
+    }
+  });
+
+  // THE 00090 REPAIR, AND IT IS A REAL GAIN RATHER THAN A SIDE-EFFECT.
+  // Composable trainers arrived so a varsity trainer could run the club's
+  // calendar without being made an exec — but a role REPLACED the base, so doing
+  // it took away the varsity note, which is the one thing their level exists
+  // for. A floor under the role hands it back, and the trainer who runs
+  // tournaments is still a trainer.
+  it('leaves a composed trainer holding the varsity note their role does not carry', () => {
+    const resolved = resolvePermissions('trainer', 'tournaments', [], []);
+    expect(RESTRICTED(resolved)).toContain('players.editor.varsitynotes.write');
+    expect(ROLE_DEFAULTS.tournaments).not.toContain('players.editor.varsitynotes.write');
+  });
+
+  // NOBODY WITHOUT A LEVEL GETS A FLOOR, which matters because a row can still
+  // carry a composition after the console has been taken away from them.
+  it('gives a person with no level no floor at all', () => {
+    const resolved = resolvePermissions(null, 'finance', [], []);
+    expect(RESTRICTED(resolved)).toEqual([...ROLE_DEFAULTS.finance].sort());
+    expect(effectiveCapabilities(null, resolved).size).toBe(0);
+  });
+
+  // AN ADMIN GETS NO FLOOR EITHER, and the reason is not symmetry. BASELINES
+  // .admin is ALL_CAPABILITIES — a level short-circuit written as a set, not
+  // anything anybody was granted — so merging it would make the resolver answer
+  // 119 for a composition that cannot exist, since both write paths refuse an
+  // admin target outright. permits() never reads it, so the only thing such a
+  // value could do is mislead an editor preview.
+  it('gives an ADMIN no floor, because their baseline is a short-circuit', () => {
+    const resolved = resolvePermissions('admin', 'finance', [], []);
+    expect(RESTRICTED(resolved)).toEqual([...ROLE_DEFAULTS.finance].sort());
+    // ...and they hold everything regardless, by level.
+    expect(permits('admin', resolved, 'permissions.write')).toBe(true);
   });
 });
 
@@ -902,14 +1064,16 @@ describe('permissionsOf', () => {
   // must read as "not narrowed", because the alternative locks every exec out
   // of the console the moment the app ships.
   it('reads a row with none of the columns as unrestricted', () => {
-    expect(permissionsOf({})).toEqual(UNRESTRICTED);
-    expect(permissionsOf(null)).toEqual(UNRESTRICTED);
-    expect(permissionsOf(undefined)).toEqual(UNRESTRICTED);
+    expect(permissionsOf('exec', {})).toEqual(UNRESTRICTED);
+    expect(permissionsOf('exec', null)).toEqual(UNRESTRICTED);
+    expect(permissionsOf('exec', undefined)).toEqual(UNRESTRICTED);
   });
 
   it('reads a null role as unrestricted', () => {
-    expect(permissionsOf({ permission_role: null, permission_grants: [], permission_revokes: [] }))
-      .toEqual(UNRESTRICTED);
+    expect(permissionsOf(
+      'exec',
+      { permission_role: null, permission_grants: [], permission_revokes: [] },
+    )).toEqual(UNRESTRICTED);
   });
 
   // The columns are NOT NULL, so a role with a missing array can only come from
@@ -917,18 +1081,34 @@ describe('permissionsOf', () => {
   // would silently discard revokes, and a discarded revoke can leave somebody
   // holding permissions.write.
   it('THROWS on a role with a missing delta column', () => {
-    expect(() => permissionsOf({ permission_role: 'finance' })).toThrow(/narrow the SELECT less/);
-    expect(() => permissionsOf({ permission_role: 'finance', permission_grants: [] }))
+    expect(() => permissionsOf('exec', { permission_role: 'finance' }))
+      .toThrow(/narrow the SELECT less/);
+    expect(() => permissionsOf('exec', { permission_role: 'finance', permission_grants: [] }))
       .toThrow(/narrow the SELECT less/);
   });
 
-  it('resolves a complete row', () => {
-    const resolved = permissionsOf({
+  // THE LEVEL IS AN ARGUMENT, AND THE FLOOR COMES WITH IT. The same row read at
+  // two levels is two different answers, which is exactly what a level-dependent
+  // floor means and exactly why the parameter is required rather than derived
+  // from the row: the sidebar resolves a bare TRIPLE that carries no level
+  // markers at all, and silently flooring it on nothing would have made the nav
+  // hide sections the server would happily serve.
+  it('resolves a complete row, with the floor of the level it was asked about', () => {
+    const row = {
       permission_role: 'finance',
       permission_grants: ['audit.page'],
       permission_revokes: [],
-    });
-    expect(RESTRICTED(resolved)).toEqual(
+    };
+    expect(RESTRICTED(permissionsOf('exec', row))).toEqual(
+      [...new Set([...EXEC_BASELINE, 'audit.page', 'fees.expenses.add.write'])].sort(),
+    );
+    // The SAME row, read as a trainer: the trainer floor, and no exec reads.
+    expect(RESTRICTED(permissionsOf('trainer', row))).toEqual(
+      [...new Set([...TRAINER_BASELINE, 'audit.page', 'fees.page', 'fees.expenses.read',
+        'fees.expenses.add.write'])].sort(),
+    );
+    // ...and with no level, no floor: the role and the grant, and nothing else.
+    expect(RESTRICTED(permissionsOf(null, row))).toEqual(
       ['audit.page', 'fees.expenses.add.write', 'fees.expenses.read', 'fees.page'],
     );
   });
@@ -964,6 +1144,12 @@ describe('permissionTripleOf', () => {
   // the client, and a discarded revoke can leave somebody holding
   // permissions.write. A `?? []` here would have been the quiet way to
   // reintroduce exactly the bug the resolver throws to prevent.
+  // STILL ONE ARGUMENT, AND DELIBERATELY SO. This function serialises rather
+  // than resolves: what crosses the wire is the three columns, unresolved, and
+  // the CLIENT applies the floor with the level the layout sent alongside. Its
+  // internal permissionsOf() call is run for the throw and the result discarded,
+  // so it passes `null` — a level there would compute a set nobody reads, and
+  // the WRONG level there would be a bug that never surfaced.
   it('THROWS rather than serialise a role with a missing delta column', () => {
     expect(() => permissionTripleOf({ permission_role: 'finance' }))
       .toThrow(/narrow the SELECT less/);
@@ -1008,28 +1194,53 @@ describe('varsity notes', () => {
   // ...and it comes back with the job that owns it. This is the whole mechanism
   // in three lines: the write is not gone, it is assigned.
   it('is held again by an exec given the role that owns the roster', () => {
-    const internal = resolvePermissions('internal', [], []);
+    const internal = resolvePermissions('exec', 'internal', [], []);
     expect(permits('exec', internal, VARSITY)).toBe(true);
   });
 
-  it('is NOT held by an exec narrowed to finance', () => {
-    const finance = resolvePermissions('finance', [], []);
+  // THE ROSTER PAGE NO LONGER GOES WITH IT, AND THAT IS THE FLOOR. Assigning
+  // Finance used to REPLACE the base, so a treasurer lost the roster entirely
+  // and could not find the person they were not allowed to write about. The
+  // owner's ruling — "baseline is the baseline, unless i manually remove it all
+  // roles should have the baseline" — means the reads stay and only the WRITE is
+  // absent, which is a far more sensible thing for a treasurer to be.
+  it('is NOT held by an exec narrowed to finance, though the roster READS remain', () => {
+    const finance = resolvePermissions('exec', 'finance', [], []);
     expect(permits('exec', finance, VARSITY)).toBe(false);
-    // ...and the roster page goes with it, so they cannot even find the person.
-    expect(permits('exec', finance, 'players.page')).toBe(false);
+    expect(permits('exec', finance, 'players.page')).toBe(true);
+    expect(permits('exec', finance, 'players.read')).toBe(true);
+    // ...and it goes for good if somebody revokes the page, which is the only
+    // way below the floor.
+    const closed = resolvePermissions('exec', 'finance', [], ['players.page']);
+    expect(permits('exec', closed, 'players.page')).toBe(false);
+    expect(permits('exec', closed, 'players.read')).toBe(false);
   });
 
   // The page has to come with it. Granting the note alone would be pruned —
   // there is no roster area for that person to hold a capability in — which is
   // the invariant behaving exactly as intended and worth showing here, because
   // this is the capability people will reach for first.
-  it('is held again the moment it and the roster page are granted', () => {
-    expect(permits('exec', resolvePermissions('finance', [VARSITY], []), VARSITY)).toBe(false);
-    const granted = resolvePermissions('finance', ['players.page', VARSITY], []);
+  // THE PRUNE MOVED TO THE TRAINER LEVEL, and this case is where it shows. An
+  // exec's floor carries `players.page`, so granting the note alone is enough
+  // for them now — there is no area an exec holds a capability in and cannot
+  // open. A TRAINER whose floor is the roster and nothing else still meets the
+  // original rule everywhere except there, so the pruning half is asserted at
+  // the level where it is still reachable.
+  it('needs no separate page grant for an exec, because the floor carries it', () => {
+    const granted = resolvePermissions('exec', 'finance', [VARSITY], []);
     expect(permits('exec', granted, VARSITY)).toBe(true);
   });
 
+  it('is still pruned for a TRAINER granted it in an area they cannot open', () => {
+    // A trainer's floor is the roster, so the note itself is never the pruned
+    // case — a capability in some OTHER area is.
+    const orphan = resolvePermissions('trainer', 'custom', ['fees.expenses.read'], []);
+    expect(permits('trainer', orphan, 'fees.expenses.read')).toBe(false);
+    const withPage = resolvePermissions('trainer', 'custom', ['fees.page', 'fees.expenses.read'], []);
+    expect(permits('trainer', withPage, 'fees.expenses.read')).toBe(true);
+  });
+
   it('is held by an admin by LEVEL, with nothing stored', () => {
-    expect(permits('admin', resolvePermissions('finance', [], []), VARSITY)).toBe(true);
+    expect(permits('admin', resolvePermissions('admin', 'finance', [], []), VARSITY)).toBe(true);
   });
 });

@@ -77,7 +77,7 @@ vi.mock('../actions/_shared', async () => {
   return {
     requireCapability: async (capability: Capability) => {
       const level = accessLevelFor(store.actor);
-      if (!permits(level, permissionsOf(store.actor), capability)) {
+      if (!permits(level, permissionsOf(level, store.actor), capability)) {
         throw new Error('Admin access required');
       }
       return store.actor;

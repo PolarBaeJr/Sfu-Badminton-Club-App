@@ -183,7 +183,7 @@ export default async function AnnouncementsPage() {
   // `seasons.*` for the same reason (app/seasons/page.tsx, ~line 90).
   const viewer = await requireCapability('announcements.page');
   const level = accessLevelFor(viewer);
-  const permissions = permissionsOf(viewer);
+  const permissions = permissionsOf(accessLevelFor(viewer), viewer);
   const may = (capability: Capability) => permits(level, permissions, capability);
 
   const canCreate = may('announcements.create.write');

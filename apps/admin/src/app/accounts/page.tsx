@@ -66,7 +66,7 @@ import { settingsForSection } from '@/lib/platform-setting-sections';
 export default async function AccountsPage() {
   const viewer = await requireCapability('accounts.page');
   const viewerLevel = accessLevelFor(viewer);
-  const viewerPermissions = permissionsOf(viewer);
+  const viewerPermissions = permissionsOf(accessLevelFor(viewer), viewer);
   const showOfficers = permits(viewerLevel, viewerPermissions, 'permissions.page');
   const showPlatformSettings = permits(viewerLevel, viewerPermissions, 'platform.page');
 

@@ -123,7 +123,7 @@ export function draftOf(person: BatchPerson): Draft {
 export function storedSet(person: BatchPerson): ReadonlySet<Capability> {
   return effectiveCapabilities(
     person.level,
-    resolvePermissions(draftOf(person).role, person.grants, person.revokes),
+    resolvePermissions(person.level, draftOf(person).role, person.grants, person.revokes),
   );
 }
 
@@ -131,7 +131,7 @@ export function storedSet(person: BatchPerson): ReadonlySet<Capability> {
 export function draftSet(person: BatchPerson, draft: Draft): ReadonlySet<Capability> {
   return effectiveCapabilities(
     person.level,
-    resolvePermissions(draft.role, draft.grants, draft.revokes),
+    resolvePermissions(person.level, draft.role, draft.grants, draft.revokes),
   );
 }
 

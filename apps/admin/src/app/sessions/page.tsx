@@ -137,7 +137,7 @@ export default async function SessionsPage({
   // middleware having been reached. Same shape as /fees and /legal.
   const viewer = await requireCapability('sessions.page');
   const level = accessLevelFor(viewer);
-  const permissions = permissionsOf(viewer);
+  const permissions = permissionsOf(accessLevelFor(viewer), viewer);
   const may = (capability: Capability) => permits(level, permissions, capability);
 
   // EVERY CONTROL ON ITS OWN CAPABILITY. Not one `canManage`: the server

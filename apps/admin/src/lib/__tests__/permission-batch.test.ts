@@ -107,25 +107,31 @@ describe('the counts across everybody', () => {
     // A level default narrowed to Finance: everything the baseline gave, gone
     // but for the three Finance keeps.
     alice: draft({ role: 'finance' }),
-    // One capability added on top of a role.
-    ben: draft({ role: 'finance', grants: ['announcements.page'] }),
+    // One capability added on top of a role. THE GRANT HAD TO CHANGE FROM
+    // `announcements.page` TO A WRITE: every section page is in the floor now,
+    // so granting one adds nothing and this row would be queued with zero
+    // changes — a test of the counting that counted nothing.
+    ben: draft({ role: 'finance', grants: ['announcements.create.write'] }),
     // The row changes and the PERSON does not — a level default turned into a
     // hand-picked set of exactly the same capabilities.
     chen: draft({ role: 'custom', grants: BASELINE as Capability[] }),
   };
 
-  // ALICE NOW GAINS SOMETHING, WHICH SHE DID NOT BEFORE, and that inversion is
-  // the narrowing showing up in the arithmetic rather than a fixture drifting.
-  // Narrowing an unrestricted officer to Finance used to be pure subtraction —
-  // the baseline contained the role — so `gaining` was empty by construction.
-  // The baseline is twelve reads now and Finance carries a WRITE the baseline
-  // does not, so assigning a role both takes and gives. Derived from the two
-  // constants rather than hard-coded, so the next edit to either keeps this
-  // honest.
+  // ALICE LOSES NOTHING AT ALL NOW, and the arithmetic has inverted twice in two
+  // changes for two different reasons — which is worth spelling out, because a
+  // number moving twice is what a stale fixture also looks like.
+  //
+  //   Originally: the baseline was the historic 73 and a role REPLACED it, so
+  //   narrowing Alice to Finance took 70 capabilities away and gave nothing.
+  //   Then: the baseline narrowed to twelve reads, so the same edit took ten and
+  //   GAVE her `fees.expenses.add.write` — the first time this test saw a gain.
+  //   Now: the club owner ruled the baseline is a FLOOR under every role, so the
+  //   twelve stay and the edit is the one write, gained, and nothing lost.
+  //
+  // Which is the whole ruling in one assertion: assigning somebody a job adds
+  // the job. It does not quietly take their reads away.
   it('adds up what each edit does to the person', () => {
-    const inFinance = new Set<Capability>(FINANCE);
     const inBaseline = new Set<Capability>(BASELINE);
-    const kept = BASELINE.filter((c) => inFinance.has(c));
     const gained = FINANCE.filter((c) => !inBaseline.has(c));
     expect(gained).toEqual(['fees.expenses.add.write']);
 
@@ -133,11 +139,11 @@ describe('the counts across everybody', () => {
     const [alice, ben] = entries;
     expect(entries).toHaveLength(3);
     expect(alice?.gaining).toEqual(gained);
-    expect(alice?.losing).toHaveLength(BASELINE.length - kept.length);
-    expect(ben).toMatchObject({ gaining: ['announcements.page'], losing: [], changes: 1 });
-    expect(totalChanges(entries)).toBe(
-      BASELINE.length - kept.length + gained.length + 1,
-    );
+    expect(alice?.losing).toEqual([]);
+    expect(ben).toMatchObject({
+      gaining: ['announcements.create.write'], losing: [], changes: 1,
+    });
+    expect(totalChanges(entries)).toBe(gained.length + 1);
   });
 
   // A person can be queued and change nothing about themselves. The bar has to
@@ -285,8 +291,17 @@ describe('refusing an edit before anything is written', () => {
   // from" select offers all four named roles regardless — and a role REPLACES
   // the base, so its defaults arrive as neither a grant nor a revoke. Only the
   // test on the RESULT sees them.
+  // THE ACTOR'S SET HAD TO GROW BY THE FLOOR, because the TARGET's now does. A
+  // treasurer holding literally the three Finance capabilities cannot edit any
+  // officer at all once every officer stands on twelve reads — the refusal would
+  // fire on the floor, before the roles were ever compared, and this test would
+  // pass while testing nothing about a role's defaults. Given the floor, it
+  // tests what it says: the Tournaments job reaches past the Finance job.
   it('refuses a role whose defaults reach past what the actor holds', () => {
-    const actor = { id: 'treasurer', held: new Set<Capability>(FINANCE) };
+    const actor = {
+      id: 'treasurer',
+      held: new Set<Capability>([...EXEC_BASELINE, ...FINANCE]),
+    };
     const person = exec({ role: 'finance', grants: [], revokes: [] });
     expect(localRefusal(person, draft({ role: 'tournaments' }), actor)).toMatch(
       /would give them .*which you do not hold/,

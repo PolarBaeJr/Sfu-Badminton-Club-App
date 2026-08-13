@@ -91,7 +91,7 @@ export default async function TournamentsPage({
   // them.
   const viewer = await requireCapability('tournaments.page');
   const level = accessLevelFor(viewer);
-  const permissions = permissionsOf(viewer);
+  const permissions = permissionsOf(accessLevelFor(viewer), viewer);
   const may = (capability: Capability) => permits(level, permissions, capability);
 
   // ONE CAPABILITY PER CONTROL, and one per fetch below. None of these is a

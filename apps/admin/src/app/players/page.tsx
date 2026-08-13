@@ -59,7 +59,7 @@ export default async function PlayersPage({
   // it at all.
   const viewer = await getAuthenticatedConsoleUser();
   const level = accessLevelFor(viewer);
-  const permissions = permissionsOf(viewer);
+  const permissions = permissionsOf(accessLevelFor(viewer), viewer);
   const isAdmin = level === 'admin';
   const can = (capability: Capability) => permits(level, permissions, capability);
   // MAY THEY SEE THE ROSTER? Its own capability, separate from the page key that

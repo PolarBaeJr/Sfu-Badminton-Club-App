@@ -12,6 +12,7 @@ import {
   EDITOR_OFFERABLE,
   EXEC_ASSIGNABLE,
   EXEC_BASELINE,
+  TRAINER_BASELINE,
   PERMISSION_ROLES,
   PERMISSION_ROLE_LABELS,
   ROLE_DEFAULTS,
@@ -341,10 +342,22 @@ describe('the resolver is untouched by this feature', () => {
     'resolves a copied %s to exactly the set that was copied',
     (role) => {
       const copied = [...ROLE_DEFAULTS[role]].sort();
-      const resolved = resolvePermissions('custom', copied, []);
+      // AT A REAL LEVEL, WITH THE FLOOR, because that is what a holder gets and
+      // the claim being made is about holders. The equivalence is unaffected by
+      // the floor — it lands identically on both sides — and asserting it at
+      // `null` to keep the old literal would have tested a person who cannot
+      // sign in.
+      const resolved = resolvePermissions('exec', 'custom', copied, []);
       expect(resolved.kind).toBe('restricted');
       if (resolved.kind !== 'restricted') return;
-      expect([...resolved.capabilities].sort()).toEqual(copied);
+      expect([...resolved.capabilities].sort()).toEqual(
+        [...new Set<Capability>([...EXEC_BASELINE, ...copied])].sort(),
+      );
+      // ...and it is the same set the ROLE itself resolves to, which is the
+      // equivalence 00104's data conversion actually rests on.
+      const asRole = resolvePermissions('exec', role, [], []);
+      if (asRole.kind !== 'restricted') return;
+      expect([...resolved.capabilities].sort()).toEqual([...asRole.capabilities].sort());
     },
   );
 
@@ -358,8 +371,13 @@ describe('the resolver is untouched by this feature', () => {
       const extra = ['legal.page', 'legal.reacceptance.write'];
       const revokes = [...ROLE_DEFAULTS[role]].slice(0, 1);
 
-      const asRole = resolvePermissions(role, extra, revokes);
+      // BOTH SIDES AT THE SAME LEVEL, so the floor lands on both and the
+      // equivalence is tested rather than the floor. Two different levels here
+      // would make this pass or fail for a reason that has nothing to do with
+      // the conversion.
+      const asRole = resolvePermissions('exec', role, extra, revokes);
       const asCopy = resolvePermissions(
+        'exec',
         'custom',
         [...new Set([...ROLE_DEFAULTS[role], ...extra])].sort(),
         revokes,
@@ -374,11 +392,23 @@ describe('the resolver is untouched by this feature', () => {
 
   // The widened ceiling did not teach the resolver a new rule either: a money
   // read still needs its area page, exactly like everything else.
+  //
+  // ASSERTED AT THE TRAINER LEVEL NOW, because that is where the rule is still
+  // reachable. An exec's floor carries `fees.page`, so this grant is no longer
+  // pruned for them — not because the invariant was relaxed, but because the
+  // condition it catches ("holds something in an area they cannot open") cannot
+  // arise for somebody who can open every section. A trainer's floor is the
+  // roster and nothing else, so the rule fires there exactly as it always did.
   it('still prunes a widened capability whose area page is absent', () => {
-    const resolved = resolvePermissions('custom', ['fees.netposition.read'], []);
+    const resolved = resolvePermissions('trainer', 'custom', ['fees.netposition.read'], []);
     expect(resolved.kind).toBe('restricted');
     if (resolved.kind !== 'restricted') return;
-    expect([...resolved.capabilities]).toEqual([]);
+    expect([...resolved.capabilities].sort()).toEqual([...TRAINER_BASELINE].sort());
+
+    // ...and for an exec it survives, on the floor's own `fees.page`.
+    const asExec = resolvePermissions('exec', 'custom', ['fees.netposition.read'], []);
+    if (asExec.kind !== 'restricted') return;
+    expect([...asExec.capabilities]).toContain('fees.netposition.read');
   });
 });
 

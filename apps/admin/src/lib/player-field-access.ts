@@ -230,7 +230,7 @@ export function assertPlayerFieldAccess(
   // list, so the floor is intersected with the supplied payload directly.
   const floorSupplied = suppliedFrom(payloads, PLAYER_FIELD_FLOOR);
   const grantable = fields.filter((f) => !FLOOR.has(f));
-  const grantableSupplied = permits(level, permissionsOf(actor), 'players.privilegedfields.write')
+  const grantableSupplied = permits(level, permissionsOf(level, actor), 'players.privilegedfields.write')
     ? []
     : suppliedFrom(payloads, grantable);
 

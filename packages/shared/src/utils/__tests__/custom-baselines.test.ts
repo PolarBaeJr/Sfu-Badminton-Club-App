@@ -10,6 +10,7 @@ import {
   EDITOR_OFFERABLE,
   EXEC_ASSIGNABLE,
   EXEC_BASELINE,
+  ROLE_DEFAULTS,
   TRAINER_BASELINE,
   UNRESTRICTED,
   type Capability,
@@ -138,8 +139,24 @@ describe('what may go in a baseline', () => {
 
   // The invariant stated as the thing it is FOR: anything this function accepts
   // survives the resolver intact. A baseline is copied into permission_grants
-  // against the empty 'custom' base, so the resolved set must equal the array.
-  it('everything it accepts resolves to exactly itself', () => {
+  // against the empty 'custom' base.
+  //
+  // "EXACTLY ITSELF" BECAME "ITSELF, PLUS THE LEVEL'S FLOOR", and the property
+  // this test exists for is the survival half rather than the equality. The club
+  // owner ruled that "all roles should have the baseline", and a hand-picked
+  // baseline is a role in every sense the editor presents — it sits in the same
+  // "Starts from" select as the four VP jobs — so a floor goes under it too. The
+  // thing that would be a bug is a baseline that saves, assigns, audits and
+  // hands out LESS than it says; that is asserted first and separately below.
+  //
+  // THE PAGE REQUIREMENT IN baselineCapabilityRefusal IS NOT RELAXED TO MATCH,
+  // and that is deliberate rather than an oversight. An exec's floor supplies
+  // every section page, so for them the check is now stricter than it needs to
+  // be — but the same stored baseline can be assigned to a TRAINER, whose floor
+  // is the roster and nothing else, and there the page is genuinely required.
+  // A check that consulted the assignee's level would be a check whose answer
+  // depended on somebody the author has not chosen yet.
+  it('everything it accepts resolves to itself, with the floor underneath', () => {
     const cases: Capability[][] = [
       ['fees.page', 'fees.expenses.read', 'fees.expenses.add.write'],
       ['players.page', 'players.read', 'players.approve.write'],
@@ -148,11 +165,46 @@ describe('what may go in a baseline', () => {
     ];
     for (const capabilities of cases) {
       expect(baselineCapabilityRefusal(capabilities, ALL)).toBeNull();
-      const resolved = resolvePermissions('custom', capabilities, []);
-      expect(resolved.kind).toBe('restricted');
-      const set = resolved.kind === 'restricted' ? resolved.capabilities : new Set();
-      expect([...set].sort()).toEqual([...new Set(capabilities)].sort());
+
+      // NOTHING AUTHORED IS EVER LOST — the half that actually matters, and it
+      // is asserted at every level a baseline can be assigned at.
+      for (const level of ['exec', 'trainer', null] as const) {
+        const resolved = resolvePermissions(level, 'custom', capabilities, []);
+        expect(resolved.kind).toBe('restricted');
+        const set = resolved.kind === 'restricted' ? resolved.capabilities : new Set();
+        for (const capability of capabilities) {
+          expect([...set], `${level}: ${capability}`).toContain(capability);
+        }
+      }
+
+      // ...and the whole answer is the authored set unioned with that level's
+      // floor, and not one capability more.
+      const asExec = resolvePermissions('exec', 'custom', capabilities, []);
+      const execSet = asExec.kind === 'restricted' ? asExec.capabilities : new Set();
+      expect([...execSet].sort()).toEqual(
+        [...new Set<Capability>([...EXEC_BASELINE, ...capabilities])].sort(),
+      );
+
+      // With no level there is no floor, so the original equality still holds
+      // exactly where it was always a statement about the ARRAY.
+      const bare = resolvePermissions(null, 'custom', capabilities, []);
+      const bareSet = bare.kind === 'restricted' ? bare.capabilities : new Set();
+      expect([...bareSet].sort()).toEqual([...new Set(capabilities)].sort());
     }
+  });
+
+  // THE HAND-PICKED PERSON NOW HOLDS TWELVE READS THEY DID NOT BEFORE, because
+  // ROLE_DEFAULTS.custom is [] and a floor under an empty base is the floor.
+  // That is the owner's ruling read literally, and it is the right answer: the
+  // empty base exists so a hand-picked SET is storable, not so that choosing
+  // "Hand-picked" is a way of taking somebody's reads away — which is what it
+  // silently was, and the one option in the editor that quietly did more than
+  // its name.
+  it('gives a hand-picked person the floor, because custom is an empty BASE and not an empty SET', () => {
+    expect(ROLE_DEFAULTS.custom).toEqual([]);
+    const resolved = resolvePermissions('exec', 'custom', [], []);
+    const set = resolved.kind === 'restricted' ? resolved.capabilities : new Set();
+    expect([...set].sort()).toEqual([...EXEC_BASELINE].sort());
   });
 
   // ------------------------------------------------------------------
@@ -218,7 +270,10 @@ describe('what may go in a baseline', () => {
 
     // A trainer composed with it holds exactly the ceiling — a widening,
     // deliberately, and bounded by it. Never more.
-    const composed = effectiveCapabilities('trainer', resolvePermissions('custom', widest, []));
+    const composed = effectiveCapabilities(
+      'trainer',
+      resolvePermissions('trainer', 'custom', widest, []),
+    );
     expect([...composed].sort()).toEqual([...EDITOR_OFFERABLE].sort());
 
     // AND STILL BOUNDED BY SOMETHING NAMED. The point of the old assertion was

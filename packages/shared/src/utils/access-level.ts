@@ -1159,16 +1159,44 @@ export type PermissionsInput = {
 };
 
 /**
- * Turn the stored triple into a set. Pure, LEVEL-AGNOSTIC and exported for
- * tests: it knows nothing about admins, execs or trainers, and the level enters
- * only at permits(), where it chooses which baseline an unrestricted person
- * holds. That is why varsity notes need no special case — one capability, three
- * baseline entries.
+ * Turn the stored triple into a set.
  *
- * Order is load-bearing. Pruning before subtraction would let a revoked page
+ * THE LEVEL IS AN ARGUMENT NOW, AND IT USED TO SAY IN THIS DOCBLOCK THAT IT
+ * NEVER WOULD BE. The club owner's ruling is "baseline is the baseline, unless i
+ * manually remove it all roles should have the baseline" — the level's baseline
+ * is a FLOOR under every composition rather than an alternative to one. A floor
+ * is by definition level-dependent (a trainer must not inherit an exec's reads),
+ * so the level has to reach the one function that builds the set.
+ *
+ * REQUIRED, AND FIRST, rather than optional. Optional would mean a call site
+ * that forgot it resolved somebody NARROWER than every other call site did —
+ * fail-closed, but a middleware that refuses a page the server action would
+ * serve is still a console that appears broken, and it would be invisible in
+ * review. Required makes the compiler enumerate every caller. First, because
+ * permits() and effectiveCapabilities() already take the level first and three
+ * functions with the same argument in three positions is its own hazard.
+ *
+ * ORDER IS THE WHOLE DESIGN, and there are now four steps rather than three:
+ *
+ *   floor  →  role defaults  →  grants  →  REVOKES  →  page invariant
+ *
+ * THE FLOOR GOES IN BEFORE THE REVOKES, and that is the sharp edge of the
+ * owner's sentence: "unless i manually remove it". Unioning the baseline in
+ * afterwards — inside effectiveCapabilities, say, which is where the level
+ * already enters and where it would have cost no call-site churn at all — would
+ * silently RESURRECT every deliberately revoked read. That is the one mechanism
+ * an admin has for narrowing somebody below the floor, it would fail with the
+ * revoke still displayed as saved in the editor, and it is a security regression
+ * rather than a bug. Merged here, a revoke removes the floor's copy like any
+ * other, and `takes every capability in an area with that area's page` in
+ * capabilities.test.ts is the assertion that proves this ordering rather than
+ * the other one.
+ *
+ * Pruning still runs last. Pruning before subtraction would let a revoked page
  * keep the section it was supposed to close.
  */
 export function resolvePermissions(
+  level: AccessLevel | null | undefined,
   role: string | null | undefined,
   grants: readonly string[],
   revokes: readonly string[],
@@ -1185,20 +1213,58 @@ export function resolvePermissions(
   const base = (ROLE_DEFAULTS as Record<string, readonly Capability[]>)[role] ?? [];
 
   const effective = new Set<Capability>();
+
+  // THE FLOOR. `BASELINES[level]`, never EXEC_BASELINE unconditionally: a
+  // varsity trainer composed onto the tournaments job must not inherit an exec's
+  // eight section pages, and hard-coding the exec floor is how that would
+  // happen without anybody noticing, since the exec case is the one everybody
+  // tests.
+  //
+  // ADMIN IS EXCLUDED, and not as a special case for tidiness. BASELINES.admin
+  // is ALL_CAPABILITIES — a LEVEL SHORT-CIRCUIT written as a set, not a floor
+  // anybody was granted. Merging it would make this function answer 119 for a
+  // composition that cannot exist: both write paths refuse an admin target
+  // outright (isAdminActor in setPlayerPermissions and setConsoleAccess), and
+  // effectiveCapabilities short-circuits on the level before consulting any set,
+  // so the only thing such a value could do is mislead an editor preview.
+  if (level === 'exec' || level === 'trainer') {
+    for (const cap of BASELINES[level]) effective.add(cap);
+  }
+
   for (const cap of base) effective.add(cap);
   // Intersecting with the vocabulary as we go: an element naming a capability
   // this build no longer has is dropped, inert rather than a member nothing
   // reads.
   for (const cap of grants) if (isCapability(cap)) effective.add(cap);
-  // REVOKE BEATS GRANT. Disjointness is a database CHECK, but the resolver has
-  // to be total — a row that somehow holds both must have one clear answer.
+  // REVOKE BEATS GRANT, AND REVOKE BEATS THE FLOOR. Disjointness is a database
+  // CHECK, but the resolver has to be total — a row that somehow holds both must
+  // have one clear answer.
   for (const cap of revokes) if (isCapability(cap)) effective.delete(cap);
 
   // THE ONE STRUCTURAL INVARIANT: every capability in an area requires that
   // area's page. Applied AFTER subtraction, and that order is the whole reason
   // it is here rather than in a CHECK — revoking `fees.page` has to take the
-  // ledgers and the ledger controls with it even when they came from the ROLE
-  // and are named nowhere in either array. Closing a section has to close it.
+  // ledgers and the ledger controls with it even when they came from the FLOOR
+  // or the ROLE and are named nowhere in either array. Closing a section has to
+  // close it.
+  //
+  // WHAT IT IS FOR CHANGED WHEN THE FLOOR ARRIVED, and pretending otherwise
+  // would leave a comment that reads true and is not. The exec floor carries all
+  // eight section pages, so for an exec NO GRANT IS PRUNED ANY MORE: there is no
+  // area they hold a capability in and cannot open. That is the owner's ruling
+  // working as intended rather than the invariant being defeated — "everyone can
+  // read things" is precisely the statement that every section page is held.
+  //
+  // TWO JOBS SURVIVE, and both are real:
+  //
+  //   * THE REVOKE CASCADE, which is now the main one. Revoking an area's page
+  //     is how an admin closes a section for somebody who holds it by floor, and
+  //     everything they had in that area goes with it in the same act. Without
+  //     this loop a revoked `fees.page` would leave the ledger standing behind a
+  //     door that had just been shut.
+  //   * THE TRAINER CASE, where it still prunes in the original direction. A
+  //     trainer's floor is the roster and nothing else, so a grant in any other
+  //     area without its page is pruned exactly as it always was.
   //
   // THIS REPLACES `write ⊆ read`, which is GONE and must not come back. Write
   // without read is now a supported state — the club owner asked for people who
@@ -1230,8 +1296,23 @@ export function resolvePermissions(
  * come from a narrowed SELECT — a programming error, not a state. The obvious
  * `?? []` would silently discard revokes, and a discarded revoke can leave
  * somebody holding permissions.write.
+ *
+ * THE LEVEL IS AN ARGUMENT, PASSED THROUGH TO THE FLOOR. It is required, and it
+ * is deliberately NOT derived from the row even though nearly every caller hands
+ * this function a row that carries `role`/`is_exec`/`is_trainer` and would let
+ * accessLevelFor() answer for free. The exception is what decides it: the SIDEBAR
+ * resolves a bare TRIPLE that crossed the server/client boundary through
+ * permissionTripleOf(), and that object has no level markers on it at all. Row
+ * derivation would have silently floored the client on nothing while every
+ * server action floored on twelve — a nav that hides sections the page will
+ * happily serve, which is the exact server/client disagreement this pair of
+ * functions exists to prevent. An explicit parameter makes the sidebar pass the
+ * level it already holds, and makes the compiler say so everywhere else.
  */
-export function permissionsOf(player: PermissionsInput | null | undefined): Permissions {
+export function permissionsOf(
+  level: AccessLevel | null | undefined,
+  player: PermissionsInput | null | undefined,
+): Permissions {
   if (!player) return UNRESTRICTED;
   const hasRole = 'permission_role' in player;
   const hasGrants = 'permission_grants' in player;
@@ -1246,7 +1327,12 @@ export function permissionsOf(player: PermissionsInput | null | undefined): Perm
       'permissionsOf: player row has permission_role but not both delta columns — narrow the SELECT less',
     );
   }
-  return resolvePermissions(role, player.permission_grants ?? [], player.permission_revokes ?? []);
+  return resolvePermissions(
+    level,
+    role,
+    player.permission_grants ?? [],
+    player.permission_revokes ?? [],
+  );
 }
 
 /**
@@ -1281,7 +1367,14 @@ export function permissionTripleOf(
   // missing delta column throws, and it has to throw on this path too:
   // serialising it as an empty array would discard a revoke on the way to the
   // client, which is the one direction this model must never fail in.
-  permissionsOf(player);
+  //
+  // THE LEVEL IS `null` BECAUSE THE RESULT IS DISCARDED. This call is run for
+  // its throw and nothing else — what crosses the wire is the three columns
+  // below, unresolved, and the CLIENT applies the floor when it resolves them
+  // with the level the layout sent alongside. Passing a level here would compute
+  // a set nobody reads, and passing the WRONG one would be a bug that never
+  // showed up because the value is thrown away.
+  permissionsOf(null, player);
   return {
     permission_role: player.permission_role ?? null,
     permission_grants: player.permission_grants ?? [],

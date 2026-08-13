@@ -76,7 +76,7 @@ vi.mock('../actions/_shared', async () => {
   return {
     requireCapability: async (capability: Capability) => {
       const level = accessLevelFor(store.actor);
-      if (!permits(level, permissionsOf(store.actor), capability)) {
+      if (!permits(level, permissionsOf(level, store.actor), capability)) {
         throw new Error('Admin access required');
       }
       return store.actor;
@@ -140,7 +140,7 @@ const audits = () => store.db.audit_logs ?? [];
 const setOfRow = async (id: string) => {
   const { accessLevelFor, effectiveCapabilities, permissionsOf } = await import('../permissions');
   const row = rowFor(id);
-  return effectiveCapabilities(accessLevelFor(row), permissionsOf(row));
+  return effectiveCapabilities(accessLevelFor(row), permissionsOf(accessLevelFor(row), row));
 };
 
 beforeEach(() => {
@@ -200,12 +200,22 @@ describe('setPlayerPermissions — who may edit whom', () => {
     store.actor.permission_role = 'finance';
     store.actor.permission_grants = ['permissions.page', 'permissions.write'];
 
-    // EXEC_B is unrestricted, so they hold the whole exec baseline — far more
-    // than the actor's Expenses tab.
+    // THE TARGET HAD TO BE GIVEN A ROLE, and that is the floor changing what
+    // "holds more than you" means rather than the rule changing. EXEC_B was
+    // UNRESTRICTED here, on the reasoning that an unrestricted exec held the
+    // whole exec baseline and therefore far more than the actor's Expenses tab.
+    // Both of them stand on the same floor now, so it cancels on both sides of
+    // the subset test and an unrestricted peer is no longer out of reach. What
+    // puts somebody out of reach is what they hold ABOVE the floor — which is
+    // where all authority lives after this change, so the case is built there.
+    rowFor(EXEC_B).permission_role = 'tournaments';
+    rowFor(EXEC_B).permission_grants = [];
+    rowFor(EXEC_B).permission_revokes = [];
+
     const res = await setPlayerPermissions(EXEC_B, { role: 'finance', grants: [], revokes: [] });
     expect(res.ok).toBe(false);
     expect(res.ok === false && res.error).toMatch(/they hold .*which you do not/);
-    expect(rowFor(EXEC_B).permission_role).toBeNull();
+    expect(rowFor(EXEC_B).permission_role).toBe('tournaments');
   });
 });
 
@@ -367,7 +377,7 @@ describe('setPlayerPermissions — nobody grants what they do not hold', () => {
     const { accessLevelFor, effectiveCapabilities, permissionsOf } = await import('../permissions');
     const setOf = (id: string) => {
       const row = rowFor(id);
-      return effectiveCapabilities(accessLevelFor(row), permissionsOf(row));
+      return effectiveCapabilities(accessLevelFor(row), permissionsOf(accessLevelFor(row), row));
     };
     const a = effectiveCapabilities('admin', { kind: 'unrestricted' });
     const b = setOf(EXEC_A);
@@ -516,12 +526,18 @@ describe('setPlayerPermissions — the shape of what gets stored', () => {
     expect((before.effective as string[])).not.toContain('fees.expenses.add.write');
     expect(after.permission_role).toBe('finance');
     expect(after.permission_grants).toEqual(['players.page']);
-    expect((after.effective as string[]).sort()).toEqual([
-      'fees.expenses.add.write',
-      'fees.expenses.read',
-      'fees.page',
-      'players.page',
-    ]);
+    // THE FLOOR IS IN THE AUDIT ROW, and it should be: the log records what
+    // somebody actually held, and after this change what they hold includes the
+    // twelve reads their level floors on. Derived from the constant rather than
+    // written out, so the next change to the floor does not need this literal
+    // edited to stay truthful.
+    expect((after.effective as string[]).sort()).toEqual(
+      [...new Set([
+        ...EXEC_BASELINE,
+        'fees.expenses.add.write',
+        'players.page',
+      ])].sort(),
+    );
   });
 });
 
@@ -561,7 +577,17 @@ describe('setPlayerPermissions — a varsity trainer can be composed too', () =>
   // survived composition would give the level ladder a second meaning, which is
   // exactly what this model exists to remove. The editor is where it is made
   // visible; this is where it is kept honest.
-  it('drops the trainer baseline when a role replaces it', async () => {
+  // THE EXPECTATION INVERTED, AND IT IS THE POINT OF THE WHOLE CHANGE. This read
+  // `drops the trainer baseline when a role replaces it` and asserted the
+  // varsity note and the roster page were GONE.
+  //
+  // That was the 00090 defect in one line. Composable trainers exist so a
+  // varsity trainer can run the club's calendar without being made an exec — and
+  // doing it took away the varsity note, which is the only thing their level is
+  // for. A role replaced the base, so the trainer who took a job stopped being a
+  // trainer. The club owner's ruling — "all roles should have the baseline" —
+  // puts the floor under the role and hands it back.
+  it('keeps the trainer baseline UNDER a role, which repairs the 00090 case', async () => {
     const res = await setPlayerPermissions(TRAINER, {
       role: 'tournaments',
       grants: [],
@@ -570,8 +596,28 @@ describe('setPlayerPermissions — a varsity trainer can be composed too', () =>
     expect(res.ok).toBe(true);
 
     const set = await setOfRow(TRAINER);
+    expect(set.has('players.editor.varsitynotes.write')).toBe(true);
+    expect(set.has('players.page')).toBe(true);
+    // ...and the job they were given is there too, which is what they were
+    // composed for.
+    expect(set.has('tournaments.draw.generate.write')).toBe(true);
+    // They are still a TRAINER, not an exec: no section the exec floor opens and
+    // the tournaments role does not.
+    expect(set.has('fees.page')).toBe(false);
+    expect(set.has('legal.page')).toBe(false);
+  });
+
+  // ...AND AN ADMIN CAN STILL TAKE IT AWAY, which is the other half of the
+  // owner's sentence: "unless i manually remove it".
+  it('lets a revoke take the varsity note off a composed trainer', async () => {
+    const res = await setPlayerPermissions(TRAINER, {
+      role: 'tournaments',
+      grants: [],
+      revokes: ['players.editor.varsitynotes.write'],
+    });
+    expect(res.ok).toBe(true);
+    const set = await setOfRow(TRAINER);
     expect(set.has('players.editor.varsitynotes.write')).toBe(false);
-    expect(set.has('players.page')).toBe(false);
   });
 
   // NOTHING CHANGES FOR ANYONE WHO IS NOT DELIBERATELY COMPOSED. Every row in
