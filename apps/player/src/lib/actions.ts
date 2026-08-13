@@ -28,6 +28,7 @@ export {
 
 export {
   updateProfile,
+  getMyCompetitionCategory,
   updateNotificationPreferences,
   completeOnboarding,
   getLegalDocuments,

@@ -91,6 +91,18 @@ export type AnnouncementType = 'info' | 'warning' | 'urgent' | 'event';
 export type AnnouncementStatus = 'draft' | 'published';
 export type AnnouncementAudience = 'all' | 'competitive' | 'recreational' | 'eligible_only';
 
+/**
+ * 00111 — players.competition_category. TWO VALUES NAMING DRAWS, not people,
+ * and `null` (undeclared, which also stores "prefer not to say") is the third
+ * state and the default one.
+ *
+ * Declared HERE rather than beside the rules in utils/competition-category.ts
+ * because it is a column's type and `Player` below needs it — putting it in the
+ * utils module would make the two files import each other. The rules, the
+ * refusal sentences and the reasoning all live there; this is only the shape.
+ */
+export type CompetitionCategory = 'mens' | 'womens';
+
 export interface Player {
   id: string;
   user_id: string | null;
@@ -103,6 +115,16 @@ export interface Player {
   handle: string | null;
   /** 00092 — the club's own membership code, seven characters, assigned once at approval and never reused. Null for a pending signup. Not a student number. */
   member_code: string | null;
+  /**
+   * 00111 — which tournament draw this member competes in, or null for
+   * undeclared (which is also how "prefer not to say" is stored).
+   *
+   * NOT a gender identity or sex field: it is the competition category a
+   * badminton entry form asks for, self-declared and self-edited, and the only
+   * thing that reads it is the tournament entry rule. No screen in either app
+   * displays it except the member's own Settings control. See 00111.
+   */
+  competition_category: CompetitionCategory | null;
   email: string;
   phone: string | null;
   status: PlayerStatus;

@@ -17,9 +17,17 @@ import {
   countDoublesField,
   wouldExceedCapacity,
   planAutoPairs,
+  unpairableNotice,
+  screenExecEntry,
+  screenPair,
+  canPairForEvent,
+  categoryRequiredBy,
+  toCompetitionCategory,
   isOutOfEvent,
   isExpectedFailure,
   ExpectedError,
+  type CompetitionCategory,
+  type TournamentEventType,
 } from '@badminton/shared';
 import { runAction, type ActionResult } from '../action-result';
 import {
@@ -83,6 +91,67 @@ async function loadEntryCapState(
     Sentry.captureException(err);
     throw new Error('Could not check how many events these players have entered. Nothing was added — try again.');
   }
+}
+
+// ============================================================
+// The competition category (00111)
+// ============================================================
+// Which draw a member competes in — 'mens', 'womens', or null for the
+// undeclared, who are everybody on the day this ships. The rules built on it
+// are in @badminton/shared/utils/competition-category and the reasoning is in
+// migration 00111; what lives here is the READ and nothing else.
+//
+// THE CONSOLE NEVER DISPLAYS THE VALUE. It is read inside these actions because
+// the entry rule cannot be applied without it, and what reaches the exec is a
+// sentence about eligibility for an event — never a sentence about a person.
+// If a screen ever starts rendering this map, that is the change to argue for
+// on its own, not a detail of an entry check.
+
+/**
+ * The declared category of each of these players, by id.
+ *
+ * REFUSES RATHER THAN RETURNING NULLS on a failed read, for the reason
+ * loadEntryCapState gives about the cap: a swallowed error here reads as
+ * "nobody has declared anything", which is precisely the state that waves every
+ * entry through. A rule that silently stops applying is worse than no rule.
+ */
+async function loadCompetitionCategories(
+  adminClient: ReturnType<typeof createAdminClient>,
+  playerIds: readonly string[],
+): Promise<Map<string, CompetitionCategory | null>> {
+  const byPlayer = new Map<string, CompetitionCategory | null>();
+  if (playerIds.length === 0) return byPlayer;
+  const { data, error } = await adminClient
+    .from('players')
+    .select('id, competition_category')
+    .in('id', playerIds as string[]);
+  if (error) {
+    Sentry.captureException(error);
+    throw new Error('Could not check who may enter this event. Nothing was added — try again.');
+  }
+  for (const row of data ?? []) {
+    byPlayer.set(row.id as string, toCompetitionCategory((row as { competition_category?: unknown }).competition_category));
+  }
+  return byPlayer;
+}
+
+/**
+ * The exec's way past a category refusal.
+ *
+ * ONE ARGUMENT, NOT A CAPABILITY. Overriding is part of adding: it is available
+ * to exactly the holders of tournaments.draw.participants.add.write who could
+ * add this person to this event anyway, and `added_by` already records who did.
+ * Minting a key for it would cost both permission-vocabulary CHECKs (see 00098)
+ * to express a distinction nobody has asked for — the club's actual case is a
+ * social event where the exec on the desk decides, and that exec is already
+ * trusted with the draw.
+ *
+ * IT IS NOT A DEFAULT AND MUST NEVER BECOME ONE. The dialog sets it after
+ * showing the refusal, so the override is always a second, deliberate press. A
+ * caller that passes it unconditionally has turned the rule off.
+ */
+export interface EntryCategoryOptions {
+  allowCategoryMismatch?: boolean;
 }
 
 /** The name to put in a cap refusal, without letting a failed lookup mask it. */
@@ -199,7 +268,11 @@ const ALREADY_PAIRED_REFUSAL =
 // partnerless entrant impossible. What still cannot happen is a PAIR in a
 // singles event — addPairToEvent keeps its own refusal for that.
 
-export async function addParticipantToEvent(eventId: string, playerId: string) {
+export async function addParticipantToEvent(
+  eventId: string,
+  playerId: string,
+  opts?: EntryCategoryOptions,
+) {
   const admin = await requireCapability('tournaments.draw.participants.add.write');
   const adminClient = createAdminClient();
 
@@ -220,6 +293,24 @@ export async function addParticipantToEvent(eventId: string, playerId: string) {
     if (paired.has(playerId)) {
       throw new ExpectedError(`${await nameOf(adminClient, playerId)} ${ALREADY_PAIRED_REFUSAL}`);
     }
+  }
+
+  // THE COMPETITION CATEGORY (00111). Refuses only a CONTRADICTION — a member
+  // who has declared a category that is not this event's — and waves the
+  // undeclared through, which is the same override the membership gate grants
+  // this path and the only rule that can ship on a roster where nobody has
+  // declared anything yet. Costs one read, and only for a gendered event.
+  //
+  // Overridable, because a club runs social events; not by default, because
+  // then it would not be a rule. See EntryCategoryOptions.
+  if (!opts?.allowCategoryMismatch && categoryRequiredBy(event.event_type as TournamentEventType) !== null) {
+    const categories = await loadCompetitionCategories(adminClient, [playerId]);
+    const screen = screenExecEntry(
+      event.event_type as TournamentEventType,
+      categories.get(playerId) ?? null,
+      await nameOf(adminClient, playerId),
+    );
+    if (!screen.ok) throw new ExpectedError(screen.message);
   }
 
   // Check max participants. For doubles that is counted in DRAW SLOTS — formed
@@ -340,7 +431,11 @@ export interface BatchAddFailure {
  * The per-player action stays: it is still the honest shape for adding one
  * person, and other callers use it.
  */
-export async function addParticipantsToEvent(eventId: string, playerIds: string[]) {
+export async function addParticipantsToEvent(
+  eventId: string,
+  playerIds: string[],
+  opts?: EntryCategoryOptions,
+) {
   const admin = await requireCapability('tournaments.draw.participants.add.write');
   const adminClient = createAdminClient();
 
@@ -390,6 +485,36 @@ export async function addParticipantsToEvent(eventId: string, playerIds: string[
     candidates = candidates.filter((id) => {
       if (paired.has(id)) {
         failures.push({ id, message: `This player ${ALREADY_PAIRED_REFUSAL}` });
+        return false;
+      }
+      return true;
+    });
+  }
+
+  // THE COMPETITION CATEGORY (00111) — PARTITIONED, never thrown. The entry
+  // cap's reasoning applies word for word: this is a PER-PERSON test, each
+  // candidate is independently eligible or not, and one member's declared
+  // category must not cost the next fifty-nine their place. It is also the
+  // reason the refusal cannot be an exception here — this action is not wrapped
+  // in runAction, so a throw reaches production as a redacted banner and the
+  // exec never learns which of the sixty was refused.
+  //
+  // Placed BEFORE the capacity slice on purpose: somebody who was never
+  // eligible must not consume one of the event's remaining places and push an
+  // eligible member into "Event is full".
+  if (!opts?.allowCategoryMismatch && candidates.length > 0
+      && categoryRequiredBy(event.event_type as TournamentEventType) !== null) {
+    const categories = await loadCompetitionCategories(adminClient, candidates);
+    candidates = candidates.filter((id) => {
+      // Keyed by player id, so the caller already knows who this is — hence the
+      // neutral subject, matching the other failure messages here.
+      const screen = screenExecEntry(
+        event.event_type as TournamentEventType,
+        categories.get(id) ?? null,
+        'This player',
+      );
+      if (!screen.ok) {
+        failures.push({ id, message: screen.message });
         return false;
       }
       return true;
@@ -872,11 +997,17 @@ export async function addPairToEvent(
   eventId: string,
   player1Id: string,
   player2Id: string,
+  opts?: EntryCategoryOptions,
 ): Promise<ActionResult<unknown>> {
-  return runAction(() => addPairToEventImpl(eventId, player1Id, player2Id));
+  return runAction(() => addPairToEventImpl(eventId, player1Id, player2Id, opts));
 }
 
-async function addPairToEventImpl(eventId: string, player1Id: string, player2Id: string) {
+async function addPairToEventImpl(
+  eventId: string,
+  player1Id: string,
+  player2Id: string,
+  opts?: EntryCategoryOptions,
+) {
   const admin = await requireCapability('tournaments.draw.pairs.add.write');
   const adminClient = createAdminClient();
 
@@ -910,16 +1041,63 @@ async function addPairToEventImpl(eventId: string, player1Id: string, player2Id:
     .select('player_id, doubles_elo')
     .in('player_id', [player1Id, player2Id]);
 
+  // competition_category rides along on the name read this path already does
+  // (00111), so the pair rule costs no extra round trip. Read, never shown.
   const { data: players } = await adminClient.from('players')
-    .select('id, full_name')
+    .select('id, full_name, competition_category')
     .in('id', [player1Id, player2Id]);
   const nameFor = (id: string) => players?.find((p) => p.id === id)?.full_name ?? 'This player';
+  const categoryFor = (id: string) =>
+    toCompetitionCategory(
+      (players?.find((p) => p.id === id) as { competition_category?: unknown } | undefined)
+        ?.competition_category,
+    );
 
   // Refused here as well as inside the RPC, so the exec gets a sentence with a
   // NAME in it rather than the database's own wording.
   for (const half of [player1Id, player2Id]) {
     if (alreadyPaired.has(half)) {
       throw new ExpectedError(`${nameFor(half)} ${ALREADY_PAIRED_REFUSAL}`);
+    }
+  }
+
+  // THE CATEGORY RULES (00111), IN TWO PARTS, because this action does two
+  // things: it can ENTER people who were not in the event at all, and it forms
+  // a TEAM out of whoever the two halves are.
+  //
+  // 1. THE PER-PERSON RULE, ONLY FOR A HALF WHO IS ENTERING NOW. A half already
+  //    loose in the pool is being PROMOTED, and they were screened on the way
+  //    into it — re-screening them here would refuse a pairing on a rule an exec
+  //    already, deliberately, overrode at entry, and leave that person stranded
+  //    in a pool nobody may pair them out of. Same discount, same reason, as the
+  //    entry cap's `alreadyUnpaired` subtraction below.
+  //
+  // 2. THE MIXED RULE, ALWAYS, because it is about the team and not about
+  //    either person: one 'mens' and one 'womens'. Two people who both declared
+  //    the same category cannot be a mixed pair however eligible each is alone,
+  //    and that stays true whether they were promoted or entered here.
+  //
+  // A HALF WHO DECLARED NOTHING REFUSES NOTHING. They cannot make the pair
+  // provably wrong, and "not provably wrong" is where every console check in
+  // this file draws its line.
+  //
+  // This is also the gate 00102's pairing RPC cannot hold: it runs in one
+  // transaction precisely so no application logic sits between the delete and
+  // the insert, and these refusals need sentences with names in them.
+  if (!opts?.allowCategoryMismatch) {
+    const pairEventType = event.event_type as TournamentEventType;
+    for (const half of [player1Id, player2Id]) {
+      if (alreadyUnpaired.has(half)) continue;
+      const screen = screenExecEntry(pairEventType, categoryFor(half), nameFor(half));
+      if (!screen.ok) throw new ExpectedError(screen.message);
+    }
+    if (categoryRequiredBy(pairEventType) === 'mixed') {
+      const pairScreen = screenPair(
+        pairEventType,
+        { category: categoryFor(player1Id), name: nameFor(player1Id) },
+        { category: categoryFor(player2Id), name: nameFor(player2Id) },
+      );
+      if (!pairScreen.ok) throw new ExpectedError(pairScreen.message);
     }
   }
 
@@ -1220,14 +1398,16 @@ export async function swapPairMember(
   pairId: string,
   outgoingPlayerId: string,
   incomingPlayerId: string,
+  opts?: EntryCategoryOptions,
 ): Promise<ActionResult<{ pairName: string }>> {
-  return runAction(() => swapPairMemberImpl(pairId, outgoingPlayerId, incomingPlayerId));
+  return runAction(() => swapPairMemberImpl(pairId, outgoingPlayerId, incomingPlayerId, opts));
 }
 
 async function swapPairMemberImpl(
   pairId: string,
   outgoingPlayerId: string,
   incomingPlayerId: string,
+  opts?: EntryCategoryOptions,
 ): Promise<{ pairName: string }> {
   // Both, in the order the operation performs them. requireCapability takes one
   // capability, so this is two calls rather than a new kind of gate.
@@ -1235,14 +1415,18 @@ async function swapPairMemberImpl(
   const admin = await requireCapability('tournaments.draw.pairs.add.write');
   const adminClient = createAdminClient();
 
+  // event_type joins the embed for 00111: a swap FORMS A NEW TEAM out of an
+  // existing one, so it is the fifth entry path and the one a category rule is
+  // easiest to forget. Replacing the woman on a mixed pair with a second man
+  // produces an ineligible team out of two additions that were each fine.
   const { data: pair } = await adminClient.from('tournament_pairs')
-    .select('id, event_id, player1_id, player2_id, event:tournament_events(id, status, tournament_id, draw_locked)')
+    .select('id, event_id, player1_id, player2_id, event:tournament_events(id, status, event_type, tournament_id, draw_locked)')
     .eq('id', pairId)
     .maybeSingle();
   if (!pair) throw new ExpectedError('Pair not found');
 
   const event = (Array.isArray(pair.event) ? pair.event[0] : pair.event) as {
-    id: string; status: string; tournament_id: string; draw_locked: boolean;
+    id: string; status: string; event_type: string; tournament_id: string; draw_locked: boolean;
   } | null;
   if (!event) throw new ExpectedError('Pair is not attached to an event');
 
@@ -1267,10 +1451,41 @@ async function swapPairMemberImpl(
   const partnerId = pair.player1_id === outgoingPlayerId ? pair.player2_id : pair.player1_id;
   const [{ data: ratings }, { data: players }] = await Promise.all([
     adminClient.from('ratings').select('player_id, doubles_elo').in('player_id', [partnerId, incomingPlayerId]),
-    adminClient.from('players').select('id, full_name').in('id', [partnerId, incomingPlayerId]),
+    // competition_category rides along on the read the swap already does — the
+    // pair rule below needs both halves of the team AS IT WILL BE.
+    adminClient.from('players').select('id, full_name, competition_category').in('id', [partnerId, incomingPlayerId]),
   ]);
   const nameFor = (id: string) => players?.find((p) => p.id === id)?.full_name ?? '';
   const eloFor = (id: string) => ratings?.find((r) => r.player_id === id)?.doubles_elo ?? 400;
+
+  // THE MIXED RULE, ON THE TEAM THE SWAP WOULD LEAVE BEHIND (00111). Screened
+  // on the REMAINING partner and the INCOMING member, never on the outgoing one
+  // — the question is whether the new team is legal, not whether the old one
+  // was.
+  //
+  // THE MIXED RULE AND NOTHING ELSE. The per-person rule is not re-applied here
+  // for the reason addPairToEvent gives about a promotion: the incoming member
+  // is by construction already in this event's pool, so they met it — or an exec
+  // deliberately overrode it — when they entered. Re-asking would refuse a swap
+  // on a decision that has already been taken, and strand somebody in a pool.
+  //
+  // Same override as the add paths, and the same reason it exists: an exec
+  // fixing a team five minutes before a draw may know something the rule does
+  // not. Nothing is written before this refusal.
+  if (!opts?.allowCategoryMismatch
+      && categoryRequiredBy(event.event_type as TournamentEventType) === 'mixed') {
+    const categoryFor = (id: string) =>
+      toCompetitionCategory(
+        (players?.find((p) => p.id === id) as { competition_category?: unknown } | undefined)
+          ?.competition_category,
+      );
+    const pairScreen = screenPair(
+      event.event_type as TournamentEventType,
+      { category: categoryFor(partnerId), name: nameFor(partnerId) || 'Their partner' },
+      { category: categoryFor(incomingPlayerId), name: nameFor(incomingPlayerId) || 'This player' },
+    );
+    if (!pairScreen.ok) throw new ExpectedError(pairScreen.message);
+  }
 
   // The pair keeps its column ORDER, so the name reads the way the row does.
   const newPlayer1 = pair.player1_id === outgoingPlayerId ? incomingPlayerId : pair.player1_id;
@@ -1652,9 +1867,14 @@ async function autoPairWaitingEntrantsImpl(eventId: string): Promise<AutoPairRes
   if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before making changes.');
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
+  // competition_category joins the embed (00111). Auto pair is the one place
+  // the rule cannot be a refusal: 00102 pairs people AFTER they enter, so by the
+  // time this runs the pool already holds whoever entered, and the honest answer
+  // to "these two may not play together" is to pair somebody else with each of
+  // them — not to refuse the batch and not to form the team anyway.
   const { data: pool, error: poolError } = await adminClient
     .from('tournament_participants')
-    .select('player_id, status, elo_before, player:players!player_id(full_name, ratings(doubles_elo))')
+    .select('player_id, status, elo_before, player:players!player_id(full_name, competition_category, ratings(doubles_elo))')
     .eq('event_id', eventId);
   // A failed read must not read as "nobody is waiting" — that would report a
   // cheerful zero and change nothing, which is the one answer the exec cannot
@@ -1673,14 +1893,18 @@ async function autoPairWaitingEntrantsImpl(eventId: string): Promise<AutoPairRes
   const nameOfPlayer = new Map<string, string>();
   const candidates = waiting.map((row) => {
     const embed = (Array.isArray(row.player) ? row.player[0] : row.player) as
-      { full_name?: string | null; ratings?: unknown } | null;
+      { full_name?: string | null; competition_category?: unknown; ratings?: unknown } | null;
     nameOfPlayer.set(row.player_id, embed?.full_name ?? 'This player');
     const ratings = Array.isArray(embed?.ratings) ? embed?.ratings[0] : embed?.ratings;
     const doublesElo = (ratings as { doubles_elo?: number | null } | null)?.doubles_elo;
     // The same fallback chain the pool's own Elo column shows, and the same 400
     // default unpair_tournament_pair stamps — so the fold sorts on the number
     // the exec is looking at.
-    return { playerId: row.player_id, rating: doublesElo ?? row.elo_before ?? 400 };
+    return {
+      playerId: row.player_id,
+      rating: doublesElo ?? row.elo_before ?? 400,
+      category: toCompetitionCategory(embed?.competition_category),
+    };
   });
 
   const nameOf = (id: string) => nameOfPlayer.get(id) ?? 'This player';
@@ -1700,7 +1924,21 @@ async function autoPairWaitingEntrantsImpl(eventId: string): Promise<AutoPairRes
     };
   }
 
-  const plan = planAutoPairs(candidates);
+  // THE EVENT'S OWN RULE, HANDED TO THE PLANNER AS A PREDICATE (00111).
+  // planAutoPairs knows nothing about competition categories and is not going
+  // to learn: the rule is one import away, in the module that owns it, and
+  // passing it in keeps the fold's arithmetic testable without one.
+  //
+  // Only Mixed Doubles constrains a PAIR — mens_doubles and womens_doubles
+  // constrain each entrant, and those entrants were screened on the way in — so
+  // every other event gets the unrestricted fold and byte-identical behaviour.
+  const eventType = event.event_type as TournamentEventType;
+  const plan = planAutoPairs(
+    candidates,
+    categoryRequiredBy(eventType) === 'mixed'
+      ? { eligible: (a, b) => canPairForEvent(eventType, a.category ?? null, b.category ?? null) }
+      : undefined,
+  );
 
   let pairsMade = 0;
   let refused = 0;
@@ -1737,6 +1975,20 @@ async function autoPairWaitingEntrantsImpl(eventId: string): Promise<AutoPairRes
     reasons.push(
       `${nameOf(plan.leftOver)} is still waiting — an odd number of people cannot be paired up completely.`,
     );
+  }
+
+  // The people a MIXED pool could not seat: the pairing rule allowed them no
+  // partner, not the arithmetic. Empty for every other event.
+  //
+  // NAMED AND LEFT IN THE POOL, which is the only defensible answer of the
+  // three — the same argument unpairedDrawRefusal makes about the draw. Forming
+  // the pair anyway ships a team the event's own rule forbids; dropping them
+  // silently hands the exec a waiting list that looks finished. So the button
+  // does what it can, says who it could not place, and the exec has the two
+  // remedies (find a partner from the other category, or move them to Open).
+  if (plan.unpairable.length > 0) {
+    stillWaiting += plan.unpairable.length;
+    reasons.push(unpairableNotice(plan.unpairable.map(nameOf)));
   }
 
   // The waiver, reported and not enforced — see AutoPairResult.unsignedNotice.

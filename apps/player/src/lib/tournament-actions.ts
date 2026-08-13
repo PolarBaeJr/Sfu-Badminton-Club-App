@@ -14,7 +14,10 @@ import {
   countDoublesField,
   doublesDrawSlots,
   wouldExceedCapacity,
+  screenSelfEntry,
+  toCompetitionCategory,
   ExpectedError,
+  type TournamentEventType,
 } from '@badminton/shared';
 import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
 import {
@@ -128,6 +131,26 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
   }
 
   if (event.status !== 'registration') throw new Error('Registration is closed');
+
+  // THE COMPETITION CATEGORY GATE (00111), and the reason it exists at all.
+  // event_type has said 'womens_singles' since 00001 with nothing enforcing it,
+  // which was survivable while only an exec could put somebody in an event. This
+  // action is the path that made it a real hole: the member enters THEMSELVES.
+  //
+  // STRICTER HERE THAN IN THE CONSOLE, deliberately and in both directions:
+  // this refuses an undeclared member, the console does not. Adding somebody by
+  // hand is an explicit override by a named exec — the same line the membership
+  // gate above draws, in the same words — whereas nobody overrides themselves.
+  // The refusal carries the remedy (declare in Settings, enter an Open event, or
+  // ask an exec), because a member who cannot act on it will just ask anyway.
+  //
+  // Open events reach none of this: screenSelfEntry returns ok for them, which
+  // is what keeps an undeclared member playing tournaments.
+  const categoryScreen = screenSelfEntry(
+    event.event_type as TournamentEventType,
+    toCompetitionCategory(player.competition_category),
+  );
+  if (!categoryScreen.ok) throw new ExpectedError(categoryScreen.message);
 
   // ---------------------------------------------------------------------
   // ENTERING A DOUBLES EVENT ON YOUR OWN

@@ -26,6 +26,7 @@ export * from './utils/tournament-bonuses';
 export * from './utils/tournament-withdrawal';
 export * from './utils/tournament-entry-cap';
 export * from './utils/doubles-pool';
+export * from './utils/competition-category';
 export * from './utils/member-identity';
 export * from './utils/membership';
 export * from './utils/fee-tiers';
