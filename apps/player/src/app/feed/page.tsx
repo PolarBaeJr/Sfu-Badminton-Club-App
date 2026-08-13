@@ -12,6 +12,7 @@ import { redirect } from 'next/navigation';
 import { ChevronRight, QrCode } from 'lucide-react';
 import { PageHeader, AvatarChip } from '@badminton/ui';
 import { PasskeyNudge } from '@/components/passkey-nudge';
+import { LiveRating } from '@/components/live-rating';
 import {
   attendanceStreak,
   clubDayKey,
@@ -356,6 +357,17 @@ export default async function FeedPage() {
 
   return (
     <div data-screen-label="Feed" className="wide-page">
+      {/* The "Your record" card below reads the member's own `ratings` row, and
+          a confirm entered on somebody else's phone left it stale.
+
+          MOUNTED UNCONDITIONALLY although that card is .wide-desktop-only, so on
+          a phone this listens for a card that is not on screen. Deliberate, and
+          cheap: it is a filter on ONE row, it fires only when this member's own
+          rating moves, and when it does the river above is stale for the same
+          reason — a rating only ever moves because a match of theirs was
+          confirmed, which is a row the river prints. Gating it on a CSS
+          breakpoint would cost a media query in JavaScript to save nothing. */}
+      <LiveRating playerId={player.id} />
       <PageHeader
         eyebrow={eyebrow.toUpperCase()}
         title="Feed"

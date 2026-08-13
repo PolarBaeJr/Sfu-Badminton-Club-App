@@ -14,6 +14,7 @@ import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { EventControlCenter } from './components/EventControlCenter';
+import { LiveTournament } from '../../../live-tournament';
 import { getTournamentBonusSettings } from '@/lib/platform-settings';
 import { hasResultsTab } from '@/lib/event-tabs';
 import type { DrawCapabilities } from '@/lib/participant-controls';
@@ -255,6 +256,28 @@ export default async function EventPage({
 
   return (
     <div className="space-y-6">
+      {/* THE CONSOLE SIDE OF THE SAME THING. Two execs running two halves of a
+          tournament both have this open, and neither sees the other's work
+          without a reload — which is how a draw gets generated against
+          occupants that have already changed.
+
+          `draw` is TRUE: this is a console screen that reads
+          tournament_matches, and the bracket, results, round-robin and
+          standings tabs are all folded out of it.
+
+          MOUNTED HERE, A SIBLING OF EventControlCenter RATHER THAN INSIDE IT.
+          The control centre is the screen's only client boundary and would work
+          — but several of its tabs render through ResponsiveTable, which draws
+          its rows twice (a table and a stack of cards, one CSS-hidden), and a
+          subscriber that drifted into one of those would quietly become two
+          channels for one screen. A server component renders this leaf once,
+          whatever the tabs do. */}
+      <LiveTournament
+        channel={`admin-tournament-event-${eventId}`}
+        tournamentId={tournamentId}
+        eventIds={[eventId]}
+        draw
+      />
       <Link
         href={`/tournaments/${tournamentId}`}
         className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--color-accent)] transition-colors"

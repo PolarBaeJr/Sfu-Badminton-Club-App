@@ -86,7 +86,11 @@ describe('every table the admin app subscribes to is published to Realtime', () 
     // If the extraction above silently stopped matching, every assertion below
     // would pass over an empty list — the guard failing the same way the thing
     // it guards fails.
-    expect(subscribed.length).toBeGreaterThanOrEqual(1);
+    //
+    // A FLOOR, RAISED WHENEVER SUBSCRIPTIONS ARE ADDED. It was 1 while the
+    // console had one; the console now has the door and the four tournament
+    // tables in live-tournament.tsx.
+    expect(subscribed.length).toBeGreaterThanOrEqual(5);
     expect(new Set(subscribed.map((s) => s.table))).toContain('session_attendance');
   });
 
@@ -105,5 +109,23 @@ describe('every table the admin app subscribes to is published to Realtime', () 
     // listeners are inert until 00112 is applied. If somebody deletes the
     // ALTER without deleting the listeners, this is the test that says so.
     expect(publishedTables()).toContain('session_attendance');
+  });
+
+  it('publishes the four tables a tournament draw moves through', () => {
+    // The console's own version of the door's case. Two execs run a tournament
+    // from opposite ends of the gym and neither sees the other's writes without
+    // a reload — which is not merely stale, it is how a round gets generated
+    // against occupants that have already changed. All four are inert until
+    // 00113 is applied. If somebody deletes an ALTER without deleting the
+    // listener, this is the test that says so.
+    const published = publishedTables();
+    for (const table of [
+      'tournament_events',
+      'tournament_matches',
+      'tournament_participants',
+      'tournament_pairs',
+    ]) {
+      expect(published, `${table} is subscribed but not published`).toContain(table);
+    }
   });
 });
