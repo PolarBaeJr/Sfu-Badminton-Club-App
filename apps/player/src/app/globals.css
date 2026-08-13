@@ -3693,6 +3693,21 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
       to fit, nothing truncates, and every target keeps its 44px.
    ════════════════════════════════════════════════════════════ */
 
+/* Grid items may shrink below their content's minimum. .wide-grid
+   and .wide-rail have carried `> * { min-width: 0 }` from the
+   start; .sched-wide never did, because until now nothing in it
+   had a min-content width worth speaking of.
+   The calendar does: .cal-grid keeps a 620px floor on a phone so
+   a session's name still fits in a cell. Without this rule that
+   620px propagates all the way out through the grid item's
+   `min-width: auto` — the scroll box never gets to scroll, and
+   the WHOLE PAGE goes 620px wide inside a 380px viewport.
+   Measured at 390px: every element from .wide-page down was
+   620px and the body scrolled sideways. With it the scroll stays
+   inside .cal-scroll (348px box, 620px content) and the document
+   does not move. */
+.sched-wide > * { min-width: 0; }
+
 /* The 44px floor on the card's controls, at EVERY width — not
    inside the desktop query, because the control that was missing
    it is missing it on the phone too. CheckInButton and
@@ -3924,9 +3939,17 @@ a.cal-ev:hover { filter: brightness(1.15); }
     justify-content: center;
   }
   /* The attendance chip CheckInButton swaps itself for, and the
-     RSVP state chips beside their one remaining action. */
+     RSVP state chips beside their one remaining action. Centred
+     but NOT stretched: a full-width green "GOING" bar in a
+     column of full-width buttons reads as a button, and it is a
+     status — there is nothing to press. Measured at 1120px,
+     which is where this first looked wrong. */
   .sched-rail-primary .sess-actions > .chip,
-  .sched-rail-primary .sess-actions > .sess-rsvp > .chip { justify-content: center; }
+  .sched-rail-primary .sess-actions > .sess-rsvp > .chip {
+    align-self: center;
+    width: auto;
+    justify-content: center;
+  }
   /* "Opens at 6:30 PM" fits on one line at this width, but a
      longer label must wrap rather than run out of the card. */
   .sched-rail-primary .sess-window { white-space: normal; text-align: center; }
