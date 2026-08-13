@@ -2063,6 +2063,16 @@ export type Database = {
         Row: {
           created_at: string
           date: string
+          // HAND-ADDED (00110_session_instants.sql). `npm run gen:types`
+          // introspects a live database and no reachable database has these
+          // columns yet — the migration is handed over to be applied by the
+          // owner, not run from here. Regenerating before it is applied will
+          // silently delete these two lines; regenerating after will restore
+          // them identically. They are STORED GENERATED columns, which is why
+          // they appear in Row and deliberately not in Insert or Update: the
+          // application must never write them.
+          ends_at: string | null
+          starts_at: string | null
           end_time: string | null
           host_player_id: string | null
           id: string

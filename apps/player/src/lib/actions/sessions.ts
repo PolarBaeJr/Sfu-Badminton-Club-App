@@ -33,7 +33,11 @@ async function performCheckIn(
 
   const { data: session } = await supabase
     .from('sessions')
-    .select('date, start_time, end_time, status')
+    // starts_at/ends_at are the instants the database resolved (00110) and are
+    // what the RLS gate compares NOW() against. Selecting them means the
+    // message this action shows is derived from the same values the gate will
+    // use, not from a second conversion that could disagree with it.
+    .select('date, start_time, end_time, status, starts_at, ends_at')
     .eq('id', sessionId)
     .single();
 
