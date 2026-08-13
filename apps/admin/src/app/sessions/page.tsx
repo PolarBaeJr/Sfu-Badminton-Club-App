@@ -19,6 +19,7 @@ import { isWaivedFee } from '@/lib/fee-status';
 import { CreateSessionForm, SessionCardMenu, AttendanceDialog, CheckinQrDialog } from './actions';
 import { SessionTable, type SessionRow } from './session-table';
 import { TonightCheckin, DoorFeed, type DoorFeedEntry } from './tonight';
+import { LiveAttendance } from './live-attendance';
 import { TurnoutPanel, type TurnoutNight } from './turnout-panel';
 
 // ---------------------------------------------------------------------------
@@ -670,6 +671,14 @@ export default async function SessionsPage({
 
         {/* Right: the door. */}
         <div className="space-y-5">
+          {/* Renders nothing. It subscribes to tonight's attendance rows and
+              re-runs this component when one moves, so the count above, the
+              feed below, every row's checked-in figure and the turnout panel
+              all re-derive together from the one read rather than drifting
+              apart. Scoped to today's sessions — an exec is watching tonight's
+              door, not the season's. Inert until 00112 is applied. */}
+          <LiveAttendance sessionIds={tonightSessions.map((s) => s.id as string)} />
+
           <div id="tonight" className="scroll-mt-6">
             <Card padding={false}>
               <TonightCheckin

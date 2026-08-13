@@ -7,6 +7,7 @@ import { createSession, updateSession, archiveSession, deleteSession, markAttend
 import { runBulk, summarizeBulk } from '@/lib/bulk-add';
 import { useToast } from '@/components/toast-provider';
 import { LocationField } from './location-field';
+import { useLiveAttendance } from './live-attendance';
 import { MoreVertical, Users, QrCode } from 'lucide-react';
 import type { SessionGroupInput, AttendanceStatus, AttendanceStatusInput } from '@badminton/shared';
 
@@ -80,6 +81,19 @@ export function AttendanceDialog({
   const [busyPlayerId, setBusyPlayerId] = useState<string | null>(null);
   const { toast } = useToast();
   const confirm = useConfirm();
+
+  // WHILE IT IS OPEN, AND ONLY THIS SESSION. `attendees` is a server prop, so
+  // a refresh re-runs page.tsx and this list re-renders underneath a dialog
+  // that stays open — the point being somebody ELSE's check-in, which
+  // revalidatePath on our own writes can never deliver. Closed, the effect
+  // tears the channel down, so the twenty door lists an officer opens across a
+  // club night are never twenty live sockets. Named per session for the same
+  // reason: one of these is mounted for every row on the page.
+  useLiveAttendance({
+    channel: `door-list-${sessionId}`,
+    sessionIds: [sessionId],
+    enabled: open,
+  });
 
   const listedIds = new Set(attendees.map((a) => a.player_id));
   const addablePlayers = players.filter((p) => !listedIds.has(p.id));

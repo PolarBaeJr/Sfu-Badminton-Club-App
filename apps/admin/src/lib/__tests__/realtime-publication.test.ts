@@ -1,0 +1,109 @@
+import { describe, it, expect } from 'vitest';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+
+// A SUBSCRIPTION TO AN UNPUBLISHED TABLE SUCCEEDS AND THEN NEVER FIRES.
+//
+// That is the whole hazard, and it has already happened once in this
+// repository: 00036 was written because `supabase_realtime` contained ZERO
+// tables while two player screens subscribed to it, so live standings and the
+// announcements badge "worked" and silently did not. Nothing errors —
+// .subscribe() resolves, the callback just never runs — so the only way to
+// find out is to notice a stale number.
+//
+// THE DELIBERATE SIBLING of apps/player/src/lib/__tests__/realtime-publication
+// .test.ts, which does the same scan over the player tree. That one existed
+// first and covered only apps/player, so the moment the console grew its own
+// subscription (the sessions door surfaces, 00112) the guard stopped covering
+// the code with the most to lose from the failure: an exec staring at a door
+// list that has quietly stopped updating has no way to tell it apart from a
+// quiet night.
+//
+// DO NOT "DEDUPE" THE TWO INTO ONE CROSS-APP SCAN. The duplication is the
+// point: each app's own suite guards its own tree, so neither app's coverage
+// depends on somebody remembering to run the other's, and a future split or
+// move of either app cannot silently take the other's guard with it. This is
+// the same shape as tournament-notification-routes.test.ts — a call-site
+// convention defended by reading the source, because a behavioural test only
+// covers the call sites somebody remembered to write a case for, which is
+// exactly what failed here.
+//
+// Note what this does NOT check: whether the migration has been APPLIED. It
+// cannot — nothing in this repository tracks that, migrations are piped into
+// psql by hand. It checks that somebody wrote the statement down, which is the
+// part a code review can catch.
+
+const SRC = join(__dirname, '../..');
+const MIGRATIONS = join(__dirname, '../../../../../supabase/migrations');
+
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = join(dir, entry.name);
+    // Tests are not the app, and this file itself contains the literal the
+    // scan below looks for — left in, the guard would eventually be checking
+    // its own fixtures.
+    if (entry.isDirectory()) return entry.name === '__tests__' ? [] : sourceFiles(full);
+    return /\.tsx?$/.test(entry.name) ? [full] : [];
+  });
+}
+
+/** Every table named by a postgres_changes subscription in the admin app. */
+function subscribedTables(): { table: string; file: string }[] {
+  const found: { table: string; file: string }[] = [];
+  for (const file of sourceFiles(SRC)) {
+    const text = readFileSync(file, 'utf8');
+    // The config object follows the 'postgres_changes' argument, so the table
+    // is the first `table: '…'` after each occurrence of it.
+    for (const match of text.matchAll(/'postgres_changes'/g)) {
+      const window = text.slice(match.index!, match.index! + 400);
+      const table = window.match(/table:\s*'([a-z_]+)'/);
+      if (table) found.push({ table: table[1]!, file: file.slice(SRC.length + 1) });
+    }
+  }
+  return found;
+}
+
+/** Every table any migration adds to the supabase_realtime publication. */
+function publishedTables(): Set<string> {
+  const published = new Set<string>();
+  for (const name of readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql'))) {
+    const sql = readFileSync(join(MIGRATIONS, name), 'utf8');
+    for (const match of sql.matchAll(
+      /ALTER\s+PUBLICATION\s+supabase_realtime\s+ADD\s+TABLE\s+([^;]+);/gi,
+    )) {
+      for (const raw of match[1]!.split(',')) {
+        published.add(raw.trim().replace(/^public\./, ''));
+      }
+    }
+  }
+  return published;
+}
+
+describe('every table the admin app subscribes to is published to Realtime', () => {
+  const subscribed = subscribedTables();
+
+  it('finds the subscriptions at all', () => {
+    // If the extraction above silently stopped matching, every assertion below
+    // would pass over an empty list — the guard failing the same way the thing
+    // it guards fails.
+    expect(subscribed.length).toBeGreaterThanOrEqual(1);
+    expect(new Set(subscribed.map((s) => s.table))).toContain('session_attendance');
+  });
+
+  it('publishes each of them', () => {
+    const published = publishedTables();
+    const missing = subscribed.filter((s) => !published.has(s.table));
+    expect(
+      missing.map((m) => `${m.table} (subscribed in ${m.file})`),
+      'a subscription to an unpublished table succeeds and then never fires',
+    ).toEqual([]);
+  });
+
+  it('publishes session_attendance, which is what makes the door surfaces live', () => {
+    // The door's own case, named rather than left to the loop above: the
+    // sessions page and its attendance dialog both watch this table, and both
+    // listeners are inert until 00112 is applied. If somebody deletes the
+    // ALTER without deleting the listeners, this is the test that says so.
+    expect(publishedTables()).toContain('session_attendance');
+  });
+});
