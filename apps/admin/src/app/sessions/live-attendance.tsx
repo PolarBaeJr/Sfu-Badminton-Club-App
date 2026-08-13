@@ -98,27 +98,31 @@ export function useLiveAttendance({
     // it is about noise rather than exposure: RLS already decides what the
     // subscriber may see, and here it lets every signed-in member see
     // everything.
+    //
+    // EVERY EVENT, AND ONE THAT WILL NOT ARRIVE. `event: '*'` because a
+    // self-scan, a walk-in marked present and a no-show corrected all move the
+    // numbers this page prints and all three reach an exec who did not make
+    // them — but a REMOVAL does not, and that is the filter's price rather
+    // than an oversight. clearAttendanceMark DELETEs the row, and under
+    // default replica identity the WAL's old tuple carries the primary key and
+    // nothing else; `session_id` is not in it, so there is nothing for
+    // `filter` to match on and the delete is never routed to a filtered
+    // subscriber. Both alternatives are worse than the gap: REPLICA IDENTITY
+    // FULL streams every deleted row's full contents to every subscriber, and
+    // dropping the filter wakes Tuesday's door list for Thursday's traffic. So
+    // a removal still reaches only the exec who made it, via revalidatePath —
+    // the same reach it had before this file existed, and removals are rare,
+    // deliberate and made by somebody standing at the screen.
+    //
+    // KEEP THIS PROSE OUT OF THE CONFIG OBJECT. The publication guard
+    // (lib/__tests__/realtime-publication.test.ts) reads the table name out of
+    // the 400 characters following 'postgres_changes', so a long comment
+    // between the two hides the subscription from the very test that exists to
+    // notice it. It did exactly that once, which is how this note got here.
     for (const sessionId of key.split(',')) {
       channel.on(
         'postgres_changes',
         {
-          // Not just INSERT: a self-scan, a walk-in marked present and a
-          // no-show corrected all move the numbers this page prints, and all
-          // three reach an exec who did not make them.
-          //
-          // WHAT THIS DOES NOT DELIVER, and it is the filter's price rather
-          // than an oversight: a REMOVAL. clearAttendanceMark DELETEs the row,
-          // and under default replica identity the WAL's old tuple carries the
-          // primary key and nothing else — `session_id` is not in it, so there
-          // is nothing for `filter` to match on and the delete is not routed
-          // to a filtered subscriber. The alternatives are both worse than the
-          // gap: REPLICA IDENTITY FULL streams every deleted row's full
-          // contents to every subscriber, and dropping the filter wakes an
-          // exec on Tuesday's door list for Thursday's traffic. So a removal
-          // still reaches only the exec who made it, via revalidatePath —
-          // which is the same reach it had before this file existed, and
-          // removals are rare, deliberate and made by somebody standing at the
-          // screen.
           event: '*',
           schema: 'public',
           table: 'session_attendance',
