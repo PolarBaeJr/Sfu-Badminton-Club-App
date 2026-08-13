@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { setSessionIntent } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { useStanding } from '@/components/standing-provider';
+import { REQUIRE_SCAN_TO_CHECK_IN } from '@/lib/checkin-scan';
 
 interface RsvpButtonsProps {
   sessionId: string;
@@ -102,9 +103,24 @@ export function RsvpButtons({ sessionId, myIntent, demoted = false }: RsvpButton
   // fifth control competing on this row. "Can't make it" stays because it is
   // the one thing check-in cannot express — it tells the exec to stop
   // expecting you, which nothing else on the card does.
+  //
+  // That argument holds only while REQUIRE_SCAN_TO_CHECK_IN is false, and the
+  // flag is the reason this is a condition rather than a deletion. Its own
+  // comment puts it plainly: with scanning optional, "tapping the button works
+  // from the bus", so a member who has not arrived can already express Going by
+  // simply checking in. Flip the flag and they cannot — check-in then needs the
+  // door code, and dropping this button would leave someone half an hour out
+  // with no way to say they are coming at all. So under the flag "Going"
+  // survives, quietly. (`REQUIRE_SCAN_TO_CHECK_IN` is annotated `: boolean`
+  // precisely so this branch keeps type-checking while it is false.)
   if (demoted) {
     return (
       <div className="sess-rsvp">
+        {REQUIRE_SCAN_TO_CHECK_IN && (
+          <button onClick={() => choose('going')} disabled={loading} className="sess-textlink">
+            Going
+          </button>
+        )}
         <button onClick={() => choose('declined')} disabled={loading} className="sess-textlink">
           Can&apos;t make it
         </button>
