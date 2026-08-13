@@ -62,8 +62,9 @@
 - **Sentry** — error tracking. **PostHog** — product analytics.
 
 ### Build, packaging & hosting
-- **npm 10 workspaces** + **Turborepo 2** orchestrate the monorepo builds.
-- **Docker** — multi-stage builds on `node:20-bookworm-slim`, producing separate player and admin images.
+- **npm 11 workspaces** + **Turborepo 2** orchestrate the monorepo builds.
+- **Node 24 (LTS)** everywhere — pinned once in `.nvmrc` and mirrored by `engines.node`, the Dockerfile and CI.
+- **Docker** — multi-stage builds on `node:24-bookworm-slim`, producing separate player and admin images.
 - **GitHub Actions** — builds ARM64 images and pushes them to **GitHub Container Registry**, tagged both as a moving `latest` and an immutable per-commit tag (for rollback).
 - **Self-hosted reverse proxy** on a **Raspberry Pi** routes traffic and auto-deploys new images.
 - **Node 20** runtime; **HTTPS** throughout.

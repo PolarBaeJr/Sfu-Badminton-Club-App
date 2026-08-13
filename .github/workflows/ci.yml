@@ -53,11 +53,13 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          # Matches the Dockerfile's node:20-bookworm-slim and the @types/node
-          # ^20 the apps compile against. There is no `engines` field or .nvmrc
-          # to read; the image is the only declaration of record, so CI must
-          # follow it or it type-checks against a Node that never runs the app.
-          node-version: 20
+          # Read from .nvmrc so there is exactly one place to change the Node
+          # version. It must stay in lockstep with the Dockerfile's
+          # node:24-bookworm-slim, the root `engines.node`, and the @types/node
+          # ^24 the apps compile against — otherwise CI type-checks against a
+          # Node that never runs the app, which is how a missing global
+          # (WebSocket, absent until Node 22) reached a production deploy.
+          node-version-file: .nvmrc
           cache: npm
 
       - run: npm ci

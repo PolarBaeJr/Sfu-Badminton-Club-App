@@ -264,14 +264,22 @@ describe('formatDayKey', () => {
 
   // formatDayKey takes a DAY KEY — a `YYYY-MM-DD` that is already club-local,
   // which is what the seasons table's DATE columns are. It must NOT be handed a
-  // TIMESTAMPTZ: it would slice the UTC date off the front, and every instant
-  // after 16:00 in Vancouver carries the NEXT day's date in UTC. Callers with a
-  // timestamp go through clubDayKey first, and this is the test that says so.
+  // TIMESTAMPTZ: it would slice the UTC date off the front, and a club evening
+  // carries the NEXT day's date in UTC. Callers with a timestamp go through
+  // clubDayKey first, and this is the test that says so.
+  //
+  // The instant is deliberately a SUMMER one. It used to be 2026-12-31T07:00:00Z
+  // ("23:00 on 30 December in Vancouver"), which stopped being true: tzdata 2026b
+  // records British Columbia dropping the winter fallback, so Vancouver is UTC-7
+  // year-round and that instant is now midnight ON the 31st. The assertion was
+  // encoding a DST rule, not the behaviour under test. A summer instant is UTC-7
+  // under both the old rule and the new one, so it tests the UTC-vs-club-local
+  // slicing without also betting on next year's timezone politics.
   it('takes the UTC date part of a timestamp, which is why a timestamp must not be passed to it', () => {
-    // 23:00 on 30 December in Vancouver.
-    const instant = '2026-12-31T07:00:00Z';
-    expect(formatDayKey(instant)).toBe('31 DEC 2026');
-    expect(formatDayKey(clubDayKey(instant, TZ))).toBe('30 DEC 2026');
+    // 22:00 on 30 June in Vancouver.
+    const instant = '2026-07-01T05:00:00Z';
+    expect(formatDayKey(instant)).toBe('1 JUL 2026');
+    expect(formatDayKey(clubDayKey(instant, TZ))).toBe('30 JUN 2026');
   });
 });
 

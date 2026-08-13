@@ -1,8 +1,11 @@
 # ---- Stage 1: Install dependencies ----
-FROM node:20-bookworm-slim AS deps
+FROM node:24-bookworm-slim AS deps
 WORKDIR /app
 
-COPY package.json package-lock.json turbo.json tsconfig.base.json ./
+# .npmrc carries engine-strict=true, so this `npm ci` fails loudly if the base
+# image above ever drifts from the `engines.node` range rather than building an
+# image against a Node the app was never type-checked on.
+COPY package.json package-lock.json turbo.json tsconfig.base.json .npmrc ./
 COPY apps/player/package.json apps/player/
 COPY apps/admin/package.json apps/admin/
 COPY packages/shared/package.json packages/shared/
@@ -56,7 +59,7 @@ ARG SENTRY_AUTH_TOKEN
 RUN npx turbo run build --filter=player --filter=admin --concurrency=1
 
 # ---- Stage 3: Player runner ----
-FROM node:20-bookworm-slim AS runner-player
+FROM node:24-bookworm-slim AS runner-player
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -75,7 +78,7 @@ EXPOSE 3000
 CMD ["node", "apps/player/server.js"]
 
 # ---- Stage 4: Admin runner ----
-FROM node:20-bookworm-slim AS runner-admin
+FROM node:24-bookworm-slim AS runner-admin
 WORKDIR /app
 
 ENV NODE_ENV=production

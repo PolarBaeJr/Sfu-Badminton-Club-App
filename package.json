@@ -16,7 +16,11 @@
     "gen:types": "node scripts/gen-db-types.mjs",
     "test": "npx turbo run test"
   },
-  "packageManager": "npm@10.9.3",
+  "packageManager": "npm@11.17.0",
+  "//engines": "Node 24 (Krypton), the LTS line, supported to 2028-04-30. Node 20 went end-of-life 2026-04-30. Kept in lockstep with .nvmrc, the Dockerfile's node:24-bookworm-slim and @types/node ^24; .npmrc sets engine-strict=true so a mismatched Node fails `npm install` loudly instead of drifting. Pinned to the major only — patch upgrades inside 24.x are wanted. packageManager matches the npm that node:24-bookworm-slim ships, so Corepack (if ever enabled) does not download a different one.",
+  "engines": {
+    "node": ">=24.0.0 <25"
+  },
   "//overrides": "Every consumer (lucide-react, @react-email/render, @sentry/react, next) takes react as a PEER and accepts 19 \u2014 but npm was still hoisting an 18.3.1 to the workspace root, so the apps rendered with 19 while shared components were built by 18. Two copies means elements created by one are rejected by the other: React error #31 on prerender. Force one copy.",
   "//overrides-2": "postcss is pinned exactly at 8.4.31 inside next and sharp ships with an advisory below 0.35; both are build-time only and semver-compatible, so lift them rather than wait for a next release to do it.",
   "overrides": {

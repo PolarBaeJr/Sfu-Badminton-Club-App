@@ -236,9 +236,14 @@ export function isCheckinOpen(
  * Today's date in the club's timezone, as YYYY-MM-DD.
  *
  * `new Date().toISOString().split('T')[0]` gives the UTC date, and Vancouver is
- * UTC-7/-8. Any club evening after 17:00 PDT (16:00 PST) is already tomorrow in
- * UTC, so stamping a DATE column that way records the wrong day — an exec
- * ending a season on Friday evening recorded it as ending Saturday.
+ * behind UTC. Any club evening after 17:00 local is already tomorrow in UTC, so
+ * stamping a DATE column that way records the wrong day — an exec ending a
+ * season on Friday evening recorded it as ending Saturday.
+ *
+ * The cutoff is deliberately not written as a fixed offset any more. It used to
+ * read "17:00 PDT (16:00 PST)"; tzdata 2026b records British Columbia dropping
+ * the winter fallback, so there is no PST half to the year and Vancouver is
+ * UTC-7 year-round. The code never cared — it asks Intl — but the comment did.
  *
  * en-CA formats as YYYY-MM-DD, which is exactly the shape a Postgres DATE
  * column and every YYYY-MM-DD string comparison in this codebase expect.
