@@ -88,7 +88,17 @@ export function AttendanceDialog({
   // revalidatePath on our own writes can never deliver. Closed, the effect
   // tears the channel down, so the twenty door lists an officer opens across a
   // club night are never twenty live sockets. Named per session for the same
-  // reason: one of these is mounted for every row on the page.
+  // reason: one of these is mounted for every row on the page — twice over, in
+  // fact, because ResponsiveTable renders the card layout and the table layout
+  // together and hides one with CSS. Only the visible copy can be clicked, so
+  // only one of the pair is ever open, and `enabled` is what keeps the other
+  // from opening a second channel on the same name.
+  //
+  // The dialog survives the refresh because `open` is client state and the
+  // element's position is stable: SessionTable keys both layouts on the
+  // session id and renders row.actions unconditionally, so React reconciles
+  // rather than remounting. A remount here would close the dialog on every
+  // check-in — the exact opposite of the feature.
   useLiveAttendance({
     channel: `door-list-${sessionId}`,
     sessionIds: [sessionId],
