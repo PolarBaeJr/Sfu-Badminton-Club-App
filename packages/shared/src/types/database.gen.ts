@@ -9,12 +9,12 @@
 //
 // which is:
 //
-//   node scripts/gen-db-types.mjs --ssh-host pi --container supabase-staging-db --database postgres --label staging
+//   node scripts/gen-db-types.mjs --ssh-host pi --container supabase-db --database postgres --label production
 //
-// SOURCE DATABASE: staging — container "supabase-staging-db" on ssh host
+// SOURCE DATABASE: production — container "supabase-db" on ssh host
 // "pi", database "postgres", schemas graphql_public,public.
 //
-// Covers 48 tables, 2 views and 29 enums.
+// Covers 48 tables, 2 views and 26 enums.
 //
 // A hand edit here is lost on the next run, and a hand-edited .gen.ts is
 // fiction that looks generated. If something below is wrong, the fix belongs
@@ -1344,6 +1344,7 @@ export type Database = {
       }
       permission_baselines: {
         Row: {
+          builtin_role: string | null
           capabilities: string[]
           created_at: string
           created_by: string | null
@@ -1353,6 +1354,7 @@ export type Database = {
           updated_by: string | null
         }
         Insert: {
+          builtin_role?: string | null
           capabilities: string[]
           created_at?: string
           created_by?: string | null
@@ -1362,6 +1364,7 @@ export type Database = {
           updated_by?: string | null
         }
         Update: {
+          builtin_role?: string | null
           capabilities?: string[]
           created_at?: string
           created_by?: string | null
@@ -2221,11 +2224,13 @@ export type Database = {
           event_type: string
           format: string
           games_per_match: number | null
+          group_count: number | null
           id: string
           match_format: string
           max_participants: number | null
           placement_bonus_enabled: boolean | null
           points_per_game: number | null
+          qualifiers_per_group: number | null
           seed_by: string | null
           seeded_from_event_id: string | null
           seeding_method: string
@@ -2240,11 +2245,13 @@ export type Database = {
           event_type: string
           format: string
           games_per_match?: number | null
+          group_count?: number | null
           id?: string
           match_format?: string
           max_participants?: number | null
           placement_bonus_enabled?: boolean | null
           points_per_game?: number | null
+          qualifiers_per_group?: number | null
           seed_by?: string | null
           seeded_from_event_id?: string | null
           seeding_method?: string
@@ -2259,11 +2266,13 @@ export type Database = {
           event_type?: string
           format?: string
           games_per_match?: number | null
+          group_count?: number | null
           id?: string
           match_format?: string
           max_participants?: number | null
           placement_bonus_enabled?: boolean | null
           points_per_game?: number | null
+          qualifiers_per_group?: number | null
           seed_by?: string | null
           seeded_from_event_id?: string | null
           seeding_method?: string
@@ -2336,6 +2345,7 @@ export type Database = {
           created_at: string | null
           elo_snapshot: Json | null
           event_id: string
+          games_per_match: number | null
           id: string
           is_bye: boolean | null
           is_third_place: boolean
@@ -2343,12 +2353,15 @@ export type Database = {
           loser_participant_id: string | null
           loser_to_match_id: string | null
           loser_to_position: string | null
+          match_format: string | null
           match_number: number | null
           notes: string | null
           pair_a_id: string | null
           pair_b_id: string | null
           participant_a_id: string | null
           participant_b_id: string | null
+          phase: string | null
+          points_per_game: number | null
           result_entered_at: string | null
           result_entered_by: string | null
           round_name: string | null
@@ -2371,6 +2384,7 @@ export type Database = {
           created_at?: string | null
           elo_snapshot?: Json | null
           event_id: string
+          games_per_match?: number | null
           id?: string
           is_bye?: boolean | null
           is_third_place?: boolean
@@ -2378,12 +2392,15 @@ export type Database = {
           loser_participant_id?: string | null
           loser_to_match_id?: string | null
           loser_to_position?: string | null
+          match_format?: string | null
           match_number?: number | null
           notes?: string | null
           pair_a_id?: string | null
           pair_b_id?: string | null
           participant_a_id?: string | null
           participant_b_id?: string | null
+          phase?: string | null
+          points_per_game?: number | null
           result_entered_at?: string | null
           result_entered_by?: string | null
           round_name?: string | null
@@ -2406,6 +2423,7 @@ export type Database = {
           created_at?: string | null
           elo_snapshot?: Json | null
           event_id?: string
+          games_per_match?: number | null
           id?: string
           is_bye?: boolean | null
           is_third_place?: boolean
@@ -2413,12 +2431,15 @@ export type Database = {
           loser_participant_id?: string | null
           loser_to_match_id?: string | null
           loser_to_position?: string | null
+          match_format?: string | null
           match_number?: number | null
           notes?: string | null
           pair_a_id?: string | null
           pair_b_id?: string | null
           participant_a_id?: string | null
           participant_b_id?: string | null
+          phase?: string | null
+          points_per_game?: number | null
           result_entered_at?: string | null
           result_entered_by?: string | null
           round_name?: string | null
@@ -2531,6 +2552,7 @@ export type Database = {
           created_at: string | null
           event_id: string
           final_position: number | null
+          group_number: number | null
           id: string
           notes: string | null
           pair_name: string | null
@@ -2548,6 +2570,7 @@ export type Database = {
           created_at?: string | null
           event_id: string
           final_position?: number | null
+          group_number?: number | null
           id?: string
           notes?: string | null
           pair_name?: string | null
@@ -2565,6 +2588,7 @@ export type Database = {
           created_at?: string | null
           event_id?: string
           final_position?: number | null
+          group_number?: number | null
           id?: string
           notes?: string | null
           pair_name?: string | null
@@ -2623,6 +2647,7 @@ export type Database = {
           elo_change: number | null
           event_id: string
           final_position: number | null
+          group_number: number | null
           id: string
           notes: string | null
           player_id: string
@@ -2640,6 +2665,7 @@ export type Database = {
           elo_change?: number | null
           event_id: string
           final_position?: number | null
+          group_number?: number | null
           id?: string
           notes?: string | null
           player_id: string
@@ -2657,6 +2683,7 @@ export type Database = {
           elo_change?: number | null
           event_id?: string
           final_position?: number | null
+          group_number?: number | null
           id?: string
           notes?: string | null
           player_id?: string
@@ -2698,64 +2725,55 @@ export type Database = {
       tournaments: {
         Row: {
           allowed_memberships: Database["public"]["Enums"]["membership_type"][]
-          bracket_size: number | null
           created_at: string
           created_by: string | null
           end_date: string | null
           event_multiplier: number
-          format: Database["public"]["Enums"]["tournament_format"]
           id: string
+          max_events_per_player: number | null
           name: string
           placement_bonus_enabled: boolean
-          scope: Database["public"]["Enums"]["tournament_scope"]
           season_id: string | null
           start_date: string
           status: Database["public"]["Enums"]["tournament_status"]
           suspended_at: string | null
           suspension_reason: string | null
-          type: Database["public"]["Enums"]["tournament_type"]
           updated_at: string
           waiver_text: string | null
         }
         Insert: {
           allowed_memberships?: Database["public"]["Enums"]["membership_type"][]
-          bracket_size?: number | null
           created_at?: string
           created_by?: string | null
           end_date?: string | null
           event_multiplier?: number
-          format?: Database["public"]["Enums"]["tournament_format"]
           id?: string
+          max_events_per_player?: number | null
           name: string
           placement_bonus_enabled?: boolean
-          scope?: Database["public"]["Enums"]["tournament_scope"]
           season_id?: string | null
           start_date: string
           status?: Database["public"]["Enums"]["tournament_status"]
           suspended_at?: string | null
           suspension_reason?: string | null
-          type?: Database["public"]["Enums"]["tournament_type"]
           updated_at?: string
           waiver_text?: string | null
         }
         Update: {
           allowed_memberships?: Database["public"]["Enums"]["membership_type"][]
-          bracket_size?: number | null
           created_at?: string
           created_by?: string | null
           end_date?: string | null
           event_multiplier?: number
-          format?: Database["public"]["Enums"]["tournament_format"]
           id?: string
+          max_events_per_player?: number | null
           name?: string
           placement_bonus_enabled?: boolean
-          scope?: Database["public"]["Enums"]["tournament_scope"]
           season_id?: string | null
           start_date?: string
           status?: Database["public"]["Enums"]["tournament_status"]
           suspended_at?: string | null
           suspension_reason?: string | null
-          type?: Database["public"]["Enums"]["tournament_type"]
           updated_at?: string
           waiver_text?: string | null
         }
@@ -3283,6 +3301,17 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: { col: string; tbl: string }[]
       }
+      pair_tournament_entrants: {
+        Args: {
+          p_added_by: string
+          p_combined_elo: number
+          p_event_id: string
+          p_pair_name: string
+          p_player1_id: string
+          p_player2_id: string
+        }
+        Returns: string
+      }
       platform_setting_bool: {
         Args: { p_default: boolean; p_key: string; p_section: string }
         Returns: boolean
@@ -3314,6 +3343,26 @@ export type Database = {
       submit_match_result: {
         Args: { p_challenge_id: string; p_completed?: boolean; p_games: Json }
         Returns: string
+      }
+      swap_tournament_pair_member: {
+        Args: {
+          p_added_by: string
+          p_combined_elo: number
+          p_incoming_player_id: string
+          p_outgoing_player_id: string
+          p_pair_id: string
+          p_pair_name: string
+        }
+        Returns: undefined
+      }
+      unpair_tournament_pair: {
+        Args: {
+          p_added_by: string
+          p_pair_id: string
+          p_reason: string
+          p_withdrawn_player_id: string
+        }
+        Returns: string[]
       }
       update_head_to_head: { Args: { p_match_id: string }; Returns: undefined }
       update_partnership_stats: {
@@ -3420,10 +3469,7 @@ export type Database = {
       session_intent: "going" | "declined"
       session_status: "open" | "closed"
       team_side: "a" | "b"
-      tournament_format: "singles" | "doubles" | "mixed_event"
-      tournament_scope: "open" | "eligible_only"
       tournament_status: "draft" | "active" | "completed" | "archived"
-      tournament_type: "internal" | "open_official" | "invitational"
       user_role: "player" | "admin"
       walkover_status: "pending" | "confirmed" | "rejected"
       walkover_type: "withdrawal" | "no_show"
@@ -3654,10 +3700,7 @@ export const Constants = {
       session_intent: ["going", "declined"],
       session_status: ["open", "closed"],
       team_side: ["a", "b"],
-      tournament_format: ["singles", "doubles", "mixed_event"],
-      tournament_scope: ["open", "eligible_only"],
       tournament_status: ["draft", "active", "completed", "archived"],
-      tournament_type: ["internal", "open_official", "invitational"],
       user_role: ["player", "admin"],
       walkover_status: ["pending", "confirmed", "rejected"],
       walkover_type: ["withdrawal", "no_show"],
