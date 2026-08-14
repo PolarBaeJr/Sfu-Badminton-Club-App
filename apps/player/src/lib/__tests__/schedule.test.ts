@@ -8,6 +8,7 @@ import {
   groupSessionsByDay,
   initialMonthIndex,
   isAttendanceRecorded,
+  isStillUpcoming,
   monthKeyOf,
   monthKeysBetween,
   tallyBySession,
@@ -313,5 +314,32 @@ describe('initialMonthIndex', () => {
 
   it('is 0 for an empty range rather than -1', () => {
     expect(initialMonthIndex([], '2026-08-13')).toBe(0);
+  });
+});
+
+describe('isStillUpcoming', () => {
+  const at = (iso: string) => new Date(iso);
+
+  // THE BUG THIS EXISTS FOR. 11 Aug ran 19:00-22:00 and nobody closed it, so it
+  // stayed status='open' and sorted into "Upcoming" on the 13th.
+  it('drops a night whose check-in window has closed, however open its status', () => {
+    expect(isStillUpcoming(at('2026-08-12T05:00:00Z'), at('2026-08-13T22:00:00Z'))).toBe(false);
+  });
+
+  it('keeps a night that is still inside its window', () => {
+    expect(isStillUpcoming(at('2026-08-14T05:00:00Z'), at('2026-08-13T22:00:00Z'))).toBe(true);
+  });
+
+  // A session days away has not opened for check-in yet, and must still show —
+  // dropping it would empty the schedule of everything but tonight.
+  it('keeps a night whose window has not opened yet', () => {
+    expect(isStillUpcoming(at('2026-08-20T05:00:00Z'), at('2026-08-13T22:00:00Z'))).toBe(true);
+  });
+
+  // The boundary is exclusive on purpose: at exactly closesAt the window is
+  // shut, and isCheckinOpen() agrees (`now < closesAt`). The list and the
+  // button must not disagree for that one instant.
+  it('drops a night at exactly its closing instant', () => {
+    expect(isStillUpcoming(at('2026-08-13T22:00:00Z'), at('2026-08-13T22:00:00Z'))).toBe(false);
   });
 });

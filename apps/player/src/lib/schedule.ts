@@ -282,3 +282,26 @@ export function initialMonthIndex(monthKeys: readonly string[], todayISO: string
   if (exact >= 0) return exact;
   return today < (monthKeys[0] as string) ? 0 : monthKeys.length - 1;
 }
+
+/**
+ * Is this night still worth showing under "Upcoming"?
+ *
+ * STATUS ALONE CANNOT ANSWER THIS. Closing a session is a manual admin action
+ * with no cron behind it, so a night nobody remembered to close stays 'open'
+ * for ever — which is how a Tuesday two days gone came to sit at the top of a
+ * list headed "Upcoming", above the words "3 sessions accepting check-ins",
+ * when its check-in had shut at 22:00 that night.
+ *
+ * The clock decides instead: a night stays until its check-in window CLOSES.
+ * Genuinely future nights are kept (their window has not closed, and usually
+ * has not opened either — the card says "Opens at 9:30 AM"); tonight is kept
+ * for as long as anyone can still check in; and a night drops the moment it
+ * can no longer be acted on. A forgotten `status` can now only make a night
+ * linger until its own end time rather than indefinitely.
+ *
+ * Takes `closesAt` rather than computing it so the caller uses the same
+ * settings-aware window as every other check-in decision on the page.
+ */
+export function isStillUpcoming(closesAt: Date, now: Date): boolean {
+  return now < closesAt;
+}

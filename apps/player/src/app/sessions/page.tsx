@@ -24,6 +24,7 @@ import {
   clubDateISO,
   describeMyState,
   groupSessionsByDay,
+  isStillUpcoming,
   initialMonthIndex,
   monthKeysBetween,
   tallyBySession,
@@ -132,23 +133,37 @@ export default async function SessionsPage() {
   const checkedInBySession = tallyBySession(attendanceRows);
   const goingBySession = tallyBySession(goingRows);
 
-  const upcoming = openSessions ?? [];
-  const upcomingCount = upcoming.length;
-
   // One clock reading for the whole render. Every "Today"/"Tomorrow" heading
   // and every check-in window on the page is derived from these two values, so
   // the screen cannot contradict itself — and because it is all resolved on the
   // server there is no second, browser-local answer to disagree with.
   const now = new Date();
   const todayISO = clubDateISO(now);
+
+  // STATUS IS NOT ENOUGH ON ITS OWN. Closing a session is a manual admin action
+  // with no cron behind it, so a night nobody remembered to close stays 'open'
+  // for ever. The query above can only ask for status, which is how a Tuesday
+  // two days gone sat at the top of a list headed "Upcoming" above the words
+  // "3 sessions accepting check-ins" — when its check-in had shut at 22:00 that
+  // night and nothing on the page could be done about it.
+  //
+  // The clock decides instead: keep a night until its check-in window CLOSES.
+  // That keeps every genuinely future session (its window has not closed, and
+  // in most cases has not opened either — the card says "Opens at 9:30 AM"),
+  // keeps tonight for as long as anyone can still check in, and drops a night
+  // the moment it can no longer be acted on. A forgotten `status` can now only
+  // make a night linger until its own end time, not indefinitely.
+  const upcoming = (openSessions ?? []).filter((s) =>
+    isStillUpcoming(getCheckinWindow(s, checkinSettings).closesAt, now)
+  );
+  const upcomingCount = upcoming.length;
+
   const days = groupSessionsByDay(upcoming, todayISO);
 
-  // Closing a session is a manual admin action with no cron behind it, so a
-  // night the exec forgot to close stays 'open' and sorts to the top. It still
-  // belongs on the page — the day heading now shows its real date, which is
-  // more than the old flat list did — but calling last Tuesday "Next up" would
-  // be a straight lie, so the accent goes to the first session dated today or
-  // later.
+  // The accent still guards against a same-day surprise: with the filter above
+  // the list can no longer start in the past, but a night still inside its
+  // window is 'today' rather than 'next', so this keeps preferring a session
+  // dated today or later before falling back.
   const nextSessionId = (upcoming.find((s) => s.date >= todayISO) ?? upcoming[0])?.id as string | undefined;
 
   // The upcoming nights the member has already committed to. It answers "what
