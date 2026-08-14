@@ -3,6 +3,9 @@
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
+// The withdrawal/DQ reason is exec-only free text and no longer lives on the
+// entry row — 00118. See lib/private-notes.ts.
+import { PAIR_NOTES, PARTICIPANT_NOTES, writePrivateNote } from '../private-notes';
 import {
   calculateTeamRating,
   ensureEntryFees,
@@ -912,9 +915,18 @@ async function exitDrawImpl(
     throw new ExpectedError(status === 'withdrawn' ? 'Already withdrawn.' : 'Already disqualified.');
   }
 
+  // `notes` is deliberately NOT set here any more — it moved to
+  // tournament_participant_notes / tournament_pair_notes (00118) because both
+  // parent tables carry a plain SELECT grant for `authenticated` AND are in the
+  // realtime publication (00113), so an exec's reason for disqualifying
+  // somebody was both queryable and streamed to every subscriber. The column
+  // still exists and still holds its history; it is simply no longer written.
+  //
+  // The note itself is written FURTHER DOWN, immediately before logAudit, and
+  // the distance is deliberate — see there.
   if (!alreadyOut) {
     const { error } = await adminClient.from(table)
-      .update({ status, notes: reason ?? null })
+      .update({ status })
       .eq('id', entryId);
     if (error) {
       Sentry.captureException(error);
@@ -947,12 +959,65 @@ async function exitDrawImpl(
     throw new ExpectedError(status === 'withdrawn' ? 'Already withdrawn.' : 'Already disqualified.');
   }
 
+  // THE NOTE, WRITTEN HERE AND NOT BESIDE THE STATUS UPDATE IT ANNOTATES.
+  //
+  // It looks like it belongs up there, and putting it there is a bug. The
+  // forfeit cascade sits between the two, and forfeitOpenMatchesForEntry can
+  // throw — applyTournamentMatchElo raises a failed rating write rather than
+  // swallowing it, which is the very thing that makes the retry path above
+  // reachable. A note written before the cascade would then survive a call
+  // whose logAudit never ran, leaving the private table holding a reason with
+  // no audit row to explain it.
+  //
+  // That asymmetry is NEW, not inherited. While the reason was a column it was
+  // set in the same statement as `status`, so "the entry is out" and "here is
+  // why" could not disagree. Writing it last restores that: everything that can
+  // fail has already failed, and the only two statements left are this one and
+  // the audit row that records what it did.
+  //
+  // NOT WRITTEN AT ALL ON THE RETRY PATH, where the status update was skipped
+  // too — a second press must not overwrite the reason the first press recorded
+  // with whatever (possibly empty) reason was typed this time. `null` in the
+  // audit row below means exactly that: no attempt.
+  //
+  // AND IT DOES NOT THROW. writePrivateNote never does, including on a
+  // transport rejection; the outcome is threaded into the audit row instead of
+  // being allowed to cost it.
+  let noteResult: { recorded: boolean; error: string | null } | null = null;
+  if (!alreadyOut) {
+    noteResult = await writePrivateNote(
+      adminClient,
+      isPair ? PAIR_NOTES : PARTICIPANT_NOTES,
+      entryId,
+      reason,
+      admin.id,
+    );
+    if (noteResult.error) {
+      Sentry.captureException(
+        new Error(`Draw-exit note not recorded: ${noteResult.error}`),
+        { extra: { entryId, isPair, status } },
+      );
+    }
+  }
+
   await logAudit(adminClient, {
     tournament_id: event.tournament_id,
     event_id: event.id,
     action: status === 'withdrawn' ? 'participant_withdrawn' : 'participant_disqualified',
     performed_by: admin.id,
-    details: { entry_id: entryId, is_pair: isPair, reason: reason ?? null, ...outcome },
+    details: {
+      entry_id: entryId,
+      is_pair: isPair,
+      // The reason is recorded HERE regardless of whether the private note
+      // landed, which is why a failed note is a degraded outcome rather than a
+      // lost one.
+      reason: reason ?? null,
+      // WHAT ACTUALLY HAPPENED, not what was asked for. `null` means no attempt
+      // was made (the retry path); `false` means 00118 has not been applied to
+      // this database yet. The audit row must not imply a note it does not have.
+      note_recorded: noteResult ? noteResult.recorded : null,
+      ...outcome,
+    },
   });
 
   revalidateEventPaths(event.tournament_id, event.id);

@@ -3,6 +3,9 @@
 import * as Sentry from '@sentry/nextjs';
 import { createAdminClient } from '../supabase-server';
 import { logAudit } from '../audit';
+// Void / no-show / restore reasons are exec-only free text and no longer live
+// on the match row — 00118. See lib/private-notes.ts.
+import { TOURNAMENT_MATCH_NOTES, fetchPrivateNotes, writePrivateNote } from '../private-notes';
 import { runAction, type ActionResult } from '../action-result';
 import { recomputeEventStandings } from './finalize';
 import {
@@ -613,11 +616,28 @@ async function voidMatchImpl(matchId: string, reason: string) {
   // Scores and winner/loser are deliberately kept: a voided match is excluded
   // from standings, finalisation and Elo by status alone, and keeping the row
   // intact means the audit trail and the bracket still show what was erased.
+  // `notes` is deliberately NOT set here any more — it moved to
+  // tournament_match_notes (00118). 00113 published `tournament_matches`, so
+  // this reason used to stream verbatim to every subscriber of the live
+  // bracket, on top of being readable off the row by any signed-in member.
   await adminClient.from('tournament_matches').update({
     status: 'voided',
-    notes: reason,
     updated_at: new Date().toISOString(),
   }).eq('id', matchId);
+
+  // AFTER THE VOID, BEFORE THE AUDIT, AND IT DOES NOT THROW — the order is the
+  // point. The match is already voided and the Elo already reversed by the time
+  // this runs, so throwing on a note failure would skip logAudit and
+  // revalidateEventPaths and leave an UNAUDITED VOID: no record of who did it
+  // or why, and a bracket still showing the match as it was.
+  const note = await writePrivateNote(
+    adminClient, TOURNAMENT_MATCH_NOTES, matchId, reason, admin.id,
+  );
+  if (note.error) {
+    Sentry.captureException(new Error(`Void note not recorded: ${note.error}`), {
+      extra: { matchId, action: 'void_match' },
+    });
+  }
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id as string,
@@ -626,7 +646,11 @@ async function voidMatchImpl(matchId: string, reason: string) {
     action: 'match_voided',
     performed_by: admin.id,
     details: {
+      // Recorded here regardless, so a note that did not land is degraded
+      // rather than lost.
       reason,
+      // WHAT ACTUALLY HAPPENED: false means 00118 is not applied here yet.
+      note_recorded: note.recorded,
       reversed_elo: reversedElo,
       cleared_next_slot: cleared.winner,
       cleared_third_place_slot: cleared.loser,
@@ -710,6 +734,7 @@ async function recordDoubleNoShowImpl(matchId: string, reason: string) {
     .in('id', [aId, bId]);
   if (entryErr) throw new Error(entryErr.message);
 
+  // `notes` moved to tournament_match_notes (00118) — see voidMatchImpl above.
   await adminClient.from('tournament_matches').update({
     status: 'voided',
     winner_participant_id: null,
@@ -717,9 +742,20 @@ async function recordDoubleNoShowImpl(matchId: string, reason: string) {
     loser_participant_id: null,
     loser_pair_id: null,
     scores: null,
-    notes: reason,
     updated_at: new Date().toISOString(),
   }).eq('id', matchId);
+
+  // After the match write, before the audit, and it does not throw. Same
+  // reasoning as voidMatchImpl: both entries are already marked absent and the
+  // Elo already reversed, so a note failure must not cost the audit row.
+  const note = await writePrivateNote(
+    adminClient, TOURNAMENT_MATCH_NOTES, matchId, reason, admin.id,
+  );
+  if (note.error) {
+    Sentry.captureException(new Error(`No-show note not recorded: ${note.error}`), {
+      extra: { matchId, action: 'double_no_show' },
+    });
+  }
 
   await logAudit(adminClient, {
     tournament_id: event.tournament_id as string,
@@ -731,6 +767,7 @@ async function recordDoubleNoShowImpl(matchId: string, reason: string) {
     performed_by: admin.id,
     details: {
       reason,
+      note_recorded: note.recorded,
       reversed_elo: reversedElo,
       cleared_next_slot: cleared.winner,
       cleared_third_place_slot: cleared.loser,
@@ -773,6 +810,26 @@ async function unvoidMatchImpl(matchId: string, reason: string) {
   const aId = (doubles ? match.pair_a_id : match.participant_a_id) as string | null;
   const bId = (doubles ? match.pair_b_id : match.participant_b_id) as string | null;
 
+  // THE REASON THIS MATCH WAS VOIDED, READ BEFORE ANYTHING IS CHANGED.
+  //
+  // The restore below overwrites it with the restore reason — that is what the
+  // single column did and what the single note row still does — so this is the
+  // last moment it can be captured for the audit row, which is the only place
+  // it survives afterwards.
+  //
+  // READ FIRST, BEFORE reverseEloSnapshot, deliberately. fetchPrivateNotes
+  // throws on a genuine failure (it swallows only "no such table"), and every
+  // line below this one mutates something. Doing it here means a failed read
+  // costs the restore and nothing else; doing it lower would risk a reversed
+  // Elo snapshot with no audit row to explain it.
+  //
+  // FALLS BACK TO THE LEGACY COLUMN, which 00118 copies but does not drop. That
+  // covers a match voided by a build that predates this one, and it is why the
+  // restore panel keeps quoting the right text in either deploy order. Remove
+  // the fallback with the migration that drops tournament_matches.notes.
+  const priorNotes = await fetchPrivateNotes(adminClient, TOURNAMENT_MATCH_NOTES, [matchId]);
+  const voidReason = priorNotes.get(matchId) ?? (match.notes as string | null) ?? null;
+
   // Belt and braces for rows voided before voidMatch learned to reverse Elo:
   // their delta is still on the players' ratings and their snapshot is still on
   // the row. Reversing here is what stops the replay from counting the same
@@ -795,7 +852,8 @@ async function unvoidMatchImpl(matchId: string, reason: string) {
     walkover_reason: null,
     result_entered_by: null,
     result_entered_at: null,
-    notes: reason || null,
+    // `notes` moved to tournament_match_notes (00118) — written below, after
+    // this update lands.
     updated_at: new Date().toISOString(),
   };
 
@@ -816,6 +874,18 @@ async function unvoidMatchImpl(matchId: string, reason: string) {
     throw new Error(error.message);
   }
 
+  // An empty restore reason CLEARS the note rather than storing '', which is
+  // what `notes: reason || null` did on the column. The match is already back
+  // in play by now, so this does not throw — same reasoning as voidMatchImpl.
+  const note = await writePrivateNote(
+    adminClient, TOURNAMENT_MATCH_NOTES, matchId, reason, admin.id,
+  );
+  if (note.error) {
+    Sentry.captureException(new Error(`Restore note not recorded: ${note.error}`), {
+      extra: { matchId, action: 'unvoid_match' },
+    });
+  }
+
   await logAudit(adminClient, {
     tournament_id: event.tournament_id as string,
     event_id: match.event_id,
@@ -824,7 +894,10 @@ async function unvoidMatchImpl(matchId: string, reason: string) {
     performed_by: admin.id,
     details: {
       reason: reason || null,
-      void_reason: match.notes,
+      // Captured before the restore overwrote it, from the private table where
+      // it now lives, falling back to the legacy column for older rows.
+      void_reason: voidReason,
+      note_recorded: note.recorded,
       // The discarded result only survives here, so record it.
       discarded_scores: match.scores,
       reversed_elo: reversedElo,

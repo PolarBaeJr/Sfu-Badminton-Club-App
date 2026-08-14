@@ -15,14 +15,21 @@ export function WalkoverActions({ walkoverId }: { walkoverId: string }) {
     if (!notes.trim()) { toast('Notes required', 'error'); return; }
     setLoading(true);
     try {
+      // The quieter 'info' toast is not a failure — it says 00118 has not been
+      // applied to this database yet, so the verdict reached audit_logs.reason
+      // but not the private note table. Same treatment (and same wording shape)
+      // as the void/convert toasts on /matches under 00117: a red toast would
+      // claim the walkover did not go through, which it did.
       if (action === 'confirm') {
         const res = await confirmWalkover(walkoverId, notes);
         if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
-        toast('Walkover confirmed', 'success');
+        if (res.data.noteRecorded) toast('Walkover confirmed', 'success');
+        else toast('Walkover confirmed — the notes were audited but not saved to the walkover', 'info');
       } else {
         const res = await rejectWalkover(walkoverId, notes);
         if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
-        toast('Walkover rejected', 'success');
+        if (res.data.noteRecorded) toast('Walkover rejected', 'success');
+        else toast('Walkover rejected — the notes were audited but not saved to the walkover', 'info');
       }
       setAction(null);
     } catch (err) {

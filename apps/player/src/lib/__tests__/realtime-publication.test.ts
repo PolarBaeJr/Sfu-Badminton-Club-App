@@ -196,4 +196,36 @@ describe('every table the player app subscribes to is published to Realtime', ()
     // to open a socket for it.
     expect(publishedTables()).not.toContain('match_admin_notes');
   });
+
+  it('never publishes any of 00118\'s private note tables, whatever else it publishes', () => {
+    // THE SAME GUARD FOR THE OTHER FOUR COLUMNS, and this app is again the one
+    // with the most to lose: /tournaments subscribes to tournament_events,
+    // tournament_matches, tournament_participants and tournament_pairs
+    // (live-tournament.tsx), all four published by 00113 — so until 00118 the
+    // reason an exec withdrew, disqualified or voided somebody streamed to the
+    // phone of every member watching the bracket, including the member it was
+    // written about.
+    //
+    // NONE OF THESE FOUR TABLES MAY EVER JOIN THEM. Their parents stay
+    // published, because that is what makes the bracket live; moving the text
+    // out is the entire fix, and one ALTER PUBLICATION would reverse it without
+    // any screen looking different. Logical replication consults neither the
+    // grant nor the RLS policy — the mechanism that keeps `players` off this
+    // list forever.
+    //
+    // walkover_admin_notes is the one whose parent is NOT published today, and
+    // it is listed anyway: 00005's walkovers_select already admits the
+    // forfeiting player, so a future migration publishing `walkovers` would be
+    // a short step, and this line makes sure the exec's verdict on that forfeit
+    // does not travel with it.
+    const published = publishedTables();
+    for (const table of [
+      'tournament_participant_notes',
+      'tournament_pair_notes',
+      'tournament_match_notes',
+      'walkover_admin_notes',
+    ]) {
+      expect(published, `${table} must never be published`).not.toContain(table);
+    }
+  });
 });

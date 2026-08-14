@@ -14,6 +14,7 @@ import Link from 'next/link';
 import { SeasonPicker } from './season-picker';
 import { RecentMatches } from './recent-matches';
 import { matchSearchKeys } from '@/lib/match-search';
+import { WALKOVER_NOTES, canReadPrivateNotes, fetchPrivateNotes } from '@/lib/private-notes';
 
 /** Local date only. The hour a match was played is noise in a history list. */
 const day = (iso: string | null | undefined) =>
@@ -147,7 +148,11 @@ export default async function PlayerDetailPage({
     // season window instead of a two-hop embed filter.
     canRead
       ? supabase.from('walkovers')
-          .select('id, walkover_type, notice_hours, reported_at, status, admin_notes, challenge:challenges(type), reporter:players!walkovers_reported_by_fkey(full_name)')
+          // admin_notes IS NO LONGER SELECTED. 00118 moved the exec's verdict
+          // to walkover_admin_notes, and this panel is the sharpest reason it
+          // had to move: it is the walkover history of ONE named member, so
+          // every note on it is that member's own file.
+          .select('id, walkover_type, notice_hours, reported_at, status, challenge:challenges(type), reporter:players!walkovers_reported_by_fkey(full_name)')
           .eq('forfeit_player_id', id)
           .gte('reported_at', selectedSeason?.start_date ?? '1970-01-01')
           .lte('reported_at', selectedSeason?.end_date ?? '2999-12-31')
@@ -201,6 +206,23 @@ export default async function PlayerDetailPage({
   const membershipLabel = MEMBERSHIP_TYPES.find((m) => m.value === membershipType)?.label ?? membershipType;
 
   const events = [...(walkoverEvents ?? []), ...(tournamentNoShows ?? [])];
+
+  // The verdicts for the walkovers listed above, from the private table 00118
+  // moved them to. Gated on the AUTHOR union (walkovers.confirm.write ∪
+  // walkovers.reject.write) rather than on `players.read`, which is what gates
+  // the rest of this panel: reading a member's reliability history and reading
+  // the exec commentary attached to it are different permissions, and only the
+  // second is what this change is about.
+  //
+  // NO FALLBACK TO THE LEGACY COLUMN HERE, unlike /walkovers and the tournament
+  // event page — the select above no longer asks for it, and re-adding it just
+  // to fall back would put the column back in the RSC payload for every viewer
+  // of this page, which is what the narrowed select exists to stop. Before 00118
+  // is applied this panel simply shows no notes.
+  const maySeeWalkoverNotes = canReadPrivateNotes(level, permissions, WALKOVER_NOTES);
+  const walkoverNotes = maySeeWalkoverNotes
+    ? await fetchPrivateNotes(supabase, WALKOVER_NOTES, (walkoverEvents ?? []).map((w) => w.id))
+    : new Map<string, string>();
 
   return (
     <div className="space-y-6">
@@ -452,8 +474,8 @@ export default async function PlayerDetailPage({
                         {day(w.reported_at)}
                         {reporter && ` · reported by ${reporter.full_name}`}
                       </p>
-                      {w.admin_notes && (
-                        <p className="mt-1 text-xs text-[var(--text-secondary)]">{w.admin_notes}</p>
+                      {walkoverNotes.get(w.id) && (
+                        <p className="mt-1 text-xs text-[var(--text-secondary)]">{walkoverNotes.get(w.id)}</p>
                       )}
                     </div>
                   );

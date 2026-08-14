@@ -16,6 +16,9 @@
 // file for why a column-grant revoke could not have done this job.
 
 import { permits, type AccessLevel, type Capability, type Permissions } from './permissions';
+// The missing-table predicate, shared with 00118's four tables so the two
+// modules cannot drift on the one question they must agree about.
+import { isMissingTableError } from './private-notes';
 // TYPE-ONLY, and it has to stay that way. supabase-server.ts reaches for
 // next/headers and the passkey cookie machinery at import time; a value import
 // here would drag all of it into the unit tests, which have no request to read
@@ -89,16 +92,18 @@ export function canReadMatchNotes(level: AccessLevel | null, permissions: Permis
  * created" toast, and the exec walks away believing a note was recorded that
  * was not. That is the same fiction this feature exists to prevent, arriving
  * through the console instead of through the database.
+ *
+ * THE BODY MOVED TO lib/private-notes.ts WITH 00118, which needed the identical
+ * question asked about four more tables. This stays as the name the /matches
+ * call sites already use, bound to this table; the parameterised version is the
+ * one thing the two modules genuinely must not answer differently, so there is
+ * only one of it. Behaviour is unchanged — the general form takes the table
+ * name that the message backstop used to hard-code.
  */
 export function isMissingNoteTableError(
   error: { code?: string | null; message?: string | null } | null | undefined,
 ): boolean {
-  if (!error) return false;
-  if (error.code === 'PGRST205' || error.code === 'PGRST202' || error.code === '42P01') return true;
-  // Backstop for a client that surfaces the message without a code — the same
-  // shape isUnknownColumnError uses, and for the same reason.
-  const message = error.message ?? '';
-  return message.includes(MATCH_ADMIN_NOTE_TABLE) && /schema cache|does not exist/i.test(message);
+  return isMissingTableError(error, MATCH_ADMIN_NOTE_TABLE);
 }
 
 /** One match's note, as the ledger renders it. */

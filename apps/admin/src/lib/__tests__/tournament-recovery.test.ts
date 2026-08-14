@@ -20,8 +20,10 @@ const makeClient = vi.hoisted(() => () => {
     // NULL here.
     const isFilters: Array<[string, unknown]> = [];
     let cols = '*';
-    let op: 'select' | 'update' | 'insert' = 'select';
+    let op: 'select' | 'update' | 'insert' | 'upsert' | 'delete' = 'select';
     let payload: Row = {};
+    // The conflict target of an upsert. Undefined for every other op.
+    let onConflict: string | undefined;
 
     const matching = () =>
       (store.db[table] ?? []).filter(
@@ -52,6 +54,27 @@ const makeClient = vi.hoisted(() => () => {
         (store.db[table] ??= []).push({ ...payload });
         return { data: null, error: null };
       }
+      // ONE ROW PER PARENT, matched on the conflict column rather than on the
+      // filter chain — an upsert carries no `.eq()`. Added for 00118's private
+      // note tables, which voidMatch and unvoidMatch now write alongside the
+      // match row itself.
+      if (op === 'upsert') {
+        const bucket = (store.db[table] ??= []);
+        // Copied to a const so it narrows inside the closure — `onConflict` is
+        // a `let` in the enclosing scope, which tsc will not narrow across a
+        // callback boundary.
+        const key = onConflict;
+        const existing = key ? bucket.find((e) => e[key] === payload[key]) : undefined;
+        if (existing) Object.assign(existing, payload);
+        else bucket.push({ ...payload });
+        return { data: null, error: null };
+      }
+      // Clearing a note — unvoidMatch with an empty restore reason deletes the
+      // row rather than storing ''.
+      if (op === 'delete') {
+        store.db[table] = (store.db[table] ?? []).filter((r) => !matching().includes(r));
+        return { data: null, error: null };
+      }
       return { data: matching().map(embed), error: null };
     };
 
@@ -59,6 +82,13 @@ const makeClient = vi.hoisted(() => () => {
       select(c: string) { cols = c; op = 'select'; return api; },
       update(p: Row) { op = 'update'; payload = p; return api; },
       insert(p: Row) { op = 'insert'; payload = p; return api; },
+      upsert(p: Row, opts?: { onConflict?: string }) {
+        op = 'upsert';
+        payload = p;
+        onConflict = opts?.onConflict;
+        return api;
+      },
+      delete() { op = 'delete'; return api; },
       eq(c: string, v: unknown) { filters.push([c, v]); return api; },
       in(c: string, vs: unknown[]) { inFilters.push([c, vs]); return api; },
       is(c: string, v: unknown) { isFilters.push([c, v]); return api; },
