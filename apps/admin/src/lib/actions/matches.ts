@@ -364,34 +364,58 @@ async function adminCreateMatchImpl(data: {
 
   const scoreSummary = data.games.map(g => `${g.side_a_score}-${g.side_b_score}`).join(', ');
 
-  // EVERY admin-entered match starts as pending_confirmation, rated or not, and
-  // the unrated one is the case that changed.
+  // NO ADMIN MATCH IS EVER BORN 'confirmed' ANY MORE, and the unrated one is
+  // the case that changed.
   //
-  // Rated ones have always had to: apply_match_result rejects anything else and
-  // flips the status to confirmed itself. Unrated ones used to be INSERTed
-  // already 'confirmed', because there is no Elo to apply and therefore no
-  // reason to route them through that function — and that is the whole of gap 1
-  // in 00119. head_to_head_stats and partnership_stats are written by
-  // on_match_confirmed, an AFTER UPDATE trigger, so a row BORN confirmed was
-  // never counted by anything: an unrated admin match has never appeared in any
-  // member's head-to-head record or partnership card.
+  // Rated ones have always started pending: apply_match_result rejects anything
+  // else and flips the status to confirmed itself. Unrated ones used to be
+  // INSERTed already 'confirmed', because there is no Elo to apply and
+  // therefore no reason to route them through that function — and that is the
+  // whole of gap 1 in 00119. head_to_head_stats and partnership_stats are
+  // written by on_match_confirmed, an AFTER UPDATE trigger, so a row BORN
+  // confirmed was never counted by anything: an unrated admin match has never
+  // appeared in any member's head-to-head record or partnership card.
   //
-  // Inserting it pending and flipping it at the end (below) means the counters
-  // are written by the same UPDATE that has always written them, at a moment
-  // when the participants and games actually exist.
+  // Inserting it unconfirmed and flipping it at the end (below) means the
+  // counters are written by the same UPDATE that has always written them, at a
+  // moment when the participants and games actually exist.
   //
-  // THE SECOND REASON, WHICH IS THE ONE THAT CANNOT DRIFT. 00119 also closes
-  // this in the database, with a trigger that counts a match when its
+  // WHY 'incomplete' AND NOT 'pending_confirmation' FOR THE UNRATED ONE. This
+  // is the whole reason the status is still conditional, and getting it wrong
+  // would trade one integrity bug for a worse one.
+  //
+  // apply_match_result decides whether to apply Elo on `event_type = 'casual'`,
+  // NOT on rated_flag — and an admin-entered match is 'admin_entered'. Its only
+  // other gate is `result_status = 'pending_confirmation'`. So a match parked at
+  // 'pending_confirmation' with rated_flag FALSE is one RPC away from being
+  // rated: confirmMatchResult in the player app (apps/player/src/lib/actions/
+  // matches.ts) checks nothing but "are you a participant", the submitter guard
+  // does not bite because the submitter is the ADMIN, and an unrated match would
+  // quietly receive Elo. That window does not exist today because the match is
+  // never pending; opening it here — between these two writes, and permanently
+  // if the confirm below fails — would be a new hole dug by a fix for two
+  // others.
+  //
+  // 'incomplete' has none of that reach. apply_match_result refuses it,
+  // dispute_match_result refuses it (00027 accepts only pending_confirmation
+  // and confirmed), reverse_match_result refuses it, and it is already the
+  // status submit_match_result uses for a match row that is not a finished
+  // result (00030) — which is exactly what a half-written admin entry is. The
+  // console lists every status and offers void/convert on anything not voided,
+  // so a stranded one is visible and recoverable, and it is badged honestly.
+  //
+  // AND THE INVARIANT THAT MAKES THIS SAFE ALONGSIDE THE DATABASE HALF is
+  // unchanged by the conditional: neither branch is 'confirmed'. 00119 also
+  // closes gap 1 in the database, with a trigger that counts a match when its
   // participants arrive and it is ALREADY confirmed — because service_role can
   // insert a confirmed match through PostgREST from any code path anybody
   // writes later, and a rule that lives only here is a rule that lasts until
   // the second call site. That trigger and discardIncompleteMatch below must
   // never both act on one match, or the cleanup would delete a match whose
   // counters had been written. They cannot: the cleanup is scoped
-  // `.eq('result_status', initialStatus)` and initialStatus is now ALWAYS
-  // 'pending_confirmation', while the trigger only ever acts on 'confirmed'.
-  // Disjoint by construction, in either deploy order.
-  const initialStatus = 'pending_confirmation';
+  // `.eq('result_status', initialStatus)`, initialStatus is never 'confirmed',
+  // and the trigger acts on nothing else. Disjoint in either deploy order.
+  const initialStatus = data.rated_flag ? 'pending_confirmation' : 'incomplete';
 
   const { data: match, error: matchError } = await adminClient.from('matches').insert({
     match_type: data.match_type,
@@ -515,11 +539,12 @@ async function adminCreateMatchImpl(data: {
     // 'confirmed', which is what fires on_match_confirmed and writes the
     // head-to-head and partnership counters (00119).
     //
-    // apply_match_result is deliberately NOT called instead. It would work —
-    // 'admin_entered' is not 'casual', so it would take the walkover-less
-    // branch, derive the winner from match_games and apply Elo — which is
-    // precisely the thing an unrated match must not get. The status move is the
-    // whole of what this needs.
+    // apply_match_result is deliberately NOT called instead, and it could not
+    // be: it refuses any status but 'pending_confirmation', which is the point
+    // of parking this match at 'incomplete'. Even if it were reachable it would
+    // be wrong — 'admin_entered' is not 'casual', so it would derive the winner
+    // from match_games and apply Elo, which is precisely what an unrated match
+    // must not get.
     //
     // NOT DISCARDED ON FAILURE, for the same reason as the Elo call above and
     // the same reason it is placed after the games rather than before: by this

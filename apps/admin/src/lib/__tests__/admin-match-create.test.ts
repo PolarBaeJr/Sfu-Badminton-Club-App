@@ -292,13 +292,21 @@ describe('adminCreateMatch', () => {
 describe('adminCreateMatch — when the match becomes confirmed (00119)', () => {
   const matchWrites = () => store.writes.filter((w) => w.table === 'matches');
 
-  it('inserts an unrated match pending, and confirms it only after the children land', async () => {
+  it('inserts an unrated match as incomplete, and confirms it only after the children land', async () => {
     const res = await adminCreateMatch(validMatch);
     expect(res.ok).toBe(true);
 
     const inserted = matchWrites().find((w) => w.op === 'insert');
     // THE BUG, IN ONE ASSERTION. This was 'confirmed'.
-    expect((inserted!.payload as Row).result_status).toBe('pending_confirmation');
+    //
+    // AND IT MUST NOT BE 'pending_confirmation' EITHER, which is the trap in
+    // the obvious version of this fix. apply_match_result gates Elo on
+    // event_type — 'admin_entered' is not 'casual' — and its only other gate is
+    // result_status = 'pending_confirmation'. Parking an UNRATED match there
+    // puts it one participant-only RPC away from being rated, permanently if
+    // the confirm below never lands. 'incomplete' is refused by
+    // apply_match_result, dispute_match_result and reverse_match_result alike.
+    expect((inserted!.payload as Row).result_status).toBe('incomplete');
 
     // The confirmation is an UPDATE, which is what on_match_confirmed listens
     // for, and it comes after both child inserts.
@@ -335,18 +343,28 @@ describe('adminCreateMatch — when the match becomes confirmed (00119)', () => 
   // The interaction between 00119's two halves. If the game insert fails the
   // match is discarded — and the delete is scoped to the status the match was
   // created with. That status must be one the participants trigger will never
-  // act on, or the cleanup and the trigger would race over one match.
-  it('discards against pending_confirmation, never against a confirmed match', async () => {
-    store.faults.push({ table: 'match_games', op: 'insert', message: 'games exploded' });
+  // act on, or the cleanup and the trigger would race over one match: the
+  // cleanup would delete a match whose counters had already been written, and
+  // the club would go on counting a match that no longer exists.
+  it('never discards against a confirmed match, on either rating path', async () => {
+    for (const rated of [false, true]) {
+      store.faults = [{ table: 'match_games', op: 'insert', message: 'games exploded' }];
+      store.writes = [];
+      store.db.matches = [];
+      store.db.match_participants = [];
+      store.db.match_games = [];
 
-    const res = await adminCreateMatch(validMatch);
-    expect(res.ok).toBe(false);
-    expect(matches()).toHaveLength(0);
+      const res = await adminCreateMatch({ ...validMatch, rated_flag: rated });
+      expect(res.ok).toBe(false);
+      expect(matches()).toHaveLength(0);
 
-    const del = store.writes.find((w) => w.table === 'matches' && w.op === 'delete');
-    expect(del!.filters).toContainEqual(['result_status', 'pending_confirmation']);
-    // And the match never reached 'confirmed' at any point, so nothing could
-    // have counted it before it was removed.
-    expect(matchWrites().some((w) => w.op === 'update')).toBe(false);
+      const del = store.writes.find((w) => w.table === 'matches' && w.op === 'delete');
+      const scoped = del!.filters.find(([c]) => c === 'result_status')![1];
+      expect(scoped).toBe(rated ? 'pending_confirmation' : 'incomplete');
+      expect(scoped).not.toBe('confirmed');
+      // And the match never reached 'confirmed' at any point, so nothing could
+      // have counted it before it was removed.
+      expect(matchWrites().some((w) => w.op === 'update')).toBe(false);
+    }
   });
 });

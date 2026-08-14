@@ -158,14 +158,26 @@
 -- second call site. So the database closes it too, with the trigger in step 4.
 --
 -- THE TWO CANNOT DRIFT, and the reason is an invariant rather than a promise.
--- After the console change, adminCreateMatch's failure cleanup
--- (discardIncompleteMatch) is scoped `.eq('result_status', expectedStatus)`
--- where expectedStatus is now ALWAYS 'pending_confirmation'; the trigger in
--- step 4 only ever acts on a match that is ALREADY 'confirmed'. Those two sets
--- are disjoint by construction, so the cleanup can never delete a match whose
--- counters have been written, in either order, no matter which of the two
--- lands on a given database first. That is also the answer to the deploy-order
--- question: migration-first and code-first are both safe.
+-- After the console change, adminCreateMatch INSERTs a rated match as
+-- 'pending_confirmation' and an unrated one as 'incomplete' — NEITHER IS
+-- 'confirmed' — and its failure cleanup (discardIncompleteMatch) is scoped
+-- `.eq('result_status', expectedStatus)` on whichever of the two it used. The
+-- trigger in step 4b only ever acts on a match that is ALREADY 'confirmed'.
+-- Those two sets are disjoint by construction, so the cleanup can never delete
+-- a match whose counters have been written, in either order, no matter which
+-- of the two lands on a given database first. That is also the answer to the
+-- deploy-order question: migration-first and code-first are both safe.
+--
+-- (The unrated one is 'incomplete' rather than 'pending_confirmation' for a
+-- reason that has nothing to do with this file and everything to do with not
+-- opening a third hole while closing two. apply_match_result decides whether
+-- to apply Elo on event_type, not on rated_flag, and 'admin_entered' is not
+-- 'casual'; its only other gate is result_status = 'pending_confirmation'. An
+-- UNRATED match parked at that status is one participant-only RPC away from
+-- being rated. 'incomplete' is refused by apply_match_result,
+-- dispute_match_result and reverse_match_result alike, and is already what
+-- submit_match_result uses for a match row that is not a finished result. The
+-- reasoning is written out at the call site.)
 --
 --   MIGRATION FIRST, CODE LATER. The old console still inserts unrated
 --   matches confirmed-first. The step 4 trigger counts them when the
@@ -176,10 +188,11 @@
 --   error to open at all, and the next confirm or void touching either player
 --   recomputes it away. Deploying the console closes it permanently.
 --
---   CODE FIRST, MIGRATION LATER. The console inserts pending, flips to
---   confirmed at the end, and the EXISTING on_match_confirmed trigger fires on
---   that flip — so unrated admin matches start counting correctly with no
---   database change at all. Gaps 2 and 3 stay open until this file is run.
+--   CODE FIRST, MIGRATION LATER. The console inserts the match unconfirmed,
+--   flips it to confirmed at the end, and the EXISTING on_match_confirmed
+--   trigger fires on that flip — so unrated admin matches start counting
+--   correctly with no database change at all. Gaps 2 and 3 stay open until
+--   this file is run.
 --
 -- ------------------------------------------------------------
 -- THE BACKFILL IS A REWRITE, AND IT SAYS SO OUT LOUD
@@ -208,6 +221,11 @@
 --     and /my-stats orders the Best Partners card by win_rate — so the card
 --     WILL REORDER after this runs, and that is the fix, not a regression.
 --
+--   head_to_head_stats.last_played_at had the SAME omission, in the same
+--     shape: its INSERT arm listed only the ids, the match_type and the three
+--     counts, so a pair's FIRST meeting left the column NULL and only their
+--     second set it. Nothing renders it today, which is why it went unnoticed.
+--
 --   *** win_rate IS STORED 0-100, NOT 0-1, AND STAYS THAT WAY. *** The
 --   ON CONFLICT arm multiplied by 100 and the renderer was fixed on
 --   2026-08-14 to stop multiplying again (apps/player/src/app/my-stats/
@@ -233,6 +251,36 @@
 -- goes to NULL along with the counts, because that is what the recompute
 -- actually returns — MAX over no rows — and a row saying "0 matches, last
 -- played in March" is the kind of half-truth this file exists to remove.
+--
+-- ------------------------------------------------------------
+-- ONE MATCH CHANGES SIDES, AND IT IS A DECISION RATHER THAN A CONSEQUENCE
+-- ------------------------------------------------------------
+-- convertMatchToCasual, on an ALREADY-CONFIRMED match, calls
+-- reverse_match_result (which sets result_status = 'voided') and then sets
+-- rated_flag = FALSE and event_type = 'casual'. The status STAYS 'voided' —
+-- the comment at matches.ts:184 explains that the voided-plus-casual-flags
+-- outcome was kept deliberately.
+--
+-- Today such a match stays in the counters, because nothing ever took it out.
+-- After this file it is EXCLUDED, because 'voided' is not 'confirmed'.
+--
+-- That is deliberate and it is worth arguing with, because it looks like it
+-- contradicts the ruling above. It does not: the ruling is that UNRATED
+-- matches count, and this match is not excluded for being unrated. It is
+-- excluded for being VOIDED, which is what an exec chose when they used a
+-- control whose whole job is to undo a result. "Voided does not count" is a
+-- cleaner rule than "voided counts if it was voided as part of a demotion",
+-- and the alternative would need the predicate to reach past result_status
+-- into the reason the status got there.
+--
+-- IF THE OWNER WANTS THE OTHER ANSWER, the change is not to this file: it is
+-- for convertMatchToCasual to leave the match confirmed rather than voided on
+-- that branch, which is now SAFE in a way it was not before. That branch's
+-- comment says the voided outcome avoids "re-firing the on_match_confirmed
+-- stats trigger" — THAT REASON IS NOW STALE. Re-firing the trigger cannot
+-- double-count anything any more; a recompute run twice is a recompute. The
+-- constraint that shaped that code no longer exists, and the next person to
+-- read it should know that before they design around it.
 --
 -- ------------------------------------------------------------
 -- FOUND AND NOT FIXED
@@ -272,6 +320,13 @@
 --     runs for one. These counters do not read win_flag (they derive the
 --     result from matches.winner_side, which IS set), so it does not affect
 --     anything here, but /my-stats does read it per participant.
+--
+--   * packages/shared/src/types/database.gen.ts is generated FROM the live
+--     database, so the three new functions below will not appear in it until
+--     somebody regenerates it after this file is applied. Nothing calls any of
+--     them through .rpc() — they are reached only by the two triggers — so the
+--     apps type-check and build unchanged today. Regenerating is a follow-up,
+--     not a prerequisite.
 --
 -- IDEMPOTENT throughout: CREATE OR REPLACE FUNCTION, DROP TRIGGER IF EXISTS
 -- before CREATE TRIGGER (the portable form — CREATE OR REPLACE TRIGGER is
@@ -658,7 +713,8 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 -- be worse than the gap it closes, and the gap is closed by the status
 -- invariant instead: discardIncompleteMatch is the only DELETE against
 -- `matches` in either app, and after the console change in this commit it can
--- only ever target a 'pending_confirmation' row, which by definition was never
+-- only ever target a 'pending_confirmation' or 'incomplete' row — never a
+-- 'confirmed' one, and therefore by definition never one this trigger has
 -- counted.
 CREATE OR REPLACE FUNCTION public.trigger_match_participants_inserted()
 RETURNS TRIGGER AS $$
@@ -737,7 +793,7 @@ BEGIN
   END LOOP;
 
   SELECT COUNT(*) INTO v_zeroed FROM public.head_to_head_stats WHERE total_matches = 0;
-  RAISE NOTICE '00119: head_to_head_stats — % pairs examined, % rows changed, % rows now at zero',
+  RAISE NOTICE '00119: head_to_head_stats — % pairs examined, % rows CHANGED, % rows now sitting at zero (a total, not a delta — a clean re-run reports the same figure with 0 changed)',
     v_seen, v_changed, v_zeroed;
 
   -- ---- partnerships ----
@@ -765,7 +821,7 @@ BEGIN
   END LOOP;
 
   SELECT COUNT(*) INTO v_zeroed FROM public.partnership_stats WHERE matches_played = 0;
-  RAISE NOTICE '00119: partnership_stats — % pairs examined, % rows changed, % rows now at zero',
+  RAISE NOTICE '00119: partnership_stats — % pairs examined, % rows CHANGED, % rows now sitting at zero (a total, not a delta — a clean re-run reports the same figure with 0 changed)',
     v_seen, v_changed, v_zeroed;
 
   RAISE NOTICE '00119: re-running this file will report 0 rows changed. If it does not, something is still writing these tables outside update_head_to_head / update_partnership_stats.';

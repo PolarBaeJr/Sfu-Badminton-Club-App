@@ -146,11 +146,12 @@ describe('00119 — the counters are derived, not accumulated', () => {
   // Idempotent, because the owner applies these by hand and a migration nobody
   // dares re-run is a migration nobody trusts.
   it('is re-runnable', () => {
-    expect(code).toMatch(/DROP TRIGGER IF EXISTS/);
-    const creates = code.match(/^CREATE (?!OR REPLACE)/gm) ?? [];
-    // The only bare CREATE is the trigger, and it is preceded by its DROP.
-    expect(creates.every((_, i) => i >= 0)).toBe(true);
-    expect(code.match(/^CREATE TRIGGER/gm) ?? []).toHaveLength(1);
+    // Every function is CREATE OR REPLACE, and the one bare CREATE — the
+    // trigger, which has no REPLACE form worth relying on across versions — is
+    // preceded by its DROP IF EXISTS.
+    const bare = code.match(/^CREATE (?!OR REPLACE)\w+/gm) ?? [];
+    expect(bare).toEqual(['CREATE TRIGGER']);
+    expect(code.indexOf('DROP TRIGGER IF EXISTS')).toBeLessThan(code.indexOf('CREATE TRIGGER'));
   });
 
   // The claim in 00114:319-329, now answered. Left as an assertion so that if
