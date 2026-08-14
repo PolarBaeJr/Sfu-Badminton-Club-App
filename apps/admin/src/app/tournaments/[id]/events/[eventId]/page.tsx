@@ -16,6 +16,7 @@ import Link from 'next/link';
 import { EventControlCenter } from './components/EventControlCenter';
 import { LiveTournament } from '../../../live-tournament';
 import { getTournamentBonusSettings } from '@/lib/platform-settings';
+import { TOURNAMENT_MATCH_NOTES, fetchPrivateNotes } from '@/lib/private-notes';
 import { hasResultsTab } from '@/lib/event-tabs';
 import type { DrawCapabilities } from '@/lib/participant-controls';
 import type { Capability } from '@/lib/permissions';
@@ -254,6 +255,42 @@ export default async function EventPage({
         )
       : null;
 
+  // THE VOID REASONS, RE-ATTACHED TO THE ROWS THAT NO LONGER CARRY THEM.
+  //
+  // 00118 moved this text off `tournament_matches` — the table is published to
+  // Realtime (00113) and carries a plain SELECT grant, so an exec's reason for
+  // voiding a match was both queryable by any member and streamed to every
+  // subscriber of the live bracket. The restore panel in ScoreEntryDialog still
+  // has to quote it back at whoever is restoring the match, so it is read here,
+  // with the service-role client, and merged onto the rows the tabs already
+  // receive.
+  //
+  // MERGED RATHER THAN PROP-DRILLED, and that is a deliberate choice over
+  // threading a fifth map through EventControlCenter, BracketTab and
+  // RoundRobinTab to reach one string in one panel. The field is the one the
+  // dialog already reads; what changed is where the server got it.
+  //
+  // GATED ON THE AUTHOR UNION, which is NARROWER than this page's own
+  // `tournaments.page`. Every viewer of this screen used to see every void
+  // reason; now only the people who can write one can read one.
+  //
+  // FALLS BACK TO THE LEGACY COLUMN, which 00118 copies but does not drop, so
+  // the panel reads correctly whichever order the migration and this build are
+  // deployed in. Drop the fallback with the column.
+  //
+  // AND NULLED OUTRIGHT FOR EVERYONE ELSE — this is the half that would be easy
+  // to miss. `select('*')` above still returns the legacy `notes` column, so
+  // without this the text would keep reaching exactly the viewers this change
+  // exists to exclude, straight past the capability check.
+  const maySeeMatchNotes = TOURNAMENT_MATCH_NOTES.capabilities.some(may);
+  const matchNotes = maySeeMatchNotes
+    ? await fetchPrivateNotes(supabase, TOURNAMENT_MATCH_NOTES, (matches ?? []).map((m) => m.id as string))
+    : new Map<string, string>();
+  const matchesWithNotes = (matches ?? []).map((m) => ({
+    ...m,
+    notes: maySeeMatchNotes ? matchNotes.get(m.id as string) ?? m.notes ?? null : null,
+  }));
+
   return (
     <div className="space-y-6">
       {/* THE CONSOLE SIDE OF THE SAME THING. Two execs running two halves of a
@@ -291,7 +328,7 @@ export default async function EventPage({
         event={event}
         participants={participants}
         pairs={pairs}
-        matches={matches ?? []}
+        matches={matchesWithNotes}
         allPlayers={allPlayers ?? []}
         siblingEvents={siblingEvents ?? []}
         isDoubles={doubles}

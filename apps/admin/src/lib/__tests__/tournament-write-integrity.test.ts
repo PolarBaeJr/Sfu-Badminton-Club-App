@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // repaired.
 
 type Row = Record<string, unknown>;
-type Op = 'select' | 'update' | 'insert' | 'delete';
+type Op = 'select' | 'update' | 'insert' | 'delete' | 'upsert';
 
 interface Fault {
   table: string;
@@ -44,6 +44,8 @@ const makeClient = vi.hoisted(() => () => {
     let cols = '*';
     let op: Op = 'select';
     let payload: Row = {};
+    // The conflict target of an upsert. Undefined for every other op.
+    let onConflict: string | undefined;
     // `.select(cols, { count: 'exact', head: true })`. An UPDATE already
     // reported its count here, because "matched no rows is a success" is the
     // whole reason this harness exists — but a SELECT did not, so every guard
@@ -120,6 +122,25 @@ const makeClient = vi.hoisted(() => () => {
         store.db[table] = (store.db[table] ?? []).filter((r) => !matching().includes(r));
         return { data: null, error: null };
       }
+      // ONE ROW PER PARENT, matched on the conflict column rather than on the
+      // filter chain — an upsert carries no `.eq()`. Added for 00118's private
+      // note tables, which every void, no-show, restore and draw exit now
+      // writes; without it those actions met an undefined method and the whole
+      // action failed, which is precisely the coupling 00118 exists to avoid.
+      if (op === 'upsert') {
+        const rows = Array.isArray(payload) ? (payload as Row[]) : [payload];
+        const bucket = (store.db[table] ??= []);
+        // Copied to a const so it narrows inside the closure — `onConflict` is
+        // a `let` in the enclosing scope, which tsc will not narrow across a
+        // callback boundary.
+        const key = onConflict;
+        for (const r of rows) {
+          const existing = key ? bucket.find((e) => e[key] === r[key]) : undefined;
+          if (existing) Object.assign(existing, r);
+          else bucket.push({ ...r });
+        }
+        return { data: null, error: null };
+      }
       const rows = matching();
       // head:true asks PostgREST for the count and no body, so `data` is null —
       // a caller that reads `data` off a head request must see nothing there.
@@ -136,6 +157,12 @@ const makeClient = vi.hoisted(() => () => {
       },
       update(p: Row) { op = 'update'; payload = p; return api; },
       insert(p: Row) { op = 'insert'; payload = p; return api; },
+      upsert(p: Row, opts?: { onConflict?: string }) {
+        op = 'upsert';
+        payload = p;
+        onConflict = opts?.onConflict;
+        return api;
+      },
       delete() { op = 'delete'; return api; },
       eq(c: string, v: unknown) { filters.push([c, v]); return api; },
       in(c: string, vs: unknown[]) { inFilters.push([c, vs]); return api; },

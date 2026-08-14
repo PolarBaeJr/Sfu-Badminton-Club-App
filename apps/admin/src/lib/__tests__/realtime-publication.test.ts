@@ -190,4 +190,39 @@ describe('every table the admin app subscribes to is published to Realtime', () 
     // refresh, and the one-line fix is exactly the line this test forbids.
     expect(publishedTables()).not.toContain('match_admin_notes');
   });
+
+  it('never publishes any of 00118\'s private note tables, whatever else it publishes', () => {
+    // THE SAME GUARD, WIDENED — and here the temptation is sharper than it was
+    // for match_admin_notes, because THREE of these four parents are published.
+    //
+    // 00113 put tournament_events, tournament_matches, tournament_participants
+    // and tournament_pairs in this publication for the live bracket. That is
+    // exactly what made their `notes` columns stream an exec's void reason and
+    // disqualification reason to every subscriber, and it is why 00118 moved
+    // the text out rather than trying to withhold a column — logical
+    // replication does not honour column-level grants, the same reason `players`
+    // may never be published.
+    //
+    // THE PARENTS STAY PUBLISHED, deliberately: the live bracket is built on
+    // them and the loop above asserts they are there. So this is the assertion
+    // that keeps 00118 meaningful. Publishing any of these four would undo it
+    // in one line and silently, and nothing subscribes to them or should: every
+    // write to one happens in the same action as a write to its parent, which
+    // is already published and already wakes these screens up.
+    //
+    // walkover_admin_notes is named alongside the other three even though
+    // `walkovers` is not published either. It is listed because the reason it
+    // must never be published is not "its parent isn't" — it is the same reason
+    // as the rest, and a future migration publishing `walkovers` for a walkover
+    // queue badge must not silently take the verdicts with it.
+    const published = publishedTables();
+    for (const table of [
+      'tournament_participant_notes',
+      'tournament_pair_notes',
+      'tournament_match_notes',
+      'walkover_admin_notes',
+    ]) {
+      expect(published, `${table} must never be published`).not.toContain(table);
+    }
+  });
 });

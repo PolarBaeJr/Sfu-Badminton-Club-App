@@ -1,5 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
+import { accessLevelFor, permissionsOf } from '@/lib/permissions';
+import { WALKOVER_NOTES, canReadPrivateNotes, fetchPrivateNotes } from '@/lib/private-notes';
 import { Card, Badge, PageHeader } from '@badminton/ui';
 import { formatRelativeTime } from '@badminton/shared';
 import { WalkoverActions } from './actions';
@@ -7,13 +9,39 @@ import { Clock, User, AlertTriangle, MessageSquare, CheckCircle2 } from 'lucide-
 
 export default async function WalkoversPage() {
   // Same capability middleware resolves for '/walkovers', re-asked at the fetch.
-  await requireCapability('walkovers.page');
+  const viewer = await requireCapability('walkovers.page');
   const supabase = createAdminClient();
 
   const { data: walkovers } = await supabase
     .from('walkovers')
     .select('*, reporter:players!walkovers_reported_by_fkey(full_name), forfeit:players!walkovers_forfeit_player_id_fkey(full_name), challenge:challenges(type, format)')
     .order('created_at', { ascending: false });
+
+  // THE EXEC'S VERDICT, READ FROM THE TABLE THAT NOW HOLDS IT.
+  //
+  // 00118 moved this off `walkovers`, where walkovers_select let the player who
+  // FORFEITED read the exec's assessment of their own forfeit — including the
+  // reason a claim was rejected.
+  //
+  // GATED ON THE AUTHOR UNION (confirm ∪ reject), which is narrower than this
+  // page's own `walkovers.page`: the list is visible to anyone allowed to look
+  // at it, and looking at the queue is not the same as reading the verdicts.
+  // Both writers are in the union because this one list shows confirmed and
+  // rejected rows together, so a reject-only officer must still be able to read
+  // a confirmed row's note.
+  //
+  // The legacy column is the fallback while 00118 has not been applied (or for
+  // rows written before it), and is withheld entirely from a viewer outside the
+  // union — `select('*')` still returns it, so without that the capability
+  // check would decide nothing.
+  const level = accessLevelFor(viewer);
+  const permissions = permissionsOf(level, viewer);
+  const maySeeNotes = canReadPrivateNotes(level, permissions, WALKOVER_NOTES);
+  const noteById = maySeeNotes
+    ? await fetchPrivateNotes(supabase, WALKOVER_NOTES, (walkovers ?? []).map((w) => w.id))
+    : new Map<string, string>();
+  const noteFor = (w: { id: string; admin_notes?: string | null }): string | null =>
+    maySeeNotes ? noteById.get(w.id) ?? w.admin_notes ?? null : null;
 
   const pendingCount = walkovers?.filter((w) => w.status === 'pending').length ?? 0;
 
@@ -86,11 +114,15 @@ export default async function WalkoversPage() {
                   {formatRelativeTime(w.reported_at)}
                 </p>
 
-                {/* Admin Notes */}
-                {w.admin_notes && (
+                {/* Admin Notes. Nothing is drawn when there is no note, and
+                    nothing is drawn when the viewer may not read notes —
+                    rendered the same way on purpose, as 00117's ledger strip
+                    argues: a "hidden" placeholder would only announce that
+                    there is something to be curious about. */}
+                {noteFor(w) && (
                   <div className="mt-1 p-3 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border)] flex items-start gap-2">
                     <MessageSquare className="w-3.5 h-3.5 text-[var(--color-accent)] flex-shrink-0 mt-0.5" />
-                    <span className="text-sm text-[var(--text-primary)]">{w.admin_notes}</span>
+                    <span className="text-sm text-[var(--text-primary)]">{noteFor(w)}</span>
                   </div>
                 )}
               </div>
