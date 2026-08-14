@@ -287,6 +287,13 @@ export async function adminCreateMatch(data: {
  * If the delete ALSO fails the orphan is real, and the only useful thing left
  * is to name it: the message and the Sentry event carry the match id so it can
  * be voided by hand instead of sitting in the results list looking legitimate.
+ *
+ * 00119 adds a trigger to match_participants (AFTER INSERT, statement-level) and
+ * that is deliberately NOT a trigger on `matches`, so the sentence above still
+ * holds: nothing runs on this delete. The cascade removes the participant rows
+ * without firing it, because it fires on INSERT and this is a DELETE. And the
+ * `expectedStatus` scoping is what keeps the two apart in the first place — see
+ * the note on initialStatus in adminCreateMatchImpl.
  */
 async function discardIncompleteMatch(
   adminClient: ReturnType<typeof createAdminClient>,
@@ -357,9 +364,34 @@ async function adminCreateMatchImpl(data: {
 
   const scoreSummary = data.games.map(g => `${g.side_a_score}-${g.side_b_score}`).join(', ');
 
-  // Rated matches must start as pending_confirmation: apply_match_result
-  // rejects anything else, then flips the status to confirmed itself.
-  const initialStatus = data.rated_flag ? 'pending_confirmation' : 'confirmed';
+  // EVERY admin-entered match starts as pending_confirmation, rated or not, and
+  // the unrated one is the case that changed.
+  //
+  // Rated ones have always had to: apply_match_result rejects anything else and
+  // flips the status to confirmed itself. Unrated ones used to be INSERTed
+  // already 'confirmed', because there is no Elo to apply and therefore no
+  // reason to route them through that function — and that is the whole of gap 1
+  // in 00119. head_to_head_stats and partnership_stats are written by
+  // on_match_confirmed, an AFTER UPDATE trigger, so a row BORN confirmed was
+  // never counted by anything: an unrated admin match has never appeared in any
+  // member's head-to-head record or partnership card.
+  //
+  // Inserting it pending and flipping it at the end (below) means the counters
+  // are written by the same UPDATE that has always written them, at a moment
+  // when the participants and games actually exist.
+  //
+  // THE SECOND REASON, WHICH IS THE ONE THAT CANNOT DRIFT. 00119 also closes
+  // this in the database, with a trigger that counts a match when its
+  // participants arrive and it is ALREADY confirmed — because service_role can
+  // insert a confirmed match through PostgREST from any code path anybody
+  // writes later, and a rule that lives only here is a rule that lasts until
+  // the second call site. That trigger and discardIncompleteMatch below must
+  // never both act on one match, or the cleanup would delete a match whose
+  // counters had been written. They cannot: the cleanup is scoped
+  // `.eq('result_status', initialStatus)` and initialStatus is now ALWAYS
+  // 'pending_confirmation', while the trigger only ever acts on 'confirmed'.
+  // Disjoint by construction, in either deploy order.
+  const initialStatus = 'pending_confirmation';
 
   const { data: match, error: matchError } = await adminClient.from('matches').insert({
     match_type: data.match_type,
@@ -475,6 +507,37 @@ async function adminCreateMatchImpl(data: {
         extra: { matchId: match.id },
       });
       throw new Error(eloError.message);
+    }
+  } else {
+    // THE UNRATED MATCH IS CONFIRMED HERE, not on the INSERT — see the note on
+    // initialStatus. There is no Elo to apply, so this does the one thing
+    // apply_match_result would have done for it: move result_status to
+    // 'confirmed', which is what fires on_match_confirmed and writes the
+    // head-to-head and partnership counters (00119).
+    //
+    // apply_match_result is deliberately NOT called instead. It would work —
+    // 'admin_entered' is not 'casual', so it would take the walkover-less
+    // branch, derive the winner from match_games and apply Elo — which is
+    // precisely the thing an unrated match must not get. The status move is the
+    // whole of what this needs.
+    //
+    // NOT DISCARDED ON FAILURE, for the same reason as the Elo call above and
+    // the same reason it is placed after the games rather than before: by this
+    // point the match has its participants and its games, so a failure leaves a
+    // complete pending_confirmation match on /matches that voidMatch can
+    // already deal with. Deleting a fully-formed match under the admin's feet
+    // would be the more destructive choice, and the counters are correct in
+    // either outcome — a match that never reached 'confirmed' is a match the
+    // counters are right not to include.
+    const { error: confirmError } = await adminClient
+      .from('matches')
+      .update({ result_status: 'confirmed' })
+      .eq('id', match.id);
+    if (confirmError) {
+      Sentry.captureException(new Error(`Unrated admin match not confirmed: ${confirmError.message}`), {
+        extra: { matchId: match.id },
+      });
+      throw new Error(confirmError.message);
     }
   }
 

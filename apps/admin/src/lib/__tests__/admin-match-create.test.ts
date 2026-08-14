@@ -30,6 +30,12 @@ const store = vi.hoisted(() => ({
   /** Fires when the participant batch is attempted — stands in for another
    *  admin touching the committed match shell while this action is mid-flight. */
   onParticipantInsert: null as null | (() => void),
+  /** Every write in order. The ORDER is the assertion for 00119: whether a
+   *  match was ever `confirmed` before its participants and games landed is not
+   *  visible in the final table contents, only in the sequence that produced
+   *  them. */
+  writes: [] as { table: string; op: Op; payload: Row | Row[]; filters: Array<[string, unknown]> }[],
+  rpcs: [] as string[],
 }));
 
 // Minimal PostgREST-shaped builder: thenable, resolves with { data, error }
@@ -53,6 +59,7 @@ const makeClient = vi.hoisted(() => () => {
 
     const run = (): { data: Row[] | null; error: { message: string; code?: string } | null } => {
       if (table === 'match_participants' && op === 'insert') store.onParticipantInsert?.();
+      if (op !== 'select') store.writes.push({ table, op, payload, filters: [...filters] });
       const f = fault();
       if (f) return { data: null, error: { message: f.message, code: f.code } };
       if (op === 'insert') {
@@ -111,7 +118,10 @@ const makeClient = vi.hoisted(() => () => {
   }
   return {
     from: (table: string) => query(table),
-    rpc: async () => ({ data: null, error: null }),
+    rpc: async (name: string) => {
+      store.rpcs.push(name);
+      return { data: null, error: null };
+    },
   };
 });
 
@@ -145,6 +155,8 @@ beforeEach(() => {
   store.faults = [];
   store.seq = 0;
   store.onParticipantInsert = null;
+  store.writes = [];
+  store.rpcs = [];
   store.db = {
     seasons: [{ id: 'season-1', active_flag: true }],
     ratings: [
@@ -250,5 +262,91 @@ describe('adminCreateMatch', () => {
     expect(matches()[0]!.result_status).toBe('voided');
     if (res.ok) throw new Error('unreachable');
     expect(res.error).toMatch(/void it from the matches list/i);
+  });
+});
+
+// ============================================================
+// 00119 — the match must not be BORN confirmed
+// ============================================================
+// head_to_head_stats and partnership_stats are written by on_match_confirmed,
+// an AFTER UPDATE trigger on `matches`. An AFTER UPDATE trigger does not fire
+// on an INSERT, so an unrated admin match — which used to be inserted with
+// result_status already 'confirmed', because there is no Elo to apply — was
+// never counted by anything. No member's head-to-head record or partnership
+// card has ever included one.
+//
+// WHAT THESE ASSERT IS THE ORDER, NOT THE OUTCOME. The final table contents are
+// identical either way: a confirmed match with two participants and a game. The
+// only difference between the bug and the fix is WHEN the row became confirmed
+// relative to its children, so every case below reads store.writes rather than
+// store.db.
+//
+// They are also the guard on 00119's other half. The migration adds a trigger
+// that counts a match when its participants arrive AND it is already confirmed;
+// discardIncompleteMatch deletes a half-built match scoped to the status it was
+// created with. If that status ever went back to 'confirmed' for the unrated
+// case, the cleanup could delete a match whose counters had been written and
+// leave the club's numbers counting a match that no longer exists. The two are
+// disjoint only because initialStatus is always 'pending_confirmation', which
+// is what the first two cases pin down.
+describe('adminCreateMatch — when the match becomes confirmed (00119)', () => {
+  const matchWrites = () => store.writes.filter((w) => w.table === 'matches');
+
+  it('inserts an unrated match pending, and confirms it only after the children land', async () => {
+    const res = await adminCreateMatch(validMatch);
+    expect(res.ok).toBe(true);
+
+    const inserted = matchWrites().find((w) => w.op === 'insert');
+    // THE BUG, IN ONE ASSERTION. This was 'confirmed'.
+    expect((inserted!.payload as Row).result_status).toBe('pending_confirmation');
+
+    // The confirmation is an UPDATE, which is what on_match_confirmed listens
+    // for, and it comes after both child inserts.
+    const order = store.writes.map((w) => `${w.table}.${w.op}`);
+    expect(order).toEqual([
+      'matches.insert',
+      'match_participants.insert',
+      'match_games.insert',
+      'matches.update',
+      'audit_logs.insert',
+    ]);
+    const confirm = matchWrites().find((w) => w.op === 'update');
+    expect((confirm!.payload as Row).result_status).toBe('confirmed');
+    expect(matches()[0]!.result_status).toBe('confirmed');
+
+    // Unrated means unrated: the status moved by hand precisely so that
+    // apply_match_result — which would derive a winner and apply Elo — is not
+    // the thing that moves it.
+    expect(store.rpcs).not.toContain('apply_match_result');
+  });
+
+  it('leaves a rated match to apply_match_result rather than confirming it directly', async () => {
+    const res = await adminCreateMatch({ ...validMatch, rated_flag: true });
+    expect(res.ok).toBe(true);
+
+    const inserted = matchWrites().find((w) => w.op === 'insert');
+    expect((inserted!.payload as Row).result_status).toBe('pending_confirmation');
+    // No hand-written confirmation on this path: apply_match_result owns the
+    // flip, because it has to apply the Elo in the same breath.
+    expect(matchWrites().some((w) => w.op === 'update')).toBe(false);
+    expect(store.rpcs).toContain('apply_match_result');
+  });
+
+  // The interaction between 00119's two halves. If the game insert fails the
+  // match is discarded — and the delete is scoped to the status the match was
+  // created with. That status must be one the participants trigger will never
+  // act on, or the cleanup and the trigger would race over one match.
+  it('discards against pending_confirmation, never against a confirmed match', async () => {
+    store.faults.push({ table: 'match_games', op: 'insert', message: 'games exploded' });
+
+    const res = await adminCreateMatch(validMatch);
+    expect(res.ok).toBe(false);
+    expect(matches()).toHaveLength(0);
+
+    const del = store.writes.find((w) => w.table === 'matches' && w.op === 'delete');
+    expect(del!.filters).toContainEqual(['result_status', 'pending_confirmation']);
+    // And the match never reached 'confirmed' at any point, so nothing could
+    // have counted it before it was removed.
+    expect(matchWrites().some((w) => w.op === 'update')).toBe(false);
   });
 });
