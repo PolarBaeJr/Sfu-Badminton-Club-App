@@ -7,10 +7,16 @@ import { useToast } from '@/components/toast-provider';
 import { useStanding } from '@/components/standing-provider';
 import { QrScanner } from '@/components/qr-scanner';
 import {
-  REQUIRE_SCAN_TO_CHECK_IN,
   UNREADABLE_SCAN_MESSAGE,
+  checkInAffordances,
   tokenFromCheckinScan,
 } from '@/lib/checkin-scan';
+import {
+  IDLE_SCAN,
+  clearedScanError,
+  failedScan,
+  restartedScan,
+} from '@/lib/scan-retry';
 
 interface CheckInButtonProps {
   sessionId: string;
@@ -18,39 +24,36 @@ interface CheckInButtonProps {
   canCheckIn: boolean;
   windowLabel?: string;
   myIntent?: 'going' | 'declined' | null;
+  /** This session requires the door code — see requiresScanToCheckIn. Defaults
+   *  to today's behaviour so a caller that has not been updated cannot
+   *  accidentally impose the strict policy on a night nobody set it for. */
+  requireScan?: boolean;
 }
 
-export function CheckInButton({ sessionId, myStatus, canCheckIn, windowLabel, myIntent }: CheckInButtonProps) {
+export function CheckInButton({ sessionId, myStatus, canCheckIn, windowLabel, myIntent, requireScan = false }: CheckInButtonProps) {
   const [loading, setLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
-  const [scanError, setScanError] = useState<string | null>(null);
-  const [scanStopped, setScanStopped] = useState(false);
-  // The key on QrScanner. It latches itself off the moment it decodes anything
-  // (stopped.current = true) and its effect only re-runs on a new onResult
-  // identity, so flipping a boolean would leave a dead camera on screen — a
-  // fresh key is what actually restarts the loop.
-  const [scanAttempt, setScanAttempt] = useState(0);
+  // The camera's retry state, shared with the tournament scanner — see
+  // lib/scan-retry. QrScanner latches itself off the moment it decodes
+  // anything, so a fresh key is what actually restarts the loop; flipping a
+  // boolean would leave a dead camera on screen.
+  const [scan, setScan] = useState(IDLE_SCAN);
   const { toast } = useToast();
   const standing = useStanding();
   const router = useRouter();
+  // One decision, read in three places below. Derived rather than tested
+  // inline so "under scan-required nothing here offers a direct check-in" is a
+  // property of a single function that a test can assert whole.
+  const affordances = checkInAffordances(requireScan);
 
-  // A failed scan stops the camera and waits for a tap. It must NOT restart
-  // itself: QrScanner latches off as soon as it decodes anything, so the only
-  // way to retry is to remount it — and the code that just failed is still the
-  // code in front of the lens, so it would decode, fail, and remount again
-  // about once a second forever. When the failure came from the server (the
-  // right door code scanned before the window opens, say) that loop is an
-  // unthrottled stream of server-action calls: the 20/IP/min limit lives on the
-  // /checkin/[token] PAGE, and this flow never touches it.
+  // A failed scan stops the camera and waits for a tap — it must NOT restart
+  // itself. The reasoning, and the loop it avoids, live in lib/scan-retry.
   const failScan = useCallback((message: string) => {
-    setScanError(message);
-    setScanStopped(true);
+    setScan((s) => failedScan(s, message));
   }, []);
 
   const openScanner = useCallback(() => {
-    setScanError(null);
-    setScanStopped(false);
-    setScanAttempt((n) => n + 1);
+    setScan(restartedScan);
     setScanning(true);
   }, []);
 
@@ -62,7 +65,7 @@ export function CheckInButton({ sessionId, myStatus, canCheckIn, windowLabel, my
         return;
       }
       setLoading(true);
-      setScanError(null);
+      setScan(clearedScanError);
       try {
         const res = await checkInWithToken(token);
         if (!res.ok) {
@@ -166,8 +169,8 @@ export function CheckInButton({ sessionId, myStatus, canCheckIn, windowLabel, my
           have cost a tap AND a camera permission prompt to reach — a member who
           only wants to tap check-in must never have to meet that prompt — and
           the note above this component in session-card says check-in "must not
-          move further from their thumb than it was". Under
-          REQUIRE_SCAN_TO_CHECK_IN this is gone and the scan is the only way in.
+          move further from their thumb than it was". On a session marked
+          scan-required this is gone and the scan is the only way in.
 
           It is a text control, not a bordered button, and that is the whole
           point of the change: as `btn btn-ghost btn-sm` it sat beside the solid
@@ -175,7 +178,7 @@ export function CheckInButton({ sessionId, myStatus, canCheckIn, windowLabel, my
           against title-case bold) and read as a second, competing check-in. One
           primary per card. The 44px floor lives in .sess-textlink, so demoting
           the LOOK did not shrink the target. */}
-      {!REQUIRE_SCAN_TO_CHECK_IN && (
+      {affordances.directOnCard && (
         <button
           type="button"
           onClick={handleCheckIn}
@@ -223,9 +226,9 @@ export function CheckInButton({ sessionId, myStatus, canCheckIn, windowLabel, my
               </button>
             </div>
 
-            {scanError && (
+            {scan.error && (
               <div className="alert-danger" role="alert" style={{ fontSize: 13 }}>
-                {scanError}
+                {scan.error}
               </div>
             )}
 
@@ -238,7 +241,7 @@ export function CheckInButton({ sessionId, myStatus, canCheckIn, windowLabel, my
                 Unmounted after a failure so the camera really stops, and
                 brought back only by a tap on "Scan again" — the code that just
                 failed is still the code in front of the lens. */}
-            {scanStopped ? (
+            {scan.stopped ? (
               <button
                 type="button"
                 onClick={openScanner}
@@ -248,7 +251,7 @@ export function CheckInButton({ sessionId, myStatus, canCheckIn, windowLabel, my
                 <QrCode size={16} /> Scan again
               </button>
             ) : (
-              <QrScanner key={scanAttempt} onResult={onScan} paused={loading} />
+              <QrScanner key={scan.attempt} onResult={onScan} paused={loading} />
             )}
 
             {loading && (
@@ -257,7 +260,7 @@ export function CheckInButton({ sessionId, myStatus, canCheckIn, windowLabel, my
               </p>
             )}
 
-            {REQUIRE_SCAN_TO_CHECK_IN ? (
+            {affordances.cameraFallback === 'printed-code' ? (
               // Presence is required, so there is no button here on purpose:
               // "camera denied" must not be a route to checking in from home.
               // The printed code and the phone's own camera app still work —
@@ -269,18 +272,20 @@ export function CheckInButton({ sessionId, myStatus, canCheckIn, windowLabel, my
               </p>
             ) : (
               <>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setScanning(false);
-                    void handleCheckIn();
-                  }}
-                  disabled={loading}
-                  className="btn btn-ghost"
-                  style={{ width: '100%', justifyContent: 'center' }}
-                >
-                  Check in without scanning
-                </button>
+                {affordances.directInDialog && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setScanning(false);
+                      void handleCheckIn();
+                    }}
+                    disabled={loading}
+                    className="btn btn-ghost"
+                    style={{ width: '100%', justifyContent: 'center' }}
+                  >
+                    Check in without scanning
+                  </button>
+                )}
                 <p className="muted" style={{ fontSize: 12, margin: 0, lineHeight: 1.5 }}>
                   Or open your phone&rsquo;s camera app on the same code.
                 </p>

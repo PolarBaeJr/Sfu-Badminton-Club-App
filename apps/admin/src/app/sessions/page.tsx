@@ -557,6 +557,9 @@ export default async function SessionsPage({
             notes: session.notes as string | null,
             status: session.status as string,
             track: session.track as SessionGroupInput,
+            // From the same select('*') as the rest; simply absent until
+            // migration 00116 is applied, which the dialog reads as false.
+            require_scan_to_check_in: session.require_scan_to_check_in as boolean | null | undefined,
           }}
           can={menuCan}
         />

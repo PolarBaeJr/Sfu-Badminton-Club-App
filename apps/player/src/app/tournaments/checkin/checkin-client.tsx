@@ -3,59 +3,85 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@badminton/ui';
+import { QrCode } from 'lucide-react';
 import { QrScanner } from '@/components/qr-scanner';
 import { useStanding } from '@/components/standing-provider';
 import { checkInToTournament, type TournamentCheckInResult } from '@/lib/tournament-checkin';
-
-// The QR encodes a full URL so a phone's native camera also works — scanning
-// with the built-in camera app opens this page with ?token= already set, and
-// the in-app scanner below is for people who are already in the app.
-function tokenFromScan(raw: string): string | null {
-  const trimmed = raw.trim();
-  // A bare token, if the code was generated as plain text.
-  if (/^[0-9a-f]{48}$/.test(trimmed)) return trimmed;
-  try {
-    return new URL(trimmed).searchParams.get('token');
-  } catch {
-    return null;
-  }
-}
+import {
+  classifyTournamentScan,
+  SESSION_CODE_SCAN_MESSAGE,
+  UNREADABLE_TOURNAMENT_SCAN_MESSAGE,
+} from '@/lib/tournament-scan';
+import {
+  IDLE_SCAN,
+  clearedScanError,
+  failedScan,
+  restartedScan,
+} from '@/lib/scan-retry';
 
 export function TournamentCheckInClient({ initialToken }: { initialToken?: string }) {
   const [result, setResult] = useState<TournamentCheckInResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [scanning, setScanning] = useState(!initialToken);
+  // The camera's retry state — the key it is mounted under, whether it has been
+  // torn down after a failure, and what went wrong. See lib/scan-retry for why
+  // a key is the only thing that can restart a QrScanner, and why the old
+  // `setScanning(true)` on failure (on a `scanning` that was already true) was
+  // a state write with no state change and therefore no remount at all.
+  const [scan, setScan] = useState(IDLE_SCAN);
   const router = useRouter();
   // Signed-out visitors read as good standing here (this page is public), so
   // they keep the existing behaviour of scanning and being sent to sign in.
   const standing = useStanding();
 
+  const failScan = useCallback((message: string) => {
+    setScan((s) => failedScan(s, message));
+  }, []);
+
+  const restartScan = useCallback(() => {
+    setScan(restartedScan);
+    setScanning(true);
+  }, []);
+
   const submit = useCallback(async (token: string) => {
     setSubmitting(true);
-    setError(null);
+    setScan(clearedScanError);
     const res = await checkInToTournament(token);
     setSubmitting(false);
     if (!res.ok) {
-      setError(res.error);
       // Let them try again rather than stranding them on a dead screen — a
-      // mis-scan at the door should not need a page reload.
+      // mis-scan at the door should not need a page reload. The camera is torn
+      // down and "Scan again" brings a fresh one back.
+      //
+      // setScanning(true) matters only on the native-camera path, where
+      // `scanning` started false because a ?token= was already present. That is
+      // the accident that hid this bug for so long: arriving with a bad token
+      // in the URL recovered correctly, and only the in-app scanner — where
+      // `scanning` was already true — was left dead.
+      failScan(res.error);
       setScanning(true);
       return;
     }
     setResult(res.data);
     setScanning(false);
     router.refresh();
-  }, [router]);
+  }, [failScan, router]);
 
   const onScan = useCallback((raw: string) => {
-    const token = tokenFromScan(raw);
-    if (!token) {
-      setError('That does not look like a check-in code.');
+    const scan = classifyTournamentScan(raw);
+    // Every miss goes through failScan, not just the server's. An early return
+    // that only set an error left a latched-off scanner mounted: a live-looking
+    // video that would never decode again, with a message underneath it.
+    if (scan.kind === 'session-code') {
+      failScan(SESSION_CODE_SCAN_MESSAGE);
       return;
     }
-    void submit(token);
-  }, [submit]);
+    if (scan.kind === 'unreadable') {
+      failScan(UNREADABLE_TOURNAMENT_SCAN_MESSAGE);
+      return;
+    }
+    void submit(scan.token);
+  }, [failScan, submit]);
 
   // Arrived via the native camera with ?token= already present — check in
   // immediately rather than asking them to scan the code they just scanned.
@@ -111,16 +137,46 @@ export function TournamentCheckInClient({ initialToken }: { initialToken?: strin
 
   return (
     <div className="space-y-4">
-      {error && (
+      {scan.error && (
         <div className="card-base" role="alert">
-          <p style={{ fontSize: 13, margin: 0 }}>{error}</p>
+          <p style={{ fontSize: 13, margin: 0 }}>{scan.error}</p>
         </div>
       )}
       {submitting && <p className="muted" style={{ fontSize: 13 }}>Checking you in…</p>}
-      {scanning && <QrScanner onResult={onScan} paused={submitting} />}
+
+      {/* Unmounted after a failure so the camera really stops, and brought back
+          only by a tap — a fresh key is the only thing that can restart it. */}
+      {scanning && (scan.stopped ? (
+        <button
+          type="button"
+          onClick={restartScan}
+          className="btn btn-primary btn-lg rounded-[8px]"
+          style={{ width: '100%', justifyContent: 'center' }}
+        >
+          <QrCode size={16} /> Scan again
+        </button>
+      ) : (
+        <QrScanner key={scan.attempt} onResult={onScan} paused={submitting} />
+      ))}
+
       <p className="muted" style={{ fontSize: 12 }}>
         Point your camera at the check-in code an exec is showing. One scan checks
         you into every event you are entered in.
+      </p>
+
+      {/* THE WAY OUT WITHOUT A CAMERA, and it is unconditional on purpose.
+          QrScanner handles a denied permission, a missing camera and an
+          insecure origin by rendering its own message and never calling
+          onResult — the parent is never told which, or even that it happened.
+          So this cannot be shown "on failure"; whichever of the three occurred,
+          the member lands on something. Before this, a member who tapped Deny
+          once saw a red box and a line telling them to point a camera they had
+          just refused: a dead end, with no mention of the two routes that still
+          work. Both need no in-browser camera permission at all. */}
+      <p className="muted" style={{ fontSize: 12, lineHeight: 1.5 }}>
+        Camera not working? Open your phone&rsquo;s camera app and point it at the same
+        code — it opens this check-in in your browser. Otherwise ask an exec to check
+        you in.
       </p>
     </div>
   );

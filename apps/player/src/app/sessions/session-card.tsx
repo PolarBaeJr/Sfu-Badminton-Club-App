@@ -5,6 +5,7 @@ import { CheckInButton } from './check-in-button';
 import { AddToCalendarButton } from './add-to-calendar';
 import { RsvpButtons } from './rsvp-buttons';
 import { describeMyState, isAttendanceRecorded } from '@/lib/schedule';
+import { requiresScanToCheckIn } from '@/lib/checkin-scan';
 
 export interface SessionCardSession {
   id: string;
@@ -15,6 +16,10 @@ export interface SessionCardSession {
   location: string;
   notes: string | null;
   track: string;
+  /** Optional because the page selects '*' and the column arrives only once
+   *  migration 00116 is applied by hand. Absent reads as "not required" —
+   *  requiresScanToCheckIn is where that is decided. */
+  require_scan_to_check_in?: boolean | null;
 }
 
 interface SessionCardProps {
@@ -130,6 +135,7 @@ export function SessionCard({
             canCheckIn={canCheckIn}
             windowLabel={windowLabel}
             myIntent={myIntent}
+            requireScan={requiresScanToCheckIn(session)}
           />
           {showWindowLabel && <span className="sess-window">{windowLabel}</span>}
           {/* Once attendance is on the record the RSVP is moot — showing both

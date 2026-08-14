@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tokenFromCheckinScan, REQUIRE_SCAN_TO_CHECK_IN } from '../checkin-scan';
+import { tokenFromCheckinScan, checkInAffordances, requiresScanToCheckIn } from '../checkin-scan';
 
 // A member at the door points the camera at whatever is in front of them. This
 // function is the only thing standing between "any QR code in the world" and a
@@ -86,11 +86,57 @@ describe('tokenFromCheckinScan — codes that are not', () => {
   });
 });
 
-describe('REQUIRE_SCAN_TO_CHECK_IN', () => {
-  it('ships as supplement, not replacement', () => {
-    // Guards the default rather than the mechanism: flipping this changes what
-    // attendance means, so the change should be deliberate enough to also
-    // update the test that says so.
-    expect(REQUIRE_SCAN_TO_CHECK_IN).toBe(false);
+describe('requiresScanToCheckIn', () => {
+  // The policy used to be a build-time constant. It is now a column, applied by
+  // hand, which means the app runs for a while against a database that has
+  // never heard of it — so what "absent" means is the load-bearing case here,
+  // not an edge case.
+
+  it('reads an unset session as permissive', () => {
+    expect(requiresScanToCheckIn({ require_scan_to_check_in: false })).toBe(false);
+  });
+
+  it('reads a session marked strict as strict', () => {
+    expect(requiresScanToCheckIn({ require_scan_to_check_in: true })).toBe(true);
+  });
+
+  it('reads a MISSING column as permissive, never as strict', () => {
+    // Before migration 00116 lands, select('*') returns rows without the field
+    // at all. Defaulting the other way would lock an entire club out of
+    // check-in on the strength of a deploy that ran ahead of its SQL.
+    expect(requiresScanToCheckIn({})).toBe(false);
+    expect(requiresScanToCheckIn({ require_scan_to_check_in: null })).toBe(false);
+    expect(requiresScanToCheckIn(null)).toBe(false);
+    expect(requiresScanToCheckIn(undefined)).toBe(false);
+  });
+});
+
+describe('checkInAffordances', () => {
+  it('offers both routes by default, which is what every session ships with', () => {
+    expect(checkInAffordances(false)).toEqual({
+      directOnCard: true,
+      directInDialog: true,
+      cameraFallback: 'direct',
+    });
+  });
+
+  // THE ONE THAT MATTERS. Scanning is required and the camera never starts —
+  // denied, absent, or an insecure origin; QrScanner renders its own message
+  // and never tells the parent which. If ANY direct affordance survives that
+  // moment, one tap on "Deny" buys permanent check-in-from-home and the setting
+  // is a fiction. Asserted as a whole object rather than field by field, so a
+  // fourth affordance added later fails this test until somebody decides what
+  // it does under the strict policy.
+  it('leaves NO direct check-in route when scanning is required', () => {
+    const strict = checkInAffordances(true);
+    expect(strict).toEqual({
+      directOnCard: false,
+      directInDialog: false,
+      cameraFallback: 'printed-code',
+    });
+    // Said again in the form the requirement is written in: nothing on this
+    // screen is a way in that skips the code.
+    expect(Object.values(strict).some((v) => v === true)).toBe(false);
+    expect(strict.cameraFallback).not.toBe('direct');
   });
 });

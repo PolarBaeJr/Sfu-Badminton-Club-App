@@ -16,9 +16,44 @@ export async function checkInToSession(sessionId: string): Promise<ActionResult>
 
 async function checkInToSessionImpl(sessionId: string) {
   const player = await requirePlayer();
+  await assertScanNotRequired(sessionId);
   // The button flow treats a duplicate as an error; the QR flow doesn't.
   const { alreadyCheckedIn } = await performCheckIn(player, sessionId);
   if (alreadyCheckedIn) throw new ExpectedError('Already checked in');
+}
+
+// The server half of the per-session scan policy.
+//
+// Hiding the buttons is not enforcement: this action is reachable by anyone who
+// can post to it, and "the exec set this night to require the door code" is a
+// rule about attendance, not about which controls happen to be on screen. So it
+// is asserted HERE, on the tokenless path, and pointedly NOT inside
+// performCheckIn — the token flow is the way in that the policy exists to
+// require, and gating it there would close the only door it leaves open.
+//
+// ITS OWN QUERY, AND ITS OWN ERROR HANDLING, for the reason spelled out over
+// the select in performCheckIn: migrations here are applied by hand, so the app
+// can be deployed against a database that has never heard of this column.
+// Naming an unknown column is a 42703 that would arrive as `session == null`
+// and turn into "This session is closed" for every member in the club. Folded
+// into the select below, one missing column would break check-in outright;
+// isolated here, a failure of any kind means the policy is unknown, and unknown
+// resolves to the permissive answer that has always been in force.
+async function assertScanNotRequired(sessionId: string) {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from('sessions')
+    .select('require_scan_to_check_in')
+    .eq('id', sessionId)
+    .maybeSingle();
+  // No throw, no Sentry: before 00116 lands this errors on every single call,
+  // and that is an expected state of the world rather than an incident.
+  if (error || !data) return;
+  if (data.require_scan_to_check_in === true) {
+    throw new ExpectedError(
+      'This session needs the check-in code on the door — scan it to check in.',
+    );
+  }
 }
 
 // The one place a player checks themselves in. `player` is always the caller's

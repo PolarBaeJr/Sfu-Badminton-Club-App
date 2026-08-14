@@ -484,6 +484,10 @@ interface SessionCardMenuProps {
     notes: string | null;
     status: string;
     track: SessionGroupInput;
+    /** Undefined until migration 00116 is applied — the page selects '*', so
+     *  the field simply is not there yet. Read through a `=== true` so the
+     *  checkbox is never handed an undefined and never flips to uncontrolled. */
+    require_scan_to_check_in?: boolean | null;
   };
   /** FOUR CAPABILITIES, NOT ONE FLAG. This menu offered Edit, Send reminder,
    *  Archive and Delete to everybody the section admitted, and each of those is
@@ -509,6 +513,7 @@ export function SessionCardMenu({ session, can }: SessionCardMenuProps) {
   const [location, setLocation] = useState(session.location);
   const [notes, setNotes] = useState(session.notes || '');
   const [track, setTrack] = useState<SessionGroupInput>(session.track);
+  const [requireScan, setRequireScan] = useState(session.require_scan_to_check_in === true);
   const [loading, setLoading] = useState(false);
   // The audited pair. Archiving ends check-in for everyone still walking in and
   // deleting takes the attendance rows with it, so both go through a dialog that
@@ -549,7 +554,7 @@ export function SessionCardMenu({ session, can }: SessionCardMenuProps) {
     if (editReason.trim().length < 5) { toast('A reason of at least 5 characters is required', 'error'); return; }
     setLoading(true);
     try {
-      const res = await updateSession(session.id, { name, date, time: time || undefined, end_time: endTime || undefined, location, notes: notes || undefined, track }, editReason);
+      const res = await updateSession(session.id, { name, date, time: time || undefined, end_time: endTime || undefined, location, notes: notes || undefined, track, require_scan_to_check_in: requireScan }, editReason);
       if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
       toast('Session updated', 'success');
       closeEdit();
@@ -561,9 +566,17 @@ export function SessionCardMenu({ session, can }: SessionCardMenuProps) {
 
   // The reason is cleared on the way out, so reopening Edit does not offer the
   // last edit's sentence as the explanation for this one.
+  //
+  // The scan checkbox is reset with it, which the text fields deliberately are
+  // not. Every other field in this dialog keeps whatever was typed after a
+  // Cancel, and that is merely untidy — a half-typed location is obviously a
+  // draft. A checkbox is not: toggled on, cancelled, and reopened, it would
+  // read as a statement that this night IS scan-required when the database says
+  // it is not, and an exec has no way to tell the two apart by looking.
   function closeEdit() {
     setEditOpen(false);
     setEditReason('');
+    setRequireScan(session.require_scan_to_check_in === true);
   }
 
   async function handleSendReminders() {
@@ -675,6 +688,39 @@ export function SessionCardMenu({ session, can }: SessionCardMenuProps) {
           <LocationField value={location} onChange={setLocation} />
           <Select label="Track" options={TRACK_OPTIONS} value={track} onChange={(e) => setTrack(e.target.value as SessionGroupInput)} />
           <Input label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Any additional info..." />
+
+          {/* THE PRESENCE SWITCH. It lives here, inside Edit, because it is a
+              property of this one night and `sessions.update.write` — the
+              capability already gating this whole dialog — is exactly the right
+              grant for it: whoever may move the night may decide how strictly
+              its door is kept.
+
+              Not on the Create form. A night is made strict once somebody has
+              decided it should be, which is rarely the moment it is scheduled,
+              and putting it there would also stamp the choice across a whole
+              40-week weekly series in one click.
+
+              The consequence is spelled out under the label rather than left to
+              be discovered on a member's phone at the door: with this on, the
+              only way in is the printed QR, and a member who cannot scan has to
+              be checked in by an officer from the door list. */}
+          <div className="space-y-1.5">
+            <label className="flex items-start gap-2 text-sm text-[var(--text-secondary)] min-h-[44px] py-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={requireScan}
+                onChange={(e) => setRequireScan(e.target.checked)}
+                className="mt-0.5 rounded border-[var(--border)]"
+              />
+              <span>Require scanning the check-in code</span>
+            </label>
+            <p className="text-xs text-[var(--text-muted)]">
+              {requireScan
+                ? 'Members must scan the QR on the door. Checking in from the app without it is refused, so anyone whose camera will not work needs an officer to mark them present.'
+                : 'Members can scan the QR or check in with one tap from the schedule.'}
+            </p>
+          </div>
+
           {/* Last, under the fields it explains, and worded so it is clear the
               sentence is about the change rather than about the session. Members
               are told when a session moves; the audit row is where the exec who

@@ -123,6 +123,23 @@ async function createSessionImpl(data: {
   return { sessions, count: dates.length };
 }
 
+// "PostgREST/Postgres has never heard of this column."
+//
+// The one failure a write of `require_scan_to_check_in` is allowed to shrug
+// off, because migration 00116 is applied by hand and this console is
+// routinely deployed ahead of it. Everything else is a real error and is
+// rethrown — see the call site in updateSessionImpl.
+//
+// Local rather than exported: this file is 'use server' and may only export
+// async functions, so a predicate declared here can be neither shared nor
+// unit-tested directly — the same constraint that put requireReason in
+// lib/audit-reason.
+function isUnknownColumnError(error: { code?: string | null; message?: string | null }): boolean {
+  if (error.code === 'PGRST204' || error.code === '42703') return true;
+  // Backstop for a client that surfaces the message without a code.
+  return (error.message ?? '').includes('require_scan_to_check_in');
+}
+
 // A typed reason on every audited session write.
 //
 // The console's rule is that every audited action carries one — ban, remove,
@@ -150,6 +167,7 @@ export async function updateSession(sessionId: string, data: {
   location: string;
   notes?: string;
   track: SessionGroupInput;
+  require_scan_to_check_in?: boolean;
 }, reason: string): Promise<ActionResult<void>> {
   return runAction(() => updateSessionImpl(sessionId, data, reason));
 }
@@ -162,6 +180,7 @@ async function updateSessionImpl(sessionId: string, data: {
   location: string;
   notes?: string;
   track: SessionGroupInput;
+  require_scan_to_check_in?: boolean;
 }, reason: string) {
   const why = requireReason(reason, 'Editing a session');
   parseOrThrow(sessionGroupSchema, data.track);
@@ -182,13 +201,56 @@ async function updateSessionImpl(sessionId: string, data: {
 
   if (error) throw new Error(error.message);
 
+  // A SECOND, SEPARATE UPDATE, and it is separate on purpose.
+  //
+  // `require_scan_to_check_in` arrives with migration 00116, which the owner
+  // applies by hand — so this console can be, and routinely is, deployed
+  // against a database that does not have the column yet. Folded into the
+  // update above, an unknown column would fail the WHOLE statement (PostgREST
+  // answers PGRST204 out of its schema cache, or 42703 from Postgres itself,
+  // and `if (error) throw` turns either into a red toast): every session edit
+  // in the console would break — name, date, location and all — for a checkbox
+  // nobody had touched. Isolated here, a pre-migration edit saves everything
+  // else and the checkbox is silently a no-op until the SQL lands.
+  //
+  // The same reasoning as the deliberately-narrow select in the player app's
+  // performCheckIn; this is the write-side half of it, which has no `select('*')`
+  // to hide behind.
+  let scanPolicyWritten = false;
+  if (data.require_scan_to_check_in !== undefined) {
+    const { error: scanError } = await adminClient
+      .from('sessions')
+      .update({ require_scan_to_check_in: data.require_scan_to_check_in })
+      .eq('id', sessionId);
+    // ONLY "the column is not there yet" is swallowed. Swallowing everything
+    // would mean that after 00116 lands, a transient failure on this statement
+    // still ends in a green "Session updated" — and the exec walks away
+    // believing the night is strict when the database says it is not. That is
+    // the same fiction this feature exists to prevent, arriving through the
+    // console instead of through the app.
+    //
+    // PGRST204 is what PostgREST answers out of its schema cache for a column
+    // it does not know ("Could not find the '…' column of 'sessions' in the
+    // schema cache"); 42703 is Postgres's own undefined_column, which is what
+    // arrives if the statement reaches the database instead. Both are the
+    // pre-migration state of the world. The message test is a backstop for the
+    // case where neither code is populated.
+    if (scanError && !isUnknownColumnError(scanError)) throw new Error(scanError.message);
+    scanPolicyWritten = !scanError;
+  }
+
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
     action_type: 'session_updated',
     target_type: 'session',
     target_id: sessionId,
     old_value: old,
-    new_value: data,
+    // What was actually written, not what was asked for. If the column is not
+    // there yet the audit row must not claim a policy change that never
+    // happened — that log is the only record of who made a night strict.
+    new_value: scanPolicyWritten
+      ? data
+      : { ...data, require_scan_to_check_in: undefined },
     reason: why,
   }, { sessionId });
 

@@ -3,7 +3,6 @@ import { useState } from 'react';
 import { setSessionIntent } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import { useStanding } from '@/components/standing-provider';
-import { REQUIRE_SCAN_TO_CHECK_IN } from '@/lib/checkin-scan';
 
 interface RsvpButtonsProps {
   sessionId: string;
@@ -104,23 +103,20 @@ export function RsvpButtons({ sessionId, myIntent, demoted = false }: RsvpButton
   // the one thing check-in cannot express — it tells the exec to stop
   // expecting you, which nothing else on the card does.
   //
-  // That argument holds only while REQUIRE_SCAN_TO_CHECK_IN is false, and the
-  // flag is the reason this is a condition rather than a deletion. Its own
-  // comment puts it plainly: with scanning optional, "tapping the button works
-  // from the bus", so a member who has not arrived can already express Going by
-  // simply checking in. Flip the flag and they cannot — check-in then needs the
-  // door code, and dropping this button would leave someone half an hour out
-  // with no way to say they are coming at all. So under the flag "Going"
-  // survives, quietly. (`REQUIRE_SCAN_TO_CHECK_IN` is annotated `: boolean`
-  // precisely so this branch keeps type-checking while it is false.)
+  // UNCONDITIONAL, and deliberately so. This used to make an exception for the
+  // scan-required policy, on the reasoning that a member half an hour out could
+  // no longer express "going" by simply checking in — check-in would need the
+  // door code they are not yet standing at. The owner has overruled it: an open
+  // check-in has no use for a bare "Going" button, because checking in already
+  // flags both intent and attendance, and a control that appears on some nights
+  // and not others is worse than one that is never there.
+  //
+  // The residual he accepted, written down so it is a decision rather than a
+  // surprise: on a scan-required night a member who has not arrived cannot say
+  // they are coming at all. The exec sees them when they walk in and scan.
   if (demoted) {
     return (
       <div className="sess-rsvp">
-        {REQUIRE_SCAN_TO_CHECK_IN && (
-          <button onClick={() => choose('going')} disabled={loading} className="sess-textlink">
-            Going
-          </button>
-        )}
         <button onClick={() => choose('declined')} disabled={loading} className="sess-textlink">
           Can&apos;t make it
         </button>
