@@ -557,7 +557,15 @@ export function SessionCardMenu({ session, can }: SessionCardMenuProps) {
       const res = await updateSession(session.id, { name, date, time: time || undefined, end_time: endTime || undefined, location, notes: notes || undefined, track, require_scan_to_check_in: requireScan }, editReason);
       if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
       toast('Session updated', 'success');
-      closeEdit();
+      // NOT closeEdit(): after a successful save the value just submitted IS
+      // the persisted one, and closeEdit resets from `session` — a prop
+      // captured BEFORE the action ran. React keeps this client state when the
+      // revalidated props arrive, so resetting here would leave the checkbox
+      // showing the opposite of what the database now holds, and the next
+      // unrelated edit would quietly write that stale value back, turning a
+      // scan-required night back into an ordinary one with nobody touching the
+      // checkbox.
+      closeEditKeeping(requireScan);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
@@ -573,10 +581,17 @@ export function SessionCardMenu({ session, can }: SessionCardMenuProps) {
   // draft. A checkbox is not: toggled on, cancelled, and reopened, it would
   // read as a statement that this night IS scan-required when the database says
   // it is not, and an exec has no way to tell the two apart by looking.
+  // CANCEL path only — discards the toggle by returning to what the server last
+  // told us. Do not call this after a successful save; use closeEditKeeping.
   function closeEdit() {
+    closeEditKeeping(session.require_scan_to_check_in === true);
+  }
+
+  /** Shut the dialog and leave the checkbox showing `requireScanValue`. */
+  function closeEditKeeping(requireScanValue: boolean) {
     setEditOpen(false);
     setEditReason('');
-    setRequireScan(session.require_scan_to_check_in === true);
+    setRequireScan(requireScanValue);
   }
 
   async function handleSendReminders() {

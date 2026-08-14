@@ -189,19 +189,7 @@ async function updateSessionImpl(sessionId: string, data: {
 
   const { data: old } = await adminClient.from('sessions').select('*').eq('id', sessionId).single();
 
-  const { error } = await adminClient.from('sessions').update({
-    name: data.name,
-    date: data.date,
-    start_time: data.time ?? null,
-    end_time: data.end_time ?? null,
-    location: data.location,
-    notes: data.notes || null,
-    track: data.track,
-  }).eq('id', sessionId);
-
-  if (error) throw new Error(error.message);
-
-  // A SECOND, SEPARATE UPDATE, and it is separate on purpose.
+  // A SEPARATE UPDATE, and it runs FIRST, and both of those are on purpose.
   //
   // `require_scan_to_check_in` arrives with migration 00116, which the owner
   // applies by hand — so this console can be, and routinely is, deployed
@@ -216,6 +204,15 @@ async function updateSessionImpl(sessionId: string, data: {
   // The same reasoning as the deliberately-narrow select in the player app's
   // performCheckIn; this is the write-side half of it, which has no `select('*')`
   // to hide behind.
+  //
+  // WHY FIRST. This is the statement that can fail for reasons the other one
+  // cannot, so it goes where a failure costs nothing. Run second, a hard error
+  // here threw AFTER the name/date/location update had already committed —
+  // leaving a half-applied edit with no audit row and no revalidate, because
+  // both happen below. Running it first means the likely failure happens before
+  // anything is written at all. Not a transaction — PostgREST gives us no way
+  // to span two statements — but it moves the only realistic failure out of the
+  // window where a partial commit is possible.
   let scanPolicyWritten = false;
   if (data.require_scan_to_check_in !== undefined) {
     const { error: scanError } = await adminClient
@@ -238,6 +235,18 @@ async function updateSessionImpl(sessionId: string, data: {
     if (scanError && !isUnknownColumnError(scanError)) throw new Error(scanError.message);
     scanPolicyWritten = !scanError;
   }
+
+  const { error } = await adminClient.from('sessions').update({
+    name: data.name,
+    date: data.date,
+    start_time: data.time ?? null,
+    end_time: data.end_time ?? null,
+    location: data.location,
+    notes: data.notes || null,
+    track: data.track,
+  }).eq('id', sessionId);
+
+  if (error) throw new Error(error.message);
 
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
