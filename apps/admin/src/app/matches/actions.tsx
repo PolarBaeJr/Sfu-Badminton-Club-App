@@ -16,14 +16,23 @@ export function MatchActions({ matchId, resultStatus }: { matchId: string; resul
     if (!reason.trim()) { toast('Reason required', 'error'); return; }
     setLoading(true);
     try {
+      // THREE OUTCOMES, NOT TWO. The act itself either happened or it did not,
+      // and that is `res.ok`. Whether the REASON reached the private note table
+      // is a separate question, because the void is committed by the time the
+      // note is written and the action deliberately does not throw past its own
+      // audit row to report a note failure (see voidMatch). So a note that did
+      // not land is reported as information rather than as an error — the act
+      // succeeded, and the reason is in the audit log either way.
       if (action === 'void') {
         const res = await voidMatch(matchId, reason);
         if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
-        toast('Match voided', 'success');
+        if (res.data.noteRecorded) toast('Match voided', 'success');
+        else toast('Match voided — the reason was audited but not saved to the match note', 'info');
       } else if (action === 'casual') {
         const res = await convertMatchToCasual(matchId, reason);
         if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
-        toast('Match converted to casual', 'success');
+        if (res.data.noteRecorded) toast('Match converted to casual', 'success');
+        else toast('Match converted to casual — the reason was audited but not saved to the match note', 'info');
       }
       setAction(null);
       setReason('');

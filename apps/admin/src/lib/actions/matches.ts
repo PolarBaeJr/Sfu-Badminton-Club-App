@@ -41,11 +41,22 @@ import { MATCH_ADMIN_NOTE_TABLE, isMissingNoteTableError } from '../match-note';
  * missing TABLE (PGRST205 / 42P01). isMissingNoteTableError knows the
  * difference; the sessions predicate would not have caught it.
  *
- * RETURNS THE MESSAGE RATHER THAN THROWING, because the three call sites want
- * three different things from a genuine failure. Only "no such table" is
- * swallowed: swallowing everything would mean that after 00117 is applied a
- * real failure still ends in a green success toast, and the exec walks away
- * believing a reason was recorded that was not.
+ * IT NEVER THROWS, AND IT DISTINGUISHES THREE OUTCOMES rather than two. The
+ * two-way version — "null means fine" — collapses "written" and "the table is
+ * not there yet" into one answer, and the callers need them apart: the audit
+ * row must not claim a note it does not have, and the exec must not be nagged
+ * about a migration they cannot run from the console.
+ *
+ *   recorded: true            the row is in the database.
+ *   recorded: false, no error 00117 has not been applied here. Silent: the
+ *                             reason is not LOST — logAdminAudit writes the
+ *                             same text to audit_logs.reason on both of the
+ *                             paths that have one — and there is nothing the
+ *                             person clicking Confirm could do about it.
+ *   error                     a real failure. Loud, always, because after
+ *                             00117 is applied a swallowed failure would end
+ *                             in a green toast and the exec would walk away
+ *                             believing a reason was recorded that was not.
  *
  * UPSERT, because one match has one note — `match_id` is the primary key. A
  * void reason overwrites whatever the entry form wrote, which is exactly what
@@ -56,7 +67,7 @@ async function writeMatchNote(
   matchId: string,
   note: string,
   authorId: string,
-): Promise<string | null> {
+): Promise<{ recorded: boolean; error: string | null }> {
   const { error } = await adminClient
     .from(MATCH_ADMIN_NOTE_TABLE)
     .upsert(
@@ -71,12 +82,21 @@ async function writeMatchNote(
       { onConflict: 'match_id' },
     );
 
-  if (!error) return null;
-  if (isMissingNoteTableError(error)) return null;
-  return error.message ?? 'The note could not be saved.';
+  if (!error) return { recorded: true, error: null };
+  if (isMissingNoteTableError(error)) return { recorded: false, error: null };
+  return { recorded: false, error: error.message ?? 'The note could not be saved.' };
 }
 
-export async function voidMatch(matchId: string, reason: string): Promise<ActionResult<void>> {
+/**
+ * `noteRecorded` is how the caller learns the reason reached
+ * `match_admin_notes`. It is FALSE and not an error when 00117 has not been
+ * applied to this database yet — see writeMatchNote, and MatchActions, which
+ * turns it into a quieter toast rather than a red one.
+ */
+export async function voidMatch(
+  matchId: string,
+  reason: string,
+): Promise<ActionResult<{ noteRecorded: boolean }>> {
   return runAction(() => voidMatchImpl(matchId, reason));
 }
 
@@ -109,24 +129,49 @@ async function voidMatchImpl(matchId: string, reason: string) {
 
   if (error) throw new Error(error.message);
 
-  // After the void, and on its own. The reason is worth recording and is not
-  // worth failing the void over — but a failure that is not "the table is not
-  // there yet" must still be loud, or the toast lies about what was written.
-  const noteError = await writeMatchNote(adminClient, matchId, reason, admin.id);
-  if (noteError) throw new Error(noteError);
+  // AFTER THE VOID, BEFORE THE AUDIT, AND IT DOES NOT THROW. The order is the
+  // point. The match is already voided and the Elo already reversed by the time
+  // this runs; there is no discard path here the way there is in
+  // adminCreateMatch, so throwing on a note failure would skip logAdminAudit
+  // and revalidatePath and leave the club with an UNAUDITED VOID — no record of
+  // who did it or why, and a ledger still showing the match as it was. That is
+  // strictly worse than the green-toast-lie this file is otherwise careful
+  // about, because an audit row for every destructive act is the one thing the
+  // console cannot reconstruct afterwards.
+  //
+  // So the outcome is threaded through instead, the same way 00116's
+  // `scanPolicyWritten` is: Sentry hears about a real failure, the audit row
+  // says honestly whether the note landed, and the exec is told in the toast.
+  const note = await writeMatchNote(adminClient, matchId, reason, admin.id);
+  if (note.error) {
+    Sentry.captureException(new Error(`Match note not recorded on void: ${note.error}`), {
+      extra: { matchId, action: 'void_match' },
+    });
+  }
 
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
     action_type: 'match_voided',
     target_type: 'match',
     target_id: matchId,
+    // WHAT ACTUALLY HAPPENED, not what was asked for — 00116's rule, applied to
+    // the other kind of pre-migration gap. If the note did not land the audit
+    // row must not imply it did.
+    new_value: { note_recorded: note.recorded },
+    // The reason itself is recorded HERE regardless, which is why a note that
+    // did not land is a degraded outcome rather than a lost one.
     reason,
   }, { matchId });
 
   revalidatePath('/matches');
+  return { noteRecorded: note.recorded };
 }
 
-export async function convertMatchToCasual(matchId: string, reason: string): Promise<ActionResult<void>> {
+/** See voidMatch for what `noteRecorded` means and why it is not an error. */
+export async function convertMatchToCasual(
+  matchId: string,
+  reason: string,
+): Promise<ActionResult<{ noteRecorded: boolean }>> {
   return runAction(() => convertMatchToCasualImpl(matchId, reason));
 }
 
@@ -176,19 +221,28 @@ async function convertMatchToCasualImpl(matchId: string, reason: string) {
   }
 
   // One write for both branches — whichever path the match took, the exec typed
-  // one reason and there is one place it belongs.
-  const noteError = await writeMatchNote(adminClient, matchId, reason, admin.id);
-  if (noteError) throw new Error(noteError);
+  // one reason and there is one place it belongs. It does NOT throw, for the
+  // reason spelled out in voidMatch: the conversion is already committed and
+  // the Elo already reversed, so throwing here would skip the audit row and
+  // leave an unaudited change to a rated result.
+  const note = await writeMatchNote(adminClient, matchId, reason, admin.id);
+  if (note.error) {
+    Sentry.captureException(new Error(`Match note not recorded on convert: ${note.error}`), {
+      extra: { matchId, action: 'convert_to_casual' },
+    });
+  }
 
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
     action_type: 'match_converted_casual',
     target_type: 'match',
     target_id: matchId,
+    new_value: { note_recorded: note.recorded },
     reason,
   }, { matchId });
 
   revalidatePath('/matches');
+  return { noteRecorded: note.recorded };
 }
 
 // ============================================================
@@ -342,8 +396,8 @@ async function adminCreateMatchImpl(data: {
   // creates the match exactly as before and drops the note.
   const trimmedNote = data.admin_note?.trim();
   if (trimmedNote) {
-    const noteError = await writeMatchNote(adminClient, match.id, trimmedNote, admin.id);
-    if (noteError) await discardIncompleteMatch(adminClient, match.id, initialStatus, noteError);
+    const note = await writeMatchNote(adminClient, match.id, trimmedNote, admin.id);
+    if (note.error) await discardIncompleteMatch(adminClient, match.id, initialStatus, note.error);
   }
 
   // Get player ratings and build participants
@@ -424,12 +478,24 @@ async function adminCreateMatchImpl(data: {
     }
   }
 
+  // THE NOTE IS STRIPPED FROM THE AUDIT PAYLOAD. `data` carries `admin_note`,
+  // and spreading it here used to put the exec's free text into
+  // `audit_logs.new_value` as well — a second copy under a DIFFERENT access
+  // rule (`audit.page`) from the one 00117 gives the note itself (the three
+  // match writes). Two audiences for one secret is how a privacy fix quietly
+  // fails. It is redundant as well as wider: the text is in
+  // match_admin_notes, and this row already records that a match was created.
+  //
+  // The void and convert paths keep theirs in `reason`, which is deliberate and
+  // different — a destructive act must be answerable in the audit log, and that
+  // column exists for exactly that.
+  const { admin_note: _auditedElsewhere, ...auditableData } = data;
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
     action_type: 'match_admin_created',
     target_type: 'match',
     target_id: match.id,
-    new_value: { ...data, score_summary: scoreSummary },
+    new_value: { ...auditableData, score_summary: scoreSummary, has_admin_note: Boolean(trimmedNote) },
   }, { matchId: match.id });
 
   revalidatePath('/matches');
