@@ -134,7 +134,6 @@ export function TurnoutPanel({
 
   const totalRoll = shown.reduce((n, night) => n + night.statuses.length, 0);
   const totalUp = shown.reduce((n, night) => n + night.statuses.filter(arrived).length, 0);
-  const tonightIsShown = shown.some((n) => n.date === today);
 
   return (
     <Card padding={false}>
@@ -167,26 +166,6 @@ export function TurnoutPanel({
               underTone="var(--border-hover)"
               format={count}
             />
-            {/* THE DENOMINATOR, SAID OUT LOUD. A stack always implies a whole,
-                and this one's is the roll rather than the club: somebody who
-                never appeared and was never marked has no row here at all. A
-                column of fifteen at a club of a hundred is not fifteen percent
-                of anything, and without this sentence a reader would take it
-                for exactly that. */}
-            <p className="text-xs text-[var(--text-muted)]">
-              Each column is the door list as it was taken that night — who came, with
-              anybody marked absent stacked above. Members who never signed up and never
-              appeared are not counted in either part.
-            </p>
-            {tonightIsShown && (
-              // Tonight is on the chart deliberately: leaving the current night
-              // off the one panel that shows the trend would answer "how are we
-              // doing" with everything except today. But its column is still
-              // filling up, so it is not yet comparable with the ones beside it.
-              <p className="text-xs text-[var(--text-muted)]">
-                Tonight is still running, so its column is not final.
-              </p>
-            )}
             {skipped > 0 && (
               // Conditional, because on most terms it describes nothing. Said
               // when it does, so a reader counting columns against the table

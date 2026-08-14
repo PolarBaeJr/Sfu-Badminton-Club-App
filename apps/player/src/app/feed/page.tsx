@@ -207,7 +207,13 @@ export default async function FeedPage() {
       .limit(15),
     supabase
       .from('challenge_participants')
-      .select('id, created_at, challenge:challenges(id, type, format, created_at, creator:players!challenges_created_by_fkey(id, full_name, handle, avatar_url))')
+      // NOT `created_at` on the outer row: challenge_participants has no such
+      // column (id, challenge_id, player_id, role, team_side,
+      // confirmation_status, responded_at). PostgREST answered 400 to the whole
+      // request, supabase-js resolved rather than rejected, and `?? []` turned
+      // it into "no pending challenges" for every member. The timestamp this
+      // needs is the challenge's own, which is selected below.
+      .select('id, challenge:challenges(id, type, format, created_at, creator:players!challenges_created_by_fkey(id, full_name, handle, avatar_url))')
       .eq('player_id', player.id)
       .eq('confirmation_status', 'pending')
       .limit(5),
@@ -303,7 +309,7 @@ export default async function FeedPage() {
       if (!c) return null;
       const creator = toPerson(pickOne(c.creator as PlayerEmbed | PlayerEmbed[] | null));
       if (!creator) return null;
-      const at = (c.created_at as string) ?? (pc.created_at as string);
+      const at = c.created_at as string;
       if (!at) return null;
       return {
         kind: 'challenge',

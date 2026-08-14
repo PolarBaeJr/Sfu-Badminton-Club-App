@@ -97,35 +97,20 @@ describe('TurnoutPanel', () => {
     expect(out).not.toContain('16 AUG');
   });
 
-  it('marks tonight as still running so its column is not read as final', () => {
+  // The panel used to carry two standing paragraphs under the chart — one
+  // spelling out that a column is the roll rather than the club, one saying
+  // tonight's column was not final. Both were removed as noise: they were on
+  // screen every time the panel drew, whether or not they described anything.
+  // The two remaining notes below are conditional, which is the difference —
+  // they appear only on the terms they actually describe.
+  it('does not carry the removed standing paragraphs', () => {
     const out = html(TurnoutPanel, {
       nights: STAGING_NIGHTS,
       today: '2026-08-11',
       seasonName: 'Fall 2026',
     });
-    expect(out).toContain('Tonight is still running');
-  });
-
-  it('says nothing about tonight when the last night charted is in the past', () => {
-    const out = html(TurnoutPanel, {
-      nights: STAGING_NIGHTS,
-      today: '2026-08-13',
-      seasonName: 'Fall 2026',
-    });
-    expect(out).not.toContain('Tonight is still running');
-  });
-
-  // THE DENOMINATOR A STACK ALWAYS IMPLIES. Fifteen at a club of a hundred is
-  // not fifteen percent of anything, and this sentence is the only thing
-  // standing between the reader and that reading.
-  it('says the column is the roll as taken, not the club', () => {
-    const out = html(TurnoutPanel, {
-      nights: STAGING_NIGHTS,
-      today: '2026-08-11',
-      seasonName: 'Fall 2026',
-    });
-    expect(out).toContain('door list as it was taken that night');
-    expect(out).toContain('never appeared are not counted');
+    expect(out).not.toContain('door list as it was taken that night');
+    expect(out).not.toContain('still running, so its column is not final');
   });
 
   // A ROLL TAKEN THAT CAME BACK EMPTY IS A REAL ZERO, and is drawn as one — an

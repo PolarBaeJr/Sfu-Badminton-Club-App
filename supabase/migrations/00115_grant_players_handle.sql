@@ -1,0 +1,41 @@
+-- ============================================================
+-- 00115_grant_players_handle.sql — let members read the handle the app
+-- already prints next to their name
+-- ============================================================
+-- 00032 replaced blanket SELECT on `players` with a column grant, and the
+-- column list it wrote does not contain `handle`. Nothing noticed, because a
+-- missing column grant is not a missing value: PostgREST refuses the ENTIRE
+-- request with 403, supabase-js resolves rather than rejects, and the app's
+-- `?? []` turns the refusal into an empty list. Four player-app reads ask for
+-- it and all four have been returning nothing since:
+--
+--   app/challenges/page.tsx:54          the challenge list        -> 403
+--   app/challenges/new/…client.tsx:80   the opponent picker       -> 403
+--   app/feed/page.tsx:202               the match river           -> 403
+--   app/feed/page.tsx:210               pending challenges        -> 400 (a
+--                                       separate bug, fixed in code)
+--
+-- Observed live: the console showed "OPEN CHALLENGES 1 / 3" beside an empty
+-- list reading "No challenges yet", while the database held three challenges
+-- for that member. The count came from a `HEAD` request that selects only
+-- `id`, which is granted, so it succeeded — and disagreed with the list beside
+-- it. That disagreement was the only symptom.
+--
+-- WHY GRANT RATHER THAN STOP SELECTING IT. The handle is rendered: as
+-- `· @handle` beside a name on the challenge list, and by the `Handle`
+-- component in the feed. It is a chosen public nickname, strictly less
+-- identifying than `first_name`, `last_name` and `full_name`, all three of
+-- which 00032 did grant. Its omission reads as an oversight in that list, not
+-- a decision — every other column the UI prints publicly is there.
+--
+-- Deliberately NOT granted, and still not: `email`, `phone`, `member_code`.
+-- Those are the columns 00032 existed to withhold, and this migration does not
+-- widen the grant beyond the single column named here.
+--
+-- Note this is a GRANT, not a policy. Row visibility is unchanged and still
+-- decided by `players_select`. Column grants are also the reason `players`
+-- must never be added to the realtime publication (00036, 00113): logical
+-- replication does not honour them, so publishing the table would stream the
+-- very columns this grant deliberately leaves out.
+
+GRANT SELECT (handle) ON public.players TO authenticated;
