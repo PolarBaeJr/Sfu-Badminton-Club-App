@@ -3785,6 +3785,14 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
    never scrolls horizontally. */
 .cal-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
+/* The one thing that tells a phone the grid drags. Hidden by default and
+   switched on inside the SAME media query that gives the grid its 620px
+   floor, so the hint exists exactly when there is something to scroll and
+   cannot outlive the overflow it describes. Nothing here has intrinsic
+   width — it is a wrapping line of text — so .cal-scroll's containment is
+   untouched and the page body still does not move sideways. */
+.cal-hint { display: none; }
+
 .cal-dow {
   display: grid; grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 1px; padding: 0 0 6px;
@@ -3842,9 +3850,16 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
   text-align: left;
   min-width: 0;
 }
+/* WRAPS — it used to be `white-space: nowrap` + `text-overflow: ellipsis`,
+   which is a hover-only design: the full name lived in a `title`, and a
+   title is invisible on every touch device. At the 1101px floor a cell is
+   ~96px wide and .tag is uppercase mono, so "Wednesday Doubles" arrived as
+   "WEDNESD…" on an iPad with no way at all to read the rest. A cell that
+   grows a line is cheaper than a name nobody can see; `anywhere` is there so
+   one long unbroken token breaks instead of pushing the column open. */
 .cal-ev-name {
   display: block;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 a.cal-ev:hover { filter: brightness(1.15); }
 /* A night this member has already said yes to. A spine, the same
@@ -3859,10 +3874,30 @@ a.cal-ev:hover { filter: brightness(1.15); }
 
 @media (max-width: 760px) {
   /* Enough width for a name to survive; below this the columns
-     would be ~50px and every cell would ellipsis to nothing. */
+     would be ~50px and every cell would wrap to one letter a line. */
   .cal-dow, .cal-grid { min-width: 620px; }
   .cal-cell { min-height: 88px; }
   .cal-title { font-size: 19px; }
+}
+
+/* The scroll affordance. Same mono caption voice as .cal-foot, which
+   is the other line on this component that explains the grid rather
+   than being part of it.
+   661px, NOT the 760px above, and the difference is the point: the
+   grid only overflows while its box is under the 620px floor, and the
+   page gutter is 42px, so the last width that actually scrolls is
+   661. Measured, not assumed — at 744px (an iPad mini in portrait)
+   the whole week already fits, and a caption telling someone to drag
+   a grid that cannot move is worse than no caption. If the 620px
+   floor or the gutter ever changes, re-derive this number. */
+@media (max-width: 661px) {
+  .cal-hint {
+    display: flex; align-items: center; gap: 6px;
+    font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--mute);
+    margin: 0 0 8px;
+  }
+  .cal-hint svg { flex: 0 0 auto; }
 }
 
 /* The secondary rail on a phone, when everything in it is

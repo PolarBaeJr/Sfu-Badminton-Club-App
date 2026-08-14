@@ -21,12 +21,12 @@ import { MonthCalendar, type CalendarEvent } from './month-calendar';
 import {
   CALENDAR_WEEKDAYS,
   buildCalendarMonth,
+  calendarMonthKeys,
   clubDateISO,
   describeMyState,
   groupSessionsByDay,
   isStillUpcoming,
   initialMonthIndex,
-  monthKeysBetween,
   tallyBySession,
   type MyState,
 } from '@/lib/schedule';
@@ -99,10 +99,14 @@ export default async function SessionsPage() {
     //
     // No status filter: the session_status enum is ('open','closed') and
     // nothing else (00001_schema.sql:88), so "all of them" is those two.
+    //
+    // season_id is selected for the month nav alone: the query deliberately
+    // returns the active season's nights AND every season-less night, and the
+    // nav has to tell those two apart — see calendarMonthKeys.
     inActiveSeason(
       supabase
         .from('sessions')
-        .select('id, name, date, start_time, status')
+        .select('id, name, date, start_time, status, season_id')
         .in('track', [player.status, 'all'])
     ).order('date', { ascending: true }).order('start_time', { ascending: true, nullsFirst: false }),
     supabase
@@ -201,23 +205,30 @@ export default async function SessionsPage() {
   // blank month while it waits. Bounding is the honest, cheap answer: an arrow
   // that stops means "there is no more", and that is true here.
   //
-  // The span is the widest of the season's own start/end and the dates of the
-  // sessions actually returned. Both halves matter: end_date is nullable so a
-  // running term is bounded by its last night, and a season-less session can
-  // sit outside the term's dates entirely. With no active season the filter is
-  // skipped upstream, so the sessions ARE the only bound there is.
+  // The term's own months, end to end, PLUS a month of its own for any night
+  // that falls outside it. The split matters because this query returns two
+  // different things: the active season's nights, which have a term to be
+  // contiguous across, and every SEASON-LESS night, which is fetched whatever
+  // its date. One leftover season-less row used to drag the whole run back to
+  // its month — two dozen empty grids between it and today — and the 600-
+  // iteration guard in monthKeysBetween stops a hang, not that. calendarMonthKeys
+  // keeps the row (it is a real night, and it has a card) and drops only the
+  // empty span behind it.
   const calendar = calendarSessions ?? [];
-  const spanBounds = [
-    ...(activeSeason?.start_date ? [activeSeason.start_date as string] : []),
-    ...(activeSeason?.end_date ? [activeSeason.end_date as string] : []),
-    ...calendar.map((s) => s.date as string),
-  ].sort();
-  const spanFrom = spanBounds[0];
-  const spanTo = spanBounds[spanBounds.length - 1];
-  // Nothing loaded at all: show this month, empty and honestly so, rather than
-  // no calendar. The empty state in the rail says which of the two reasons.
-  const monthKeys =
-    spanFrom && spanTo ? monthKeysBetween(spanFrom, spanTo) : monthKeysBetween(todayISO, todayISO);
+  const seasonDates = activeSeason
+    ? calendar.filter((s) => s.season_id === activeSeason.id).map((s) => s.date as string)
+    : [];
+  const looseDates = calendar
+    .filter((s) => !activeSeason || s.season_id !== activeSeason.id)
+    .map((s) => s.date as string);
+  const monthKeys = calendarMonthKeys(
+    activeSeason?.start_date
+      ? { startISO: activeSeason.start_date as string, endISO: (activeSeason.end_date as string | null) ?? null }
+      : null,
+    seasonDates,
+    looseDates,
+    todayISO,
+  );
 
   // Only the open nights have a card in the rail, so only they are worth a
   // jump link. A closed night's cell stays plain text rather than an anchor

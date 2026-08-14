@@ -13,13 +13,46 @@ import {
 import { MainContent } from '@/components/main-content';
 import { ToastProvider } from '@/components/toast-provider';
 import { SentryUserInit } from '@/components/sentry-user-init';
-import { Barlow, Barlow_Condensed, JetBrains_Mono } from 'next/font/google';
+import localFont from 'next/font/local';
 import { cn, ConfirmProvider, StaleBuildBanner } from '@badminton/ui';
 import { withBase } from '@/lib/base-path';
 
-const barlow = Barlow({ subsets: ['latin'], variable: '--font-sans', weight: ['400','500','600','700'] });
-const barlowCondensed = Barlow_Condensed({ subsets: ['latin'], variable: '--font-display', weight: ['400','600','700'] });
-const jetbrainsMono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono', weight: ['400','500','600','700'] });
+// Self-hosted for the same reason the members' app is: next/font/google fetches
+// from fonts.gstatic.com during `docker build`, so a network blip on the CI
+// runner fails the image. Byte-identical files (Google's own `latin` subset
+// woff2, one per weight) live in src/fonts/ with their OFL 1.1 licences.
+// See apps/player/src/app/layout.tsx for the full note, including which
+// unicode-ranges this trades away.
+const barlow = localFont({
+  src: [
+    { path: '../fonts/barlow-latin-400.woff2', weight: '400', style: 'normal' },
+    { path: '../fonts/barlow-latin-500.woff2', weight: '500', style: 'normal' },
+    { path: '../fonts/barlow-latin-600.woff2', weight: '600', style: 'normal' },
+    { path: '../fonts/barlow-latin-700.woff2', weight: '700', style: 'normal' },
+  ],
+  variable: '--font-sans',
+  display: 'swap',
+});
+const barlowCondensed = localFont({
+  src: [
+    { path: '../fonts/barlow-condensed-latin-400.woff2', weight: '400', style: 'normal' },
+    { path: '../fonts/barlow-condensed-latin-600.woff2', weight: '600', style: 'normal' },
+    { path: '../fonts/barlow-condensed-latin-700.woff2', weight: '700', style: 'normal' },
+  ],
+  variable: '--font-display',
+  display: 'swap',
+});
+// One variable file, four declared weights — the shape Google's CSS had.
+const jetbrainsMono = localFont({
+  src: [
+    { path: '../fonts/jetbrains-mono-latin-400.woff2', weight: '400', style: 'normal' },
+    { path: '../fonts/jetbrains-mono-latin-400.woff2', weight: '500', style: 'normal' },
+    { path: '../fonts/jetbrains-mono-latin-400.woff2', weight: '600', style: 'normal' },
+    { path: '../fonts/jetbrains-mono-latin-400.woff2', weight: '700', style: 'normal' },
+  ],
+  variable: '--font-mono',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   title: 'SFU Badminton - Admin',

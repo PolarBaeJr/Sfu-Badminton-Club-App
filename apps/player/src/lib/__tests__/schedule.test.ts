@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   addDaysISO,
   buildCalendarMonth,
+  calendarMonthKeys,
   clubDateISO,
   dayHeading,
   describeMyState,
@@ -215,6 +216,85 @@ describe('monthKeysBetween', () => {
   });
 });
 
+describe('calendarMonthKeys', () => {
+  const term = { startISO: '2026-09-08', endISO: '2026-12-05' };
+
+  it('walks the term end to end, gaps included', () => {
+    // October has no sessions in it and is still reachable: an empty month
+    // inside a term is an answer ("nothing that month"), not an absence of one.
+    expect(calendarMonthKeys(term, ['2026-09-10', '2026-11-04'], [], '2026-09-20')).toEqual([
+      '2026-09',
+      '2026-10',
+      '2026-11',
+      '2026-12',
+    ]);
+  });
+
+  it('runs to the last session when the term has no end date', () => {
+    expect(calendarMonthKeys(
+      { startISO: '2026-09-08', endISO: null },
+      ['2026-09-10', '2026-11-04'],
+      [],
+      '2026-09-20',
+    )).toEqual(['2026-09', '2026-10', '2026-11']);
+  });
+
+  it('gives a stale season-less night ONE month, not the span behind it', () => {
+    // The bug this exists to stop: a leftover 2024 row used to drag the run
+    // back through every month between it and the term — two dozen blank grids.
+    const keys = calendarMonthKeys(term, ['2026-09-10'], ['2024-09-18'], '2026-09-20');
+    expect(keys).toEqual(['2024-09', '2026-09', '2026-10', '2026-11', '2026-12']);
+    expect(keys).not.toContain('2025-01');
+  });
+
+  it('keeps a season-less night that lands inside the term without duplicating it', () => {
+    expect(calendarMonthKeys(term, ['2026-09-10'], ['2026-10-02'], '2026-09-20')).toEqual([
+      '2026-09',
+      '2026-10',
+      '2026-11',
+      '2026-12',
+    ]);
+  });
+
+  it('caps a typo’d end date at a year rather than walking to it', () => {
+    const keys = calendarMonthKeys(
+      { startISO: '2026-09-08', endISO: '2099-12-31' },
+      ['2026-09-10'],
+      [],
+      '2026-09-20',
+    );
+    expect(keys).toHaveLength(13);
+    expect(keys[0]).toBe('2026-09');
+    expect(keys[12]).toBe('2027-09');
+  });
+
+  it('lists only the months with sessions in them when no season is active', () => {
+    expect(calendarMonthKeys(null, [], ['2025-01-14', '2026-08-13'], '2026-08-14')).toEqual([
+      '2025-01',
+      '2026-08',
+    ]);
+  });
+
+  it('falls back to this month when nothing at all is loaded', () => {
+    expect(calendarMonthKeys(null, [], [], '2026-08-14')).toEqual(['2026-08']);
+  });
+
+  it('does not put an empty today into a finished term', () => {
+    // The summer-break case initialMonthIndex is written around: reading the
+    // page in August after a Jan-April term must land on April, not on an
+    // empty August with both arrows live.
+    const keys = calendarMonthKeys(
+      { startISO: '2026-01-05', endISO: '2026-04-20' },
+      ['2026-01-07'],
+      [],
+      '2026-08-14',
+    );
+    expect(keys).not.toContain('2026-08');
+    expect(initialMonthIndex(keys, '2026-08-14')).toBe(keys.length - 1);
+    expect(keys[keys.length - 1]).toBe('2026-04');
+  });
+});
+
 describe('buildCalendarMonth', () => {
   const s = (id: string, date: string) => ({ id, date });
 
@@ -314,6 +394,20 @@ describe('initialMonthIndex', () => {
 
   it('is 0 for an empty range rather than -1', () => {
     expect(initialMonthIndex([], '2026-08-13')).toBe(0);
+  });
+
+  it('opens on the next month with something in it when the list has a hole', () => {
+    // calendarMonthKeys returns gapped lists now: one stale season-less night
+    // in 2024, then the term. Reading this in August must open on September,
+    // not on December — the far end is three back-presses from what you came
+    // for, and it is the answer a first-key comparison used to give.
+    const gapped = ['2024-09', ...keys];
+    expect(initialMonthIndex(gapped, '2026-08-14')).toBe(1);
+    expect(gapped[initialMonthIndex(gapped, '2026-08-14')]).toBe('2026-09');
+  });
+
+  it('still opens on the stray month while it is the only thing ahead', () => {
+    expect(initialMonthIndex(['2024-09', '2026-09'], '2024-08-01')).toBe(0);
   });
 });
 

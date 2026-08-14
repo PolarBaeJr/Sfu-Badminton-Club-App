@@ -16,13 +16,57 @@ import { StandingBanner } from '@/components/standing-banner';
 import { cookies } from 'next/headers';
 import { getMissingLegalDocuments, hasConsoleAccess, getAccountStanding, type AccountStanding } from '@badminton/shared';
 import { createServiceRoleClient, createServerSupabaseClient, getActiveSeason } from '@/lib/supabase-server';
-import { Barlow, Barlow_Condensed, JetBrains_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import { cn } from "@/lib/utils";
 import { ConfirmProvider, StaleBuildBanner } from "@badminton/ui";
 
-const barlow = Barlow({ subsets: ['latin'], variable: '--font-sans', weight: ['400','500','600','700'] });
-const barlowCondensed = Barlow_Condensed({ subsets: ['latin'], variable: '--font-display', weight: ['400','600','700'] });
-const jetbrainsMono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono', weight: ['400','500','600','700'] });
+// SELF-HOSTED, NOT next/font/google — and that is a deploy property, not a
+// preference. next/font/google resolves at BUILD time: `docker build` opens a
+// socket to fonts.gstatic.com, so a blip on the CI runner's network fails the
+// image rather than the page. It already has. These are the exact same bytes
+// (sha256-identical to the files the Google loader was fetching: the `latin`
+// subset woff2 Google serves for each weight), vendored under src/fonts/ with
+// their OFL 1.1 licences, so the build reads the disk and nothing else.
+//
+// `subsets: ['latin']` is what these three calls replace, and latin is what is
+// vendored. Google's stylesheet also carried latin-ext + vietnamese (and, for
+// the mono, greek/cyrillic/cyrillic-ext) as extra unicode-range blocks;
+// next/font/local has no per-file unicode-range, so those ranges are gone and
+// a character outside latin-1 now falls to the metric-matched fallback below.
+// display:'swap' is stated rather than left to the default because matching
+// today's swap behaviour is the point of the exercise.
+//
+// JetBrains Mono is a VARIABLE font: one file serves all four weights, which
+// is exactly what Google's CSS did (four @font-face rules, one src).
+const barlow = localFont({
+  src: [
+    { path: '../fonts/barlow-latin-400.woff2', weight: '400', style: 'normal' },
+    { path: '../fonts/barlow-latin-500.woff2', weight: '500', style: 'normal' },
+    { path: '../fonts/barlow-latin-600.woff2', weight: '600', style: 'normal' },
+    { path: '../fonts/barlow-latin-700.woff2', weight: '700', style: 'normal' },
+  ],
+  variable: '--font-sans',
+  display: 'swap',
+});
+const barlowCondensed = localFont({
+  src: [
+    { path: '../fonts/barlow-condensed-latin-400.woff2', weight: '400', style: 'normal' },
+    { path: '../fonts/barlow-condensed-latin-600.woff2', weight: '600', style: 'normal' },
+    { path: '../fonts/barlow-condensed-latin-700.woff2', weight: '700', style: 'normal' },
+  ],
+  variable: '--font-display',
+  display: 'swap',
+});
+const jetbrainsMono = localFont({
+  src: [
+    { path: '../fonts/jetbrains-mono-latin-400.woff2', weight: '400', style: 'normal' },
+    { path: '../fonts/jetbrains-mono-latin-400.woff2', weight: '500', style: 'normal' },
+    { path: '../fonts/jetbrains-mono-latin-400.woff2', weight: '600', style: 'normal' },
+    { path: '../fonts/jetbrains-mono-latin-400.woff2', weight: '700', style: 'normal' },
+  ],
+  variable: '--font-mono',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   title: 'SFU Badminton Club',

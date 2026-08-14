@@ -200,6 +200,73 @@ export function monthKeysBetween(loISO: string, hiISO: string): string[] {
   return keys;
 }
 
+/**
+ * No real term runs longer than a year. A span wider than this did not come
+ * from a season; it came from a typo in `end_date`, and the cap is what stops
+ * one from turning the arrows into a fifty-year walk.
+ */
+const SEASON_RUN_MONTH_CAP = 12;
+
+/**
+ * The months the calendar's arrows can reach.
+ *
+ * The naive answer — every month from the earliest loaded date to the latest —
+ * is what this replaces, and it was wrong for one specific reason: the page
+ * loads the active season's sessions PLUS every session with no season on it,
+ * and those season-less rows are fetched regardless of date. One night left
+ * over from a term two years ago therefore stretched the run to include every
+ * month in between, and the member got two dozen blank grids to walk through.
+ *
+ * A season-less session is a real state, not junk — it is a night an exec
+ * posted before opening the term, and it appears in the rail — so it is NOT
+ * dropped. What is dropped is the empty span it used to drag behind it:
+ *
+ *   • Inside the active term the run stays CONTIGUOUS. A month with no
+ *     sessions in it is worth showing there — "are we playing the week after
+ *     reading break?" is answered by an empty grid just as well as a full one,
+ *     and that question is why this calendar exists.
+ *   • Outside it, only the months that actually HOLD a session are reachable.
+ *     A stray night from 2024 gets its own September 2024 and nothing else, so
+ *     the arrows step from it straight back to the term.
+ *
+ * With no active season the caller loads every session ever recorded, so there
+ * is no term to be contiguous across and only the months with sessions in them
+ * are listed. With nothing loaded at all the answer is today's month: one
+ * honestly empty grid beats no calendar.
+ */
+export function calendarMonthKeys(
+  season: { startISO: string; endISO: string | null } | null,
+  seasonSessionDates: readonly string[],
+  looseSessionDates: readonly string[],
+  todayISO: string
+): string[] {
+  const keys = new Set<string>();
+
+  if (season) {
+    // The term's own span, widened by any of its sessions that fall outside
+    // start/end (end_date is nullable, so a running term is bounded by its last
+    // night). Sorting strings is sorting dates — they are all YYYY-MM-DD.
+    const bounds = [
+      season.startISO,
+      ...(season.endISO ? [season.endISO] : []),
+      ...seasonSessionDates,
+    ].sort();
+    const run = monthKeysBetween(bounds[0] as string, bounds[bounds.length - 1] as string);
+    // +1 because the cap counts months AFTER the first: a 12-month term
+    // occupies 13 keys.
+    for (const key of run.slice(0, SEASON_RUN_MONTH_CAP + 1)) keys.add(key);
+  }
+
+  // Every session gets its own month whatever the run decided — including a
+  // season-less one, and including an in-season one past the cap above. No
+  // night is ever unreachable on the calendar it appears on.
+  for (const dateISO of seasonSessionDates) keys.add(monthKeyOf(dateISO));
+  for (const dateISO of looseSessionDates) keys.add(monthKeyOf(dateISO));
+
+  if (keys.size === 0) keys.add(monthKeyOf(todayISO));
+  return [...keys].sort();
+}
+
 export interface CalendarCell<T> {
   dateISO: string;
   /** Day of the month, as shown in the corner of the cell. */
@@ -270,17 +337,27 @@ export function buildCalendarMonth<T extends { date: string }>(
 }
 
 /**
- * The month the calendar opens on: today's, clamped into the navigable range.
- * A member reading this page over the summer break — after the season's last
- * night — lands on the last month that has anything in it, rather than on an
+ * The month the calendar opens on: today's, or the next one the list actually
+ * has. A member reading this page over the summer break — after the season's
+ * last night — lands on the last month with anything in it, rather than on an
  * empty August with both arrows dead.
+ *
+ * "The next one" rather than "today's, clamped", because calendarMonthKeys can
+ * return a list with HOLES in it: a stale season-less night from 2024 is one
+ * reachable month years before the term. Clamping compared only against the
+ * first key, so reading this page in August 2026 with a 2024 stray and a
+ * September term opened on DECEMBER — past the far end, three back-presses from
+ * the nights the member came to see. Scanning forward for the first month at or
+ * after today gets September, and because the list is sorted the scan finds an
+ * exact match first when there is one.
  */
 export function initialMonthIndex(monthKeys: readonly string[], todayISO: string): number {
   if (monthKeys.length === 0) return 0;
   const today = monthKeyOf(todayISO);
-  const exact = monthKeys.indexOf(today);
-  if (exact >= 0) return exact;
-  return today < (monthKeys[0] as string) ? 0 : monthKeys.length - 1;
+  const next = monthKeys.findIndex((key) => key >= today);
+  // Nothing at or after today: everything loaded is behind us, so open on the
+  // last month there is.
+  return next >= 0 ? next : monthKeys.length - 1;
 }
 
 /**
