@@ -1,41 +1,49 @@
 -- ============================================================
--- 00115_grant_players_handle.sql — let members read the handle the app
--- already prints next to their name
+-- 00115_grant_players_handle.sql — restate 00092's column grant, because one
+-- database lost it
 -- ============================================================
--- 00032 replaced blanket SELECT on `players` with a column grant, and the
--- column list it wrote does not contain `handle`. Nothing noticed, because a
--- missing column grant is not a missing value: PostgREST refuses the ENTIRE
--- request with 403, supabase-js resolves rather than rejects, and the app's
--- `?? []` turns the refusal into an empty list. Four player-app reads ask for
--- it and all four have been returning nothing since:
+-- This migration adds nothing new. 00092:584 already says:
 --
---   app/challenges/page.tsx:54          the challenge list        -> 403
---   app/challenges/new/…client.tsx:80   the opponent picker       -> 403
---   app/feed/page.tsx:202               the match river           -> 403
---   app/feed/page.tsx:210               pending challenges        -> 400 (a
---                                       separate bug, fixed in code)
+--     GRANT SELECT (handle, member_code) ON public.players TO authenticated;
 --
--- Observed live: the console showed "OPEN CHALLENGES 1 / 3" beside an empty
--- list reading "No challenges yet", while the database held three challenges
--- for that member. The count came from a `HEAD` request that selects only
--- `id`, which is granted, so it succeeded — and disagreed with the list beside
--- it. That disagreement was the only symptom.
+-- Production has both columns granted. Staging had NEITHER, which is drift,
+-- not design — the same `players` grant drift that was repaired once before at
+-- the table level (arwdm -> UPDATE,DELETE) without anyone checking the column
+-- grants underneath it.
 --
--- WHY GRANT RATHER THAN STOP SELECTING IT. The handle is rendered: as
--- `· @handle` beside a name on the challenge list, and by the `Handle`
--- component in the feed. It is a chosen public nickname, strictly less
--- identifying than `first_name`, `last_name` and `full_name`, all three of
--- which 00032 did grant. Its omission reads as an oversight in that list, not
--- a decision — every other column the UI prints publicly is there.
+-- WHY IT WENT UNNOTICED FOR SO LONG. A missing column grant is not a missing
+-- value. PostgREST refuses the ENTIRE request with 403, supabase-js resolves
+-- rather than rejects, and the app's `?? []` renders the refusal as an empty
+-- list. On staging that silently emptied:
 --
--- Deliberately NOT granted, and still not: `email`, `phone`, `member_code`.
--- Those are the columns 00032 existed to withhold, and this migration does not
--- widen the grant beyond the single column named here.
+--   app/challenges/page.tsx:54          the challenge list      (handle)
+--   app/challenges/new/…client.tsx:80   the opponent picker     (handle)
+--   app/feed/page.tsx:202               the match river         (handle)
+--   app/settings/page.tsx:139           your own identity       (member_code)
+--   app/my-stats/page.tsx:335           your own member code    (member_code)
 --
--- Note this is a GRANT, not a policy. Row visibility is unchanged and still
--- decided by `players_select`. Column grants are also the reason `players`
--- must never be added to the realtime publication (00036, 00113): logical
--- replication does not honour them, so publishing the table would stream the
--- very columns this grant deliberately leaves out.
+-- The symptom that finally gave it away was a disagreement, not an error:
+-- "OPEN CHALLENGES 1 / 3" printed above a list reading "No challenges yet",
+-- because the count is a HEAD request selecting only `id` — granted, so it
+-- succeeded and told the truth — while the list beside it was refused.
+--
+-- Restated as a single idempotent GRANT so both databases can be brought to
+-- the state 00092 always intended. Running it where 00092 already landed is a
+-- no-op; GRANT does not error on a privilege already held.
+--
+-- ON member_code SPECIFICALLY. Granting it to `authenticated` does mean any
+-- signed-in member can read every member's code, because a column grant is not
+-- row-scoped — rows are decided by players_select, which admits any member to
+-- any approved row. That is 00092's deliberate trade: the member's OWN
+-- Settings and My Stats read the column from the base table, and there is no
+-- way to grant "your own row's member_code" alone. It is a safe trade because
+-- the code authenticates NOTHING: no query anywhere looks a person up by it
+-- (`eq('member_code', …)` appears nowhere in the app), it is assigned once,
+-- non-sequential so it publishes no join order, and deliberately unrelated to
+-- any SFU student number.
+--
+-- Still withheld, and untouched here: `email`, `phone`. Those are what 00032
+-- exists to protect, and nothing below widens the grant beyond the two columns
+-- 00092 named.
 
-GRANT SELECT (handle) ON public.players TO authenticated;
+GRANT SELECT (handle, member_code) ON public.players TO authenticated;
