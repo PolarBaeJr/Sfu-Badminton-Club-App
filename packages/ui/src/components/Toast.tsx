@@ -16,6 +16,7 @@ import { cn } from '../utils';
  *     50   Dialog / ConfirmDialog, WaiverGate, DeletionGate
  *     60   PlayerPicker menu, DatePicker calendar
  *     100  Dropdown menu, OfflineBanner
+ *     210  StaleBuildBanner (STALE_BUILD_Z_INDEX)
  *
  * A toast at 50 therefore rendered *under* any open Dropdown, PlayerPicker or
  * DatePicker, and tied with Dialog — where the winner was decided by DOM order
@@ -27,6 +28,9 @@ import { cn } from '../utils';
  * no ancestor can trap it) and sits deliberately above everything in the list
  * above. A toast is the app answering something you just did; if anything is
  * allowed to cover it, the answer is lost.
+ *
+ * The one thing above a toast is StaleBuildBanner, and only because it is the
+ * exit from a tab where no answer is coming at all.
  */
 export const TOAST_Z_INDEX = 200;
 

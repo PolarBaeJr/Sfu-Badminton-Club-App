@@ -14,6 +14,7 @@ export * from './utils/access-level';
 export * from './utils/auth-errors';
 export * from './utils/capability-gates';
 export * from './utils/expected-error';
+export * from './utils/stale-build';
 export * from './utils/theme';
 export * from './utils/rate-limit';
 export * from './utils/supabase-helpers';

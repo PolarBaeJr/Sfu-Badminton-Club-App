@@ -14,7 +14,7 @@ import { MainContent } from '@/components/main-content';
 import { ToastProvider } from '@/components/toast-provider';
 import { SentryUserInit } from '@/components/sentry-user-init';
 import { Barlow, Barlow_Condensed, JetBrains_Mono } from 'next/font/google';
-import { cn, ConfirmProvider } from '@badminton/ui';
+import { cn, ConfirmProvider, StaleBuildBanner } from '@badminton/ui';
 import { withBase } from '@/lib/base-path';
 
 const barlow = Barlow({ subsets: ['latin'], variable: '--font-sans', weight: ['400','500','600','700'] });
@@ -107,6 +107,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         `}} />
       </head>
       <body className="antialiased">
+        {/* Outside every provider — see the player app's layout for why. */}
+        <StaleBuildBanner />
         <ToastProvider>
           <ConfirmProvider>
             <SentryUserInit playerId={null} />

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useCallback } from 'react';
-import { Toast, ToastViewport } from '@badminton/ui';
+import { Toast, ToastViewport, isStaleBuild } from '@badminton/ui';
 
 interface ToastItem {
   id: number;
@@ -25,6 +25,12 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
   const toast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    // See the identical block in the player app's provider. Short version: once
+    // the build has moved, every action fails identically and StaleBuildBanner
+    // is already saying so with the reload that fixes it — a red slab per retry
+    // carrying Next's generic wording only buries it. A flag read, never a
+    // message match; errors only.
+    if (type === 'error' && isStaleBuild()) return;
     const id = nextId++;
     setToasts((prev) => [...prev, { id, message, type }]);
   }, []);

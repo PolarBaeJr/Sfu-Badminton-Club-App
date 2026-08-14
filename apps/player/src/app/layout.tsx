@@ -18,7 +18,7 @@ import { getMissingLegalDocuments, hasConsoleAccess, getAccountStanding, type Ac
 import { createServiceRoleClient, createServerSupabaseClient, getActiveSeason } from '@/lib/supabase-server';
 import { Barlow, Barlow_Condensed, JetBrains_Mono } from "next/font/google";
 import { cn } from "@/lib/utils";
-import { ConfirmProvider } from "@badminton/ui";
+import { ConfirmProvider, StaleBuildBanner } from "@badminton/ui";
 
 const barlow = Barlow({ subsets: ['latin'], variable: '--font-sans', weight: ['400','500','600','700'] });
 const barlowCondensed = Barlow_Condensed({ subsets: ['latin'], variable: '--font-display', weight: ['400','600','700'] });
@@ -165,6 +165,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         `}} />
       </head>
       <body>
+        {/* Outside every provider on purpose. It needs none of them, it must
+            reach a member who is stuck behind WaiverGate or DeletionGate, and
+            the fetch wrapper it installs should be in place before anything
+            below has a handler that could fire a server action. */}
+        <StaleBuildBanner />
         <PostHogProvider>
           <ToastProvider>
             <ConfirmProvider>

@@ -15,6 +15,15 @@ export { Switch } from './Switch';
 export { Badge } from './Badge';
 export { Card } from './Card';
 export { Toast, ToastViewport, TOAST_Z_INDEX } from './Toast';
+export {
+  StaleBuildBanner,
+  STALE_BUILD_Z_INDEX,
+  isStaleBuild,
+  isStaleBuildError,
+  markStaleBuild,
+  subscribeToStaleBuild,
+  installStaleBuildDetector,
+} from './StaleBuildBanner';
 export { Dialog } from './Dialog';
 export { Dropdown } from './Dropdown';
 export { Spinner } from './Spinner';

@@ -5,6 +5,7 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "dependencies": {
+    "@badminton/shared": "*",
     "clsx": "^2.1.0",
     "lucide-react": "^1.26.0",
     "tailwind-merge": "^2.5.0"
