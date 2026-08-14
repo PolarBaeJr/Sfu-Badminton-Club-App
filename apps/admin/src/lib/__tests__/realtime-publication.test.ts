@@ -167,4 +167,27 @@ describe('every table the admin app subscribes to is published to Realtime', () 
     // wrong.
     expect(publishedTables()).not.toContain('players');
   });
+
+  it('never publishes match_admin_notes, whatever else it publishes', () => {
+    // THE SECOND INVERSE GUARD, and it exists because `matches` IS published.
+    //
+    // 00114 put `matches` in this publication and wrote down, honestly, that
+    // `admin_note` therefore streams the exec's own words about a void to every
+    // signed-in subscriber — not a new exposure, because matches_select is
+    // USING (TRUE), but a real one. 00117 moves that text to
+    // `match_admin_notes`, a table with no grant for `authenticated` and RLS on
+    // with no policy.
+    //
+    // PUBLISHING IT WOULD UNDO ALL OF THAT IN ONE LINE, and silently. Logical
+    // replication does not honour column grants — the reason `players` may
+    // never be published — and it does not consult a table's grants either. The
+    // console does not subscribe to this table and has no reason to: every
+    // write to it happens in the same action as a write to `matches`, which is
+    // already published and already wakes this page up.
+    //
+    // The temptation is concrete rather than theoretical: somebody adding a
+    // note to the live ledger will notice the strip does not appear until a
+    // refresh, and the one-line fix is exactly the line this test forbids.
+    expect(publishedTables()).not.toContain('match_admin_notes');
+  });
 });

@@ -43,15 +43,25 @@ import { createClient } from '@/lib/supabase-browser';
  *
  * NUDGE, DO NOT MERGE. router.refresh() rather than merging the payload into
  * local state. The socket payload is whatever RLS lets through, and
- * matches_select is `USING (TRUE)` — every signed-in member can read every
- * row, including `admin_note`. What this CONSOLE shows is much narrower and is
- * decided per viewer: the create form needs `matches.create.write`, the void
- * and convert controls their own capabilities, and the dispute and walkover
- * panels theirs. Re-running the server component re-derives all of it from the
- * viewer's own credentials, so a live update cannot surface something a static
- * render withheld. Names are not in the payload either — they come from the
- * `players` join the server does, and `players` is not published and must
- * never be.
+ * matches_select is `USING (TRUE)` — every signed-in member can read every row
+ * of this table. What this CONSOLE shows is much narrower and is decided per
+ * viewer: the create form needs `matches.create.write`, the void and convert
+ * controls their own capabilities, the dispute and walkover panels theirs, and
+ * the ADMIN NOTE strip the union of the three match writes. Re-running the
+ * server component re-derives all of it from the viewer's own credentials, so a
+ * live update cannot surface something a static render withheld. Names are not
+ * in the payload either — they come from the `players` join the server does,
+ * and `players` is not published and must never be.
+ *
+ * THE NOTE IS NOT ON THIS WIRE ANY MORE, and that is the point of 00117. It
+ * used to be `matches.admin_note`, riding on every row this channel carries to
+ * every subscriber; it now lives in `match_admin_notes`, which is deliberately
+ * NOT a member of `supabase_realtime` (both apps' realtime-publication guard
+ * tests assert that by name). So this listener no longer fires when a note is
+ * written on its own — it fires on the `matches` write that always accompanies
+ * one — and adding the note table to the publication to "fix" that would hand
+ * the text back to the whole club. The column itself is still there and still
+ * streams its historical values until a later migration drops it.
  *
  * *** INERT UNTIL THE PUBLICATION SAYS SO. *** `matches` is not a member of
  * `supabase_realtime` until 00114 is applied, and a subscription to an

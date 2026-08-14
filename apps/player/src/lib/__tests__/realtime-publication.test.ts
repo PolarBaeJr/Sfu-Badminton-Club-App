@@ -175,4 +175,25 @@ describe('every table the player app subscribes to is published to Realtime', ()
     expect(publishedTables()).toContain('ratings');
     expect(subscribed.map((s) => s.file)).toContain('components/live-rating.tsx');
   });
+
+  it('never publishes match_admin_notes, whatever else it publishes', () => {
+    // THE SECOND INVERSE GUARD, and the one this app has the most to lose from.
+    // Deliberately duplicated from the console's suite, on the same reasoning
+    // the header gives for duplicating the whole file: each app defends its own
+    // tree and the migration set is edited from both.
+    //
+    // `matches` IS published (00114), and that file wrote down honestly that
+    // `admin_note` — the exec's own words about a void or a demotion — therefore
+    // streams verbatim to every signed-in subscriber. THE SUBSCRIBERS ARE THIS
+    // APP'S: /feed, /my-stats, /challenges and one challenge, all four of them
+    // members' phones. 00117 moves that text to `match_admin_notes`, which
+    // holds no grant for `authenticated` and has RLS on with no policy.
+    //
+    // Publishing it would hand it all straight back, because logical
+    // replication consults neither the grant nor the policy — the exact
+    // mechanism that keeps `players` off this list forever. Nothing in this app
+    // subscribes to the table, nothing may, and no member should ever be able
+    // to open a socket for it.
+    expect(publishedTables()).not.toContain('match_admin_notes');
+  });
 });

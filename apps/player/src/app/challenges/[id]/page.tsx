@@ -22,9 +22,29 @@ export default async function ChallengeDetailPage({ params }: { params: Promise<
 
   if (!challenge) notFound();
 
+  // NAMED COLUMNS, NOT `*`. This is a member's own session reading the club's
+  // match ledger, and it needs four fields off it: the status badge, the
+  // scoreline, the id it hands to the actions, and who submitted it (which
+  // decides whether this viewer is offered "confirm" or "dispute").
+  // `select('*')` was asking for the lot — the season and tournament ids, the
+  // Elo weights, the walkover bookkeeping, and until 00117 `admin_note`, the
+  // exec's own words about a void.
+  //
+  // IT ALSO REMOVES A LANDMINE FOR ANY FUTURE COLUMN RESTRICTION. A revoked
+  // column grant does not blank a field, it fails the WHOLE PostgREST request
+  // with 403 — and supabase-js RESOLVES rather than rejects, so the `?? null`
+  // below would have rendered the refusal as "this challenge has no match" on a
+  // page that is otherwise fine. 00115 is the write-up of that failure mode
+  // costing five player screens; a `select('*')` is the shape that walks into
+  // it. The children are enumerated for the same reason.
+  // ONE STRING LITERAL, NOT A CONCATENATION, and that is a type-level
+  // requirement rather than a style choice. supabase-js parses the select
+  // string as a LITERAL type to derive the row shape; `'a, b' + 'c'` widens to
+  // `string`, the parse fails, and every field access below becomes
+  // `Property 'result_status' does not exist on type 'GenericStringError'`.
   const { data: match } = await supabase
     .from('matches')
-    .select('*, match_participants(*, player:players(full_name)), match_games(*)')
+    .select('id, result_status, score_summary, submitted_by, match_participants(id, rating_delta, player:players(full_name)), match_games(id, game_number, side_a_score, side_b_score)')
     .eq('challenge_id', id)
     .maybeSingle();
 

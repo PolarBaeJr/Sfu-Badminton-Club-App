@@ -15,10 +15,66 @@ import {
 } from '@badminton/shared';
 import { requireCapability } from './_shared';
 import { runAction, type ActionResult } from '../action-result';
+import { MATCH_ADMIN_NOTE_TABLE, isMissingNoteTableError } from '../match-note';
 
 // ============================================================
 // Match Management
 // ============================================================
+
+/**
+ * Record an exec's free text about a match, in the private table that holds it.
+ *
+ * A SEPARATE STATEMENT, NEVER FOLDED INTO THE MATCH WRITE, and that is the
+ * whole reason this function exists rather than an `admin_note:` line in each
+ * of the three updates it replaces. `match_admin_notes` arrives with migration
+ * 00117, which the owner applies by hand — so this console can be, and
+ * routinely is, deployed against a database that has never heard of the table.
+ * Written as part of the `matches` update, an absent table would fail the WHOLE
+ * statement and `if (error) throw` would turn voiding a match into a red toast
+ * for the sake of an annotation nobody asked about. Isolated here, a
+ * pre-migration void still voids and the note is a silent no-op until the SQL
+ * lands.
+ *
+ * This is the same shape as the `require_scan_to_check_in` write in
+ * lib/actions/sessions.ts (00116), with one difference worth naming: there the
+ * pre-migration failure is a missing COLUMN (PGRST204 / 42703), here it is a
+ * missing TABLE (PGRST205 / 42P01). isMissingNoteTableError knows the
+ * difference; the sessions predicate would not have caught it.
+ *
+ * RETURNS THE MESSAGE RATHER THAN THROWING, because the three call sites want
+ * three different things from a genuine failure. Only "no such table" is
+ * swallowed: swallowing everything would mean that after 00117 is applied a
+ * real failure still ends in a green success toast, and the exec walks away
+ * believing a reason was recorded that was not.
+ *
+ * UPSERT, because one match has one note — `match_id` is the primary key. A
+ * void reason overwrites whatever the entry form wrote, which is exactly what
+ * the old single column did.
+ */
+async function writeMatchNote(
+  adminClient: ReturnType<typeof createAdminClient>,
+  matchId: string,
+  note: string,
+  authorId: string,
+): Promise<string | null> {
+  const { error } = await adminClient
+    .from(MATCH_ADMIN_NOTE_TABLE)
+    .upsert(
+      {
+        match_id: matchId,
+        note,
+        author_id: authorId,
+        // Sent explicitly as well as by trigger: the trigger fires on UPDATE,
+        // and the INSERT half of an upsert would otherwise keep the default.
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'match_id' },
+    );
+
+  if (!error) return null;
+  if (isMissingNoteTableError(error)) return null;
+  return error.message ?? 'The note could not be saved.';
+}
 
 export async function voidMatch(matchId: string, reason: string): Promise<ActionResult<void>> {
   return runAction(() => voidMatchImpl(matchId, reason));
@@ -42,12 +98,22 @@ async function voidMatchImpl(matchId: string, reason: string) {
     }
   }
 
+  // `admin_note` is deliberately NOT set here any more — it moved to
+  // match_admin_notes (00117) because every signed-in member could read it off
+  // this row and, since 00114, receive it over Realtime. The column still
+  // exists and still holds its history; it is simply no longer written.
   const { error } = await adminClient
     .from('matches')
-    .update({ result_status: 'voided', admin_note: reason })
+    .update({ result_status: 'voided' })
     .eq('id', matchId);
 
   if (error) throw new Error(error.message);
+
+  // After the void, and on its own. The reason is worth recording and is not
+  // worth failing the void over — but a failure that is not "the table is not
+  // there yet" must still be loud, or the toast lies about what was written.
+  const noteError = await writeMatchNote(adminClient, matchId, reason, admin.id);
+  if (noteError) throw new Error(noteError);
 
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
@@ -81,9 +147,11 @@ async function convertMatchToCasualImpl(matchId: string, reason: string) {
       });
       throw new Error(reverseError.message);
     }
+    // See voidMatch: the reason no longer rides along on the row. It is written
+    // once, below, after both branches converge.
     const { error } = await adminClient
       .from('matches')
-      .update({ rated_flag: false, event_type: 'casual', admin_note: reason })
+      .update({ rated_flag: false, event_type: 'casual' })
       .eq('id', matchId);
     if (error) throw new Error(error.message);
   } else {
@@ -92,7 +160,7 @@ async function convertMatchToCasualImpl(matchId: string, reason: string) {
     // 'casual' but still confirms the result and updates head-to-head once.
     const { error: upErr } = await adminClient
       .from('matches')
-      .update({ rated_flag: false, event_type: 'casual', result_status: 'pending_confirmation', admin_note: reason })
+      .update({ rated_flag: false, event_type: 'casual', result_status: 'pending_confirmation' })
       .eq('id', matchId);
     if (upErr) throw new Error(upErr.message);
     const { error: applyErr } = await adminClient.rpc('apply_match_result', {
@@ -106,6 +174,11 @@ async function convertMatchToCasualImpl(matchId: string, reason: string) {
       throw new Error(applyErr.message);
     }
   }
+
+  // One write for both branches — whichever path the match took, the exec typed
+  // one reason and there is one place it belongs.
+  const noteError = await writeMatchNote(adminClient, matchId, reason, admin.id);
+  if (noteError) throw new Error(noteError);
 
   await logAdminAudit(adminClient, {
     actor_id: admin.id,
@@ -251,10 +324,27 @@ async function adminCreateMatchImpl(data: {
     confirmed_by: admin.id,
     result_status: initialStatus,
     season_id: seasonId,
-    admin_note: data.admin_note || null,
+    // `admin_note` is no longer written. The form still sends it (the action's
+    // input contract is unchanged, so create-match.tsx needed no edit); it now
+    // lands in match_admin_notes, below. See 00117.
   }).select().single();
 
   if (matchError) throw new Error(matchError.message);
+
+  // THE NOTE, IMMEDIATELY AND BEFORE THE CHILDREN. Placed here rather than at
+  // the end of the action so a genuine failure to record it is treated like the
+  // participant and game inserts below: discard the shell and tell the admin,
+  // rather than leave a finished, confirmed match whose note quietly went
+  // missing. If a LATER step discards the match, the note row goes with it —
+  // match_admin_notes.match_id is ON DELETE CASCADE for exactly this path.
+  //
+  // A database without the table returns null here, so a pre-migration console
+  // creates the match exactly as before and drops the note.
+  const trimmedNote = data.admin_note?.trim();
+  if (trimmedNote) {
+    const noteError = await writeMatchNote(adminClient, match.id, trimmedNote, admin.id);
+    if (noteError) await discardIncompleteMatch(adminClient, match.id, initialStatus, noteError);
+  }
 
   // Get player ratings and build participants
   const allPlayerIds = [...data.side_a_players, ...data.side_b_players];

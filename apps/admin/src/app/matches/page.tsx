@@ -4,6 +4,7 @@ import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { Card, Badge, PageHeader, TableCard, Atomic } from '@badminton/ui';
 import { MATCH_FORMAT_LABELS, formatDateTime, unwrap } from '@badminton/shared';
 import { SearchableTable } from '@/components/searchable-table';
+import { canReadMatchNotes, fetchMatchNotes } from '@/lib/match-note';
 import { MatchActions } from './actions';
 import { CreateMatchForm } from './create-match';
 import { LiveMatches } from './live-matches';
@@ -15,6 +16,7 @@ import {
   ArrowDown,
   Minus,
   Inbox,
+  StickyNote,
 } from 'lucide-react';
 
 export default async function MatchesPage() {
@@ -26,6 +28,14 @@ export default async function MatchesPage() {
   // rule: `players` is handed straight to a client component, so it crosses to
   // the browser whether or not anything is drawn with it.
   const canCreate = permits(accessLevelFor(viewer), permissionsOf(accessLevelFor(viewer), viewer), 'matches.create.write');
+  // WHOEVER MAY AUTHOR A NOTE MAY READ ONE. The union of the three match write
+  // capabilities — see lib/match-note.ts for why no single one of them, and
+  // why not `matches.page`, which this page already asked for and which every
+  // onlooker holds. Resolved here and used to SKIP THE QUERY, not to hide the
+  // output: this page is a server component and an unrendered value still
+  // crosses to the browser in the RSC payload, which is the same reasoning
+  // /fees and the dashboard finance snapshot use.
+  const canSeeNotes = canReadMatchNotes(accessLevelFor(viewer), permissionsOf(accessLevelFor(viewer), viewer));
   const supabase = createAdminClient();
 
   const matches = unwrap(
@@ -64,6 +74,14 @@ export default async function MatchesPage() {
       .in('challenge_id', matches?.map(m => m.challenge_id).filter(Boolean) || ['00000000-0000-0000-0000-000000000000'])
   );
 
+  // The exec-only notes for the fifty matches on screen. Empty for a viewer
+  // without the capability, and empty for a database that has not had 00117
+  // applied yet — fetchMatchNotes swallows "no such table" and nothing else, so
+  // the ledger renders normally in both cases and a real failure still surfaces.
+  const notesByMatch = canSeeNotes
+    ? await fetchMatchNotes(supabase, matches?.map((m) => m.id as string) ?? [])
+    : new Map<string, string>();
+
   const disputesByMatch = new Map<string, typeof disputes>();
   disputes?.forEach(d => {
     const existing = disputesByMatch.get(d.match_id) || [];
@@ -86,6 +104,11 @@ export default async function MatchesPage() {
     sideB: m.match_participants?.filter((p: Record<string, unknown>) => p.team_side === 'b') || [],
     matchDisputes: disputesByMatch.get(m.id) || [],
     matchWalkovers: m.challenge_id ? walkoversByChallenge.get(m.challenge_id) || [] : [],
+    // undefined has two meanings here and they are NOT the same state: "this
+    // match has no note" and "you are not allowed to know". Neither draws
+    // anything — see the note strip in callouts() — which is what keeps the
+    // second one from being announced.
+    adminNote: notesByMatch.get(m.id as string),
   }));
 
   const names = (side: Record<string, unknown>[]) =>
@@ -107,9 +130,50 @@ export default async function MatchesPage() {
     </span>
   );
 
-  // The dispute and walkover call-outs, which both renderings hang off the row.
-  const callouts = (matchDisputes: Record<string, unknown>[], matchWalkovers: Record<string, unknown>[], boxed: boolean) => (
+  // The dispute, walkover and admin-note call-outs, which both renderings hang
+  // off the row.
+  const callouts = (
+    matchDisputes: Record<string, unknown>[],
+    matchWalkovers: Record<string, unknown>[],
+    adminNote: string | undefined,
+    boxed: boolean,
+  ) => (
     <>
+      {/* THE EXEC'S OWN WORDS, and the only thing on this page that is not
+          club-readable. Same strip as the dispute and walkover call-outs
+          below — border-l-2, the same two spacings, an existing palette var
+          (--color-info, which no other strip here uses) and no new colour.
+
+          NOTHING IS DRAWN WHEN THERE IS NO NOTE, and nothing is drawn when the
+          viewer may not read notes. Those are different states and this is the
+          deliberate choice to render them the same: an empty "no note" line
+          shown to somebody without the capability would be a claim this page
+          cannot make — it did not ask the database — and a "hidden" placeholder
+          would announce that there is something to be curious about. Silence is
+          the honest rendering of "not your business", and it costs the reader
+          who simply has no note nothing at all.
+
+          NO RADIUS CLASS, and its absence is deliberate. The two strips below
+          say `rounded-md`, which in this repo rounds NOTHING: packages/config's
+          Tailwind preset REPLACES theme.borderRadius rather than extending it,
+          and every named key from `sm` to `3xl` is '0'. So they render square,
+          and writing `rounded-[8px]` here — the arbitrary value that would
+          actually take — would make this the one rounded box on the row. Left
+          off entirely rather than copying a class that does nothing. */}
+      {adminNote && (
+        <div className={boxed ? 'mt-2' : 'mt-3'}>
+          <div
+            className={`flex items-start gap-1.5 text-xs border-l-2 border-[var(--color-info)] ${
+              boxed ? 'px-2.5 py-1.5 bg-[var(--color-info)]/5' : 'pl-2.5 py-1'
+            }`}
+          >
+            <StickyNote className="w-3.5 h-3.5 text-[var(--color-info)] mt-0.5 shrink-0" />
+            <span className="text-[var(--text-secondary)] whitespace-pre-wrap break-words">
+              <span className="font-medium text-[var(--color-info)]">Admin note</span>: {adminNote}
+            </span>
+          </div>
+        </div>
+      )}
       {matchDisputes.length > 0 && (
         <div className={boxed ? 'mt-2 space-y-1' : 'mt-3 space-y-1.5'}>
           {matchDisputes.map((d: Record<string, unknown>) => (
@@ -181,7 +245,7 @@ export default async function MatchesPage() {
   // Both renderings of a row, built from one set of names, so the desktop <tr>
   // and the phone <TableCard> cannot disagree about who played — and so the
   // search has a single key per row rather than one per layout.
-  const matchRows = rows.map(({ m, sideA, sideB, matchDisputes, matchWalkovers }) => {
+  const matchRows = rows.map(({ m, sideA, sideB, matchDisputes, matchWalkovers, adminNote }) => {
     const actions = m.result_status !== 'voided'
       ? <MatchActions matchId={m.id} resultStatus={m.result_status} />
       : undefined;
@@ -226,7 +290,7 @@ export default async function MatchesPage() {
           ]}
           actions={actions}
         >
-          {(matchDisputes.length > 0 || matchWalkovers.length > 0) && callouts(matchDisputes, matchWalkovers, false)}
+          {(matchDisputes.length > 0 || matchWalkovers.length > 0 || adminNote) && callouts(matchDisputes, matchWalkovers, adminNote, false)}
         </TableCard>
       ),
       row: (
@@ -241,7 +305,7 @@ export default async function MatchesPage() {
                 {names(sideB).join(' & ')}
               </span>
             </div>
-            {callouts(matchDisputes, matchWalkovers, true)}
+            {callouts(matchDisputes, matchWalkovers, adminNote, true)}
           </td>
           <td className="px-5 py-4 font-mono text-sm font-medium text-[var(--text-primary)]">
             {m.score_summary || <span className="text-[var(--text-muted)]">-</span>}
