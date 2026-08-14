@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeftRight, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { CalendarMonth } from '@/lib/schedule';
 
 /**
@@ -25,11 +25,17 @@ export interface CalendarEvent {
 
 interface MonthCalendarProps {
   /**
-   * Every month the loaded data covers, oldest first. The nav is bounded to
-   * this list on purpose: the page fetches the ACTIVE SEASON's sessions and
-   * nothing else, so a month outside it would render empty whether or not the
-   * club played that month. Refusing to go there is the honest answer; a blank
-   * grid would be a claim we cannot support.
+   * The months the arrows can reach, oldest first — the active term end to
+   * end, plus a month of its own for any night that sits outside it (see
+   * calendarMonthKeys). The nav is bounded to this list on purpose: the page
+   * fetches the ACTIVE SEASON's sessions and any night with no term on it, so
+   * a month outside it would render empty whether or not the club played that
+   * month. Refusing to go there is the honest answer; a blank grid would be a
+   * claim we cannot support.
+   *
+   * The list can therefore have holes in it — an old season-less night is one
+   * reachable month with years of nothing on either side, and stepping off it
+   * lands back at the term. The note under the grid is what says so.
    */
   months: CalendarMonth<CalendarEvent>[];
   initialIndex: number;
@@ -78,6 +84,18 @@ export function MonthCalendar({ months, initialIndex, weekdays, rangeLabel }: Mo
         </div>
       </div>
 
+      {/* Says the grid moves, because nothing else does. At 390px the box shows
+          Sun to about halfway through Wednesday, and a month grid's own edge
+          reads as a margin rather than as a cut — unlike the chip rails
+          elsewhere on the app, where a half-visible chip advertises its own
+          overflow. CSS shows it only under 662px — the measured width at which
+          the 620px grid floor stops being wider than its box — so it never
+          promises a drag on a screen where the whole week already fits. */}
+      <p className="cal-hint">
+        <ArrowLeftRight size={12} aria-hidden="true" />
+        Scroll sideways for the full week
+      </p>
+
       {/* Horizontal scroll rather than seven crushed columns. A phone cannot
           give a month grid enough width to print a session's NAME in a cell,
           and a grid of anonymous coloured dots is a worse answer than one the
@@ -109,6 +127,11 @@ export function MonthCalendar({ months, initialIndex, weekdays, rangeLabel }: Mo
                   {cell.isToday && <span className="sr-only"> (today)</span>}
                 </time>
                 {cell.sessions.map((ev) => {
+                  // `title` is still here for a mouse, but it is no longer the
+                  // only copy of the name: .cal-ev-name WRAPS now. A phone
+                  // and a tablet have no hover, so a name clipped to
+                  // "WEDNESD…" with the rest behind a tooltip was unreadable
+                  // on exactly the devices that clip it hardest.
                   // The badge vocabulary the rest of the page already speaks:
                   // .tag-win is the same green the "N OPEN" pill uses, plain
                   // .tag is the same grey a closed night wears in Past
@@ -141,8 +164,11 @@ export function MonthCalendar({ months, initialIndex, weekdays, rangeLabel }: Mo
       {rangeLabel && (
         <p className="cal-foot">
           {/* Says out loud where the arrows stop and why, so a dead arrow reads
-              as a boundary rather than a broken button. */}
-          Showing {rangeLabel}. Nights from other terms are not on this calendar.
+              as a boundary rather than a broken button — and names the second
+              thing on here, which is what makes a lone month years off the term
+              read as a night nobody filed rather than as a glitch. */}
+          Showing {rangeLabel}, plus any night not yet assigned to a term.
+          Nights from other terms are not on this calendar.
         </p>
       )}
     </div>
