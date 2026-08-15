@@ -115,13 +115,28 @@
 -- Excluding walkovers CANNOT be done from result_status alone, and that is the
 -- point of the finding above: the rated ones are indistinguishable from any
 -- other confirmed match by status. They are distinguishable by
--- matches.walkover_type, which apply_walkover_result is the only writer of —
--- verified across every migration and both apps. (The `'walkover'` strings all
--- over apps/admin/src/lib/tournament-actions/* are tournament_matches.status, a
+-- matches.walkover_type.
+--
+-- apply_walkover_result IS ITS ONLY WRITER, and that was checked rather than
+-- assumed. Across every migration, `walkover_type` appears on `matches` in
+-- exactly three shapes: the DDL (00001:398), the INSERT in
+-- apply_walkover_result (00003:534/545, live body 00049:137/148), and READS of
+-- the form `IF v_match.walkover_type IS NOT NULL` inside apply_match_result
+-- (00003:330, 00019:69, 00028:138, 00041:181). Nothing UPDATEs it, ever. In
+-- both apps the identifier only ever names walkovers.walkover_type, the
+-- reporting table — never the match's. (The `'walkover'` strings all over
+-- apps/admin/src/lib/tournament-actions/* are tournament_matches.status, a
 -- different table that never touches these counters at all.) walkovers.
 -- walkover_type is NOT NULL (00001:441), so the column is set on every walkover
 -- match and NULL on every other match. `result_status = 'confirmed' AND
 -- walkover_type IS NULL` is therefore exact in both directions.
+--
+-- AND THE ENGINE ALREADY AGREES THAT THIS IS THE FORFEIT TEST. apply_match_result
+-- branches on the identical expression — `IF v_match.walkover_type IS NOT NULL`
+-- — to decide that a match has no games and its winner must come from
+-- winner_side instead. This file is not inventing a way to recognise a
+-- walkover; it is asking the same question the rating path already asks, and
+-- getting the answer used for a different purpose.
 --
 -- 00119 gave the predicate a result_status parameter rather than a `matches`
 -- rowtype so it would not be pinned to the shape of that table (00119:344-346).
@@ -256,6 +271,20 @@
 -- (players.ts:431), so the console's blockers list loses the phantom row at the
 -- same time and for the same reason.)
 --
+-- ONE COMMENT IN 00079 IS NOW STALE AND IS NOT REWRITTEN HERE.
+-- merge_players_unhandled() classifies head_to_head_stats.player_a_id/_b_id and
+-- partnership_stats.player_a_id/_b_id under "Blocked by the guard: the loser
+-- provably has none of these" (00079:76-88). After the narrowing above that
+-- sentence is no longer true — a loser with ZEROED rows now passes the guard
+-- and those rows go by CASCADE. The CLASSIFICATION is still correct, because
+-- the outcome is right either way: an empty tombstone is worth nothing and
+-- losing it with the delete is the desired behaviour. Only the stated REASON
+-- has changed, from "cannot exist" to "may exist and is disposable".
+-- merge_players_unhandled is deliberately not re-created for a comment — it
+-- reads pg_constraint live and rewriting it would put a fourth copy of that
+-- static list in the tree — but the next person to read that line should not
+-- take it for a guarantee that these rows cannot reach the delete.
+--
 -- AND THE RECOMPUTE IS ADDED ANYWAY, in STEPS 5 and 7. It is insurance, not a
 -- repair: with the guard in place it finds nothing to change and returns 0.
 -- 00079 set exactly this precedent — its reliability-metric merge rules are
@@ -315,11 +344,17 @@
 --     .rpc() — they are reached by triggers and by merge_players — so both apps
 --     type-check and build unchanged. A follow-up, not a prerequisite.
 --
---   * THIS FILE DEPENDS ON matches.walkover_type CONTINUING TO EXIST. A
---     parallel migration (00122) drops columns and is not visible from here. If
---     it drops walkover_type, STEP 1's predicate stops compiling and the
---     walkover ruling has to be re-expressed on forfeit_player_id, which
---     apply_walkover_result sets on the same rows.
+--   * THIS FILE DEPENDS ON THREE COLUMNS SURVIVING A MIGRATION IT CANNOT SEE.
+--     A parallel migration (00122) drops columns and is not visible from here.
+--     If it drops matches.walkover_type, STEP 1's predicate stops compiling and
+--     the walkover ruling has to be re-expressed on forfeit_player_id, which
+--     apply_walkover_result sets on the same rows. WORSE, if it drops
+--     head_to_head_stats.player_a_points / player_b_points, this file does not
+--     merely lose an argument — STEP 2 FAILS TO APPLY, because ARGUMENT C
+--     decided to populate those two columns rather than drop them. Whoever
+--     applies these in sequence should read 00122's column list first. The two
+--     files disagreeing about those columns is a coordination error to catch
+--     before psql does.
 --
 -- IDEMPOTENT throughout: DROP FUNCTION IF EXISTS, CREATE OR REPLACE FUNCTION,
 -- and a backfill that is a recompute. No triggers are created — 00119's two
