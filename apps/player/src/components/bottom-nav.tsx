@@ -68,8 +68,21 @@ export function BottomNav({
   const checkUnread = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
+    // players_self, NOT players. This runs in the browser as `authenticated`,
+    // and 00032 replaced blanket SELECT on `players` with a column grant that
+    // does not include `eligibility_flag` — so this query was refused outright
+    // ("permission denied for table players"), and because a refusal arrives as
+    // `data: null` rather than a rejection, the badge simply never appeared.
+    // Live on production from the 2026-08-15 deploy until now; Sentry caught it
+    // with the query in the breadcrumb, which is the only reason it was found.
+    //
+    // The view is already scoped to the caller's own row and `authenticated`
+    // holds table-level SELECT on it, so this reads the column without widening
+    // anyone's access to anyone else's. The .eq() is kept as belt-and-braces:
+    // the view enforces it, and a filter that agrees with the view costs one
+    // index lookup and survives the view being redefined.
     const { data: player } = await supabase
-      .from('players')
+      .from('players_self')
       // status and eligibility_flag because target_audience is matched
       // against the viewer, not filtered in the query.
       .select('id, status, eligibility_flag')
