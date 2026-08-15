@@ -328,9 +328,29 @@ export async function deleteTournament(tournamentId: string) {
 
   const { data: old } = await adminClient.from('tournaments').select('*').eq('id', tournamentId).single();
 
-  // Delete related data first
-  await adminClient.from('tournament_participants').delete().eq('tournament_id', tournamentId);
-  await adminClient.from('tournament_events').delete().eq('tournament_id', tournamentId);
+  // DELETING THE EVENTS IS ENOUGH, and it is the only statement here that ever
+  // did anything.
+  //
+  // This used to begin with a delete against `tournament_participants` filtered
+  // on `tournament_id` — a column that table does not have (it hangs off an
+  // EVENT, via `event_id`; `tournament_id` belongs to the unrelated
+  // `legacy_tournament_participants`). PostgREST answered 42703 every time and
+  // the bare `await` threw the error away, so the line had never once deleted a
+  // row. It read like the statement that clears a tournament's entrants, which
+  // is worse than not being there at all.
+  //
+  // What actually clears them is the cascade, verified against production:
+  // tournament_participants, tournament_pairs and tournament_matches all
+  // reference tournament_events(id) ON DELETE CASCADE. So removing the events
+  // removes the entrants, the pairs and the draw with them.
+  const { error: eventsError } = await adminClient
+    .from('tournament_events')
+    .delete()
+    .eq('tournament_id', tournamentId);
+  // Checked, unlike before: if this fails the cascade never runs, and deleting
+  // the tournament row below would then fail its own FK — or worse, succeed and
+  // orphan every event. Better to stop here and say so.
+  if (eventsError) throw new Error(eventsError.message);
 
   const { error } = await adminClient.from('tournaments').delete().eq('id', tournamentId);
   if (error) throw new Error(error.message);
