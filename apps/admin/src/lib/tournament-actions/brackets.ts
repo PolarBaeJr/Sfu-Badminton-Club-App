@@ -16,6 +16,7 @@ import {
   POOL_LADDER_SHAPE,
   isPlayedMatch,
   CUSTOM_FORMAT_BOUNDS,
+  maxFirstRoundByes,
 } from '@badminton/shared';
 import type { SeedBy, TournamentMatchPhase } from '@badminton/shared';
 import {
@@ -781,6 +782,48 @@ async function generateSingleEliminationBracketImpl(
   const N = entries.length;
   if (N < 2) throw new Error('Need at least 2 participants to generate a bracket');
 
+  // ------------------------------------------------------------
+  // THE SEEDS THAT WERE PROMISED A SKIP (00124)
+  // ------------------------------------------------------------
+  //
+  // seed_skip_count is a FLOOR, and this is the only place it is read. It does
+  // not place a single bye — the byes are already where it wants them. A field
+  // of N sits in a bracket of nextPowerOf2(N); the empty slots are the tail
+  // ranks; getStandardSeedPositions pairs rank r against rank B+1-r, so the
+  // empty tail falls opposite the TOP seeds and hands them the byes, in seed
+  // order, exactly as the convention says. drawWithinTiers keeps that true
+  // through a redraw by shuffling entrants inside an index range rather than
+  // permuting rank-slots. See 00124's header for the full argument.
+  //
+  // So the number of byes is a function of N alone and nobody can choose it.
+  // What an exec CAN do is state how many seeds they promised a skip to, and
+  // this refuses to build a draw that would break the promise. It cannot be
+  // checked when the number is set — nobody has entered yet — so it is checked
+  // here, where N is real.
+  //
+  // BEFORE ANY WRITE, deliberately. Auto-seeding persists seed numbers a few
+  // lines below and deletePhaseMatches tears down the old draw further down; a
+  // refusal that lands after either leaves an exec with a half-changed event and
+  // an error message. Refusing here costs a re-press and nothing else.
+  //
+  // The refusal never fires for a field that forces MORE byes than promised.
+  // Those go to seeds N+1, N+2, ... as they always have — a floor, not a cap.
+  const seedSkip = ((event as { seed_skip_count?: number | null }).seed_skip_count ?? 0);
+  if (seedSkip > 0) {
+    const availableByes = maxFirstRoundByes(N);
+    if (seedSkip > availableByes) {
+      throw new ExpectedError(
+        `This event promises the top ${seedSkip} seed${seedSkip === 1 ? '' : 's'} a first-round bye, but a field of ${N} `
+        + `sits in a ${nextPowerOf2(N)}-slot draw, which has ${availableByes === 0 ? 'no byes at all' : `only ${availableByes}`}. `
+        + `The number of byes is fixed by the size of the field — a bracket holds a power of two, and the spare slots are what a bye is — `
+        + `so there is no draw that can deliver more. `
+        + (availableByes === 0
+          ? 'Lower "Seeds Skipping Round One" to 0, or change the field size: a field of exactly 2, 4, 8, 16 … fills its bracket and leaves nobody a bye.'
+          : `Lower "Seeds Skipping Round One" to ${availableByes} or fewer.`),
+      );
+    }
+  }
+
   // THE SECOND HARD BLOCK. The field above is drawn from
   // status IN ('registered','checked_in') — no check-in required — so without
   // this an unsigned entrant an exec added is handed an opponent and a court
@@ -1113,6 +1156,11 @@ async function generateSingleEliminationBracketImpl(
       bracket_size: bracketSize,
       participants: N,
       byes: numByes,
+      // The promise this draw was checked against (00124), recorded next to the
+      // byes it was checked against so the pair can be read together. It is
+      // always <= byes here — generation refused otherwise — and 0 means no
+      // promise was made rather than "a promise of nothing".
+      seed_skip_promised: seedSkip,
       // Recorded as three distinguishable states, not a boolean: "asked for and
       // created", "asked for and impossible" (a 2-entry draw has no semi-finals)
       // and "not asked for". The middle one is the only silent outcome in this

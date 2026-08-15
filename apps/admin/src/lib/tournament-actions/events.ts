@@ -12,6 +12,8 @@ import {
   playsRoundRobin,
   statusStepsFor,
   currentPhase,
+  endsInKnockout,
+  SEED_SKIP_BOUNDS,
 } from '@badminton/shared';
 import type {
   TournamentEventType,
@@ -98,6 +100,40 @@ function normalizeGroupShape(
   return { group_count: g, qualifiers_per_group: g !== null && g > 1 ? (q ?? 2) : null };
 }
 
+// How many top seeds must skip the first round (00124).
+//
+// THE FIELD-DEPENDENT CEILING IS NOT CHECKED HERE, DELIBERATELY, and it is the
+// same call normalizeGroupShape makes two functions up. The real ceiling is
+// maxFirstRoundByes(entrants) — a field of 20 sits in a 32-draw and can give 12
+// seeds a bye, a field of 16 can give none at all — and at creation time nobody
+// has entered, so bounding against the current headcount would refuse an exec
+// who sets 4 with three people registered and sixty expected. The CHECK in
+// 00124 bounds what can be STORED; generateSingleEliminationBracket refuses what
+// the field cannot deliver, on the day, when the number is real.
+//
+// The round-robin refusal IS checked here, because it does not depend on the
+// field: a round robin has no first round to skip. 00124 has a row-level CHECK
+// for it, but Postgres would report a constraint name to an exec who picked the
+// format several fields higher up.
+function normalizeSeedSkip(
+  format: TournamentEventFormat | string | undefined,
+  seedSkipCount?: number | null,
+): { seed_skip_count: number } {
+  const n = seedSkipCount == null || Number.isNaN(seedSkipCount) ? 0 : Math.trunc(seedSkipCount);
+  const { min, max } = SEED_SKIP_BOUNDS;
+  if (n < min || n > max) {
+    throw new ExpectedError(
+      `The number of seeds that skip the first round must be between ${min} and ${max}. Leave it at 0 for an ordinary draw.`,
+    );
+  }
+  if (n > 0 && !endsInKnockout(format)) {
+    throw new ExpectedError(
+      'A round robin has no first round to skip — everybody plays everybody. Only an event that ends in a bracket can give its top seeds a bye.',
+    );
+  }
+  return { seed_skip_count: n };
+}
+
 // A seeding link is only meaningful within one tournament, and the self-seed
 // case would deadlock generation on standings it is supposed to produce.
 async function assertSeedSourceUsable(
@@ -132,6 +168,7 @@ async function createTournamentEventImpl(
     seed_by?: SeedBy | null;
     group_count?: number | null;
     qualifiers_per_group?: number | null;
+    seed_skip_count?: number | null;
     max_participants?: number;
     seeding_method?: TournamentSeedingMethod;
     elo_multiplier?: number;
@@ -143,6 +180,7 @@ async function createTournamentEventImpl(
 
   const typedFormat = normalizeTypedFormat(config.games_per_match, config.points_per_game);
   const groupShape = normalizeGroupShape(config.format, config.group_count, config.qualifiers_per_group);
+  const seedSkip = normalizeSeedSkip(config.format, config.seed_skip_count);
   // A pool_to_bracket event seeds from ITSELF — that is the format — so an
   // external source would be a second, contradictory field for the same
   // bracket. Refused rather than ignored: silently dropping a link the exec set
@@ -190,6 +228,7 @@ async function createTournamentEventImpl(
       ? (config.seed_by ?? 'wins')
       : null,
     ...groupShape,
+    ...seedSkip,
     max_participants: config.max_participants ?? null,
     seeding_method: config.seeding_method ?? 'elo',
     elo_multiplier: config.elo_multiplier ?? 1.25,
@@ -223,6 +262,7 @@ async function updateTournamentEventImpl(
     seed_by?: SeedBy | null;
     group_count?: number | null;
     qualifiers_per_group?: number | null;
+    seed_skip_count?: number | null;
     max_participants?: number | null;
     seeding_method?: TournamentSeedingMethod;
     elo_multiplier?: number;
@@ -296,6 +336,22 @@ async function updateTournamentEventImpl(
       'group_count' in updates ? updates.group_count : (event as { group_count?: number | null }).group_count,
       'qualifiers_per_group' in updates ? updates.qualifiers_per_group : (event as { qualifiers_per_group?: number | null }).qualifiers_per_group,
     ));
+  }
+
+  // NO seeding_method-style carve-out here either, and for the group shape's
+  // reason rather than the seeding method's. The seeding method is exempt
+  // because it is read once, by the NEXT generation, and changes nothing about
+  // matches that already exist. This number is read by the next generation too
+  // — but the only draw it could describe is one that already exists, and that
+  // draw's byes are already dealt. Letting it through would record a promise
+  // about a bracket nobody can rebuild, which is a setting that reads as broken
+  // rather than one that does nothing. The unmodified gate above (no draw, still
+  // editable) refuses it with a sentence naming the reason.
+  //
+  // The FORMAT is the event's own, not the patch's: format is not updatable, so
+  // there is no version of this call in which the two could differ.
+  if ('seed_skip_count' in updates) {
+    Object.assign(patch, normalizeSeedSkip(event.format as TournamentEventFormat, updates.seed_skip_count));
   }
 
   if ('seeded_from_event_id' in updates) {

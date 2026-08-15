@@ -394,6 +394,43 @@ export function nextPowerOf2(n: number): number {
   return p;
 }
 
+/**
+ * The most seeds a field of this size can send into round two with a bye — the
+ * ceiling on tournament_events.seed_skip_count (00124).
+ *
+ * IT IS ALSO THE EXACT NUMBER, not merely the maximum, and that is the whole
+ * point. A bracket holds a power of two; a field of E leaves nextPowerOf2(E) - E
+ * slots empty; the standard seeding positions pair rank r against rank B+1-r, so
+ * the empty tail ranks fall opposite the top seeds and hand them a bye. Nobody
+ * chooses the count — the field size decides it.
+ *
+ * There is no bigger bracket to escape into, either. A round-one match with two
+ * empty slots is not a match, so a legal draw needs B - E <= B/2, i.e. B <= 2E,
+ * and the only power of two in [E, 2E] besides nextPowerOf2(E) is 2E itself —
+ * reachable only when E is already a power of two, and it makes EVERY round-one
+ * match a bye. So a 16-strong field cannot give one single seed a bye: 14
+ * players producing 7 winners plus 2 skippers is 9 entrants for an 8-slot round
+ * two. The honest version of that is a qualifying draw, which is a different
+ * feature.
+ *
+ * Returns 0 below two entrants — there is no draw at all, so nothing skips.
+ */
+export function maxFirstRoundByes(fieldSize: number): number {
+  if (!Number.isFinite(fieldSize) || fieldSize < 2) return 0;
+  const entrants = Math.trunc(fieldSize);
+  return nextPowerOf2(entrants) - entrants;
+}
+
+/**
+ * The schema-level bounds on seed_skip_count, mirroring 00124's CHECK.
+ *
+ * The real ceiling is maxFirstRoundByes(field size), which is unknowable when
+ * the event is created — nobody has entered yet. Same position 00106 was in with
+ * qualifiers_per_group, and the same split: this bounds what can be STORED, and
+ * the generator refuses what the field cannot deliver on the day.
+ */
+export const SEED_SKIP_BOUNDS = { min: 0, max: 64 } as const;
+
 // Per-format scoring rules: how many games the match is a best-of, the target a
 // game is played to, and the deuce cap. Rally scoring: reach the target, but win
 // by two — so at 20-20 play continues (22-20, 23-21, …) until the cap, where the

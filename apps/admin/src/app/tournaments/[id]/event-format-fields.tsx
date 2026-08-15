@@ -9,8 +9,12 @@ import {
   describeMatchShape,
   isPoolToBracket,
   playsRoundRobin,
+  endsInKnockout,
   knockoutLadderShape,
   POOL_LADDER_SHAPE,
+  nextPowerOf2,
+  maxFirstRoundByes,
+  SEED_SKIP_BOUNDS,
 } from '@badminton/shared';
 import type { TournamentMatchFormat, SeedBy, TournamentEventType, RoundShape } from '@badminton/shared';
 
@@ -29,6 +33,11 @@ export interface EventFormatValues {
   /** Blank or "1" is an ordinary flat round robin — see 00106. */
   groupCount: string;
   qualifiersPerGroup: string;
+  /**
+   * How many top seeds must skip the first round (00124). Blank or "0" is an
+   * ordinary draw and is the pre-00124 behaviour exactly.
+   */
+  seedSkip: string;
 }
 
 export interface SiblingEvent {
@@ -88,6 +97,7 @@ export const EMPTY_FORMAT_VALUES: EventFormatValues = {
   seedBy: 'wins',
   groupCount: '',
   qualifiersPerGroup: '2',
+  seedSkip: '',
 };
 
 /**
@@ -153,6 +163,11 @@ export function toFormatPayload(v: EventFormatValues, format?: string) {
     qualifiers_per_group: qualifiersMeanSomething
       ? (v.qualifiersPerGroup === '' ? null : Number(v.qualifiersPerGroup))
       : null,
+    // 0, never null: the column is NOT NULL (00124) and 0 IS the answer "no
+    // seeds skip". Sent as 0 rather than omitted on a round robin as well, so a
+    // number typed on a knockout and then switched to a round robin cannot be
+    // left behind on the row for the server's round-robin CHECK to reject later.
+    seed_skip_count: endsInKnockout(format) && v.seedSkip !== '' ? Number(v.seedSkip) : 0,
   };
 }
 
@@ -161,6 +176,7 @@ export function EventFormatFields({
   onChange,
   siblings,
   format,
+  fieldSize,
 }: {
   value: EventFormatValues;
   onChange: (next: EventFormatValues) => void;
@@ -171,6 +187,13 @@ export function EventFormatFields({
    * exactly what it rendered before rather than a field it cannot honour.
    */
   format?: string;
+  /**
+   * How many entrants this event has RIGHT NOW, so the seed-skip control can
+   * show the exec the number their field can actually deliver instead of making
+   * them discover it at Generate. Optional and undefined at creation time, when
+   * nobody has entered yet and there is no honest number to show.
+   */
+  fieldSize?: number;
 }) {
   const set = (patch: Partial<EventFormatValues>) => onChange({ ...value, ...patch });
   const { minGames, maxGames, minPoints, maxPoints } = CUSTOM_FORMAT_BOUNDS;
@@ -190,6 +213,45 @@ export function EventFormatFields({
   const isRoundRobin = playsRoundRobin(format);
   const poolToBracket = isPoolToBracket(format);
   const groups = value.groupCount === '' ? 0 : Number(value.groupCount);
+
+  // The seed-skip control (00124). A pool_to_bracket event gets it too: its
+  // knockout half is a bracket like any other. A plain round robin does not —
+  // there is no first round to skip — and the server and 00124's CHECK both
+  // refuse a non-zero value there, so offering it would be a dead invitation.
+  const offerSeedSkip = endsInKnockout(format);
+  // ------------------------------------------------------------
+  // HOW BIG THE BRACKET'S FIELD WILL BE — the only number that decides the byes
+  // ------------------------------------------------------------
+  //
+  // Worth deriving rather than leaving blank, because a control whose only
+  // runtime behaviour is a refusal three screens later reads as broken. There
+  // are three cases and they know different amounts:
+  //
+  //   * A PLAIN KNOCKOUT with no pool link. The field is who has entered, which
+  //     the settings dialog passes in. Unknown at creation time — nobody has
+  //     entered yet — and then there is no honest number to show.
+  //   * A POOL_TO_BRACKET EVENT. Its knockout field is not its entrants, it is
+  //     its own QUALIFIERS, and that is a number this form is holding two
+  //     controls above: qualifiers_per_group out of each of group_count groups,
+  //     with a flat pool counting as one group (00107). Max Participants can cap
+  //     it further, which can only make it smaller — and smaller is the
+  //     direction that gives MORE byes, so the number shown is never optimistic.
+  //     This is the case most worth showing: those products are usually powers
+  //     of two (4 out of one pool, 2 out of each of 4 groups), so a promise here
+  //     will nearly always refuse, and the exec needs to see WHY before Generate.
+  //   * A KNOCKOUT SEEDED FROM A SIBLING POOL. The field comes from another
+  //     event's standings and its own Max Participants; nothing on this form
+  //     knows it, so it gets no line rather than a confidently wrong one.
+  const qualifierField = poolToBracket
+    ? Math.max(1, groups) * (value.qualifiersPerGroup === '' ? 0 : Number(value.qualifiersPerGroup))
+    : null;
+  const projectedField = poolToBracket
+    ? qualifierField
+    : (value.seededFrom === '' ? fieldSize ?? null : null);
+  const showFieldLine = offerSeedSkip
+    && projectedField !== null && Number.isFinite(projectedField) && projectedField >= 2;
+  const availableByes = showFieldLine ? maxFirstRoundByes(projectedField!) : 0;
+  const seedSkipNow = value.seedSkip === '' ? 0 : Number(value.seedSkip);
 
   // Preview the shape that will actually be played, so an exec can see at a
   // glance whether their typed values took effect over the preset.
@@ -356,6 +418,67 @@ export function EventFormatFields({
             ) : (
               <>Leave blank for one pool where everybody plays everybody. Two or more makes this a group stage: far fewer
               matches, and a bracket can seed from it.</>
+            )}
+          </p>
+        </>
+      )}
+
+      {/* SEEDS SKIPPING ROUND ONE (00124) — at the top level of the form, NOT
+          inside the group block above and NOT inside the pool picker below.
+          Both of those gates are false on a plain single-elimination event,
+          which is the format this control exists for; nesting it in either is
+          how "Rank The Pool By" ended up unreachable on the one format that
+          needed it. `offerSeedSkip` is the only condition. */}
+      {offerSeedSkip && (
+        <>
+          <Input
+            label="Seeds Skipping Round One"
+            type="number"
+            min={SEED_SKIP_BOUNDS.min}
+            max={SEED_SKIP_BOUNDS.max}
+            value={value.seedSkip}
+            onChange={(e) => set({ seedSkip: e.target.value })}
+            placeholder="0 — nobody skips"
+          />
+          <p className="text-xs text-[var(--text-muted)] -mt-2">
+            {/* SAYING WHAT IT ACTUALLY DOES, because the name promises more
+                than any bracket can give. A draw's byes are decided by the size
+                of the field — the bracket holds a power of two and the spare
+                slots ARE the byes — and they already go to the top seeds in
+                order. This number is the promise, and the draw refuses to be
+                generated under it. */}
+            The top few seeds enter at round two instead of playing a first-round match.{' '}
+            <span className="font-medium text-[var(--text-primary)]">
+              This is a minimum the draw is checked against, not a placement.
+            </span>{' '}
+            A bracket holds a power of two, so the number of byes is decided by how many are in the draw
+            {poolToBracket ? ' — here, how many qualify out of the pool — ' : ' '}
+            and they already go to the top seeds in order. Set this and the draw refuses to be generated if the field
+            cannot give that many seeds a bye.
+            {showFieldLine && (
+              <>
+                {' '}
+                <span className="font-medium text-[var(--text-primary)]">
+                  {poolToBracket
+                    ? `${projectedField} qualifiers go into a ${nextPowerOf2(projectedField!)}-slot knockout`
+                    : `${projectedField} ${projectedField === 1 ? 'entry' : 'entries'} right now sits in a ${nextPowerOf2(projectedField!)}-slot draw`}
+                  , which gives {availableByes === 0 ? 'nobody' : `the top ${availableByes}`} a bye
+                </span>
+                {availableByes === 0
+                  ? (poolToBracket
+                    // The case this format lands on almost every time: 4 out of
+                    // one pool, or 2 out of each of 4 groups, are both powers of
+                    // two. The remedy is the qualifier count, not this number.
+                    ? ' — a field that exactly fills its bracket leaves no spare slots. Change how many qualify if some of them are meant to skip a round.'
+                    : ' — a field that exactly fills its bracket leaves no spare slots, so any number above 0 will refuse.')
+                  : `, so 0 to ${availableByes} will generate.`}
+                {seedSkipNow > availableByes && (
+                  <span className="font-medium text-[var(--color-danger)]">
+                    {' '}This event will not generate a draw until the number comes down to {availableByes} or the field
+                    changes size.
+                  </span>
+                )}
+              </>
             )}
           </p>
         </>
