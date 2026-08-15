@@ -3411,6 +3411,165 @@ describe('a round robin and a knockout in one event', () => {
   });
 
   // ============================================================
+  // ONE COLUMN DECIDES BOTH HALVES — the seed_by trap, pinned
+  // ============================================================
+  //
+  // buildFieldFromOwnPool picks the qualifiers by event.seed_by and
+  // assignPositionsAndPoints ranks everybody the knockout did not contain by
+  // event.seed_by. That they read the SAME column is the whole fix, and nothing
+  // asserted it: every pool_to_bracket test above plays a pool whose 'wins'
+  // order and 'points' order happen to be identical, so a reader that quietly
+  // went back to 'wins' would pass all of them.
+  //
+  // These two play a pool where the two orders are almost exactly reversed, and
+  // run it twice — once by points, once by NULL — so the column, not the tally,
+  // is demonstrably what moves the field and the placings.
+
+  /**
+   * The two fixtures played as two-game blowouts; every other one is a
+   * three-game thriller. See playThePoolOnMargins.
+   */
+  const POOL_BLOWOUTS = new Set(['0-1', '1-2']);
+
+  /**
+   * Play the pool so that WINS ORDER AND POINTS ORDER DISAGREE — at the top of
+   * the table AND at the bottom, which is what makes both readers testable.
+   *
+   * Lower index still wins every fixture, so the wins table is untouched:
+   * p-0 5 wins, p-1 4, p-2 3, p-3 2, p-4 1, p-5 0.
+   *
+   * Only the scorelines differ. A thriller is 11-9, 9-11, 11-9 — 31 points to
+   * the winner, 29 to the loser — and a blowout is 11-2, 11-2, so 22 to 4.
+   * Everything is a thriller except p-0 v p-1 and p-1 v p-2, which is the shape
+   * of a pool where one entrant happens to get two cheap results. Totals:
+   *
+   *   p-3 149, p-4 147, p-0 146, p-5 145, p-2 126, p-1 119
+   *
+   * TWO INVERSIONS, BOTH DELIBERATE. The top four by points is
+   * {p-3, p-4, p-0, p-5} against {p-0, p-1, p-2, p-3} by wins, so the
+   * QUALIFYING reader is pinned; and the two left over rank p-2 ahead of p-1 by
+   * points but p-1 ahead of p-2 by wins, so the NON-QUALIFIER reader in
+   * finalize.ts is pinned too. Without that second inversion a finalize that
+   * quietly went back to 'wins' would still have passed.
+   */
+  function playThePoolOnMargins() {
+    Object.assign(event(), { status: 'pool_live' });
+    for (const m of matchesIn('pool')) {
+      const a = m.participant_a_id as string;
+      const b = m.participant_b_id as string;
+      const ai = Number(a.slice(2));
+      const bi = Number(b.slice(2));
+      const aWins = ai < bi;
+      const pair = `${Math.min(ai, bi)}-${Math.max(ai, bi)}`;
+      // Winner-perspective games, flipped onto a/b below.
+      const games = POOL_BLOWOUTS.has(pair)
+        ? [[11, 2], [11, 2]]
+        : [[11, 9], [9, 11], [11, 9]];
+      Object.assign(m, {
+        status: 'completed',
+        winner_participant_id: aWins ? a : b,
+        loser_participant_id: aWins ? b : a,
+        scores: games.map(([w, l]) => (aWins ? { a: w, b: l } : { a: l, b: w })),
+      });
+    }
+  }
+
+  /**
+   * Play out a four-strong knockout, lower index winning, to whatever shape the
+   * ladder stamped on each round. Returns nothing: these tests care about the
+   * non-qualifiers, and assert the qualifiers only as a band.
+   */
+  async function playTheKnockout() {
+    Object.assign(event(), { status: 'live' });
+    const rounds = [...new Set(matchesIn('bracket').map((m) => m.round_number as number))].sort((x, y) => x - y);
+    for (const round of rounds) {
+      for (const m of matchesIn('bracket').filter((x) => x.round_number === round)) {
+        const a = m.participant_a_id as string | null;
+        const b = m.participant_b_id as string | null;
+        if (!a || !b) continue;
+        const aWins = Number(a.slice(2)) < Number(b.slice(2));
+        const target = (m.points_per_game as number | null) ?? 21;
+        const game = { a: aWins ? target : target - 11, b: aWins ? target - 11 : target };
+        const needed = Math.floor(((m.games_per_match as number | null) ?? 1) / 2) + 1;
+        const scores = Array.from({ length: needed }, () => game);
+        expect((await enterMatchResult(m.id as string, scores, aWins ? 'a' : 'b', false)).ok).toBe(true);
+      }
+    }
+  }
+
+  /** Who actually got into the knockout draw. */
+  const drawnField = () => new Set(
+    matchesIn('bracket').flatMap((m) => [m.participant_a_id, m.participant_b_id]).filter(Boolean),
+  );
+
+  it('seeds the knockout AND ranks the non-qualifiers by the same seed_by — points', async () => {
+    poolToBracketField(6);
+    // The one line under test. Everything else is identical to the 'wins' case
+    // below, including the scorelines.
+    Object.assign(event(), { seed_by: 'points' });
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+    playThePoolOnMargins();
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    // WHO QUALIFIED came from the points column: the four highest scorers, which
+    // here includes the entrant who lost every match. Under 'wins' this set is
+    // p-0..p-3, so this assertion fails outright if the column stops being read.
+    expect(drawnField()).toEqual(new Set(['p-3', 'p-4', 'p-0', 'p-5']));
+
+    await playTheKnockout();
+    await finalizeEvent('e1');
+
+    const posOf = (id: string) => participant(id).final_position as number;
+    // A four-strong draw with no playoff awards 1, 2 and joint 3rd, so every
+    // qualifier sits at 3 or better. Asserted as a band rather than by name
+    // because the draw shuffles within its seeding tiers.
+    for (const id of ['p-3', 'p-4', 'p-0', 'p-5']) {
+      expect(posOf(id)).toBeLessThanOrEqual(3);
+    }
+    // AND THE NON-QUALIFIERS WERE RANKED BY THE SAME COLUMN — the assertion the
+    // placement-bonus ledger actually rides on. p-2 (126 points) ahead of p-1
+    // (119), both behind every qualifier, starting from max(assigned) + 1.
+    // Ranked by WINS this pair is the other way round (p-1 has 4 wins to p-2's
+    // 3), so a finalize that stopped reading seed_by fails here.
+    expect(posOf('p-2')).toBe(4);
+    expect(posOf('p-1')).toBe(5);
+    // Placement bonuses key off final_position, so nobody may be left without one.
+    for (const p of store.db.tournament_participants!) {
+      expect(p.final_position).not.toBeNull();
+    }
+  });
+
+  it('treats a NULL seed_by as wins end to end, through both readers', async () => {
+    poolToBracketField(6);
+    // NOT a hypothetical row. createTournamentEvent writes 'wins' here, but the
+    // settings dialog sends seeded_from_event_id: null for this format — it has
+    // no external pool — and updateTournamentEvent nulls seed_by alongside it,
+    // so a live pool_to_bracket event can sit on NULL.
+    //
+    // sortStandings' own null handling is unit-tested in @badminton/shared;
+    // what is tested HERE is the whole path — a NULL row still qualifies the
+    // wins-order field and still ranks the leftovers in wins order, over the
+    // very scorelines that produce a different answer under 'points' above.
+    Object.assign(event(), { seed_by: null });
+    expect((await generateRoundRobinMatches('e1')).ok).toBe(true);
+    playThePoolOnMargins();
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    // The wins order, over the very scorelines that gave the points order above.
+    expect(drawnField()).toEqual(new Set(['p-0', 'p-1', 'p-2', 'p-3']));
+
+    await playTheKnockout();
+    await finalizeEvent('e1');
+
+    const posOf = (id: string) => participant(id).final_position as number;
+    for (const id of ['p-0', 'p-1', 'p-2', 'p-3']) {
+      expect(posOf(id)).toBeLessThanOrEqual(3);
+    }
+    expect(posOf('p-4')).toBe(4);
+    expect(posOf('p-5')).toBe(5);
+  });
+
+  // ============================================================
   // Setting what a round is played to (00108)
   // ============================================================
 

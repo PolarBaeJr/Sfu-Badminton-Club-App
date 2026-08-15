@@ -488,9 +488,24 @@ async function buildFieldFromOwnPool(
   doubles: boolean,
 ): Promise<{ entries: FieldEntry[]; groupCount: number; poolSize: number }> {
   const eventId = event.id as string;
-  // Always populated on this format (events.ts), which is what closes the
-  // documented seed_by trap: the order that decides who qualifies and the order
-  // finalizeEvent ranks the non-qualifiers by are read from the same column.
+  // ONE COLUMN, READ TWICE — that is what closes the documented seed_by trap.
+  // The order that decides who qualifies (here) and the order finalizeEvent
+  // ranks the non-qualifiers by are the same value on the same row, so they
+  // cannot disagree whatever it is set to. Frozen too: updateTournamentEvent
+  // refuses any format change once matches exist, so seed_by cannot move
+  // between the draw and the finalise.
+  //
+  // THE COLUMN IS NOT ALWAYS POPULATED, whatever the comment that used to sit
+  // here said. createTournamentEvent does populate it on this format, but the
+  // settings dialog sends seeded_from_event_id: null for a pool_to_bracket
+  // event — it has no external pool — and updateTournamentEvent nulls seed_by
+  // alongside it. So a NULL row is reachable and normal.
+  //
+  // It is also harmless, at two layers: 00046 defines NULL as 'wins', the `??`
+  // below says so, and sortStandings/compareAcrossGroups independently ask
+  // `seedBy === 'points'` rather than assuming a value, so a null that got past
+  // here would still order by wins. The `??` is belt-and-braces rather than the
+  // thing holding it up — worth keeping, not worth relying on alone.
   const seedBy = ((event.seed_by as SeedBy | null) ?? 'wins') as SeedBy;
 
   // Same definition of "played out" the two-event path uses, so an exec cannot
