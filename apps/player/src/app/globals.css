@@ -3999,3 +3999,61 @@ a.cal-ev:hover { filter: brightness(1.15); }
      longer label must wrap rather than run out of the card. */
   .sched-rail-primary .sess-window { white-space: normal; text-align: center; }
 }
+
+
+/* ══════════════════════════════════════════════════════════════
+   THE TOURNAMENT DRAW
+   ══════════════════════════════════════════════════════════════
+   A converging draw meets in the middle, which halves its height
+   and costs it width: nine columns on a 32-entry event where the
+   old left-to-right ladder was five. That trade is right for a
+   laptop and wrong for a phone — vertical scrolling is free on a
+   phone and sideways scrolling is the expensive axis — so the two
+   get different things, switched here and nowhere else.
+
+   Below 768px the chart is DISPLAY:NONE, not merely scrolled. It
+   therefore contributes no width to the page at all, which is the
+   strongest possible answer to the bug where a wide child made a
+   380px viewport 620px wide. Above it, the chart's own overflow
+   is contained on .draw-scroll and the body still never moves. */
+
+.draw-chart-wrap { display: none; }
+.draw-rounds     { display: block; }
+
+@media (min-width: 768px) {
+  .draw-chart-wrap { display: block; }
+  .draw-rounds     { display: none; }
+}
+
+/* The scroll box. min-width:0 is the line that keeps the
+   containment honest: without it a flex or grid ancestor sizes
+   this box to its widest CHILD — the 2088px chart — instead of to
+   the space available, and the overflow escapes upwards into the
+   page body. It is cheap and it is the exact failure this app has
+   already had once. */
+.draw-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  min-width: 0;
+  max-width: 100%;
+}
+.draw-scroll:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 2px;
+}
+
+/* The one line that says the chart drags. Unlike .cal-hint this is
+   NOT switched by a media query: the calendar grid has one fixed
+   620px floor, so the width at which it stops overflowing is a
+   number somebody could derive once, while a draw is 552px at four
+   entrants and 2088px at sixty-four. DrawScroller measures the box
+   instead and renders this only when it actually overflows, so the
+   hint cannot outlive the overflow it describes at any width. Same
+   mono caption voice as .cal-hint and .cal-foot. */
+.draw-hint {
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--mute);
+  margin: 0 0 8px;
+}
+.draw-hint svg { flex: 0 0 auto; }
