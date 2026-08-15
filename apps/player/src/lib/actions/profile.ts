@@ -523,3 +523,21 @@ async function recordPasskeySetup(playerId: string, outcome: string | undefined)
     });
   }
 }
+
+/**
+ * Record that the member enrolled a passkey, after the fact.
+ *
+ * Onboarding cannot enrol before completeOnboarding runs: the register route
+ * needs a `players` row and nothing creates one until then (there is no trigger
+ * on auth.users). So the enrolment happens immediately AFTER, and this carries
+ * the outcome back to the column that completeOnboarding could only guess at.
+ *
+ * Same swallow-and-report contract as recordPasskeySetup: this is an analytics
+ * column, and a member who has just enrolled a working passkey must never see
+ * an error because a string would not save.
+ */
+export async function markPasskeyEnrolled(): Promise<void> {
+  const player = await getCurrentPlayer();
+  if (!player) return;
+  await recordPasskeySetup(player.id as string, 'enrolled');
+}

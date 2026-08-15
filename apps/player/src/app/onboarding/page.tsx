@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { completeOnboarding, getLegalDocuments } from '@/lib/actions';
+import { markPasskeyEnrolled } from '@/lib/actions/profile';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/toast-provider';
 import { LegalMarkdown } from '@badminton/ui';
@@ -141,6 +142,8 @@ export default function OnboardingPage() {
   // is deliberate and unavoidable, which is what actually moves the number)
   // with no way to strand anyone.
   const [passkeyBusy, setPasskeyBusy] = useState(false);
+  // The ANSWER, not the credential: enrolment happens in handleComplete.
+  const [passkeyWanted, setPasskeyWanted] = useState(false);
   const [passkeyAdded, setPasskeyAdded] = useState(false);
   const [passkeyDeclined, setPasskeyDeclined] = useState(false);
   // Both null until resolved, and BOTH must be true before anything is asked of
@@ -187,13 +190,17 @@ export default function OnboardingPage() {
   // The gate on "Enter the club". Note the leading `!passkeyOffered`: while
   // either check is still resolving, and forever on a device that cannot do
   // this, the answer is already "nothing to answer" and the button is live.
-  const passkeyAnswered = !passkeyOffered || passkeyAdded || passkeyDeclined;
+  const passkeyAnswered = !passkeyOffered || passkeyWanted || passkeyAdded || passkeyDeclined;
 
   // What goes on the record (00121). `undefined` while we genuinely do not know
   // — better to store nothing than to guess, since the whole value of this
   // column is telling a refusal apart from an impossibility.
   function passkeyOutcome(): PasskeySetupOutcome | undefined {
     if (passkeyAdded) return 'enrolled';
+    // Chose to enrol but it has not happened yet — markPasskeyEnrolled fills
+    // this in once it has. Guessing 'enrolled' here would record a passkey
+    // that may never exist.
+    if (passkeyWanted) return undefined;
     if (passkeySupported === false) return 'unsupported';
     if (passkeyConfigured === false) return 'unavailable';
     if (passkeyDeclined) return 'declined';
@@ -215,18 +222,28 @@ export default function OnboardingPage() {
     }
   }
 
-  async function handleAddPasskey() {
-    setPasskeyBusy(true);
-    const result = await enrollPasskey();
-    setPasskeyBusy(false);
-    if (result.ok) {
-      setPasskeyAdded(true);
-      // Enrolling after declining is a change of mind, not a contradiction.
-      setPasskeyDeclined(false);
-      toast('Passkey saved — you can use it to sign in', 'success');
-    } else if (result.error) {
-      toast(result.error, 'error');
-    }
+  // THE PASSKEY CANNOT BE ENROLLED FROM THIS SCREEN, and that is not a bug in
+  // the enrolment code — it is an ordering fact about the account.
+  //
+  // /api/passkey/register/options answers 401 "Not signed in" unless
+  // getCurrentPlayer() finds a `players` row, and there is NO trigger on
+  // auth.users that creates one: the row is written by completeOnboarding,
+  // below. So on a brand-new account — the only kind that ever sees this
+  // screen — there is no player to hang a credential on until the member
+  // presses "Enter the club". Measured on production 2026-08-15: zero triggers
+  // on auth.users, and 17 auth users with no players row.
+  //
+  // Enrolling here therefore always failed with a message about not being
+  // signed in, shown to somebody visibly signed in and halfway through making
+  // an account. It went unnoticed while the step was optional.
+  //
+  // So this button now records the ANSWER and handleComplete performs the
+  // enrolment once the row exists. The member sees the same two choices in the
+  // same place; only the moment of the WebAuthn prompt moves, from before the
+  // account exists to immediately after.
+  function choosePasskey() {
+    setPasskeyWanted(true);
+    setPasskeyDeclined(false);
   }
 
   const allAccepted = waiverAccepted && cocAccepted && termsAccepted && ageAttested;
@@ -251,6 +268,20 @@ export default function OnboardingPage() {
         toast(res.error, 'error');
         setLoading(false);
         return;
+      }
+      // The row exists now, so the credential finally has something to hang
+      // off. Failure here must not strand a member who has just completed
+      // onboarding: they are in, and the feed's PasskeyNudge asks again.
+      if (passkeyWanted) {
+        setPasskeyBusy(true);
+        const enrolled = await enrollPasskey();
+        setPasskeyBusy(false);
+        if (enrolled.ok) {
+          await markPasskeyEnrolled();
+          toast('Passkey saved — you can use it to sign in', 'success');
+        } else if (enrolled.error) {
+          toast(`${enrolled.error} You can add one later from Settings.`, 'error');
+        }
       }
       router.push(destinationAfterOnboarding());
     } catch (err) {
@@ -450,13 +481,24 @@ export default function OnboardingPage() {
                   )}
                 </div>
 
-                {!passkeyAdded && (
+                {/* The chosen state. The button no longer enrols on the spot —
+                    it cannot, there is no players row yet — so without this the
+                    member taps "Set up a passkey", sees nothing happen, and taps
+                    it again. This says the choice landed and when the prompt
+                    comes. */}
+                {passkeyWanted && !passkeyAdded && (
+                  <div className="mono" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, marginTop: 14 }}>
+                    <Check size={14} /> Your device will ask for it when you enter the club.
+                  </div>
+                )}
+
+                {!passkeyAdded && !passkeyWanted && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14 }}>
                     <button
                       type="button"
                       className="btn btn-primary"
                       disabled={passkeyBusy}
-                      onClick={() => void handleAddPasskey()}
+                      onClick={choosePasskey}
                       style={{ width: '100%', justifyContent: 'center', height: 48, gap: 8 }}
                     >
                       {passkeyBusy ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
