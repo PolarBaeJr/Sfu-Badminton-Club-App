@@ -99,16 +99,33 @@ export function LiveTournament({
     // rather than exposure: RLS already decides what a subscriber may see, and
     // here it lets every signed-in member see everything.
     //
-    // EVERY EVENT, AND SOME THAT WILL NOT ARRIVE. `event: '*'` because a score,
-    // a walkover, a void, a check-in, a seeding change and a status transition
-    // all move what these pages print. A DELETE does not: under default replica
-    // identity the WAL's old tuple carries the primary key alone, so neither
-    // `event_id` nor `tournament_id` is there for `filter` to match on. 00113
-    // works through the four delete paths and why the gap is survivable — the
-    // short version is that all three real ones are refused once a draw exists,
-    // and the fourth (clearing an event's matches to rebuild them) is followed
-    // immediately by INSERTs, which DO route because an insert's tuple is the
-    // new row.
+    // EVERY EVENT, AND SINCE 00120 THE DELETES TOO. `event: '*'` because a
+    // score, a walkover, a void, a check-in, a seeding change and a status
+    // transition all move what these pages print.
+    //
+    // A DELETE USED NOT TO ARRIVE AT ALL: under default replica identity the
+    // WAL's old tuple carries the primary key alone, so neither `event_id` nor
+    // `tournament_id` is there for `filter` to match on. 00113 worked through
+    // the four delete paths and judged the gap survivable, correctly for three
+    // of them; 00120 closes the rest by three different routes, because the
+    // four paths are not one problem. An ENTRY REMOVED during registration or
+    // check-in — an entrant withdrawing from the list this page draws — now
+    // arrives as an UPDATE on `tournament_events` (a statement-level trigger
+    // touches the parent), which the tournament-wide listener below already
+    // watches; an EVENT DELETED routes on its own, that table now being FULL;
+    // and CLEARING an event's matches to rebuild them needed nothing, being
+    // followed immediately by INSERTs, which DO route because an insert's tuple
+    // is the new row.
+    //
+    // WHAT THIS APP GAINS AND DOES NOT GAIN. The entry tables stay on DEFAULT
+    // replica identity deliberately: both still carry the `notes` column 00118
+    // privatised but did not drop, and `tournament_pairs` carries `pair_name`.
+    // FULL on either would push an exec's disqualification reason to the phone
+    // of every member watching that event's bracket. Nothing new reaches this
+    // page — the refresh re-reads from the server exactly as it always did.
+    // The cost is one extra nudge: an entry removed from one event of a
+    // tournament also wakes a page watching a sibling event of the SAME
+    // tournament. No other tournament hears it.
     //
     // KEEP THIS PROSE OUT OF THE CONFIG OBJECTS. The publication guards
     // (lib/__tests__/realtime-publication.test.ts in both apps) read each table

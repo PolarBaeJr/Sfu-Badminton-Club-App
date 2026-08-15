@@ -99,20 +99,29 @@ export function useLiveAttendance({
     // subscriber may see, and here it lets every signed-in member see
     // everything.
     //
-    // EVERY EVENT, AND ONE THAT WILL NOT ARRIVE. `event: '*'` because a
-    // self-scan, a walk-in marked present and a no-show corrected all move the
-    // numbers this page prints and all three reach an exec who did not make
-    // them — but a REMOVAL does not, and that is the filter's price rather
-    // than an oversight. clearAttendanceMark DELETEs the row, and under
-    // default replica identity the WAL's old tuple carries the primary key and
-    // nothing else; `session_id` is not in it, so there is nothing for
-    // `filter` to match on and the delete is never routed to a filtered
-    // subscriber. Both alternatives are worse than the gap: REPLICA IDENTITY
-    // FULL streams every deleted row's full contents to every subscriber, and
-    // dropping the filter wakes Tuesday's door list for Thursday's traffic. So
-    // a removal still reaches only the exec who made it, via revalidatePath —
-    // the same reach it had before this file existed, and removals are rare,
-    // deliberate and made by somebody standing at the screen.
+    // EVERY EVENT, INCLUDING THE REMOVAL — but only since 00120. `event: '*'`
+    // because a self-scan, a walk-in marked present and a no-show corrected all
+    // move the numbers this page prints, and so does clearAttendanceMark
+    // DELETEing the row.
+    //
+    // THE DELETE WAS THE ONE THAT DID NOT ARRIVE, for as long as this file
+    // existed. Under DEFAULT replica identity the WAL's old tuple carries the
+    // primary key and nothing else, so `session_id` is not in it, there is
+    // nothing for `filter` to match on, and a filtered subscriber is never
+    // routed the event. The removal reached only the exec who made it, via
+    // revalidatePath, while the officer watching the same list from a laptop
+    // kept showing the person who had just been un-marked.
+    //
+    // 00120 SETS THIS TABLE'S REPLICA IDENTITY TO FULL, so the old tuple now
+    // carries `session_id` and the filter can finally be evaluated. THE FILTER
+    // IS NOT GONE — Thursday's door list still does not hear Tuesday's; what
+    // changed is that the filter can be applied to a delete at all. The
+    // blanket objection to FULL (it streams every column of the deleted row)
+    // was weighed table by table rather than as a class: this row is four ids,
+    // two timestamps and an enum, it has never had a text column, and
+    // attendance_select is USING (TRUE), so nothing reaches a subscriber that
+    // they could not already SELECT. 00120 works through why the same
+    // statement would be wrong on three of the tournament tables.
     //
     // KEEP THIS PROSE OUT OF THE CONFIG OBJECT. The publication guard
     // (lib/__tests__/realtime-publication.test.ts) reads the table name out of
