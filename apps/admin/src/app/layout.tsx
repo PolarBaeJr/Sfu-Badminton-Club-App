@@ -19,10 +19,15 @@ import { withBase } from '@/lib/base-path';
 
 // Self-hosted for the same reason the members' app is: next/font/google fetches
 // from fonts.gstatic.com during `docker build`, so a network blip on the CI
-// runner fails the image. Byte-identical files (Google's own `latin` subset
-// woff2, one per weight) live in src/fonts/ with their OFL 1.1 licences.
-// See apps/player/src/app/layout.tsx for the full note, including which
-// unicode-ranges this trades away.
+// runner fails the image. Byte-identical files (Google's own woff2 for each
+// family, weight and subset) live in src/fonts/ with their OFL 1.1 licences.
+//
+// Barlow arrives as three unicode-range subsets. localFont() mints a private
+// family per call and offers no per-file unicode-range, so each subset needs
+// its own call and globals.css chains them back into --font-sans/--font-display
+// — subsets first, because the latin call's Arial metric fallback would
+// otherwise answer for ř and ế. See apps/player/src/app/layout.tsx for the
+// full note; this file is the same arrangement.
 const barlow = localFont({
   src: [
     { path: '../fonts/barlow-latin-400.woff2', weight: '400', style: 'normal' },
@@ -30,8 +35,34 @@ const barlow = localFont({
     { path: '../fonts/barlow-latin-600.woff2', weight: '600', style: 'normal' },
     { path: '../fonts/barlow-latin-700.woff2', weight: '700', style: 'normal' },
   ],
-  variable: '--font-sans',
+  variable: '--font-sans-latin',
   display: 'swap',
+});
+const barlowExt = localFont({
+  src: [
+    { path: '../fonts/barlow-latin-ext-400.woff2', weight: '400', style: 'normal' },
+    { path: '../fonts/barlow-latin-ext-500.woff2', weight: '500', style: 'normal' },
+    { path: '../fonts/barlow-latin-ext-600.woff2', weight: '600', style: 'normal' },
+    { path: '../fonts/barlow-latin-ext-700.woff2', weight: '700', style: 'normal' },
+  ],
+  variable: '--font-sans-ext',
+  display: 'swap',
+  preload: false,
+  adjustFontFallback: false,
+  declarations: [{ prop: 'unicode-range', value: 'U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF' }],
+});
+const barlowVietnamese = localFont({
+  src: [
+    { path: '../fonts/barlow-vietnamese-400.woff2', weight: '400', style: 'normal' },
+    { path: '../fonts/barlow-vietnamese-500.woff2', weight: '500', style: 'normal' },
+    { path: '../fonts/barlow-vietnamese-600.woff2', weight: '600', style: 'normal' },
+    { path: '../fonts/barlow-vietnamese-700.woff2', weight: '700', style: 'normal' },
+  ],
+  variable: '--font-sans-vi',
+  display: 'swap',
+  preload: false,
+  adjustFontFallback: false,
+  declarations: [{ prop: 'unicode-range', value: 'U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB' }],
 });
 const barlowCondensed = localFont({
   src: [
@@ -39,8 +70,32 @@ const barlowCondensed = localFont({
     { path: '../fonts/barlow-condensed-latin-600.woff2', weight: '600', style: 'normal' },
     { path: '../fonts/barlow-condensed-latin-700.woff2', weight: '700', style: 'normal' },
   ],
-  variable: '--font-display',
+  variable: '--font-display-latin',
   display: 'swap',
+});
+const barlowCondensedExt = localFont({
+  src: [
+    { path: '../fonts/barlow-condensed-latin-ext-400.woff2', weight: '400', style: 'normal' },
+    { path: '../fonts/barlow-condensed-latin-ext-600.woff2', weight: '600', style: 'normal' },
+    { path: '../fonts/barlow-condensed-latin-ext-700.woff2', weight: '700', style: 'normal' },
+  ],
+  variable: '--font-display-ext',
+  display: 'swap',
+  preload: false,
+  adjustFontFallback: false,
+  declarations: [{ prop: 'unicode-range', value: 'U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF' }],
+});
+const barlowCondensedVietnamese = localFont({
+  src: [
+    { path: '../fonts/barlow-condensed-vietnamese-400.woff2', weight: '400', style: 'normal' },
+    { path: '../fonts/barlow-condensed-vietnamese-600.woff2', weight: '600', style: 'normal' },
+    { path: '../fonts/barlow-condensed-vietnamese-700.woff2', weight: '700', style: 'normal' },
+  ],
+  variable: '--font-display-vi',
+  display: 'swap',
+  preload: false,
+  adjustFontFallback: false,
+  declarations: [{ prop: 'unicode-range', value: 'U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB' }],
 });
 // One variable file, four declared weights — the shape Google's CSS had.
 const jetbrainsMono = localFont({
@@ -126,7 +181,16 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       lang="en"
       data-theme="dark"
       suppressHydrationWarning
-      className={cn('font-sans', barlow.variable, barlowCondensed.variable, jetbrainsMono.variable)}
+      className={cn(
+        'font-sans',
+        // All six Barlow variables have to land on the same element: globals.css
+        // composes --font-sans/--font-display out of them at :root, which IS
+        // this <html>, and a var() that resolves to nothing there would
+        // invalidate the whole font-family it sits in.
+        barlow.variable, barlowExt.variable, barlowVietnamese.variable,
+        barlowCondensed.variable, barlowCondensedExt.variable, barlowCondensedVietnamese.variable,
+        jetbrainsMono.variable,
+      )}
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: `

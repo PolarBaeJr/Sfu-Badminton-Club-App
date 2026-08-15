@@ -212,6 +212,16 @@
 :root {
   /* How wide the app is allowed to get. See .page. */
   --page-max: none;
+
+  /* Barlow ships as three unicode-range subsets and next/font/local gives each
+     its own family name, so the family Google served as one has to be
+     reassembled here (see layout.tsx). --font-sans and --font-display keep
+     their names because tailwind.config.ts and every rule below reference them.
+     The subsets go FIRST: --font-*-latin ends in next/font's Arial metric
+     fallback, and Arial covers ř and ế, so anything after it is dead. */
+  --font-sans:    var(--font-sans-ext), var(--font-sans-vi), var(--font-sans-latin);
+  --font-display: var(--font-display-ext), var(--font-display-vi), var(--font-display-latin);
+
   --display: var(--font-display), ui-sans-serif, system-ui, sans-serif;
   --body:    var(--font-sans), ui-sans-serif, system-ui, sans-serif;
   --mono:    var(--font-mono), ui-monospace, monospace;
