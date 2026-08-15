@@ -414,6 +414,12 @@ import {
 import { finalizeEvent, applyPlacementBonuses } from '../tournament-actions/finalize';
 import { generateSingleEliminationBracket, generateRoundRobinMatches, setRoundMatchShape } from '../tournament-actions/brackets';
 import { updateTournamentEvent } from '../tournament-actions/events';
+// THE FORM'S OWN PAYLOAD BUILDER, not a hand-made patch. Whether an exec's
+// choice of seed_by survives a save depends on toFormatPayload and
+// updateTournamentEvent agreeing about when the column means something, and a
+// test that wrote the patch by hand would assert the server half while assuming
+// the client half — which is the exact seam the bug lived in.
+import { toFormatPayload, EMPTY_FORMAT_VALUES } from '@/app/tournaments/[id]/event-format-fields';
 import { autoSeedEventByElo } from '../tournament-actions/seeding';
 import { withdrawParticipant } from '../tournament-actions/participants';
 import {
@@ -3541,10 +3547,11 @@ describe('a round robin and a knockout in one event', () => {
 
   it('treats a NULL seed_by as wins end to end, through both readers', async () => {
     poolToBracketField(6);
-    // NOT a hypothetical row. createTournamentEvent writes 'wins' here, but the
-    // settings dialog sends seeded_from_event_id: null for this format — it has
-    // no external pool — and updateTournamentEvent nulls seed_by alongside it,
-    // so a live pool_to_bracket event can sit on NULL.
+    // NOT a hypothetical row. createTournamentEvent writes 'wins' here, but any
+    // event created before 00107, or by a build whose settings dialog nulled
+    // seed_by alongside the pool link, can sit on NULL — that WAS what
+    // updateTournamentEvent did on this format until the test below changed it.
+    // The coalesce is what has to survive either way.
     //
     // sortStandings' own null handling is unit-tested in @badminton/shared;
     // what is tested HERE is the whole path — a NULL row still qualifies the
@@ -3567,6 +3574,59 @@ describe('a round robin and a knockout in one event', () => {
     }
     expect(posOf('p-4')).toBe(4);
     expect(posOf('p-5')).toBe(5);
+  });
+
+  /**
+   * THE SETTINGS DIALOG MUST NOT UNDO THE CHOICE IT JUST OFFERED.
+   *
+   * 'points' is now selectable on a pool_to_bracket event — the form gate was
+   * `seededFrom !== ''`, which is false forever on the one format that ranks its
+   * OWN pool. Making the control reachable is only half the job: this format has
+   * no external pool, so both dialogs blank the pool picker and every save sends
+   * `seeded_from_event_id: null`, and updateTournamentEvent's else-branch used to
+   * null seed_by alongside it. The exec would have picked "Most points scored",
+   * seen "Event updated", and been silently back on wins.
+   *
+   * So the branch clears the LINK and keeps the CRITERION on this format, which
+   * is the same condition createTournamentEvent stores on. Asserted through the
+   * real payload shape the dialog sends rather than a hand-made patch, because
+   * the bug was entirely in how those two lined up.
+   */
+  it('keeps a pool_to_bracket event’s seed_by when the settings dialog clears the pool link', async () => {
+    poolToBracketField(6);
+    expect(event().seed_by).toBe('wins');
+
+    const res = await updateTournamentEvent('e1', {
+      ...toFormatPayload(
+        { ...EMPTY_FORMAT_VALUES, seedBy: 'points', qualifiersPerGroup: '4' },
+        'pool_to_bracket',
+      ),
+      max_participants: null,
+    });
+
+    expect(res.ok).toBe(true);
+    // The link is still cleared — this format may never carry one.
+    expect(event().seeded_from_event_id ?? null).toBeNull();
+    // ...and the criterion survived the clearing.
+    expect(event().seed_by).toBe('points');
+  });
+
+  it('still drops seed_by on a format that has no pool to rank', async () => {
+    // The other half of the same branch, so the fix above cannot be read as
+    // "always keep it". A plain round robin PRODUCES standings and never
+    // consumes any: finalize.ts ranks it by wins because several brackets may
+    // seed off it with different criteria. A criterion left behind here would be
+    // read as a choice nobody made if a pool link were added later.
+    poolToBracketField(6);
+    Object.assign(event(), { format: 'round_robin' });
+
+    const res = await updateTournamentEvent('e1', {
+      ...toFormatPayload({ ...EMPTY_FORMAT_VALUES, seedBy: 'points' }, 'round_robin'),
+      max_participants: null,
+    });
+
+    expect(res.ok).toBe(true);
+    expect(event().seed_by).toBeNull();
   });
 
   // ============================================================

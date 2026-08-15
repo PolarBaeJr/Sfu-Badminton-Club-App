@@ -304,19 +304,35 @@ async function updateTournamentEventImpl(
       await assertSeedSourceUsable(adminClient, event.tournament_id, eventId, sourceId);
       patch.seed_by = updates.seed_by ?? 'wins';
     } else {
-      // A POOL_TO_BRACKET EVENT COMES THROUGH HERE, and it is worth saying so
-      // rather than leaving it to be rediscovered. The settings dialog blanks
-      // the pool picker on any round-robin format (it has no external pool),
-      // so it always sends seeded_from_event_id: null — and this branch then
-      // nulls seed_by, which createTournamentEvent had populated.
+      // A POOL_TO_BRACKET EVENT COMES THROUGH HERE, and it is the reason this
+      // branch is no longer a flat `seed_by = null`.
       //
-      // Harmless, because 00046 defines NULL as 'wins' and every reader
-      // coalesces (`?? 'wins'`), so the two orders that matter — who qualifies
-      // out of the pool, and how finalizeEvent ranks the rest — still come from
-      // this one column and still agree. Not "always populated", though: any
-      // reader added later must keep the coalesce.
+      // The settings dialog blanks the pool picker on any round-robin format —
+      // that format has no EXTERNAL pool, and createTournamentEvent refuses the
+      // combination outright — so it always sends seeded_from_event_id: null.
+      // Nulling seed_by alongside it was previously described as harmless, on
+      // the grounds that 00046 defines NULL as 'wins' and every reader
+      // coalesces. That reasoning holds only while 'wins' is the ONLY value an
+      // exec can choose. It no longer is: the form can now express 'points' on
+      // this format, and a save that quietly rewrote it to NULL would send the
+      // exec back to 'wins' with a success toast on screen — the choice would
+      // appear to be taken and then not be.
+      //
+      // So the link is cleared and the criterion is KEPT, which is exactly what
+      // createTournamentEvent does for the same format (`seeded_from_event_id ||
+      // isPoolToBracket(format)`). The two writers now agree about when this
+      // column means something. Still coalesced to 'wins' rather than left
+      // undefined, so a caller that omits seed_by cannot blank a stored choice.
       patch.seeded_from_event_id = null;
-      patch.seed_by = null;
+      patch.seed_by = isPoolToBracket(event.format as string)
+        ? (updates.seed_by ?? 'wins')
+        // Every other format reaching this branch genuinely has no pool to rank:
+        // a plain round robin PRODUCES standings (finalize.ts ranks it by wins,
+        // because N brackets may seed off it with different criteria), and an
+        // unlinked knockout seeds by Elo or by hand. A stale criterion left
+        // behind would be read as a choice nobody made if a link were added
+        // later.
+        : null;
     }
   }
 

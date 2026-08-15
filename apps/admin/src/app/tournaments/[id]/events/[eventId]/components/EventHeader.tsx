@@ -423,9 +423,19 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
             {!isPoolToBracket(event.format as string) && (
               <Badge variant="default">{describeMatchShape(event as unknown as TournamentEventRow)}</Badge>
             )}
-            {seededFromPool && (
+            {/* THE ONLY PLACE seed_by IS VISIBLE AFTER THE DRAW, which is why
+                it covers pool_to_bracket too. Event Settings is offered only
+                while `totalMatches === 0` (see settingsEditable below), so once
+                a draw exists the criterion is frozen and there is no form left
+                to disable — this badge is the read-only view of it. Gating on
+                `seededFromPool` alone hid it on the one format that ranks its
+                OWN pool: pool_to_bracket has no seeded_from_event_id by
+                construction, yet brackets.ts picks its qualifiers by seed_by and
+                finalize.ts ranks its non-qualifiers by the same column. */}
+            {(seededFromPool || poolToBracket) && (
               <Badge variant="default">
-                Seeded from pool by {(event.seed_by as string) === 'points' ? 'points' : 'wins'}
+                {seededFromPool ? 'Seeded from pool by ' : 'Pool ranked by '}
+                {(event.seed_by as string) === 'points' ? 'points' : 'wins'}
               </Badge>
             )}
             {drawLocked && <Badge variant="default">Draw Locked</Badge>}

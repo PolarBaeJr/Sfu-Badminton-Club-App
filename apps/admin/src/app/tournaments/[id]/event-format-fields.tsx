@@ -91,6 +91,34 @@ export const EMPTY_FORMAT_VALUES: EventFormatValues = {
 };
 
 /**
+ * Does this event RANK A POOL, and therefore need a criterion to rank it by?
+ *
+ * Two ways to be true, and they are different arrangements rather than two
+ * spellings of one:
+ *
+ *   * SEEDED FROM A SIBLING. The pool is another event; this one reads its
+ *     standings to build a draw. seed_by belongs to the event being DRAWN, not
+ *     to the pool being read — N brackets may seed off one pool, each ranking it
+ *     differently.
+ *   * pool_to_bracket. The pool and the bracket are the same event (00107), so
+ *     `seeded_from_event_id` is NULL by construction — createTournamentEvent
+ *     refuses to let that format carry an external link at all. seed_by is still
+ *     read twice: brackets.ts picks the qualifiers by it, and finalize.ts ranks
+ *     the non-qualifiers by it.
+ *
+ * A PLAIN round_robin IS FALSE, deliberately. It produces standings rather than
+ * consuming any, its own seed_by is never read, and finalize.ts ranks it by wins
+ * because that is the only well-defined answer when several brackets may seed
+ * off it with different criteria.
+ *
+ * One function so the form's gate and the form's payload cannot disagree — the
+ * previous shape had the answer written out twice and one copy was wrong.
+ */
+function ranksAPool(v: EventFormatValues, format?: string): boolean {
+  return v.seededFrom !== '' || isPoolToBracket(format);
+}
+
+/**
  * Server-action payload. Blank inputs become NULL, which means "use the enum".
  *
  * `format` is passed so the qualifier count can be sent for a pool_to_bracket
@@ -108,7 +136,19 @@ export function toFormatPayload(v: EventFormatValues, format?: string) {
     games_per_match: v.gamesPerMatch === '' ? null : Number(v.gamesPerMatch),
     points_per_game: v.pointsPerGame === '' ? null : Number(v.pointsPerGame),
     seeded_from_event_id: v.seededFrom === '' ? null : v.seededFrom,
-    seed_by: v.seededFrom === '' ? null : v.seedBy,
+    // MIRRORS createTournamentEvent'S OWN CONDITION (tournament-actions/events.ts),
+    // which stores seed_by when `seeded_from_event_id || isPoolToBracket(format)`.
+    // It used to be `seededFrom === '' ? null : v.seedBy`, and that one-sided test
+    // is why 'points' could not be chosen at all on a pool_to_bracket event: the
+    // pool and the bracket are the SAME event there, so there is no sibling to
+    // seed from, `seededFrom` is always blank, and the payload sent seed_by NULL —
+    // which every reader coalesces to 'wins'. The column was CHECK-constrained to
+    // ('wins','points') and honoured by both readers all along; only the form
+    // could not express the second value.
+    //
+    // `format` is optional and `isPoolToBracket(undefined)` is false, so a caller
+    // that has not been updated still gets exactly today's behaviour.
+    seed_by: ranksAPool(v, format) ? v.seedBy : null,
     group_count: groups,
     qualifiers_per_group: qualifiersMeanSomething
       ? (v.qualifiersPerGroup === '' ? null : Number(v.qualifiersPerGroup))
@@ -322,43 +362,75 @@ export function EventFormatFields({
       )}
 
       {siblings.length > 0 && (
+        <Select
+          label="Seed From (optional)"
+          value={value.seededFrom}
+          onChange={(e) => set({ seededFrom: e.target.value })}
+          options={[
+            { value: '', label: 'No pool — seed by Elo / manual seeds' },
+            ...siblings.map((s) => ({
+              value: s.id,
+              label: `${TOURNAMENT_EVENT_TYPE_LABELS[s.event_type as TournamentEventType] ?? s.event_type} · ${
+                s.format !== 'round_robin'
+                  ? 'Single Elimination'
+                  : (s.group_count ?? 1) >= 2
+                    ? `Group Stage (${s.group_count})`
+                    : 'Round Robin'
+              }`,
+            })),
+          ]}
+        />
+      )}
+
+      {/* RANK THE POOL BY — OUTSIDE the pool picker, which is what makes
+          'points' reachable at all.
+
+          It used to be nested inside `siblings.length > 0` AND gated on
+          `seededFrom !== ''`, and on a pool_to_bracket event both of those are
+          false forever: the pool and the bracket are the same event, so there is
+          no sibling to seed from and both dialogs blank the picker
+          (`seedableSiblings = []`) precisely because an external link would be a
+          second, contradictory field for the same draw. The control was
+          therefore unreachable on the one format that ranks its OWN pool — while
+          the database has had `seed_by CHECK (seed_by IN ('wins','points'))` all
+          along and brackets.ts/finalize.ts have both been reading it. An exec
+          could not pick the value the schema and the server already supported.
+
+          ranksAPool() is the same condition createTournamentEvent stores on, so
+          the control appears exactly when the column is written. */}
+      {ranksAPool(value, format) && (
         <>
           <Select
-            label="Seed From (optional)"
-            value={value.seededFrom}
-            onChange={(e) => set({ seededFrom: e.target.value })}
+            label={poolToBracket ? 'Rank This Event’s Pool By' : 'Rank The Pool By'}
+            value={value.seedBy}
+            onChange={(e) => set({ seedBy: e.target.value as SeedBy })}
             options={[
-              { value: '', label: 'No pool — seed by Elo / manual seeds' },
-              ...siblings.map((s) => ({
-                value: s.id,
-                label: `${TOURNAMENT_EVENT_TYPE_LABELS[s.event_type as TournamentEventType] ?? s.event_type} · ${
-                  s.format !== 'round_robin'
-                    ? 'Single Elimination'
-                    : (s.group_count ?? 1) >= 2
-                      ? `Group Stage (${s.group_count})`
-                      : 'Round Robin'
-                }`,
-              })),
+              { value: 'wins', label: 'Most wins' },
+              { value: 'points', label: 'Most points scored' },
             ]}
           />
-          {value.seededFrom !== '' && (
-            <>
-              <Select
-                label="Rank The Pool By"
-                value={value.seedBy}
-                onChange={(e) => set({ seedBy: e.target.value as SeedBy })}
-                options={[
-                  { value: 'wins', label: 'Most wins' },
-                  { value: 'points', label: 'Most points scored' },
-                ]}
-              />
-              <p className="text-xs text-[var(--text-muted)] -mt-2">
+          <p className="text-xs text-[var(--text-muted)] -mt-2">
+            {poolToBracket ? (
+              <>
+                How this event&rsquo;s own round robin is ordered — both to decide who goes through to its knockout and to
+                place everybody who does not. Wins first is the usual answer; points scored settles a pool where several
+                entrants finish level, and counts every rally rather than every match.{' '}
+                <span className="font-medium text-[var(--text-primary)]">
+                  Fixed once the pool is generated
+                </span>{' '}
+                — the draw is played under it, so it cannot be changed underneath matches that exist.
+              </>
+            ) : (
+              <>
                 The top finishers of that pool become this draw, in finishing order, up to Max Participants. From a group
                 stage it is the top few of EACH group — winners seeded above runners-up, and two entrants from the same
-                group kept apart in round one. The bracket cannot be generated until every pool match has been played.
-              </p>
-            </>
-          )}
+                group kept apart in round one. The bracket cannot be generated until every pool match has been played.{' '}
+                <span className="font-medium text-[var(--text-primary)]">
+                  Fixed once this event&rsquo;s draw is generated.
+                </span>
+              </>
+            )}
+          </p>
         </>
       )}
     </>
