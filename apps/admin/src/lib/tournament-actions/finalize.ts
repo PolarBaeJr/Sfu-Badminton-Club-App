@@ -439,13 +439,14 @@ async function assignPositionsAndPoints(
     // won a knockout match.
     //
     // THE ORDER COMES FROM event.seed_by, WHICH IS THE DOCUMENTED TRAP CLOSED.
-    // assignPositionsAndPoints has always called computeRoundRobinStandings
-    // with no seedBy — defaulting to 'wins' — while the bracket was seeded by
-    // seed_by, and across TWO events those can disagree, so final_position (and
-    // therefore the placement-bonus ledger) could be computed from a different
-    // order than the draw was. Here there is ONE row: the same column decides
-    // who qualified and how the rest are ranked, so they cannot disagree. The
-    // two-event path's call below is deliberately left exactly as it was.
+    // Within one event the worry was real: the bracket half was seeded by
+    // seed_by while this half defaulted to 'wins', so final_position — and
+    // therefore the placement-bonus ledger — could be computed from a different
+    // order than the draw was. Here there is ONE row and buildFieldFromOwnPool
+    // reads the same column, so they cannot disagree.
+    //
+    // The `else` branch below still passes no seedBy, and that is correct
+    // rather than an oversight — see the note on it.
     if (poolToBracket) {
       const seedBy = ((event.seed_by as SeedBy | null) ?? 'wins') as SeedBy;
       const poolStandings = await computeRoundRobinStandings(eventId, seedBy);
@@ -456,7 +457,21 @@ async function assignPositionsAndPoints(
       }
     }
   } else {
-    // Round robin: compute standings and assign positions
+    // Round robin: compute standings and assign positions.
+    //
+    // NO seedBy, AND THAT IS THE ONLY WELL-DEFINED CHOICE — not a leftover.
+    // This branch is reached only by `round_robin` (endsInKnockout covers the
+    // other two formats), and a round robin's own seed_by says nothing about
+    // its own table: the column means "how to rank the pool THIS event is drawn
+    // from", so on a pool it is either NULL or a statement about some other
+    // event entirely.
+    //
+    // Nor could it be made to mean that. A pool may feed several brackets, each
+    // carrying its own seed_by, and its positions are assigned when IT is
+    // finalised — possibly before any bracket exists. There is no single value
+    // to read, so 'wins' (sortStandings' default, and what a pool table is read
+    // by) is the answer. The order a bracket seeds that pool by is a property of
+    // the bracket's draw, not a second opinion about the pool's result.
     const standings = await computeRoundRobinStandings(eventId);
     standings.forEach((s, i) => positionMap.set(s!.id, i + 1));
   }

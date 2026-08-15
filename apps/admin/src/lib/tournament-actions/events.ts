@@ -167,14 +167,25 @@ async function createTournamentEventImpl(
     // seed_by is only read when a source is set; storing it without one would
     // leave a stale choice behind if a source is added later.
     //
-    // A POOL-TO-BRACKET EVENT ALWAYS SETS IT (00107), and that is the fix for
-    // the documented trap: assignPositionsAndPoints calls
-    // computeRoundRobinStandings with no seedBy, so it defaults to 'wins',
-    // while the bracket is seeded by seed_by. Across TWO events those can
-    // disagree and final_position — which drives the placement-bonus ledger —
-    // then comes from a different order than the draw did. Here there is ONE
-    // row, so the column is always populated and both readers pass it. The
-    // two-event path is deliberately left exactly as it is.
+    // A POOL-TO-BRACKET EVENT SETS IT AT CREATION (00107), because that format
+    // reads it against its OWN pool: brackets.ts picks the qualifiers by it and
+    // finalize.ts ranks the non-qualifiers by it, so the column has to exist.
+    //
+    // WHAT THE "seed_by TRAP" ACTUALLY IS, since it was recorded for a long time
+    // in a stronger form than the code supports. The worry was that
+    // assignPositionsAndPoints ranks a round robin with no seedBy — defaulting
+    // to 'wins' — while a bracket is seeded by seed_by, so final_position (which
+    // drives the placement-bonus ledger) could come from a different order than
+    // the draw. Within ONE event that was real, and it is closed: both readers
+    // take this column.
+    //
+    // ACROSS TWO EVENTS IT IS NOT A CONFLICT AND CANNOT BE MADE ONE. seed_by
+    // belongs to the event being DRAWN, not to the pool being read: N brackets
+    // may seed off one pool, each with its own value, and the pool's positions
+    // exist before any of them is created. There is no function from the pool's
+    // row to a single ranking criterion, so its final_position cannot be derived
+    // from seed_by at all — 'wins' is the only well-defined answer, and that is
+    // why the round-robin path in finalize.ts is left alone rather than "fixed".
     seed_by: (config.seeded_from_event_id || isPoolToBracket(config.format))
       ? (config.seed_by ?? 'wins')
       : null,
@@ -293,6 +304,17 @@ async function updateTournamentEventImpl(
       await assertSeedSourceUsable(adminClient, event.tournament_id, eventId, sourceId);
       patch.seed_by = updates.seed_by ?? 'wins';
     } else {
+      // A POOL_TO_BRACKET EVENT COMES THROUGH HERE, and it is worth saying so
+      // rather than leaving it to be rediscovered. The settings dialog blanks
+      // the pool picker on any round-robin format (it has no external pool),
+      // so it always sends seeded_from_event_id: null — and this branch then
+      // nulls seed_by, which createTournamentEvent had populated.
+      //
+      // Harmless, because 00046 defines NULL as 'wins' and every reader
+      // coalesces (`?? 'wins'`), so the two orders that matter — who qualifies
+      // out of the pool, and how finalizeEvent ranks the rest — still come from
+      // this one column and still agree. Not "always populated", though: any
+      // reader added later must keep the coalesce.
       patch.seeded_from_event_id = null;
       patch.seed_by = null;
     }
