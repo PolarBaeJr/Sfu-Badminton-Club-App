@@ -333,7 +333,16 @@ async function restoreMyAccountImpl() {
   revalidatePath('/');
 }
 
-export async function completeOnboarding(data: {
+// What onboarding reports about the passkey question (00121). Kept as a plain
+// tuple rather than added to profileSchema: this is a record of what the client
+// observed about its own browser, not a profile field the member typed, and it
+// must never be able to fail the whole onboarding submit. An unrecognised value
+// is dropped silently — losing one analytics answer is nothing next to
+// stranding a member at the door for sending a string we did not expect.
+const PASSKEY_SETUP_VALUES = ['enrolled', 'declined', 'unsupported', 'unavailable'] as const;
+export type PasskeySetupOutcome = (typeof PASSKEY_SETUP_VALUES)[number];
+
+type OnboardingInput = {
   first_name: string;
   last_name?: string;
   display_name?: string;
@@ -342,20 +351,14 @@ export async function completeOnboarding(data: {
   code_of_conduct_accepted: boolean;
   terms_accepted: boolean;
   age_attestation: boolean;
-}): Promise<ActionResult> {
+  passkey_setup?: PasskeySetupOutcome;
+};
+
+export async function completeOnboarding(data: OnboardingInput): Promise<ActionResult> {
   return runAction(() => completeOnboardingImpl(data));
 }
 
-async function completeOnboardingImpl(data: {
-  first_name: string;
-  last_name?: string;
-  display_name?: string;
-  phone?: string;
-  waiver_accepted: boolean;
-  code_of_conduct_accepted: boolean;
-  terms_accepted: boolean;
-  age_attestation: boolean;
-}) {
+async function completeOnboardingImpl(data: OnboardingInput) {
   parseOrThrow(profileSchema, data);
   parseOrThrow(legalAcceptanceSchema, data);
   const supabase = await createServerSupabaseClient();
@@ -486,7 +489,37 @@ async function completeOnboardingImpl(data: {
 
   if (playerId) {
     await insertAcceptances(supabase, playerId, data.age_attestation);
+    await recordPasskeySetup(playerId, data.passkey_setup);
   }
 
   revalidatePath('/');
+}
+
+/**
+ * Store the member's answer to the passkey question (00121).
+ *
+ * Written with the SERVICE-ROLE client rather than folded into the `players`
+ * update above, for two reasons. The column carries no column-level GRANT on
+ * purpose — see the migration header — so the member's own client cannot write
+ * it; and keeping it out of that update means a problem with this column can
+ * never fail the statement that sets onboarding_completed. The member gets in
+ * either way.
+ *
+ * Failures are swallowed for the same reason: the last thing onboarding should
+ * do is refuse to finish because an analytics column would not take. Sentry
+ * keeps the record.
+ */
+async function recordPasskeySetup(playerId: string, outcome: string | undefined) {
+  if (!outcome || !PASSKEY_SETUP_VALUES.includes(outcome as PasskeySetupOutcome)) return;
+  try {
+    const { error } = await createServiceRoleClient()
+      .from('players')
+      .update({ passkey_setup: outcome })
+      .eq('id', playerId);
+    if (error) throw new Error(error.message);
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: { action: 'recordPasskeySetup', playerId, outcome },
+    });
+  }
 }

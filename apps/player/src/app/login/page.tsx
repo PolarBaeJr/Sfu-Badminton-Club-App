@@ -6,7 +6,13 @@ import { createClient } from '@/lib/supabase-browser';
 import { CHECKIN_TOKEN_REGEX, friendlyAuthError } from '@badminton/shared';
 import { Mail, CheckCircle2, ChevronRight, Loader2, KeyRound } from 'lucide-react';
 import { ShuttleMark } from '@/components/shuttle-mark';
-import { signInWithPasskey, supportsPasskeys } from '@/lib/passkey-client';
+import {
+  signInWithPasskey,
+  supportsPasskeys,
+  beginConditionalPasskeySignIn,
+  cancelPasskeyCeremony,
+  PASSKEY_AUTOFILL_AUTOCOMPLETE,
+} from '@/lib/passkey-client';
 
 // A player who scans a session QR while logged out arrives at
 // /login?checkin=<token>; carry that token through sign-in so they land back on
@@ -38,6 +44,32 @@ export default function LoginPage() {
   useEffect(() => {
     setCanUsePasskeys(supportsPasskeys());
   }, []);
+
+  // Passkey autofill. The member presses nothing: if this browser supports
+  // conditional mediation and they have a credential for this site, it appears
+  // in the email field's own dropdown and picking it signs them in.
+  //
+  // Deliberately NOT gated on canUsePasskeys — beginConditionalPasskeySignIn
+  // does its own (stricter) detection and returns false without touching the
+  // network when the browser cannot do this, so gating here would only add a
+  // render's delay and a second source of truth.
+  //
+  // Runs only on the screen that actually has the email field: the code screen
+  // (`sent`) has unmounted it, and under "Sign up" a passkey cannot help — it
+  // proves an account that already exists. Leaving either of those states runs
+  // the cleanup, which cancels the pending ceremony so it can never complete
+  // against a challenge cookie some later request has replaced.
+  useEffect(() => {
+    if (sent || mode !== 'signin') return;
+    let live = true;
+    void beginConditionalPasskeySignIn().then((signedIn) => {
+      if (signedIn && live) window.location.href = `/auth/post-login${checkinSuffix()}`;
+    });
+    return () => {
+      live = false;
+      cancelPasskeyCeremony();
+    };
+  }, [sent, mode]);
 
   async function handlePasskeyLogin() {
     setPasskeyLoading(true);
@@ -326,9 +358,13 @@ export default function LoginPage() {
                   className="text-[var(--mute)]"
                   style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)' }}
                 />
+                {/* The `webauthn` token is what makes this field an autofill
+                    surface for a passkey — without it the conditional request
+                    above refuses to start. See PASSKEY_AUTOFILL_AUTOCOMPLETE. */}
                 <input
                   id="email"
                   type="email"
+                  autoComplete={PASSKEY_AUTOFILL_AUTOCOMPLETE}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@sfu.ca"

@@ -6,7 +6,13 @@ import { createClient } from '@/lib/supabase-browser';
 import { Button, Input, Card } from '@badminton/ui';
 import { friendlyAuthError } from '@badminton/shared';
 import { Shield, Mail, Loader2, Globe, AlertCircle, KeyRound } from 'lucide-react';
-import { signInWithPasskey, supportsPasskeys } from '@/lib/passkey-client';
+import {
+  signInWithPasskey,
+  supportsPasskeys,
+  beginConditionalPasskeySignIn,
+  cancelPasskeyCeremony,
+  PASSKEY_AUTOFILL_AUTOCOMPLETE,
+} from '@/lib/passkey-client';
 import { SIGNIN_OTP_TYPES, shouldTryNextOtpType, isUnknownAccountError } from '@/lib/auth-otp';
 import { withBase } from '@/lib/base-path';
 
@@ -47,6 +53,24 @@ export default function LoginPage() {
   useEffect(() => {
     setCanUsePasskeys(supportsPasskeys());
   }, []);
+
+  // Passkey autofill — the admin's credential appears in the email field's own
+  // dropdown, no button pressed. Held until the session check has finished:
+  // an admin who is already signed in is about to be redirected to /dashboard,
+  // and the form (with its email field) has not rendered yet, so starting here
+  // would only throw the "no <input> with webauthn" error into the void.
+  // Skipped once a code has been requested — that screen has no email field.
+  useEffect(() => {
+    if (checkingSession || sent) return;
+    let live = true;
+    void beginConditionalPasskeySignIn().then((signedIn) => {
+      if (signedIn && live) window.location.href = withBase('/dashboard');
+    });
+    return () => {
+      live = false;
+      cancelPasskeyCeremony();
+    };
+  }, [checkingSession, sent]);
 
   async function handlePasskeyLogin() {
     setPasskeyLoading(true);
@@ -350,9 +374,13 @@ export default function LoginPage() {
               {/* Email code form */}
               <form onSubmit={handleSendCode} className="space-y-4">
                 <div className="relative">
+                  {/* The trailing `webauthn` token is what lets the browser
+                      offer a passkey in this field's autofill; without it the
+                      conditional request refuses to start. */}
                   <Input
                     label="Email"
                     type="email"
+                    autoComplete={PASSKEY_AUTOFILL_AUTOCOMPLETE}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="admin@sfu.ca"

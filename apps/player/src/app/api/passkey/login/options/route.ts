@@ -16,8 +16,28 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Passkeys are not configured' }, { status: 503 });
   }
 
+  // 60/min, raised from 10. This route stopped being something a member opts
+  // into: /login now starts a conditional (autofill) request on every view, so
+  // one visit costs one challenge whether or not a passkey is ever used.
+  //
+  // How much traffic 10 was actually rationing depends on what getClientIp can
+  // resolve, and the pessimistic case is the one to size for. It prefers
+  // `cf-connecting-ip` (the true client, when Cloudflare's header reaches the
+  // container) and otherwise takes the RIGHTMOST x-forwarded-for hop — which is
+  // whatever address our own edge saw, i.e. one value shared by everyone behind
+  // it, degrading to 'unknown' if no header arrives at all. So the bucket is
+  // per-member at best and effectively per-deployment at worst, and at worst 10
+  // /min is ten page views for the entire club. A 429 here does not merely skip
+  // the speculative offer either: it also breaks the "Sign in with a passkey"
+  // BUTTON, which mints its challenge from this same route. Throttling the
+  // default way in is the failure this limiter exists to avoid, not to cause.
+  //
+  // Safe to loosen because the response is not a secret: allowCredentials is
+  // empty by design (see below), so an unauthenticated caller learns nothing
+  // about who has an account no matter how many challenges they collect. The
+  // limiter that actually guards sign-in is on /login/verify.
   const ip = getClientIp(request);
-  const rl = rateLimit(`pk-login-options:${ip}`, 10, 60_000);
+  const rl = rateLimit(`pk-login-options:${ip}`, 60, 60_000);
   if (!rl.success) return new NextResponse('Too many requests', { status: 429 });
 
   // allowCredentials is deliberately EMPTY. The alternative — asking for an

@@ -10,7 +10,24 @@ import { listPasskeys } from '@/lib/actions/passkeys';
 // so this is how they get asked. Dismissal is remembered locally and for good —
 // a nudge that reappears after being refused is just nagging. Settings keeps a
 // permanent entry point for anyone who changes their mind later.
+//
 const DISMISSED_KEY = 'passkey-nudge-dismissed';
+
+/**
+ * A short hold, written by onboarding when a member declines the passkey there.
+ *
+ * They land on /feed seconds later, and this banner asking the identical
+ * question immediately is the nagging the rule above forbids. But a decline at
+ * onboarding must NOT count as dismissing this permanently: the member was
+ * answering at the door, in a hurry, possibly on a borrowed phone, and this
+ * banner is the only remaining way they are ever asked again. Making every
+ * decliner invisible to it would leave exactly the population this feature
+ * exists for on emailed codes forever.
+ *
+ * sessionStorage, so it lasts the tab and no longer — the next visit asks
+ * again, and only pressing "Not now" here makes it permanent.
+ */
+export const PASSKEY_DECLINED_THIS_SESSION_KEY = 'passkey-declined-this-session';
 
 export function PasskeyNudge() {
   const [visible, setVisible] = useState(false);
@@ -23,8 +40,9 @@ export function PasskeyNudge() {
       if (!supportsPasskeys()) return;
       try {
         if (localStorage.getItem(DISMISSED_KEY)) return;
+        if (sessionStorage.getItem(PASSKEY_DECLINED_THIS_SESSION_KEY)) return;
       } catch {
-        // Private browsing can throw on localStorage; just show the nudge.
+        // Private browsing can throw on either store; just show the nudge.
       }
       const res = await listPasskeys();
       if (cancelled) return;

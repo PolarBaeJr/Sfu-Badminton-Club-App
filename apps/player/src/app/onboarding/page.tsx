@@ -6,8 +6,11 @@ import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/toast-provider';
 import { LegalMarkdown } from '@badminton/ui';
 import { LEGAL_DOCUMENT_LABELS, sortLegalDocuments, CHECKIN_TOKEN_REGEX } from '@badminton/shared';
-import { User, Phone, Sparkles, Trophy, ChevronRight, ChevronLeft, Loader2, Rocket, KeyRound, Check } from 'lucide-react';
+import { User, Phone, Sparkles, Trophy, ChevronRight, ChevronLeft, Loader2, Rocket, KeyRound, Check, Mail } from 'lucide-react';
 import { enrollPasskey, supportsPasskeys } from '@/lib/passkey-client';
+import { passkeysConfigured } from '@/lib/actions/passkeys';
+import type { PasskeySetupOutcome } from '@/lib/actions/profile';
+import { PASSKEY_DECLINED_THIS_SESSION_KEY } from '@/components/passkey-nudge';
 
 const steps = [
   { number: 1, title: 'Profile' },
@@ -121,12 +124,33 @@ export default function OnboardingPage() {
   const [displayName, setDisplayName] = useState('');
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
-  // Offered on the last step, never required. A passkey is a convenience on top
-  // of the emailed code, and gating "Enter the club" on hardware some phones
-  // don't have would lock people out of onboarding entirely.
+  // The passkey question, asked on the last step and now REQUIRING an answer —
+  // but the answer may be "no". Onboarding is the one moment the middleware
+  // guarantees every member passes through exactly once (onboarding_completed),
+  // so it is the only reliable place to ask; a nudge that can be ignored leaves
+  // most of the club on emailed codes forever, and every code costs sender
+  // reputation.
+  //
+  // "Answer required", not "passkey required". This same flow collects the
+  // liability waiver, and it is being completed on a phone at the door on club
+  // night. A hard block turns any passkey failure — a browser that reports
+  // support and then refuses, a member who declines the system prompt twice,
+  // a deployment missing PASSKEY_COOKIE_SECRET — into a member who cannot get
+  // into the club's app at all, with no path forward and nobody to ask. An
+  // explicit, recorded decline gets nearly the same enrolment rate (the choice
+  // is deliberate and unavoidable, which is what actually moves the number)
+  // with no way to strand anyone.
   const [passkeyBusy, setPasskeyBusy] = useState(false);
   const [passkeyAdded, setPasskeyAdded] = useState(false);
-  const [canUsePasskeys, setCanUsePasskeys] = useState(false);
+  const [passkeyDeclined, setPasskeyDeclined] = useState(false);
+  // Both null until resolved, and BOTH must be true before anything is asked of
+  // the member. supportsPasskeys() touches window (hence the effect, not
+  // render); passkeysConfigured() asks the server whether this deployment can
+  // enrol at all, because PASSKEY_COOKIE_SECRET is server-only and without it
+  // the register route answers 503 — requiring an answer to a question whose
+  // "yes" is broken would be exactly the stranding this design avoids.
+  const [passkeySupported, setPasskeySupported] = useState<boolean | null>(null);
+  const [passkeyConfigured, setPasskeyConfigured] = useState<boolean | null>(null);
   const [docs, setDocs] = useState<{ document: string; version: string; content: string }[] | null>(null);
   const [waiverAccepted, setWaiverAccepted] = useState(false);
   const [cocAccepted, setCocAccepted] = useState(false);
@@ -146,8 +170,50 @@ export default function OnboardingPage() {
   }, []);
 
   useEffect(() => {
-    setCanUsePasskeys(supportsPasskeys());
+    setPasskeySupported(supportsPasskeys());
+    // Failure resolves to false, not to a pending promise: an unreachable
+    // server action must degrade to "we can't enrol here", which asks nothing
+    // of the member, rather than leaving the last step waiting forever.
+    void passkeysConfigured()
+      .then(setPasskeyConfigured)
+      .catch(() => setPasskeyConfigured(false));
   }, []);
+
+  // Ask only when both halves say yes. Anything else — no WebAuthn in this
+  // browser, or no passkey secret on this deployment — means the member is
+  // simply told they will get emailed codes, and is required to do nothing.
+  const passkeyOffered = passkeySupported === true && passkeyConfigured === true;
+  const passkeyImpossible = passkeySupported === false || passkeyConfigured === false;
+  // The gate on "Enter the club". Note the leading `!passkeyOffered`: while
+  // either check is still resolving, and forever on a device that cannot do
+  // this, the answer is already "nothing to answer" and the button is live.
+  const passkeyAnswered = !passkeyOffered || passkeyAdded || passkeyDeclined;
+
+  // What goes on the record (00121). `undefined` while we genuinely do not know
+  // — better to store nothing than to guess, since the whole value of this
+  // column is telling a refusal apart from an impossibility.
+  function passkeyOutcome(): PasskeySetupOutcome | undefined {
+    if (passkeyAdded) return 'enrolled';
+    if (passkeySupported === false) return 'unsupported';
+    if (passkeyConfigured === false) return 'unavailable';
+    if (passkeyDeclined) return 'declined';
+    return undefined;
+  }
+
+  // Declining here holds the feed's PasskeyNudge for THIS SESSION only —
+  // otherwise it asks the identical question on the very next screen. It is
+  // deliberately not the nudge's permanent dismissal: the banner is the only
+  // way a decliner is ever asked again, and silencing it for good would strand
+  // exactly the people this change exists to move off emailed codes.
+  function declinePasskey() {
+    setPasskeyDeclined(true);
+    try {
+      sessionStorage.setItem(PASSKEY_DECLINED_THIS_SESSION_KEY, '1');
+    } catch {
+      // Private browsing can throw. Non-fatal: the worst case is the banner
+      // appearing once, which is what happened before this existed.
+    }
+  }
 
   async function handleAddPasskey() {
     setPasskeyBusy(true);
@@ -155,6 +221,8 @@ export default function OnboardingPage() {
     setPasskeyBusy(false);
     if (result.ok) {
       setPasskeyAdded(true);
+      // Enrolling after declining is a change of mind, not a contradiction.
+      setPasskeyDeclined(false);
       toast('Passkey saved — you can use it to sign in', 'success');
     } else if (result.error) {
       toast(result.error, 'error');
@@ -177,6 +245,7 @@ export default function OnboardingPage() {
         code_of_conduct_accepted: cocAccepted,
         terms_accepted: termsAccepted,
         age_attestation: ageAttested,
+        passkey_setup: passkeyOutcome(),
       });
       if (!res.ok) {
         toast(res.error, 'error');
@@ -343,34 +412,93 @@ export default function OnboardingPage() {
               </div>
             </div>
 
-            {canUsePasskeys && (
-              <div className="card-base" style={{ padding: 16 }}>
+            {/* The passkey question. Full width and above the fold of this
+                step, not a footnote beside a "Set up" link, because it is now
+                the thing standing between the member and the button below. */}
+            {passkeyOffered && (
+              <div
+                className="card-base"
+                style={{
+                  padding: 16,
+                  // Answered cards recede; the unanswered one is the only thing
+                  // on this step wearing the accent, so what to do next is
+                  // never in question.
+                  borderColor: passkeyAnswered ? 'var(--line)' : 'var(--red)',
+                }}
+              >
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
                   <KeyRound size={16} style={{ marginTop: 2, flexShrink: 0 }} />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>Skip the email next time</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>
+                      {passkeyAdded ? 'Passkey ready' : 'Set up your passkey'}
+                    </div>
                     <div className="muted" style={{ fontSize: 12, marginTop: 2, lineHeight: 1.5 }}>
-                      Set up a passkey and sign in with your fingerprint, face or
-                      device PIN — no waiting for a code.
+                      {passkeyAdded
+                        ? 'Next time, sign in with your fingerprint, face or device PIN — this device will offer it automatically.'
+                        : passkeyDeclined
+                        ? "No problem — we'll email you a 6-digit code every time you sign in. You can add a passkey later from Settings."
+                        : 'Sign in with your fingerprint, face or device PIN instead of waiting on an emailed code. It takes one tap and stays on this device.'}
                     </div>
                   </div>
-                  {passkeyAdded ? (
+                  {passkeyAdded && (
                     <span
                       className="mono"
-                      style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}
+                      style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, flexShrink: 0 }}
                     >
                       <Check size={14} /> Added
                     </span>
-                  ) : (
+                  )}
+                </div>
+
+                {!passkeyAdded && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14 }}>
                     <button
                       type="button"
-                      className="btn btn-ghost btn-sm"
+                      className="btn btn-primary"
                       disabled={passkeyBusy}
                       onClick={() => void handleAddPasskey()}
+                      style={{ width: '100%', justifyContent: 'center', height: 48, gap: 8 }}
                     >
-                      {passkeyBusy ? <Loader2 size={14} className="animate-spin" /> : 'Set up'}
+                      {passkeyBusy ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
+                      {passkeyDeclined ? 'Set up a passkey after all' : 'Set up a passkey'}
                     </button>
-                  )}
+                    {/* The decline. A real button the member has to press, not a
+                        pre-ticked box and not a way of doing nothing — that is
+                        the entire difference between this and the old optional
+                        offer, and it is what makes the recorded 'declined'
+                        mean something. */}
+                    {!passkeyDeclined && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        disabled={passkeyBusy}
+                        onClick={declinePasskey}
+                        style={{ width: '100%', justifyContent: 'center', height: 44, gap: 8 }}
+                      >
+                        <Mail size={14} />
+                        No thanks — email me a code each time
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Nothing is ASKED of a member who cannot do this: they are told
+                what will happen instead, once, and the button below stays live.
+                They are still recorded — as 'unsupported' or 'unavailable', not
+                as a refusal — because the whole point of that column is being
+                able to tell "would not" from "could not". Covers both a browser
+                without WebAuthn and a deployment that cannot enrol. */}
+            {passkeyImpossible && (
+              <div className="card-base" style={{ padding: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                  <Mail size={16} style={{ marginTop: 2, flexShrink: 0 }} />
+                  <div className="muted" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                    {passkeySupported === false
+                      ? "This browser can't store a passkey, so we'll email you a 6-digit code each time you sign in."
+                      : "Passkeys aren't available on this site yet, so we'll email you a 6-digit code each time you sign in."}
+                  </div>
                 </div>
               </div>
             )}
@@ -395,25 +523,40 @@ export default function OnboardingPage() {
               </span>
             </div>
 
-            <div className="row" style={{ gap: 10 }}>
-              <button
-                type="button"
-                onClick={() => setStep(2)}
-                className="btn btn-ghost"
-                style={{ height: 48 }}
-              >
-                <ChevronLeft size={14} /> Back
-              </button>
-              <button
-                type="button"
-                onClick={handleComplete}
-                disabled={loading}
-                className="btn btn-primary btn-lg"
-                style={{ flex: 1, justifyContent: 'center', height: 48 }}
-              >
-                {loading ? <Loader2 size={16} className="animate-spin" /> : <Rocket size={14} />}
-                Enter the club
-              </button>
+            <div>
+              <div className="row" style={{ gap: 10 }}>
+                <button
+                  type="button"
+                  onClick={() => setStep(2)}
+                  className="btn btn-ghost"
+                  style={{ height: 48 }}
+                >
+                  <ChevronLeft size={14} /> Back
+                </button>
+                <button
+                  type="button"
+                  onClick={handleComplete}
+                  disabled={loading || !passkeyAnswered}
+                  className="btn btn-primary btn-lg"
+                  style={{
+                    flex: 1,
+                    justifyContent: 'center',
+                    height: 48,
+                    opacity: passkeyAnswered ? 1 : 0.4,
+                  }}
+                >
+                  {loading ? <Loader2 size={16} className="animate-spin" /> : <Rocket size={14} />}
+                  Enter the club
+                </button>
+              </div>
+              {/* Say WHY it is disabled. A dimmed button with no explanation is
+                  how a member ends up stuck on the last step of onboarding
+                  believing the app is broken. */}
+              {!passkeyAnswered && (
+                <div className="muted" style={{ fontSize: 12, marginTop: 8, textAlign: 'center' }}>
+                  Set up a passkey above, or choose to keep emailed codes, to continue.
+                </div>
+              )}
             </div>
           </>
         )}
