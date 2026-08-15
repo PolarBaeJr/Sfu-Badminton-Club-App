@@ -21,10 +21,17 @@ import type { TournamentEventRow } from '@/lib/tournament-types';
 export function EventSettingsDialog({
   event,
   siblings,
+  totalEntries,
   onClose,
 }: {
   event: TournamentEventRow;
   siblings: SiblingEvent[];
+  /**
+   * The field as it stands, so the seed-skip control can say how many byes it
+   * would actually produce (00124). Optional so an un-updated caller still
+   * type-checks and simply gets no live line.
+   */
+  totalEntries?: number;
   onClose: () => void;
 }) {
   const [values, setValues] = useState<EventFormatValues>({
@@ -48,6 +55,15 @@ export function EventSettingsDialog({
     qualifiersPerGroup: (event as { qualifiers_per_group?: number | null }).qualifiers_per_group?.toString()
       ?? (isPoolToBracket(event.format)
         && (((event as { group_count?: number | null }).group_count ?? 1) <= 1) ? '4' : '2'),
+    // Same structural read as the two above (00124 is not in the generated
+    // Database type until the migration has been run and the types regenerated).
+    // 0 opens the control blank rather than showing a literal "0": blank and 0
+    // mean the same thing here, and a placeholder that says so reads better than
+    // a number the exec has to clear before typing.
+    seedSkip: (() => {
+      const stored = (event as { seed_skip_count?: number | null }).seed_skip_count ?? 0;
+      return stored > 0 ? String(stored) : '';
+    })(),
   });
   const [maxParticipants, setMaxParticipants] = useState(event.max_participants?.toString() ?? '');
   const [loading, setLoading] = useState(false);
@@ -82,7 +98,13 @@ export function EventSettingsDialog({
   return (
     <Dialog open onClose={onClose} title="Event Settings">
       <form onSubmit={handleSave} className="space-y-4">
-        <EventFormatFields value={values} onChange={setValues} siblings={seedableSiblings} format={event.format} />
+        <EventFormatFields
+          value={values}
+          onChange={setValues}
+          siblings={seedableSiblings}
+          format={event.format}
+          fieldSize={totalEntries}
+        />
         <Input
           label={values.seededFrom === '' ? 'Max Participants (optional)' : 'Bracket Size (how many qualify)'}
           type="number"

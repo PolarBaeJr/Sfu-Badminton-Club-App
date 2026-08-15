@@ -632,6 +632,10 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
         <EventSettingsDialog
           event={event as unknown as TournamentEventRow}
           siblings={siblingEvents}
+          // The header already counts the field for its stats row; the settings
+          // dialog needs the same number to tell an exec how many byes their
+          // draw would actually have (00124).
+          totalEntries={totalEntries}
           onClose={() => setSettingsOpen(false)}
         />
       )}

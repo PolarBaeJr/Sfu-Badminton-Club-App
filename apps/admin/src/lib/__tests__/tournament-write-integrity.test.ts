@@ -420,6 +420,9 @@ import { updateTournamentEvent } from '../tournament-actions/events';
 // test that wrote the patch by hand would assert the server half while assuming
 // the client half — which is the exact seam the bug lived in.
 import { toFormatPayload, EMPTY_FORMAT_VALUES } from '@/app/tournaments/[id]/event-format-fields';
+// 00124's ceiling, imported rather than restated: the form, the generator's
+// refusal and these tests must all be reading the same arithmetic.
+import { maxFirstRoundByes, nextPowerOf2 } from '@badminton/shared';
 import { autoSeedEventByElo } from '../tournament-actions/seeding';
 import { withdrawParticipant } from '../tournament-actions/participants';
 import {
@@ -2330,6 +2333,363 @@ describe('regenerating a draw that already exists', () => {
       .filter((m) => m.event_id === 'e1' && m.round_number === 1)
       .flatMap((m) => [m.participant_a_id, m.participant_b_id]);
     expect(drawn.filter(Boolean).sort()).toEqual(afterSecond.map((p) => p.id).sort());
+  });
+});
+
+// ============================================================
+// Seeds that skip the first round (00124)
+// ============================================================
+//
+// WHAT THIS SETTING IS, because the name says something the arithmetic cannot
+// deliver and a test suite that assumed otherwise would be asserting fiction.
+//
+// A bracket holds a power of two. A field of E leaves nextPowerOf2(E) - E slots
+// empty, and an empty slot facing a real entrant IS a bye — byes are left over,
+// not created. getStandardSeedPositions pairs draw-rank r against rank B+1-r, so
+// the empty TAIL ranks fall opposite the TOP seeds. The byes therefore already
+// go to the top seeds in seed order, which the redraw test above
+// ("leaves the byes with the top of the field on every redraw") has asserted
+// since long before this feature existed.
+//
+// And there is no larger bracket to escape into: a round-one match with two
+// empty slots is not a match, so B - E <= B/2, so B <= 2E, and the only power of
+// two in [E, 2E] besides nextPowerOf2(E) is 2E itself — reachable only when E is
+// already a power of two, where it makes EVERY round-one match a bye.
+//
+// So seed_skip_count places nothing. It is a FLOOR the generator refuses to
+// build under, and these tests are about the refusal and about the fact that it
+// changed no draw that used to work.
+describe('seeds that skip the first round', () => {
+  function seedField(n: number) {
+    store.db.tournament_matches = [];
+    store.db.tournament_participants = Array.from({ length: n }, (_, i) => ({
+      id: `p-${i}`, event_id: 'e1', player_id: `pl-${i}`, elo_before: 1500 - i * 10,
+      elo_after: null, elo_change: null, seed_number: i + 1,
+      final_position: null, points: null, status: 'checked_in',
+    }));
+    Object.assign(event(), { status: 'checkin', draw_locked: false });
+  }
+  const byes = () => store.db.tournament_matches!.filter((m) => m.is_bye);
+  const withByes = () => byes()
+    .map((m) => (m.participant_a_id ?? m.participant_b_id) as string)
+    .sort((a, b) => Number(a.slice(2)) - Number(b.slice(2)));
+
+  /**
+   * THE CEILING, AS ARITHMETIC, BEFORE ANY OF IT TOUCHES A DATABASE.
+   *
+   * These numbers are the whole feature: they are what the form shows, what the
+   * refusal names, and the reason "exactly N" was not an option. A power-of-two
+   * field gives NOBODY a bye — 14 players producing 7 winners plus 2 skippers is
+   * 9 entrants for an 8-slot round two — and no setting can change that.
+   */
+  it('derives the ceiling from the field size and nothing else', () => {
+    // Exact powers of two: the field fills the bracket, so there is no spare
+    // slot and no bye, at any size.
+    for (const exact of [2, 4, 8, 16, 32, 64, 128]) {
+      expect(maxFirstRoundByes(exact)).toBe(0);
+    }
+    // The awkward counts.
+    expect(maxFirstRoundByes(12)).toBe(4);    // 16-draw
+    expect(maxFirstRoundByes(20)).toBe(12);   // 32-draw
+    expect(maxFirstRoundByes(33)).toBe(31);   // 64-draw, one real round-one match
+    expect(maxFirstRoundByes(100)).toBe(28);  // the 128-draw from the brief
+    expect(maxFirstRoundByes(5)).toBe(3);
+    // Below a draw at all. Nothing skips, and nothing throws.
+    expect(maxFirstRoundByes(1)).toBe(0);
+    expect(maxFirstRoundByes(0)).toBe(0);
+    // A ceiling of B/2 - 1 is the most any field can reach, which is what makes
+    // 64 a schema bound rather than a real one: reaching it needs 192 entrants.
+    expect(maxFirstRoundByes(nextPowerOf2(33) / 2 + 1)).toBe(nextPowerOf2(33) / 2 - 1);
+  });
+
+  it('changes nothing at all when it is left at the default', async () => {
+    // THE ONE THAT MATTERS MOST. Every event that exists takes 0 from 00124's
+    // default, so a draw that worked yesterday has to be byte-identical today.
+    // Pinned through Math.random, the only entropy in the feature, so the two
+    // draws are comparable at all.
+    const rand = vi.spyOn(Math, 'random').mockReturnValue(0.31415);
+    seedField(20);
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    const before = store.db.tournament_matches!
+      .map((m) => `${m.round_number}:${m.bracket_position}:${m.participant_a_id}/${m.participant_b_id}:${m.is_bye}`)
+      .join('|');
+    // 20 entries in a 32-draw: 12 byes, already on the top 12 seeds, with nobody
+    // having asked for any of them.
+    expect(byes()).toHaveLength(12);
+
+    // Explicitly zero rather than absent — the column is NOT NULL, so this is
+    // what every row actually holds.
+    Object.assign(event(), { seed_skip_count: 0 });
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    const after = store.db.tournament_matches!
+      .map((m) => `${m.round_number}:${m.bracket_position}:${m.participant_a_id}/${m.participant_b_id}:${m.is_bye}`)
+      .join('|');
+
+    expect(after).toBe(before);
+    rand.mockRestore();
+  });
+
+  it('generates when the field can keep the promise, and the promised seeds are the ones with byes', async () => {
+    // 12 in a 16-draw is 4 byes; promise 4 and the ceiling is met exactly.
+    seedField(12);
+    Object.assign(event(), { seed_skip_count: 4 });
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    // The four byes are seeds 1-4, in seed order, and nobody else has one.
+    expect(withByes()).toEqual(['p-0', 'p-1', 'p-2', 'p-3']);
+    // And they really do enter at round two: a bye is completed with its holder
+    // as the winner and already advanced.
+    for (const b of byes()) {
+      expect(b.status).toBe('completed');
+      expect(b.round_number).toBe(1);
+      const next = store.db.tournament_matches!.find((m) => m.id === b.winner_to_match_id)!;
+      expect(next.round_number).toBe(2);
+      expect([next.participant_a_id, next.participant_b_id]).toContain(b.winner_participant_id);
+    }
+  });
+
+  it('is a FLOOR: a field that forces more byes still generates, and the surplus goes down the seed order', async () => {
+    // The reason it is not "exactly N". 20 entrants force 12 byes; an exec who
+    // promised the top 4 has kept that promise three times over, and refusing a
+    // draw for being too generous would be absurd. The surplus goes down the
+    // order to seeds 5, 6, 7 … exactly as it did before this feature existed.
+    //
+    // "DOWN THE ORDER" MEANS DOWN THE RANKS, NOT DOWN THE SEED NUMBERS, and the
+    // difference is the draw. Byes fall on ranks 1..12 of a 32-draw; the tiers
+    // are [1],[2],[3,4],[5,8],[9,16],[17,20], so ranks 1-8 are seeds 1-8 every
+    // time — those tiers sit wholly inside the byes — while ranks 9-12 are four
+    // of the eight entrants of the 9-16 tier, drawn between themselves. A tier
+    // is by definition a set the draw treats as interchangeable, which is the
+    // same reasoning the redraw test above states for the third bye of a
+    // 5-entry field. Seeds 17-20 can never hold one.
+    seedField(20);
+    Object.assign(event(), { seed_skip_count: 4 });
+
+    for (let i = 0; i < 20; i++) {
+      store.db.tournament_matches = [];
+      expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+      const holders = withByes();
+      expect(holders).toHaveLength(12);
+      // The promise, kept: the top four always skip.
+      expect(holders.slice(0, 4)).toEqual(['p-0', 'p-1', 'p-2', 'p-3']);
+      // The surplus that the tiers pin exactly.
+      expect(holders.slice(0, 8)).toEqual(Array.from({ length: 8 }, (_, k) => `p-${k}`));
+      // The four that are the draw's business come from the 9-16 tier and
+      // nowhere else — never from the entrants below it.
+      const rest = holders.slice(8).map((id) => Number(id.slice(2)));
+      expect(rest).toHaveLength(4);
+      expect(rest.every((n) => n >= 8 && n <= 15)).toBe(true);
+    }
+  });
+
+  it('refuses a promise the field cannot keep, and names the number it can', async () => {
+    // 33 in a 64-draw gives 31 byes; 40 is past the ceiling. The refusal has to
+    // carry the number, because "it did not work" on the morning of a tournament
+    // is not something an exec can act on.
+    seedField(33);
+    Object.assign(event(), { seed_skip_count: 40 });
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    expect(res.ok).toBe(false);
+    expect(res.ok ? '' : res.error).toContain('top 40 seeds');
+    expect(res.ok ? '' : res.error).toContain('64-slot draw');
+    expect(res.ok ? '' : res.error).toContain('only 31');
+    expect(res.ok ? '' : res.error).toContain('31 or fewer');
+  });
+
+  it('refuses on a power-of-two field, where no seed can skip at all', async () => {
+    // The case the club will hit first, and the one the arithmetic is least
+    // forgiving about: 16 entrants fill a 16-draw exactly, so there is not one
+    // spare slot to be a bye. The message must say that rather than implying a
+    // smaller number would have worked.
+    seedField(16);
+    Object.assign(event(), { seed_skip_count: 2 });
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    expect(res.ok).toBe(false);
+    expect(res.ok ? '' : res.error).toContain('no byes at all');
+    expect(res.ok ? '' : res.error).toContain('Lower "Seeds Skipping Round One" to 0');
+  });
+
+  it('refuses BEFORE it writes anything, so a failed generation leaves the draw and the seeds alone', async () => {
+    // A refusal that landed after the auto-seed writes or after
+    // deletePhaseMatches would leave an exec with a half-changed event and an
+    // error on screen. The check sits immediately after the field is read, and
+    // this is what says so.
+    seedField(16);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    const drawBefore = store.db.tournament_matches!.map((m) => m.id).sort();
+    expect(drawBefore.length).toBeGreaterThan(0);
+
+    Object.assign(event(), { seed_skip_count: 2 });
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    expect(res.ok).toBe(false);
+    // Every match still there, and the same rows — not deleted and rebuilt.
+    expect(store.db.tournament_matches!.map((m) => m.id).sort()).toEqual(drawBefore);
+    // No bracket_generated audit row for the attempt that refused.
+    expect(store.db.tournament_audit_log!.filter((r) => r.action === 'bracket_generated')).toHaveLength(1);
+  });
+
+  it('records the promise next to the byes in the audit row', async () => {
+    seedField(12);
+    Object.assign(event(), { seed_skip_count: 3 });
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    const audit = store.db.tournament_audit_log!.filter((r) => r.action === 'bracket_generated').at(-1)!;
+    expect((audit.details as Row).seed_skip_promised).toBe(3);
+    expect((audit.details as Row).byes).toBe(4);
+  });
+
+  // ------------------------------------------------------------
+  // Setting the number
+  // ------------------------------------------------------------
+
+  it('is frozen once a draw exists, and says why rather than ignoring the field', async () => {
+    // The same gate that freezes the match format. It is NOT given the
+    // seeding_method carve-out: that exemption exists for a setting the next
+    // draw reads and this draw does not depend on, whereas the only bracket this
+    // number could describe is the one that already exists, whose byes are
+    // already dealt.
+    seedField(12);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    const res = await updateTournamentEvent('e1', { seed_skip_count: 4 });
+
+    expect(res.ok).toBe(false);
+    expect(res.ok ? '' : res.error).toContain('already has a draw');
+    expect(event().seed_skip_count).toBeUndefined();
+
+    // And it cannot be smuggled past on the back of the one setting that IS
+    // exempt — that carve-out is "seeding_method on its own", not "contains".
+    const bundled = await updateTournamentEvent('e1', { seeding_method: 'manual', seed_skip_count: 4 });
+    expect(bundled.ok).toBe(false);
+    expect(bundled.ok ? '' : bundled.error).toContain('already has a draw');
+    expect(event().seed_skip_count).toBeUndefined();
+  });
+
+  it('accepts the number before a draw exists', async () => {
+    seedField(12);
+
+    expect((await updateTournamentEvent('e1', { seed_skip_count: 4 })).ok).toBe(true);
+    expect(event().seed_skip_count).toBe(4);
+  });
+
+  it('does NOT refuse a number the CURRENT field cannot absorb', async () => {
+    // Deliberate, and the same call normalizeGroupShape makes for
+    // qualifiers_per_group. The number is set while registration is open — an
+    // exec planning a sixty-strong event with three people signed up must not be
+    // refused. The generator asks the field-dependent question on the day.
+    seedField(3);
+
+    expect((await updateTournamentEvent('e1', { seed_skip_count: 12 })).ok).toBe(true);
+    expect(event().seed_skip_count).toBe(12);
+  });
+
+  it('refuses a number outside the bounds the schema allows', async () => {
+    seedField(12);
+
+    const tooBig = await updateTournamentEvent('e1', { seed_skip_count: 65 });
+    expect(tooBig.ok).toBe(false);
+    expect(tooBig.ok ? '' : tooBig.error).toContain('between 0 and 64');
+
+    const negative = await updateTournamentEvent('e1', { seed_skip_count: -1 });
+    expect(negative.ok).toBe(false);
+    expect(negative.ok ? '' : negative.error).toContain('between 0 and 64');
+
+    expect(event().seed_skip_count).toBeUndefined();
+  });
+
+  it('refuses a non-zero number on a round robin, which has no first round to skip', async () => {
+    seedField(12);
+    Object.assign(event(), { format: 'round_robin' });
+
+    const res = await updateTournamentEvent('e1', { seed_skip_count: 2 });
+
+    expect(res.ok).toBe(false);
+    expect(res.ok ? '' : res.error).toContain('no first round to skip');
+    expect(event().seed_skip_count).toBeUndefined();
+
+    // Zero is always fine, on any format — it is what every row already holds.
+    expect((await updateTournamentEvent('e1', { seed_skip_count: 0 })).ok).toBe(true);
+    expect(event().seed_skip_count).toBe(0);
+  });
+
+  /**
+   * THE FORM'S OWN PAYLOAD, not a hand-made patch — same reasoning as the
+   * seed_by test above. Whether an exec's number reaches the column depends on
+   * toFormatPayload and normalizeSeedSkip agreeing about which formats the
+   * control means anything on, and that agreement is exactly where the "Rank The
+   * Pool By" defect lived.
+   */
+  it('sends the number the form collected, on the formats that have a bracket', () => {
+    for (const format of ['single_elimination', 'pool_to_bracket']) {
+      expect(
+        toFormatPayload({ ...EMPTY_FORMAT_VALUES, seedSkip: '4' }, format).seed_skip_count,
+      ).toBe(4);
+    }
+    // A round robin has no bracket. The form hides the control there, and the
+    // payload sends 0 rather than omitting it — so a number typed on a knockout
+    // and then switched away cannot be left behind on the row for 00124's CHECK
+    // to reject on save.
+    expect(
+      toFormatPayload({ ...EMPTY_FORMAT_VALUES, seedSkip: '4' }, 'round_robin').seed_skip_count,
+    ).toBe(0);
+    // Blank is the default and means nobody skips.
+    expect(
+      toFormatPayload(EMPTY_FORMAT_VALUES, 'single_elimination').seed_skip_count,
+    ).toBe(0);
+  });
+
+  it('round-trips the form payload through the server onto the column', async () => {
+    seedField(12);
+
+    const res = await updateTournamentEvent(
+      'e1',
+      toFormatPayload({ ...EMPTY_FORMAT_VALUES, seedSkip: '3' }, 'single_elimination'),
+    );
+
+    expect(res.ok).toBe(true);
+    expect(event().seed_skip_count).toBe(3);
+    // And the draw the exec then generates is the one that number describes.
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    expect(withByes()).toEqual(['p-0', 'p-1', 'p-2', 'p-3']);
+  });
+
+  it('works the same for a doubles field, where the seeds live on the pairs', async () => {
+    // seed_number is carried by tournament_pairs as well as
+    // tournament_participants, and the generator picks a table and treats the
+    // rest identically — so the promise has to hold on both.
+    store.db.tournament_matches = [];
+    store.db.tournament_participants = [];
+    store.db.tournament_pairs = Array.from({ length: 12 }, (_, i) => ({
+      id: `pr-${i}`, event_id: 'e1', player_a_id: `pl-a${i}`, player_b_id: `pl-b${i}`,
+      combined_elo: 3000 - i * 10, seed_number: i + 1, status: 'checked_in',
+      final_position: null, points: null,
+    }));
+    Object.assign(event(), {
+      status: 'checkin', draw_locked: false, event_type: 'mens_doubles', seed_skip_count: 4,
+    });
+
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+    const holders = byes()
+      .map((m) => (m.pair_a_id ?? m.pair_b_id) as string)
+      .sort((a, b) => Number(a.slice(3)) - Number(b.slice(3)));
+    expect(holders).toEqual(['pr-0', 'pr-1', 'pr-2', 'pr-3']);
+
+    // And a promise the doubles field cannot keep is refused the same way.
+    store.db.tournament_matches = [];
+    Object.assign(event(), { seed_skip_count: 8 });
+    const res = await generateSingleEliminationBracket('e1', false);
+    expect(res.ok).toBe(false);
+    expect(res.ok ? '' : res.error).toContain('only 4');
   });
 });
 

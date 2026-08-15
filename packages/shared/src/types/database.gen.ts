@@ -2245,6 +2245,7 @@ export type Database = {
           points_per_game: number | null
           qualifiers_per_group: number | null
           seed_by: string | null
+          seed_skip_count: number
           seeded_from_event_id: string | null
           seeding_method: string
           status: string
@@ -2266,6 +2267,7 @@ export type Database = {
           points_per_game?: number | null
           qualifiers_per_group?: number | null
           seed_by?: string | null
+          seed_skip_count?: number
           seeded_from_event_id?: string | null
           seeding_method?: string
           status?: string
@@ -2287,6 +2289,7 @@ export type Database = {
           points_per_game?: number | null
           qualifiers_per_group?: number | null
           seed_by?: string | null
+          seed_skip_count?: number
           seeded_from_event_id?: string | null
           seeding_method?: string
           status?: string

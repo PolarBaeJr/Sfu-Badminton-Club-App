@@ -11,6 +11,8 @@ export type TournamentEventRow = Tables['tournament_events']['Row'] & {
   /** The group shape (00106) and, on a pool_to_bracket event, how many qualify. */
   group_count?: number | null;
   qualifiers_per_group?: number | null;
+  /** How many top seeds must skip the first round (00124). NOT NULL, 0 = none. */
+  seed_skip_count?: number | null;
 };
 // COLUMNS THE GENERATED TYPE DOES NOT KNOW ABOUT YET. database.gen.ts is
 // generated from the live database, and 00107/00108 have not been applied there

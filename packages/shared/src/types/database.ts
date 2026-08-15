@@ -700,6 +700,11 @@ export interface TournamentEvent {
   // group, so qualifiers_per_group reads as "how many qualify".
   group_count: number | null;
   qualifiers_per_group: number | null;
+  // How many top seeds must skip the first round of the knockout (00124). A
+  // FLOOR the generator refuses to build under, never a placement instruction —
+  // the bye count is fixed by the field size. 0 is the default and means no
+  // promise was made. NOT NULL in the schema, so no coalesce anywhere.
+  seed_skip_count: number;
   max_participants: number | null;
   seeding_method: TournamentSeedingMethod;
   elo_multiplier: number;
