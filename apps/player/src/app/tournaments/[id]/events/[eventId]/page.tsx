@@ -74,11 +74,42 @@ export default async function EventDetailPage({
   let participants: Array<Record<string, unknown>> = [];
   let pairs: Array<Record<string, unknown>> = [];
 
+  // NAMED COLUMNS, NOT `*`, ON ALL THREE READS BELOW — and the reason is
+  // 00117/00118 rather than payload size.
+  //
+  // Those two migrations moved the exec's own free text out of these tables and
+  // into private ones, but deliberately did NOT drop the old columns: the owner
+  // applies migrations by hand and deploys code separately, so a running build
+  // may still be selecting them. `tournament_participants.notes` and
+  // `tournament_pairs.notes` are the reason an entry was withdrawn or
+  // disqualified; `tournament_matches.notes` is the reason a match was voided,
+  // recorded as a double no-show, or restored. Every one of them still holds its
+  // history, and this page — the one player screen that reads all three tables —
+  // was shipping the lot to every member inside the RSC payload. Narrowing the
+  // select is what actually stops that before the DROP COLUMN follow-up runs.
+  //
+  // The columns are enumerated from what the JSX below actually reads, not from
+  // what looks plausible, because a column list is all-or-nothing: PostgREST
+  // fails the WHOLE request on an unknown or ungranted column, and 00115 is the
+  // write-up of that emptying five player screens. Here it would THROW rather
+  // than blank — `unwrap` raises on `res.error` — but a loud wrong answer is
+  // still a wrong answer. Note that the `as Array<Record<string, unknown>>`
+  // casts erase the select-derived row type, so type-check cannot check this
+  // list for you; it was checked by reading every access off these rows,
+  // including the bracket-notation ones in getEntryName/getEntrySeed/isWinner
+  // and the `(e: any)` ones in Final Standings.
+  //
+  // ONE STRING LITERAL EACH, never a concatenation: supabase-js parses the
+  // select string as a literal type, and `'a, b' + 'c'` widens to `string`.
   if (doubles) {
     const data = unwrap(
       await supabase
         .from('tournament_pairs')
-        .select('*, player1:players!tournament_pairs_player1_id_fkey(full_name, avatar_url), player2:players!tournament_pairs_player2_id_fkey(full_name, avatar_url)')
+        // pair_name and points are read by Final Standings; final_position both
+        // filters and sorts it. player1_id/player2_id are NOT here — the only
+        // code that compares them is the "who is my partner" lookup below, which
+        // has always had its own narrow select.
+        .select('id, seed_number, status, final_position, points, pair_name, player1:players!tournament_pairs_player1_id_fkey(full_name, avatar_url), player2:players!tournament_pairs_player2_id_fkey(full_name, avatar_url)')
         .eq('event_id', eventId)
         .order('seed_number')
     );
@@ -87,7 +118,11 @@ export default async function EventDetailPage({
     const data = unwrap(
       await supabase
         .from('tournament_participants')
-        .select('*, player:players!player_id(full_name, avatar_url)')
+        // elo_change is the singles-only rating delta in Final Standings; it has
+        // no counterpart on the pairs read above because that block is behind
+        // `!doubles`. `players!player_id` is a foreign-key hint naming the
+        // relationship, not a selected column, so player_id itself stays out.
+        .select('id, seed_number, status, final_position, points, elo_change, player:players!player_id(full_name, avatar_url)')
         .eq('event_id', eventId)
         .order('seed_number')
     );
@@ -97,7 +132,15 @@ export default async function EventDetailPage({
   const matches = unwrap(
     await supabase
       .from('tournament_matches')
-      .select('*')
+      // bracket_position is the second .order() key rather than something the
+      // JSX reads. PostgREST would sort on it whether or not it is selected;
+      // it is named so the ordering and the projection cannot drift apart.
+      //
+      // What is deliberately gone, beyond `notes`: elo_snapshot (the rating
+      // engine's working, a Json blob), walkover_reason / walkover_winner,
+      // result_entered_by, the loser_* and *_to_* advancement wiring, and the
+      // per-match format overrides — none of which this page draws.
+      .select('id, round_number, bracket_position, round_name, court, status, scores, is_bye, is_third_place, phase, participant_a_id, participant_b_id, pair_a_id, pair_b_id, winner_participant_id, winner_pair_id')
       .eq('event_id', eventId)
       .order('round_number')
       .order('bracket_position')
