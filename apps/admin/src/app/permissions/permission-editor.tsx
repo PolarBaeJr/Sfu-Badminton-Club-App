@@ -1545,6 +1545,31 @@ export function PermissionEditor({
                       <p className="text-sm text-[var(--mute)] max-w-[64ch]">{readOnlyReason}</p>
                     )}
 
+                    {/* ADMIN IGNORES EVERY CELL BELOW, so say it before somebody
+                        spends a minute setting them.
+
+                        effectiveCapabilities returns ALL_CAPABILITIES on
+                        `level === 'admin'` before it looks at the stored set
+                        (access-level.ts:1397). The row still saves — the grid is
+                        not lying about what it wrote — but nothing reads it while
+                        the level stands, so the console and the player menu are
+                        unchanged and the edit looks lost. That is exactly how it
+                        was reported on 2026-08-15: "the permission editor makes
+                        no changes". Losing an hour to a screen that accepted the
+                        work and discarded it is worse than being told up front. */}
+                    {selectedLevel === 'admin' && (
+                      <div className="border border-[var(--border)] bg-[var(--surface-2)] p-3">
+                        <p className={cn(MICRO, 'text-[var(--text-primary)]')}>
+                          An admin holds every capability by level
+                        </p>
+                        <p className="mt-1 text-[11px] text-[var(--mute)] max-w-[64ch]">
+                          Anything set below is stored but never read while they are an admin — the
+                          level answers first. To give this person a narrower set, change their level
+                          above; the capabilities then start counting.
+                        </p>
+                      </div>
+                    )}
+
                     {/* WHAT SAVING WOULD TAKE AWAY. The figure in the header
                         answers "what will they hold"; this band answers the
                         question that actually catches people out, which is "what
