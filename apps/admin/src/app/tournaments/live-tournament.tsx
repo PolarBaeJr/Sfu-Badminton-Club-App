@@ -132,18 +132,43 @@ export function LiveTournament({
     // decides what a subscriber may see, and here it lets every signed-in
     // member see everything.
     //
-    // EVERY EVENT, AND SOME THAT WILL NOT ARRIVE. `event: '*'` because a score,
-    // a walkover, a void, a check-in, a seeding change and a status transition
-    // all move what these tabs print. A DELETE does not: under default replica
-    // identity the WAL's old tuple carries the primary key alone, so neither
-    // `event_id` nor `tournament_id` is there for `filter` to match on. 00113
-    // works through the four delete paths and why the gap is survivable — the
-    // short version is that removing an entrant, removing a pair and deleting
-    // an event are all refused once a draw exists, and clearing an event's
-    // matches to rebuild them is followed immediately by INSERTs, which DO
-    // route because an insert's tuple is the new row. What is genuinely lost is
-    // an entry removed during registration or check-in: it stays on the other
-    // exec's screen until they navigate or reload.
+    // EVERY EVENT, AND SINCE 00120 THE DELETES TOO. `event: '*'` because a
+    // score, a walkover, a void, a check-in, a seeding change and a status
+    // transition all move what these tabs print.
+    //
+    // A DELETE USED NOT TO ARRIVE AT ALL: under default replica identity the
+    // WAL's old tuple carries the primary key alone, so neither `event_id` nor
+    // `tournament_id` is there for `filter` to match on. 00113 worked through
+    // the four delete paths and judged the gap survivable, correctly for three
+    // of them. 00120 closes the rest, and by three different routes because the
+    // four paths are not one problem:
+    //
+    //   * AN ENTRY REMOVED during registration or check-in — the one 00113
+    //     named as genuinely lost — now arrives as an UPDATE on
+    //     `tournament_events`, which the tournament-wide listener below is
+    //     already watching. A statement-level trigger touches the parent
+    //     event's updated_at, and the refresh re-reads the entry list without
+    //     the removed row. The delete event itself is still never delivered and
+    //     does not need to be: nothing here reads a payload, it only refreshes.
+    //     THE PRICE, quantified: removing an entrant from one event now also
+    //     nudges a screen watching a SIBLING event of the same tournament. No
+    //     other tournament, and no other screen in the club, hears anything.
+    //
+    //   * AN EVENT DELETED during registration now routes on its own —
+    //     `tournament_events` is set to REPLICA IDENTITY FULL, which is safe
+    //     there because every column is an id, a number, or a value picked from
+    //     a fixed menu.
+    //
+    //   * CLEARING AN EVENT'S MATCHES to rebuild them needed nothing and got
+    //     nothing: it is followed immediately by INSERTs, which DO route
+    //     because an insert's tuple is the new row.
+    //
+    // THE ENTRY TABLES ARE DELIBERATELY LEFT ON DEFAULT REPLICA IDENTITY, which
+    // is why the trigger exists at all. tournament_participants and
+    // tournament_pairs still carry the `notes` column 00118 privatised but did
+    // not drop, and tournament_pairs carries `pair_name`; FULL on either would
+    // put an exec's disqualification reason on the wire in the delete path.
+    // Both apps' guard tests pin that.
     //
     // KEEP THIS PROSE OUT OF THE CONFIG OBJECTS. The publication guards
     // (lib/__tests__/realtime-publication.test.ts in both apps) read each table
