@@ -107,9 +107,17 @@ function footerText(m: DrawMatch): string {
 
 export function Draw({ matches, thirdPlace, nameOf, seedOf }: DrawProps) {
   const layout = computeDrawLayout(matches, GEOMETRY, { thirdPlace: !!thirdPlace });
+  // THE HIGHEST round_number, not the COUNT of rounds. getRoundName counts back
+  // from the final — `totalRounds - roundNumber + 1` — so the two arguments have
+  // to be in the same numbering. Handed a count, a draw whose rounds are not
+  // numbered 1..R (anything hand-built, anything the pool half shifted) goes
+  // negative and prints "Round of 0.0078125". Only the fallback is affected,
+  // since the generator stamps round_name on every row it writes, which is
+  // exactly why it would have gone unnoticed.
+  const lastRoundNumber = matches.reduce((max, m) => Math.max(max, m.round_number), 0);
   const roundName = (roundNumber: number) =>
     matches.find((m) => m.round_number === roundNumber)?.round_name
-    ?? getRoundName(roundNumber, layout.rounds);
+    ?? getRoundName(roundNumber, lastRoundNumber);
   const roundLabel = (roundNumber: number, side: DrawSide) =>
     side === 'centre'
       ? roundName(roundNumber)

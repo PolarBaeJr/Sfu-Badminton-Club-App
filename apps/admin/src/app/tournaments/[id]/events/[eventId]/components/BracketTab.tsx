@@ -214,6 +214,14 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles, pha
   // heads most of them twice — the shape is a property of the round, not of the
   // half, and two identical selects side by side would invite somebody to set
   // them differently.
+  // THE HIGHEST round_number, not the COUNT of rounds. getRoundName counts back
+  // from the final — `totalRounds - roundNumber + 1` — so the two arguments have
+  // to be in the same numbering. Handed a count, a draw whose rounds are not
+  // numbered 1..R goes negative and prints "Round of 0.0078125". Only the
+  // fallback is affected, since the generator stamps round_name on every row,
+  // which is exactly why it would have gone unnoticed.
+  const lastRoundNumber = treeMatches.reduce((max, m) => Math.max(max, m.round_number), 0);
+
   const roundsInOrder: Array<{ roundNumber: number; matches: TournamentMatchRow[]; name: string }> = [];
   for (const col of layout.columns) {
     if (roundsInOrder.some((r) => r.roundNumber === col.roundNumber)) continue;
@@ -221,7 +229,7 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles, pha
     roundsInOrder.push({
       roundNumber: col.roundNumber,
       matches: roundMatches,
-      name: roundMatches[0]?.round_name ?? getRoundName(col.roundNumber, layout.rounds),
+      name: roundMatches[0]?.round_name ?? getRoundName(col.roundNumber, lastRoundNumber),
     });
   }
   roundsInOrder.sort((a, b) => a.roundNumber - b.roundNumber);
@@ -246,7 +254,7 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles, pha
 
   const roundNameOf = (roundNumber: number) =>
     roundsInOrder.find((r) => r.roundNumber === roundNumber)?.name
-    ?? getRoundName(roundNumber, layout.rounds);
+    ?? getRoundName(roundNumber, lastRoundNumber);
 
   // WHICH HALF, spoken. Sighted readers get the half from where the card is on
   // the sheet; a screen reader gets nothing from that, and in a converging draw
@@ -343,7 +351,7 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles, pha
                     }`}
                   >
                     {roundsInOrder.find((r) => r.roundNumber === col.roundNumber)?.name
-                      ?? getRoundName(col.roundNumber, layout.rounds)}
+                      ?? getRoundName(col.roundNumber, lastRoundNumber)}
                   </h3>
                 </div>
               ))}
