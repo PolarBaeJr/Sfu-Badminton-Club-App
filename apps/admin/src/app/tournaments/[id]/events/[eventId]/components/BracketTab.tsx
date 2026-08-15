@@ -1,7 +1,8 @@
 'use client';
 
-import { Fragment, useEffect, useRef, useState } from 'react';
-import { getRoundName, eventIsPlaying } from '@badminton/shared';
+import { useEffect, useRef, useState } from 'react';
+import { getRoundName, eventIsPlaying, computeDrawLayout, fitScale } from '@badminton/shared';
+import type { DrawSide } from '@badminton/shared';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
 import { RoundShapeControl } from './RoundShapeControl';
 import { Trophy } from 'lucide-react';
@@ -15,42 +16,51 @@ import type {
 } from '@/lib/tournament-types';
 
 /**
- * Bracket geometry — the single source of truth for every offset on this page.
- * Connectors are absolutely positioned from these numbers, so a card that grows
- * or a gap that changes only needs an edit here; nothing else is hand-tuned.
- * CARD_H is enforced on every card (see MatchCard) because the elbow maths only
- * holds while all cards in a column are the same height — a shorter skip card
- * or a taller "Enter Score" card is what throws the lines off centre.
+ * THE CONSOLE'S HALF OF THE CONVERGING DRAW.
+ *
+ * Where every offset comes from is `computeDrawLayout` in @badminton/shared —
+ * the same function the player app's chart is built on, so the two diagrams
+ * cannot drift the way the two hand-maintained copies of this geometry did
+ * (92px cards here, 100px there). This file owns the SIZES it draws at and the
+ * markup; it owns no arithmetic.
+ *
+ * The sizes are picked from the bottom up: 88px is 44px at the 0.5 zoom floor,
+ * and the whole card is the button, so the smallest tap target this tab will
+ * open at is exactly the minimum.
  */
-const CARD_H = 100;               // fixed outer height of one match card
-const CARD_GAP = 16;              // gap between sibling cards in the first round
-const PITCH = CARD_H + CARD_GAP;  // centre-to-centre distance in the first round
-const COL_W = 244;                // width of a round column
-const LINK_W = 76;                // width of the connector gutter between rounds
-                                  // Widened from 40: rounds sat close enough that a
-                                  // quarter-final card and the semi it feeds read as
-                                  // one block, and the elbow between them had no room
-                                  // to be seen as a join rather than a border.
-const HEAD_H = 34;                // round heading block; keeps gutters in step
-const META_H = 20;                // card meta strip (match number / court)
-const FOOT_H = 26;                // card footer strip (status / score button)
-// Heading + the explanatory sentence under the playoff card. Measured for the
-// sentence WRAPPING to three lines at COL_W, not for one line: this number only
-// feeds the scroll box's height, and being short by a line clips the caption.
-const PLAYOFF_CAPTION_H = 72;
+const META_H = 18;                // card meta strip (match number / court)
+const SIDE_H = 23;                // one entrant's row
+const FOOT_H = 24;                // card footer strip (status / action)
+const CARD_H = META_H + SIDE_H * 2 + FOOT_H;   // 88
+const CARD_GAP = 12;              // gap between sibling cards in the first round
+const COL_W = 196;                // width of a round column
+const LINK_W = 28;                // width of the connector gutter between rounds
+const HEAD_H = 30;                // round heading strip above the diagram
+// Heading + the explanatory sentence under the playoff card, measured for the
+// sentence WRAPPING at COL_W rather than for one line: this number only feeds
+// the diagram's height, and being short by a line clips the caption.
+const PLAYOFF_CAPTION_H = 76;
 
-/** Zoom stops, smallest first. 1 is always in the list so "actual size" exists. */
+const GEOMETRY = {
+  cardH: CARD_H,
+  cardGap: CARD_GAP,
+  colW: COL_W,
+  linkW: LINK_W,
+  headH: HEAD_H,
+  playoffCaptionH: PLAYOFF_CAPTION_H,
+};
+
+/** Zoom stops. 1 is always reachable so "actual size" exists. */
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 1;
-/** Below this, a card's action strip is too small to press. Bounds the DEFAULT only. */
+/** Below this, a card is too small to press. Bounds the DEFAULT only. */
 const ZOOM_USABLE_FLOOR = 0.5;
-
-/** Vertical centre of match `idx` in the round at 0-based depth `depth`. */
-function cardCentre(depth: number, idx: number) {
-  const mult = Math.pow(2, depth);
-  const padTop = ((mult - 1) * PITCH) / 2;
-  return padTop + idx * mult * PITCH + CARD_H / 2;
-}
+/**
+ * The share of the window the diagram may claim before it scrolls inside its
+ * own box. Used for the fit arithmetic as well as for the cap, so the scale
+ * that "Fit" reports is the scale that actually fits.
+ */
+const VIEWPORT_H_SHARE = 0.78;
 
 interface Props {
   event: TournamentEventRow;
@@ -71,22 +81,22 @@ interface Props {
  * button is a smaller hit target, and these must not shrink with the bracket.
  */
 function ZoomBar({
-  zoom, onZoom, fitZoom,
-}: { zoom: number; onZoom: (z: number) => void; fitZoom: number }) {
+  zoom, onZoom, fitBoth, fitWidth,
+}: { zoom: number; onZoom: (z: number) => void; fitBoth: number; fitWidth: number }) {
   const step = (delta: number) =>
     onZoom(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round((zoom + delta) * 20) / 20)));
 
   // Nothing to zoom: the diagram already fits AND is being shown at full size.
   // Showing a dead control on every eight-player event is noise.
   //
-  // The second half of that condition is load-bearing. Gated on fitZoom alone,
+  // The second half of that condition is load-bearing. Gated on the fit alone,
   // someone who zoomed out on a narrow window and then widened it past the point
   // where the draw fits lost the controls while the bracket was still scaled —
   // a shrunken diagram with no way back to 100%.
-  if (fitZoom >= 1 && zoom >= 1) return null;
+  if (fitBoth >= 1 && zoom >= 1) return null;
 
   const btn =
-    'px-2 py-1 rounded-md border border-[var(--border)] text-[11px] uppercase tracking-[0.08em] ' +
+    'px-2 py-1 border border-[var(--border)] text-[11px] uppercase tracking-[0.08em] ' +
     'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:border-[var(--border-hover)] ' +
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ' +
     'disabled:opacity-40 disabled:hover:text-[var(--text-muted)]';
@@ -98,7 +108,13 @@ function ZoomBar({
         {Math.round(zoom * 100)}%
       </span>
       <button type="button" className={btn} onClick={() => step(0.1)} disabled={zoom >= ZOOM_MAX} aria-label="Zoom in">+</button>
-      <button type="button" className={btn} onClick={() => onZoom(fitZoom)}>Fit width</button>
+      {/* WHOLE DRAW, not just its width, and that is the control this tab was
+          missing. A converging chart is short and wide; fitting the width alone
+          reports a comfortable number and still leaves the reader scrolling —
+          which is what "unreadable above 32" was. "Fit width" stays for the big
+          draws where the whole-draw scale is too small to read at all. */}
+      <button type="button" className={btn} onClick={() => onZoom(fitBoth)}>Fit</button>
+      <button type="button" className={btn} onClick={() => onZoom(fitWidth)}>Fit width</button>
       <button type="button" className={btn} onClick={() => onZoom(1)}>100%</button>
     </div>
   );
@@ -108,82 +124,56 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles, pha
   const [scoreMatch, setScoreMatch] = useState<TournamentMatchRow | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const [viewportW, setViewportW] = useState(0);
+  const [viewportH, setViewportH] = useState(0);
   // null means "the user has not touched the controls", which is what lets the
   // default track the window while a deliberate 100% survives a resize.
   const [userZoom, setUserZoom] = useState<number | null>(null);
 
   // Measured rather than assumed: the page is full-width on this route, so the
   // available space depends on the window, the sidebar and the scrollbar, and
-  // any figure hard-coded here would be wrong on somebody's screen.
+  // any figure hard-coded here would be wrong on somebody's screen. The HEIGHT
+  // is taken from the window rather than from the box, because the box's own
+  // height is content-driven until the cap bites — measuring it would fit the
+  // diagram to whatever height the diagram already had.
   useEffect(() => {
     const el = viewportRef.current;
     if (!el) return;
-    const measure = () => setViewportW(el.clientWidth);
+    const measure = () => {
+      setViewportW(el.clientWidth);
+      setViewportH(Math.max(320, Math.round(window.innerHeight * VIEWPORT_H_SHARE)));
+    };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
-    return () => ro.disconnect();
+    window.addEventListener('resize', measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+    };
   }, []);
 
   // The third-place playoff shares round_number with the final so the two are
-  // scheduled together, but it is held OUT of `columns` on purpose.
-  //
-  // Put in the final's column as a real sibling, the connector maths would see a
-  // round with two cards feeding a round with one — the exact shape of "these
-  // two matches feed that one". `canLink` would refuse to draw the elbows
-  // (2 !== 1 * 2), so the SEMI-FINALS would silently lose their connectors too,
-  // and the playoff would still look like a second final. So it stays out of the
-  // column data and is drawn by hand under the FINAL instead (see
-  // `hangsPlayoff`) — it is played on finals day and it is the other match that
-  // ends someone's tournament — on a dashed elbow reaching back to the
-  // semi-finals that feed it: near enough to read as part of the bracket, drawn
-  // differently enough to read as a branch rather than the path to the title.
+  // scheduled together, but it is held OUT of the tree on purpose: as a real
+  // sibling of the final it is a round of two feeding a round of one — the
+  // exact shape of "these two matches feed that one" — and every elbow in the
+  // semi-finals would be drawn from that false premise. It is placed by the
+  // layout engine instead, in the clear space under the final.
   const thirdPlace = matches.find((m) => m.is_third_place) ?? null;
-  const allMatches = matches.filter((m) => !m.is_third_place);
+  const treeMatches = matches.filter((m) => !m.is_third_place);
   // eventIsPlaying rather than `=== 'live'` (00107). It reads the same on a
   // single_elimination event; on a pool_to_bracket one it is what keeps the
   // knockout scoreable at `live` while the pool tab stays scoreable at
   // `pool_live`.
   const isLive = eventIsPlaying(event.status) || event.status === 'bracket_generated';
 
-  if (allMatches.length === 0) {
-    return (
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-8 text-center">
-        <Trophy className="w-8 h-8 mx-auto mb-3 text-[var(--text-muted)] opacity-50" />
-        <p className="text-sm text-[var(--text-muted)]">Bracket not generated yet.</p>
-      </div>
-    );
-  }
-
-  // Group matches by round
-  const rounds: Record<number, TournamentMatchRow[]> = {};
-  for (const m of allMatches) {
-    if (!rounds[m.round_number]) rounds[m.round_number] = [];
-    rounds[m.round_number]!.push(m);
-  }
-  const roundNumbers = Object.keys(rounds).map(Number).sort((a, b) => a - b);
-  const totalRounds = Math.max(...roundNumbers);
-
-  const columns = roundNumbers.map((roundNum) => ({
-    roundNum,
-    matches: rounds[roundNum]!.slice().sort((a, b) => a.bracket_position - b.bracket_position),
-  }));
-
-  // Every column is padded to the same height, so the bracket sits in one tidy
-  // block and the connector gutters share the first round's coordinate space.
-  const firstRoundCount = columns[0]?.matches.length ?? 1;
-  const bracketH = (firstRoundCount - 1) * PITCH + CARD_H;
+  const layout = computeDrawLayout(treeMatches, GEOMETRY, { thirdPlace: !!thirdPlace });
 
   // Build name lookup
   const nameMap: Record<string, string> = {};
   if (isDoubles) {
-    for (const p of pairs) {
-      nameMap[p.id] = getName(p, isDoubles);
-    }
+    for (const p of pairs) nameMap[p.id] = getName(p, isDoubles);
   } else {
-    for (const p of participants) {
-      nameMap[p.id] = getName(p, isDoubles);
-    }
+    for (const p of participants) nameMap[p.id] = getName(p, isDoubles);
   }
 
   // Seed lookup
@@ -211,50 +201,60 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles, pha
     return seedMap[id] ?? null;
   }
 
-  // Natural size of the diagram, from the same constants the connectors use.
-  // The playoff block hangs off the bottom of the semi-final column, so it adds
-  // to the height without adding a column.
-  const naturalW = columns.length * COL_W + Math.max(columns.length - 1, 0) * LINK_W;
+  if (treeMatches.length === 0) {
+    return (
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-8 text-center">
+        <Trophy className="w-8 h-8 mx-auto mb-3 text-[var(--text-muted)] opacity-50" />
+        <p className="text-sm text-[var(--text-muted)]">Bracket not generated yet.</p>
+      </div>
+    );
+  }
 
-  // How much empty column there is under the LAST semi-final card. In a
-  // four-entry draw the semi-finals ARE the first round, so the last card ends
-  // exactly at the foot of the column and this is zero — a riser drawn upward
-  // from there would be painted through that card's footer. Whatever is missing
-  // is added as real space below instead (extraGap), and the box has to be tall
-  // enough to hold it or the caption is cut off.
-  // The playoff card sits under the FINAL — it is decided on finals day and it
-  // is the other match that ends someone's tournament, so it belongs in the
-  // last column rather than tucked under the round that feeds it. The dashed
-  // connector still comes from the SEMI-FINALS, because that is who plays in it,
-  // and it is drawn as an elbow reaching back across the gutter.
-  const finalDepth = columns.length - 1;
-  const semiDepth = columns.length - 2;
-  const semiCol = semiDepth >= 0 ? columns[semiDepth] : undefined;
-  // Empty column under the last semi-final card, which is where the elbow turns.
-  const semiSlack = semiCol
-    ? Math.max(bracketH - (cardCentre(semiDepth, semiCol.matches.length - 1) + CARD_H / 2), 0)
-    : 0;
-  const playoffExtraGap = Math.max(CARD_GAP - semiSlack, 0);
-  // Vertical drop, measured from the playoff card's own top edge back up to the
-  // bottom of the last semi-final. Both columns share the same body height, so
-  // this is the same number in either.
-  const playoffRiserH = semiSlack + playoffExtraGap;
+  // The "played to" strip names each round ONCE, even though a converging draw
+  // heads most of them twice — the shape is a property of the round, not of the
+  // half, and two identical selects side by side would invite somebody to set
+  // them differently.
+  const roundsInOrder: Array<{ roundNumber: number; matches: TournamentMatchRow[]; name: string }> = [];
+  for (const col of layout.columns) {
+    if (roundsInOrder.some((r) => r.roundNumber === col.roundNumber)) continue;
+    const roundMatches = treeMatches.filter((m) => m.round_number === col.roundNumber);
+    roundsInOrder.push({
+      roundNumber: col.roundNumber,
+      matches: roundMatches,
+      name: roundMatches[0]?.round_name ?? getRoundName(col.roundNumber, layout.rounds),
+    });
+  }
+  roundsInOrder.sort((a, b) => a.roundNumber - b.roundNumber);
 
-  const naturalH =
-    HEAD_H + bracketH +
-    (thirdPlace && columns.length >= 2 ? playoffExtraGap + CARD_H + PLAYOFF_CAPTION_H : 0);
+  const fitBoth = fitScale(layout, viewportW, viewportH, ZOOM_MIN);
+  const fitWidth = viewportW > 0 && layout.width > 0
+    ? Math.min(1, Math.max(ZOOM_MIN, viewportW / layout.width))
+    : 1;
 
-  // Never magnify: a four-player draw blown up to fill a monitor looks broken,
-  // and the point of this control is only to bring a big draw back into view.
-  const fitZoom = viewportW > 0 ? Math.min(1, Math.max(ZOOM_MIN, viewportW / naturalW)) : 1;
+  // THE WHOLE DRAW, BUT NEVER SMALLER THAN THE FLOOR. A 128-slot draw fitted
+  // whole to this pane lands near 25%, which turns an 88px card into a 22px one
+  // — the bracket is on screen and none of it can be read or pressed. So the
+  // default is clamped UP to the floor rather than abandoned: at 0.5 the card is
+  // exactly 44px, the minimum tap target, and the reader still sees most of the
+  // chart's width instead of the left quarter of it.
+  //
+  // Measured on a 1192px pane: a 32-draw opens whole at 60%, a 64-draw at the
+  // 50% floor showing 98% of its width, a 128-draw at 50% showing 83%. The old
+  // fallback — open at 100% and scroll — put a 64-draw's reader back where the
+  // complaint started, looking at a quarter of the sheet.
+  const zoom = userZoom ?? Math.min(1, Math.max(fitBoth, ZOOM_USABLE_FLOOR));
 
-  // The DEFAULT will not go below half size, even though the control will. A
-  // 128-slot draw fitted to a phone lands at 25%, which turns the 26px "Enter
-  // Score" strip into a 6px target — the bracket is on screen and none of it can
-  // be used. Below the floor, open at the scale the cards were designed for and
-  // let the reader scroll, which is what the page did before this control
-  // existed. Fit width is still one press away.
-  const zoom = userZoom ?? (fitZoom < ZOOM_USABLE_FLOOR ? 1 : fitZoom);
+  const roundNameOf = (roundNumber: number) =>
+    roundsInOrder.find((r) => r.roundNumber === roundNumber)?.name
+    ?? getRoundName(roundNumber, layout.rounds);
+
+  // WHICH HALF, spoken. Sighted readers get the half from where the card is on
+  // the sheet; a screen reader gets nothing from that, and in a converging draw
+  // "Semi-Final" on its own is now ambiguous between two cards.
+  const roundLabelOf = (roundNumber: number, side: DrawSide) => {
+    const name = roundNameOf(roundNumber);
+    return side === 'centre' ? name : `${name}, ${side === 'left' ? 'top' : 'bottom'} half`;
+  };
 
   return (
     <>
@@ -262,23 +262,21 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles, pha
         {/* WHAT EACH ROUND IS PLAYED TO (00108), in a strip above the diagram
             rather than on the round headings themselves. The headings sit
             inside the CSS transform that zooms the bracket, so a select there
-            would shrink with it — at "fit width" on a 32-draw it would be a
-            three-pixel control. Here it is always full size, always in one
+            would shrink with it — at "fit" on a 32-draw it would be a
+            four-pixel control. Here it is always full size, always in one
             place, and reads as the ladder it is: 11s, 15s, 21s, best of 3. */}
         <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[8px] border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
             Played to
           </span>
-          {columns.map((col) => (
-            <span key={col.roundNum} className="flex items-center gap-1.5">
-              <span className="text-[11px] text-[var(--text-secondary)]">
-                {col.matches[0]?.round_name ?? getRoundName(col.roundNum, totalRounds)}
-              </span>
+          {roundsInOrder.map((round) => (
+            <span key={round.roundNumber} className="flex items-center gap-1.5">
+              <span className="text-[11px] text-[var(--text-secondary)]">{round.name}</span>
               <RoundShapeControl
                 event={event}
-                matches={col.matches}
+                matches={round.matches}
                 phase={phase}
-                roundNumber={col.roundNum}
+                roundNumber={round.roundNumber}
               />
             </span>
           ))}
@@ -295,201 +293,136 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles, pha
             </span>
           )}
         </div>
-        <ZoomBar zoom={zoom} onZoom={setUserZoom} fitZoom={fitZoom} />
+
+        {/* THE DRAW READS INWARDS FROM BOTH EDGES, which is not how anybody
+            expects a bracket to read until they are told once. */}
+        <p className="mb-3 text-[11px] text-[var(--text-muted)]">
+          {layout.mode === 'converging'
+            ? 'The top half runs inwards from the left, the bottom half inwards from the right, and they meet at the final in the middle.'
+            : 'This draw’s rounds do not halve, so it is shown as a plain left-to-right ladder.'}
+        </p>
+
+        <ZoomBar zoom={zoom} onZoom={setUserZoom} fitBoth={fitBoth} fitWidth={fitWidth} />
+
         {/* Two nested boxes because a CSS transform does not change layout size:
             the scaled diagram would still reserve its FULL width and height, so
             a zoomed-out bracket left a screen of blank card behind it and the
             scrollbars never shrank. The outer box scrolls, the middle box is
             sized to the SCALED dimensions, and only the inner one is
-            transformed. */}
-        {/* The height cap is only for draws that needed zooming out in the first
-            place. Applying it unconditionally would put an inner scrollbar on an
-            eight-player bracket that used to flow with the page, and cost the
-            reader the event header while they scrolled. */}
+            transformed.
+
+            The height cap is unconditional and costs a short draw nothing: a
+            max-height only bites once the content exceeds it, so an eight-player
+            bracket still flows with the page and grows no inner scrollbar. */}
         <div
           ref={viewportRef}
           className="overflow-auto"
-          style={fitZoom < 1 ? { maxHeight: '78vh' } : undefined}
+          style={{ maxHeight: `${Math.round(VIEWPORT_H_SHARE * 100)}vh` }}
         >
-          <div style={{ width: naturalW * zoom, height: naturalH * zoom }}>
+          <div style={{ width: layout.width * zoom, height: layout.height * zoom }}>
             <div
-              className="flex items-start"
-              role="table"
-              aria-label="Bracket rounds"
-              style={{ width: naturalW, transform: `scale(${zoom})`, transformOrigin: 'top left' }}
+              className="relative"
+              style={{
+                width: layout.width,
+                height: layout.height,
+                transform: `scale(${zoom})`,
+                transformOrigin: 'top left',
+              }}
             >
-          {columns.map((col, depth) => {
-            const roundMatches = col.matches;
-            const roundName = roundMatches[0]?.round_name ?? getRoundName(col.roundNum, totalRounds);
-            const isFinal = col.roundNum === totalRounds;
-
-            const mult = Math.pow(2, depth);
-            const padY = ((mult - 1) * PITCH) / 2;
-            const gap = mult * PITCH - CARD_H;
-
-            const next = columns[depth + 1];
-            // The playoff hangs under the round that FEEDS it — the semi-finals,
-            // i.e. the column immediately before the final. Guarded on there
-            // actually being one: a two-entry event has a final and nothing
-            // else, and there is nothing to hang it from.
-            const hangsPlayoff = !!thirdPlace && columns.length >= 2 && depth === finalDepth;
-            // The dashed drop starts at the bottom edge of the last semi-final
-            // card and ends where the playoff card begins, which is the foot of
-            // the column body. Derived, not tuned: change PITCH or CARD_H and
-            // the line still lands on both.
-            // Geometry for the playoff drop is computed once, above, because
-            // naturalH needs the same numbers to size the scroll box.
-            const riserH = playoffRiserH;
-            const extraGap = playoffExtraGap;
-            // Elbows are only meaningful when the next round is exactly half the
-            // size of this one; anything else means the bracket data is odd and
-            // a guessed line would point at the wrong card.
-            const canLink = !!next && roundMatches.length === next.matches.length * 2;
-
-            return (
-              <Fragment key={col.roundNum}>
-                <div className="flex flex-col shrink-0" style={{ width: COL_W }} role="rowgroup" aria-label={roundName}>
-                  <div className="flex items-center justify-center" style={{ height: HEAD_H }}>
-                    <h3
-                      role="columnheader"
-                      className={`text-[11px] font-bold uppercase tracking-[0.12em] ${
-                        isFinal ? 'text-[var(--color-warning)]' : 'text-[var(--text-muted)]'
-                      }`}
-                    >
-                      {roundName}
-                    </h3>
-                  </div>
-
-                  <div
-                    className="flex flex-col"
-                    style={{ paddingTop: padY, paddingBottom: padY, gap: `${gap}px` }}
+              {/* Round headings. One per column, so a converging draw names
+                  each round over both of its halves. */}
+              {layout.columns.map((col) => (
+                <div
+                  key={col.key}
+                  className="absolute flex items-center justify-center"
+                  style={{ left: col.x, top: 0, width: COL_W, height: HEAD_H }}
+                >
+                  <h3
+                    className={`text-[11px] font-bold uppercase tracking-[0.12em] ${
+                      col.side === 'centre' ? 'text-[var(--color-warning)]' : 'text-[var(--text-muted)]'
+                    }`}
                   >
-                    {roundMatches.map((m) => (
-                      <MatchCard
-                        key={m.id}
-                        m={m}
-                        isDoubles={isDoubles}
-                        isLive={isLive}
-                        getEntryName={getEntryName}
-                        getSeed={getSeed}
-                        onEnterScore={() => setScoreMatch(m)}
-                      />
-                    ))}
-                  </div>
-
-                  {hangsPlayoff && thirdPlace && (
-                    <div className="relative" style={{ width: COL_W, marginTop: extraGap }}>
-                      {/* An elbow reaching BACK to the semi-finals, drawn dashed.
-                          The card sits under the final because that is when it is
-                          played, but the final does not feed it — the two beaten
-                          semi-finalists do, and a line down from the final would
-                          say the opposite. Dashed rather than solid for the same
-                          reason the round connectors are solid: those mean "the
-                          winner advances to here", and this match leads nowhere.
-
-                          Negative left reaches into the gutter and the semi-final
-                          column; nothing clips it, and every offset comes from the
-                          same constants the round elbows use. */}
-                      <span
-                        aria-hidden="true"
-                        className="absolute border-t border-dashed border-[var(--border-hover)]"
-                        style={{ left: -(LINK_W / 2), top: CARD_H / 2, width: LINK_W / 2 }}
-                      />
-                      <span
-                        aria-hidden="true"
-                        className="absolute border-l border-dashed border-[var(--border-hover)]"
-                        style={{ left: -(LINK_W / 2), top: -riserH, height: riserH + CARD_H / 2 }}
-                      />
-                      <span
-                        aria-hidden="true"
-                        className="absolute border-t border-dashed border-[var(--border-hover)]"
-                        // Stops at the semi-final column's right edge rather than
-                        // reaching COL_W/2 back underneath it. The long reach made
-                        // the line appear to emerge from the middle of the lower
-                        // semi's card, which reads as "M6 feeds this" — the exact
-                        // claim the dashes exist to avoid, since BOTH beaten
-                        // semi-finalists play in it.
-                        style={{ left: -LINK_W, top: -riserH, width: LINK_W / 2 }}
-                      />
-                      <MatchCard
-                        m={thirdPlace}
-                        isDoubles={isDoubles}
-                        isLive={isLive}
-                        getEntryName={getEntryName}
-                        getSeed={getSeed}
-                        onEnterScore={() => setScoreMatch(thirdPlace)}
-                      />
-                      <h3 className="mt-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--text-secondary)]">
-                        3rd Place Playoff
-                      </h3>
-                      {/* Says what it is and, just as importantly, what it is
-                          not. Now that a line touches the card, a reader can no
-                          longer infer from the absence of one that the winner
-                          stops here — so the sentence has to say it. */}
-                      <p className="text-[11px] leading-snug text-[var(--text-muted)]">
-                        The two semi-final losers. Decides 3rd and 4th — the winner does not advance to the final.
-                      </p>
-                    </div>
-                  )}
+                    {roundsInOrder.find((r) => r.roundNumber === col.roundNumber)?.name
+                      ?? getRoundName(col.roundNumber, layout.rounds)}
+                  </h3>
                 </div>
+              ))}
 
-                {next && (
-                  <div className="flex flex-col shrink-0" style={{ width: LINK_W }} aria-hidden="true">
-                    <div style={{ height: HEAD_H }} />
-                    <div className="relative" style={{ height: bracketH }}>
-                      {canLink &&
-                        next.matches.map((_, k) => {
-                          const yTop = cardCentre(depth, k * 2);
-                          const yBottom = cardCentre(depth, k * 2 + 1);
-                          const yMid = cardCentre(depth + 1, k);
-                          const half = LINK_W / 2;
-                          return (
-                            <div key={k}>
-                              {/* stubs out of each feeder, the riser joining them, then into the winner's card */}
-                              <span className="absolute bg-[var(--border-hover)]" style={{ left: 0, top: yTop, width: half, height: 1 }} />
-                              <span className="absolute bg-[var(--border-hover)]" style={{ left: 0, top: yBottom, width: half, height: 1 }} />
-                              <span className="absolute bg-[var(--border-hover)]" style={{ left: half, top: yTop, width: 1, height: yBottom - yTop }} />
-                              <span className="absolute bg-[var(--border-hover)]" style={{ left: half, top: yMid, width: half, height: 1 }} />
-                            </div>
-                          );
-                        })}
-                    </div>
+              {/* The connector work, as flat boxes the engine positioned. */}
+              <div className="absolute inset-x-0" style={{ top: HEAD_H, height: layout.bodyH }} aria-hidden="true">
+                {layout.connectors.map((c) => (
+                  <span
+                    key={c.key}
+                    className="absolute bg-[var(--border-hover)]"
+                    style={{ left: c.x, top: c.y, width: c.w, height: c.h }}
+                  />
+                ))}
+              </div>
+
+              <div className="absolute inset-x-0" style={{ top: HEAD_H, height: layout.bodyH }}>
+                {layout.nodes.map((node) => (
+                  <div
+                    key={node.id}
+                    className="absolute"
+                    style={{ left: node.x, top: node.y, width: COL_W }}
+                  >
+                    <MatchCard
+                      m={node.match}
+                      side={node.side}
+                      roundLabel={roundLabelOf(node.roundNumber, node.side)}
+                      isDoubles={isDoubles}
+                      isLive={isLive}
+                      getEntryName={getEntryName}
+                      getSeed={getSeed}
+                      onEnterScore={() => setScoreMatch(node.match)}
+                    />
+                  </div>
+                ))}
+
+                {/* THE 3RD PLACE PLAYOFF, in the clear space under the final.
+                    The centre column carries one card, so a converging draw has
+                    a whole column of room exactly where the reader is already
+                    looking — and it is the other match that ends somebody's
+                    tournament, decided on the same day.
+
+                    NO LINE TOUCHES IT, and that is a change from the linear
+                    draw, which reached a dashed elbow back to the semi-finals.
+                    In a converging draw the two beaten semi-finalists are on
+                    OPPOSITE sides of the final, so there is no single path back
+                    to draw and any line long enough to reach one of them has to
+                    cross the final — which would say something about the final.
+                    The caption does the work instead, and now has to, since a
+                    reader can no longer infer "leads nowhere" from a line that
+                    is not there. */}
+                {thirdPlace && layout.thirdPlace && (
+                  <div
+                    className="absolute"
+                    style={{ left: layout.thirdPlace.x, top: layout.thirdPlace.y, width: COL_W }}
+                  >
+                    <MatchCard
+                      m={thirdPlace}
+                      side="centre"
+                      roundLabel="3rd Place Playoff"
+                      isDoubles={isDoubles}
+                      isLive={isLive}
+                      getEntryName={getEntryName}
+                      getSeed={getSeed}
+                      onEnterScore={() => setScoreMatch(thirdPlace)}
+                    />
+                    <h3 className="mt-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--text-secondary)]">
+                      3rd Place Playoff
+                    </h3>
+                    <p className="text-[11px] leading-snug text-[var(--text-muted)]">
+                      The two beaten semi-finalists, one from each half. Decides 3rd and 4th — the
+                      winner does not advance to the final.
+                    </p>
                   </div>
                 )}
-              </Fragment>
-            );
-          })}
+              </div>
             </div>
           </div>
         </div>
       </div>
-
-      {/* Fallback only. With no semi-final column there is nothing to hang the
-          playoff from, so it keeps its own panel rather than vanishing — an
-          event whose bracket data is odd enough to reach here still has a real
-          match that needs a score entered. */}
-      {thirdPlace && columns.length < 2 && (
-        <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
-          <div className="flex items-baseline gap-3 mb-3">
-            <h3 className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--text-secondary)]">
-              3rd Place Playoff
-            </h3>
-            <p className="text-[11px] text-[var(--text-muted)]">
-              The two semi-final losers. Decides 3rd and 4th — the winner does not advance to the final.
-            </p>
-          </div>
-          <div style={{ width: COL_W }}>
-            <MatchCard
-              m={thirdPlace}
-              isDoubles={isDoubles}
-              isLive={isLive}
-              getEntryName={getEntryName}
-              getSeed={getSeed}
-              onEnterScore={() => setScoreMatch(thirdPlace)}
-            />
-          </div>
-        </div>
-      )}
 
       {scoreMatch && (
         <ScoreEntryDialog
@@ -508,6 +441,8 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles, pha
 
 interface CardProps {
   m: TournamentMatchRow;
+  side: DrawSide;
+  roundLabel: string;
   isDoubles: boolean;
   isLive: boolean;
   getEntryName: (id: string | null) => string;
@@ -515,7 +450,7 @@ interface CardProps {
   onEnterScore: () => void;
 }
 
-function MatchCard({ m, isDoubles, isLive, getEntryName, getSeed, onEnterScore }: CardProps) {
+function MatchCard({ m, side, roundLabel, isDoubles, isLive, getEntryName, getSeed, onEnterScore }: CardProps) {
   const aId = isDoubles ? m.pair_a_id : m.participant_a_id;
   const bId = isDoubles ? m.pair_b_id : m.participant_b_id;
   const winnerId = isDoubles ? m.winner_pair_id : m.winner_participant_id;
@@ -544,29 +479,40 @@ function MatchCard({ m, isDoubles, isLive, getEntryName, getSeed, onEnterScore }
   // isLive would hide the affordance exactly where it is wanted.
   const canChangeResult = isCompleted && !isSkip;
 
+  // THE WHOLE CARD IS THE BUTTON, where it used to be the 26px footer strip.
+  // All four of those states already opened the same dialog, so the split
+  // bought nothing and cost the tab its tap target: 26px was under the 44px
+  // minimum at 100%, never mind at the scale a 32-draw opens at. An 88px card
+  // is still 44px at the 0.5 zoom floor, which is why 88 is the number.
+  const actionable = !!(canEnterScore || canRecover || canChangeResult);
+  const actionLabel =
+    canEnterScore ? 'Enter Score'
+    : canRecover ? (isVoided ? 'Restore Match' : 'Fix Slots')
+    : null;
+
   const scores = m.scores as GameScore[] | null;
   // Either side can be the empty one — the generator gives the skip to whichever
   // slot the seed landed in, not always slot B.
   const sideLabel = (id: string | null) => (isSkip && !id ? 'skip' : getEntryName(id));
-  const label = `Match ${m.match_number ?? ''}: ${sideLabel(aId)} vs ${sideLabel(bId)}${
+  const label = `${roundLabel}. Match ${m.match_number ?? ''}: ${sideLabel(aId)} vs ${sideLabel(bId)}${
     isCompleted ? `, winner: ${getEntryName(winnerId)}` : ''
-  }`;
+  }${actionable ? `. ${actionLabel ?? 'Change the recorded result'}` : ''}`;
 
-  return (
-    <div
-      role="row"
-      aria-label={label}
-      style={{ height: CARD_H }}
-      className={`flex flex-col rounded-lg border overflow-hidden transition-colors ${
-        isReady && isLive
-          ? 'border-[color-mix(in_srgb,var(--color-accent)_50%,transparent)] shadow-[0_0_0_1px_rgba(204,0,0,0.18)]'
-          : isSkip
-          ? 'border-dashed border-[var(--border)] opacity-60'
-          : 'border-[var(--border)]'
-      }`}
-    >
+  // ONE GAME'S DIGITS PER SIDE, not the whole scoreline twice. A best-of-3 read
+  // from A's point of view is "21-19 15-21 21-18" — seventeen mono characters
+  // next to a doubles pair's name, which did not fit in the old 244px column
+  // and certainly does not fit in this one. Split down the middle it is "21 15
+  // 21" over "19 21 18", which is the same information in half the width and is
+  // how a printed draw sheet has always shown it.
+  const scoreFor = (which: 'a' | 'b') =>
+    scores?.map((g) => (which === 'a' ? g.a : g.b)).join(' ') ?? null;
+
+  const body = (
+    <>
       <div
-        className="flex items-center justify-between px-2.5 text-[10px] font-mono text-[var(--text-muted)] bg-[var(--bg-elevated)] border-b border-[var(--border)] shrink-0"
+        className={`flex items-center justify-between px-2 text-[10px] font-mono text-[var(--text-muted)] bg-[var(--bg-elevated)] border-b border-[var(--border)] shrink-0 ${
+          side === 'right' ? 'flex-row-reverse' : ''
+        }`}
         style={{ height: META_H }}
       >
         <span>{m.match_number ? `M${m.match_number}` : ''}</span>
@@ -581,7 +527,8 @@ function MatchCard({ m, isDoubles, isLive, getEntryName, getSeed, onEnterScore }
         // An empty slot has no result to strike through — a skip match is
         // "completed" with a winner, so without the id guard SKIP renders struck.
         lost={isCompleted && !!winnerId && !!aId && winnerId !== aId}
-        score={scores?.map((g) => `${g.a}-${g.b}`).join(' ') ?? null}
+        score={scoreFor('a')}
+        mirrored={side === 'right'}
       />
       <div className="border-t border-[var(--border)]" />
       <Side
@@ -590,45 +537,58 @@ function MatchCard({ m, isDoubles, isLive, getEntryName, getSeed, onEnterScore }
         isPlaceholder={!bId}
         won={isCompleted && winnerId === bId}
         lost={isCompleted && !!winnerId && !!bId && winnerId !== bId}
-        score={scores?.map((g) => `${g.b}-${g.a}`).join(' ') ?? null}
+        score={scoreFor('b')}
+        mirrored={side === 'right'}
       />
 
-      <div className="shrink-0 border-t border-[var(--border)]" style={{ height: FOOT_H }}>
-        {canEnterScore ? (
-          <button
-            onClick={onEnterScore}
-            aria-label={`Enter score for match ${m.match_number ?? ''}`}
-            className="w-full h-full text-xs font-medium text-[var(--color-accent)] bg-[var(--bg-elevated)] hover:bg-[color-mix(in_srgb,var(--color-accent)_10%,transparent)] transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
-          >
-            Enter Score
-          </button>
-        ) : canRecover ? (
-          <button
-            onClick={onEnterScore}
-            aria-label={`${isVoided ? 'Restore match' : 'Fix slots for match'} ${m.match_number ?? ''}`}
-            className="w-full h-full text-xs font-medium text-[var(--color-warning)] bg-[var(--bg-elevated)] hover:bg-[color-mix(in_srgb,var(--color-warning)_10%,transparent)] transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-warning)] focus-visible:outline-none"
-          >
-            {isVoided ? 'Restore Match' : 'Fix Slots'}
-          </button>
-        ) : canChangeResult ? (
-          <button
-            onClick={onEnterScore}
-            aria-label={`Change the recorded result for match ${m.match_number ?? ''}`}
-            className="w-full h-full flex items-center justify-center gap-2 text-xs font-medium bg-[var(--bg-elevated)] hover:bg-[color-mix(in_srgb,var(--color-warning)_10%,transparent)] transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-warning)] focus-visible:outline-none"
-          >
-            {/* The status stays visible. This is a settled match, and the button
-                must not read as though the result is still being entered — the
-                label is the secondary thing on the row, not the headline. */}
-            <StatusLabel status={m.status} isSkip={false} />
-            <span className="text-[var(--text-muted)]">· Change</span>
-          </button>
+      <div
+        className={`shrink-0 border-t border-[var(--border)] flex items-center justify-center gap-2 bg-[var(--bg-elevated)] ${
+          canEnterScore ? 'text-[var(--color-accent)]' : canRecover ? 'text-[var(--color-warning)]' : ''
+        }`}
+        style={{ height: FOOT_H }}
+      >
+        {actionLabel ? (
+          <span className="text-xs font-medium">{actionLabel}</span>
         ) : (
-          <div className="w-full h-full flex items-center justify-center bg-[var(--bg-elevated)]">
+          <>
+            {/* The status stays visible on a settled match. This is a decided
+                result, and the card must not read as though the score is still
+                being entered — "Change" is the secondary thing on the row. */}
             <StatusLabel status={m.status} isSkip={!!isSkip} />
-          </div>
+            {canChangeResult && <span className="text-[10px] text-[var(--text-muted)]">· Change</span>}
+          </>
         )}
       </div>
-    </div>
+    </>
+  );
+
+  const shell =
+    `w-full flex flex-col border overflow-hidden transition-colors text-left ${
+      isReady && isLive
+        ? 'border-[color-mix(in_srgb,var(--color-accent)_50%,transparent)] shadow-[0_0_0_1px_rgba(204,0,0,0.18)]'
+        : isSkip
+        ? 'border-dashed border-[var(--border)] opacity-60'
+        : 'border-[var(--border)]'
+    }`;
+
+  if (!actionable) {
+    return (
+      <div role="group" aria-label={label} style={{ height: CARD_H }} className={shell}>
+        {body}
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onEnterScore}
+      aria-label={label}
+      style={{ height: CARD_H }}
+      className={`${shell} hover:border-[var(--border-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]`}
+    >
+      {body}
+    </button>
   );
 }
 
@@ -639,6 +599,7 @@ function Side({
   won,
   lost,
   score,
+  mirrored,
 }: {
   name: string;
   seed: number | null;
@@ -646,23 +607,34 @@ function Side({
   won: boolean;
   lost: boolean;
   score: string | null;
+  /**
+   * The bottom half of a converging draw runs right to left, so its cards are
+   * mirrored: the seed and the score sit on the OUTSIDE edge and the name reads
+   * inwards, towards the final. Without this the two halves read as one long
+   * chart with a gap in it rather than as two pointing at each other.
+   */
+  mirrored: boolean;
 }) {
   return (
     <div
-      className={`flex-1 min-h-0 flex items-center gap-2 px-2.5 text-sm ${
+      className={`flex-1 min-h-0 flex items-center gap-1.5 px-2 text-[13px] ${
+        mirrored ? 'flex-row-reverse text-right' : ''
+      } ${
         // Inset bar rather than a real border so the winner's name stays on the
         // same baseline as the loser's. The wash is spelled out as color-mix
         // because Tailwind 3 silently drops `/10` on an arbitrary var() colour.
         won
-          ? 'bg-[color-mix(in_srgb,var(--color-success)_12%,transparent)] shadow-[inset_2px_0_0_var(--color-success)]'
+          ? mirrored
+            ? 'bg-[color-mix(in_srgb,var(--color-success)_12%,transparent)] shadow-[inset_-2px_0_0_var(--color-success)]'
+            : 'bg-[color-mix(in_srgb,var(--color-success)_12%,transparent)] shadow-[inset_2px_0_0_var(--color-success)]'
           : 'bg-[var(--bg-card)]'
       }`}
     >
-      <span className="w-5 shrink-0 text-right font-mono text-[10px] text-[var(--text-muted)]">
+      <span className={`w-4 shrink-0 font-mono text-[10px] text-[var(--text-muted)] ${mirrored ? 'text-left' : 'text-right'}`}>
         {seed ? seed : ''}
       </span>
       <span
-        className={`flex-1 truncate ${
+        className={`flex-1 min-w-0 truncate ${
           won
             ? 'text-[var(--color-success)] font-semibold'
             : lost
@@ -675,7 +647,7 @@ function Side({
         {name}
       </span>
       {won && <span className="sr-only">(Winner)</span>}
-      {score && <span className="shrink-0 font-mono text-xs text-[var(--text-muted)]">{score}</span>}
+      {score && <span className="shrink-0 font-mono text-[11px] text-[var(--text-muted)]">{score}</span>}
     </div>
   );
 }

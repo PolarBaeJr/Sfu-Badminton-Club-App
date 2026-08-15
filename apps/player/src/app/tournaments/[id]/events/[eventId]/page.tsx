@@ -6,7 +6,6 @@ import {
   TOURNAMENT_EVENT_STATUS_LABELS,
   TOURNAMENT_EVENT_STATUS_COLORS,
   describeMatchShape,
-  getRoundName,
   isOutOfEvent,
   unwrap,
   unwrapMaybe,
@@ -26,18 +25,12 @@ import { FadeIn } from '@/components/motion-wrapper';
 import { EventActions } from './EventActions';
 import { ParticipantsList, type ParticipantEntry } from './ParticipantsList';
 import { LiveTournament } from '../../../live-tournament';
+import { Draw, type DrawMatch } from './Draw';
 
-/**
- * Bracket geometry — one source of truth for the card size, the column offsets
- * and the connector elbows. Every card is forced to BRACKET_CARD_H so a round's
- * pitch is exactly BRACKET_PITCH no matter what a card contains; the elbows are
- * positioned off the same numbers.
- */
-const BRACKET_CARD_H = 92;                                  // fixed outer height of a match card
-const BRACKET_GAP    = 12;                                  // gap between sibling cards in round 1
-const BRACKET_PITCH  = BRACKET_CARD_H + BRACKET_GAP;        // centre-to-centre distance in round 1
-const BRACKET_HEAD_H = 30;                                  // round heading block, equal in every column
-const BRACKET_FOOT_H = 22;                                  // card footer strip (score / status)
+// The bracket's geometry used to be five constants here and five more in the
+// console, drifting apart card height by card height. It is now one shared
+// layout engine (@badminton/shared/utils/bracket-layout) with each app owning
+// only the sizes it draws at — see ./Draw.
 
 export default async function EventDetailPage({
   params,
@@ -96,7 +89,7 @@ export default async function EventDetailPage({
   // still a wrong answer. Note that the `as Array<Record<string, unknown>>`
   // casts erase the select-derived row type, so type-check cannot check this
   // list for you; it was checked by reading every access off these rows,
-  // including the bracket-notation ones in getEntryName/getEntrySeed/isWinner
+  // including the bracket-notation ones in getEntryName/isWinner/toDrawMatch
   // and the `(e: any)` ones in Final Standings.
   //
   // ONE STRING LITERAL EACH, never a concatenation: supabase-js parses the
@@ -254,11 +247,12 @@ export default async function EventDetailPage({
       });
 
   // The third-place playoff shares round_number with the final so the two are
-  // scheduled together (00080), and it has to come OUT of the round grouping
-  // before the columns are built. Left in, it renders as a second card in the
-  // final's column with a connector elbow drawn into it — which says the winner
-  // of that match goes on to play the final. They do not; the match feeds
-  // nothing. It gets its own labelled row underneath instead.
+  // scheduled together (00080), and it has to come OUT of the tree before the
+  // layout is built. Left in, it is a round of two feeding a round of one —
+  // the exact shape of "these two matches feed that one" — so the layout engine
+  // would draw the semi-finals' elbows from a false premise and the playoff
+  // would read as a second final. It is passed separately and placed in the
+  // clear space under the final instead.
   //
   // "Your Matches" further down deliberately still reads it off allMatches: a
   // player who is in it wants to see it, and it identifies itself there by
@@ -281,18 +275,6 @@ export default async function EventDetailPage({
     : allMatches;
   const bracketMatches = knockoutMatches.filter((m) => !m.is_third_place);
 
-  const roundsMap = new Map<number, Array<Record<string, unknown>>>();
-  let maxRound = 0;
-  for (const m of bracketMatches) {
-    const rn = m.round_number as number;
-    if (rn > maxRound) maxRound = rn;
-    if (!roundsMap.has(rn)) roundsMap.set(rn, []);
-    roundsMap.get(rn)!.push(m);
-  }
-
-  const totalRounds = maxRound;
-  const sortedRounds = Array.from(roundsMap.entries()).sort(([a], [b]) => a - b);
-
   // The pool half's own rounds, listed separately so a pool_to_bracket event
   // shows its round robin as a results list under the bracket.
   const poolRoundsMap = new Map<number, Array<Record<string, unknown>>>();
@@ -314,15 +296,6 @@ export default async function EventDetailPage({
     return participantNameMap[pid] || 'TBD';
   }
 
-  function getEntrySeed(match: Record<string, unknown>, side: 'a' | 'b'): number | null {
-    const key = doubles
-      ? side === 'a' ? 'pair_a_id' : 'pair_b_id'
-      : side === 'a' ? 'participant_a_id' : 'participant_b_id';
-    const pid = match[key] as string | null;
-    if (!pid) return null;
-    return participantSeedMap[pid] ?? null;
-  }
-
   function isWinner(match: Record<string, unknown>, side: 'a' | 'b'): boolean {
     const key      = doubles ? (side === 'a' ? 'pair_a_id' : 'pair_b_id') : (side === 'a' ? 'participant_a_id' : 'participant_b_id');
     const winnerKey= doubles ? 'winner_pair_id' : 'winner_participant_id';
@@ -339,6 +312,25 @@ export default async function EventDetailPage({
   // endsInKnockout, not `=== 'single_elimination'`: a pool_to_bracket event has
   // a bracket too, and it is the half that decides the event.
   const isSingleElim = endsInKnockout(event.format as string);
+
+  // The draw, flattened to entry ids ONCE. Everything below the flattening is
+  // the same code for singles and for doubles — the `doubles` branch is spent
+  // here rather than three times inside a renderer, which is what the four
+  // near-identical key lookups above used to be.
+  const toDrawMatch = (m: Record<string, unknown>): DrawMatch => ({
+    id:               m.id as string,
+    round_number:     m.round_number as number,
+    bracket_position: (m.bracket_position as number) ?? 0,
+    round_name:       (m.round_name as string | null) ?? null,
+    status:           m.status as string,
+    scores:           (m.scores as Array<{ a: number; b: number }> | null) ?? null,
+    is_bye:           !!m.is_bye,
+    aId:              (doubles ? m.pair_a_id : m.participant_a_id) as string | null,
+    bId:              (doubles ? m.pair_b_id : m.participant_b_id) as string | null,
+    winnerId:         (doubles ? m.winner_pair_id : m.winner_participant_id) as string | null,
+  });
+  const drawMatches = bracketMatches.map(toDrawMatch);
+  const drawThirdPlace = thirdPlaceMatch ? toDrawMatch(thirdPlaceMatch) : null;
 
   return (
     <div className="space-y-5 pb-28 px-4 sm:px-0">
@@ -432,143 +424,27 @@ export default async function EventDetailPage({
         </div>
       </FadeIn>
 
-      {/* Bracket View (Single Elimination, and the knockout half of a
-          pool_to_bracket event) */}
+      {/* THE DRAW (single elimination, and the knockout half of a
+          pool_to_bracket event).
+
+          A CONVERGING WALL CHART on a tablet and up: the top half runs inwards
+          from the left, the bottom half inwards from the right, and they meet
+          at the final in the centre column. On a phone the same draw is a
+          round-by-round list — see DrawRounds for why a phone does not get the
+          chart. Both come out of one shared layout engine. */}
       {isSingleElim && bracketMatches.length > 0 && (
         <FadeIn delay={0.05}>
           <div className="card-elevated rounded-2xl overflow-hidden">
             <div className="flex items-center gap-2 p-4 pb-0 mb-3">
               <Trophy className="w-4 h-4 text-[var(--color-gold)]" />
-              <h2 className="display-md">Bracket</h2>
+              <h2 className="display-md">Draw</h2>
             </div>
-            {/* Horizontal scroll wrapper with fade mask */}
-            <div className="overflow-x-auto scroll-fade-x pb-4 px-4" role="region" aria-label="Tournament bracket">
-              <div className="flex min-w-fit" role="table" aria-label="Bracket rounds" style={{ gap: '32px' }}>
-                {sortedRounds.map(([roundNum, roundMatches], roundIdx) => {
-                  const isFirstRound = roundIdx === 0;
-                  const isLastRound  = roundIdx === sortedRounds.length - 1;
-                  const roundMult    = Math.pow(2, roundIdx);
-                  // Everything below is derived from BRACKET_CARD_H / BRACKET_GAP so the
-                  // elbows and the column offsets can never drift apart. The card height
-                  // is enforced on the card itself — the old value was a guess that no
-                  // card actually matched, which is why the lines missed the boxes.
-                  const gap          = roundMult * BRACKET_PITCH - BRACKET_CARD_H;
-                  const topPadding   = ((roundMult - 1) * BRACKET_PITCH) / 2;
-
-                  return (
-                    <div
-                      key={roundNum}
-                      className="flex flex-col min-w-[210px]"
-                      role="rowgroup"
-                      aria-label={getRoundName(roundNum, totalRounds)}
-                    >
-                      {/* Headings live outside the gapped column — as a flex child they
-                          picked up the round's own (doubling) gap and shoved each round
-                          down by a different amount. */}
-                      <h3
-                        className="eyebrow text-center flex items-center justify-center shrink-0"
-                        role="columnheader"
-                        style={{ height: `${BRACKET_HEAD_H}px` }}
-                      >
-                        {getRoundName(roundNum, totalRounds)}
-                      </h3>
-                      <div
-                        className="flex flex-col"
-                        style={{ gap: `${gap}px`, paddingTop: `${topPadding}px`, paddingBottom: `${topPadding}px` }}
-                      >
-                        {roundMatches.map((m, matchIdx) => {
-                          const matchStatus = m.status as TournamentMatchStatus;
-                          const scores      = m.scores as Array<{ a: number; b: number }> | null;
-                          const scoreStr    = formatScores(scores);
-                          const isSkip      = !!m.is_bye;
-                          const footer      = scoreStr
-                            || (isSkip ? 'Skip' : matchStatus === 'completed' ? 'W/O' : 'vs');
-
-                          return (
-                            <div key={m.id as string} className="relative" style={{ height: `${BRACKET_CARD_H}px` }}>
-                              {!isLastRound && <div className="absolute top-1/2 -right-[16px] w-[16px] border-t border-[var(--border)]" />}
-                              {!isFirstRound && <div className="absolute top-1/2 -left-[16px] w-[16px] border-t border-[var(--border)]" />}
-                              {!isLastRound && matchIdx % 2 === 0 && matchIdx + 1 < roundMatches.length && (
-                                <div className="absolute border-r border-[var(--border)]" style={{ right: '-16px', top: '50%', height: `${BRACKET_CARD_H + gap}px` }} />
-                              )}
-                              <div
-                                className={`h-full flex flex-col border border-[var(--border)] rounded-xl overflow-hidden card-surface ${
-                                  isSkip ? 'opacity-50' : 'card-interactive'
-                                }`}
-                              >
-                                {(['a', 'b'] as const).map((side) => {
-                                  const name = getEntryName(m, side);
-                                  const seed = getEntrySeed(m, side);
-                                  const won  = isWinner(m, side);
-                                  return (
-                                    <div
-                                      key={side}
-                                      className={`flex-1 min-h-0 px-2.5 text-sm flex items-center gap-2 ${
-                                        side === 'b' ? 'border-t border-[var(--border)]' : ''
-                                      } ${
-                                        won
-                                          ? 'match-winner'
-                                          : 'bg-white/[0.02] text-[var(--text-secondary)]'
-                                      }`}
-                                    >
-                                      <span className="nums text-[10px] text-[var(--text-dim)] w-4 text-right shrink-0">
-                                        {seed ?? ''}
-                                      </span>
-                                      <span className="truncate flex-1">{name}</span>
-                                      {won && <span className="sr-only">(Winner)</span>}
-                                      {won && matchStatus === 'completed' && (
-                                        <Crown className="w-3 h-3 text-[var(--color-gold)] shrink-0" aria-hidden="true" />
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                                <div
-                                  className="nums flex items-center justify-center text-[11px] text-[var(--text-dim)] border-t border-[var(--border)] shrink-0"
-                                  style={{ height: `${BRACKET_FOOT_H}px` }}
-                                >
-                                  {footer}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* 3rd Place Playoff — outside the scrolling grid, with no connector
-                touching it, so it cannot read as a second final. */}
-            {thirdPlaceMatch && (
-              <div className="px-4 pb-4">
-                <h3 className="eyebrow mb-2">3rd Place Playoff</h3>
-                <div className="border border-[var(--border)] rounded-xl overflow-hidden max-w-[280px]">
-                  {(['a', 'b'] as const).map((side) => {
-                    const won = isWinner(thirdPlaceMatch, side);
-                    return (
-                      <div
-                        key={side}
-                        className={`px-2.5 py-2 text-sm flex items-center gap-2 ${
-                          side === 'b' ? 'border-t border-[var(--border)]' : ''
-                        } ${won ? 'match-winner' : 'bg-white/[0.02] text-[var(--text-secondary)]'}`}
-                      >
-                        <span className="truncate flex-1">{getEntryName(thirdPlaceMatch, side)}</span>
-                        {won && <span className="sr-only">(Winner)</span>}
-                      </div>
-                    );
-                  })}
-                  <div className="nums flex items-center justify-center text-[11px] text-[var(--text-dim)] border-t border-[var(--border)] py-1.5">
-                    {formatScores(thirdPlaceMatch.scores as Array<{ a: number; b: number }> | null)
-                      || (thirdPlaceMatch.status === 'completed' ? 'W/O' : 'vs')}
-                  </div>
-                </div>
-                <p className="text-xs text-[var(--text-muted)] mt-2">
-                  The two semi-final losers, playing for 3rd. The winner does not advance to the final.
-                </p>
-              </div>
-            )}
+            <Draw
+              matches={drawMatches}
+              thirdPlace={drawThirdPlace}
+              nameOf={participantNameMap}
+              seedOf={participantSeedMap}
+            />
           </div>
         </FadeIn>
       )}
