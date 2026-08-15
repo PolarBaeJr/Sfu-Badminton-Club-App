@@ -91,10 +91,39 @@ describe('isStaleBuildResponse — refuses (false positives are worse than the b
     ).toBe(false);
   });
 
-  it('refuses 5xx on an action call — the server is down, reloading will not help', () => {
-    for (const status of [500, 502, 503, 504]) {
+  // The 5xx split, which is the whole reason this is not `status >= 500`.
+  //
+  // 502/503/504 come from something IN FRONT of the app — during a container
+  // roll the old one is gone, the new one is not serving, and the proxy answers
+  // with its own HTML error page. That page is neither RSC nor a redirect,
+  // which is exactly the dead end hit on 2026-08-13. A reload fixes it seconds
+  // later, so offering one is honest.
+  //
+  // 500 is the APP itself erroring. A reload returns the same error, and
+  // telling a member to reload sends them away from a real failure with false
+  // reassurance.
+  it('refuses 500 — the app erred, and reloading returns the same error', () => {
+    for (const status of [500, 501]) {
       expect(
         isStaleBuildResponse({ carriesServerAction: true, status, actionNotFoundHeader: null }),
+      ).toBe(false);
+    }
+  });
+
+  it('accepts gateway-class 5xx on an action call — that is a deploy in progress', () => {
+    for (const status of [502, 503, 504]) {
+      expect(
+        isStaleBuildResponse({ carriesServerAction: true, status, actionNotFoundHeader: null }),
+      ).toBe(true);
+    }
+  });
+
+  it('still refuses a gateway 5xx that was not an action call', () => {
+    // An image or a health check failing mid-roll must not raise the banner —
+    // the member was not trying to write anything, so nothing was lost.
+    for (const status of [502, 503, 504]) {
+      expect(
+        isStaleBuildResponse({ carriesServerAction: false, status, actionNotFoundHeader: null }),
       ).toBe(false);
     }
   });

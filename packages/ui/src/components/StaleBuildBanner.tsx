@@ -76,13 +76,20 @@ export function StaleBuildBanner() {
             style={{ color: 'var(--color-accent)' }}
             aria-hidden="true"
           />
-          {/* "was not saved" is a claim, so it had better be true: the server
-              rejects an unknown action id before the handler runs, so the write
-              never reached the database. Anything the member completed earlier
-              in this tab did save, which is why this says "your last change"
-              and not "your work". */}
+          {/* "was not saved" is a claim, so it had better be true. It is, in
+              both cases this fires for: the server rejects an unknown action id
+              BEFORE the handler runs, and a gateway-class 5xx means the request
+              never reached the app at all. Either way the write did not land.
+              Anything the member completed earlier in this tab did save, which
+              is why this says "your last change" and not "your work".
+
+              "updated or restarting" rather than "updated" because the second
+              case — 502/503/504 during a container roll — is not yet a new
+              build from the member's side; it is the gap between two. Claiming
+              an update that has not finished would be a small lie told at the
+              exact moment the app is asking to be trusted. */}
           <p className="min-w-0 text-sm leading-snug">
-            <span className="font-semibold">The app was updated.</span>{' '}
+            <span className="font-semibold">The app was updated or is restarting.</span>{' '}
             <span className="text-[var(--text-secondary)]">
               Your last change was not saved. Reload to continue.
             </span>

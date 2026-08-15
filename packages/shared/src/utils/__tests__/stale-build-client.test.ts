@@ -94,6 +94,24 @@ describe('installStaleBuildDetector — raises the flag', () => {
     expect(mod.isStaleBuild()).toBe(true);
   });
 
+  // THE CASE ACTUALLY HIT ON 2026-08-13. During a container roll the proxy
+  // answers an action POST with its own HTML error page — neither RSC nor a
+  // redirect — which is what Next reports as "An unexpected response was
+  // received from the server", naming no cause and offering no way out. A
+  // reload fixes it seconds later, which is the test for whether offering one
+  // is honest. 500 stays refused: that is the app erring, not the gap between
+  // two of them.
+  it('on a gateway-class 5xx to an action call — a deploy in progress', async () => {
+    for (const status of [502, 503, 504]) {
+      const mod = await freshModule();
+      const { host } = hostReturning(fakeResponse(status, { 'content-type': 'text/html' }));
+      mod.installStaleBuildDetector(host);
+
+      await host.fetch('/sessions', ACTION_INIT);
+      expect(mod.isStaleBuild(), `status ${status} should raise the flag`).toBe(true);
+    }
+  });
+
   it('when the action id rides on a Request instead of an init object', async () => {
     const mod = await freshModule();
     const { host } = hostReturning(fakeResponse(404, { 'x-nextjs-action-not-found': '1' }));
@@ -148,8 +166,7 @@ describe('installStaleBuildDetector — does NOT raise the flag', () => {
     ['an unauthenticated action', fakeResponse(401)],
     ['a forbidden action', fakeResponse(403)],
     ['a redirect to login', fakeResponse(307)],
-    ['the app being down mid-roll (502)', fakeResponse(502, { 'content-type': 'text/html' })],
-    ['a gateway timeout (504)', fakeResponse(504)],
+    ['the app erroring in its own handler (500)', fakeResponse(500, { 'content-type': 'text/html' })],
     ['a crash inside the action (500)', fakeResponse(500)],
   ];
 

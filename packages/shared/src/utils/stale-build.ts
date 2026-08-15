@@ -133,15 +133,34 @@ export interface StaleBuildResponseInput {
  *
  *   - Not an action request → false. A 404 from an ordinary fetch is an
  *     ordinary 404.
- *   - 5xx → false. That is the server being down or a proxy failing mid-roll.
- *     It looks identical to the member and is NOT fixed by reloading, so
- *     telling them to reload would be a lie.
+ *   3. A GATEWAY-CLASS 5xx — 502, 503, 504 — answering an action call. These
+ *      come from something IN FRONT of the app rather than from the app, and
+ *      during a deploy that is exactly what a member meets: the old container
+ *      is gone, the new one is not yet serving, and the proxy answers with its
+ *      own HTML error page. That page is neither RSC nor a redirect, which is
+ *      what produced the "An unexpected response was received from the server"
+ *      seen on 2026-08-13 — a dead end with no cause named and no way forward.
+ *      Reloading DOES fix it, seconds later, which is the whole test for
+ *      whether offering a reload is honest.
+ *
+ * Everything else is refused on purpose:
+ *
+ *   - Not an action request → false. A 404 from an ordinary fetch is an
+ *     ordinary 404.
+ *   - 500 and 501 → false. Those are the APP erroring, not something in front
+ *     of it, and a reload returns the same error. Telling a member to reload
+ *     would send them away from a real failure with false reassurance. The
+ *     distinction from rule 3 is deliberate and is the reason this is not
+ *     simply `status >= 500`.
  *   - A network error (no response at all) never reaches this function.
  */
+const GATEWAY_STATUSES = new Set([502, 503, 504]);
+
 export function isStaleBuildResponse(input: StaleBuildResponseInput): boolean {
   if (!input.carriesServerAction) return false;
   if (input.actionNotFoundHeader === '1') return true;
-  return input.status === 404;
+  if (input.status === 404) return true;
+  return GATEWAY_STATUSES.has(input.status);
 }
 
 /**
