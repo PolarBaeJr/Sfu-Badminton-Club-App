@@ -124,7 +124,15 @@ async function createChallengeImpl(input: ChallengeCreateInput) {
     });
   }
 
-  await supabase.rpc('increment_challenges_issued', { p_player_id: player.id });
+  // Service-role, not the user's client: 00126 revokes EXECUTE on this
+  // SECURITY DEFINER function from anon and authenticated. It takes the player
+  // id as a parameter and checks nothing internally, so while it was reachable
+  // over PostgREST any caller could inflate anyone's reliability counter. The
+  // counter is server-derived bookkeeping, never something the browser asks
+  // for, so moving the one call site to the trusted key is the fix — the
+  // alternative was rewriting a SECURITY DEFINER body, which 00049 warns about.
+  // `player.id` comes from requirePlayer() above, i.e. the verified session.
+  await createServiceRoleClient().rpc('increment_challenges_issued', { p_player_id: player.id });
 
   trackServerEvent(player.id, 'challenge_created', {
     ...getPlayerProps(player),
