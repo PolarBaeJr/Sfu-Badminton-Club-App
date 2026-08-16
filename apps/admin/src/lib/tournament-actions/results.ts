@@ -1482,6 +1482,152 @@ export async function unvoidMatch(matchId: string, reason: string): Promise<Acti
   return runAction(async () => { await unvoidMatchImpl(matchId, reason); });
 }
 
+// ============================================================
+// What the result did to the two entrants — READ ONLY
+// ============================================================
+//
+// "once a game is scored, show a summary". The figures are THIS EVENT's, not a
+// career: tournament_participants carries elo_before / elo_after / elo_change /
+// points / final_position per entrant per event, and elo_change accumulates
+// across the event's rounds (00083) while elo_after tracks the ladder, so the
+// pair of them is a true "where they started, where they are now" for the day.
+//
+// A SEPARATE ACTION rather than a wider return from enterMatchResult. Those
+// signatures are ActionResult<void> and are asserted against by a great deal of
+// test, and the summary is a READ — it has no business sharing a transaction
+// with the write, and it must run AFTER the write has landed to report anything
+// true. Gated on `tournaments.page`, the same capability that renders the event
+// page: the Results and Leaderboard tabs already show these columns to anyone
+// who can open it, so this exposes nothing new.
+//
+// DOUBLES IS THINNER, AND SAYS SO. tournament_pairs has combined_elo, points and
+// final_position and no per-event rating columns at all — there is no pair row
+// for a rating to move on, and the deltas go to the two players' ladders
+// individually. So a doubles summary reports the record and the points and
+// leaves the rating line off rather than printing a blank one.
+export interface EntryEventSummary {
+  entryId: string;
+  name: string;
+  isWinner: boolean;
+  /** Decided matches this entry has played in this event, byes excluded. */
+  played: number;
+  won: number;
+  points: number | null;
+  finalPosition: number | null;
+  /** Singles only — a pair has no rating row of its own. */
+  eloBefore: number | null;
+  eloAfter: number | null;
+  eloChange: number | null;
+}
+
+export interface MatchOutcomeSummary {
+  doubles: boolean;
+  roundName: string | null;
+  scores: Array<{ a: number; b: number }> | null;
+  status: string;
+  /** Placings and points are only written when the event is finalised. */
+  eventFinalised: boolean;
+  a: EntryEventSummary | null;
+  b: EntryEventSummary | null;
+}
+
+async function getMatchOutcomeSummaryImpl(matchId: string): Promise<MatchOutcomeSummary> {
+  await requireCapability('tournaments.page');
+  const adminClient = createAdminClient();
+
+  const { data: match, error } = await adminClient.from('tournament_matches')
+    .select('*, event:tournament_events(id, event_type, status)')
+    .eq('id', matchId)
+    .single();
+  if (error || !match) throw new ExpectedError('That match could not be read back.');
+
+  const event = match.event as Record<string, unknown>;
+  const doubles = isDoublesEvent(event.event_type as TournamentEventType);
+  const eventId = match.event_id as string;
+  const aId = (doubles ? match.pair_a_id : match.participant_a_id) as string | null;
+  const bId = (doubles ? match.pair_b_id : match.participant_b_id) as string | null;
+  const winnerId = (doubles ? match.winner_pair_id : match.winner_participant_id) as string | null;
+
+  // Every match in the event, so the record is counted the same way for both
+  // sides in one round trip. An event holds at most a few hundred rows.
+  const { data: all } = await adminClient.from('tournament_matches')
+    .select('status, is_bye, participant_a_id, participant_b_id, winner_participant_id, pair_a_id, pair_b_id, winner_pair_id')
+    .eq('event_id', eventId);
+
+  const record = (entryId: string) => {
+    let played = 0;
+    let won = 0;
+    for (const m of all ?? []) {
+      // A bye is not a match somebody played, and a voided one is a match that
+      // no longer happened — neither belongs in a record.
+      if (m.is_bye) continue;
+      if (m.status !== 'completed' && m.status !== 'walkover') continue;
+      const a = doubles ? m.pair_a_id : m.participant_a_id;
+      const b = doubles ? m.pair_b_id : m.participant_b_id;
+      if (a !== entryId && b !== entryId) continue;
+      played++;
+      if ((doubles ? m.winner_pair_id : m.winner_participant_id) === entryId) won++;
+    }
+    return { played, won };
+  };
+
+  const entries = new Map<string, EntryEventSummary>();
+  const ids = [aId, bId].filter((x): x is string => !!x);
+
+  if (ids.length > 0 && doubles) {
+    const { data: pairs } = await adminClient.from('tournament_pairs')
+      .select('id, pair_name, points, final_position, player1:players!tournament_pairs_player1_id_fkey(full_name), player2:players!tournament_pairs_player2_id_fkey(full_name)')
+      .in('id', ids);
+    for (const p of pairs ?? []) {
+      const p1 = (p.player1 as { full_name?: string } | null)?.full_name;
+      const p2 = (p.player2 as { full_name?: string } | null)?.full_name;
+      entries.set(p.id as string, {
+        entryId: p.id as string,
+        // `[a,b].filter(Boolean).join(' / ')` is '' rather than null when both
+        // players are missing, so a trailing ?? would never fire — the fallback
+        // is spelled with || deliberately.
+        name: (p.pair_name as string | null) || [p1, p2].filter(Boolean).join(' / ') || 'Unknown',
+        isWinner: p.id === winnerId,
+        ...record(p.id as string),
+        points: (p.points as number | null) ?? null,
+        finalPosition: (p.final_position as number | null) ?? null,
+        eloBefore: null, eloAfter: null, eloChange: null,
+      });
+    }
+  } else if (ids.length > 0) {
+    const { data: parts } = await adminClient.from('tournament_participants')
+      .select('id, points, final_position, elo_before, elo_after, elo_change, player:players!player_id(full_name)')
+      .in('id', ids);
+    for (const p of parts ?? []) {
+      entries.set(p.id as string, {
+        entryId: p.id as string,
+        name: ((p.player as { full_name?: string } | null)?.full_name) ?? 'Unknown',
+        isWinner: p.id === winnerId,
+        ...record(p.id as string),
+        points: (p.points as number | null) ?? null,
+        finalPosition: (p.final_position as number | null) ?? null,
+        eloBefore: (p.elo_before as number | null) ?? null,
+        eloAfter: (p.elo_after as number | null) ?? null,
+        eloChange: (p.elo_change as number | null) ?? null,
+      });
+    }
+  }
+
+  return {
+    doubles,
+    roundName: (match.round_name as string | null) ?? null,
+    scores: (match.scores as Array<{ a: number; b: number }> | null) ?? null,
+    status: match.status as string,
+    eventFinalised: event.status === 'completed',
+    a: aId ? entries.get(aId) ?? null : null,
+    b: bId ? entries.get(bId) ?? null : null,
+  };
+}
+
+export async function getMatchOutcomeSummary(matchId: string): Promise<ActionResult<MatchOutcomeSummary>> {
+  return runAction(async () => getMatchOutcomeSummaryImpl(matchId));
+}
+
 // Place or clear one side of an undecided match by hand. The escape hatch for a
 // next-round slot that will never be filled by advancement — because the match
 // feeding it was voided, or was a branch of nothing but byes.

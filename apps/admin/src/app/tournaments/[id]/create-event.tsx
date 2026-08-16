@@ -150,7 +150,17 @@ export function CreateEventButton({
           <p className="text-xs text-[var(--text-muted)] -mt-2">
             {TOURNAMENT_EVENT_FORMAT_HINTS[format]}
           </p>
-          <EventFormatFields value={formatValues} onChange={setFormatValues} siblings={seedableSiblings} format={format} />
+          {/* eloMultiplier is the dialog's own live state, not the tournament
+              default, so the ladder's weights move as the exec types in the Elo
+              Multiplier box further down — which is the only way to see what
+              changing it does before the event exists. */}
+          <EventFormatFields
+            value={formatValues}
+            onChange={setFormatValues}
+            siblings={seedableSiblings}
+            format={format}
+            eloMultiplier={eloMultiplier}
+          />
           <Input
             label="Max Participants (optional)"
             type="number"

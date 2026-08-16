@@ -66,7 +66,9 @@ export {
   setMatchEntry,
   editMatchResult,
   undoMatchResult,
+  getMatchOutcomeSummary,
 } from './tournament-actions/results';
+export type { MatchOutcomeSummary, EntryEventSummary } from './tournament-actions/results';
 
 export {
   applyPlacementBonuses,

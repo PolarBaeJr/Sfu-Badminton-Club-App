@@ -8,10 +8,8 @@ import {
   calculateEloUpdate,
   getKFactor,
   getMarginMultiplier,
-  getFormatWeight,
-  getEventRules,
-  hasTypedFormat,
-  derivedFormatWeight,
+  resolvedFormatWeight,
+  eventEloMultiplier,
   isDoublesEvent,
   isOutOfEvent,
   isOpenMatch,
@@ -33,8 +31,6 @@ import {
 import { eventWaiverHash } from '@badminton/shared/src/utils/event-waiver';
 import type {
   TournamentEventType,
-  TournamentMatchFormat,
-  MatchFormat,
   RatingSettings,
   SeedBy,
   EventMatchShape,
@@ -509,15 +505,9 @@ export async function unsignedAmong(
   }
 }
 
-// Map tournament match format to the shared elo engine's MatchFormat
-function toEloFormat(mf: TournamentMatchFormat): MatchFormat {
-  switch (mf) {
-    case 'best_of_3_to_21': return 'bo3_21';
-    case 'one_game_21': return 'single_21';
-    case 'one_game_15': return 'single_15';
-    case 'one_game_11': return 'single_11';
-  }
-}
+// The tournament-format -> engine-format mapping that used to live here is now
+// inside resolvedFormatWeight (packages/shared/src/elo/engine.ts), so the
+// console can show the weight this function used to be the only caller of.
 
 // ============================================================
 // Notification helper
@@ -1075,15 +1065,19 @@ export async function applyTournamentMatchElo(matchId: string) {
   // (target / 21) x (1.25 for a best-of) — so a game to 11 lands at ~0.52 and
   // the final at 1.25 with no new formula and no new setting.
   const shape = resolveMatchShape(match as MatchShapeOverride, event as unknown as EventMatchShape);
-  const rules = getEventRules(shape);
-  const eloMultiplier = Number(event.elo_multiplier) || 1.25;
   // A typed format has no entry in the weight table, so its weight is derived
   // from the shape the same way 00031 derives it for custom challenges. Without
   // this, a pool played at 1 game to 15 would move ratings as if it were the
   // event's fallback enum — usually best of 3 to 21, worth 2.5x as much.
-  const formatWeight = hasTypedFormat(shape)
-    ? derivedFormatWeight(rules.bestOf, rules.target)
-    : getFormatWeight(toEloFormat(shape.match_format as TournamentMatchFormat));
+  //
+  // BOTH LINES NOW COME OUT OF THE ENGINE rather than being spelled out here,
+  // because the console prints them: the bracket tab shows each round's weight
+  // under the round's shape, and Event Settings shows the whole ladder. A
+  // display derived from a second copy of this arithmetic would be wrong on
+  // exactly the rounds the two branches disagree about (a game to 11 is 0.52
+  // typed and 0.50 inherited), which is the sort of number nobody re-checks.
+  const eloMultiplier = eventEloMultiplier(event.elo_multiplier);
+  const formatWeight = resolvedFormatWeight(shape);
 
   // What this match does to one player's ratings row. Everything except
   // participant_id is required by apply_tournament_match_rating; only the four

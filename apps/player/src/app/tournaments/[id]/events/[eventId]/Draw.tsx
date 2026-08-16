@@ -1,4 +1,5 @@
-import { getRoundName, computeDrawLayout } from '@badminton/shared';
+import type { ReactNode } from 'react';
+import { getRoundName, computeDrawLayout, splitPairLabel } from '@badminton/shared';
 import type { DrawSide } from '@badminton/shared';
 import { DrawScroller } from './DrawScroller';
 
@@ -256,7 +257,7 @@ function ChartCard({
             {/* No crown icon on a chart card, unlike the list below: the winner
                 already carries .match-winner's colour, and 14px of icon on a
                 144px name field is 14px the name needed more. */}
-            <span className="truncate flex-1 min-w-0">{entryName(m, s, nameOf)}</span>
+            <EntryName label={entryName(m, s, nameOf)} size="chart" />
             {won && <span className="sr-only">(Winner)</span>}
           </div>
         );
@@ -268,6 +269,44 @@ function ChartCard({
         {footer}
       </div>
     </div>
+  );
+}
+
+/**
+ * ONE ENTRY'S NAME — a doubles pair STACKED, one partner a line.
+ *
+ * MEASURED, against the compiled CSS with the real Barlow files, not reasoned
+ * about. The chart card's name field is 130.0px (the 168px column, less 16px of
+ * padding, a 6px gap and the 14px seed gutter). A doubles label is two whole
+ * names joined — "Jonathan Smithson & Katarzyna Kowalski" — and that string is
+ * 231.9px at 13px. It printed nine characters of thirty-eight and named neither
+ * player. Stacked at 11px the longest partner name in the sample,
+ * "Bartholomew Fairweather", is 123.3px, so both fit whole with room over.
+ *
+ * The phone list needed it too, for the same reason and a smaller margin: at
+ * 390px that row's name field is 202.5px once a best-of-3's digits are on it,
+ * and the joined label needs 232px. The comment that used to sit on ListRow
+ * claimed 287px, which was the width BEFORE the digits — the two-line stack is
+ * what makes that claim true again.
+ *
+ * The cost is type size, and it is paid only by doubles — the case that could
+ * not be read at all. A single-line label (a singles player, or a pair with a
+ * name of its own) keeps its size and its truncation exactly as before.
+ */
+function EntryName({ label, size }: { label: string; size: 'chart' | 'list' }) {
+  const lines = splitPairLabel(label);
+  if (lines.length === 1) {
+    return <span className="truncate flex-1 min-w-0" title={label}>{label}</span>;
+  }
+  // leading-[1.05], not [1.1]: the chart row is a fixed 24px and two 11px lines
+  // at 1.1 come to 24.2px, which the card's overflow-hidden was shaving.
+  const lineClass = size === 'chart' ? 'text-[11px] leading-[1.05]' : 'text-[13px] leading-[1.15]';
+  return (
+    <span className="flex-1 min-w-0 flex flex-col justify-center" title={label}>
+      {lines.map((line, i) => (
+        <span key={i} className={`truncate ${lineClass}`}>{line}</span>
+      ))}
+    </span>
   );
 }
 
@@ -311,30 +350,103 @@ function DrawRounds({
     r.nodes.sort((a, b) => a.match.bracket_position - b.match.bracket_position);
   }
 
+  // WHICH ROUNDS OPEN. A 128-entrant draw is 127 matches, and every one of them
+  // stacked open is a list nobody scrolls to the bottom of — the first round
+  // alone is 64 rows, so "the final" is 3,000px below the fold on the one screen
+  // that has the least of it.
+  //
+  // The rule is "the round somebody is here for", in three fallbacks:
+  //   * whatever is being PLAYED (live, or ready to start),
+  //   * failing that the LAST round with a result, which on a finished event is
+  //     the final and on a half-played one is where the draw has got to,
+  //   * failing both, round one — nothing has happened yet, so the fixtures are
+  //     the news.
+  //
+  // A SHORT DRAW OPENS WHOLE. Three rounds is at most seven matches; collapsing
+  // that buys nothing and costs a reader two taps, so an eight-entry event
+  // behaves exactly as it did before this existed.
+  const isPlaying = (r: { nodes: typeof layout.nodes }) =>
+    r.nodes.some((n) => n.match.status === 'live' || n.match.status === 'ready');
+  const hasResult = (r: { nodes: typeof layout.nodes }) =>
+    r.nodes.some((n) => n.match.status === 'completed' || n.match.status === 'walkover');
+
+  const allOpen = rounds.length <= 3;
+  let focusIndex = rounds.findIndex(isPlaying);
+  if (focusIndex === -1) focusIndex = rounds.map(hasResult).lastIndexOf(true);
+  if (focusIndex === -1) focusIndex = 0;
+
   return (
-    <div className="draw-rounds px-4 pb-4 space-y-4">
-      {rounds.map((r) => (
-        <div key={r.roundNumber}>
-          <h3 className="eyebrow mb-2">{roundName(r.roundNumber)}</h3>
-          <div className="space-y-1.5">
-            {r.nodes.map((node) => (
-              <ListRow key={node.id} m={node.match} nameOf={nameOf} seedOf={seedOf} />
-            ))}
-          </div>
-        </div>
+    <div className="draw-rounds px-4 pb-4 space-y-2">
+      {rounds.map((r, i) => (
+        <RoundDisclosure
+          key={r.roundNumber}
+          title={roundName(r.roundNumber)}
+          count={r.nodes.length}
+          open={allOpen || i === focusIndex}
+        >
+          {r.nodes.map((node) => (
+            <ListRow key={node.id} m={node.match} nameOf={nameOf} seedOf={seedOf} />
+          ))}
+        </RoundDisclosure>
       ))}
       {thirdPlace && (
-        <div>
-          <h3 className="eyebrow mb-2">3rd Place Playoff</h3>
-          <div className="space-y-1.5">
-            <ListRow m={thirdPlace} nameOf={nameOf} seedOf={seedOf} />
-          </div>
-          <p className="text-xs text-[var(--text-muted)] mt-2">
+        <RoundDisclosure title="3rd Place Playoff" count={1} open={allOpen || focusIndex === rounds.length - 1}>
+          <ListRow m={thirdPlace} nameOf={nameOf} seedOf={seedOf} />
+          <p className="text-xs text-[var(--text-muted)] pt-1">
             The two beaten semi-finalists. The winner does not advance to the final.
           </p>
-        </div>
+        </RoundDisclosure>
       )}
     </div>
+  );
+}
+
+/**
+ * ONE COLLAPSIBLE ROUND, as a native <details>.
+ *
+ * Native rather than a toggle with state, because Draw is a SERVER component:
+ * a useState disclosure would drag the whole draw across the client boundary
+ * for a triangle. <details> also arrives with the keyboard behaviour, the
+ * expanded/collapsed announcement and browser find-in-page already working,
+ * none of which a div and an onClick get for free.
+ *
+ * WHAT `open` ACTUALLY DOES HERE, since the obvious claim about it is wrong.
+ * React writes the attribute whenever the PROP CHANGES between renders, so this
+ * is not a plain initial state: the page is on a realtime channel (00113), a
+ * result landing re-renders this list, and `focusIndex` moves when the round
+ * being played finishes. A round the reader opened by hand is untouched — its
+ * prop is false on both renders — but the round that WAS the focus closes as
+ * the focus moves on to the next one. That is the behaviour worth having (the
+ * open round follows play) and it costs one tap to undo, but it is not "the
+ * browser owns it from then on", and a comment saying so would be a lie a
+ * future reader would build on.
+ */
+function RoundDisclosure({
+  title, count, open, children,
+}: {
+  title: string;
+  count: number;
+  open: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <details open={open} className="group border border-[var(--border)] rounded-[8px] overflow-hidden">
+      {/* 44px minimum, and the whole strip is the target rather than the
+          triangle. list-none plus the webkit rule removes the default marker,
+          which cannot be laid out inside a flex summary. */}
+      <summary className="flex items-center justify-between gap-2 px-3 min-h-[44px] cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+        <span className="eyebrow">{title}</span>
+        <span className="flex items-center gap-2">
+          <span className="nums text-[11px] text-[var(--text-dim)]">
+            {count} {count === 1 ? 'match' : 'matches'}
+          </span>
+          <span aria-hidden="true" className="text-[10px] text-[var(--text-dim)] transition-transform group-open:rotate-180">
+            ▼
+          </span>
+        </span>
+      </summary>
+      <div className="space-y-1.5 px-3 pb-3 pt-1">{children}</div>
+    </details>
   );
 }
 
@@ -345,8 +457,14 @@ function DrawRounds({
  * Side by side was measured at 390px and does not work. The row is 358px wide;
  * a best-of-3 printed once in the middle ("21-19, 15-21, 21-18") is 100px of
  * it, which leaves 129px a side and truncates "Jonathan Smithson" to
- * "Jonathan..." on both entrants at once. Stacked, each name gets 287px — forty
- * characters — and the digits read down a column the way a scorecard does.
+ * "Jonathan..." on both entrants at once. Stacked, each name gets its own row
+ * and the digits read down a column the way a scorecard does.
+ *
+ * Re-measured since: with this side's OWN digits on the row the name field is
+ * 202.5px, not the 287px this note used to claim — that was the width before
+ * the digits were moved onto it. A doubles label needs 232px, so it still
+ * truncated, which is why the name goes through EntryName here as well as on
+ * the chart.
  */
 function ListRow({
   m, nameOf, seedOf,
@@ -376,7 +494,7 @@ function ListRow({
             <span className="nums text-[10px] text-[var(--text-dim)] w-4 text-right shrink-0">
               {entrySeed(m, s, seedOf) ?? ''}
             </span>
-            <span className="truncate flex-1 min-w-0">{entryName(m, s, nameOf)}</span>
+            <EntryName label={entryName(m, s, nameOf)} size="list" />
             {won && <span className="sr-only">(Winner)</span>}
             {digits && <span className="nums text-xs text-[var(--text-dim)] shrink-0">{digits}</span>}
           </div>

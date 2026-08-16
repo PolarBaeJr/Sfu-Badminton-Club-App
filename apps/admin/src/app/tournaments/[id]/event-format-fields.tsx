@@ -15,6 +15,8 @@ import {
   nextPowerOf2,
   maxFirstRoundByes,
   SEED_SKIP_BOUNDS,
+  eloWeightBreakdown,
+  eventEloMultiplier,
 } from '@badminton/shared';
 import type { TournamentMatchFormat, SeedBy, TournamentEventType, RoundShape } from '@badminton/shared';
 
@@ -177,6 +179,7 @@ export function EventFormatFields({
   siblings,
   format,
   fieldSize,
+  eloMultiplier,
 }: {
   value: EventFormatValues;
   onChange: (next: EventFormatValues) => void;
@@ -194,6 +197,13 @@ export function EventFormatFields({
    * nobody has entered yet and there is no honest number to show.
    */
   fieldSize?: number;
+  /**
+   * This event's Elo multiplier, so the ladder can say what each round is
+   * actually worth. Passed RAW — a string out of PostgREST, a number out of the
+   * create dialog's own input, or absent — because eventEloMultiplier() is the
+   * one coercion the rating path uses and doing it here would make a second.
+   */
+  eloMultiplier?: number | string | null;
 }) {
   const set = (patch: Partial<EventFormatValues>) => onChange({ ...value, ...patch });
   const { minGames, maxGames, minPoints, maxPoints } = CUSTOM_FORMAT_BOUNDS;
@@ -289,28 +299,64 @@ export function EventFormatFields({
           <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
             Played to
           </p>
-          <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+          <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
             {[
               ['Pool', POOL_LADDER_SHAPE],
               ['First rounds', knockoutLadderShape(3)],
               ['Quarter-final', knockoutLadderShape(2)],
               ['Semi-final', knockoutLadderShape(1)],
               ['Final & third place', knockoutLadderShape(0)],
-            ].map(([label, shape]) => (
-              <div key={label as string} className="contents">
-                <dt className="text-[var(--text-muted)]">{label as string}</dt>
-                <dd className="text-[var(--text-primary)]">
-                  {describeMatchShape({
-                    match_format: 'best_of_3_to_21',
-                    games_per_match: (shape as RoundShape).games_per_match,
-                    points_per_game: (shape as RoundShape).points_per_game,
-                  })}
-                </dd>
-              </div>
-            ))}
+            ].map(([label, shape]) => {
+              // The ladder stamps games_per_match / points_per_game on every row
+              // it writes (knockoutLadder), so every rung here is a TYPED shape
+              // and takes the derived branch of the weight — which is the branch
+              // rateTournamentMatch will take on these matches too.
+              const rung = {
+                match_format: 'best_of_3_to_21',
+                games_per_match: (shape as RoundShape).games_per_match,
+                points_per_game: (shape as RoundShape).points_per_game,
+              };
+              const elo = eloWeightBreakdown(rung, eloMultiplier);
+              return (
+                <div key={label as string} className="contents">
+                  <dt className="text-[var(--text-muted)]">{label as string}</dt>
+                  <dd className="text-[var(--text-primary)]">
+                    {describeMatchShape(rung)}
+                    {/* THE ELO WEIGHT, UNDER THE GAME IT BELONGS TO — per round,
+                        because 00108 lets one draw rate its five rungs five
+                        different ways and a single event-level figure would be
+                        right for at most one of them. */}
+                    <span className="block font-mono text-[11px] leading-tight text-[var(--text-muted)]">
+                      <span className="sr-only">{elo.spoken}</span>
+                      <span aria-hidden="true">Elo {elo.short}</span>
+                    </span>
+                  </dd>
+                </div>
+              );
+            })}
           </dl>
           <p className="mt-2 text-xs text-[var(--text-muted)]">
             The default ladder. Any round can be changed from the event page before it is played.
+          </p>
+          <p className="mt-1 text-xs text-[var(--text-muted)]">
+            Elo is how hard a round moves ratings: the round&rsquo;s own weight — longer games count for
+            more — times this event&rsquo;s multiplier of{' '}
+            <span className="font-mono text-[var(--text-secondary)]">
+              {eventEloMultiplier(eloMultiplier).toFixed(2)}
+            </span>
+            . A rated challenge played to 21 is{' '}
+            <span className="font-mono text-[var(--text-secondary)]">1.00×</span>, so the pool here counts
+            about{' '}
+            <span className="font-medium text-[var(--text-primary)]">
+              {Math.round(
+                eloWeightBreakdown(
+                  { match_format: 'best_of_3_to_21', ...POOL_LADDER_SHAPE },
+                  eloMultiplier,
+                ).product * 100,
+              )}
+              %
+            </span>{' '}
+            of one — not the quarter a game to 11 looks like.
           </p>
         </div>
       ) : (

@@ -6,8 +6,9 @@ import { getEventRules, previewEloChange, tallyGames, isLegalGameScore, isLegalG
 import type { TournamentMatchFormat, MatchFormat } from '@badminton/shared';
 import {
   enterMatchResult, enterWalkover, voidMatch, unvoidMatch, setMatchEntry, recordDoubleNoShow,
-  editMatchResult,
+  editMatchResult, getMatchOutcomeSummary,
 } from '@/lib/tournament-actions';
+import type { MatchOutcomeSummary, EntryEventSummary } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
 import type { TournamentEventRow, TournamentMatchRow } from '@/lib/tournament-types';
@@ -33,7 +34,11 @@ interface Props {
 // already decided, while 'correct' reverses the existing rating and re-applies
 // it. Sharing one Submit button between them is how somebody ends up pressing
 // "enter" on a settled match and being told, opaquely, that it is not playable.
-type View = 'score' | 'walkover' | 'slots' | 'restore' | 'correct';
+//
+// 'summary' is where a SCORED match lands. Everything else in this dialog is a
+// form; that one is a read of what the write did, and nothing on it can write
+// anything back — see the note on `showSummary`.
+type View = 'score' | 'walkover' | 'slots' | 'restore' | 'correct' | 'summary';
 
 export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, entries, onClose }: Props) {
   // THE MATCH'S OWN SHAPE, FALLING BACK TO THE EVENT'S (00108).
@@ -157,6 +162,30 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
     router.refresh();
   }
 
+  // WHAT THE RESULT DID, shown instead of closing — for a SCORED match only.
+  //
+  // It is the same rule as `done` and not an exception to it: the stale snapshot
+  // this dialog is holding is never rendered again once `summary` is set. Every
+  // figure on that panel comes out of the payload just fetched, and the panel
+  // offers one button, which closes. `router.refresh()` still fires, so the
+  // bracket behind it is rebuilding while the exec reads it.
+  //
+  // Only the two paths that RECORD A SCORE come here. A walkover, a void, a
+  // restore and a slot repair all still close: they change who is in the draw
+  // rather than what somebody's tournament looks like, and a summary of a
+  // walkover is a table of unchanged numbers.
+  const [summary, setSummary] = useState<MatchOutcomeSummary | null>(null);
+  async function showSummary(message: string) {
+    toast(message, 'success');
+    router.refresh();
+    const res = await getMatchOutcomeSummary(match.id);
+    // A refused or failed read is not worth a second error on top of a
+    // successful save — fall back to the old behaviour and close.
+    if (!res.ok) { onClose(); return; }
+    setSummary(res.data);
+    setView('summary');
+  }
+
   function addGame() {
     if (games.length < maxGames) {
       setGames([...games, { a: '', b: '' }]);
@@ -190,7 +219,7 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
         .map(g => ({ a: parseInt(g.a) || 0, b: parseInt(g.b) || 0 }));
       const res = await enterMatchResult(match.id, scores, autoWinner, timeExceeded);
       if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
-      done('Score submitted');
+      await showSummary('Score submitted');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
@@ -223,11 +252,11 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
         .map(g => ({ a: parseInt(g.a) || 0, b: parseInt(g.b) || 0 }));
       const res = await editMatchResult(match.id, scores, winner, walkoverReason);
       if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
-      done(
-        scores.length > 0
-          ? 'Result changed — ratings have been re-applied'
-          : 'Walkover re-awarded — ratings have been re-applied',
-      );
+      if (scores.length > 0) {
+        await showSummary('Result changed — ratings have been re-applied');
+      } else {
+        done('Walkover re-awarded — ratings have been re-applied');
+      }
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed', 'error');
     }
@@ -352,7 +381,9 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
     );
   }
 
-  const title = isVoided
+  const title = view === 'summary'
+    ? 'Result Recorded'
+    : isVoided
     ? 'Restore Voided Match'
     : view === 'slots'
     ? 'Fix Match Slots'
@@ -371,6 +402,17 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
     : match.status === 'walkover'
     ? `walkover${match.walkover_reason ? ` — ${match.walkover_reason}` : ''}`
     : 'no scores recorded';
+
+  // NOTHING BELOW THIS LINE IS REACHED once the result has landed, and that is
+  // the point: every form in this dialog is built from `match`, which the write
+  // has just made stale. The summary is rendered from the payload alone.
+  if (view === 'summary' && summary) {
+    return (
+      <Dialog open={true} onClose={onClose} title={title}>
+        <OutcomeSummary summary={summary} onClose={onClose} />
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog open={true} onClose={onClose} title={title}>
@@ -705,5 +747,144 @@ export function ScoreEntryDialog({ match, event, nameMap, seedMap, isDoubles, en
         )}
       </div>
     </Dialog>
+  );
+}
+
+// ============================================================
+// After the game: what it did to each side's tournament
+// ============================================================
+//
+// THE EVENT'S FIGURES, NOT A CAREER. "elo_before -> elo_after" is where this
+// entrant started the day and where they are now, and elo_change is the whole
+// event's swing rather than this match's (00083) — three numbers that finally
+// agree, which they did not before that migration. It is deliberately not a
+// per-match delta: an exec looking at a scored quarter-final wants "is this
+// player up or down on the day", and the per-match figure is already in the
+// audit log for anyone who wants it.
+//
+// It doubles as confirmation that the RIGHT result landed. The score, the
+// winner and the record are read back out of the database after the write, so
+// a scoreline typed into the wrong card shows up here as the wrong name in
+// green — which is the check that used to require closing the dialog and
+// finding the card again.
+function OutcomeSummary({ summary, onClose }: { summary: MatchOutcomeSummary; onClose: () => void }) {
+  const scoreline = summary.scores && summary.scores.length > 0
+    ? summary.scores.map((g) => `${g.a}-${g.b}`).join(', ')
+    : null;
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-[8px] bg-[var(--bg-elevated)] px-3 py-2">
+        <p className="text-sm text-[var(--text-primary)]">
+          {summary.roundName ?? 'This match'}
+          {scoreline ? <> — <span className="font-mono">{scoreline}</span></> : null}
+          {summary.status === 'walkover' ? ' — walkover' : ''}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {[summary.a, summary.b].map((entry, i) =>
+          entry ? <EntrySummaryCard key={entry.entryId} entry={entry} doubles={summary.doubles} />
+                : <div key={i} />,
+        )}
+      </div>
+
+      {/* SAID, NOT LEFT BLANK. tournament_pairs has no elo columns — the rating
+          movement from a doubles match goes to the two players' own ladders and
+          there is no pair row for it to land on — so the panel names the gap
+          rather than showing an empty rating line that reads as "no change". */}
+      {summary.doubles && (
+        <p className="text-xs text-[var(--text-muted)]">
+          Rating movement is not tracked per pair: a doubles result moves each player&rsquo;s own doubles
+          rating, which is on their player page rather than on this event&rsquo;s entry.
+        </p>
+      )}
+
+      {!summary.eventFinalised && (
+        <p className="text-xs text-[var(--text-muted)]">
+          Points and final placings are written when the event is finalised, so they are still blank.
+        </p>
+      )}
+
+      <div className="flex justify-end pt-1">
+        <Button onClick={onClose} className="focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 focus-visible:outline-none">
+          Done
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function EntrySummaryCard({ entry, doubles }: { entry: EntryEventSummary; doubles: boolean }) {
+  // THE DELTA IS DERIVED FROM THE TWO RATINGS BESIDE IT, not read from
+  // elo_change, so the three figures on the row always reconcile.
+  //
+  // They usually agree — applyPlacementBonuses credits elo_change and elo_after
+  // together — but not always: the bonus is CLAMPED into elo_after and not into
+  // elo_change, so at the rating ceiling the stored change can exceed the
+  // movement it describes. "1114 -> 1190 (+108)" is precisely the row 00083 and
+  // the elo_after fix exist to have stopped appearing, and a confirmation panel
+  // is the last place to reintroduce it.
+  //
+  // When there is no elo_after at all — an entry that has been credited but
+  // never rated — the arrow is dropped rather than pointed at a question mark,
+  // and the stored change is shown on its own.
+  const hasBoth = entry.eloBefore != null && entry.eloAfter != null;
+  const delta = hasBoth ? entry.eloAfter! - entry.eloBefore! : entry.eloChange;
+  const up = (delta ?? 0) > 0;
+  const down = (delta ?? 0) < 0;
+
+  return (
+    <div
+      className={`rounded-[8px] border p-3 space-y-2 ${
+        entry.isWinner
+          ? 'border-[var(--color-success)] bg-[color-mix(in_srgb,var(--color-success)_8%,transparent)]'
+          : 'border-[var(--border)]'
+      }`}
+    >
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-sm font-semibold text-[var(--text-primary)]">{entry.name}</span>
+        {entry.isWinner && (
+          <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-success)]">Won</span>
+        )}
+      </div>
+
+      <dl className="space-y-1 text-xs">
+        <div className="flex justify-between gap-2">
+          <dt className="text-[var(--text-muted)]">In this event</dt>
+          <dd className="font-mono text-[var(--text-secondary)]">
+            {entry.won}&ndash;{entry.played - entry.won}
+            <span className="sr-only"> won and lost of {entry.played} played</span>
+          </dd>
+        </div>
+
+        {!doubles && delta != null && (
+          <div className="flex justify-between gap-2">
+            <dt className="text-[var(--text-muted)]">Rating</dt>
+            <dd className="font-mono text-[var(--text-secondary)]">
+              {hasBoth && <>{entry.eloBefore} &rarr; {entry.eloAfter} </>}
+              <span className={up ? 'text-[var(--color-success)]' : down ? 'text-[var(--color-danger)]' : 'text-[var(--text-muted)]'}>
+                <span className="sr-only">{up ? 'gained' : down ? 'lost' : 'no change'} </span>
+                ({up ? '+' : ''}{delta})
+              </span>
+            </dd>
+          </div>
+        )}
+
+        {entry.points != null && entry.points > 0 && (
+          <div className="flex justify-between gap-2">
+            <dt className="text-[var(--text-muted)]">Points</dt>
+            <dd className="font-mono text-[var(--text-secondary)]">{entry.points}</dd>
+          </div>
+        )}
+
+        {entry.finalPosition != null && (
+          <div className="flex justify-between gap-2">
+            <dt className="text-[var(--text-muted)]">Finished</dt>
+            <dd className="font-mono text-[var(--text-secondary)]">#{entry.finalPosition}</dd>
+          </div>
+        )}
+      </dl>
+    </div>
   );
 }
