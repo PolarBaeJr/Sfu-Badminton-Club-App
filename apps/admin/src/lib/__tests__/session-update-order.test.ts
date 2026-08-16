@@ -1,5 +1,28 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// TWENTY SECONDS, FOR MODULE LOADING AND NOT FOR LOGIC.
+//
+// The three cases below assert the order of two array pushes. What is slow is
+// the `await import('../actions/sessions')` inside each of them: that module
+// reaches Supabase, next/cache, next/headers and session-reminders, and the
+// whole of that graph has to be transformed and evaluated before the first
+// assertion can run. The work is one-time and it is cheap on an idle machine —
+// about a second for the file — but it lands INSIDE a test's own clock rather
+// than in a hook, so the default 5s budget is being spent on `import` and not on
+// anything this file is about.
+//
+// Under `turbo run test` several suites compete for cores and that import
+// stretches with the contention, which is why this file passes alone and times
+// out in a full run. Twenty is far outside that spread and still far inside
+// "this test is hung"; the global default stays at 5s so a genuinely wedged test
+// elsewhere is still caught quickly.
+//
+// PER-FILE, so it covers all three: vitest caches the module after the first
+// `import()`, but the tests do not run in a guaranteed order under contention
+// and any one of them can be the one that pays the load. Raising only the first
+// would leave the flake exactly where it was.
+vi.setConfig({ testTimeout: 20_000 });
+
 // THE ORDER OF TWO WRITES, WHICH NOTHING ON SCREEN WOULD REVEAL.
 //
 // updateSession writes a session in two statements, because

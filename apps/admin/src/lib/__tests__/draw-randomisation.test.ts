@@ -1,5 +1,31 @@
 import { describe, it, expect, vi } from 'vitest';
 
+// TWENTY SECONDS, FOR CPU TIME AND NOT FOR LOGIC.
+//
+// Nothing in this file waits on anything — there is no I/O, no timer and no
+// database. The cases below run the draw two thousand times over, and the tier
+// separation invariant runs forty draws for every bracket size and every field
+// on top of that, because a statistical property is only asserted by a lot of
+// samples. In isolation that is about a second.
+//
+// The 5s default is not a statement about this file, it is a statement about a
+// machine with a free core. Under `turbo run test` several suites compete for
+// cores at once and a purely CPU-bound test stretches with the contention; three
+// separate agents have now lost time to this file timing out on a busy laptop
+// while passing on its own. Twenty is chosen to be far outside that spread and
+// still far inside "this test is hung" — the global default deliberately stays
+// at 5s so a genuinely wedged test elsewhere is still caught quickly.
+//
+// FEWER DRAWS WAS THE OTHER OPTION AND IT IS THE WRONG ONE. The iteration count
+// IS the assertion here: a tier that leaks across a boundary once in a thousand
+// shuffles is exactly the bug these cases exist to catch, and it is invisible to
+// a hundred. Making the test cheap would make it stop testing.
+//
+// Per-FILE rather than per-suite: there are six describes below and any of them
+// can be the one that pays, so a suite option would have to be repeated six
+// times and remembered a seventh when the next one is added.
+vi.setConfig({ testTimeout: 20_000 });
+
 // _internal pulls the admin Supabase client and next/cache in at module load.
 // Neither is used by anything under test here — these are pure functions — but
 // the imports still have to resolve.

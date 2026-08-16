@@ -136,7 +136,15 @@ export function MonthCalendar({ months, initialIndex, weekdays, rangeLabel }: Mo
                   // .tag-win is the same green the "N OPEN" pill uses, plain
                   // .tag is the same grey a closed night wears in Past
                   // sessions. .cal-ev only re-shapes them into a full-width
-                  // one-line block; it invents no colour.
+                  // 44px block; it invents no colour.
+                  //
+                  // The <span> branch carries the SAME .cal-ev, so a night
+                  // with no card to jump to is the same size as one that has
+                  // it. That is 44px spent on something you cannot press, and
+                  // it is the right trade: two chips of different heights
+                  // stacked in one cell reads as a layout fault, and the
+                  // member has no way to know which of them is a link until
+                  // they try. Uniform, or the grid stops looking like a grid.
                   const cls = `tag ${ev.status === 'open' ? 'tag-win' : ''} cal-ev${ev.mine ? ' is-mine' : ''}`;
                   const label = [
                     ev.name,

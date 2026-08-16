@@ -30,18 +30,23 @@ export default async function WalkoversPage() {
   // rejected rows together, so a reject-only officer must still be able to read
   // a confirmed row's note.
   //
-  // The legacy column is the fallback while 00118 has not been applied (or for
-  // rows written before it), and is withheld entirely from a viewer outside the
-  // union — `select('*')` still returns it, so without that the capability
-  // check would decide nothing.
+  // `walkover_admin_notes` IS THE ONLY SOURCE. There used to be a
+  // `?? w.admin_notes` behind this lookup, for rows written before 00118 moved
+  // the text off the parent table. It never had anything to return: 00118's own
+  // sweep — re-run by 00122 and again by 00125 — copies every non-blank
+  // `walkovers.admin_notes` into `walkover_admin_notes` keyed by the same
+  // walkover id, so any row the fallback could have answered for is a row the
+  // map already answers for. 00125 then DROPS the column, at which point
+  // `select('*')` stops returning it and the fallback was reading undefined.
+  // Removing it changes nothing before that migration and nothing after it.
   const level = accessLevelFor(viewer);
   const permissions = permissionsOf(level, viewer);
   const maySeeNotes = canReadPrivateNotes(level, permissions, WALKOVER_NOTES);
   const noteById = maySeeNotes
     ? await fetchPrivateNotes(supabase, WALKOVER_NOTES, (walkovers ?? []).map((w) => w.id))
     : new Map<string, string>();
-  const noteFor = (w: { id: string; admin_notes?: string | null }): string | null =>
-    maySeeNotes ? noteById.get(w.id) ?? w.admin_notes ?? null : null;
+  const noteFor = (w: { id: string }): string | null =>
+    maySeeNotes ? noteById.get(w.id) ?? null : null;
 
   const pendingCount = walkovers?.filter((w) => w.status === 'pending').length ?? 0;
 

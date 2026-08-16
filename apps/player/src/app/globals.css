@@ -3849,11 +3849,56 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
 /* One night inside a cell. .tag / .tag-win supply the colours —
    the same green as the "N OPEN" pill and the same grey as a
    closed row in Past sessions. This only re-shapes them into a
-   full-width single line. */
+   full-width block.
+
+   44px, AND IT COSTS THE GRID NOTHING UNTIL A DAY HAS TWO NIGHTS
+   ON IT. This chip is a LINK — it jumps to the session's card in
+   the rail — and at `min-height: 22px` it was a 21px target,
+   half the floor .sess-actions button and .cal-nav button hold on
+   this same screen. Stated here in the base rule rather than
+   inside a media query, for .sess-actions button's reason: the
+   target is under the floor at EVERY width, so the fix cannot
+   live at one of them.
+
+   The objection was that three chips at 44px are 132px inside an
+   88px cell. That is not what happens: `min-height` on .cal-cell
+   is a FLOOR, and a cell that needs more simply takes it — the
+   week's row grows with it and the rest of the grid does not.
+   Measured against the compiled stylesheet, cell height by number
+   of nights on the day, at 390px / at the 1101px floor:
+
+     nights   before        after
+       1      88 / 106      88 / 106   ← unchanged, both widths
+       2     110 / 110     130 / 130
+       3     148 / 148     178 / 178
+
+   ONE NIGHT IS FREE, at both widths, and one night is the common
+   day: nothing in the schema caps a date at one session and the
+   query does not either, but the club plays one night at a time
+   and this page narrows even that to the member's own track. So a
+   month of ordinary days is pixel-for-pixel the month that was
+   there before, and the cost of the change is confined to the
+   weeks that hold a doubled-up day. The 6-week grid measured
+   640px → 690px at 390px only because the fixture deliberately
+   puts a two-night day and a three-night day in separate weeks.
+
+   FLEX, not block, and that pairing is the load-bearing part: a
+   block box with min-height:44px leaves a one-line name pinned to
+   the top of a 44px slab, which reads as a rendering fault rather
+   than as a target. .tag already says `align-items: center`, so
+   restoring the display it declares is all that is needed —
+   nothing here invents a second vocabulary. Measured: a one-line
+   name sits with 15.5px of air above and 15.5px below.
+
+   A NAME THAT NEEDS MORE THAN 44px STILL GETS IT — min-height is
+   a floor here too. The longest case measured, an unbroken token
+   split by .cal-ev-name's `overflow-wrap: anywhere`, is 73px at
+   390px, and was 73px before this change as well. */
 .cal-ev {
-  display: block;
+  display: flex;
+  align-items: center;
   width: 100%;
-  min-height: 22px;
+  min-height: 44px;
   padding: 4px 6px;
   font-size: 10px;
   line-height: 1.3;
@@ -3866,9 +3911,19 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
    ~96px wide and .tag is uppercase mono, so "Wednesday Doubles" arrived as
    "WEDNESD…" on an iPad with no way at all to read the rest. A cell that
    grows a line is cheaper than a name nobody can see; `anywhere` is there so
-   one long unbroken token breaks instead of pushing the column open. */
+   one long unbroken token breaks instead of pushing the column open.
+
+   `min-width: 0` is what keeps that true now that .cal-ev is a flex
+   container. A flex item's automatic minimum size is its min-content
+   width, and a flex item does NOT shrink below it — so without this
+   the name would set a floor on the chip, the chip on the cell, the
+   cell on .cal-grid, and a 620px grid would quietly become wider
+   than 620px. `flex: 1` so the name still fills the chip and the
+   text stays left-aligned rather than centring on its own line. */
 .cal-ev-name {
   display: block;
+  flex: 1;
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 a.cal-ev:hover { filter: brightness(1.15); }
