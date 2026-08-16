@@ -131,8 +131,11 @@ describe('skillTierElo', () => {
   });
 
   it('ignores a zero, negative or non-numeric tier value', () => {
-    // Mirrors num() in the engine and rating_setting_int in SQL: a tier that
-    // seeds rating 0 is a typo, not an intention.
+    // Mirrors num() in the engine, and the non-positive guard
+    // apply_skill_tier_seed applies AROUND rating_setting_int (00127) — the
+    // helper itself returns 0 for a configured 0, since 0 casts fine. A tier
+    // that seeds rating 0 is a typo, not an intention, and if the two sides
+    // ever disagree a member is shown one number and given another.
     expect(skillTierElo('advanced', { tier_advanced_elo: 0 })).toBe(1200);
     expect(skillTierElo('advanced', { tier_advanced_elo: -50 })).toBe(1200);
     expect(skillTierElo('advanced', { tier_advanced_elo: 'high' })).toBe(1200);

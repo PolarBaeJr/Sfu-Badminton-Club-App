@@ -1,6 +1,6 @@
 import { AvatarChip } from '@badminton/ui';
 import { KFactorPanel, type KFactors } from './k-factor-panel';
-import { KImpactPanel } from './k-impact-panel';
+import { KImpactPanel, type TierPair } from './k-impact-panel';
 import type { EloBounds } from '@badminton/shared/src/utils/constants';
 
 // The right-hand column of /ratings: what these settings reach, and who last
@@ -93,7 +93,12 @@ export function RatingsAside({
    */
   kFactors: KFactors;
   /** Everything the impact table needs, resolved from settings by the page. */
-  impact: { baseline: number; bounds: EloBounds; provisionalKEnabled: boolean };
+  impact: {
+    baseline: number;
+    bounds: EloBounds;
+    provisionalKEnabled: boolean;
+    tiers: TierPair;
+  };
 }) {
   return (
     <div className="flex flex-col gap-5 xl:sticky xl:top-5 xl:self-start">
@@ -114,6 +119,7 @@ export function RatingsAside({
             baseline={impact.baseline}
             bounds={impact.bounds}
             provisionalKEnabled={impact.provisionalKEnabled}
+            tiers={impact.tiers}
           />
         </div>
       </CardShell>

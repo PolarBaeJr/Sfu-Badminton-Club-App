@@ -173,6 +173,9 @@ SET search_path TO 'public', 'pg_temp'
 AS $$
 DECLARE
   v_elo INTEGER;
+  -- The fallback for the tier that was claimed, kept beside v_elo so the
+  -- non-positive guard below can reach it without repeating the CASE.
+  v_fallback INTEGER;
   v_min INTEGER := rating_setting_int('min_elo', 100);
   v_max INTEGER := rating_setting_int('max_elo', 1500);
   -- What an untouched rating looks like: create_player_with_rating seeds every
@@ -192,11 +195,33 @@ BEGIN
   -- non-castable key falls back to the number this migration seeded, rather
   -- than to NULL — which would write a NULL rating into a NOT NULL column and
   -- fail the whole call.
+  v_fallback := CASE p_tier
+                  WHEN 'beginner'     THEN 400
+                  WHEN 'intermediate' THEN 800
+                  WHEN 'advanced'     THEN 1200
+                END;
   v_elo := CASE p_tier
              WHEN 'beginner'     THEN rating_setting_int('tier_beginner_elo', 400)
              WHEN 'intermediate' THEN rating_setting_int('tier_intermediate_elo', 800)
              WHEN 'advanced'     THEN rating_setting_int('tier_advanced_elo', 1200)
            END;
+
+  -- A NON-POSITIVE SETTING IS UNSET, NOT A RATING, AND THE TWO SIDES HAVE TO
+  -- SAY SO IN THE SAME WORDS. skillTierElo() in packages/shared already reads
+  -- it that way — `Number.isFinite(n) && n > 0 ? n : fallback`, matching num()
+  -- in the engine — and it is what the onboarding screen PRINTS. Without the
+  -- same rule here the two disagree on exactly the input the /ratings form
+  -- allows: the tier fields are `min: 0`, so an admin can save
+  -- tier_beginner_elo = 0, at which point rating_setting_int returns 0 (0 is
+  -- perfectly castable, so none of its three fallbacks fire), the clamp below
+  -- lifts it to min_elo, and a member is shown "you will start at 400" and
+  -- written 100. Guarding here rather than in rating_setting_int because 0 is
+  -- not obviously unset for every caller of that helper, and rather than in a
+  -- CHECK because rating_defaults is a free-form jsonb blob with no per-key
+  -- constraint and the form is not the only way a value reaches it.
+  IF v_elo IS NULL OR v_elo <= 0 THEN
+    v_elo := v_fallback;
+  END IF;
 
   -- Clamped to the configured ladder, the same way every other rating write is.
   -- An admin who sets tier_advanced_elo above max_elo gets the ceiling, not a

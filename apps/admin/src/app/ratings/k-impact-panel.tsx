@@ -1,4 +1,9 @@
-import { calculateEloUpdate, FORMAT_WEIGHTS, EVENT_MULTIPLIERS } from '@badminton/shared/src/elo/engine';
+import {
+  calculateEloUpdate,
+  calculateExpected,
+  FORMAT_WEIGHTS,
+  EVENT_MULTIPLIERS,
+} from '@badminton/shared/src/elo/engine';
 import type { EloBounds } from '@badminton/shared/src/utils/constants';
 import type { KFactors } from './k-factor-panel';
 
@@ -39,19 +44,36 @@ import type { KFactors } from './k-factor-panel';
  *   ONE TIER APART — the favourite is a full skill tier above (00127). This is
  *   the scenario the tiers created and the one that decides whether provisional
  *   K is doing its job: it shows what a member who UNDERSTATED their level
- *   gains per win against the people they are now mis-seeded among. On this
- *   ladder ELO_SCALE is 800, so a 400 gap is half a scale and the favourite is
- *   expected to win about 76% of the time — meaning they gain little for
- *   winning and lose heavily for losing, which is precisely the mechanism that
- *   drags a wrong tier back to the truth.
+ *   gains per win against the people they are now mis-seeded among. The
+ *   favourite gains little for winning and loses heavily for losing, which is
+ *   precisely the mechanism that drags a wrong tier back to the truth.
+ *
+ * THE TIER RATINGS COME IN, THEY ARE NOT ASSUMED. This panel used to model a
+ * fixed 400-point gap and label it "one skill tier apart", with the 76%
+ * expectation written into the prose — on a screen whose own form edits
+ * tier_beginner_elo, tier_intermediate_elo and tier_advanced_elo. Move any of
+ * them and the panel described a system that was no longer configured, which is
+ * the exact failure it exists to prevent for the K-factors. So the pair is
+ * resolved from the live settings (impactOf) and the expectation is computed
+ * from it by calculateExpected — the same function the engine rates with — so
+ * the sentence under the table cannot drift from the table above it, or from
+ * ELO_SCALE if that ever moves.
+ *
+ * On the shipped settings this renders exactly what it rendered before:
+ * Beginner 400, Intermediate 800, a gap of half of ELO_SCALE (800), and
+ * calculateExpected(800, 400) = 0.7597 → 76%.
  */
 
 /** A plain rated challenge, single game to 21 — the club's commonest match. */
 const FORMAT_WEIGHT = FORMAT_WEIGHTS.single_21;
 const EVENT_MULT = EVENT_MULTIPLIERS.rated_challenge;
 
-/** One tier of separation (00127): 400 points, half of ELO_SCALE. */
-const TIER_GAP = 400;
+/** The two tiers the "one tier apart" scenario is played between (00127). */
+export type TierPair = {
+  /** The lower-rated of the two — already ordered by the caller. */
+  under: { label: string; elo: number };
+  over: { label: string; elo: number };
+};
 
 function swing(
   playerRating: number,
@@ -79,23 +101,28 @@ const MONO_LABEL = 'font-mono text-[10px] uppercase tracking-[.14em] text-[var(-
 
 export function KImpactPanel({
   k,
-  /** The club's starting rating — the midpoint both scenarios are measured at. */
+  /** The club's starting rating — where the even match is measured. */
   baseline,
   bounds,
   /** False when provisional K is switched off (00127). */
   provisionalKEnabled,
+  /** The two tier ratings as they are configured right now (00127). */
+  tiers,
 }: {
   k: KFactors;
   baseline: number;
   bounds: EloBounds | null;
   provisionalKEnabled: boolean;
+  tiers: TierPair;
 }) {
-  // The favourite sits a tier above the baseline so BOTH players stay inside a
-  // realistic part of the ladder; measuring the gap downward from the baseline
-  // would push the underdog under the floor on most configurations and the
-  // clamp would then quietly flatten the figures.
-  const under = baseline;
-  const over = baseline + TIER_GAP;
+  // The two configured tier ratings, not the baseline plus a constant. Both
+  // sides stay inside a realistic part of the ladder by construction, because
+  // these are ratings the seed would really write — they went through
+  // skillTierElo's clamp on the way in.
+  const under = tiers.under.elo;
+  const over = tiers.over.elo;
+  const tierGap = over - under;
+  const favouriteExpectation = Math.round(calculateExpected(over, under) * 100);
 
   const rows = [
     // Provisional first, matching the form's order and the panel above. When
@@ -154,11 +181,12 @@ export function KImpactPanel({
       </div>
 
       <p className="text-[13px] leading-[1.5] text-[var(--mute)]">
-        Rating the winner gains in one rated challenge, single game to 21, starting from{' '}
-        {baseline}. <span className="text-[var(--ink-2)]">Even</span> is two players on the same
-        rating; <span className="text-[var(--ink-2)]">Fav. wins</span> and{' '}
-        <span className="text-[var(--ink-2)]">Upset</span> are one skill tier apart ({TIER_GAP}{' '}
-        points), which the favourite is expected to win about 76% of the time. The loser moves by
+        Rating the winner gains in one rated challenge, single game to 21.{' '}
+        <span className="text-[var(--ink-2)]">Even</span> is two players on the same rating,{' '}
+        {baseline}; <span className="text-[var(--ink-2)]">Fav. wins</span> and{' '}
+        <span className="text-[var(--ink-2)]">Upset</span> are {tiers.over.label} ({over}) against{' '}
+        {tiers.under.label} ({under}){tierGap > 0 ? `, a gap of ${tierGap} points` : ''}, which the
+        favourite is expected to win about {favouriteExpectation}% of the time. The loser moves by
         the same amount in the opposite direction.
       </p>
 

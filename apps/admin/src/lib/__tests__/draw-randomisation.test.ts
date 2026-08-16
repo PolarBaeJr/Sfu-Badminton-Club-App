@@ -36,6 +36,7 @@ vi.mock('../supabase-server', () => ({ createAdminClient: () => ({}) }));
 import {
   getStandardSeedPositions,
   seedTierBands,
+  seedTierBandsReserving,
   drawWithinTiers,
   makeDrawRng,
   newDrawSeed,
@@ -199,6 +200,104 @@ describe('the tier separation invariant', () => {
     }
     // Named so a refactor that silently stops iterating is visible.
     expect(draws).toBe(2280);
+  });
+});
+
+// ============================================================
+// The promised prefix (00124)
+// ============================================================
+//
+// seed_skip_count promises SEEDS a bye, and the byes fall on RANKS. Those are
+// the same set only when the promise ends on a tier boundary, so a non-zero
+// promise is handed to the draw and cuts the band it lands in. These cases are
+// about the cut being a real constraint AND a harmless one: the separation
+// invariant above is the thing it must not cost, and the argument that it
+// cannot is that shuffling within two contiguous halves of a band is a subset
+// of shuffling within the band.
+describe('reserving the seeds that were promised a skip', () => {
+  it('cuts exactly the band the promise lands inside, and no other', () => {
+    // Mid-band: [3,4] becomes [3,3] and [4,4].
+    expect(seedTierBandsReserving(16, 3)).toEqual([[1, 1], [2, 2], [3, 3], [4, 4], [5, 8], [9, 16]]);
+    // On a boundary: nothing to cut, so the bands are untouched.
+    expect(seedTierBandsReserving(16, 4)).toEqual(seedTierBands(16));
+    expect(seedTierBandsReserving(16, 8)).toEqual(seedTierBands(16));
+    // Deep inside the big band, which is the 20-entrant case: [9,16] splits at
+    // the promise and everything below it is left whole.
+    expect(seedTierBandsReserving(20, 9))
+      .toEqual([[1, 1], [2, 2], [3, 4], [5, 8], [9, 9], [10, 16], [17, 20]]);
+    // Zero is the default every event that made no promise passes, and it must
+    // return the bands unchanged or the draw is not byte-identical.
+    expect(seedTierBandsReserving(20, 0)).toEqual(seedTierBands(20));
+  });
+
+  it('is total — a nonsense reserve cuts nothing rather than throwing', () => {
+    for (const reserve of [-1, 0, 99, Number.NaN, 3.7]) {
+      const bands = seedTierBandsReserving(8, reserve);
+      // Whatever it did, the bands still cover 1..8 exactly once.
+      const covered = bands.flatMap(([lo, hi]) =>
+        Array.from({ length: hi - lo + 1 }, (_, k) => lo + k));
+      expect(covered).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+  });
+
+  it('puts the promised seeds on the top ranks, at every promise and every size', () => {
+    for (let n = 2; n <= 32; n++) {
+      for (let reserve = 1; reserve <= n; reserve++) {
+        for (let iter = 0; iter < 8; iter++) {
+          const seeded: Entrant[] = Array.from({ length: n }, (_, k) => ({ rank: k + 1 }));
+          const drawn = drawWithinTiers(seeded, makeDrawRng(n * 977 + reserve * 31 + iter), reserve);
+          // Ranks 1..reserve hold seeds 1..reserve — which is the whole promise,
+          // since the byes fall on a prefix of the ranks.
+          for (let r = 1; r <= reserve; r++) expect(drawn[r - 1]!.rank).toBeLessThanOrEqual(reserve);
+          // And it is still a permutation of the field.
+          expect(drawn.map((e) => e.rank).sort((a, b) => a - b))
+            .toEqual(Array.from({ length: n }, (_, k) => k + 1));
+        }
+      }
+    }
+  });
+
+  it('costs the separation invariant nothing, at every promise', () => {
+    // The one property the cut could plausibly break. It cannot — cutting a
+    // band into two contiguous halves still permutes the band's own set onto
+    // itself, so the sub-bracket argument above is untouched — and this is what
+    // says so rather than the comment saying so.
+    for (const bracketSize of [4, 8, 16, 32]) {
+      for (let n = 2; n <= bracketSize; n++) {
+        for (let reserve = 0; reserve <= n; reserve++) {
+          const seeded: Entrant[] = Array.from({ length: n }, (_, k) => ({ rank: k + 1 }));
+          const drawn = drawWithinTiers(
+            seeded, makeDrawRng(bracketSize * 7919 + n * 97 + reserve), reserve,
+          );
+          const slots = getStandardSeedPositions(bracketSize).map((rank) => drawn[rank - 1] ?? null);
+          const slotOfRank = new Map<number, number>();
+          slots.forEach((e, idx) => { if (e) slotOfRank.set(e.rank, idx); });
+
+          for (let m = 1; Math.pow(2, m) <= bracketSize; m++) {
+            const top = Math.pow(2, m);
+            const subBracketSize = bracketSize / top;
+            const occupied = new Set<number>();
+            for (let rank = 1; rank <= Math.min(top, n); rank++) {
+              const subBracket = Math.floor(slotOfRank.get(rank)! / subBracketSize);
+              expect(occupied.has(subBracket)).toBe(false);
+              occupied.add(subBracket);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it('does not freeze the ranks below the promise', () => {
+    // A "fix" that simply stopped shuffling would satisfy every assertion
+    // above. 20 entrants promising 9 leaves ranks 10-16 to be drawn between
+    // themselves, and they must still move.
+    const seen = new Set<string>();
+    for (let seed = 0; seed < 60; seed++) {
+      const seeded: Entrant[] = Array.from({ length: 20 }, (_, k) => ({ rank: k + 1 }));
+      seen.add(drawWithinTiers(seeded, makeDrawRng(seed), 9).map((e) => e.rank).join(','));
+    }
+    expect(seen.size).toBeGreaterThan(1);
   });
 });
 

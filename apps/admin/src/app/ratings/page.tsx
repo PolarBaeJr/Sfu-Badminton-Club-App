@@ -11,7 +11,13 @@ import {
   type LastActivation,
   type LastChange,
 } from './ratings-aside';
-import { PROVISIONAL_THRESHOLD, DEFAULT_ELO, resolveEloBounds } from '@badminton/shared/src/utils/constants';
+import {
+  PROVISIONAL_THRESHOLD,
+  DEFAULT_ELO,
+  resolveEloBounds,
+  skillTierElo,
+  SKILL_TIER_LABELS,
+} from '@badminton/shared/src/utils/constants';
 import { getKFactor, type RatingSettings } from '@badminton/shared/src/elo/engine';
 import type { KFactors } from './k-factor-panel';
 
@@ -156,15 +162,35 @@ function kFactorsOf(settings: PlatformSetting[]): KFactors {
  * an explicit false counts as off, so a missing key (every database before
  * 00127 runs) reads as today's behaviour rather than silently reporting the
  * provisional K-factors as unused.
+ *
+ * THE TIER PAIR IS RESOLVED HERE, NOT ASSUMED BY THE PANEL. The panel's second
+ * scenario is "one skill tier apart", and the three tier ratings are editable
+ * on this very screen — three fields further down the same form. A hardcoded
+ * 400-point gap therefore described a system that stopped being the configured
+ * one the moment anybody touched them. Resolved through skillTierElo so the
+ * numbers are the ones apply_skill_tier_seed would actually write, including
+ * its fallback for an unset or non-positive value and the clamp to the ladder.
+ *
+ * BEGINNER AND INTERMEDIATE, because the scenario exists to show what a member
+ * who UNDERSTATED their level gains per win, and the first step down is the one
+ * they take. They are ordered rather than assumed: an admin who sets
+ * intermediate below beginner must not produce a "favourite" who is not one.
  */
 function impactOf(settings: PlatformSetting[]) {
   const defaults = (settings.find((s) => s.key === 'rating_defaults')?.value ??
     null) as RatingSettings | null;
   const baseline = Number((defaults as Record<string, unknown> | null)?.default_elo);
+  const bounds = resolveEloBounds(defaults ? { min: defaults.min_elo, max: defaults.max_elo } : null);
+  const blob = defaults as Record<string, unknown> | null;
+  const lower = { label: SKILL_TIER_LABELS.beginner, elo: skillTierElo('beginner', blob, bounds) };
+  const upper = { label: SKILL_TIER_LABELS.intermediate, elo: skillTierElo('intermediate', blob, bounds) };
   return {
     baseline: Number.isFinite(baseline) && baseline > 0 ? Math.round(baseline) : DEFAULT_ELO,
-    bounds: resolveEloBounds(defaults ? { min: defaults.min_elo, max: defaults.max_elo } : null),
+    bounds,
     provisionalKEnabled: defaults?.provisional_k_enabled !== false,
+    tiers: lower.elo <= upper.elo
+      ? { under: lower, over: upper }
+      : { under: upper, over: lower },
   };
 }
 

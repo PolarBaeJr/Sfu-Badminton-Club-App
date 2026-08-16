@@ -105,6 +105,67 @@ describe('drawWithinQualificationTiers', () => {
       expect(drawn[4]!.id).toBe('A3');
     }
   });
+
+  /**
+   * seed_skip_count REACHES THIS SHUFFLE TOO, and it is the half that is easy
+   * to forget.
+   *
+   * 00124's CHECK only excludes round_robin, so pool_to_bracket may carry a
+   * promise — and a pool_to_bracket event with two or more groups is drawn HERE
+   * rather than by drawWithinTiers. The straddle is the same shape: two groups
+   * of two qualifiers plus a third-placed entrant order as
+   * [W-A, W-B, R-A, R-B, T-A], the 5-strong field leaves 3 byes on ranks 1-3,
+   * and a promise of 3 lands inside the runners-up RUN. Without the reserve the
+   * third bye is a coin flip between R-A and R-B while the generator's ceiling
+   * check reports the promise as keepable.
+   */
+  it('reserves the promised prefix, so a promise landing mid-run still holds', () => {
+    const field: Q[] = [
+      { id: 'A1', group: 1, groupRank: 1 }, { id: 'B1', group: 2, groupRank: 1 },
+      { id: 'A2', group: 1, groupRank: 2 }, { id: 'B2', group: 2, groupRank: 2 },
+      { id: 'A3', group: 1, groupRank: 3 },
+    ];
+
+    const unreserved = new Set<string>();
+    const reserved = new Set<string>();
+    for (let seed = 0; seed < 60; seed++) {
+      unreserved.add(drawWithinQualificationTiers(field, (e) => e.groupRank, makeDrawRng(seed))[2]!.id);
+      reserved.add(drawWithinQualificationTiers(field, (e) => e.groupRank, makeDrawRng(seed), 3)[2]!.id);
+    }
+
+    // The defect, still there at the default — and correct there, because
+    // nobody promised anything.
+    expect([...unreserved].sort()).toEqual(['A2', 'B2']);
+    // The promise, kept: rank 3 is the qualifier the seeding put third.
+    expect([...reserved]).toEqual(['A2']);
+  });
+
+  it('reserves nothing below the promise, and nothing at all at zero', () => {
+    const field = qualifiers(4, 2);
+    const whole = new Set<string>();
+    const cut = new Set<string>();
+    for (let seed = 0; seed < 60; seed++) {
+      whole.add(drawWithinQualificationTiers(field, (e) => e.groupRank, makeDrawRng(seed), 0).map(e => e.id).join(''));
+      // A promise of 4 lands exactly on the winners/runners-up boundary, which
+      // is already a run boundary — so it cuts nothing and the runners-up are
+      // still drawn between themselves.
+      cut.add(drawWithinQualificationTiers(field, (e) => e.groupRank, makeDrawRng(seed), 4).map(e => e.id).slice(4).join(''));
+    }
+    for (let seed = 0; seed < 60; seed++) {
+      expect(drawWithinQualificationTiers(field, (e) => e.groupRank, makeDrawRng(seed), 0))
+        .toEqual(drawWithinQualificationTiers(field, (e) => e.groupRank, makeDrawRng(seed)));
+    }
+    expect(whole.size).toBeGreaterThan(1);
+    expect(cut.size).toBeGreaterThan(1);
+  });
+
+  it('is total: a reserve past the end of the field cuts nothing', () => {
+    const field = qualifiers(3, 2);
+    for (const reserve of [-5, 0, 99, Number.NaN]) {
+      const drawn = drawWithinQualificationTiers(field, (e) => e.groupRank, makeDrawRng(7), reserve);
+      expect(drawn.map((e) => e.id).sort()).toEqual(field.map((e) => e.id).sort());
+    }
+  });
 });
 
 describe('sameGroupRound1Conflicts', () => {

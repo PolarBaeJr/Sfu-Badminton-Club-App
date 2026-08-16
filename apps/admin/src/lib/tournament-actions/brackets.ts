@@ -786,14 +786,27 @@ async function generateSingleEliminationBracketImpl(
   // THE SEEDS THAT WERE PROMISED A SKIP (00124)
   // ------------------------------------------------------------
   //
-  // seed_skip_count is a FLOOR, and this is the only place it is read. It does
-  // not place a single bye — the byes are already where it wants them. A field
-  // of N sits in a bracket of nextPowerOf2(N); the empty slots are the tail
-  // ranks; getStandardSeedPositions pairs rank r against rank B+1-r, so the
-  // empty tail falls opposite the TOP seeds and hands them the byes, in seed
-  // order, exactly as the convention says. drawWithinTiers keeps that true
-  // through a redraw by shuffling entrants inside an index range rather than
-  // permuting rank-slots. See 00124's header for the full argument.
+  // seed_skip_count is a FLOOR. It does not place a single bye — the byes are
+  // already where it wants them. A field of N sits in a bracket of
+  // nextPowerOf2(N); the empty slots are the tail ranks; getStandardSeedPositions
+  // pairs rank r against rank B+1-r, so the empty tail falls opposite the TOP
+  // RANKS and hands them the byes. See 00124's header for the full argument.
+  //
+  // RANKS, NOT SEEDS, AND THE GAP IS WHY THIS NUMBER IS ALSO PASSED TO THE
+  // DRAW. The byes land on ranks 1..B-N; the draw shuffles entrants within
+  // their seeding tier, so the entrant AT rank r is only guaranteed to be seed
+  // r when the tier boundaries line up with the prefix. They do not in general:
+  // a promise of 3 on a 5-strong field sits inside the [3,4] band, and a
+  // promise of 9 on a 20-strong field sits inside [9,16] with the bye line at
+  // 12 — so seeds 13-16 could take the last four byes while seeds 9-12 played
+  // round one. Checking the COUNT of byes here and leaving the draw alone would
+  // therefore validate a promise the draw was free to break.
+  //
+  // So the number goes to the shuffle as well, where it becomes a tier boundary
+  // of its own (seedTierBandsReserving), and the check below stays a pure
+  // count. One number, read once, enforced in the one place that can enforce
+  // it — rather than a second post-draw validator that could disagree with the
+  // first.
   //
   // So the number of byes is a function of N alone and nobody can choose it.
   // What an exec CAN do is state how many seeds they promised a skip to, and
@@ -913,12 +926,13 @@ async function generateSingleEliminationBracketImpl(
       tierOf: (e) => e.groupRank ?? Number.MAX_SAFE_INTEGER,
       groupOf: (e) => e.group ?? null,
       seed: drawSeed,
+      reserveTop: seedSkip,
     });
     entries = drawn.entries;
     drawAttempts = drawn.attempts;
     sameGroupR1 = drawn.conflicts === 0 ? 'avoided' : 'unavoidable';
   } else if (drawIsRandomised) {
-    entries = drawWithinTiers(entries, makeDrawRng(drawSeed));
+    entries = drawWithinTiers(entries, makeDrawRng(drawSeed), seedSkip);
   }
 
   const bracketSize = nextPowerOf2(N);

@@ -708,6 +708,50 @@ export function seedTierBands(count: number): Array<[number, number]> {
 }
 
 /**
+ * The tier bands, cut so that no band straddles rank `reserveTop`.
+ *
+ * WHY A PROMISE HAS TO BE A TIER BOUNDARY (00124). seed_skip_count is a promise
+ * about SEEDS — "the top N skip round one" — but the byes are a property of
+ * RANKS: they fall on ranks 1..B-E, and drawWithinTiers is free to move an
+ * entrant anywhere inside their band. When the promised prefix ends in the
+ * MIDDLE of a band, those two facts disagree. A 5-entry field has 3 byes and
+ * bands [1,1], [2,2], [3,4], so a promise of 3 is accepted by the generator's
+ * ceiling check and then broken by the draw half the time: seed 4 takes rank 3
+ * and its bye while seed 3 plays round one. A 20-entry field is the version the
+ * club will actually see — 12 byes, band [9,16] straddling the bye line, so a
+ * promise of 9 can leave four promised seeds playing round one.
+ *
+ * The fix is to say what the promise means: an exec who typed a number has
+ * declared that the top N are NOT interchangeable with the rest of their tier,
+ * so the draw treats N as a tier boundary of its own.
+ *
+ * THIS CANNOT BREAK THE SEPARATION INVARIANT, and the argument is the same one
+ * the band comment above makes. Separation survives because permuting within a
+ * band maps {1..2^k} onto itself for every k; cutting a band into two
+ * CONTIGUOUS sub-ranges and shuffling each within itself is still a permutation
+ * that maps each band's set onto itself, so it is a strictly smaller group of
+ * permutations than the one already proved safe. Nothing can cross a boundary
+ * that was not crossable before.
+ *
+ * `reserveTop` of 0 — every event that never sets seed_skip_count — returns
+ * seedTierBands unchanged, so the default draw is byte-identical.
+ */
+export function seedTierBandsReserving(count: number, reserveTop: number): Array<[number, number]> {
+  const bands = seedTierBands(count);
+  // Total in its own right: callers outside the generator (the randomisation
+  // tests, the group-draw tests) pass whatever they like, and a reserve past
+  // the end of the field cuts nothing.
+  const cut = Math.min(Math.max(Math.trunc(reserveTop) || 0, 0), count);
+  if (cut === 0) return bands;
+  const out: Array<[number, number]> = [];
+  for (const [lo, hi] of bands) {
+    if (lo <= cut && cut < hi) out.push([lo, cut], [cut + 1, hi]);
+    else out.push([lo, hi]);
+  }
+  return out;
+}
+
+/**
  * Draw the field: shuffle the entrants within each seeding tier.
  *
  * `entries` must already be in seeding order (rank 1 first) — the caller sorts
@@ -723,10 +767,18 @@ export function seedTierBands(count: number): Array<[number, number]> {
  * entrants: a 5-entry draw could hand seed 4 a bye while seed 1 played, which
  * is not a draw, it is a favour. Shuffling the array leaves the tail empty by
  * construction, and the bye-placement test asserts it over many iterations.
+ *
+ * `reserveTop` is seed_skip_count (00124) and defaults to 0, which is what
+ * every draw that made no promise passes. See seedTierBandsReserving for why a
+ * promise that ends mid-band has to cut the band, and why cutting is safe.
  */
-export function drawWithinTiers<T>(entries: readonly T[], rng: () => number): T[] {
+export function drawWithinTiers<T>(
+  entries: readonly T[],
+  rng: () => number,
+  reserveTop = 0,
+): T[] {
   const drawn = [...entries];
-  for (const [lo, hi] of seedTierBands(drawn.length)) {
+  for (const [lo, hi] of seedTierBandsReserving(drawn.length, reserveTop)) {
     // Fisher-Yates over [lo-1, hi-1] inclusive. A one-member band (seeds 1 and
     // 2, and a clipped final band with a single occupant) has nothing to swap.
     for (let i = hi - 1; i > lo - 1; i--) {
@@ -875,16 +927,35 @@ export function planGroupAssignment<T extends GroupCandidate>(
  * guarantees, since it emits depth-major. Runs are detected rather than
  * computed from a band table, so a tier that is short (a group with fewer
  * finishers than the rest) needs no special case: it is simply a shorter run.
+ *
+ * `reserveTop` is seed_skip_count (00124), and it cuts a run the same way
+ * seedTierBandsReserving cuts a band, for the same reason and with the same
+ * safety argument — a run split into two contiguous halves still permutes the
+ * run's own set onto itself, so no qualifier can cross a tier that they could
+ * not cross before. It is needed HERE as well as there because
+ * seed_skip_count's CHECK only excludes round_robin: a pool_to_bracket event
+ * with two or more groups reaches its knockout through this shuffle, and a
+ * promise landing mid-run breaks identically. Two groups with five qualifiers
+ * order as [W-A, W-B, R-A, R-B, T-A]: three byes, and a promise of 3 lands
+ * inside the runners-up run, so the third bye is a coin flip between R-A and
+ * R-B when it was promised to whichever of them the seeding put third.
+ *
+ * This cuts against the header above — "which B is a question the group stage
+ * never asked" — only at the default, which is where that argument lives. An
+ * exec who typed a number has answered the question for the top N, and the cut
+ * bites nowhere else: `reserveTop` of 0 leaves every run whole.
  */
 export function drawWithinQualificationTiers<T>(
   entries: readonly T[],
   tierOf: (entry: T) => number,
   rng: () => number,
+  reserveTop = 0,
 ): T[] {
   const drawn = [...entries];
+  const cut = Math.min(Math.max(Math.trunc(reserveTop) || 0, 0), drawn.length);
   let start = 0;
   for (let i = 1; i <= drawn.length; i++) {
-    if (i < drawn.length && tierOf(drawn[i]!) === tierOf(drawn[start]!)) continue;
+    if (i < drawn.length && tierOf(drawn[i]!) === tierOf(drawn[start]!) && i !== cut) continue;
     // Fisher-Yates over [start, i-1]. A one-member run has nothing to swap.
     for (let j = i - 1; j > start; j--) {
       const k = start + Math.floor(rng() * (j - start + 1));
@@ -958,6 +1029,21 @@ export function sameGroupRound1Conflicts<T>(
  * scheduling nicety, on a day when the courts are already booked. The caller
  * records `same_group_round_1` in the audit row so the compromise is written
  * down rather than merely tolerated.
+ *
+ * `reserveTop` MAKES 'unavoidable' VERY SLIGHTLY MORE LIKELY, AND THAT IS THE
+ * TRADE, stated here so the next person to see `same_group_round_1:
+ * 'unavoidable'` on an event that also carries a seed_skip_count does not go
+ * looking for a second bug.
+ *
+ * The reserve never creates a clash by itself — the ranks it pins are bye
+ * ranks, and a bye is never a conflict. What it does is shrink the pool the
+ * attempt loop can draw from: when the promise ends inside a run that reaches
+ * past the bye line, only the members above the promise can still reach the
+ * CONTESTED ranks, so an arrangement that needed a now-pinned qualifier down
+ * there is no longer reachable and the loop can exhaust where it used to
+ * succeed. An explicit promise outranks a scheduling nicety, the audit row
+ * already records the compromise, and the pigeonhole pre-check is untouched
+ * because it was always necessary and never sufficient.
  */
 export function drawAvoidingSameGroupRound1<T>(
   entries: readonly T[],
@@ -967,10 +1053,18 @@ export function drawAvoidingSameGroupRound1<T>(
     groupOf: (entry: T) => number | null;
     seed: number;
     maxAttempts?: number;
+    /**
+     * seed_skip_count (00124). Passed to EVERY call of the shuffle below —
+     * both the infeasible early return and the attempt loop — because a
+     * promise that only holds on the happy path is not a promise, and the
+     * infeasible branch is the one nobody looks at.
+     */
+    reserveTop?: number;
   },
 ): { entries: T[]; conflicts: number; attempts: number; feasible: boolean } {
   const { bracketSize, tierOf, groupOf, seed } = opts;
   const maxAttempts = opts.maxAttempts ?? 64;
+  const reserveTop = opts.reserveTop ?? 0;
 
   // Contested = both slots hold a real entrant. entries.length is the field, so
   // ranks above it are empty and their matches are byes or nothing at all.
@@ -999,7 +1093,7 @@ export function drawAvoidingSameGroupRound1<T>(
   if (!feasible) {
     // Still DRAW it — the tier shuffle is wanted regardless — but do not spend
     // 64 attempts chasing an arrangement that provably does not exist.
-    const drawn = drawWithinQualificationTiers(entries, tierOf, makeDrawRng(seed));
+    const drawn = drawWithinQualificationTiers(entries, tierOf, makeDrawRng(seed), reserveTop);
     return {
       entries: drawn,
       conflicts: sameGroupRound1Conflicts(drawn, bracketSize, groupOf),
@@ -1013,7 +1107,7 @@ export function drawAvoidingSameGroupRound1<T>(
     // generation with the audit row's draw_seed reproduces this same sequence
     // and therefore the same bracket, which is the property the randomised draw
     // was built to have and this must not break.
-    const drawn = drawWithinQualificationTiers(entries, tierOf, makeDrawRng((seed + attempts * 0x9e3779b1) >>> 0));
+    const drawn = drawWithinQualificationTiers(entries, tierOf, makeDrawRng((seed + attempts * 0x9e3779b1) >>> 0), reserveTop);
     attempts++;
     const conflicts = sameGroupRound1Conflicts(drawn, bracketSize, groupOf);
     if (conflicts < bestConflicts || attempts === 1) {

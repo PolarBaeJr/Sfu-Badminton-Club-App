@@ -2485,6 +2485,93 @@ describe('seeds that skip the first round', () => {
     }
   });
 
+  /**
+   * THE PROMISE IS ABOUT SEEDS AND THE BYES ARE ABOUT RANKS, AND UNTIL THIS
+   * TEST EXISTED THE GENERATOR ONLY CHECKED THE SECOND.
+   *
+   * The ceiling check counts byes — nextPowerOf2(E) - E — and stops. It never
+   * asked whether the promised seeds are the ones who GET them, and the draw is
+   * free to say otherwise: drawWithinTiers shuffles entrants inside their
+   * seeding band, so rank r holds some member of r's band rather than seed r.
+   * The two agree only when the promise ends on a band boundary.
+   *
+   * 20 entrants promising 9 is the case a club can actually reach. Bands are
+   * [1],[2],[3,4],[5,8],[9,16],[17,20] and the byes are ranks 1-12, so the
+   * [9,16] band straddles the bye line: before the fix, seeds 13-16 could take
+   * bye ranks 9-12 while four seeds who had been promised a skip played round
+   * one. The count check passed the whole time — 9 <= 12.
+   *
+   * ASSERTED OVER UNPINNED REDRAWS, and asserting TWO things, because "stop
+   * shuffling entirely" would satisfy the first on its own. Math.random is left
+   * alone so every iteration is a genuinely different draw (the pinned
+   * mockReturnValue fixtures elsewhere prove reproducibility, which is the
+   * opposite property and useless here).
+   */
+  it('keeps the promise when it lands mid-tier, without freezing the rest of the draw', async () => {
+    seedField(20);
+    Object.assign(event(), { seed_skip_count: 9 });
+
+    const surplus = new Set<string>();
+    for (let i = 0; i < 40; i++) {
+      store.db.tournament_matches = [];
+      expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+
+      const holders = withByes();
+      expect(holders).toHaveLength(12);
+      // THE PROMISE. The nine seeds who were promised a skip have one, every
+      // single time — not eight of them and a tier-mate.
+      expect(holders.slice(0, 9)).toEqual(Array.from({ length: 9 }, (_, k) => `p-${k}`));
+      // The three surplus byes are still the draw's business: they come out of
+      // what is left of the 9-16 band, ranks 10-12, and never from below it.
+      const rest = holders.slice(9).map((id) => Number(id.slice(2)));
+      expect(rest).toHaveLength(3);
+      expect(rest.every((n) => n >= 9 && n <= 15)).toBe(true);
+      surplus.add(rest.join(','));
+    }
+
+    // AND THE DRAW IS STILL A DRAW. Reserving the promised prefix cuts one
+    // band in two; it does not stop the shuffle, and a fix that did would pass
+    // every assertion above.
+    expect(surplus.size).toBeGreaterThan(1);
+  });
+
+  it('keeps a promise that splits the smallest straddling tier', async () => {
+    // The minimal case, and the one the existing redraw test above already
+    // showed the mechanism for: a 5-entry field has 3 byes and a [3,4] band, so
+    // "the top 3 skip" was accepted and then broken whenever the shuffle put
+    // seed 4 at rank 3. That test collects the third bye holder over 30 redraws
+    // and finds BOTH p-2 and p-3 — at seed_skip_count 0, which is correct,
+    // because a tier is interchangeable until somebody promises otherwise.
+    seedField(5);
+    Object.assign(event(), { seed_skip_count: 3 });
+
+    for (let i = 0; i < 30; i++) {
+      store.db.tournament_matches = [];
+      expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+      expect(withByes()).toEqual(['p-0', 'p-1', 'p-2']);
+    }
+  });
+
+  it('leaves the tier interchangeable again the moment the promise stops at the boundary', async () => {
+    // The reserve must bite ONLY where the promise needs it. A promise of 2 on
+    // the same 5-entry field ends on a band boundary, so [3,4] is left whole
+    // and the third bye is a coin flip exactly as it is at 0 — which is the
+    // behaviour the draw was designed for and must not be lost to a fix that
+    // over-reserves.
+    seedField(5);
+    Object.assign(event(), { seed_skip_count: 2 });
+
+    const third = new Set<string>();
+    for (let i = 0; i < 30; i++) {
+      store.db.tournament_matches = [];
+      expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+      const holders = withByes();
+      expect(holders.slice(0, 2)).toEqual(['p-0', 'p-1']);
+      third.add(holders[2]!);
+    }
+    expect([...third].sort()).toEqual(['p-2', 'p-3']);
+  });
+
   it('refuses a promise the field cannot keep, and names the number it can', async () => {
     // 33 in a 64-draw gives 31 byes; 40 is past the ceiling. The refusal has to
     // carry the number, because "it did not work" on the morning of a tournament

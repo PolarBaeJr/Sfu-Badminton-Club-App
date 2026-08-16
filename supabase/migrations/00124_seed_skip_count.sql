@@ -23,9 +23,27 @@
 --      `entries` — already sorted best-first — by rank, so the EMPTY ranks are
 --      always the tail E+1..B. Rank r therefore holds a bye exactly when
 --      B + 1 - r > E, i.e. when r <= B - E. The byes already go to the top
---      B - E seeds, in seed order, and always have. drawWithinTiers shuffles
---      entrants within an index range rather than permuting rank-slots
---      precisely so that this stays true through a redraw.
+--      B - E RANKS, and always have. drawWithinTiers shuffles entrants within
+--      an index range rather than permuting rank-slots precisely so that this
+--      stays true through a redraw.
+--
+--   2b. RANKS ARE NOT SEEDS ONCE THE DRAW HAS RUN, and this is the one thing
+--      about the feature that is easy to get wrong — it was wrong here first.
+--      drawWithinTiers shuffles entrants inside their seeding band, so rank r
+--      holds SOME member of r's band, not necessarily seed r. The bands are
+--      [1,1], [2,2], [3,4], [5,8], [9,16] …, so the top B - E ranks are exactly
+--      the top B - E seeds only when B - E falls on a band boundary. It often
+--      does not: a 5-strong field has 3 byes and a [3,4] band, so seed 4 can
+--      take the third bye while seed 3 plays round one; a 20-strong field has
+--      12 byes and a [9,16] band, so seeds 13-16 can take the last four.
+--
+--      That is harmless at the default — a tier is by definition a set the draw
+--      treats as interchangeable — but it is exactly what this column promises
+--      NOT to happen. So a non-zero seed_skip_count is handed to the draw as
+--      well as to the check: the promised prefix becomes a tier boundary of its
+--      own, and seeds 1..N then hold ranks 1..N and therefore byes. Zero cuts
+--      nothing, so every event that made no promise draws exactly as before.
+--      See seedTierBandsReserving in tournament-actions/_internal.ts.
 --
 --   3. A round-one match with BOTH slots empty is not a match — it would sit
 --      pending forever with nobody in it — so a legal draw needs
@@ -111,7 +129,7 @@ ALTER TABLE tournament_events
   );
 
 COMMENT ON COLUMN tournament_events.seed_skip_count IS
-  'How many of the top seeds must skip the first round of this event''s knockout, entering at round two with a bye. A FLOOR, not a placement instruction: the number of byes in a bracket is fixed by the field size (bracket size is nextPowerOf2(entrants), the empty slots are the tail, and the standard seeding positions hand them to the top seeds in seed order), so this column never moves a bye. It is the promise the exec made, recorded so generateSingleEliminationBracket can refuse to build a draw that gives fewer than this many seeds a bye — with the number the field CAN deliver, nextPowerOf2(entrants) - entrants, in the refusal. 0 (the default and the pre-00124 behaviour) means no promise and nothing is checked. Must be 0 on format = round_robin, which has no bracket. Frozen once the event has matches, by the same updateTournamentEvent gate that freezes the match format.';
+  'How many of the top seeds must skip the first round of this event''s knockout, entering at round two with a bye. A FLOOR, not a placement instruction: the number of byes in a bracket is fixed by the field size (bracket size is nextPowerOf2(entrants), the empty slots are the tail, and the standard seeding positions hand them to the top RANKS), so this column never moves a bye. It is the promise the exec made, recorded so generateSingleEliminationBracket can refuse to build a draw that gives fewer than this many seeds a bye — with the number the field CAN deliver, nextPowerOf2(entrants) - entrants, in the refusal. A non-zero value is also handed to the draw, where it becomes a seeding-tier boundary so that the top N SEEDS hold the top N ranks; without that the tier shuffle can hand a promised seed''s bye to a tier-mate below them. 0 (the default and the pre-00124 behaviour) means no promise, nothing is checked and the draw is unconstrained. Must be 0 on format = round_robin, which has no bracket. Frozen once the event has matches, by the same updateTournamentEvent gate that freezes the match format.';
 
 -- ============================================================
 -- If an ALTER above failed, these show what it found
