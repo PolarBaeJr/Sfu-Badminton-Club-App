@@ -14,6 +14,11 @@ import { DrawScroller } from './DrawScroller';
  * IT RENDERS THE DRAW TWICE, and only one is ever on screen. Above 768px the
  * chart; below it, a plain round-by-round list. See the note on `DrawRounds`
  * for why a phone does not get the chart.
+ *
+ * The sizes below are the sizes the chart is LAID OUT at, which above a certain
+ * draw size is not the size it is drawn at: DrawScroller scales the whole thing
+ * down to fit its box. Nothing here has to know that — a transform leaves every
+ * measured figure in this file true, which is most of why it is a transform.
  */
 
 // The card is two entrant rows and a status strip, and no more: a phone-first
@@ -135,73 +140,72 @@ export function Draw({ matches, thirdPlace, nameOf, seedOf }: DrawProps) {
             ? 'The top half runs inwards from the left, the bottom half from the right, and they meet at the final in the middle.'
             : 'This draw’s rounds do not halve, so it is shown as a plain left-to-right ladder.'}
         </p>
-        <DrawScroller>
-          <div
-            className="relative"
-            style={{ width: layout.width, height: layout.height }}
-          >
-            {layout.columns.map((col) => (
-              <div
-                key={col.key}
-                className="absolute eyebrow flex items-center justify-center"
-                style={{ left: col.x, top: 0, width: COL_W, height: HEAD_H }}
-              >
-                {roundName(col.roundNumber)}
+        {/* The sized, positioned box the absolute offsets below are relative to
+            is DrawScroller's innermost one — it owns it because it is the one
+            being transformed to fit. Everything here is laid out at full size
+            and scaled as a whole. */}
+        <DrawScroller width={layout.width} height={layout.height}>
+          {layout.columns.map((col) => (
+            <div
+              key={col.key}
+              className="absolute eyebrow flex items-center justify-center"
+              style={{ left: col.x, top: 0, width: COL_W, height: HEAD_H }}
+            >
+              {roundName(col.roundNumber)}
+            </div>
+          ))}
+
+          <div className="absolute inset-x-0" style={{ top: HEAD_H, height: layout.bodyH }} aria-hidden="true">
+            {layout.connectors.map((c) => (
+              <span
+                key={c.key}
+                className="absolute bg-[var(--border)]"
+                style={{ left: c.x, top: c.y, width: c.w, height: c.h }}
+              />
+            ))}
+          </div>
+
+          <div className="absolute inset-x-0" style={{ top: HEAD_H, height: layout.bodyH }}>
+            {layout.nodes.map((node) => (
+              <div key={node.id} className="absolute" style={{ left: node.x, top: node.y, width: COL_W }}>
+                <ChartCard
+                  m={node.match}
+                  side={node.side}
+                  roundLabel={roundLabel(node.roundNumber, node.side)}
+                  nameOf={nameOf}
+                  seedOf={seedOf}
+                />
               </div>
             ))}
 
-            <div className="absolute inset-x-0" style={{ top: HEAD_H, height: layout.bodyH }} aria-hidden="true">
-              {layout.connectors.map((c) => (
-                <span
-                  key={c.key}
-                  className="absolute bg-[var(--border)]"
-                  style={{ left: c.x, top: c.y, width: c.w, height: c.h }}
+            {/* THE 3RD PLACE PLAYOFF, in the clear space under the final. The
+                centre column holds one card, so a converging draw has a whole
+                column of room right where the reader is already looking.
+
+                Nothing is drawn joining it to anything: its two entrants are
+                the beaten semi-finalists, who in a converging draw sit on
+                OPPOSITE sides of the final, so there is no single line back to
+                them that would not cross the final and say something about it.
+                The caption carries it instead. */}
+            {thirdPlace && layout.thirdPlace && (
+              <div
+                className="absolute"
+                style={{ left: layout.thirdPlace.x, top: layout.thirdPlace.y, width: COL_W }}
+              >
+                <ChartCard
+                  m={thirdPlace}
+                  side="centre"
+                  roundLabel="3rd Place Playoff"
+                  nameOf={nameOf}
+                  seedOf={seedOf}
                 />
-              ))}
-            </div>
-
-            <div className="absolute inset-x-0" style={{ top: HEAD_H, height: layout.bodyH }}>
-              {layout.nodes.map((node) => (
-                <div key={node.id} className="absolute" style={{ left: node.x, top: node.y, width: COL_W }}>
-                  <ChartCard
-                    m={node.match}
-                    side={node.side}
-                    roundLabel={roundLabel(node.roundNumber, node.side)}
-                    nameOf={nameOf}
-                    seedOf={seedOf}
-                  />
-                </div>
-              ))}
-
-              {/* THE 3RD PLACE PLAYOFF, in the clear space under the final. The
-                  centre column holds one card, so a converging draw has a whole
-                  column of room right where the reader is already looking.
-
-                  Nothing is drawn joining it to anything: its two entrants are
-                  the beaten semi-finalists, who in a converging draw sit on
-                  OPPOSITE sides of the final, so there is no single line back to
-                  them that would not cross the final and say something about it.
-                  The caption carries it instead. */}
-              {thirdPlace && layout.thirdPlace && (
-                <div
-                  className="absolute"
-                  style={{ left: layout.thirdPlace.x, top: layout.thirdPlace.y, width: COL_W }}
-                >
-                  <ChartCard
-                    m={thirdPlace}
-                    side="centre"
-                    roundLabel="3rd Place Playoff"
-                    nameOf={nameOf}
-                    seedOf={seedOf}
-                  />
-                  <h3 className="eyebrow mt-2">3rd Place Playoff</h3>
-                  <p className="text-[11px] leading-snug text-[var(--text-muted)]">
-                    The two beaten semi-finalists, one from each half. The winner does not advance
-                    to the final.
-                  </p>
-                </div>
-              )}
-            </div>
+                <h3 className="eyebrow mt-2">3rd Place Playoff</h3>
+                <p className="text-[11px] leading-snug text-[var(--text-muted)]">
+                  The two beaten semi-finalists, one from each half. The winner does not advance
+                  to the final.
+                </p>
+              </div>
+            )}
           </div>
         </DrawScroller>
       </div>
