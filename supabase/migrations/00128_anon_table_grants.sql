@@ -169,6 +169,46 @@ CREATE TEMP TABLE _00128_acl_before ON COMMIT DROP AS
 -- evidence is uniform. No policy admits anon on any of them, and no anon
 -- statement in eighteen days of pg_stat_statements touched any of them.
 
+-- A SWEEP, NOT A LIST — and the list below is kept only as documentation.
+--
+-- The explicit statements that follow were measured against PRODUCTION and are
+-- accurate there. Staging carries four relations production does not
+-- (cron_config, email_suppressions, tournament_checkin_tokens and the
+-- purgeable_inactive_players VIEW), so the hand-written list left anon reaching
+-- them and this file's own closing assertion refused to commit. That assertion
+-- did its job; the list was the thing at fault.
+--
+-- A list cannot be right on two databases that have drifted, and the evidence
+-- behind this migration is not per-table anyway: eighteen days of
+-- pg_stat_statements show the anon role touching NO table at all, only three
+-- SECURITY DEFINER functions that read as their owner. "Nothing in public is
+-- reachable by anon" is therefore the rule, and a sweep states the rule rather
+-- than one database's snapshot of it.
+--
+-- VIEWS included (relkind 'v'): purgeable_inactive_players is a view, and a
+-- view is queried through its own ACL, so omitting views would leave a readable
+-- window onto tables that had just been closed.
+--
+-- ratings is excluded here and handled in section B, which keeps its SELECT.
+DO $sweep$
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN
+    SELECT c.oid::regclass AS ident
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'public'
+       AND c.relkind IN ('r', 'v', 'm', 'p')
+       AND c.relname <> 'ratings'
+       AND c.relacl IS NOT NULL
+       AND c.relacl::text LIKE '%anon=%'
+  LOOP
+    EXECUTE format('REVOKE ALL PRIVILEGES ON %s FROM PUBLIC, anon', r.ident);
+  END LOOP;
+END
+$sweep$;
+
 -- Membership, identity and moderation.
 REVOKE ALL PRIVILEGES ON TABLE public.players               FROM PUBLIC, anon;
 REVOKE ALL PRIVILEGES ON TABLE public.passkey_credentials   FROM PUBLIC, anon;
@@ -398,14 +438,31 @@ BEGIN
 
   -- (6) The default privilege that mints the grant is gone for anon and intact
   --     for the other two.
+  --     SCOPED TO THE OWNER WE CAN ACTUALLY ALTER. Default privileges are keyed
+  --     by (granting role, schema), and ALTER DEFAULT PRIVILEGES may only be
+  --     issued by the owning role or a member of it. Staging carries a SECOND
+  --     entry for schema public owned by supabase_admin, which production does
+  --     not have, and `postgres` is not a member of supabase_admin
+  --     (pg_has_role says false) — so that entry is unreachable from any
+  --     connection this migration can run on.
+  --
+  --     It is also not the entry that matters. A default ACL applies to objects
+  --     created BY its owning role, and every table in this repo is created by
+  --     migrations running as postgres. The supabase_admin entry would only
+  --     mint a grant on a table supabase_admin itself created, which nothing
+  --     here does. Asserting over every owner therefore fails on staging for a
+  --     condition that is neither fixable nor relevant, which is a worse
+  --     outcome than not asserting it: an assertion nobody can satisfy gets
+  --     deleted, and then the real one goes with it.
   SELECT count(*) INTO n
   FROM pg_default_acl d
   JOIN pg_namespace ns ON ns.oid = d.defaclnamespace
   CROSS JOIN LATERAL aclexplode(d.defaclacl) a
   WHERE ns.nspname = 'public' AND d.defaclobjtype = 'r'
+    AND d.defaclrole = 'postgres'::regrole
     AND a.grantee = 'anon'::regrole;
   IF n <> 0 THEN
-    RAISE EXCEPTION '00128: ALTER DEFAULT PRIVILEGES still grants anon on tables';
+    RAISE EXCEPTION '00128: ALTER DEFAULT PRIVILEGES still grants anon on tables created by postgres';
   END IF;
 
   SELECT count(DISTINCT a.grantee) INTO n
