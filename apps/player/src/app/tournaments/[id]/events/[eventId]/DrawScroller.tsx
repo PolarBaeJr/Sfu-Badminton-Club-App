@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeftRight } from 'lucide-react';
+import { ArrowLeftRight, ArrowUpDown, Maximize2, Minimize2 } from 'lucide-react';
 
 /**
  * THE DRAW SHRINKS TO FIT ITS BOX, and only scrolls when shrinking any further
@@ -118,34 +118,93 @@ const TOPBAR_H = 71;
 /** So the last row of cards is not flush against the bottom of the window. */
 const BOTTOM_GUTTER = 24;
 
+/**
+ * THE FULL-SCREEN FLOOR, which is HIGHER than the page's, not lower.
+ *
+ * "allow full screen too so i can just only show the thing" — the draw goes on
+ * a projector at a tournament so the room can watch it fill in. 0.68 was
+ * derived for one person at a laptop at arm's length, and that derivation does
+ * not survive the change of reader.
+ *
+ * WHY HIGHER. On a laptop the reader is ~55cm from a screen showing roughly
+ * 48px per cm, so the 7.5px partner line at the page floor subtends about 10
+ * arcmin. Project the same 1920px onto a 3m-wide screen and it is 6.4px per cm,
+ * read from perhaps 8m; matching that same 10 arcmin then takes about 14.5px of
+ * rendered type. The line is 11px at FULL size, so a projected chart is already
+ * harder to read at 1.0 than a laptop's is at 0.68, and every further step down
+ * is spent on a reader at the back who cannot lean in. Shrinking is the wrong
+ * currency here.
+ *
+ * WHY 0.80 AND NOT HIGHER. The floor must never be what stops the largest draw
+ * that CAN fit a screen from fitting it. Measured in full screen at 1920×1080 —
+ * a 1884px pane and a 1012px budget once this shell's padding and header are
+ * out — a 64-draw fits both axes at 0.843, and 8, 16 and 32 fit at 1.0 outright.
+ * So 0.80 costs nothing at all at the resolution this feature exists for, and
+ * still leaves 0.04 of margin against a projector whose aspect differs a little.
+ * A 128-draw would need 0.41 and is refused: it holds at 0.80 and scrolls, which
+ * prints a fragment somebody can actually read instead of a whole sheet nobody
+ * can.
+ *
+ * WHAT IT COSTS, said plainly: on a 1280×720 projector a 32-draw needs 0.73 and
+ * so now scrolls where the page floor would have fitted it whole. That is the
+ * deliberate trade — 720p is the fading end of the projector market and an
+ * illegible whole chart serves the room no better than a legible part of one.
+ */
+const FULLSCREEN_FLOOR = 0.80;
+
 export function DrawScroller({
-  width, height, children,
+  width, height, title, subtitle, note, children,
 }: {
   /** The layout's UNSCALED size. The scale is worked out from it here. */
   width: number;
   height: number;
+  /** Shown ONLY in full screen: which event this sheet is. */
+  title?: string;
+  /** Shown ONLY in full screen, beside the title: the tournament. */
+  subtitle?: string;
+  /** Shown ONLY in full screen: how the chart reads. See the header below. */
+  note?: string;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
   // One piece of state for both axes. Measured together in one callback so a
   // resize can never leave the width from this frame and the height from the
   // last one, which would fit the chart to a window that never existed.
-  const [box, setBox] = useState({ avail: 0, budget: 0 });
+  const [box, setBox] = useState({ avail: 0, budget: 0, full: false });
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const measure = () =>
+    const measure = () => {
+      // Read off the DOCUMENT rather than off React state. This runs from a
+      // ResizeObserver and from two listeners, and a state value closed over at
+      // mount would be false for the whole life of the effect.
+      const full = !!document.fullscreenElement
+        && document.fullscreenElement === shellRef.current;
       setBox({
+        full,
         // clientWidth, not getBoundingClientRect: it excludes the box's own
         // scrollbar, so fitting to it cannot leave the chart a scrollbar's
         // width too wide and oscillating between overflowing and not.
         avail: el.clientWidth,
-        // The WINDOW, not this box. The box's own height is whatever the scale
-        // last made it, so measuring that would fit the chart to the height the
-        // chart already had and never converge.
-        budget: Math.max(0, window.innerHeight - TOPBAR_H - BOTTOM_GUTTER),
+        // TWO DIFFERENT BUDGETS, because the box means different things.
+        //
+        // In the page its height is whatever the scale last made it, so
+        // measuring it would fit the chart to the height the chart already had
+        // and never converge — the budget has to come from the window, less the
+        // sticky topbar.
+        //
+        // In full screen the shell is a flex column and this box is
+        // `flex: 1 1 auto; min-height: 0`, so its height is dictated by the
+        // SCREEN — what is left under the header — and not by its content.
+        // There it can be measured directly, which also means the header's real
+        // height is accounted for rather than guessed at.
+        budget: full
+          ? el.clientHeight
+          : Math.max(0, window.innerHeight - TOPBAR_H - BOTTOM_GUTTER),
       });
+    };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
@@ -155,13 +214,45 @@ export function DrawScroller({
     // is still sized from the previous scale — so the observer never fires and
     // a height-only resize would never re-fit.
     window.addEventListener('resize', measure);
+    // AND fullscreenchange, which is not covered by either of the other two.
+    // Entering full screen on a screen the same size as the window changes no
+    // box at all, so the observer may never fire, and the browser does not
+    // reliably raise `resize` for it — but the BUDGET has changed, because the
+    // topbar is gone. This is also the only path that runs when Esc is pressed.
+    document.addEventListener('fullscreenchange', measure);
     return () => {
       ro.disconnect();
       window.removeEventListener('resize', measure);
+      document.removeEventListener('fullscreenchange', measure);
     };
   }, []);
 
-  const { avail, budget } = box;
+  const { avail, budget, full } = box;
+
+  /**
+   * NOTHING IS SET OPTIMISTICALLY HERE. `full` is only ever written by the
+   * `fullscreenchange` handler above, so a request the browser refuses — which
+   * it will if it does not judge this a user gesture, or if the page is in an
+   * iframe without `allow="fullscreen"` — leaves the component exactly as it
+   * was rather than styled for a full screen it never got.
+   */
+  const toggleFull = () => {
+    const el = shellRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) {
+      void document.exitFullscreen?.().catch(() => {});
+      return;
+    }
+    // UNPREFIXED ONLY, on purpose. A webkit fallback here would be half a
+    // fallback and worse than none: the measuring below reads
+    // `document.fullscreenElement`, the listener is `fullscreenchange` and the
+    // stylesheet keys off `:fullscreen`, so an element that went full screen
+    // through a prefixed call would be full screen with the page's flex layout,
+    // the page's floor, no header, and a button still offering to enter. Safari
+    // has shipped the unprefixed element method since 16.4; below that the
+    // button simply does nothing and the chart stays where it was.
+    void el.requestFullscreen?.().catch(() => {});
+  };
 
   // ZERO IS THE PHONE, and it has to mean "leave it alone" rather than "scale to
   // nothing". Below 768px .draw-chart-wrap is display:none, so clientWidth is 0
@@ -170,8 +261,9 @@ export function DrawScroller({
   //
   // THE SMALLER OF THE TWO FITS, then floored. Taking the width alone is what
   // left a 64-draw 1200px tall on a screen with 800px to give it.
+  const floor = full ? FULLSCREEN_FLOOR : FIT_FLOOR;
   const scale = avail > 0 && budget > 0 && width > 0 && height > 0
-    ? Math.min(1, Math.max(FIT_FLOOR, Math.min(avail / width, budget / height)))
+    ? Math.min(1, Math.max(floor, Math.min(avail / width, budget / height)))
     : 1;
 
   const scaledW = Math.ceil(width * scale);
@@ -187,31 +279,90 @@ export function DrawScroller({
   // the floor can either overflow. So this cannot claim a drag that is not
   // there.
   //
-  // There is deliberately NO matching notice when a floored draw runs off the
-  // bottom. The hint exists because sideways scrolling inside a box is
-  // undiscoverable — nothing about the page suggests that box moves. Scrolling
-  // the page down is the most discoverable gesture there is, and captioning it
-  // would be telling the reader something they already know.
   const overflows = avail > 0 && scaledW > avail + 1;
 
+  /**
+   * DOWNWARD OVERFLOW IS ONLY WORTH SAYING IN FULL SCREEN, and the reason is
+   * the same one that justifies the sideways hint rather than an exception to
+   * it: what makes an overflow worth captioning is whether it is discoverable.
+   *
+   * In the page a floored draw simply makes a tall block and the PAGE scrolls,
+   * which is the most discoverable gesture on the web — captioning it would
+   * tell the reader something they already know. In full screen there is no
+   * page behind this to scroll, so the shell gives the box its own vertical
+   * scroller, and that is the undiscoverable case all over again: a draw can
+   * run a whole screen below the fold with nothing on the sheet admitting it.
+   * That is at its worst here, because a projected chart may have nobody at the
+   * keyboard — so the notice is what tells whoever set it up that the room is
+   * seeing a cropped draw.
+   */
+  const scaledH = Math.ceil(height * scale);
+  const overflowsDown = full && budget > 0 && scaledH > budget + 1;
+
   return (
-    <>
-      {overflows && (
+    // THE SHELL IS WHAT GOES FULL SCREEN, not the scroll box, so the header
+    // below travels with the chart. It lives inside .draw-chart-wrap, which is
+    // display:none under 768px — so a phone never sees the button at all and
+    // needs no separate rule. That is the right answer rather than an
+    // oversight: full screen exists to project a wall chart at a tournament,
+    // and the phone deliberately does not render the wall chart. A phone-sized
+    // full screen of a 2472px sheet would be the sideways drag this whole
+    // change removed, and the round-by-round list stays what a phone gets.
+    <div ref={shellRef} className="draw-shell">
+      {/* Seen only in full screen (display:none otherwise). A projected sheet
+          with no caption is a bracket nobody in the room can place; on the page
+          this would only repeat the header a few centimetres above. */}
+      <div className="draw-full-head">
+        {title && <span className="draw-full-title">{title}</span>}
+        {subtitle && <span className="draw-full-sub">{subtitle}</span>}
+        {/* HOW TO READ IT, repeated here because the page's copy of this line
+            is a sibling ABOVE the shell and so is outside the element that goes
+            full screen — it would simply never paint. A converging draw is not
+            how anybody expects a bracket to read until they are told once, and
+            a room watching a projection is the audience least likely to have
+            been told. */}
+        {note && <span className="draw-full-note">{note}</span>}
+      </div>
+
+      <div className="draw-tools">
+        <button
+          type="button"
+          className="draw-full-btn"
+          onClick={toggleFull}
+          aria-pressed={full}
+        >
+          {full ? <Minimize2 size={12} aria-hidden="true" /> : <Maximize2 size={12} aria-hidden="true" />}
+          {full ? 'Exit full screen' : 'Full screen'}
+        </button>
+      </div>
+
+      {(overflows || overflowsDown) && (
         <p className="draw-hint">
-          <ArrowLeftRight size={12} aria-hidden="true" />
-          Scroll sideways — the two halves meet at the final
+          {overflowsDown && !overflows
+            ? <ArrowUpDown size={12} aria-hidden="true" />
+            : <ArrowLeftRight size={12} aria-hidden="true" />}
+          {overflows && overflowsDown
+            ? 'This draw is bigger than the screen — scroll to see all of it'
+            : overflowsDown
+              ? 'This draw is taller than the screen — scroll down for the rest'
+              : 'Scroll sideways — the two halves meet at the final'}
         </p>
       )}
       {/* tabIndex makes a SCROLLABLE region reachable by keyboard, which a
           scroll box with no focusable child otherwise is not — so it is gated
-          on the box actually scrolling, for the same reason the fade below is.
-          A chart that fits has nothing to scroll and a tab stop there is a stop
-          that does nothing, which since this box started fitting is the common
-          case. The region and its label stay either way, so it is still
-          reachable by landmark navigation. */}
+          on the box actually scrolling — on EITHER axis, since in full screen
+          this box owns the vertical scroll too. A chart that fits has nothing
+          to scroll and a tab stop there is a stop that does nothing, which
+          since this box started fitting is the common case. The region and its
+          label stay either way, so it is still reachable by landmark
+          navigation.
+
+          The fade below stays width-only: it is a horizontal mask and it says
+          "there is more to the SIDE", which vertical overflow does not make
+          true. */}
       <div
         ref={ref}
-        tabIndex={overflows ? 0 : -1}
+        tabIndex={overflows || overflowsDown ? 0 : -1}
         role="region"
         aria-label="Tournament draw"
         // The edge fade says "there is more this way", so it is now gated on
@@ -240,6 +391,6 @@ export function DrawScroller({
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }

@@ -66,6 +66,13 @@ interface DrawProps {
   thirdPlace: DrawMatch | null;
   nameOf: Record<string, string>;
   seedOf: Record<string, number | null>;
+  /**
+   * What the sheet is, for the FULL-SCREEN header only — the page already says
+   * both of these in its own header. A projected chart with no caption is a
+   * bracket nobody in the room can place.
+   */
+  title?: string;
+  subtitle?: string;
 }
 
 /** A skip match has one real entry and one empty slot; only the empty side is labelled. */
@@ -111,7 +118,7 @@ function footerText(m: DrawMatch): string {
   return 'vs';
 }
 
-export function Draw({ matches, thirdPlace, nameOf, seedOf }: DrawProps) {
+export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle }: DrawProps) {
   const layout = computeDrawLayout(matches, GEOMETRY, { thirdPlace: !!thirdPlace });
   // THE HIGHEST round_number, not the COUNT of rounds. getRoundName counts back
   // from the final — `totalRounds - roundNumber + 1` — so the two arguments have
@@ -129,22 +136,32 @@ export function Draw({ matches, thirdPlace, nameOf, seedOf }: DrawProps) {
       ? roundName(roundNumber)
       : `${roundName(roundNumber)}, ${side === 'left' ? 'top' : 'bottom'} half`;
 
+  const readingNote = layout.mode === 'converging'
+    ? 'The top half runs inwards from the left, the bottom half from the right, and they meet at the final in the middle.'
+    : 'This draw’s rounds do not halve, so it is shown as a plain left-to-right ladder.';
+
   return (
     <>
       {/* THE CHART — tablet and up only. `display: none` below 768px, so on a
           phone it contributes no width at all and the page body cannot be
           pushed sideways by it. */}
       <div className="draw-chart-wrap px-4 pb-4">
-        <p className="text-xs text-[var(--text-muted)] mb-2">
-          {layout.mode === 'converging'
-            ? 'The top half runs inwards from the left, the bottom half from the right, and they meet at the final in the middle.'
-            : 'This draw’s rounds do not halve, so it is shown as a plain left-to-right ladder.'}
-        </p>
+        {/* ONE STRING, TWO PLACES. This sits above the shell, so it is outside
+            the element that goes full screen and would vanish there; the same
+            text is handed to DrawScroller for its full-screen header rather
+            than written out twice and left to drift. */}
+        <p className="text-xs text-[var(--text-muted)] mb-2">{readingNote}</p>
         {/* The sized, positioned box the absolute offsets below are relative to
             is DrawScroller's innermost one — it owns it because it is the one
             being transformed to fit. Everything here is laid out at full size
             and scaled as a whole. */}
-        <DrawScroller width={layout.width} height={layout.height}>
+        <DrawScroller
+          width={layout.width}
+          height={layout.height}
+          title={title}
+          subtitle={subtitle}
+          note={readingNote}
+        >
           {layout.columns.map((col) => (
             <div
               key={col.key}
