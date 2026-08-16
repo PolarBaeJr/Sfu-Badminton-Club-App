@@ -253,6 +253,29 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
   if (data.exec_title !== undefined) playerUpdate.exec_title = data.exec_title;
   if (data.fee_exempt !== undefined) playerUpdate.fee_exempt = data.fee_exempt;
   if (data.exec_photo_url !== undefined) playerUpdate.exec_photo_url = data.exec_photo_url;
+  // 00129 — the member's Gender, which they set once and cannot change again.
+  // THIS IS THE ONLY WAY IT EVER CHANGES AFTER THAT, and it is deliberately an
+  // ordinary line in this function rather than a server action of its own:
+  //
+  //   * the capability is players.update.write, which every exec baseline holds
+  //     and which the whole rest of this dialog is already behind — no new
+  //     capability is minted, so CAPABILITY_GATES keeps one enforcement point
+  //     per capability and the drift test is untouched;
+  //   * `reason` is required by adminPlayerUpdateSchema and the logAdminAudit
+  //     call below carries the previous row whole, so every exec change to this
+  //     field is audited with a reason and a before-value for free.
+  //
+  // `null` is a value an exec may send: clearing it back to "prefer not to say"
+  // is a correction, and after 00129 this is the only route to NULL there is.
+  // Hence `!== undefined` rather than a truthiness test.
+  //
+  // The write reaches the database through createAdminClient() — the
+  // service-role key — which is what guard_competition_category_lock_trg
+  // recognises as the console. It is NOT recognised by auth.uid() being NULL:
+  // see 00129 on why that shape would have admitted anon as well.
+  if (data.competition_category !== undefined) {
+    playerUpdate.competition_category = data.competition_category;
+  }
   if (Object.keys(playerUpdate).length > 0) {
     const { error } = await adminClient.from('players').update(playerUpdate).eq('id', playerId);
     if (error) throw new Error(error.message);

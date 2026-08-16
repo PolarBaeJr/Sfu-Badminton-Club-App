@@ -117,12 +117,19 @@ export interface Player {
   member_code: string | null;
   /**
    * 00111 — which tournament draw this member competes in, or null for
-   * undeclared (which is also how "prefer not to say" is stored).
+   * undeclared (which is also how "prefer not to say" is stored). Headed
+   * "Gender" on screen since 00129; the two stored values still name draws,
+   * which is why they are still 'mens' and 'womens'.
    *
-   * NOT a gender identity or sex field: it is the competition category a
-   * badminton entry form asks for, self-declared and self-edited, and the only
-   * thing that reads it is the tournament entry rule. No screen in either app
-   * displays it except the member's own Settings control. See 00111.
+   * WRITE-ONCE FOR THE MEMBER (00129). They set it from null themselves in
+   * Settings and the database refuses every later change from them, including
+   * back to null — a permitted retraction would make the lock a two-step
+   * formality. After that it changes only through the console's member Edit
+   * dialog, gated on players.update.write and audited with a reason.
+   *
+   * Shown on exactly two screens: the member's own Settings, and that dialog.
+   * Nothing else in either app renders it — the tournament code reads it and
+   * reports the CONSEQUENCE ("no eligible partner"), never the value.
    */
   competition_category: CompetitionCategory | null;
   email: string;

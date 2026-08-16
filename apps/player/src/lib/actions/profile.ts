@@ -18,6 +18,8 @@ import {
   isHandleTakenError,
   HANDLE_TAKEN_MESSAGE,
   toCompetitionCategory,
+  isCompetitionCategoryLockedError,
+  COMPETITION_CATEGORY_LOCKED_MESSAGE,
   isSkillTier,
   type SkillTier,
   type CompetitionCategory,
@@ -43,7 +45,14 @@ export async function updateProfile(data: {
 }
 
 /**
- * The signed-in member's own competition category (00111).
+ * The signed-in member's own competition category (00111) — "Gender" on screen
+ * since 00129.
+ *
+ * IT IS ALSO THE LOCK STATE, and that is why 00129 added no second call. A
+ * locked field is exactly a non-NULL one: the member sets it once from NULL and
+ * from then on only the console may change it, so `data !== null` is the whole
+ * answer to "may I still edit this". Nothing else has to be fetched, and there
+ * is no second predicate that could drift from the trigger's.
  *
  * A SERVER ACTION RATHER THAN A BROWSER READ, and that is the access control
  * rather than a style choice. `authenticated` has no SELECT grant on the
@@ -163,10 +172,15 @@ async function updateProfileImpl(data: {
   if (data.bio !== undefined) update.bio = data.bio;
   if (data.hide_from_leaderboard !== undefined) update.hide_from_leaderboard = data.hide_from_leaderboard;
   if (data.show_activity_status !== undefined) update.show_activity_status = data.show_activity_status;
-  // 00111 — the competition category, and THE ONLY WRITE PATH IT HAS. It is not
-  // in adminPlayerUpdateSchema and not in ADMIN_ONLY_PLAYER_FIELDS, so nobody
-  // but the member reaches this column. `null` is a real value here — clearing
-  // the declaration is the member withdrawing it, and it has to be possible.
+  // 00111 — the competition category, "Gender" on screen. THE MEMBER'S ONLY
+  // WRITE PATH TO IT, and since 00129 a write they get exactly once: the
+  // database refuses any later change, including back to NULL.
+  //
+  // STILL SENT UNCONDITIONALLY WHEN THE CALLER SUPPLIES IT, and the settings
+  // form supplies it only while the field is unlocked. Filtering here on the
+  // stored value would be a second copy of the lock rule, running on the wrong
+  // side of the trust boundary and free to drift from the trigger's. The
+  // trigger is the rule; this is a form field.
   if (data.competition_category !== undefined) {
     update.competition_category = data.competition_category;
   }
@@ -182,6 +196,16 @@ async function updateProfileImpl(data: {
     // same handle in the same second and both pass a prior check. Expected, so
     // it reaches the member as a sentence and Sentry as nothing.
     if (isHandleTakenError(error)) throw new ExpectedError(HANDLE_TAKEN_MESSAGE);
+    // The write-once lock (00129) refusing a change to a declared Gender. Its
+    // own sentence, and Sentry gets nothing: this is a rule the app enforces on
+    // purpose and a member can reach it legitimately — a stale tab, a form
+    // opened before an exec set the value, or getMyCompetitionCategory having
+    // failed and collapsed the control to editable. None of those is a bug
+    // worth waking anybody for, and all of them read as an unknown Postgres
+    // string without this branch.
+    if (isCompetitionCategoryLockedError(error)) {
+      throw new ExpectedError(COMPETITION_CATEGORY_LOCKED_MESSAGE);
+    }
     Sentry.captureException(error, { extra: { action: 'updateProfile', playerId: player.id } });
     throw new Error(error.message);
   }

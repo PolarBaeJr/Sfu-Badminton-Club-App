@@ -141,8 +141,12 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
   // this refuses an undeclared member, the console does not. Adding somebody by
   // hand is an explicit override by a named exec — the same line the membership
   // gate above draws, in the same words — whereas nobody overrides themselves.
-  // The refusal carries the remedy (declare in Settings, enter an Open event, or
-  // ask an exec), because a member who cannot act on it will just ask anyway.
+  // The refusal carries the remedy, because a member who cannot act on it will
+  // just ask anyway — and since 00129 the remedy differs by branch: an
+  // UNDECLARED member is sent to Settings, where the Gender control is still
+  // theirs to set, while a MISMATCH is by definition somebody who has already
+  // declared and therefore somebody the write-once lock refuses, so they are
+  // sent to an exec. Both also get the Open events, which need nobody.
   //
   // Open events reach none of this: screenSelfEntry returns ok for them, which
   // is what keeps an undeclared member playing tournaments.

@@ -42,14 +42,23 @@ export const profileSchema = z.object({
   bio: z.string().max(500).optional(),
   hide_from_leaderboard: z.boolean().optional(),
   show_activity_status: z.boolean().optional(),
-  // 00111 — which tournament draw this member competes in. THE MEMBER'S OWN
-  // SCHEMA IS THE ONLY ONE THAT ACCEPTS IT: adminPlayerUpdateSchema deliberately
-  // does not, so the console cannot set somebody's category for them, and a test
-  // pins that absence because it is the whole access rule.
+  // 00111 — which tournament draw this member competes in, labelled "Gender" in
+  // the app since 00129.
+  //
+  // BOTH SCHEMAS NOW ACCEPT IT. 00111 kept it out of adminPlayerUpdateSchema on
+  // purpose and a test pinned the absence; 00129 reverses that premise on the
+  // club owner's instruction, because the field is write-once for a member and
+  // an exec has to be able to change it afterwards. WHAT BOUNDS THE MEMBER IS NO
+  // LONGER A SCHEMA — it is the guard_competition_category_lock_trg trigger,
+  // which is the only place it could be: `authenticated` holds UPDATE on the
+  // column, so a shape check in TypeScript never saw the writes it was meant to
+  // stop.
   //
   // `null` is a value a member may SEND, not just one they may leave out —
-  // clearing the field back to undeclared has to be possible, and `.optional()`
-  // alone would make "unset it" indistinguishable from "did not touch it".
+  // `.optional()` alone would make "unset it" indistinguishable from "did not
+  // touch it". The database refuses a member's clear (see 00129 on why a
+  // permitted retraction makes the lock a two-step formality); the schema still
+  // carries it, because a member who has never declared one sends exactly this.
   competition_category: z.enum(['mens', 'womens']).nullable().optional(),
 });
 
@@ -268,6 +277,21 @@ export const adminPlayerUpdateSchema = z.object({
   // Photo for the public /exec page. Separate from avatar_url so a profile
   // picture change never alters the club's public page.
   exec_photo_url: blankAsUndefined(z.string().url().max(500)),
+  // 00129 — the member's Gender, which they set once and an exec changes after
+  // that. ADDED DELIBERATELY, REVERSING 00111: that migration kept the key out
+  // of this schema and a test pinned the absence, on the reading that only the
+  // member ever sets it. The club owner has since asked for the field to lock,
+  // and a lock with no exec key is a field nobody can ever correct.
+  //
+  // It is on NEITHER PLAYER_FIELD_FLOOR NOR PLAYER_FIELD_PRIVILEGED in the
+  // admin app's player-field-access.ts, which is what makes it writable by any
+  // holder of players.update.write — an exec — rather than admin-only. That is
+  // a decision, not an omission; see the note there.
+  //
+  // Nullable for the same reason the member's schema is: an exec clearing it
+  // back to "prefer not to say" is a correction they must be able to make, and
+  // it is the ONLY route back to NULL that exists after 00129.
+  competition_category: z.enum(['mens', 'womens']).nullable().optional(),
   reason: z.string().min(2, 'Reason is required'),
 });
 

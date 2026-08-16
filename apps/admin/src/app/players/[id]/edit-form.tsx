@@ -2,7 +2,15 @@
 
 import { useState } from 'react';
 import { Button, Input, Select, Switch, Textarea } from '@badminton/ui';
-import { PLAYER_STATUS_LABELS, MIN_ELO, MAX_ELO, MEMBERSHIP_TYPES } from '@badminton/shared';
+import {
+  PLAYER_STATUS_LABELS,
+  MIN_ELO,
+  MAX_ELO,
+  MEMBERSHIP_TYPES,
+  COMPETITION_CATEGORY_CHOICES,
+  toCompetitionCategory,
+  type CompetitionCategory,
+} from '@badminton/shared';
 import { updatePlayer, approvePlayer } from '@/lib/actions';
 import { useToast } from '@/components/toast-provider';
 import type { Player, Rating } from '@badminton/shared';
@@ -76,6 +84,19 @@ export function PlayerEditForm({
     (player as { exec_photo_url?: string | null }).exec_photo_url ?? '',
   );
   const [feeExempt, setFeeExempt] = useState(player.fee_exempt ?? false);
+  // 00129 — the member's Gender. THE CONSOLE IS THE ONLY PLACE IT CAN CHANGE
+  // once the member has declared one: a database trigger refuses their own
+  // second write, including a clear, so this control is the whole remedy for a
+  // wrong answer.
+  //
+  // The value is already on `player` — the detail page fetches the row with
+  // createAdminClient().select('*'), the service-role key, which is not subject
+  // to the column grants. Nothing was added to that select and NO SELECT GRANT
+  // WAS ADDED for it; see 00111 on why granting one to `authenticated` would
+  // publish every member's answer to the whole club.
+  const [category, setCategory] = useState<CompetitionCategory | ''>(
+    toCompetitionCategory((player as { competition_category?: unknown }).competition_category) ?? '',
+  );
   const [reason, setReason] = useState('');
 
   const isPending = player.status === 'pending_approval';
@@ -118,6 +139,18 @@ export function PlayerEditForm({
               ? execPhotoUrl
               : undefined,
           fee_exempt: isAdmin && feeExempt !== (player.fee_exempt ?? false) ? feeExempt : undefined,
+          // Sent only when it actually changed, like every field above. NOT
+          // gated on isAdmin: this one is exec work by design (00129), and the
+          // server guard passes it because it is on neither admin-only list.
+          // `null` is a real value — an exec putting a member back to "prefer
+          // not to say" — so the ternary yields null rather than undefined for
+          // the empty option.
+          competition_category:
+            category !== (toCompetitionCategory(
+              (player as { competition_category?: unknown }).competition_category,
+            ) ?? '')
+              ? (category === '' ? null : category)
+              : undefined,
           reason,
         });
         if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
@@ -159,6 +192,25 @@ export function PlayerEditForm({
       />
       <p className="text-xs text-[var(--text-muted)] -mt-2">
         {MEMBERSHIP_TYPES.find((m) => m.value === membershipType)?.description}
+      </p>
+      {/* 00129. Not behind isAdmin: correcting this is exec work, which is the
+          whole point of the change — the member set it once and the database
+          will not take a second write from them.
+
+          It is the one field on this form that is somebody's personal detail
+          rather than their standing in the club, so the hint says what it is
+          for and who else sees it. Read it as a correction tool, not as data
+          entry: an exec should be changing it because the member asked. */}
+      <Select
+        label="Gender"
+        options={COMPETITION_CATEGORY_CHOICES.map((c) => ({ value: c.value, label: c.label }))}
+        value={category}
+        onChange={(e) => setCategory(toCompetitionCategory(e.target.value) ?? '')}
+      />
+      <p className="text-xs text-[var(--text-muted)] -mt-2">
+        The member sets this once themselves and cannot change it afterwards —
+        this is where it gets corrected. It decides which gendered draws they
+        can enter; Open events ignore it. Shown nowhere else in the console.
       </p>
       {isAdmin && (
       <div className="grid grid-cols-2 gap-3">
