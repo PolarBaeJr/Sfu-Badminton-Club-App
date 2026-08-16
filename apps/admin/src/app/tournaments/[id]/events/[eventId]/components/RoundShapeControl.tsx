@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { setRoundMatchShape } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { describeMatchShape, resolveMatchShape, isPlayedMatch } from '@badminton/shared';
+import { describeMatchShape, resolveMatchShape, isPlayedMatch, eloWeightBreakdown } from '@badminton/shared';
 import type { TournamentEventRow, TournamentMatchRow } from '@/lib/tournament-types';
 
 // ============================================================
@@ -69,11 +69,27 @@ export function RoundShapeControl({ event, matches, phase, roundNumber, thirdPla
   // played to, which is the event's shape, or the label would read "Same as the
   // event" next to nothing and say less than the page said before this control
   // existed.
-  const resolved = describeMatchShape(resolveMatchShape(first ?? null, event));
+  const shape = resolveMatchShape(first ?? null, event);
+  const resolved = describeMatchShape(shape);
   // The EVENT's own shape, which is a different string the moment this round
   // overrides it — "Same as the event (Best of 3 to 21)" must name what the
   // event says, not what this round currently says.
   const eventShape = describeMatchShape(event);
+
+  // WHAT THIS ROUND IS WORTH TO A RATING, under the shape shown above it.
+  //
+  // "the elo settings below the game" — and it belongs per ROUND rather than per
+  // event because 00108 lets one draw rate its rounds four different ways: an
+  // event-level figure would be right for at most one of them. The weight is
+  // read out of the engine (resolvedFormatWeight), so it cannot disagree with
+  // what rateTournamentMatch will apply, including on the branch where an
+  // INHERITING round is weighed from the enum table rather than the formula.
+  //
+  // Both numbers are shown because neither is the answer on its own: the
+  // owner's question was whether a game to 11 counts a quarter, and 0.52 alone
+  // does not say that an event multiplier of 1.25 lifts it back to 0.65 — which
+  // is two thirds of a rated challenge, not a quarter of one.
+  const elo = eloWeightBreakdown(shape, event.elo_multiplier);
 
   // A ROUND WITH A RESULT IS NOT EDITABLE, and it says so rather than failing on
   // click. The server refuses on the same definition (isPlayedMatch, so byes do
@@ -103,31 +119,51 @@ export function RoundShapeControl({ event, matches, phase, roundNumber, thirdPla
     ? 'What the third-place playoff is played to'
     : `What round ${roundNumber} is played to`;
 
+  // UNDER the shape, never beside it: the shape is the question and the weight
+  // is a consequence of the answer, so it has to move when the select does.
+  // `title` carries the sentence; the visible line is three numbers, because a
+  // strip that names up to eight rounds cannot afford a sentence each.
+  const weightLine = (
+    <span
+      className="block font-mono text-[10px] leading-tight text-[var(--text-muted)]"
+      title={elo.spoken}
+    >
+      <span className="sr-only">{elo.spoken}</span>
+      <span aria-hidden="true">Elo {elo.short}</span>
+    </span>
+  );
+
   if (locked) {
     return (
-      <span className="text-[10px] font-medium text-[var(--text-muted)] uppercase tracking-wider">
-        {resolved}
+      <span className="inline-flex flex-col gap-0.5">
+        <span className="text-[10px] font-medium text-[var(--text-muted)] uppercase tracking-wider">
+          {resolved}
+        </span>
+        {weightLine}
       </span>
     );
   }
 
   return (
-    <label className="flex items-center gap-2">
-      <span className="sr-only">{label}</span>
-      <select
-        value={selected}
-        disabled={saving}
-        onChange={(e) => change(e.target.value)}
-        aria-label={label}
-        className="text-[11px] rounded-[6px] border border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-primary)] px-2 py-1 focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
-      >
-        {selected === 'custom' && <option value="custom">{resolved}</option>}
-        {CHOICES.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.id === 'inherit' ? `Same as the event (${eventShape})` : c.label}
-          </option>
-        ))}
-      </select>
-    </label>
+    <span className="inline-flex flex-col gap-0.5">
+      <label className="flex items-center gap-2">
+        <span className="sr-only">{label}</span>
+        <select
+          value={selected}
+          disabled={saving}
+          onChange={(e) => change(e.target.value)}
+          aria-label={label}
+          className="text-[11px] rounded-[6px] border border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-primary)] px-2 py-1 focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+        >
+          {selected === 'custom' && <option value="custom">{resolved}</option>}
+          {CHOICES.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.id === 'inherit' ? `Same as the event (${eventShape})` : c.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      {weightLine}
+    </span>
   );
 }

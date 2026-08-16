@@ -1,5 +1,15 @@
 import type { MatchFormat, EventType } from '../types/database';
-import { clampElo, DEFAULT_ELO, PROVISIONAL_THRESHOLD, SWEEP_MARGIN_MULTIPLIER, derivedFormatWeight, type EloBounds } from '../utils/constants';
+import {
+  clampElo,
+  DEFAULT_ELO,
+  PROVISIONAL_THRESHOLD,
+  SWEEP_MARGIN_MULTIPLIER,
+  derivedFormatWeight,
+  getEventRules,
+  hasTypedFormat,
+  type EloBounds,
+  type EventMatchShape,
+} from '../utils/constants';
 
 export const FORMAT_WEIGHTS: Record<MatchFormat, number> = {
   bo3_21: 1.25,
@@ -110,6 +120,101 @@ export function getFormatWeight(format: MatchFormat): number {
 
 export function getEventMultiplier(eventType: EventType): number {
   return EVENT_MULTIPLIERS[eventType];
+}
+
+// ============================================================
+// What a TOURNAMENT round is worth — the two halves of the same product
+// ============================================================
+//
+// These exist so the console can SHOW the number the ladder is about to apply,
+// rather than a second, plausible copy of it. There are two ways to get a
+// format weight and they do not agree:
+//
+//   * a round with a TYPED shape (games_per_match / points_per_game set —
+//     everything knockoutLadder() stamps, and every per-round override) is
+//     weighed by the formula, derivedFormatWeight = (target / 21) x 1.25 for a
+//     best-of;
+//   * a round that INHERITS the event's enum is weighed by the FORMAT_WEIGHTS
+//     table above.
+//
+// The two disagree on half the shapes — a game to 15 is 0.71 derived and 0.75
+// tabulated, a game to 11 is 0.52 derived and 0.50 tabulated — so a display
+// that picked one branch would be wrong for every round on the other. Hence one
+// function, called by rateTournamentMatch AND by the two places that print it.
+
+/** Tournament match_format enum -> the ladder's own enum. */
+function toEloFormat(mf: string): MatchFormat | null {
+  switch (mf) {
+    case 'best_of_3_to_21': return 'bo3_21';
+    case 'one_game_21': return 'single_21';
+    case 'one_game_15': return 'single_15';
+    case 'one_game_11': return 'single_11';
+    // Already an engine format (the challenge side passes these), or something
+    // the CHECK constraint does not allow. Named rather than cast, so an unknown
+    // string falls through to the derived formula below instead of indexing the
+    // table with a miss and multiplying a rating change by undefined.
+    default: return mf in FORMAT_WEIGHTS ? (mf as MatchFormat) : null;
+  }
+}
+
+/**
+ * The format weight the rating engine will actually use for a resolved match
+ * shape. Pass the output of `resolveMatchShape(match, event)`.
+ */
+export function resolvedFormatWeight(shape: EventMatchShape): number {
+  const rules = getEventRules(shape);
+  if (hasTypedFormat(shape)) return derivedFormatWeight(rules.bestOf, rules.target);
+  const mapped = toEloFormat(String(shape.match_format));
+  return mapped ? FORMAT_WEIGHTS[mapped] : derivedFormatWeight(rules.bestOf, rules.target);
+}
+
+/**
+ * An event's Elo multiplier, coerced the way the rating path coerces it.
+ *
+ * `tournament_events.elo_multiplier` is DECIMAL(4,2), which PostgREST hands
+ * back as a STRING, and it has no CHECK constraint. `Number(x) || 1.25` is
+ * deliberately reproduced rather than improved: it is what rateTournamentMatch
+ * does, including reading an explicit 0 as "unset" — a display that treated 0
+ * as 0 would promise an unrated round that the engine still rates at 1.25.
+ */
+export function eventEloMultiplier(raw: unknown): number {
+  return Number(raw) || 1.25;
+}
+
+/**
+ * Both halves of a round's rating weight, plus the only number that means
+ * anything on its own: their product.
+ *
+ * The engine multiplies kFactor x formatWeight x eventMultiplier x ... , so the
+ * round's own weight is only half the answer — an event at 1.25 rates its game
+ * to 11 (0.52) harder than a rated challenge to 21 rates itself (1.00 x 1.00).
+ * Showing the weight alone is what let a game to 11 be read as "a quarter".
+ *
+ * No predicted point swing is offered, and that is deliberate: the delta also
+ * needs the K-factor, both ratings and the sweep multiplier, so any "+/-N" here
+ * would be a number nobody could reproduce.
+ */
+export function eloWeightBreakdown(shape: EventMatchShape, rawMultiplier: unknown): {
+  weight: number;
+  multiplier: number;
+  product: number;
+  /** "0.52 x 1.25 = 0.65x" */
+  short: string;
+  /** The same thing said out loud, for a screen reader. */
+  spoken: string;
+} {
+  const weight = resolvedFormatWeight(shape);
+  const multiplier = eventEloMultiplier(rawMultiplier);
+  const product = weight * multiplier;
+  return {
+    weight,
+    multiplier,
+    product,
+    short: `${weight.toFixed(2)} × ${multiplier.toFixed(2)} = ${product.toFixed(2)}×`,
+    spoken:
+      `Rating weight ${weight.toFixed(2)} for this round, times ${multiplier.toFixed(2)} for the event, `
+      + `is ${product.toFixed(2)} times. A rated challenge played to 21 is 1.00 times.`,
+  };
 }
 
 /**

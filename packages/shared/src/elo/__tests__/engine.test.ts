@@ -7,9 +7,13 @@ import {
   getEventMultiplier,
   getKFactor,
   previewEloChange,
+  resolvedFormatWeight,
+  eventEloMultiplier,
+  eloWeightBreakdown,
   FORMAT_WEIGHTS,
   EVENT_MULTIPLIERS,
 } from '../engine';
+import { knockoutLadderShape, POOL_LADDER_SHAPE } from '../../utils/tournament-phases';
 
 describe('calculateExpected', () => {
   it('returns 0.5 for equal ratings', () => {
@@ -371,5 +375,108 @@ describe('previewEloChange', () => {
     const preview = previewEloChange(1200, 1600, 'single_21', 'rated_challenge', 'singles', false);
     expect(preview.winDelta).toBeGreaterThan(0);
     expect(preview.winDelta).toBeGreaterThan(12);
+  });
+});
+
+// ============================================================
+// What the console PRINTS is what the ladder APPLIES
+// ============================================================
+//
+// resolvedFormatWeight is the whole of rateTournamentMatch's weight decision,
+// lifted here so the bracket tab and Event Settings can show the number without
+// keeping a second copy of the branch. The branch matters: the enum table and
+// the derived formula DISAGREE on half the shapes, so a display that assumed
+// either one would be wrong for every round on the other.
+describe('resolvedFormatWeight', () => {
+  it('weighs an inheriting round from the enum table', () => {
+    expect(resolvedFormatWeight({ match_format: 'best_of_3_to_21' })).toBe(FORMAT_WEIGHTS.bo3_21);
+    expect(resolvedFormatWeight({ match_format: 'one_game_21' })).toBe(FORMAT_WEIGHTS.single_21);
+    expect(resolvedFormatWeight({ match_format: 'one_game_15' })).toBe(FORMAT_WEIGHTS.single_15);
+    expect(resolvedFormatWeight({ match_format: 'one_game_11' })).toBe(FORMAT_WEIGHTS.single_11);
+  });
+
+  it('weighs a typed round from the formula, which is NOT the table', () => {
+    // (target / 21) x 1.25 for a best-of, clamped to [0.25, 1.5].
+    expect(resolvedFormatWeight({ match_format: 'best_of_3_to_21', games_per_match: 3, points_per_game: 21 }))
+      .toBeCloseTo(1.25, 4);
+    expect(resolvedFormatWeight({ match_format: 'best_of_3_to_21', games_per_match: 1, points_per_game: 21 }))
+      .toBeCloseTo(1.0, 4);
+    expect(resolvedFormatWeight({ match_format: 'best_of_3_to_21', games_per_match: 1, points_per_game: 15 }))
+      .toBeCloseTo(15 / 21, 4);
+    expect(resolvedFormatWeight({ match_format: 'best_of_3_to_21', games_per_match: 1, points_per_game: 11 }))
+      .toBeCloseTo(11 / 21, 4);
+  });
+
+  // The number the owner asked about. A game to 11 is NOT the 0.25 clamp floor
+  // — that floor is unreachable above a five-point target — so it is worth
+  // pinning the two apart.
+  it('puts a game to 11 near a half, nowhere near the 0.25 floor', () => {
+    const eleven = resolvedFormatWeight({ match_format: 'best_of_3_to_21', games_per_match: 1, points_per_game: 11 });
+    expect(eleven).toBeGreaterThan(0.5);
+    expect(eleven).toBeLessThan(0.53);
+  });
+
+  it('falls back to the formula for a format the table has no row for', () => {
+    expect(resolvedFormatWeight({ match_format: 'not_a_real_format' })).toBeCloseTo(1.0, 4);
+  });
+
+  it('rates the whole default ladder in ascending order', () => {
+    const shape = (r: { games_per_match: number; points_per_game: number }) =>
+      resolvedFormatWeight({ match_format: 'best_of_3_to_21', ...r });
+    const rungs = [
+      shape(POOL_LADDER_SHAPE),
+      shape(knockoutLadderShape(2)),
+      shape(knockoutLadderShape(1)),
+      shape(knockoutLadderShape(0)),
+    ];
+    expect(rungs).toEqual([...rungs].sort((a, b) => a - b));
+    expect(shape(knockoutLadderShape(3))).toBe(shape(POOL_LADDER_SHAPE));
+  });
+});
+
+describe('eventEloMultiplier', () => {
+  // DECIMAL(4,2) arrives as a string over PostgREST.
+  it('reads the string PostgREST hands back', () => {
+    expect(eventEloMultiplier('1.25')).toBe(1.25);
+    expect(eventEloMultiplier('0.80')).toBe(0.8);
+  });
+
+  it('reproduces the rating path’s fallbacks exactly, 0 included', () => {
+    expect(eventEloMultiplier(null)).toBe(1.25);
+    expect(eventEloMultiplier(undefined)).toBe(1.25);
+    expect(eventEloMultiplier('')).toBe(1.25);
+    expect(eventEloMultiplier('rubbish')).toBe(1.25);
+    // `|| 1.25`, not `?? 1.25` — an explicit 0 is read as unset by
+    // rateTournamentMatch, so it has to be read as unset here too or the screen
+    // would promise an unrated round the engine still rates.
+    expect(eventEloMultiplier(0)).toBe(1.25);
+  });
+});
+
+describe('eloWeightBreakdown', () => {
+  it('multiplies the round’s weight by the event’s multiplier', () => {
+    const b = eloWeightBreakdown(
+      { match_format: 'best_of_3_to_21', games_per_match: 1, points_per_game: 11 },
+      '1.25',
+    );
+    expect(b.weight).toBeCloseTo(11 / 21, 4);
+    expect(b.multiplier).toBe(1.25);
+    expect(b.product).toBeCloseTo((11 / 21) * 1.25, 4);
+    expect(b.short).toBe('0.52 × 1.25 = 0.65×');
+  });
+
+  it('agrees with the engine: the product IS the factor applied to the K', () => {
+    const shape = { match_format: 'best_of_3_to_21', games_per_match: 1, points_per_game: 15 };
+    const b = eloWeightBreakdown(shape, 1.15);
+    const viaEngine = calculateEloUpdate({
+      playerRating: 1200,
+      opponentRating: 1200,
+      kFactor: 48,
+      formatWeight: b.weight,
+      eventMultiplier: b.multiplier,
+      won: true,
+    });
+    // Equal ratings, so (actual - expected) is exactly 0.5.
+    expect(viaEngine.delta).toBe(Math.round(48 * b.product * 0.5));
   });
 });

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { getRoundName, eventIsPlaying, computeDrawLayout, fitScale } from '@badminton/shared';
+import { getRoundName, eventIsPlaying, computeDrawLayout, fitScale, eventEloMultiplier, splitPairLabel } from '@badminton/shared';
 import type { DrawSide } from '@badminton/shared';
 import { ScoreEntryDialog } from './ScoreEntryDialog';
 import { RoundShapeControl } from './RoundShapeControl';
@@ -300,6 +300,17 @@ export function BracketTab({ event, matches, participants, pairs, isDoubles, pha
               />
             </span>
           )}
+          {/* THE LEGEND FOR THE LINE UNDER EACH ROUND, said once rather than
+              eight times. The figure exists because "1 game to 11" reads as a
+              knock-down round and gives no clue what it is worth — the guess it
+              invites is 11/21 ≈ a half, or the 0.25 clamp floor, and both are
+              wrong for a round in an event whose multiplier is 1.25. */}
+          <p className="w-full text-[10px] leading-snug text-[var(--text-muted)]">
+            Elo is how hard a round moves ratings: the round&rsquo;s own weight (longer games count for more)
+            times this event&rsquo;s multiplier of{' '}
+            <span className="font-mono text-[var(--text-secondary)]">{eventEloMultiplier(event.elo_multiplier).toFixed(2)}</span>.
+            A rated challenge played to 21 is 1.00×.
+          </p>
         </div>
 
         {/* THE DRAW READS INWARDS FROM BOTH EDGES, which is not how anybody
@@ -641,8 +652,24 @@ function Side({
       <span className={`w-4 shrink-0 font-mono text-[10px] text-[var(--text-muted)] ${mirrored ? 'text-left' : 'text-right'}`}>
         {seed ? seed : ''}
       </span>
+      {/* A DOUBLES PAIR IS TWO LINES, one partner each.
+          MEASURED against the compiled CSS with the real Barlow files: this
+          name field is 97.2px once a best-of-3's digits are on the row (196px
+          column, less 16px padding, the 16px seed gutter, 12px of gaps and 53px
+          of score). A pair label is two whole names joined —
+          "Jonathan Smithson / Katarzyna Kowalski" is 228.5px at 13px — so it
+          printed about eight characters of thirty-eight and named neither of
+          them. Stacked at 10px a typical partner name is 85px and fits whole.
+          THE LONGEST STILL DOES NOT: "Bartholomew Fairweather" is 112.1px and
+          ellipsizes. That is a much smaller lie than the one it replaces, and
+          closing it would mean moving the score off the entrant rows — a change
+          to the card's whole shape rather than to its longest name. `title`
+          carries the full label for a mouse; the card's aria-label already
+          carries it for a reader.
+          A singles name, or a pair with a name of its own, is one line at 13px
+          exactly as before. */}
       <span
-        className={`flex-1 min-w-0 truncate ${
+        className={`flex-1 min-w-0 flex flex-col justify-center ${
           won
             ? 'text-[var(--color-success)] font-semibold'
             : lost
@@ -651,8 +678,19 @@ function Side({
             ? 'text-[var(--text-muted)] italic'
             : 'text-[var(--text-secondary)]'
         }`}
+        title={name}
       >
-        {name}
+        {(() => {
+          const lines = splitPairLabel(name);
+          return lines.length === 1
+            ? <span className="truncate">{name}</span>
+            : lines.map((line, i) => (
+                // leading-[1.05], not [1.1]: the entrant row is 23px and two
+                // 10px lines at 1.1 come to 22px of text in a 21.5px box, which
+                // the card's overflow-hidden was shaving.
+                <span key={i} className="truncate text-[10px] leading-[1.05]">{line}</span>
+              ));
+        })()}
       </span>
       {won && <span className="sr-only">(Winner)</span>}
       {score && <span className="shrink-0 font-mono text-[11px] text-[var(--text-muted)]">{score}</span>}

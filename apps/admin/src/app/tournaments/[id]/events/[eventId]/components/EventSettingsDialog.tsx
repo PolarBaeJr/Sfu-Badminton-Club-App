@@ -104,6 +104,7 @@ export function EventSettingsDialog({
           siblings={seedableSiblings}
           format={event.format}
           fieldSize={totalEntries}
+          eloMultiplier={event.elo_multiplier}
         />
         <Input
           label={values.seededFrom === '' ? 'Max Participants (optional)' : 'Bracket Size (how many qualify)'}
