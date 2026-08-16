@@ -4,7 +4,9 @@ import {
   COMPETITION_CATEGORY_CHOICES,
   canPairForEvent,
   categoryRequiredBy,
+  COMPETITION_CATEGORY_LOCKED_MESSAGE,
   isCompetitionCategory,
+  isCompetitionCategoryLockedError,
   isOpenEvent,
   screenExecEntry,
   screenPair,
@@ -87,6 +89,12 @@ describe('self-entry refuses the undeclared as well as the contradicting', () =>
     expect(screen.message).toContain("Women's Singles");
     // A screenshot of this refusal must disclose nothing about the member.
     expect(screen.message).not.toMatch(/\bmens\b|\bmen's category\b/i);
+    // 00129. A mismatch is only ever reached by a member who has ALREADY
+    // declared, and that is exactly the member the write-once lock refuses —
+    // so this branch must not send them to Settings to do a write the database
+    // will reject. The remedy is an exec.
+    expect(screen.message).toContain('exec');
+    expect(screen.message).not.toContain('Settings');
   });
 
   it('refuses an undeclared member and hands them all three remedies', () => {
@@ -205,16 +213,67 @@ describe('who may write the column', () => {
       .toBe(false);
   });
 
-  // THE LOAD-BEARING ABSENCE. player-field-access.ts is write authorization over
-  // a list of names, and a field on no list passes it freely — so what actually
-  // stops the console setting somebody's category is that this schema does not
-  // accept the key and zod strips it. 00111 says so; this is what holds it.
-  it('is dropped by the console’s player-update schema, so no exec can set it', () => {
+  // THE ABSENCE THAT USED TO BE HERE IS GONE, AND ON PURPOSE. Until 00129 this
+  // test asserted that adminPlayerUpdateSchema DROPS the key, on 00111's reading
+  // that only the member ever sets their own category. The field is now
+  // write-once for the member — a database trigger refuses their second write —
+  // so somebody has to be able to correct it, and the club owner said an exec.
+  //
+  // What replaces the absence is not another schema check. It is the trigger:
+  // `authenticated` holds a column UPDATE grant, so no TypeScript boundary was
+  // ever what stopped a member, and pretending otherwise is what this inversion
+  // is here to prevent a reader concluding.
+  it('is now accepted by the console’s player-update schema, so an exec can correct it', () => {
     const parsed = adminPlayerUpdateSchema.parse({
       status: 'competitive',
-      reason: 'routine update',
+      reason: 'member asked us to fix it',
       competition_category: 'mens',
     } as Record<string, unknown>);
-    expect('competition_category' in parsed).toBe(false);
+    expect(parsed.competition_category).toBe('mens');
+  });
+
+  // The exec's route back to "prefer not to say", which after 00129 is the only
+  // one there is: a member cannot clear their own, because clear-then-set would
+  // be the whole lock in two requests.
+  it('lets the console clear it back to undeclared', () => {
+    const parsed = adminPlayerUpdateSchema.parse({
+      reason: 'member asked us to withdraw it',
+      competition_category: null,
+    } as Record<string, unknown>);
+    expect(parsed.competition_category).toBeNull();
+  });
+
+  it('still refuses a third value on both sides', () => {
+    expect(adminPlayerUpdateSchema.safeParse({
+      reason: 'x', competition_category: 'non_binary',
+    }).success).toBe(false);
+  });
+});
+
+// The lock's refusal, as the app has to recognise it coming back from
+// PostgREST. Narrow on purpose: 42501 is also what an RLS refusal and a missing
+// grant raise, and reporting one of those to a member as "gender is set once"
+// would send them to an exec who cannot help.
+describe('recognising the write-once refusal', () => {
+  it('matches the trigger’s own error and nothing else', () => {
+    expect(isCompetitionCategoryLockedError({
+      code: '42501', message: COMPETITION_CATEGORY_LOCKED_MESSAGE,
+    })).toBe(true);
+    expect(isCompetitionCategoryLockedError({
+      code: '42501', message: 'permission denied for table players',
+    })).toBe(false);
+    expect(isCompetitionCategoryLockedError({
+      code: '23505', message: COMPETITION_CATEGORY_LOCKED_MESSAGE,
+    })).toBe(false);
+    expect(isCompetitionCategoryLockedError(null)).toBe(false);
+    expect(isCompetitionCategoryLockedError(undefined)).toBe(false);
+  });
+
+  // The sentence the member reads is the sentence the database raises. If these
+  // two ever drift, a member gets one explanation from the form and a different
+  // one from a direct call, and 00129's RAISE is where the other copy lives.
+  it('is the same sentence the migration raises', () => {
+    expect(COMPETITION_CATEGORY_LOCKED_MESSAGE)
+      .toBe('Gender is set once. Ask an exec to change it.');
   });
 });

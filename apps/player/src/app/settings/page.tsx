@@ -76,10 +76,21 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [theme, setThemeState] = useState<Theme>('dark');
-  // 00111 — which tournament draw this member competes in. '' is undeclared,
-  // which is where every member starts and where they may stay: it is the
-  // stored NULL, not a sentinel this form invents.
+  // 00111 — which tournament draw this member competes in, headed "Gender"
+  // since 00129. '' is undeclared, which is where every member starts and where
+  // they may stay: it is the stored NULL, not a sentinel this form invents.
   const [competitionCategory, setCompetitionCategory] = useState<CompetitionCategory | ''>('');
+  // THE VALUE AS THE SERVER LAST CONFIRMED IT, which is what decides the lock —
+  // held apart from the box above precisely because the box changes as somebody
+  // types and the lock must not. Non-null means "already declared", and after
+  // 00129 that means the member cannot change it: not to the other value, and
+  // not back to "prefer not to say" either.
+  //
+  // No second fetch and no second predicate: getMyCompetitionCategory already
+  // returns exactly this, and "locked" is defined as its being non-null. A
+  // separate is-locked flag could disagree with the database trigger; this
+  // cannot.
+  const [declaredCategory, setDeclaredCategory] = useState<CompetitionCategory | null>(null);
   const [showOnLeaderboard, setShowOnLeaderboard] = useState(true);
   const [showActivity, setShowActivity] = useState(true);
   const [pushEnabled, setPushEnabled] = useState(false);
@@ -158,6 +169,13 @@ export default function SettingsPage() {
         setHandle(identity?.handle || '');
         setMemberCode(identity?.member_code ?? null);
         setCompetitionCategory(mine.ok ? (mine.data ?? '') : '');
+        // FAILS OPEN, and it has to: a failed read must not present a member
+        // who has never declared anything with a permanent "locked" panel they
+        // can do nothing about. The cost of failing open is a refusal from the
+        // trigger on save, which arrives as its own sentence (see updateProfile
+        // — the lock's SQLSTATE is mapped to an ExpectedError). The database is
+        // the lock; this is the label on it.
+        setDeclaredCategory(mine.ok ? (mine.data ?? null) : null);
         setPhone(data.phone || '');
         setBio(data.bio || '');
         setShowOnLeaderboard(!data.hide_from_leaderboard);
@@ -231,9 +249,16 @@ export default function SettingsPage() {
         handle,
         phone: phone || undefined,
         bio: bio || undefined,
-        // Always sent, and null when cleared, for the handle's reason above:
-        // withdrawing a declaration has to be an edit the form can save.
-        competition_category: competitionCategory === '' ? null : competitionCategory,
+        // OMITTED ONCE DECLARED (00129), not sent-as-unchanged. The trigger
+        // would accept the same value back — it compares with IS DISTINCT FROM
+        // precisely so an ordinary profile save is not a refusal — but sending
+        // a field this form is not offering to change is how a stale tab turns
+        // into a mystery error. While it is still unlocked, '' is sent as null:
+        // "prefer not to say" is a real answer and the one every member starts
+        // on, so it has to be an edit the form can save.
+        competition_category: declaredCategory !== null
+          ? undefined
+          : (competitionCategory === '' ? null : competitionCategory),
         hide_from_leaderboard: !showOnLeaderboard,
         show_activity_status: showActivity,
       });
@@ -242,6 +267,13 @@ export default function SettingsPage() {
         toast(res.error, 'error');
         setLoading(false);
         return;
+      }
+      // The save that declared a Gender is the one that locks it. Recorded here
+      // rather than by re-reading, so the control switches to its locked state
+      // in the same beat as the toast — a member who saves and still sees an
+      // open dropdown will reasonably assume they can change it again.
+      if (declaredCategory === null && competitionCategory !== '') {
+        setDeclaredCategory(competitionCategory);
       }
       setSaved(true);
       toast('Profile updated', 'success');
@@ -423,32 +455,61 @@ export default function SettingsPage() {
                   As an exec, your bio is shown publicly on the club&apos;s exec page.
                 </p>
               )}
-              {/* 00111 — THE ONLY PLACE THIS VALUE APPEARS ON A SCREEN, and it
-                  is the member's own. It is not on the roster, not on the
-                  ladder, not on the public profile, and no admin screen renders
-                  it: the console reads it inside the entry actions and shows
-                  only the consequence.
+              {/* 00111, relabelled and locked by 00129. This is the member's
+                  own value on their own page. It is not on the roster, not on
+                  the ladder and not on their public profile; the one other
+                  screen that shows it is the member Edit dialog in the console,
+                  because an exec cannot change a value they are not shown.
 
-                  Phrased as the EVENTS it opens rather than as a fact about the
-                  member, because that is all it is used for. "Prefer not to say"
-                  is first and is the state every member is in until they change
-                  it — Open Singles and Open Doubles stay available either way,
-                  so nothing on this page is a gate on the rest of the app. */}
-              <div>
-                <Select
-                  label="Tournament events"
-                  value={competitionCategory}
-                  onChange={(e) => setCompetitionCategory(
-                    toCompetitionCategory(e.target.value) ?? '',
-                  )}
-                  options={COMPETITION_CATEGORY_CHOICES.map((c) => ({ value: c.value, label: c.label }))}
-                />
-                <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                  Which category you enter at club tournaments. Only you and the
-                  tournament desk see this, and Open events are open to everyone
-                  whatever you choose.
-                </p>
-              </div>
+                  TWO STATES, AND THE SECOND IS NOT A DISABLED DROPDOWN. Once
+                  the member has declared one the database refuses every later
+                  change from them, so a greyed-out <Select> would be a control
+                  that looks like it might work — it would still open on a
+                  phone, and it would still say "Prefer not to say" as though it
+                  were reachable. The declared state is a statement of the value
+                  plus who to ask, in the same shape as Member code above, which
+                  is the other field on this page nobody edits themselves. */}
+              {declaredCategory !== null ? (
+                <div className="settings-row">
+                  <div>
+                    <div className="settings-row-label">Gender</div>
+                    <div className="settings-row-hint">
+                      Set once, so this is now changed by an exec rather than
+                      here — ask one if it is wrong. It decides which gendered
+                      draws you can enter at club tournaments; Open events are
+                      open to everyone whatever it says, and only you and the
+                      tournament desk see it.
+                    </div>
+                  </div>
+                  {/* NOT the `.tag` the Member code row uses, and that is the
+                      one deliberate departure from copying it. `.tag` is
+                      uppercase mono, which is right for a seven-character code
+                      and reads as shouting for a person's answer about
+                      themselves. Same slot, same weight, plain text. */}
+                  <div className="settings-row-control">
+                    <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--ink)' }}>
+                      {COMPETITION_CATEGORY_CHOICES.find((c) => c.value === declaredCategory)?.label}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <Select
+                    label="Gender"
+                    value={competitionCategory}
+                    onChange={(e) => setCompetitionCategory(
+                      toCompetitionCategory(e.target.value) ?? '',
+                    )}
+                    options={COMPETITION_CATEGORY_CHOICES.map((c) => ({ value: c.value, label: c.label }))}
+                  />
+                  <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                    Decides which gendered draws you can enter at club
+                    tournaments. Only you and the tournament desk see it, and
+                    Open events are open to everyone whatever you choose. Once
+                    you set it, an exec changes it rather than you.
+                  </p>
+                </div>
+              )}
               <button
                 type="submit"
                 disabled={loading}

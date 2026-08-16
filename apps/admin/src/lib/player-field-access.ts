@@ -124,6 +124,24 @@ export const ADMIN_ONLY_PLAYER_FIELDS = [
   ...PLAYER_FIELD_PRIVILEGED,
 ] as const;
 
+// competition_category IS ON NEITHER LIST, AND THAT IS A DECISION.
+//
+// It became writable from this console in 00129: the field is write-once for
+// the member, so somebody has to be able to correct it afterwards, and the club
+// owner said an exec. A field on neither list passes this guard freely, which
+// is exactly "any holder of players.update.write may set it" — an exec.
+//
+// PLAYER_FIELD_PRIVILEGED was the near miss. It sounds right and it is wrong:
+// players.privilegedfields.write sits in no baseline, so putting the field
+// there would make it admin-only today and the exec could not do the one thing
+// the change exists for.
+//
+// Nothing here is what stops a MEMBER changing their own. This file is console
+// authorization and every write it guards is service-role; the member's lock is
+// the guard_competition_category_lock_trg trigger, which is the only place it
+// could be, because `authenticated` holds a column UPDATE grant and would
+// otherwise route around any check written in TypeScript.
+
 export type AdminOnlyPlayerField = (typeof ADMIN_ONLY_PLAYER_FIELDS)[number];
 
 // What a VARSITY TRAINER may change on a player record: nothing. Not status,

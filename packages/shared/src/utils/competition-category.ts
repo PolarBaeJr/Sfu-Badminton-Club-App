@@ -13,12 +13,18 @@
  * say", and why self-entry refuses where exec entry does not. The functions
  * below are that reasoning in code and are not independently defensible.
  *
- * NOTHING HERE FORMATS THE CATEGORY FOR DISPLAY, on purpose. There is no
- * `categoryLabel(category)` export and there must not be one: no screen in
- * either app shows a member's category, and the refusals below are written to
- * name the EVENT a person is not eligible for rather than the category they
- * are. `COMPETITION_CATEGORY_CHOICES` exists only for the member's own settings
- * control — the one place the value is legitimately on screen, to its owner.
+ * THE REFUSALS BELOW STILL NAME THE EVENT, NEVER THE CATEGORY. That has not
+ * changed and must not: a refusal is read on a screen somebody else may be
+ * looking at, and it discloses nothing by naming the draw a person cannot enter
+ * rather than the one they are in.
+ *
+ * WHAT DID CHANGE (00129). 00111 said "no screen in either app shows a member's
+ * category". Two now do, and both deliberately: the member's own Settings, and
+ * the member Edit dialog in the console — because the club owner asked for the
+ * field to be lockable, and an exec cannot change a value they are not shown.
+ * `COMPETITION_CATEGORY_CHOICES` is what both draw. There is still no
+ * `categoryLabel(category)` export and there must not be one: a bare formatter
+ * is what would put the value on a roster row or a tournament list by accident.
  */
 
 import type { CompetitionCategory, TournamentEventType } from '../types/database';
@@ -38,23 +44,61 @@ export function toCompetitionCategory(value: unknown): CompetitionCategory | nul
 }
 
 /**
- * The member's own settings control, and the ONLY place a category is written
- * as words on a screen.
+ * The two places a category is written as words on a screen: the member's own
+ * Settings control, and the exec's member Edit dialog in the console.
  *
- * Phrased as the event it lets you enter — "Men's events" — rather than as an
- * attribute of the member, because that is what the answer is used for and the
- * only thing the club needs to know. The empty option is offered explicitly and
- * is not a lockout: it is the state every member is in today, and it keeps every
- * Open event and the whole rest of the app available.
+ * THE LABELS MOVED IN 00129 AND THE VALUES DID NOT. They used to read "Men's
+ * events" / "Women's events", phrased as the draw rather than as the person,
+ * because the control above them was headed "Tournament events". The club owner
+ * renamed that heading to "Gender", and "Gender: Men's events" is not a
+ * sentence — so the option text is now plain. The STORED values are untouched
+ * and still name draws; see 00129 on why the two-value enum was not reopened at
+ * the same time.
+ *
+ * The empty option is offered explicitly and is not a lockout: it is the state
+ * every member starts in, and it keeps every Open event and the whole rest of
+ * the app available. It is also, after 00129, the only one of the three a
+ * member cannot come back to on their own — the field is write-once for them.
  */
 export const COMPETITION_CATEGORY_CHOICES: ReadonlyArray<{
   value: CompetitionCategory | '';
   label: string;
 }> = [
   { value: '', label: 'Prefer not to say' },
-  { value: 'mens', label: "Men's events" },
-  { value: 'womens', label: "Women's events" },
+  { value: 'mens', label: 'Man' },
+  { value: 'womens', label: 'Woman' },
 ] as const;
+
+/**
+ * The sentence a member sees when the lock refuses their write, and the one the
+ * database raises. KEPT IDENTICAL IN BOTH PLACES on purpose: the trigger's
+ * message is what a hand-rolled PostgREST call gets, and the app's is what the
+ * form gets, and a member comparing the two should not find two different
+ * accounts of the same rule.
+ */
+export const COMPETITION_CATEGORY_LOCKED_MESSAGE =
+  'Gender is set once. Ask an exec to change it.';
+
+/**
+ * Did this Postgres error come from the write-once lock (00129)?
+ *
+ * Shaped exactly like isHandleTakenError: a SQLSTATE plus a discriminator, so
+ * an unrelated privilege error is not silently reported to the member as a
+ * locked field. 42501 is `insufficient_privilege`, which is also what an RLS
+ * refusal and a missing grant raise — hence the message test as well.
+ *
+ * Callers turn a true here into an ExpectedError. Without that the refusal
+ * reaches the member as a raw Postgres string and Sentry as an unknown
+ * exception, which is exactly the noise a deliberate, reachable refusal should
+ * never generate.
+ */
+export function isCompetitionCategoryLockedError(
+  error: { code?: string | null; message?: string | null } | null | undefined,
+): boolean {
+  if (!error) return false;
+  return error.code === '42501'
+    && (error.message ?? '').includes(COMPETITION_CATEGORY_LOCKED_MESSAGE);
+}
 
 /**
  * What an event requires of a single entrant.
@@ -142,7 +186,12 @@ export function screenSelfEntry(
         (required === 'mixed'
           ? 'a named category'
           : `the ${required === 'mens' ? "men's" : "women's"} category`) +
-        '. Set your competition category in Settings, or enter an Open event instead. ' +
+        // "Gender in Settings" since 00129 — the control used to be headed
+        // "Tournament events" and a remedy that names a label the app no longer
+        // shows is not a remedy. Still three ways out, and still in this order:
+        // the one the member can act on now, the one that needs nothing, and
+        // the one that needs somebody else.
+        '. Set your Gender in Settings, or enter an Open event instead. ' +
         'A tournament admin can also enter you by hand.',
     };
   }
@@ -156,9 +205,17 @@ export function screenSelfEntry(
     // Says which event they are not eligible for, never which category they
     // are. The member knows their own answer; the sentence does not repeat it
     // back, so a screenshot of a refusal discloses nothing.
+    //
+    // THE REMEDY CHANGED IN 00129 AND HAD TO. This branch is reached ONLY by a
+    // member who has already declared — that is what makes it a mismatch rather
+    // than an 'undeclared' — and that is exactly the member the write-once lock
+    // refuses. "Change it in Settings" was still true when they could; after
+    // 00129 it sends them to a control that is no longer there to do a write
+    // the database would reject. An exec is the remedy now, and it is the same
+    // remedy COMPETITION_CATEGORY_LOCKED_MESSAGE names.
     message:
-      `${eventLabel} is not open to your declared competition category. ` +
-      'Enter an Open event instead, or change your category in Settings.',
+      `${eventLabel} is not open to your declared Gender. ` +
+      'Enter an Open event instead, or ask an exec if your Gender is wrong.',
   };
 }
 
