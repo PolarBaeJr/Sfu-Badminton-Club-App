@@ -13,6 +13,7 @@ import {
   FORMAT_WEIGHTS,
   EVENT_MULTIPLIERS,
 } from '../engine';
+import type { RatingSettings } from '../engine';
 import { knockoutLadderShape, POOL_LADDER_SHAPE } from '../../utils/tournament-phases';
 
 describe('calculateExpected', () => {
@@ -375,6 +376,163 @@ describe('previewEloChange', () => {
     const preview = previewEloChange(1200, 1600, 'single_21', 'rated_challenge', 'singles', false);
     expect(preview.winDelta).toBeGreaterThan(0);
     expect(preview.winDelta).toBeGreaterThan(12);
+  });
+});
+
+// ============================================================
+// The preview is a PROMISE, and it has to be the ladder's own number
+// ============================================================
+//
+// previewEloChange called getKFactor with no settings, so every figure a member
+// saw before accepting a challenge came from the hardcoded fallbacks (80/48
+// singles) while apply_match_result rated the match from
+// platform_settings.rating_defaults (64/36 on production). The tests below
+// assert EQUIVALENCE with what the engine would actually apply rather than any
+// literal delta: a test asserting "80" would have passed against the bug and
+// would fail the moment the club retunes a knob, which is exactly backwards.
+describe('previewEloChange honours the configured rating settings', () => {
+  // The live production row, shape and all. Values are only ever used to build
+  // the expectation THROUGH the engine, never asserted against directly.
+  const LIVE: RatingSettings = {
+    max_elo: 3001,
+    min_elo: 100,
+    singles_k_provisional: 64,
+    singles_k_established: 36,
+    doubles_k_provisional: 64,
+    doubles_k_established: 36,
+    provisional_threshold: 8,
+    sweep_margin_multiplier: 1.15,
+  };
+
+  /** What the rating path would write for this side, built from the same parts. */
+  function applied(opts: {
+    playerRating: number;
+    opponentRating: number;
+    matchType: 'singles' | 'doubles';
+    provisional: boolean;
+    matchesPlayed?: number;
+    settings?: RatingSettings | null;
+    format?: keyof typeof FORMAT_WEIGHTS;
+    won: boolean;
+  }) {
+    return calculateEloUpdate({
+      playerRating: opts.playerRating,
+      opponentRating: opts.opponentRating,
+      kFactor: getKFactor(opts.matchType, opts.provisional, opts.matchesPlayed, opts.settings),
+      formatWeight: FORMAT_WEIGHTS[opts.format ?? 'single_21'],
+      eventMultiplier: EVENT_MULTIPLIERS.rated_challenge,
+      won: opts.won,
+      bounds: opts.settings ? { min: opts.settings.min_elo, max: opts.settings.max_elo } : undefined,
+    }).delta;
+  }
+
+  it('agrees with calculateEloUpdate for an established player', () => {
+    const preview = previewEloChange(
+      1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30, undefined, LIVE,
+    );
+    const base = { playerRating: 1200, opponentRating: 1150, matchType: 'singles' as const, provisional: false, matchesPlayed: 30, settings: LIVE };
+    expect(preview.winDelta).toBe(applied({ ...base, won: true }));
+    expect(preview.lossDelta).toBe(applied({ ...base, won: false }));
+  });
+
+  it('agrees with calculateEloUpdate for a provisional player', () => {
+    const preview = previewEloChange(
+      1200, 1150, 'bo3_21', 'rated_challenge', 'doubles', true, undefined, 2, undefined, LIVE,
+    );
+    const base = { playerRating: 1200, opponentRating: 1150, matchType: 'doubles' as const, provisional: true, matchesPlayed: 2, settings: LIVE, format: 'bo3_21' as const };
+    expect(preview.winDelta).toBe(applied({ ...base, won: true }));
+    expect(preview.lossDelta).toBe(applied({ ...base, won: false }));
+  });
+
+  // THE BUG, stated as the difference it made rather than as a number. On the
+  // live row the established K is 36 against a fallback of 48, so a preview that
+  // ignored settings overstated every established member's swing by a third.
+  it('differs from the unconfigured preview whenever the club has retuned K', () => {
+    const withSettings = previewEloChange(
+      1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30, undefined, LIVE,
+    );
+    const withoutSettings = previewEloChange(
+      1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30,
+    );
+    expect(withSettings.winDelta).not.toBe(withoutSettings.winDelta);
+    // ...and the settings-aware one is the one getKFactor agrees with.
+    expect(withSettings.winDelta).toBe(
+      applied({ playerRating: 1200, opponentRating: 1150, matchType: 'singles', provisional: false, matchesPlayed: 30, settings: LIVE, won: true }),
+    );
+  });
+
+  // 00127's off switch. Mirrors `v_provisional_k AND (...)` in
+  // apply_match_result: with it off, a player who is provisional by BOTH tests
+  // still takes the established K.
+  it('honours provisional_k_enabled: false', () => {
+    const off: RatingSettings = { ...LIVE, provisional_k_enabled: false };
+    const preview = previewEloChange(
+      1200, 1150, 'single_21', 'rated_challenge', 'singles', true, undefined, 0, undefined, off,
+    );
+    const established = previewEloChange(
+      1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30, undefined, off,
+    );
+    expect(preview.winDelta).toBe(established.winDelta);
+  });
+
+  it('still applies provisional K when the switch is absent or true', () => {
+    const on: RatingSettings = { ...LIVE, provisional_k_enabled: true };
+    for (const settings of [LIVE, on]) {
+      const provisional = previewEloChange(
+        1200, 1150, 'single_21', 'rated_challenge', 'singles', true, undefined, 0, undefined, settings,
+      );
+      const established = previewEloChange(
+        1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30, undefined, settings,
+      );
+      expect(provisional.winDelta).toBeGreaterThan(established.winDelta);
+    }
+  });
+
+  // The threshold is a setting too, so a club that raised it must see the
+  // placement K for longer. 30 matches is established at a threshold of 8 and
+  // provisional at one of 50.
+  it('reads provisional_threshold from settings', () => {
+    const raised: RatingSettings = { ...LIVE, provisional_threshold: 50 };
+    const atLive = previewEloChange(1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30, undefined, LIVE);
+    const atRaised = previewEloChange(1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30, undefined, raised);
+    expect(atRaised.winDelta).toBeGreaterThan(atLive.winDelta);
+  });
+
+  // The bounds come from the same row, and calculateEloUpdate derives the delta
+  // FROM the clamped rating — so a preview that fell back to the MAX_ELO
+  // constant would tell a 1495-rated member on a club with a ceiling of 3001
+  // that they had almost nothing left to gain.
+  it('clamps against the configured ceiling, not the constant', () => {
+    const near = previewEloChange(1495, 1100, 'bo3_21', 'rated_challenge', 'singles', true, undefined, 0, undefined, LIVE);
+    const clampedToConstant = previewEloChange(1495, 1100, 'bo3_21', 'rated_challenge', 'singles', true, undefined, 0);
+    expect(near.winDelta).toBeGreaterThan(clampedToConstant.winDelta);
+    expect(1495 + near.winDelta).toBeGreaterThan(1500);
+  });
+
+  // A settings read that failed hands down null, and the screen must still draw
+  // a figure rather than NaN — the same degradation getKFactor already promises
+  // field by field.
+  it('falls back to the shipped defaults for null or undefined settings', () => {
+    const withNull = previewEloChange(1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30, undefined, null);
+    const withNothing = previewEloChange(1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30);
+    expect(withNull).toEqual(withNothing);
+    expect(Number.isFinite(withNull.winDelta)).toBe(true);
+  });
+
+  // A malformed row must not zero out or invert the preview: num() treats any
+  // non-positive or non-numeric K as unset, and resolveEloBounds ignores an
+  // inverted pair.
+  it('degrades to the defaults on a malformed settings row', () => {
+    const junk = {
+      singles_k_established: 0,
+      singles_k_provisional: 'sixty' as unknown as number,
+      min_elo: 2000,
+      max_elo: 100,
+      provisional_threshold: null,
+    } as RatingSettings;
+    const preview = previewEloChange(1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30, undefined, junk);
+    const defaults = previewEloChange(1200, 1150, 'single_21', 'rated_challenge', 'singles', false, undefined, 30);
+    expect(preview).toEqual(defaults);
   });
 });
 

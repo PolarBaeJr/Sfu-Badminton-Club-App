@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Dialog, Input, Select, Switch } from '@badminton/ui';
-import { getEventRules, previewEloChange, tallyGames, isLegalGameScore, isLegalGameCount, resolveMatchShape, describeMatchShape } from '@badminton/shared';
+import { getEventRules, tallyGames, isLegalGameScore, isLegalGameCount, resolveMatchShape, describeMatchShape } from '@badminton/shared';
 import type { TournamentMatchFormat, MatchFormat } from '@badminton/shared';
 import {
   enterMatchResult, enterWalkover, voidMatch, unvoidMatch, setMatchEntry, recordDoubleNoShow,

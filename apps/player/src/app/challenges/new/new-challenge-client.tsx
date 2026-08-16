@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase-browser';
 import { Select, Input, Textarea, DatePicker, Button, PlayerPicker } from '@badminton/ui';
 import { previewEloChange } from '@badminton/shared';
+import type { RatingSettings } from '@badminton/shared';
 import { createChallenge } from '@/lib/actions';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/toast-provider';
@@ -30,7 +31,18 @@ interface PlayerOption {
   doubles_elo: number;
 }
 
-export default function NewChallengeClient({ initialOpponentId }: { initialOpponentId?: string }) {
+export default function NewChallengeClient({
+  initialOpponentId,
+  ratingSettings,
+}: {
+  initialOpponentId?: string;
+  /**
+   * platform_settings.rating_defaults, read by the server wrapper. Optional so
+   * an un-updated caller still type-checks; null when the read failed, which
+   * previewEloChange treats as "no overrides configured".
+   */
+  ratingSettings?: RatingSettings | null;
+}) {
   const [type, setType] = useState<'singles' | 'doubles'>('singles');
   const [rated, setRated] = useState(true);
   // Custom shape: "best of X games to Y points". Held as text so the fields can
@@ -53,6 +65,23 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
   const [loading, setLoading] = useState(false);
   const [players, setPlayers] = useState<PlayerOption[]>([]);
   const [myElo, setMyElo] = useState({ singles: 400, doubles: 400 });
+  // WHICH K-FACTOR THIS VIEWER IS ON, which is the other half of getting the
+  // preview right. apply_match_result picks between the provisional and the
+  // established K on `singles_provisional OR singles_matches_played <
+  // provisional_threshold` (00127), read off the rater's OWN ratings row. The
+  // form used to hardcode `provisional: true`, so an established member was
+  // shown the placement K — on production, 64 where the ladder would apply 36.
+  //
+  // Opens provisional, matching the pre-fix behaviour, so the brief window
+  // before the row loads cannot show an established member a bigger number than
+  // they will get. In practice the preview needs an opponent, and the opponent
+  // list arrives from the same load().
+  const [myPlacement, setMyPlacement] = useState({
+    singlesProvisional: true,
+    doublesProvisional: true,
+    singlesMatches: 0,
+    doublesMatches: 0,
+  });
   const [myName, setMyName] = useState('');
   const router = useRouter();
   const { toast } = useToast();
@@ -63,15 +92,30 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
+      // The placement columns come from the same embedded ratings row as the
+      // Elo. `ratings` is selectable whole by any authenticated member
+      // (ratings_select, 00005_rls.sql) with no column-level grants, so widening
+      // this select cannot hit the 403-renders-as-empty-data failure.
       const { data: me } = await supabase
         .from('players')
-        .select('id, full_name, ratings(singles_elo, doubles_elo)')
+        .select(
+          'id, full_name, ratings(singles_elo, doubles_elo, singles_provisional, doubles_provisional, singles_matches_played, doubles_matches_played)'
+        )
         .eq('user_id', user.id)
         .single();
 
       if (me) {
         const r = Array.isArray(me.ratings) ? me.ratings[0] : me.ratings;
         setMyElo({ singles: r?.singles_elo ?? 400, doubles: r?.doubles_elo ?? 400 });
+        setMyPlacement({
+          // `?? true` and `?? 0` are the pessimistic readings of a missing
+          // value: both say "still in placement", which is the K the old code
+          // always assumed and never overstates the delta.
+          singlesProvisional: r?.singles_provisional ?? true,
+          doublesProvisional: r?.doubles_provisional ?? true,
+          singlesMatches: r?.singles_matches_played ?? 0,
+          doublesMatches: r?.doubles_matches_played ?? 0,
+        });
         setMyName(me.full_name ?? '');
       }
 
@@ -116,12 +160,16 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
     (isCustom ? (Number(customGames) > 1 ? 'bo3_21' : 'single_21') : format) as 'single_21' | 'bo3_21' | 'single_15' | 'single_11',
     rated ? 'rated_challenge' : 'casual',
     type,
-    true,
+    // The viewer's own placement state and match count, not a hardcoded `true`
+    // and a dropped count — the two arguments getKFactor combines with
+    // provisional_threshold to reproduce apply_match_result's CASE.
+    type === 'singles' ? myPlacement.singlesProvisional : myPlacement.doublesProvisional,
     undefined,
-    undefined,
+    type === 'singles' ? myPlacement.singlesMatches : myPlacement.doublesMatches,
     isCustom
       ? { gamesPerMatch: Number(customGames) || 3, pointsPerGame: Number(customPoints) || 21 }
       : undefined,
+    ratingSettings,
   ) : null;
 
   async function handleSubmit(e: React.FormEvent) {
@@ -369,6 +417,16 @@ export default function NewChallengeClient({ initialOpponentId }: { initialOppon
                     </div>
                   </div>
                 </div>
+                {/* THE TWO THINGS THE FIGURES ABOVE CANNOT SAY. Both are now
+                    true of the numbers rather than of the defaults: the K, the
+                    threshold and the rating bounds all come from the same
+                    settings row apply_match_result rates the match from. What is
+                    left is the sweep bonus, which needs a scoreline that does
+                    not exist yet, and the opponent's own delta, which is rated
+                    off THEIR matches played and is not the mirror of this one. */}
+                <p className="mt-3 text-[11px] leading-snug text-[var(--text-muted)]">
+                  Your change, at your current K-factor. Winning without dropping a game counts for a little more.
+                </p>
               </motion.div>
             )}
 

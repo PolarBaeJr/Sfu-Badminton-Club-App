@@ -2694,6 +2694,107 @@ describe('seeds that skip the first round', () => {
 });
 
 // ============================================================
+// How hard an event moves ratings
+// ============================================================
+//
+// elo_multiplier was accepted by updateTournamentEvent and sent by NO form, so
+// it was set once at creation and then unreachable for the event's whole life.
+// Event Settings sends it now. Two things have to hold: an exec can change it
+// while the event is still editable, and they cannot change it underneath a
+// draw that has already started rating matches.
+describe('the event Elo multiplier', () => {
+  function editableEvent() {
+    store.db.tournament_matches = [];
+    store.db.tournament_participants = [];
+    Object.assign(event(), { status: 'registration', draw_locked: false, elo_multiplier: 1.25 });
+  }
+
+  it('can be changed while the event is still editable', () => {
+    editableEvent();
+    return updateTournamentEvent('e1', { elo_multiplier: 0.5 }).then((res) => {
+      expect(res.ok).toBe(true);
+      expect(event().elo_multiplier).toBe(0.5);
+    });
+  });
+
+  // THE RULING, AS A TEST. The multiplier is read once per RESULT rather than
+  // stamped on the draw, so it is tempting to exempt it from the gate the way
+  // seeding_method is exempt. It is not exempted: elo_snapshot records the
+  // delta and NOT the multiplier that produced it, so an event whose early
+  // rounds were rated at 1.25 and whose later ones take 0.5 has no record of
+  // which was which — while the console prints the round weights from the
+  // event's CURRENT value, so the earlier rounds would display a figure never
+  // applied to them.
+  it('is frozen once a draw exists, and says why rather than ignoring the field', async () => {
+    editableEvent();
+    store.db.tournament_matches = [{
+      id: 'm1', event_id: 'e1', round_number: 1, match_number: 1, status: 'pending',
+      is_bye: false, scores: null, elo_snapshot: null,
+    } as Row];
+
+    const res = await updateTournamentEvent('e1', { elo_multiplier: 0.5 });
+
+    expect(res.ok).toBe(false);
+    expect(res.ok ? '' : res.error).toContain('already has a draw');
+    expect(event().elo_multiplier).toBe(1.25);
+
+    // And it cannot ride in on the one setting that IS exempt — that carve-out
+    // is "seeding_method on its own", not "contains seeding_method".
+    const bundled = await updateTournamentEvent('e1', { seeding_method: 'manual', elo_multiplier: 0.5 });
+    expect(bundled.ok).toBe(false);
+    expect(event().elo_multiplier).toBe(1.25);
+  });
+
+  // The column is DECIMAL(4,2) with NO CHECK constraint, and eventEloMultiplier
+  // is `Number(raw) || 1.25` — deliberately faithful to the rating path rather
+  // than defensive. Every refusal below is therefore the ONLY thing standing
+  // between a typo and a rated draw.
+  it('refuses 0, which does not mean what it looks like it means', async () => {
+    editableEvent();
+    const res = await updateTournamentEvent('e1', { elo_multiplier: 0 });
+    expect(res.ok).toBe(false);
+    expect(res.ok ? '' : res.error).toContain('does not make an event unrated');
+    expect(event().elo_multiplier).toBe(1.25);
+  });
+
+  it('refuses a negative, which would hand every loser rating', async () => {
+    editableEvent();
+    const res = await updateTournamentEvent('e1', { elo_multiplier: -1 });
+    expect(res.ok).toBe(false);
+    expect(res.ok ? '' : res.error).toContain('cannot be negative');
+    expect(event().elo_multiplier).toBe(1.25);
+  });
+
+  it('refuses a slipped decimal point', async () => {
+    editableEvent();
+    // 125 for 1.25. The column would store it without complaint and every
+    // rating change in the draw would be multiplied by a hundred.
+    const res = await updateTournamentEvent('e1', { elo_multiplier: 125 });
+    expect(res.ok).toBe(false);
+    expect(res.ok ? '' : res.error).toContain('must be between');
+    expect(event().elo_multiplier).toBe(1.25);
+  });
+
+  it('rounds to the column’s own scale rather than refusing a third decimal', async () => {
+    editableEvent();
+    expect((await updateTournamentEvent('e1', { elo_multiplier: 1.259 })).ok).toBe(true);
+    // DECIMAL(4,2) would round on the way in anyway; rounding here means the
+    // number the exec is shown is the number that lands.
+    expect(event().elo_multiplier).toBe(1.26);
+  });
+
+  it('leaves a stored weight alone when no value is sent', async () => {
+    editableEvent();
+    Object.assign(event(), { elo_multiplier: 0.75 });
+
+    // The settings dialog omits the key when its box is empty rather than
+    // sending NaN, and an omitted key must not reset the column to the default.
+    expect((await updateTournamentEvent('e1', { max_participants: 16 })).ok).toBe(true);
+    expect(event().elo_multiplier).toBe(0.75);
+  });
+});
+
+// ============================================================
 // Group stage (00106)
 // ============================================================
 //

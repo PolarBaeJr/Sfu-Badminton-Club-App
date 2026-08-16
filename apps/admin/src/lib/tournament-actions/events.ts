@@ -14,6 +14,7 @@ import {
   currentPhase,
   endsInKnockout,
   SEED_SKIP_BOUNDS,
+  ELO_MULTIPLIER_BOUNDS,
 } from '@badminton/shared';
 import type {
   TournamentEventType,
@@ -134,6 +135,52 @@ function normalizeSeedSkip(
   return { seed_skip_count: n };
 }
 
+// How hard this event moves ratings, relative to a rated challenge.
+//
+// THE COLUMN HAS NO CHECK CONSTRAINT, which is why this exists at all: the
+// number reaches apply_tournament_match_rating through eventEloMultiplier()
+// (`Number(raw) || 1.25`), and that coercion is deliberately faithful to the
+// rating path rather than defensive. A negative therefore inverts the whole
+// event, a 0 silently becomes 1.25, and a slipped decimal point multiplies
+// every delta in the draw by a hundred. See ELO_MULTIPLIER_BOUNDS for the
+// argument behind each end of the range.
+//
+// Rounded to the column's own scale rather than refused for having three
+// decimals: DECIMAL(4,2) would round 1.259 to 1.26 on the way in, so refusing
+// would be pedantry about a value the database is happy to store, but rounding
+// HERE means the number the exec is told about is the number that lands.
+function normalizeEloMultiplier(raw?: number | null): number | undefined {
+  if (raw == null) return undefined;
+  const { min, max } = ELO_MULTIPLIER_BOUNDS;
+  if (!Number.isFinite(raw)) {
+    throw new ExpectedError('The Elo multiplier has to be a number.');
+  }
+  if (raw === 0) {
+    // Named separately from the range refusal because 0 is the one value an
+    // exec reaches for ON PURPOSE, meaning something the field cannot express —
+    // and the only one whose behaviour is the opposite of how it reads.
+    throw new ExpectedError(
+      'An Elo multiplier of 0 does not make an event unrated — the rating path reads 0 as "not set" and uses 1.25 instead. '
+      + `Set it to ${min} if this event should barely count towards ratings.`,
+    );
+  }
+  if (raw < 0) {
+    // Also worth its own sentence: the range message below would read as a
+    // formatting complaint, when what a negative actually does is hand every
+    // loser in the draw rating and take it off every winner.
+    throw new ExpectedError(
+      'An Elo multiplier cannot be negative — it would reverse every rating change in the event, '
+      + 'so winners would lose rating and losers would gain it.',
+    );
+  }
+  if (raw < min || raw > max) {
+    throw new ExpectedError(
+      `The Elo multiplier must be between ${min} and ${max}. A rated challenge is 1.00 and the usual tournament is 1.25.`,
+    );
+  }
+  return Math.round(raw * 100) / 100;
+}
+
 // A seeding link is only meaningful within one tournament, and the self-seed
 // case would deadlock generation on standings it is supposed to produce.
 async function assertSeedSourceUsable(
@@ -181,6 +228,7 @@ async function createTournamentEventImpl(
   const typedFormat = normalizeTypedFormat(config.games_per_match, config.points_per_game);
   const groupShape = normalizeGroupShape(config.format, config.group_count, config.qualifiers_per_group);
   const seedSkip = normalizeSeedSkip(config.format, config.seed_skip_count);
+  const eloMultiplier = normalizeEloMultiplier(config.elo_multiplier);
   // A pool_to_bracket event seeds from ITSELF — that is the format — so an
   // external source would be a second, contradictory field for the same
   // bracket. Refused rather than ignored: silently dropping a link the exec set
@@ -231,7 +279,7 @@ async function createTournamentEventImpl(
     ...seedSkip,
     max_participants: config.max_participants ?? null,
     seeding_method: config.seeding_method ?? 'elo',
-    elo_multiplier: config.elo_multiplier ?? 1.25,
+    elo_multiplier: eloMultiplier ?? 1.25,
     placement_bonus_enabled: config.placement_bonus_enabled ?? true,
   }).select().single();
 
@@ -352,6 +400,52 @@ async function updateTournamentEventImpl(
   // there is no version of this call in which the two could differ.
   if ('seed_skip_count' in updates) {
     Object.assign(patch, normalizeSeedSkip(event.format as TournamentEventFormat, updates.seed_skip_count));
+  }
+
+  /**
+   * THE ELO MULTIPLIER, AND WHY IT GETS NO seeding_method-STYLE CARVE-OUT.
+   *
+   * The number was reachable only at creation until now — createTournamentEvent
+   * took it, this function took it, and no form on either dialog sent it — so an
+   * event set up at the wrong weight stayed at the wrong weight for its whole
+   * life. Event Settings now sends it, which is the whole of the fix.
+   *
+   * It is tempting to exempt it from the "no draw, still editable" gate above,
+   * because unlike the match format it is not baked into the draw: it is read
+   * once per RESULT, by applyTournamentMatchElo, off the event row as it stands
+   * at that moment. An event that has been drawn but not played would take a new
+   * value perfectly consistently.
+   *
+   * IT IS NOT EXEMPTED, because the same property is what makes it dangerous one
+   * match later. Change it after round one has been rated and the event's early
+   * rounds were rated at the old weight while its later ones take the new — and
+   * nothing anywhere records which was which. `elo_snapshot` stores
+   * `{discipline, entries[{before, after, delta, won, …}]}` and NOT the
+   * multiplier that produced the delta, so the split is unreconstructible after
+   * the fact. Meanwhile the console now PRINTS the weight per round (the bracket
+   * tab's "Played to" strip and this dialog's ladder, both via
+   * eloWeightBreakdown), and both read the event's current value — so every
+   * already-rated round would start displaying a figure that was never applied
+   * to it. That is the "silently restate history" case, and the honest options
+   * are to refuse it or to record what each match was rated under. Recording it
+   * needs a column, and this branch is not taking a migration.
+   *
+   * So the unmodified gate — no matches, still editable — is the right one here
+   * too, and it is STRICTLY SAFER than "no rated matches": it refuses at the
+   * draw rather than at the first result, with a sentence that names the reason.
+   * Once a column exists to stamp the applied multiplier on each match, this is
+   * the comment to revisit.
+   */
+  if ('elo_multiplier' in updates) {
+    const eloMultiplier = normalizeEloMultiplier(updates.elo_multiplier);
+    if (eloMultiplier === undefined) {
+      // Sent as null/absent by a caller that has the key but no value. Dropped
+      // rather than written, so a blank box cannot reset a configured weight to
+      // the default behind the exec's back.
+      delete patch.elo_multiplier;
+    } else {
+      patch.elo_multiplier = eloMultiplier;
+    }
   }
 
   if ('seeded_from_event_id' in updates) {

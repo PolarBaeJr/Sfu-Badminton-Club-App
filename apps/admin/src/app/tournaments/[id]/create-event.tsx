@@ -9,6 +9,7 @@ import {
   isDoublesEvent,
   isPoolToBracket,
   playsRoundRobin,
+  ELO_MULTIPLIER_BOUNDS,
 } from '@badminton/shared';
 import { createTournamentEvent } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
@@ -184,12 +185,26 @@ export function CreateEventButton({
               { value: 'random', label: 'Random' },
             ]}
           />
+          {/* The same bounds the edit form and the server use. This box was
+              unbounded, which mattered more than it looks: the column has no
+              CHECK, eventEloMultiplier() is `Number(raw) || 1.25`, and so a
+              negative inverted the event, a 0 silently became 1.25, and 125 for
+              1.25 multiplied every rating change in the draw by a hundred. */}
           <Input
             label="Elo Multiplier"
             type="number"
+            min={ELO_MULTIPLIER_BOUNDS.min}
+            max={ELO_MULTIPLIER_BOUNDS.max}
+            step={ELO_MULTIPLIER_BOUNDS.step}
             value={eloMultiplier}
             onChange={(e) => setEloMultiplier(e.target.value)}
           />
+          <p className="text-xs text-[var(--text-muted)] -mt-2">
+            How hard this event moves ratings, on top of each round&rsquo;s own weight. A rated challenge is{' '}
+            <span className="font-mono text-[var(--text-secondary)]">1.00</span>; the usual tournament is{' '}
+            <span className="font-mono text-[var(--text-secondary)]">1.25</span>. It can still be changed from Event
+            Settings, up until the draw is generated.
+          </p>
           <div className="flex items-center justify-between pt-2">
             <Button variant="ghost" onClick={() => setOpen(false)} type="button">Cancel</Button>
             <Button type="submit" loading={loading}>Create Event</Button>

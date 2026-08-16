@@ -303,6 +303,21 @@ export function calculateTeamRating(ratings: number[]): number {
   return Math.round(ratings.reduce((a, b) => a + b, 0) / ratings.length);
 }
 
+/**
+ * What ONE side stands to gain or lose, for a match that has not been played.
+ *
+ * This is a promise made to a member before they accept a challenge, so it has
+ * to be the number apply_match_result will actually write. Everything the two
+ * engines can agree on is threaded through `settings`; the one thing they
+ * cannot is the MARGIN MULTIPLIER, which needs a scoreline that does not exist
+ * yet. The preview therefore reports the un-swept figure, which is the SMALLER
+ * of the two outcomes on production (sweep_margin_multiplier is 1.15) — under-
+ * promising a gain is the safe direction for a figure somebody is deciding on.
+ *
+ * The delta is the VIEWER'S. The other side is rated with its own K off its own
+ * matches played, so the two are not mirror images and nothing here should be
+ * labelled as what the opponent stands to lose.
+ */
 export function previewEloChange(
   playerRating: number,
   opponentRating: number,
@@ -316,12 +331,35 @@ export function previewEloChange(
   // than looked up. Without this the preview passed a format the table has no
   // entry for, so the weight came back undefined and every figure rendered NaN.
   custom?: { gamesPerMatch: number; pointsPerGame: number },
+  // The club's configured knobs, from platform_settings.rating_defaults.
+  //
+  // OPTIONAL, AND THAT IS THE WHOLE POINT OF THE PARAMETER. Omitting it was not
+  // a caller forgetting to pass something; it was the preview quietly computing
+  // its K from the hardcoded fallbacks while apply_match_result computed the
+  // REAL delta from the settings row. On production those disagree by most of a
+  // factor of two — the fallbacks are 80/48 for singles, the configured values
+  // are 64/36 — so a member deciding whether to accept a challenge was shown a
+  // number the ladder was never going to apply.
+  //
+  // Threaded rather than fetched here because this module is pure and runs on
+  // both sides of the client boundary; the caller reads the row (server-side)
+  // and hands it down. Passing null or nothing reproduces the old behaviour
+  // exactly, which is what a settings read that failed should degrade to.
+  settings?: RatingSettings | null,
 ): { winDelta: number; lossDelta: number } {
-  const k = getKFactor(matchType, provisional, matchesPlayed);
+  // The same four arguments apply_match_result assembles (00041/00127): the
+  // configured K pair, the provisional threshold, and the 00127 off switch.
+  const k = getKFactor(matchType, provisional, matchesPlayed, settings);
   const fw = custom
     ? derivedFormatWeight(custom.gamesPerMatch, custom.pointsPerGame)
     : (getFormatWeight(format) ?? FORMAT_WEIGHTS.single_21);
   const em = getEventMultiplier(eventType);
+  // The configured rating range, for the same reason. calculateEloUpdate derives
+  // its delta from the CLAMPED rating, so a preview that fell back to the
+  // MIN_ELO/MAX_ELO constants would understate the gain for anybody near 1500 on
+  // a club whose ceiling is 3001 — and would do it silently, since the figure
+  // still looks like a plausible delta.
+  const bounds = settings ? { min: settings.min_elo, max: settings.max_elo } : undefined;
 
   const winResult = calculateEloUpdate({
     playerRating,
@@ -331,6 +369,7 @@ export function previewEloChange(
     eventMultiplier: em,
     won: true,
     eloWeightOverride,
+    bounds,
   });
 
   const lossResult = calculateEloUpdate({
@@ -341,6 +380,7 @@ export function previewEloChange(
     eventMultiplier: em,
     won: false,
     eloWeightOverride,
+    bounds,
   });
 
   return { winDelta: winResult.delta, lossDelta: lossResult.delta };

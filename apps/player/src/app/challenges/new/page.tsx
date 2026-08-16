@@ -2,6 +2,7 @@ import { isUuid, getAccountStanding } from '@badminton/shared';
 import Link from 'next/link';
 import { PageHeader } from '@badminton/ui';
 import { getCurrentPlayer } from '@/lib/supabase-server';
+import { getRatingSettings } from '@/lib/rating-settings';
 import NewChallengeClient from './new-challenge-client';
 
 // Server wrapper so ?opponent= can be read without useSearchParams(), which in
@@ -42,5 +43,18 @@ export default async function NewChallengePage({
     );
   }
 
-  return <NewChallengeClient initialOpponentId={isUuid(opponent) ? opponent : undefined} />;
+  // The rating knobs are read HERE and handed down, because the form is a
+  // client component and the preview it draws has to be computed from the same
+  // row apply_match_result rates the match from. There is no server round trip
+  // between picking an opponent and seeing the figure, so it cannot be fetched
+  // at the moment it is needed — and a browser-side read of platform_settings
+  // would be a second, differently-authorised path to the same row.
+  const ratingSettings = await getRatingSettings();
+
+  return (
+    <NewChallengeClient
+      initialOpponentId={isUuid(opponent) ? opponent : undefined}
+      ratingSettings={ratingSettings}
+    />
+  );
 }

@@ -505,6 +505,35 @@ export function maxFirstRoundByes(fieldSize: number): number {
  */
 export const SEED_SKIP_BOUNDS = { min: 0, max: 64 } as const;
 
+/**
+ * What an event's Elo multiplier may be set to.
+ *
+ * `tournament_events.elo_multiplier` is DECIMAL(4,2) with a default of 1.25 and
+ * NO CHECK CONSTRAINT, so the column itself permits anything from -99.99 to
+ * 99.99. Three of those are actively harmful and none of them is refused
+ * anywhere else:
+ *
+ *   * A NEGATIVE number inverts the event. eventEloMultiplier() is
+ *     `Number(raw) || 1.25`, so -1 passes through untouched and every winner in
+ *     the draw loses rating while every loser gains it.
+ *   * ZERO does not mean "unrated". `|| 1.25` reads it as unset, so an exec
+ *     typing 0 to stop an event counting gets the default instead — the one
+ *     value whose behaviour is the opposite of what it looks like.
+ *   * A MISTYPED DECIMAL. 125 for 1.25 is one slipped keypress and multiplies
+ *     every rating change in the event by a hundred; the column would store it
+ *     without complaint up to 99.99 and throw a raw Postgres numeric overflow
+ *     above that.
+ *
+ * The ceiling is 5, not 99.99, because the point of a bound is to catch the
+ * typo rather than to restate the column. Four times what a rated challenge is
+ * worth is already beyond any use the club has had, and an exec who genuinely
+ * wants more can say so; nobody who wanted 1.25 meant 6.
+ *
+ * Two decimal places, to match the column's scale — a third would be rounded
+ * away on the way in and the stored value would differ from what was typed.
+ */
+export const ELO_MULTIPLIER_BOUNDS = { min: 0.25, max: 5, step: 0.01 } as const;
+
 // Per-format scoring rules: how many games the match is a best-of, the target a
 // game is played to, and the deuce cap. Rally scoring: reach the target, but win
 // by two — so at 20-20 play continues (22-20, 23-21, …) until the cap, where the

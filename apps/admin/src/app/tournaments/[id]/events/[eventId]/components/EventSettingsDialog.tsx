@@ -5,7 +5,7 @@ import { Button, Dialog, Input } from '@badminton/ui';
 import { updateTournamentEvent } from '@/lib/tournament-actions';
 import { useToast } from '@/components/toast-provider';
 import { useRouter } from 'next/navigation';
-import { playsRoundRobin, isPoolToBracket } from '@badminton/shared';
+import { playsRoundRobin, isPoolToBracket, ELO_MULTIPLIER_BOUNDS, eventEloMultiplier } from '@badminton/shared';
 import type { SeedBy, TournamentMatchFormat } from '@badminton/shared';
 import {
   EventFormatFields,
@@ -66,6 +66,19 @@ export function EventSettingsDialog({
     })(),
   });
   const [maxParticipants, setMaxParticipants] = useState(event.max_participants?.toString() ?? '');
+  // HOW HARD THIS EVENT MOVES RATINGS, which until now was set once at creation
+  // and then unreachable: updateTournamentEvent has always accepted the field,
+  // but no form sent it, so an event created at the wrong weight stayed there.
+  //
+  // Seeded through eventEloMultiplier() rather than String(event.elo_multiplier)
+  // because the column is DECIMAL(4,2) and PostgREST hands it back as a STRING —
+  // "1.25" prints the same either way, but a null row would render the literal
+  // "null" in the box, and eventEloMultiplier is the one coercion the rating
+  // path uses. toFixed(2) matches the column's scale, so the value shown is the
+  // value stored.
+  const [eloMultiplier, setEloMultiplier] = useState(
+    eventEloMultiplier(event.elo_multiplier).toFixed(2),
+  );
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
@@ -76,6 +89,18 @@ export function EventSettingsDialog({
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
+    // A BLANK BOX IS REFUSED RATHER THAN TREATED AS "NO CHANGE".
+    //
+    // The field opens on the event's current value, so it is never legitimately
+    // empty — an exec who has cleared it is mid-edit. Omitting the key would
+    // leave the stored weight untouched AND toast success, so the exec would
+    // walk away believing they had cleared a number that is still set. That is
+    // the same silent-no-op the seed_by null-rewrite was fixed for; say so
+    // instead.
+    if (eloMultiplier.trim() === '') {
+      toast('Enter an Elo multiplier, or set it back to 1.25 for the usual weighting.', 'error');
+      return;
+    }
     setLoading(true);
     try {
       const res = await updateTournamentEvent(event.id, {
@@ -84,6 +109,9 @@ export function EventSettingsDialog({
           event.format,
         ),
         max_participants: maxParticipants === '' ? null : Number(maxParticipants),
+        // Always sent — handleSave refuses a blank box above, so there is no
+        // path here that could quietly omit it and report success.
+        elo_multiplier: Number(eloMultiplier),
       });
       if (!res.ok) { toast(res.error, 'error'); setLoading(false); return; }
       toast('Event updated', 'success');
@@ -104,7 +132,13 @@ export function EventSettingsDialog({
           siblings={seedableSiblings}
           format={event.format}
           fieldSize={totalEntries}
-          eloMultiplier={event.elo_multiplier}
+          // The dialog's own live state, not the stored row — the ladder above
+          // recomputes as the exec types in the Elo Multiplier box below, which
+          // is the only way to see what the change does before saving it.
+          // create-event does the same for the same reason; passing
+          // event.elo_multiplier here would make the two dialogs disagree about
+          // what a round is worth while one of them is being edited.
+          eloMultiplier={eloMultiplier}
         />
         <Input
           label={values.seededFrom === '' ? 'Max Participants (optional)' : 'Bracket Size (how many qualify)'}
@@ -114,6 +148,41 @@ export function EventSettingsDialog({
           onChange={(e) => setMaxParticipants(e.target.value)}
           placeholder={values.seededFrom === '' ? 'Leave empty for unlimited' : 'Leave empty to take the whole pool'}
         />
+        {/* AT THE TOP LEVEL OF THE FORM, beside Max Participants — NOT inside
+            EventFormatFields. Every control in that component sits behind one of
+            `poolToBracket`, `isRoundRobin`, `offerSeedSkip`, `ranksAPool` or
+            `siblings.length > 0`, and all five are false on a plain
+            single-elimination event with no sibling pool. Nesting it there is
+            how "Rank The Pool By" and the seed-skip control each ended up
+            unreachable on the format they existed for. create-event keeps its
+            copy outside the component for the same reason. */}
+        <Input
+          label="Elo Multiplier"
+          type="number"
+          min={ELO_MULTIPLIER_BOUNDS.min}
+          max={ELO_MULTIPLIER_BOUNDS.max}
+          step={ELO_MULTIPLIER_BOUNDS.step}
+          value={eloMultiplier}
+          onChange={(e) => setEloMultiplier(e.target.value)}
+        />
+        <p className="text-xs text-[var(--text-muted)] -mt-2">
+          How hard this event moves ratings, on top of each round&rsquo;s own weight. A rated challenge is{' '}
+          <span className="font-mono text-[var(--text-secondary)]">1.00</span>; the usual tournament is{' '}
+          <span className="font-mono text-[var(--text-secondary)]">1.25</span>.{' '}
+          {/* SAID PLAINLY, because the alternative is an exec discovering it by
+              trying. It is read once per RESULT, not stamped on the draw, so
+              changing it after some rounds had been rated would leave the event
+              with two different weights in its history and nothing recording
+              which match got which — the ladder above would then print a figure
+              that was never applied to the earlier rounds. The settings gate
+              refuses at the draw rather than at the first result, which is
+              stricter and needs no bookkeeping. */}
+          <span className="font-medium text-[var(--text-primary)]">
+            Fixed once this event&rsquo;s draw is generated
+          </span>{' '}
+          — matches already rated keep the weight they were rated at, and nothing records which was which, so it
+          cannot be changed underneath a draw that has started.
+        </p>
         <div className="flex items-center justify-between pt-2">
           <Button variant="ghost" type="button" onClick={onClose}>Cancel</Button>
           <Button type="submit" loading={loading}>Save Changes</Button>
