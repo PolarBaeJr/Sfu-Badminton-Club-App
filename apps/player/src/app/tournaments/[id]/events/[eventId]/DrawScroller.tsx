@@ -121,11 +121,16 @@ export function DrawScroller({
           Scroll sideways — the two halves meet at the final
         </p>
       )}
-      {/* tabIndex makes a scrollable region reachable by keyboard, which a
-          scroll box with no focusable child otherwise is not. */}
+      {/* tabIndex makes a SCROLLABLE region reachable by keyboard, which a
+          scroll box with no focusable child otherwise is not — so it is gated
+          on the box actually scrolling, for the same reason the fade below is.
+          A chart that fits has nothing to scroll and a tab stop there is a stop
+          that does nothing, which since this box started fitting is the common
+          case. The region and its label stay either way, so it is still
+          reachable by landmark navigation. */}
       <div
         ref={ref}
-        tabIndex={0}
+        tabIndex={overflows ? 0 : -1}
         role="region"
         aria-label="Tournament draw"
         // The edge fade says "there is more this way", so it is now gated on
