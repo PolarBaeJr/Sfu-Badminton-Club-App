@@ -73,6 +73,51 @@ import { ArrowLeftRight } from 'lucide-react';
  */
 const FIT_FLOOR = 0.68;
 
+/**
+ * THE HEIGHT BUDGET: how much of the window the chart has to fit inside.
+ *
+ * "this still doesnt fit in a paghe". Fitting the width alone was not what was
+ * asked for. A 64-draw is 1200px tall and a 128 is 2384px, so a chart that had
+ * stopped dragging sideways still ran three screens off the bottom, and the
+ * thing the reader wants from a wall chart — the shape of the draw, at a glance
+ * — needs BOTH axes on screen at once. "Vertical scrolling is free" was the
+ * wrong assumption and this is where it is dropped.
+ *
+ * WHAT "FITS" MEANS HERE, precisely, because it is not "visible without ever
+ * scrolling". The event page has a header, the entrants and the check-in state
+ * above the draw, so the chart is never on screen at page load whatever its
+ * size. It fits when, once the reader has scrolled its top up under the sticky
+ * topbar, the whole chart is inside the window.
+ *
+ * So the budget is the window less the chrome that is still on screen at that
+ * point, and the only such chrome is `.topbar` — it is `position: sticky` and
+ * everything else in the shell scrolls away with the page. (`OfflineBanner` is
+ * `position: fixed`, but it exists only while the connection is down and
+ * budgeting for it permanently would shrink every chart for a state that is
+ * almost never true.)
+ *
+ * 71px IS MEASURED, and the arithmetic that looks like it derives it is wrong.
+ * globals.css says next to `.notif-section` that the sticky topbar is "14px + a
+ * 34px mark + 14px + a hairline ≈ 63px"; the box actually reports 71px at every
+ * width above 980, because the brand mark is not what sets the row's height.
+ * That comment was written for another surface and taking it on trust would
+ * have handed the chart 8px it does not have. Below 980px `.topbar-inner` drops
+ * to 12px of padding and the bar measures 63px, so 71 is the larger of the two
+ * values the chart can meet and therefore the safe one to budget for.
+ *
+ * NO max-height, AND THAT IS THE DEPARTURE FROM THE CONSOLE. The console caps
+ * its diagram at 78vh and lets it scroll inside its own box. That is right for
+ * a pane in a full-height console shell and wrong here: this chart sits in a
+ * page that already scrolls, and a nested vertical scroll region inside a
+ * scrolling page traps the wheel and gives the reader two ways to move one
+ * axis. The budget picks the SCALE and nothing else. When the floor stops a
+ * draw fitting, the block is simply tall and the page scrolls, exactly as a
+ * long block should.
+ */
+const TOPBAR_H = 71;
+/** So the last row of cards is not flush against the bottom of the window. */
+const BOTTOM_GUTTER = 24;
+
 export function DrawScroller({
   width, height, children,
 }: {
@@ -82,27 +127,51 @@ export function DrawScroller({
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [avail, setAvail] = useState(0);
+  // One piece of state for both axes. Measured together in one callback so a
+  // resize can never leave the width from this frame and the height from the
+  // last one, which would fit the chart to a window that never existed.
+  const [box, setBox] = useState({ avail: 0, budget: 0 });
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    // clientWidth, not getBoundingClientRect: it excludes the box's own
-    // scrollbar, so fitting to it cannot leave the chart a scrollbar's width too
-    // wide and oscillating between overflowing and not.
-    const measure = () => setAvail(el.clientWidth);
+    const measure = () =>
+      setBox({
+        // clientWidth, not getBoundingClientRect: it excludes the box's own
+        // scrollbar, so fitting to it cannot leave the chart a scrollbar's
+        // width too wide and oscillating between overflowing and not.
+        avail: el.clientWidth,
+        // The WINDOW, not this box. The box's own height is whatever the scale
+        // last made it, so measuring that would fit the chart to the height the
+        // chart already had and never converge.
+        budget: Math.max(0, window.innerHeight - TOPBAR_H - BOTTOM_GUTTER),
+      });
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
-    return () => ro.disconnect();
+    // BOTH, and the listener is not redundant. Shorten the window without
+    // changing its width and this box's content box does not change at all —
+    // its width comes from the pane and its height from the middle box, which
+    // is still sized from the previous scale — so the observer never fires and
+    // a height-only resize would never re-fit.
+    window.addEventListener('resize', measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+    };
   }, []);
+
+  const { avail, budget } = box;
 
   // ZERO IS THE PHONE, and it has to mean "leave it alone" rather than "scale to
   // nothing". Below 768px .draw-chart-wrap is display:none, so clientWidth is 0
   // and avail/width would be 0 — a scale of 0 or, on an empty draw, NaN. The
   // same guard covers the first render, before the effect has measured anything.
-  const scale = avail > 0 && width > 0
-    ? Math.min(1, Math.max(FIT_FLOOR, avail / width))
+  //
+  // THE SMALLER OF THE TWO FITS, then floored. Taking the width alone is what
+  // left a 64-draw 1200px tall on a screen with 800px to give it.
+  const scale = avail > 0 && budget > 0 && width > 0 && height > 0
+    ? Math.min(1, Math.max(FIT_FLOOR, Math.min(avail / width, budget / height)))
     : 1;
 
   const scaledW = Math.ceil(width * scale);
@@ -111,6 +180,18 @@ export function DrawScroller({
   // the box would still report the full 2088px and the hint would advertise a
   // drag that scaling had already removed. These two numbers are exact, and the
   // +1 absorbs the sub-pixel a fractional pane width leaves behind.
+  //
+  // STILL WIDTH ALONE, now that the scale fits both axes, and it stays exact:
+  // if the height binds then the scale is below the width's own fit and the
+  // width has room to spare, if the width binds it fits exactly, and only at
+  // the floor can either overflow. So this cannot claim a drag that is not
+  // there.
+  //
+  // There is deliberately NO matching notice when a floored draw runs off the
+  // bottom. The hint exists because sideways scrolling inside a box is
+  // undiscoverable — nothing about the page suggests that box moves. Scrolling
+  // the page down is the most discoverable gesture there is, and captioning it
+  // would be telling the reader something they already know.
   const overflows = avail > 0 && scaledW > avail + 1;
 
   return (
