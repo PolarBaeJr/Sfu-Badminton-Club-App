@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeftRight, ArrowUpDown, Maximize2, Minimize2 } from 'lucide-react';
+import { ArrowLeftRight, ArrowUpDown, Maximize2, Minimize2, Play, Square } from 'lucide-react';
 
 /**
  * THE DRAW SHRINKS TO FIT ITS BOX, and only scrolls when shrinking any further
@@ -137,13 +137,14 @@ const BOTTOM_GUTTER = 24;
  *
  * WHY 0.80 AND NOT HIGHER. The floor must never be what stops the largest draw
  * that CAN fit a screen from fitting it. Measured in full screen at 1920×1080 —
- * a 1884px pane and a 1012px budget once this shell's padding and header are
- * out — a 64-draw fits both axes at 0.843, and 8, 16 and 32 fit at 1.0 outright.
- * So 0.80 costs nothing at all at the resolution this feature exists for, and
- * still leaves 0.04 of margin against a projector whose aspect differs a little.
- * A 128-draw would need 0.41 and is refused: it holds at 0.80 and scrolls, which
- * prints a fragment somebody can actually read instead of a whole sheet nobody
- * can.
+ * a 1884px pane and a 1010px budget once this shell's padding and header are
+ * out — a 64-draw fits both axes at 0.842, and 8, 16 and 32 fit at 1.0 outright.
+ * (1012 and 0.843 before the controls joined the header's row; the two pixels
+ * that cost are worth what a row that cannot underlap buys.) So 0.80 costs
+ * nothing at all at the resolution this feature exists for, and still leaves
+ * 0.04 of margin against a projector whose aspect differs a little. A 128-draw
+ * would need 0.41 and is refused by this floor — which is what the halves
+ * below exist to answer, and until they did it held at 0.80 and scrolled.
  *
  * WHAT IT COSTS, said plainly: on a 1280×720 projector a 32-draw needs 0.73 and
  * so now scrolls where the page floor would have fitted it whole. That is the
@@ -152,8 +153,37 @@ const BOTTOM_GUTTER = 24;
  */
 const FULLSCREEN_FLOOR = 0.80;
 
+/**
+ * HOW LONG AN UNATTENDED PROJECTOR HOLDS ONE HALF BEFORE TURNING THE PAGE.
+ *
+ * Only ever used when the reader has switched rotation on — see the button. 15
+ * seconds is the time to find a name in a column of 32 and read the score
+ * beside it, not the time to glance at the shape of the draw; the shorter
+ * figure would serve the person who already knows where to look and nobody
+ * else, and this exists precisely for the room that does not.
+ */
+const ROTATE_MS = 15000;
+
+/**
+ * ONE PAGE OF A DRAW THAT IS SHOWN IN HALVES.
+ *
+ * Built by the server component, which owns the geometry — this file measures
+ * boxes and picks a scale and knows nothing about brackets.
+ */
+export interface DrawPage {
+  key: string;
+  /** What the room is looking at: "Top half" / "Bottom half". */
+  label: string;
+  /** This page's UNSCALED size, which is not the whole draw's. */
+  width: number;
+  height: number;
+  /** How THIS page reads, replacing the whole draw's line in the header. */
+  note?: string;
+  body: ReactNode;
+}
+
 export function DrawScroller({
-  width, height, title, subtitle, note, children,
+  width, height, title, subtitle, note, pages = [], children,
 }: {
   /** The layout's UNSCALED size. The scale is worked out from it here. */
   width: number;
@@ -164,6 +194,12 @@ export function DrawScroller({
   subtitle?: string;
   /** Shown ONLY in full screen: how the chart reads. See the header below. */
   note?: string;
+  /**
+   * The halves, when this draw is big enough to have been built with them.
+   * Empty otherwise, and empty means every branch below collapses to exactly
+   * what this component did before paging existed.
+   */
+  pages?: DrawPage[];
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -172,6 +208,28 @@ export function DrawScroller({
   // resize can never leave the width from this frame and the height from the
   // last one, which would fit the chart to a window that never existed.
   const [box, setBox] = useState({ avail: 0, budget: 0, full: false });
+
+  /**
+   * *** THE PAGE IS PURE CLIENT STATE AND IS NEVER SEEDED FROM A MEASUREMENT.
+   * THAT IS THE WHOLE DESIGN. ***
+   *
+   * LiveTournament calls router.refresh() every time the desk enters a score,
+   * which re-renders this whole subtree from the server and hands `pages` a
+   * brand new array. If which page is showing were derived from anything that
+   * arrives with that render — an index in the payload, a key on the element, a
+   * value read back off the DOM — the projected draw would snap back to the top
+   * half every time somebody typed a 21, which is several times a minute at a
+   * live event. Plain state in a component whose position in the tree does not
+   * change survives a refresh untouched, and that is why it is plain state.
+   *
+   * `split` is the same argument for the whole/halves choice: 'auto' defers to
+   * the measurement, and once the reader has said otherwise their answer is
+   * kept rather than recomputed on the next result.
+   */
+  const [pageIndex, setPageIndex] = useState(0);
+  const [split, setSplit] = useState<'auto' | 'halves' | 'whole'>('auto');
+  /** OFF BY DEFAULT, always. See the button. */
+  const [rotate, setRotate] = useState(false);
 
   useEffect(() => {
     const el = ref.current;
@@ -259,14 +317,55 @@ export function DrawScroller({
   // and avail/width would be 0 — a scale of 0 or, on an empty draw, NaN. The
   // same guard covers the first render, before the effect has measured anything.
   //
-  // THE SMALLER OF THE TWO FITS, then floored. Taking the width alone is what
-  // left a 64-draw 1200px tall on a screen with 800px to give it.
+  // THE SMALLER OF THE TWO FITS. Taking the width alone is what left a 64-draw
+  // 1200px tall on a screen with 800px to give it. `null` is the unmeasured
+  // case, kept distinct from a real fit so that the floor is applied to a
+  // number that was actually measured and never to a placeholder.
+  const fitOf = (w: number, h: number) =>
+    avail > 0 && budget > 0 && w > 0 && h > 0
+      ? Math.min(1, Math.min(avail / w, budget / h))
+      : null;
   const floor = full ? FULLSCREEN_FLOOR : FIT_FLOOR;
-  const scale = avail > 0 && budget > 0 && width > 0 && height > 0
-    ? Math.min(1, Math.max(floor, Math.min(avail / width, budget / height)))
-    : 1;
 
-  const scaledW = Math.ceil(width * scale);
+  /**
+   * WHEN HALVES TAKE OVER: only when the whole draw cannot be shown whole.
+   *
+   * "what if u split 128 into 2 and 64 aswell, 2 pages?" — but a draw that FITS
+   * has nothing to gain from being cut up, and a reader who opens a 32 and
+   * finds half of it has been surprised for no reason. So the test is the
+   * floor and nothing else: if the whole sheet needs less than 0.80 it cannot
+   * be shown at a size the back of the room can read, and only then is half of
+   * it the better answer. A 128 crosses that line at every resolution; a 64
+   * crosses it at 720p and not at 1080p; a 32 crosses it at 720p only.
+   *
+   * MEASURED AGAINST THE UNFLOORED FIT, not against the scale actually used.
+   * The scale has already been clamped up to 0.80, so comparing IT to the floor
+   * would compare a number to itself and never be true.
+   *
+   * The reader can still say otherwise either way, and that answer sticks —
+   * a 64 at 1080p is 0.843 whole and 1.0 in halves, which is worth offering
+   * even though it is not worth imposing.
+   */
+  const wholeFit = fitOf(width, height);
+  const canPage = full && pages.length > 1;
+  const mustPage = canPage && wholeFit !== null && wholeFit < FULLSCREEN_FLOOR;
+  const paged = canPage && (split === 'auto' ? mustPage : split === 'halves');
+
+  // MODULO, NOT A CLAMP, and it is the guard for a draw that was REGENERATED
+  // under a projector: the halves are rebuilt and the index has to land
+  // somewhere real without anybody being at the keyboard.
+  const activeIndex = pages.length ? ((pageIndex % pages.length) + pages.length) % pages.length : 0;
+  const active = paged ? pages[activeIndex]! : null;
+
+  // Everything below is about THE SHEET ON SCREEN, which on a paged draw is one
+  // half and not the whole thing. One pair of numbers so no measurement can be
+  // taken against the wrong sheet.
+  const sheetW = active ? active.width : width;
+  const sheetH = active ? active.height : height;
+  const fit = fitOf(sheetW, sheetH);
+  const scale = fit === null ? 1 : Math.max(floor, fit);
+
+  const scaledW = Math.ceil(sheetW * scale);
   // COMPUTED, NOT READ BACK OFF THE DOM. scrollWidth is the wrong instrument
   // once a transform is involved: a transform does not change layout size, so
   // the box would still report the full 2088px and the hint would advertise a
@@ -296,8 +395,69 @@ export function DrawScroller({
    * keyboard — so the notice is what tells whoever set it up that the room is
    * seeing a cropped draw.
    */
-  const scaledH = Math.ceil(height * scale);
+  const scaledH = Math.ceil(sheetH * scale);
   const overflowsDown = full && budget > 0 && scaledH > budget + 1;
+
+  /**
+   * TURNING THE PAGE PUTS THE READER BACK AT THE TOP LEFT OF IT.
+   *
+   * Only matters when the new page does not fit either — at 720p a 128 half
+   * still needs 0.54 — but there it matters completely: the scroll box is one
+   * element that survives the swap, so without this the second half would open
+   * at wherever the first half had been dragged to, which on a projector is a
+   * chart nobody can put back.
+   */
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.scrollLeft = 0;
+    el.scrollTop = 0;
+  }, [activeIndex, paged]);
+
+  /**
+   * ARROW KEYS, because a tournament desk has a keyboard and the room does not.
+   *
+   * Bound only while a draw is actually paged, so nothing is intercepted on the
+   * page or on a draw that fits whole. preventDefault is deliberate: the scroll
+   * box owns the arrow keys too, and a chart that fits — which is the point of
+   * paging — has nothing for them to scroll, so turning the page is the only
+   * useful thing they could be doing.
+   */
+  useEffect(() => {
+    if (!paged) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (!step) return;
+      e.preventDefault();
+      setPageIndex((i) => i + step);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [paged]);
+
+  /**
+   * THE UNATTENDED PROJECTOR, and it is OFF until somebody asks for it.
+   *
+   * A hall puts the draw on a wall and walks away, and a page that never turns
+   * shows the room half the tournament — so this is genuinely useful. It is
+   * also genuinely infuriating if you are reading, which is why it can never be
+   * the default and why the button says out loud that it is running.
+   *
+   * *** THE DEPS ARE PRIMITIVES ONLY. *** `pages` is a fresh array on every
+   * render, and this component re-renders every time the desk enters a score
+   * (LiveTournament coalesces at 700ms). An array in this list would tear the
+   * interval down and start it again on each of those, and the page would never
+   * actually turn. The updater is functional for the same reason: `pageIndex`
+   * in the deps would restart the countdown on every tick of it.
+   */
+  useEffect(() => {
+    if (!rotate || !paged) return;
+    const t = setInterval(() => setPageIndex((i) => i + 1), ROTATE_MS);
+    return () => clearInterval(t);
+  }, [rotate, paged]);
+
+  const showPager = full && pages.length > 1;
 
   return (
     // THE SHELL IS WHAT GOES FULL SCREEN, not the scroll box, so the header
@@ -309,43 +469,119 @@ export function DrawScroller({
     // full screen of a 2472px sheet would be the sideways drag this whole
     // change removed, and the round-by-round list stays what a phone gets.
     <div ref={shellRef} className="draw-shell">
-      {/* Seen only in full screen (display:none otherwise). A projected sheet
-          with no caption is a bracket nobody in the room can place; on the page
-          this would only repeat the header a few centimetres above. */}
-      <div className="draw-full-head">
-        {title && <span className="draw-full-title">{title}</span>}
-        {subtitle && <span className="draw-full-sub">{subtitle}</span>}
-        {/* HOW TO READ IT, repeated here because the page's copy of this line
-            is a sibling ABOVE the shell and so is outside the element that goes
-            full screen — it would simply never paint. A converging draw is not
-            how anybody expects a bracket to read until they are told once, and
-            a room watching a projection is the audience least likely to have
-            been told. */}
-        {note && <span className="draw-full-note">{note}</span>}
+      {/* ONE ROW, NOT A CAPTION AND A FLOATING CLUSTER. In full screen the
+          header and the controls are laid out side by side here, so the
+          controls take the room they need and the title gets what is left.
+          They used to be absolutely positioned over the header with a
+          `padding-right: 160px` reserved for them, which was a number that
+          could only ever be right for the exact set of buttons it was measured
+          against — and this change adds four more. On the page the header is
+          display:none and this is just the row the button already sat in. */}
+      <div className="draw-topline">
+        {/* Seen only in full screen (display:none otherwise). A projected sheet
+            with no caption is a bracket nobody in the room can place; on the
+            page this would only repeat the header a few centimetres above. */}
+        <div className="draw-full-head">
+          {title && <span className="draw-full-title">{title}</span>}
+          {/* WHICH HALF THE ROOM IS LOOKING AT, and it is set in the header
+              rather than left to the small print in the controls, because the
+              question it answers — "is my match on this page?" — is asked from
+              the back of the hall by somebody who cannot read a 10px button.
+              It is the draw's own word for the two sides: the reading note and
+              every card's label already say top half and bottom half. */}
+          {active && <span className="draw-page-label">{active.label}</span>}
+          {subtitle && <span className="draw-full-sub">{subtitle}</span>}
+          {/* HOW TO READ IT, repeated here because the page's copy of this line
+              is a sibling ABOVE the shell and so is outside the element that goes
+              full screen — it would simply never paint. A converging draw is not
+              how anybody expects a bracket to read until they are told once, and
+              a room watching a projection is the audience least likely to have
+              been told. On a half page it is that page's own line: what it meets
+              at is a semi-final, and the final is on both pages. */}
+          {(active?.note ?? note) && <span className="draw-full-note">{active?.note ?? note}</span>}
+        </div>
+
+        <div className="draw-tools">
+          {showPager && (
+            <div className="draw-pager" role="group" aria-label="Which part of the draw to show">
+              {/* NAMED BUTTONS, NOT ARROWS. With two pages a named pair is its
+                  own previous and next, and it answers the question the arrows
+                  do not: which half is this. The keyboard still gets the
+                  arrows, which is what the desk actually uses. */}
+              {pages.map((p, i) => (
+                <button
+                  key={p.key}
+                  type="button"
+                  className="draw-page-btn"
+                  aria-pressed={paged && i === activeIndex}
+                  onClick={() => { setSplit('halves'); setPageIndex(i); }}
+                >
+                  {p.label}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="draw-page-btn"
+                aria-pressed={!paged}
+                onClick={() => { setSplit('whole'); setRotate(false); }}
+              >
+                Whole draw
+              </button>
+              {/* ROTATION SAYS SO WHEN IT IS ON. An unattended wall chart wants
+                  it and a reader does not, so it starts off, and when it is
+                  running the button carries the interval and a bar under the
+                  header counts it down — a page that turns under somebody
+                  mid-sentence should never be a mystery. */}
+              <button
+                type="button"
+                className="draw-page-btn"
+                aria-pressed={rotate}
+                disabled={!paged}
+                onClick={() => setRotate((r) => !r)}
+              >
+                {rotate
+                  ? <Square size={10} aria-hidden="true" />
+                  : <Play size={10} aria-hidden="true" />}
+                {rotate ? `Auto ${ROTATE_MS / 1000}s` : 'Auto'}
+              </button>
+            </div>
+          )}
+          <button
+            type="button"
+            className="draw-full-btn"
+            onClick={toggleFull}
+            aria-pressed={full}
+          >
+            {full ? <Minimize2 size={12} aria-hidden="true" /> : <Maximize2 size={12} aria-hidden="true" />}
+            {full ? 'Exit full screen' : 'Full screen'}
+          </button>
+        </div>
       </div>
 
-      <div className="draw-tools">
-        <button
-          type="button"
-          className="draw-full-btn"
-          onClick={toggleFull}
-          aria-pressed={full}
-        >
-          {full ? <Minimize2 size={12} aria-hidden="true" /> : <Maximize2 size={12} aria-hidden="true" />}
-          {full ? 'Exit full screen' : 'Full screen'}
-        </button>
-      </div>
+      {/* The countdown. Keyed on the page so the CSS animation restarts from
+          zero on every turn, including the ones the reader made by hand. */}
+      {rotate && paged && (
+        <div className="draw-rotate-bar" aria-hidden="true">
+          <span key={activeIndex} style={{ animationDuration: `${ROTATE_MS}ms` }} />
+        </div>
+      )}
 
       {(overflows || overflowsDown) && (
         <p className="draw-hint">
           {overflowsDown && !overflows
             ? <ArrowUpDown size={12} aria-hidden="true" />
             : <ArrowLeftRight size={12} aria-hidden="true" />}
+          {/* "This draw" is the wrong noun once a page is one HALF of it: the
+              notice exists to tell whoever set the projector up that the room
+              is seeing a crop, and it would be saying so about the wrong
+              thing. Paging is meant to end the crop, not to renegotiate it. */}
           {overflows && overflowsDown
-            ? 'This draw is bigger than the screen — scroll to see all of it'
+            ? `This ${active ? 'half' : 'draw'} is bigger than the screen — scroll to see all of it`
             : overflowsDown
-              ? 'This draw is taller than the screen — scroll down for the rest'
-              : 'Scroll sideways — the two halves meet at the final'}
+              ? `This ${active ? 'half' : 'draw'} is taller than the screen — scroll down for the rest`
+              : active
+                ? 'Scroll sideways — this half meets at the semi-final'
+                : 'Scroll sideways — the two halves meet at the final'}
         </p>
       )}
       {/* tabIndex makes a SCROLLABLE region reachable by keyboard, which a
@@ -364,7 +600,10 @@ export function DrawScroller({
         ref={ref}
         tabIndex={overflows || overflowsDown ? 0 : -1}
         role="region"
-        aria-label="Tournament draw"
+        // WHICH HALF, HERE TOO. The arrow keys are the one control with no
+        // visible press to feel, so without this a keyboard reader turns the
+        // page and is told nothing at all about where they landed.
+        aria-label={active ? `Tournament draw, ${active.label.toLowerCase()}` : 'Tournament draw'}
         // The edge fade says "there is more this way", so it is now gated on
         // there being more. Applied unconditionally it dimmed the first and last
         // column of a chart that fitted whole — which, since this box started
@@ -377,17 +616,23 @@ export function DrawScroller({
             reader would be dragging across empty space to the right of a
             chart that already fitted. The middle box is sized to the SCALED
             result and only the inner one is transformed. */}
-        <div style={{ width: scaledW, height: Math.ceil(height * scale) }}>
+        <div style={{ width: scaledW, height: scaledH }}>
           <div
             className="relative"
             style={{
-              width,
-              height,
+              width: sheetW,
+              height: sheetH,
               transform: `scale(${scale})`,
               transformOrigin: 'top left',
             }}
           >
-            {children}
+            {/* ONLY THE SHEET ON SCREEN IS MOUNTED. Keeping the whole draw in
+                the DOM behind a `display: none` would leave a 128-entrant chart
+                — 127 cards and some 700 connector spans — laid out and
+                repainted on every live refresh for nobody to see. The halves
+                arrive as markup from the server either way, so mounting one is
+                a swap and not a fetch. */}
+            {active ? active.body : children}
           </div>
         </div>
       </div>

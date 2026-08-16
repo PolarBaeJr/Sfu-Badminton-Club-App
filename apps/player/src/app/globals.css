@@ -4263,27 +4263,131 @@ a.cal-ev:hover { filter: brightness(1.15); }
 }
 .draw-shell:fullscreen .draw-full-head {
   display: flex; align-items: baseline; gap: 10px;
-  flex: 0 0 auto; margin-bottom: 10px; min-width: 0;
-  padding-right: 160px;   /* clear of the exit button */
+  /* Takes what the controls beside it in .draw-topline leave. It used to
+     reserve 160px of padding for them instead, which was a number measured
+     against a single button — see the paging block below. */
+  flex: 1 1 auto; min-width: 0;
+  /* The backstop, so that a pathologically long tournament name can only
+     ever be cut off at this box's own edge and never paint over the
+     controls beside it. Nothing reaches it at any real length. */
+  overflow: hidden;
 }
+/* *** THE NOTE IS THE ONLY THING IN HERE THAT FLEXES. ***
+   Not a preference — a measured sub-pixel trap. `text-overflow: ellipsis`
+   fires the moment an item's used width lands a hair under its ink width,
+   and a flex item that shrinks AT ALL rounds into that gap: with the note
+   absorbing all but 0.1px of a 32px squeeze, "Men's Singles" still came
+   out "Men's Singl…" and "SFU Open 2026" as "SFU Open 20…" at 1280x720.
+   Both boxes measured 93.3px against 93.3px of text and ellipsed anyway.
+   Shrink 0 keeps them at their exact natural width, where they paint whole
+   — which is what they did before the controls joined this row, and it is
+   only a squeeze in the row that ever exposed this. */
 .draw-shell:fullscreen .draw-full-title {
   font-family: var(--display); font-weight: 700; font-size: 20px;
   letter-spacing: -.01em; color: var(--ink);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  flex: 0 0 auto;
 }
 .draw-shell:fullscreen .draw-full-sub {
   font-size: 12px; color: var(--mute);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  flex: 0 0 auto;
 }
 /* How the chart reads. Last, and the first to be squeezed: it is the
    line a full room can most afford to lose to a long event name. */
 .draw-shell:fullscreen .draw-full-note {
   font-size: 12px; color: var(--mute);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* The whole squeeze lands here, and only here. See the title above. */
   flex: 0 1 auto; min-width: 0;
 }
 .draw-shell:fullscreen .draw-tools {
-  position: absolute; top: 14px; right: 18px; margin: 0; z-index: 1;
+  flex: 0 0 auto; margin: 0; flex-wrap: wrap; gap: 6px; max-width: 60%;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   PAGING A DRAW TOO BIG TO FIT
+   ──────────────────────────────────────────────────────────────
+   "what if u split 128 into 2 and 64 aswell, 2 pages?" A 128
+   needs 0.41 to fit a 1080p screen and is refused by the 0.80
+   floor, so it scrolls — which on a projector nobody is standing
+   at is a crop. Shown as halves it is two 64-shaped sheets at
+   0.843, whole, on screen, both axes.
+
+   THE HEADER AND THE CONTROLS SHARE A ROW rather than the
+   controls floating over the header on a reserved 160px of
+   padding. That padding was measured against one button; there
+   are now five, and the widths differ with the label. A flex row
+   cannot underlap. On the page (not full screen) .draw-topline is
+   a plain block whose only visible child is .draw-tools, which
+   keeps the right-aligned row it already had. */
+.draw-shell:fullscreen .draw-topline {
+  display: flex; align-items: baseline; gap: 14px;
+  flex: 0 0 auto; margin-bottom: 10px; min-width: 0;
+}
+
+/* WHICH HALF, at the size the title is, because it answers a
+   question asked from the back of the hall. Same words the
+   reading note and every card's label use — the draw calls its
+   two sides the top half and the bottom half. */
+.draw-shell:fullscreen .draw-page-label {
+  font-family: var(--display); font-weight: 700; font-size: 20px;
+  letter-spacing: -.01em; color: var(--ink);
+  border-left: 3px solid var(--red); padding-left: 8px;
+  white-space: nowrap; flex: 0 0 auto;
+}
+
+.draw-pager { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.draw-page-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--mute);
+  border: 1px solid var(--line); padding: 4px 8px;
+  background: transparent; cursor: pointer;
+}
+/* :not([aria-pressed='true']) IS LOAD-BEARING, not tidiness. A bare
+   :hover is one pseudo-class more specific than the [aria-pressed]
+   rule below, so hovering the button that is already showing
+   repainted its label var(--ink) on a var(--ink) fill and the text
+   vanished — measured, not theorised: rgb(240,240,240) on
+   rgb(240,240,240). It is the button the pointer is most likely to
+   be resting on, since clicking it is what turned it on. */
+.draw-page-btn:hover:not(:disabled):not([aria-pressed='true']) {
+  color: var(--ink); border-color: var(--line-2);
+}
+.draw-page-btn:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.draw-page-btn:disabled { opacity: .4; cursor: default; }
+/* The one that is showing. Filled rather than merely outlined:
+   this is read at a glance by somebody who is also holding a
+   score sheet. */
+.draw-page-btn[aria-pressed='true'] {
+  color: var(--bg); background: var(--ink); border-color: var(--ink);
+}
+.draw-page-btn[aria-pressed='true']:hover:not(:disabled) { background: var(--ink-2); border-color: var(--ink-2); }
+
+/* The rotation countdown, along the very top edge of the screen.
+   ABSOLUTE, SO IT COSTS THE CHART NOTHING. In the flow it took 10px
+   out of the height budget, which dropped a 128's halves from 0.842
+   to 0.833 — a chart that changed size when you turned rotation on,
+   for a bar. Out of flow the scale is the same either way. */
+.draw-rotate-bar {
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 3px; background: var(--line); overflow: hidden; z-index: 1;
+}
+.draw-rotate-bar > span {
+  display: block; height: 100%; background: var(--red);
+  transform-origin: left center;
+  animation: draw-rotate-sweep linear forwards;
+}
+@keyframes draw-rotate-sweep {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+/* A page that turns on its own is a moving thing on a wall. Honour
+   the request not to animate by simply not drawing the countdown —
+   the pages still turn, which is what was asked for. */
+@media (prefers-reduced-motion: reduce) {
+  .draw-rotate-bar > span { animation: none; transform: scaleX(1); }
 }
 /* The one place a nested vertical scroller IS right: there is no
    page behind this to scroll, so a draw past the floor has to be

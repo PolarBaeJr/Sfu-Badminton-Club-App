@@ -64,9 +64,10 @@ export interface DrawGeometry {
   /** Height of the round-heading strip above the body. */
   headH: number;
   /**
-   * Room reserved under the third-place card for its heading and the sentence
-   * that says its winner does not advance. Only consulted when a third-place
-   * match is passed.
+   * Room reserved under each CENTRE-COLUMN card that is not part of the tree —
+   * the third-place playoff, and the final when only a half of the draw is
+   * being laid out — for its heading and the sentence that explains it. Only
+   * consulted when such a card is asked for.
    */
   playoffCaptionH?: number;
 }
@@ -78,6 +79,19 @@ export interface DrawLayoutOptions {
    * reserves a slot for it and returns where that slot is.
    */
   thirdPlace?: boolean;
+  /**
+   * How many further cards to reserve in the centre column, ABOVE the
+   * third-place slot and below the root.
+   *
+   * This exists for the player app's paged full screen, where a draw too large
+   * for a projector is shown one HALF at a time. A half is the subtree under
+   * one semi-final, fed back through this same function, so its root is that
+   * semi-final and THE FINAL IS NOT IN IT — the final's other feeder is on the
+   * other page. The final is repeated on both pages instead, and this is the
+   * room it goes in: the same clear centre column, and for the same reason,
+   * that the third-place playoff already uses.
+   */
+  centreSlots?: number;
 }
 
 // ============================================================
@@ -151,6 +165,11 @@ export interface DrawLayout<M extends DrawInputMatch> {
   connectors: DrawConnector[];
   /** Where the third-place card goes, when one was asked for. */
   thirdPlace: { x: number; y: number } | null;
+  /**
+   * Where `options.centreSlots` asked for room, top to bottom, above the
+   * third-place slot. Empty unless it was asked for.
+   */
+  centreSlots: Array<{ x: number; y: number }>;
   /** Total diagram width. */
   width: number;
   /** Total diagram height, heading strip included. */
@@ -224,6 +243,7 @@ export function computeDrawLayout<M extends DrawInputMatch>(
       columns: [],
       connectors: [],
       thirdPlace: null,
+      centreSlots: [],
       width: 0,
       height: 0,
       headH: geometry.headH,
@@ -328,6 +348,42 @@ function linkSegments(
     });
   }
   return out;
+}
+
+/**
+ * The cards that sit in the centre column BELOW the root and are not part of
+ * the tree: whatever `centreSlots` asked for, and then the third-place playoff.
+ * Each gets `playoffCaptionH` of room beneath it for the sentence that says
+ * what it is, and the body grows to hold the stack.
+ *
+ * Written once and shared by both modes so the two cannot drift, and so the
+ * order is fixed in one place: `centreSlots` first, because the only caller
+ * that asks for one is a HALF of a draw asking for its final, and the final
+ * belongs directly under the semi-final it follows on from — not under a
+ * third-place playoff that neither of them feeds.
+ */
+function stackBelowRoot(
+  anchor: { x: number; y: number },
+  geometry: DrawGeometry,
+  options: DrawLayoutOptions,
+): {
+  centreSlots: Array<{ x: number; y: number }>;
+  thirdPlace: { x: number; y: number } | null;
+  bottom: number;
+} {
+  const captionH = geometry.playoffCaptionH ?? 0;
+  const centreSlots: Array<{ x: number; y: number }> = [];
+  let y = anchor.y + geometry.cardH + geometry.cardGap * 2;
+  for (let k = 0; k < (options.centreSlots ?? 0); k++) {
+    centreSlots.push({ x: anchor.x, y });
+    y += geometry.cardH + captionH;
+  }
+  let thirdPlace: { x: number; y: number } | null = null;
+  if (options.thirdPlace) {
+    thirdPlace = { x: anchor.x, y };
+    y += geometry.cardH + captionH;
+  }
+  return { centreSlots, thirdPlace, bottom: y };
 }
 
 function layoutConverging<M extends DrawInputMatch>(
@@ -443,10 +499,13 @@ function layoutConverging<M extends DrawInputMatch>(
   // crossing the final would say something about the final. The caption under
   // the card carries it instead.
   let thirdPlace: { x: number; y: number } | null = null;
-  if (options.thirdPlace) {
+  let centreSlots: Array<{ x: number; y: number }> = [];
+  if (options.thirdPlace || options.centreSlots) {
     const finalNode = nodes.find((n) => n.depth === rounds - 1)!;
-    thirdPlace = { x: finalNode.x, y: finalNode.y + cardH + cardGap * 2 };
-    bodyH = Math.max(bodyH, thirdPlace.y + cardH + (geometry.playoffCaptionH ?? 0));
+    const stacked = stackBelowRoot(finalNode, geometry, options);
+    centreSlots = stacked.centreSlots;
+    thirdPlace = stacked.thirdPlace;
+    bodyH = Math.max(bodyH, stacked.bottom);
   }
 
   return {
@@ -455,6 +514,7 @@ function layoutConverging<M extends DrawInputMatch>(
     columns,
     connectors,
     thirdPlace,
+    centreSlots,
     width,
     height: headH + bodyH,
     headH,
@@ -526,11 +586,14 @@ function layoutLinear<M extends DrawInputMatch>(
   for (const n of nodes) bodyH = Math.max(bodyH, n.y + cardH);
 
   let thirdPlace: { x: number; y: number } | null = null;
-  if (options.thirdPlace && rounds > 0) {
+  let centreSlots: Array<{ x: number; y: number }> = [];
+  if ((options.thirdPlace || options.centreSlots) && rounds > 0) {
     const lastCol = colX(rounds - 1);
     const finalY = Math.max(...levels[rounds - 1]!.map((_, i) => y[rounds - 1]![i]!));
-    thirdPlace = { x: lastCol, y: finalY + cardH + cardGap * 2 };
-    bodyH = Math.max(bodyH, thirdPlace.y + cardH + (geometry.playoffCaptionH ?? 0));
+    const stacked = stackBelowRoot({ x: lastCol, y: finalY }, geometry, options);
+    centreSlots = stacked.centreSlots;
+    thirdPlace = stacked.thirdPlace;
+    bodyH = Math.max(bodyH, stacked.bottom);
   }
 
   return {
@@ -539,12 +602,56 @@ function layoutLinear<M extends DrawInputMatch>(
     columns,
     connectors,
     thirdPlace,
+    centreSlots,
     width,
     height: headH + bodyH,
     headH,
     bodyH,
     rounds,
   };
+}
+
+// ============================================================
+// One half of a draw, on its own
+// ============================================================
+
+/**
+ * Split a converging draw into its two halves, as the match lists each is made
+ * of. Feed either list back through `computeDrawLayout` and you get that half
+ * laid out as its OWN converging chart, meeting at what was the semi-final.
+ *
+ * WHY THIS IS WORTH HAVING, and it is not "the chart is too wide". A converging
+ * draw is bounded by its HEIGHT: each side stacks half the first round, so a
+ * 128 is 32 cards tall and 2384px, against 1012px of projector. Splitting it
+ * into halves and converging EACH half is what buys the height back — the top
+ * half of a 128 is 64 entrants meeting at a semi-final, which is the same shape
+ * as a whole 64 draw and 1200px tall. Halving buys a size class, and it is the
+ * only split that does: laying a half out as a plain ladder instead would keep
+ * all 32 rows and gain nothing at all.
+ *
+ * NOTHING IS RE-DERIVED HERE. `computeDrawLayout` already assigns sides by
+ * walking DOWN from the final rather than by cutting the first round in half —
+ * the advancement wiring is what decides which half a card is in — so a half is
+ * read straight off `node.side` and this cannot disagree with the chart it
+ * came from.
+ *
+ * Returns null when there are no halves to take: a linear fallback layout has
+ * no sides, and a one-round draw is a final with nothing under it.
+ */
+export function drawHalves<M extends DrawInputMatch>(
+  layout: DrawLayout<M>,
+): { top: M[]; bottom: M[] } | null {
+  if (layout.mode !== 'converging' || layout.rounds < 2) return null;
+  const top: M[] = [];
+  const bottom: M[] = [];
+  for (const node of layout.nodes) {
+    // The final is skipped rather than assigned: it is the one card whose two
+    // feeders are in DIFFERENT halves, so it belongs to neither list. A caller
+    // showing one half is expected to repeat it — see `centreSlots`.
+    if (node.side === 'left') top.push(node.match);
+    else if (node.side === 'right') bottom.push(node.match);
+  }
+  return top.length && bottom.length ? { top, bottom } : null;
 }
 
 // ============================================================

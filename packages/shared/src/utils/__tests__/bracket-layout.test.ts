@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeDrawLayout, fitScale, type DrawInputMatch } from '../bracket-layout';
+import { computeDrawLayout, drawHalves, fitScale, type DrawInputMatch } from '../bracket-layout';
 import { nextPowerOf2 } from '../constants';
 
 const GEO = { cardH: 80, cardGap: 10, colW: 200, linkW: 30, headH: 30 };
@@ -278,6 +278,93 @@ describe('computeDrawLayout — the third-place playoff', () => {
   it('still finds room on a four-entry draw, where the centre column is short', () => {
     const l = computeDrawLayout(drawOf(4), { ...GEO, playoffCaptionH: 60 }, { thirdPlace: true });
     expect(l.bodyH).toBeGreaterThanOrEqual(l.thirdPlace!.y + GEO.cardH + 60);
+  });
+});
+
+describe('drawHalves — a draw too big for a projector, one half at a time', () => {
+  it('is a clean cut: every card but the final, and neither half is the other', () => {
+    const l = computeDrawLayout(drawOf(128), GEO);
+    const halves = drawHalves(l)!;
+    expect(halves).not.toBeNull();
+    // 127 matches; the final belongs to neither half, so 63 a side.
+    expect(halves.top).toHaveLength(63);
+    expect(halves.bottom).toHaveLength(63);
+    const ids = new Set([...halves.top, ...halves.bottom].map((m) => m.id));
+    expect(ids.size).toBe(126);
+    expect(ids.has('r7p0')).toBe(false);
+  });
+
+  it('agrees with the wiring, not with a cut down the first round', () => {
+    const l = computeDrawLayout(drawOf(32), GEO);
+    const halves = drawHalves(l)!;
+    const top = new Set(halves.top.map((m) => m.id));
+    // Follow one first-round match all the way up: every parent it feeds has
+    // to be in the same half it is.
+    let pos = 3;
+    for (let round = 1; round <= 4; round++) {
+      expect(top.has(`r${round}p${pos}`)).toBe(true);
+      pos = Math.floor(pos / 2);
+    }
+  });
+
+  it('is A WHOLE DRAW ONE SIZE DOWN once it is laid out again', () => {
+    const whole128 = computeDrawLayout(drawOf(128), GEO);
+    const half = computeDrawLayout(drawHalves(whole128)!.top, GEO);
+    const whole64 = computeDrawLayout(drawOf(64), GEO);
+    // THE POINT OF THE FEATURE, as an equality. Half of a 128 is the same
+    // sheet as a whole 64 — which is the largest draw that already fitted a
+    // 1080p screen — so halving buys exactly one size class.
+    expect(half.mode).toBe('converging');
+    expect(half.width).toBe(whole64.width);
+    expect(half.height).toBe(whole64.height);
+    // And it is bounded by height, so the saving is real: the whole 128 is
+    // nearly twice as tall as its own half.
+    expect(whole128.height).toBeGreaterThan(half.height * 1.9);
+  });
+
+  it('has nothing to give a draw with no halves', () => {
+    // A linear fallback has no sides at all.
+    const ladder = computeDrawLayout(
+      [
+        { id: 'a', round_number: 1, bracket_position: 0 },
+        { id: 'b', round_number: 1, bracket_position: 1 },
+        { id: 'c', round_number: 1, bracket_position: 2 },
+        { id: 'd', round_number: 2, bracket_position: 0 },
+      ],
+      GEO,
+    );
+    expect(ladder.mode).toBe('linear');
+    expect(drawHalves(ladder)).toBeNull();
+    // A two-entry event is a final and nothing under it.
+    expect(drawHalves(computeDrawLayout(drawOf(2), GEO))).toBeNull();
+  });
+});
+
+describe('computeDrawLayout — centreSlots, the final on a half page', () => {
+  it('stacks under the root, above the third-place playoff, in the centre column', () => {
+    const geo = { ...GEO, playoffCaptionH: 60 };
+    const l = computeDrawLayout(drawHalves(computeDrawLayout(drawOf(64), GEO))!.top, geo, {
+      centreSlots: 1,
+      thirdPlace: true,
+    });
+    const root = l.nodes.find((n) => n.side === 'centre')!;
+    expect(l.centreSlots).toHaveLength(1);
+    expect(l.centreSlots[0]!.x).toBe(root.x);
+    expect(l.thirdPlace!.x).toBe(root.x);
+    // Root, then the final, then the playoff — the final follows on from the
+    // semi-final it sits under, and the playoff feeds nothing at all.
+    expect(l.centreSlots[0]!.y).toBeGreaterThan(root.y + geo.cardH);
+    expect(l.thirdPlace!.y).toBeGreaterThan(l.centreSlots[0]!.y + geo.cardH);
+    expect(l.bodyH).toBeGreaterThanOrEqual(l.thirdPlace!.y + geo.cardH + 60);
+  });
+
+  it('leaves a draw that asked for neither exactly where it was', () => {
+    const geo = { ...GEO, playoffCaptionH: 60 };
+    const plain = computeDrawLayout(drawOf(16), geo, { thirdPlace: true });
+    expect(plain.centreSlots).toEqual([]);
+    // The third-place slot has not moved now that it shares a code path.
+    const final = at(plain, 'r4p0');
+    expect(plain.thirdPlace).toEqual({ x: final.x, y: final.y + geo.cardH + geo.cardGap * 2 });
   });
 });
 

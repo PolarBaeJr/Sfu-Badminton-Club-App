@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
-import { getRoundName, computeDrawLayout, splitPairLabel } from '@badminton/shared';
-import type { DrawSide } from '@badminton/shared';
-import { DrawScroller } from './DrawScroller';
+import { getRoundName, computeDrawLayout, drawHalves, splitPairLabel } from '@badminton/shared';
+import type { DrawSide, DrawLayout } from '@badminton/shared';
+import { DrawScroller, type DrawPage } from './DrawScroller';
 
 /**
  * THE PLAYER APP'S HALF OF THE CONVERGING DRAW.
@@ -42,6 +42,27 @@ const GEOMETRY = {
   headH: HEAD_H,
   playoffCaptionH: PLAYOFF_CAPTION_H,
 };
+
+/**
+ * THE SMALLEST DRAW THAT IS EVER BUILT IN HALVES — five rounds, so 32 entrants
+ * and up. Not a taste call: it is the smallest draw that a projector can fail
+ * to fit, so below it the halves could never be shown and building them would
+ * be pure cost.
+ *
+ * Measured in full screen against the compiled CSS. At 1920×1080 a 16-draw
+ * (four rounds, 1320×608) fits both axes at 1.0 with room to spare, and at
+ * 1280×720 — the worst projector this feature admits to — it still fits at
+ * 0.94. A 32-draw is the first that does not: it needs 0.73 at 720p, below the
+ * 0.80 floor, and so is the first that has anything to gain.
+ *
+ * The cost this buys off is real but small: the halves are built by the SERVER
+ * component whether or not full screen is ever entered, so their markup travels
+ * in the flight payload every time. Two halves are about the same element count
+ * as the whole chart, so a draw that has them pays roughly double for its
+ * chart. Worth it at 32 and up, which is where a projector is; not worth it
+ * below, where one never is.
+ */
+const HALVES_FROM_ROUNDS = 5;
 
 /**
  * One knockout match, already resolved to entry ids. The page flattens singles
@@ -131,14 +152,93 @@ export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle }: D
   const roundName = (roundNumber: number) =>
     matches.find((m) => m.round_number === roundNumber)?.round_name
     ?? getRoundName(roundNumber, lastRoundNumber);
-  const roundLabel = (roundNumber: number, side: DrawSide) =>
-    side === 'centre'
-      ? roundName(roundNumber)
-      : `${roundName(roundNumber)}, ${side === 'left' ? 'top' : 'bottom'} half`;
 
   const readingNote = layout.mode === 'converging'
     ? 'The top half runs inwards from the left, the bottom half from the right, and they meet at the final in the middle.'
     : 'This draw’s rounds do not halve, so it is shown as a plain left-to-right ladder.';
+
+  /**
+   * THE TWO PAGES A DRAW TOO BIG FOR A PROJECTOR IS SHOWN AS.
+   *
+   * "what if u split 128 into 2 and 64 aswell, 2 pages?" A 128 needs 0.41 to
+   * fit a 1080p screen whole, is refused by the 0.80 floor and scrolls, which
+   * on a projector nobody is standing at is the same as being cropped.
+   *
+   * WHAT A HALF IS, and it is not "the left column of the sheet". Each half is
+   * fed back through the SAME layout engine and converges in its own right, so
+   * the top half of a 128 is 64 entrants meeting at a semi-final — the same
+   * shape, and the same 1200px, as a whole 64 draw, which already fits. That
+   * is the whole trick: halving buys a size class. Laying a half out as a plain
+   * ladder would keep all 32 of its rows and buy nothing.
+   *
+   * ROUND NAMES STILL COME FROM THE WHOLE DRAW. `roundName` closes over
+   * `lastRoundNumber` computed from every match, so a half page's centre column
+   * reads "Semi-final" and not "Final" — which is what it would say if the
+   * names were re-derived from the half's own round count.
+   */
+  const halves = layout.rounds >= HALVES_FROM_ROUNDS ? drawHalves(layout) : null;
+  const finalMatch = layout.nodes.find(
+    (n) => n.side === 'centre' && n.depth === layout.rounds - 1,
+  )?.match ?? null;
+
+  const pages: DrawPage[] = halves && finalMatch
+    ? ([['top', halves.top], ['bottom', halves.bottom]] as const).map(([half, halfMatches]) => {
+        // centreSlots: 1 is the FINAL. It is not in either half — its two
+        // feeders are one per page — so it is repeated on both, in the clear
+        // centre column under the semi-final, exactly where and for exactly
+        // the reason the third-place playoff already sits. The third-place
+        // match, whose two entrants are also one per page, follows it down.
+        const pageLayout = computeDrawLayout(halfMatches, GEOMETRY, {
+          centreSlots: 1,
+          thirdPlace: !!thirdPlace,
+        });
+        const other = half === 'top' ? 'bottom' : 'top';
+        return {
+          key: half,
+          label: half === 'top' ? 'Top half' : 'Bottom half',
+          width: pageLayout.width,
+          height: pageLayout.height,
+          note: `The ${half} half of the draw, meeting at its semi-final in the middle. `
+            + `The final is repeated on both halves.`,
+          body: (
+            <ChartBody
+              layout={pageLayout}
+              half={half}
+              roundName={roundName}
+              nameOf={nameOf}
+              seedOf={seedOf}
+              extras={[
+                {
+                  key: 'final',
+                  pos: pageLayout.centreSlots[0]!,
+                  match: finalMatch,
+                  heading: roundName(finalMatch.round_number),
+                  // TWO LINES, AND THAT IS A MEASURED LIMIT rather than a
+                  // house style. The centre column stacks its cards a
+                  // `cardH + playoffCaptionH` pitch apart, so this sentence has
+                  // 64px under the card and the heading takes 22 of them: at
+                  // 11px in a 152px field a third line lands on top of the
+                  // third-place playoff's own heading. Where the other
+                  // finalist comes from is said once, in the page's header,
+                  // where there is room for it.
+                  caption: `The winner of this half plays the winner of the ${other} half.`,
+                },
+                ...(thirdPlace && pageLayout.thirdPlace
+                  ? [{
+                      key: 'third',
+                      pos: pageLayout.thirdPlace,
+                      match: thirdPlace,
+                      heading: '3rd Place Playoff',
+                      caption: 'The two beaten semi-finalists, one from each half. '
+                        + 'The winner does not advance to the final.',
+                    }]
+                  : []),
+              ]}
+            />
+          ),
+        };
+      })
+    : [];
 
   return (
     <>
@@ -161,69 +261,25 @@ export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle }: D
           title={title}
           subtitle={subtitle}
           note={readingNote}
+          pages={pages}
         >
-          {layout.columns.map((col) => (
-            <div
-              key={col.key}
-              className="absolute eyebrow flex items-center justify-center"
-              style={{ left: col.x, top: 0, width: COL_W, height: HEAD_H }}
-            >
-              {roundName(col.roundNumber)}
-            </div>
-          ))}
-
-          <div className="absolute inset-x-0" style={{ top: HEAD_H, height: layout.bodyH }} aria-hidden="true">
-            {layout.connectors.map((c) => (
-              <span
-                key={c.key}
-                className="absolute bg-[var(--border)]"
-                style={{ left: c.x, top: c.y, width: c.w, height: c.h }}
-              />
-            ))}
-          </div>
-
-          <div className="absolute inset-x-0" style={{ top: HEAD_H, height: layout.bodyH }}>
-            {layout.nodes.map((node) => (
-              <div key={node.id} className="absolute" style={{ left: node.x, top: node.y, width: COL_W }}>
-                <ChartCard
-                  m={node.match}
-                  side={node.side}
-                  roundLabel={roundLabel(node.roundNumber, node.side)}
-                  nameOf={nameOf}
-                  seedOf={seedOf}
-                />
-              </div>
-            ))}
-
-            {/* THE 3RD PLACE PLAYOFF, in the clear space under the final. The
-                centre column holds one card, so a converging draw has a whole
-                column of room right where the reader is already looking.
-
-                Nothing is drawn joining it to anything: its two entrants are
-                the beaten semi-finalists, who in a converging draw sit on
-                OPPOSITE sides of the final, so there is no single line back to
-                them that would not cross the final and say something about it.
-                The caption carries it instead. */}
-            {thirdPlace && layout.thirdPlace && (
-              <div
-                className="absolute"
-                style={{ left: layout.thirdPlace.x, top: layout.thirdPlace.y, width: COL_W }}
-              >
-                <ChartCard
-                  m={thirdPlace}
-                  side="centre"
-                  roundLabel="3rd Place Playoff"
-                  nameOf={nameOf}
-                  seedOf={seedOf}
-                />
-                <h3 className="eyebrow mt-2">3rd Place Playoff</h3>
-                <p className="text-[11px] leading-snug text-[var(--text-muted)]">
-                  The two beaten semi-finalists, one from each half. The winner does not advance
-                  to the final.
-                </p>
-              </div>
-            )}
-          </div>
+          <ChartBody
+            layout={layout}
+            half={null}
+            roundName={roundName}
+            nameOf={nameOf}
+            seedOf={seedOf}
+            extras={thirdPlace && layout.thirdPlace
+              ? [{
+                  key: 'third',
+                  pos: layout.thirdPlace,
+                  match: thirdPlace,
+                  heading: '3rd Place Playoff',
+                  caption: 'The two beaten semi-finalists, one from each half. '
+                    + 'The winner does not advance to the final.',
+                }]
+              : []}
+          />
         </DrawScroller>
       </div>
 
@@ -234,6 +290,116 @@ export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle }: D
         seedOf={seedOf}
         roundName={roundName}
       />
+    </>
+  );
+}
+
+/**
+ * A card that is drawn in the centre column but is NOT part of the tree the
+ * layout was built from — the third-place playoff on a whole draw, and on a
+ * half page the final as well.
+ *
+ * Nothing is drawn joining any of them to anything, and that is one rule rather
+ * than two exceptions: every card in here is fed from BOTH halves at once, so
+ * there is no single line back to its entrants that would not cross the sheet
+ * and say something false about what it crossed. The caption carries it.
+ */
+interface CentreExtra {
+  key: string;
+  pos: { x: number; y: number };
+  match: DrawMatch;
+  heading: string;
+  caption: string;
+}
+
+/**
+ * THE CHART ITSELF, drawn from whatever layout it is handed.
+ *
+ * ONE RENDERER FOR THE WHOLE DRAW AND FOR A HALF OF IT. A half is the same
+ * shape — a converging tree with a centre column — so it is the same markup
+ * with a different layout, and writing it twice is how the two would come to
+ * disagree about a card that had been edited on one of them.
+ *
+ * `half` IS THE PAGE'S HALF, AND IT OVERRIDES THE NODE'S SIDE FOR LABELLING.
+ * On a half page `node.side` is the side of THAT page's own converging chart,
+ * which is a quarter of the real draw — so reading the aria-label off it would
+ * announce half the cards on the top-half page as being in the bottom half.
+ * The draw has no name for a quarter, so a half page says only which half it
+ * is, on every card.
+ */
+function ChartBody({
+  layout, half, roundName, nameOf, seedOf, extras,
+}: {
+  layout: DrawLayout<DrawMatch>;
+  half: 'top' | 'bottom' | null;
+  roundName: (roundNumber: number) => string;
+  nameOf: Record<string, string>;
+  seedOf: Record<string, number | null>;
+  extras: CentreExtra[];
+}) {
+  const roundLabel = (roundNumber: number, side: DrawSide) => {
+    if (half) return `${roundName(roundNumber)}, ${half} half`;
+    return side === 'centre'
+      ? roundName(roundNumber)
+      : `${roundName(roundNumber)}, ${side === 'left' ? 'top' : 'bottom'} half`;
+  };
+
+  return (
+    <>
+      {layout.columns.map((col) => (
+        <div
+          key={col.key}
+          className="absolute eyebrow flex items-center justify-center"
+          style={{ left: col.x, top: 0, width: COL_W, height: HEAD_H }}
+        >
+          {roundName(col.roundNumber)}
+        </div>
+      ))}
+
+      <div className="absolute inset-x-0" style={{ top: HEAD_H, height: layout.bodyH }} aria-hidden="true">
+        {layout.connectors.map((c) => (
+          <span
+            key={c.key}
+            className="absolute bg-[var(--border)]"
+            style={{ left: c.x, top: c.y, width: c.w, height: c.h }}
+          />
+        ))}
+      </div>
+
+      <div className="absolute inset-x-0" style={{ top: HEAD_H, height: layout.bodyH }}>
+        {layout.nodes.map((node) => (
+          <div key={node.id} className="absolute" style={{ left: node.x, top: node.y, width: COL_W }}>
+            <ChartCard
+              m={node.match}
+              side={node.side}
+              roundLabel={roundLabel(node.roundNumber, node.side)}
+              nameOf={nameOf}
+              seedOf={seedOf}
+            />
+          </div>
+        ))}
+
+        {/* The clear space under the centre card. A converging draw's centre
+            column holds one match, so it is the only spare room on the sheet
+            and it is right where the reader is already looking. */}
+        {extras.map((extra) => (
+          <div
+            key={extra.key}
+            className="absolute"
+            style={{ left: extra.pos.x, top: extra.pos.y, width: COL_W }}
+          >
+            <ChartCard
+              m={extra.match}
+              side="centre"
+              roundLabel={extra.heading}
+              nameOf={nameOf}
+              seedOf={seedOf}
+            />
+            <h3 className="eyebrow mt-2">{extra.heading}</h3>
+            <p className="text-[11px] leading-snug text-[var(--text-muted)]">{extra.caption}</p>
+          </div>
+        ))}
+      </div>
     </>
   );
 }
