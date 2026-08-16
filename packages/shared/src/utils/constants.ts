@@ -281,6 +281,80 @@ export function clearHostOnlyAuthCookies(): void {
 
 export const PROVISIONAL_THRESHOLD = 8;
 
+// SKILL TIERS (00127) — the three answers onboarding offers, and the starting
+// rating each one seeds.
+//
+// FALLBACKS, NOT THE TRUTH. Like DEFAULT_ELO and the K-factors above, the live
+// numbers are platform_settings.rating_defaults (tier_beginner_elo,
+// tier_intermediate_elo, tier_advanced_elo) and an admin can move them on
+// /ratings. Anything that PRINTS a tier's rating must read the settings —
+// printing these constants is how the onboarding screen ends up contradicting
+// the console. They exist for callers with no settings to hand, and so the two
+// engines fall back to the same numbers the SQL side does.
+//
+// 400 APART, WHICH IS HALF A SCALE ON THIS LADDER, NOT A FULL ONE. ELO_SCALE is
+// 800 (see engine.ts) because this is a 2x stretch of classic Elo, so one tier
+// of separation is ~76% expected win rate for the stronger player and
+// beginner-vs-advanced (800, a full scale) is ~91%.
+//
+// Beginner is DEFAULT_ELO exactly: that tier changes nothing, which is why no
+// existing member needed backfilling when tiering shipped.
+export const SKILL_TIERS = ['beginner', 'intermediate', 'advanced'] as const;
+export type SkillTier = (typeof SKILL_TIERS)[number];
+
+export const SKILL_TIER_FALLBACK_ELO: Record<SkillTier, number> = {
+  beginner: 400,
+  intermediate: 800,
+  advanced: 1200,
+};
+
+/** Which rating_defaults key holds each tier's starting rating. */
+export const SKILL_TIER_SETTING_KEY: Record<SkillTier, string> = {
+  beginner: 'tier_beginner_elo',
+  intermediate: 'tier_intermediate_elo',
+  advanced: 'tier_advanced_elo',
+};
+
+export const SKILL_TIER_LABELS: Record<SkillTier, string> = {
+  beginner: 'Beginner',
+  intermediate: 'Intermediate',
+  advanced: 'Advanced',
+};
+
+// What each tier means in words a member can place themselves against without
+// knowing what an Elo is. Deliberately about EXPERIENCE and CONTEXT rather than
+// self-assessed ability ("good", "competitive") — people are unreliable judges
+// of the latter and reliable reporters of the former.
+export const SKILL_TIER_DESCRIPTIONS: Record<SkillTier, string> = {
+  beginner: 'New to badminton, or you play socially and are still learning the shots.',
+  intermediate: 'You play regularly, know the rules and shot types, and can rally consistently.',
+  advanced: 'You have competed — school team, club league, or tournaments.',
+};
+
+export function isSkillTier(value: unknown): value is SkillTier {
+  return typeof value === 'string' && (SKILL_TIERS as readonly string[]).includes(value);
+}
+
+/**
+ * The starting rating a tier seeds, resolved the way the SQL side resolves it.
+ *
+ * Mirrors apply_skill_tier_seed (00127): read the configured key, fall back to
+ * the constant when it is absent or not a positive number, then clamp to the
+ * configured ladder. A non-positive value is treated as unset rather than
+ * honoured, matching num() in the engine — a tier seeding rating 0 would be a
+ * settings typo, not an intention.
+ */
+export function skillTierElo(
+  tier: SkillTier,
+  settings?: Record<string, unknown> | null,
+  bounds?: EloBounds | null,
+): number {
+  const raw = settings?.[SKILL_TIER_SETTING_KEY[tier]];
+  const n = Number(raw);
+  const value = Number.isFinite(n) && n > 0 ? n : SKILL_TIER_FALLBACK_ELO[tier];
+  return clampElo(Math.round(value), bounds);
+}
+
 // Margin-of-victory bonus applied when a multi-game match ends in a sweep
 // (2-0 / 3-0). Applies to both sides: the winner gains slightly more, the loser
 // drops slightly more. Kept small on purpose — see getMarginMultiplier().

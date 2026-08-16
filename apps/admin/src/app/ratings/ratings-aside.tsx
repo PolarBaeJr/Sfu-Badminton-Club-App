@@ -1,5 +1,7 @@
 import { AvatarChip } from '@badminton/ui';
 import { KFactorPanel, type KFactors } from './k-factor-panel';
+import { KImpactPanel } from './k-impact-panel';
+import type { EloBounds } from '@badminton/shared/src/utils/constants';
 
 // The right-hand column of /ratings: what these settings reach, and who last
 // moved them.
@@ -78,6 +80,7 @@ export function RatingsAside({
   lastActivation,
   lastChange,
   kFactors,
+  impact,
 }: {
   ladder: LadderShape;
   lastActivation: LastActivation;
@@ -89,9 +92,32 @@ export function RatingsAside({
    * the chart lives inside the ladder's own `ok` branch below.
    */
   kFactors: KFactors;
+  /** Everything the impact table needs, resolved from settings by the page. */
+  impact: { baseline: number; bounds: EloBounds; provisionalKEnabled: boolean };
 }) {
   return (
     <div className="flex flex-col gap-5 xl:sticky xl:top-5 xl:self-start">
+      {/* WHAT A K-FACTOR IS WORTH, IN POINTS. First card in the column because
+          it is the only one that makes the numbers in the form legible — the
+          rest of the aside describes the club, this describes the settings.
+
+          ITS OWN CARD, DELIBERATELY NOT INSIDE THE LADDER'S `ok` BRANCH like
+          KFactorPanel is. That panel joins K values to HEAD COUNTS and so needs
+          `players.read`; this one is arithmetic on the settings row alone, so
+          it answers to `platform.page` — the capability that already gates the
+          whole aside. Nesting it under the counts would withhold it from a
+          viewer who is entitled to see it. */}
+      <CardShell heading="What a K-factor is worth">
+        <div className="border-t border-[var(--line)] px-4 py-4">
+          <KImpactPanel
+            k={kFactors}
+            baseline={impact.baseline}
+            bounds={impact.bounds}
+            provisionalKEnabled={impact.provisionalKEnabled}
+          />
+        </div>
+      </CardShell>
+
       <CardShell heading="What these settings touch">
         {ladder.state === 'withheld' ? (
           <NotShown what="The size of the ladder is not shown to you." />

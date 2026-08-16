@@ -234,6 +234,36 @@ export const FIELD_META: Record<string, Record<string, FieldMeta>> = {
       min: 1,
       step: 1,
     },
+    provisional_k_enabled: {
+      label: 'Provisional K-factors',
+      // Names the consequence, not the mechanism. Switching this off is the
+      // decision on this page most likely to be made without realising what it
+      // does, so the hint says what stops happening — including the interaction
+      // with the skill tiers, which is not obvious from either field alone.
+      hint: 'On: new members move on the higher provisional K-factors until they have played their placement matches, so a wrong starting rating corrects itself in a few matches. Off: everybody moves on the established K-factors from their first match, and a member who understated their skill level at signup takes far longer to be found out.',
+      type: 'boolean',
+    },
+    tier_beginner_elo: {
+      label: 'Beginner starting rating',
+      hint: 'Assigned to a member who picks Beginner at signup. Normally the same as the starting rating above, so the tier changes nothing for a true beginner.',
+      type: 'number',
+      min: 0,
+      step: 50,
+    },
+    tier_intermediate_elo: {
+      label: 'Intermediate starting rating',
+      hint: 'Assigned to a member who picks Intermediate at signup.',
+      type: 'number',
+      min: 0,
+      step: 50,
+    },
+    tier_advanced_elo: {
+      label: 'Advanced starting rating',
+      hint: 'Assigned to a member who picks Advanced at signup. Only ever seeds a rating that has never moved — a member claiming a roster row you already rated keeps the rating you gave them.',
+      type: 'number',
+      min: 0,
+      step: 50,
+    },
   },
   tournament_bonuses: {
     enabled: {

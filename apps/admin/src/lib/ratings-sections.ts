@@ -43,6 +43,12 @@ export const RATINGS_SECTIONS: RatingsSectionDef[] = [
     id: 'k-factors',
     label: 'K-factors',
     fields: [
+      // The switch leads the section it governs. Reading order matters here:
+      // the four K values below are only half the story if the pair of them
+      // that applies to new members can be turned off, and an admin who scrolls
+      // past the switch to edit singles_k_provisional would be tuning a number
+      // that is not in use.
+      { key: 'rating_defaults', field: 'provisional_k_enabled' },
       { key: 'rating_defaults', field: 'singles_k_provisional' },
       { key: 'rating_defaults', field: 'singles_k_established' },
       { key: 'rating_defaults', field: 'doubles_k_provisional' },
@@ -52,7 +58,17 @@ export const RATINGS_SECTIONS: RatingsSectionDef[] = [
   {
     id: 'new-members',
     label: 'New members',
-    fields: [{ key: 'rating_defaults', field: 'provisional_threshold' }],
+    fields: [
+      { key: 'rating_defaults', field: 'provisional_threshold' },
+      // The three tiers, in ladder order, beside the placement-match count they
+      // work with: the tier is the starting GUESS and the placement matches are
+      // the CORRECTION. Split across two sections they would read as unrelated
+      // knobs, which is exactly the misreading that leads to turning provisional
+      // K off because "the tiers handle it now".
+      { key: 'rating_defaults', field: 'tier_beginner_elo' },
+      { key: 'rating_defaults', field: 'tier_intermediate_elo' },
+      { key: 'rating_defaults', field: 'tier_advanced_elo' },
+    ],
   },
   {
     id: 'match-weighting',

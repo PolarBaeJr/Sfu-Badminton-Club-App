@@ -11,7 +11,7 @@ import {
   type LastActivation,
   type LastChange,
 } from './ratings-aside';
-import { PROVISIONAL_THRESHOLD } from '@badminton/shared/src/utils/constants';
+import { PROVISIONAL_THRESHOLD, DEFAULT_ELO, resolveEloBounds } from '@badminton/shared/src/utils/constants';
 import { getKFactor, type RatingSettings } from '@badminton/shared/src/elo/engine';
 import type { KFactors } from './k-factor-panel';
 
@@ -95,6 +95,7 @@ export default async function RatingsPage() {
               lastActivation={lastActivation}
               lastChange={lastChange}
               kFactors={kFactorsOf(settings)}
+              impact={impactOf(settings)}
             />
           }
         />
@@ -136,6 +137,34 @@ function kFactorsOf(settings: PlatformSetting[]): KFactors {
     singlesEstablished: getKFactor('singles', false, undefined, defaults),
     doublesProvisional: getKFactor('doubles', true, undefined, defaults),
     doublesEstablished: getKFactor('doubles', false, undefined, defaults),
+  };
+}
+
+/**
+ * The rest of what the impact table needs: the rating both scenarios start
+ * from, the clamp, and whether provisional K is switched on at all (00127).
+ *
+ * SAME ROW, NO EXTRA FETCH — `settings` is the rating section of the
+ * platform_settings read the form already made, exactly like kFactorsOf above.
+ *
+ * The bounds go through resolveEloBounds so the table clamps deltas the way a
+ * real match would, including its refusal to honour an inverted min/max pair.
+ * The baseline falls back to DEFAULT_ELO rather than to a literal, so a club
+ * that has moved default_elo sees its own numbers.
+ *
+ * `provisional_k_enabled` is read with `!== false`, matching getKFactor(): only
+ * an explicit false counts as off, so a missing key (every database before
+ * 00127 runs) reads as today's behaviour rather than silently reporting the
+ * provisional K-factors as unused.
+ */
+function impactOf(settings: PlatformSetting[]) {
+  const defaults = (settings.find((s) => s.key === 'rating_defaults')?.value ??
+    null) as RatingSettings | null;
+  const baseline = Number((defaults as Record<string, unknown> | null)?.default_elo);
+  return {
+    baseline: Number.isFinite(baseline) && baseline > 0 ? Math.round(baseline) : DEFAULT_ELO,
+    bounds: resolveEloBounds(defaults ? { min: defaults.min_elo, max: defaults.max_elo } : null),
+    provisionalKEnabled: defaults?.provisional_k_enabled !== false,
   };
 }
 
