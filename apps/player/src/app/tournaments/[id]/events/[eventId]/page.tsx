@@ -444,6 +444,10 @@ export default async function EventDetailPage({
               thirdPlace={drawThirdPlace}
               nameOf={participantNameMap}
               seedOf={participantSeedMap}
+              // For the full-screen header only. Projected at a tournament the
+              // chart is the whole screen, so it has to say which event it is.
+              title={TOURNAMENT_EVENT_TYPE_LABELS[eventType]}
+              subtitle={tournament.name}
             />
           </div>
         </FadeIn>

@@ -4211,3 +4211,83 @@ a.cal-ev:hover { filter: brightness(1.15); }
   margin: 0 0 8px;
 }
 .draw-hint svg { flex: 0 0 auto; }
+
+/* ──────────────────────────────────────────────────────────────
+   THE DRAW, FULL SCREEN
+   ──────────────────────────────────────────────────────────────
+   "allow full screen too so i can just only show the thing" — a
+   tournament projects the bracket so the room can watch it fill
+   in. So this strips the app down to the chart and one line
+   saying which event it is: no topbar, no nav, no card.
+
+   SWITCHED BY :fullscreen, NOT BY A REACT CLASS. The layout then
+   changes in the same frame the browser enters full screen,
+   rather than one React render later, so there is no pass where
+   the chart is measured against a box that is full screen but
+   not yet laid out like it. React state here drives only the
+   button's wording.
+
+   The flex column is what makes the height budget honest. In the
+   page the scroll box's height is whatever the scaled chart
+   made it, so it cannot be measured to fit the chart INTO. Here
+   `flex: 1 1 auto` with `min-height: 0` sizes it from the screen
+   instead — the space left after the header — so DrawScroller
+   can read its clientHeight and get the real budget. Without
+   min-height:0 a flex item refuses to shrink below its content
+   and the box would silently be as tall as the chart again. */
+
+.draw-shell { position: relative; }
+
+/* Unobtrusive on the page: this is used at a tournament, not
+   every visit. Same mono caption voice as .draw-hint. */
+.draw-tools { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.draw-full-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--mute);
+  border: 1px solid var(--line); padding: 4px 8px;
+  background: transparent; cursor: pointer;
+}
+.draw-full-btn:hover { color: var(--ink); border-color: var(--line-2); }
+.draw-full-btn:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+
+/* Only ever seen in full screen: on the page the event name is
+   already in the header a few centimetres above. */
+.draw-full-head { display: none; }
+
+.draw-shell:fullscreen {
+  display: flex; flex-direction: column;
+  width: 100%; height: 100%;
+  background: var(--bg);
+  padding: 14px 18px;
+}
+.draw-shell:fullscreen .draw-full-head {
+  display: flex; align-items: baseline; gap: 10px;
+  flex: 0 0 auto; margin-bottom: 10px; min-width: 0;
+  padding-right: 160px;   /* clear of the exit button */
+}
+.draw-shell:fullscreen .draw-full-title {
+  font-family: var(--display); font-weight: 700; font-size: 20px;
+  letter-spacing: -.01em; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.draw-shell:fullscreen .draw-full-sub {
+  font-size: 12px; color: var(--mute);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* How the chart reads. Last, and the first to be squeezed: it is the
+   line a full room can most afford to lose to a long event name. */
+.draw-shell:fullscreen .draw-full-note {
+  font-size: 12px; color: var(--mute);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  flex: 0 1 auto; min-width: 0;
+}
+.draw-shell:fullscreen .draw-tools {
+  position: absolute; top: 14px; right: 18px; margin: 0; z-index: 1;
+}
+/* The one place a nested vertical scroller IS right: there is no
+   page behind this to scroll, so a draw past the floor has to be
+   scrollable here or it is simply cropped. */
+.draw-shell:fullscreen .draw-scroll {
+  flex: 1 1 auto; min-height: 0; overflow: auto;
+}
