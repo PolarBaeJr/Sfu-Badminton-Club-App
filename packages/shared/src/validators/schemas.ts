@@ -53,6 +53,30 @@ export const profileSchema = z.object({
   competition_category: z.enum(['mens', 'womens']).nullable().optional(),
 });
 
+/**
+ * 00130 — the club's PUBLIC blurb for one officer, shown on /exec.
+ *
+ * A SCHEMA OF ITS OWN rather than another key on profileSchema, because it is
+ * not part of the same act. profileSchema is what a member submits from
+ * Settings about themselves; this is what an officer publishes under the club's
+ * name from the exec panel, and the two have different write paths, different
+ * gates and different audiences. Folding it in would mean the Settings form
+ * could carry it, which is the exact coupling this migration exists to undo.
+ *
+ * `.max(500)` matches profileSchema's `bio`. The database has no CHECK on
+ * either column, so this is the whole cap for both, and keeping them equal
+ * means an exec's existing bio always fits when 00130 copies it across.
+ *
+ * NOT `.optional()`. `''` is a real, meaningful value here — it is an officer
+ * clearing their public blurb, and /exec then omits the paragraph entirely.
+ * Optionality would make "clear it" indistinguishable from "did not send it".
+ */
+export const EXEC_BIO_MAX_LENGTH = 500;
+
+export const execBioSchema = z.object({
+  exec_bio: z.string().max(EXEC_BIO_MAX_LENGTH),
+});
+
 // Optional custom shape: "best of X games to Y points". When set these win over
 // the preset (see migration 00031). Best-of must be odd so a majority always
 // exists; the bounds keep a "best of 99 to 500" off the ladder. Shared by the

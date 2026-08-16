@@ -143,7 +143,24 @@ export interface Player {
   ban_reason: string | null;
   onboarding_completed: boolean;
   avatar_url: string | null;
+  /**
+   * The member's PERSONAL bio. Edited in Settings, shown on their ladder
+   * profile at /leaderboard/[playerId] to signed-in members, and — since 00130
+   * — published nowhere. It used to double as an exec's public blurb; that is
+   * `exec_bio` now.
+   */
   bio: string | null;
+  /**
+   * 00130 — the blurb shown under an officer on the PUBLIC /exec page, written
+   * by that officer on that page. Only meaningful on an `is_exec` row.
+   *
+   * NO SELECT GRANT for `authenticated`, on purpose: get_executives() is
+   * SECURITY DEFINER and is the only reader, so naming this column in a
+   * `.from('players').select(...)` fails the whole request with a 403 that
+   * arrives as empty data. It is also absent from the `players_self` view,
+   * whose column list was frozen at 00032.
+   */
+  exec_bio: string | null;
   exec_title: string | null;
   waiver_reset_at: string | null;
   /** 00059 — when the "your membership is now inactive" notice was sent. Cleared whenever active_flag goes back to true. */
