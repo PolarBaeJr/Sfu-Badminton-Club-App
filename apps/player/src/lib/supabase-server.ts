@@ -69,6 +69,19 @@ export async function getExecutives(): Promise<{
   exec_title: string | null;
   // Deliberately not avatar_url — the exec page has its own photos (00042).
   exec_photo_url: string | null;
+  /**
+   * THE OFFICER'S PUBLIC BLURB, AND SINCE 00130 IT IS players.exec_bio — NOT
+   * players.bio. The function aliases it back to `bio` on the way out, which is
+   * why this property did not have to be renamed: keeping the output column
+   * meant the migration and the app deploy needed no ordering between them on a
+   * live database. players.bio is now the member's personal bio only, edited in
+   * Settings, shown on their ladder profile, and published nowhere.
+   *
+   * It has no SELECT grant for `authenticated` (00130 §4a) — this function is
+   * SECURITY DEFINER and is the ONLY way to read it. Do not add it to a
+   * `.from('players').select(...)` anywhere: that request would 403 as a whole
+   * and arrive here as empty data.
+   */
   bio: string | null;
 }[]> {
   const supabase = await createServerSupabaseClient();

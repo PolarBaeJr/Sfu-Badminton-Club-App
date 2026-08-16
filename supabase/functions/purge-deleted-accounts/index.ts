@@ -72,6 +72,12 @@ Deno.serve(async (req) => {
         phone: null,
         avatar_url: null,
         bio: null,
+        // 00130 split the one bio into two. The deletion email promises "profile
+        // photo and bio are erased for good", and an officer's exec_bio is words
+        // they wrote about themselves just as much as bio is — so it is erased
+        // here too, not merely hidden. active_flag: false already takes them off
+        // /exec, but "off the page" is not what was promised.
+        exec_bio: null,
         active_flag: false,
         user_id: null,
       })

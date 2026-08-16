@@ -10,6 +10,7 @@
 //   - notifications.ts — markNotificationRead / All / markAnnouncementRead
 //   - sessions.ts    — checkInToSession / checkInWithToken (QR)
 //   - calendar.ts    — getCalendarFeedToken / regenerateCalendarFeedToken
+//   - exec.ts        — updateExecBio (the exec panel's one write)
 //   - _shared.ts     — requirePlayer / getPlayerProps / trackServerEvent
 //                      (NOT 'use server' — internal helpers)
 export {
@@ -54,3 +55,5 @@ export {
   getCalendarFeedToken,
   regenerateCalendarFeedToken,
 } from './actions/calendar';
+
+export { updateExecBio } from './actions/exec';

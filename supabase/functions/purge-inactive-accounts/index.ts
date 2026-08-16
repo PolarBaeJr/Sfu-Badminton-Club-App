@@ -135,6 +135,11 @@ Deno.serve(async (req) => {
         phone: null,
         avatar_url: null,
         bio: null,
+        // 00130 split the one bio into two. The inactivity notice promises the
+        // member's "name, email, phone, photo, bio" are erased, and an officer's
+        // exec_bio is a bio — erased here too rather than left behind because
+        // active_flag: false happens to take them off /exec.
+        exec_bio: null,
         active_flag: false,
         user_id: null,
       })

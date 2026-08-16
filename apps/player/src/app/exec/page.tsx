@@ -1,7 +1,8 @@
 import Link from 'next/link';
 import { Users } from 'lucide-react';
-import { createServerSupabaseClient, getExecutives } from '@/lib/supabase-server';
+import { createServerSupabaseClient, getCurrentPlayer, getExecutives } from '@/lib/supabase-server';
 import { AvatarChip } from '@badminton/ui';
+import { ExecBioEditor } from './exec-bio-editor';
 
 // Public page — viewable without an account (see middleware public allowlist).
 export const dynamic = 'force-dynamic';
@@ -14,7 +15,14 @@ export const dynamic = 'force-dynamic';
  *  is no email column in that signature and no club contact address anywhere in
  *  platform_settings, which is why no officer here carries a contact control:
  *  publishing an address the function deliberately withholds would be a privacy
- *  decision, not a layout one. */
+ *  decision, not a layout one.
+ *
+ *  THE `bio` FIELD IS NOT players.bio ANY MORE (00130). It is players.exec_bio,
+ *  aliased back to `bio` inside the function so the change needed no
+ *  coordination with the deploy. players.bio is the member's PERSONAL bio, it
+ *  is edited in Settings, and it is now published nowhere — this page stopped
+ *  reading it, which is the whole point of that migration. The two used to be
+ *  one field doing two jobs. */
 
 /** Titles are free text — the admin console accepts any string up to 60 chars
  *  (schemas.ts: `exec_title: blankAsUndefined(z.string().max(60))`) — so there
@@ -54,6 +62,27 @@ export default async function ExecPage() {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   const back = user ? { href: '/my-stats', label: '← ME' } : { href: '/', label: '← HOME' };
+
+  // WHICH CARD, IF ANY, BELONGS TO THE PERSON LOOKING AT IT — the one officer
+  // who gets the editor instead of a paragraph (00130). Null for everybody
+  // else, which is every signed-out visitor, every ordinary member, and every
+  // officer looking at a colleague.
+  //
+  // getCurrentPlayer() is a service-role read of the whole row, so it is called
+  // ONLY inside this branch: the comment above is about not walking a
+  // signed-out visitor into a login wall, and the same reasoning says not to
+  // run a privileged read for a stranger who cannot possibly own a card here.
+  //
+  // `is_exec`, not hasConsoleAccess(): the test has to match the function's own
+  // `is_exec AND active_flag` filter, or a varsity trainer — who has console
+  // access and is on no public page — would be handed an editor for a card that
+  // does not exist. Matching an id against the returned rows is what enforces
+  // active_flag, since an inactive officer is not in `execs` at all.
+  let viewerExecId: string | null = null;
+  if (user) {
+    const me = await getCurrentPlayer();
+    viewerExecId = me?.is_exec ? (me.id as string) : null;
+  }
 
   // get_executives() orders alphabetically by title — `ORDER BY (exec_title IS
   // NULL), exec_title, name` — which puts Marketing above President and reads
@@ -107,12 +136,20 @@ export default async function ExecPage() {
                   )}
                 </div>
               </div>
-              {/* players.bio, which execs write about themselves in Settings and
-                  which 00042 added to this function specifically so it would
-                  land here. Omitted rather than substituted when empty: a
-                  sentence invented per job title would be the club making a
-                  promise on a volunteer's behalf. */}
-              {e.bio && <p className="exec-officer-bio">{e.bio}</p>}
+              {/* players.exec_bio, arriving as `bio` (00130 — see the note at
+                  the top of this file). Omitted rather than substituted when
+                  empty: a sentence invented per job title would be the club
+                  making a promise on a volunteer's behalf.
+
+                  The officer looking at their OWN card gets the editor in place
+                  of the paragraph — the editor renders the same paragraph when
+                  it is not being edited, so the card reads identically to
+                  everyone else's until they touch it. This is the "exec panel"
+                  the exec bio now lives in: the words are written on the page
+                  they are published to. */}
+              {e.id === viewerExecId
+                ? <ExecBioEditor initialBio={e.bio} />
+                : e.bio && <p className="exec-officer-bio">{e.bio}</p>}
             </article>
           ))}
         </div>

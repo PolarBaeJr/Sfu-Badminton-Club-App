@@ -86,11 +86,19 @@ describe('the public pages agree about a member’s name', () => {
   });
 
   it('finds the newest definition, not the first one written', () => {
-    // 00042 defined get_executives() with the nickname, 00096 redefined it and
-    // 00100 redefined it again. If this helper ever started returning an
-    // earlier file the assertions above would pass or fail for the wrong
-    // reason, so it is pinned too.
-    expect(lastDefinitionOf('get_executives').file).toMatch(/^00100_/);
+    // 00042 defined get_executives() with the nickname, 00096 redefined it,
+    // 00100 redefined it again, and 00130 redefined it once more — that last
+    // one for a different reason entirely (it moved the officer's public blurb
+    // off players.bio onto players.exec_bio, aliased back to `bio` so the
+    // signature did not move). If this helper ever started returning an earlier
+    // file the assertions above would pass or fail for the wrong reason, so it
+    // is pinned too.
+    //
+    // THE PIN IS EXPECTED TO MOVE. It is a self-test of the helper, not a rule
+    // about the function — every legitimate redefinition bumps it, which is
+    // precisely how this test tells a migration author that the two assertions
+    // above are now being read against their file.
+    expect(lastDefinitionOf('get_executives').file).toMatch(/^00130_/);
     expect(lastDefinitionOf('get_leaderboard').file).toMatch(/^00092_/);
   });
 });

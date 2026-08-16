@@ -2891,6 +2891,111 @@ a.notif-index-row:hover .notif-index-label { color: var(--ink); }
   overflow-wrap: anywhere;
 }
 
+/* --- the exec panel ----------------------------------------- */
+/* 00130 — the one officer looking at their own card edits their
+   public blurb here, on the page it is published to, instead of
+   in Settings where it used to share a field with their personal
+   bio. Rendered for exactly one card; nobody else sees any of
+   this, so it must not disturb the rhythm of the list when it is
+   sitting closed.
+
+   No box, no panel, no accent. .exec-officer-bio already owns
+   the vertical space below the row, and .exec-bio-block simply
+   inherits it — a card that gained a border the moment its owner
+   looked at it would break the "these are peers" reading the
+   two-column layout below is built on. */
+.exec-bio-block {
+  margin-top: 12px;
+}
+/* Already spaced by the block, so the paragraph inside it must
+   not add the 12px a second time. */
+.exec-bio-block .exec-officer-bio { margin-top: 0; }
+
+/* The nothing-written state. Deliberately quieter than the bio
+   itself and italic, because it is an instruction to one person
+   rather than a sentence about them — an officer must be able to
+   tell at a glance that the club page is currently blank for
+   them without it looking like published copy. */
+.exec-bio-empty {
+  font-size: 14px;
+  line-height: 1.5;
+  font-style: italic;
+  color: var(--mute);
+  margin: 0;
+}
+
+/* The same mono-uppercase voice as .exec-back and
+   .exec-officer-role, which is this screen's whole vocabulary for
+   things that are not prose. Transparent by default so a closed
+   editor reads as a link rather than a button competing with the
+   officer's name for weight.
+
+   min-height 44px is the tap target, and it is why the block sets
+   its own padding rather than leaning on the font size: at 10px
+   mono a comfortable-looking button is about 26px tall, which is
+   a miss on a phone.
+
+   NO border-radius token: Tailwind's config here replaces
+   theme.borderRadius, so rounded-* utilities compile to nothing —
+   and square is what the rest of this screen is anyway. */
+.exec-bio-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 14px;
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--mute);
+  background: transparent;
+  border: 1px solid var(--line);
+  cursor: pointer;
+  transition: color .15s, border-color .15s, background-color .15s;
+}
+@media (hover: hover) {
+  .exec-bio-btn:hover { color: var(--ink); border-color: var(--ink-2); }
+}
+.exec-bio-btn:disabled { opacity: .5; cursor: default; }
+/* Save. --red is this screen's one accent and it is otherwise
+   spent only on the president, so it is borrowed rather than
+   claimed: filled, so the two buttons in the row are told apart
+   by weight and not by hue alone. */
+.exec-bio-btn[data-variant="primary"] {
+  color: var(--surface);
+  background: var(--ink);
+  border-color: var(--ink);
+}
+@media (hover: hover) {
+  .exec-bio-btn[data-variant="primary"]:hover {
+    color: var(--surface);
+    background: var(--ink-2);
+    border-color: var(--ink-2);
+  }
+}
+
+/* Wraps rather than shrinks: two 44px targets sitting side by
+   side need about 200px, and the phone column is 640px minus its
+   gutters, so this only ever fires inside a narrow laptop
+   column. */
+.exec-bio-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* The sentence that says this field is not the Settings one.
+   Sits between the box and its buttons because that is the last
+   thing read before Save is pressed. */
+.exec-bio-note {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--mute);
+  margin: 8px 0 0;
+}
+
 /* --- the laptop --------------------------------------------- */
 /* Two equal columns, not the house 1.6fr/1fr river-and-rail.
    That pattern exists to put SUPPORTING material beside a main

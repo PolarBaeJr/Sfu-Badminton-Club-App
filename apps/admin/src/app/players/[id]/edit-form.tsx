@@ -255,9 +255,15 @@ export function PlayerEditForm({
               placeholder="https://…"
               maxLength={500}
             />
+            {/* "along with this member's bio" was true until 00130, when the
+                exec page stopped reading players.bio. The blurb beside this
+                photo is players.exec_bio now, and the officer writes it
+                themselves on /exec — no console screen edits it, so saying so
+                is what stops an admin looking for a field that is not here. */}
             <p className="text-xs text-[var(--text-muted)]">
-              Shown on the public exec page, along with this member&apos;s bio. Falls
-              back to their initials if left blank. Their profile avatar is never used here.
+              Shown on the public exec page. Falls back to their initials if left
+              blank. Their profile avatar is never used here. The blurb beside it is
+              written by the exec themselves, on the exec page.
             </p>
           </>
         )}

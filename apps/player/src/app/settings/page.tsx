@@ -112,8 +112,10 @@ export default function SettingsPage() {
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   // TWO different questions, deliberately kept apart:
-  //   isExec         — is this person on the club exec? Drives the note about
-  //                    their bio being published on the public /exec page (00042).
+  //   isExec         — is this person on the club exec? Drives the note saying
+  //                    where their OTHER bio is edited. Until 00130 this field
+  //                    WAS their exec page bio (00042); it no longer is, and the
+  //                    note is what stops an officer wondering where it went.
   //                    A varsity trainer is NOT an exec and their bio is private.
   //   canOpenConsole — may this person open the admin console at all? Trainers
   //                    can, so this is strictly wider than isExec.
@@ -188,7 +190,16 @@ export default function SettingsPage() {
         if (mins % 1440 === 0) { setLeadValue(String(mins / 1440)); setLeadUnit('days'); }
         else if (mins % 60 === 0) { setLeadValue(String(mins / 60)); setLeadUnit('hours'); }
         else { setLeadValue(String(mins)); setLeadUnit('minutes'); }
-        setIsExec(data.is_exec || data.role === 'admin');
+        // `is_exec` ALONE, not `|| role === 'admin'`. It was the wider test
+        // while the note only claimed "your bio is public", where an admin who
+        // is not on the exec team read a sentence that was merely untrue for
+        // them. 00130's note LINKS to /exec, and that page hands an editor to
+        // exactly the officers get_executives() returns — `is_exec AND
+        // active_flag` — so the wider test would send a non-exec admin to a
+        // page with no card of theirs on it and nothing to edit. Three places
+        // now agree on one predicate: the function's filter, updateExecBio's
+        // gate, and this note.
+        setIsExec(!!data.is_exec);
         // The SAME predicate the top bar uses (layout.tsx) and the same one the
         // console itself enforces — never a second hand-rolled boolean. This
         // page used to test `is_exec || role === 'admin'`, which predates the
@@ -446,13 +457,19 @@ export default function SettingsPage() {
               )}
               <Input label="Phone"               value={phone}       onChange={(e) => setPhone(e.target.value.replace(/[^\d\s+\-()]/g, ''))} placeholder="Optional" inputMode="tel" />
               <Textarea label="Bio"              value={bio}         onChange={(e) => setBio(e.target.value)} placeholder="A few words about yourself" />
-              {/* Execs only: their bio is published on the public /exec page
-                  (00042). Saying so here matters — the field predates that page
-                  by a long way, so an exec may have written it expecting it to
-                  stay private. */}
+              {/* Execs only, and it now says the OPPOSITE of what it said from
+                  00042 until 00130. This field was the exec page bio; it is not
+                  any more (players.exec_bio is), and it is published nowhere.
+                  Pointing at where the other one lives matters more than ever
+                  here — an officer who wrote their public blurb in this box
+                  needs to be told, on this screen, that editing it here no
+                  longer changes the club page. */}
               {isExec && (
                 <p className="muted" style={{ fontSize: 12, marginTop: -6 }}>
-                  As an exec, your bio is shown publicly on the club&apos;s exec page.
+                  Your personal bio. It&apos;s shown on your ladder profile to other
+                  members, and nowhere public. Your bio on the club&apos;s{' '}
+                  <Link href="/exec" style={{ color: 'inherit', textDecoration: 'underline' }}>exec page</Link> is a
+                  separate one, edited there.
                 </p>
               )}
               {/* 00111, relabelled and locked by 00129. This is the member's
