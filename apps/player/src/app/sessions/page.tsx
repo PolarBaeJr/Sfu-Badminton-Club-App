@@ -399,7 +399,6 @@ export default async function SessionsPage() {
             months={calendarMonths}
             initialIndex={initialMonthIndex(monthKeys, todayISO)}
             weekdays={CALENDAR_WEEKDAYS}
-            rangeLabel={activeSeason ? activeSeason.name : null}
           />
         </section>
 

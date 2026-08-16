@@ -41,10 +41,9 @@ interface MonthCalendarProps {
   initialIndex: number;
   weekdays: string[];
   /** Named in the "that's all we loaded" note under the grid. */
-  rangeLabel: string | null;
 }
 
-export function MonthCalendar({ months, initialIndex, weekdays, rangeLabel }: MonthCalendarProps) {
+export function MonthCalendar({ months, initialIndex, weekdays }: MonthCalendarProps) {
   const [index, setIndex] = useState(() =>
     Math.min(Math.max(initialIndex, 0), Math.max(months.length - 1, 0))
   );
@@ -169,16 +168,6 @@ export function MonthCalendar({ months, initialIndex, weekdays, rangeLabel }: Mo
         </div>
       </div>
 
-      {rangeLabel && (
-        <p className="cal-foot">
-          {/* Says out loud where the arrows stop and why, so a dead arrow reads
-              as a boundary rather than a broken button — and names the second
-              thing on here, which is what makes a lone month years off the term
-              read as a night nobody filed rather than as a glitch. */}
-          Showing {rangeLabel}, plus any night not yet assigned to a term.
-          Nights from other terms are not on this calendar.
-        </p>
-      )}
     </div>
   );
 }

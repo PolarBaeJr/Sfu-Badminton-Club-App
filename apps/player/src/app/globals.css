@@ -3931,12 +3931,6 @@ a.cal-ev:hover { filter: brightness(1.15); }
    device .session-card.is-next uses, rather than a fourth colour. */
 .cal-ev.is-mine { box-shadow: inset 2px 0 0 var(--red); }
 
-.cal-foot {
-  font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
-  text-transform: uppercase; color: var(--mute);
-  margin: 10px 0 0;
-}
-
 @media (max-width: 760px) {
   /* Enough width for a name to survive; below this the columns
      would be ~50px and every cell would wrap to one letter a line. */
@@ -3945,9 +3939,9 @@ a.cal-ev:hover { filter: brightness(1.15); }
   .cal-title { font-size: 19px; }
 }
 
-/* The scroll affordance. Same mono caption voice as .cal-foot, which
-   is the other line on this component that explains the grid rather
-   than being part of it.
+/* The scroll affordance. The one caption left on this component that
+   explains the grid rather than being part of it — the .cal-foot line
+   that used to sit under the grid was removed as noise.
    661px, NOT the 760px above, and the difference is the point: the
    grid only overflows while its box is under the 620px floor, and the
    page gutter is 42px, so the last width that actually scrolls is
@@ -4104,7 +4098,7 @@ a.cal-ev:hover { filter: brightness(1.15); }
    entrants and 2088px at sixty-four. DrawScroller measures the box
    instead and renders this only when it actually overflows, so the
    hint cannot outlive the overflow it describes at any width. Same
-   mono caption voice as .cal-hint and .cal-foot. */
+   mono caption voice as .cal-hint. */
 .draw-hint {
   display: flex; align-items: center; gap: 6px;
   font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
