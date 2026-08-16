@@ -175,6 +175,10 @@ DECLARE
   v_elo INTEGER;
   v_min INTEGER := rating_setting_int('min_elo', 100);
   v_max INTEGER := rating_setting_int('max_elo', 1500);
+  -- What an untouched rating looks like: create_player_with_rating seeds every
+  -- new row at exactly this. Used below to tell "nobody has decided" apart from
+  -- "an exec set this by hand", which no match counter can distinguish.
+  v_default_elo INTEGER := rating_setting_int('default_elo', 400);
   v_seeded INTEGER := 0;
 BEGIN
   -- An unrecognised tier is dropped rather than raised. This is the last step
@@ -218,7 +222,22 @@ BEGIN
      AND doubles_matches_played = 0
      AND NOT EXISTS (
        SELECT 1 FROM season_final_ratings sfr WHERE sfr.player_id = p_player_id
-     );
+     )
+     -- AND STILL UNTOUCHED. The three conditions above only prove nobody has
+     -- PLAYED; they say nothing about whether somebody has DECIDED. An exec can
+     -- set a rating by hand when adding a known player to the roster
+     -- (actions/players.ts:262 writes singles_elo directly), and such a row has
+     -- zero matches and no season snapshot — so without this line, the moment
+     -- that player claims their row and picks a tier at onboarding, a
+     -- deliberate rating is silently replaced by a self-declared one. The
+     -- onboarding copy promises the opposite.
+     --
+     -- Equality with default_elo is the test because that is what "nobody has
+     -- decided" looks like: create_player_with_rating seeds every new row at
+     -- exactly that value. A rating that differs from it, with no matches
+     -- behind it, can only have been set by hand.
+     AND singles_elo = v_default_elo
+     AND doubles_elo = v_default_elo;
 
   GET DIAGNOSTICS v_seeded = ROW_COUNT;
   RETURN v_seeded > 0;
@@ -240,7 +259,22 @@ COMMENT ON FUNCTION public.apply_skill_tier_seed(uuid, text) IS
 -- mean any authenticated member could reseed any OTHER member's unplayed
 -- rating. The grant is the authorization here; there is no auth.uid() check
 -- inside because there is no path by which a member reaches it.
-REVOKE ALL ON FUNCTION public.apply_skill_tier_seed(uuid, text) FROM PUBLIC;
+-- PUBLIC IS NOT ENOUGH, and this file nearly shipped believing it was.
+--
+-- Supabase's ALTER DEFAULT PRIVILEGES grants EXECUTE to anon and authenticated
+-- as EXPLICIT entries on every function created in this schema. REVOKE ... FROM
+-- PUBLIC does not touch an explicit grant, so the two lines below, without the
+-- roles named, would have left a SECURITY DEFINER function taking an ARBITRARY
+-- p_player_id callable by anyone holding the anon key — which ships in the
+-- browser bundle. Any visitor could have rewritten any unplayed member's rating
+-- and set their skill_tier.
+--
+-- 00126 exists because of this exact trap and documents it at length; this
+-- migration was written the same day and reproduced it anyway. That is how
+-- quiet it is. Naming PUBLIC as well as the roles is also required — anon is a
+-- member of PUBLIC, so revoking from the role alone leaves the PUBLIC grant.
+REVOKE ALL ON FUNCTION public.apply_skill_tier_seed(uuid, text)
+  FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.apply_skill_tier_seed(uuid, text) TO service_role;
 
 
