@@ -18,10 +18,13 @@ import {
   isHandleTakenError,
   HANDLE_TAKEN_MESSAGE,
   toCompetitionCategory,
+  isSkillTier,
+  type SkillTier,
   type CompetitionCategory,
   type LegalAcceptanceInput,
   type WaiverDocument,
 } from '@badminton/shared';
+import { getSkillTierOptions, type SkillTierOption } from '../rating-tiers';
 import { buildRosterClaim, normalizeEmail } from '../roster-claim';
 import { createServerSupabaseClient, createServiceRoleClient, getCurrentPlayer } from '../supabase-server';
 import { requirePlayer, trackServerEvent, runAction, type ActionResult } from './_shared';
@@ -352,6 +355,12 @@ type OnboardingInput = {
   terms_accepted: boolean;
   age_attestation: boolean;
   passkey_setup?: PasskeySetupOutcome;
+  // The skill tier the member picked (00127). Carried the same way
+  // passkey_setup is — outside profileSchema, and applied AFTER the player and
+  // ratings rows exist, because before completeOnboarding there is nothing to
+  // seed. An unrecognised or absent value seeds nothing and the member simply
+  // starts at default_elo, which is what happened before tiering shipped.
+  skill_tier?: SkillTier;
 };
 
 export async function completeOnboarding(data: OnboardingInput): Promise<ActionResult> {
@@ -490,6 +499,12 @@ async function completeOnboardingImpl(data: OnboardingInput) {
   if (playerId) {
     await insertAcceptances(supabase, playerId, data.age_attestation);
     await recordPasskeySetup(playerId, data.passkey_setup);
+    // AFTER the row exists, and after nothing else depends on it. Ordering is
+    // the whole reason this is a separate call rather than a column on the
+    // insert above: on the claim path and the existing-player path there is no
+    // insert to hang it on, and on all three paths the seed has to inspect the
+    // ratings row it is about to overwrite.
+    await applySkillTier(playerId, data.skill_tier);
   }
 
   revalidatePath('/');
@@ -522,6 +537,61 @@ async function recordPasskeySetup(playerId: string, outcome: string | undefined)
       extra: { action: 'recordPasskeySetup', playerId, outcome },
     });
   }
+}
+
+/**
+ * Seed the starting rating from the skill tier the member claimed (00127).
+ *
+ * ALL THE JUDGEMENT IS IN SQL, ON PURPOSE. apply_skill_tier_seed resolves the
+ * tier name to a rating out of platform_settings, clamps it to the ladder, and
+ * refuses to touch a rating that has ever moved (matches played, or a season
+ * snapshot). Doing any of that here would mean two implementations of the same
+ * rule that can drift, and the dangerous half — "is this rating safe to
+ * overwrite" — would be the half running on the client's side of the trust
+ * boundary.
+ *
+ * A TIER NAME IS SENT, NEVER A RATING. The function takes 'beginner' |
+ * 'intermediate' | 'advanced'. If this passed an integer into a SECURITY
+ * DEFINER function, a hostile client would be able to type itself to the top of
+ * the ladder — the same escalation shape 00056 closed on player inserts.
+ *
+ * Service-role, because that is the only grant the function carries: a
+ * SECURITY DEFINER routine that rewrites an arbitrary player's rating is not
+ * something a member's own session should be able to reach.
+ *
+ * Same swallow-and-report contract as recordPasskeySetup. This is the last step
+ * of onboarding; a member who has just accepted the waiver and enrolled a
+ * passkey must not be bounced back to step three because a rating seed failed.
+ * They land at default_elo — exactly where every member landed before tiering
+ * existed — and Sentry keeps the record.
+ */
+async function applySkillTier(playerId: string, tier: string | undefined) {
+  if (!isSkillTier(tier)) return;
+  try {
+    const { error } = await createServiceRoleClient().rpc('apply_skill_tier_seed', {
+      p_player_id: playerId,
+      p_tier: tier,
+    });
+    if (error) throw new Error(error.message);
+  } catch (error) {
+    Sentry.captureException(error, {
+      extra: { action: 'applySkillTier', playerId, tier },
+    });
+  }
+}
+
+/**
+ * The tiers onboarding offers, with the rating each one currently seeds.
+ *
+ * A server action because the onboarding screen is a client component and the
+ * numbers live in platform_settings — the same reason passkeysConfigured()
+ * exists. No auth gate beyond the session the reader's client already carries:
+ * these are the club's published rating rules, already readable by any
+ * authenticated member through settings_select, and the caller is by definition
+ * a signed-in member halfway through making an account.
+ */
+export async function getSkillTiers(): Promise<SkillTierOption[]> {
+  return getSkillTierOptions();
 }
 
 /**

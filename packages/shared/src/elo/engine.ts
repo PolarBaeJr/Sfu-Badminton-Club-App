@@ -133,6 +133,18 @@ export interface RatingSettings {
   // it — leaving it off the type is how the TS engine ended up defaulting the
   // multiplier to 1.0 while SQL applied 1.15 to the identical scoreline.
   sweep_margin_multiplier?: number | null;
+  /**
+   * Whether the provisional K-factors apply at all (00127). Default ON — the
+   * behaviour of every club before this setting existed.
+   *
+   * Turning it OFF makes every player take the ESTABLISHED K regardless of how
+   * few matches they have played. It deliberately does NOT change the
+   * provisional flags or the threshold that clears them: /ratings counts heads
+   * off `flag OR matches_played < threshold`, and suppressing the flag would
+   * make those figures lie about members who are still, factually, in their
+   * placement window.
+   */
+  provisional_k_enabled?: boolean | null;
 }
 
 function num(value: unknown, fallback: number): number {
@@ -152,7 +164,19 @@ export function getKFactor(
   // K-factor. Uses the shared constant so tuning it can't silently drift from
   // the rest of the app.
   const threshold = num(settings?.provisional_threshold, PROVISIONAL_THRESHOLD);
-  const isProvisional = provisional || (matchesPlayed !== undefined && matchesPlayed < threshold);
+  // The 00127 switch. `=== false` and not a truthiness test: a malformed value
+  // — a string, a null, a key that was never written — must degrade to today's
+  // behaviour (provisional K ON), the same convention num() follows above. Only
+  // an explicit false turns it off.
+  //
+  // Mirrors the `v_provisional_k AND (...)` guard in apply_match_result
+  // (00127). Both engines must agree: challenges rate through the SQL function
+  // and tournaments through this one, so honouring the switch in only one would
+  // apply a different K to the same player depending on where they played.
+  const provisionalKEnabled = settings?.provisional_k_enabled !== false;
+  const isProvisional =
+    provisionalKEnabled &&
+    (provisional || (matchesPlayed !== undefined && matchesPlayed < threshold));
   // Defaults are doubled from the classic 40/24 (singles) and 32/18 (doubles)
   // to match the 2x-stretched ELO_SCALE — this keeps each delta the same
   // fraction of the scale, so convergence speed and volatility are unchanged.

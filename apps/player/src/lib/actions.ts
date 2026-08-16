@@ -31,6 +31,7 @@ export {
   getMyCompetitionCategory,
   updateNotificationPreferences,
   completeOnboarding,
+  getSkillTiers,
   getLegalDocuments,
   acceptLegalDocuments,
   deleteMyAccount,
