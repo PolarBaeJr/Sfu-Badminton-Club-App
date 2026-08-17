@@ -84,7 +84,7 @@ export async function registerForEvent(eventId: string, opts?: RegisterOptions):
 async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
   const player = await requirePlayer();
   if (player.is_banned) {
-    throw new Error('Your account is suspended pending a reinstatement fee. Contact an admin to be reinstated.');
+    throw new ExpectedError('Your account is suspended pending a reinstatement fee. Contact an admin to be reinstated.');
   }
   const service = createServiceRoleClient();
   await assertCurrentWaiver(service, player);
@@ -116,7 +116,7 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
   if (!event) throw new Error('Event not found');
   const regTournament = pickSuspension(event.tournament);
   if (regTournament?.suspended_at) {
-    throw new Error(`This tournament is currently suspended${regTournament.suspension_reason ? `: ${regTournament.suspension_reason}` : ''}`);
+    throw new ExpectedError(`This tournament is currently suspended${regTournament.suspension_reason ? `: ${regTournament.suspension_reason}` : ''}`);
   }
   // Membership gate. Some events are internal-only, some admit alumni, some are
   // open. Enforced here rather than in RLS because this action uses the
@@ -130,7 +130,7 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
     throw new ExpectedError(membershipRefusalMessage(allowedMemberships));
   }
 
-  if (event.status !== 'registration') throw new Error('Registration is closed');
+  if (event.status !== 'registration') throw new ExpectedError('Registration is closed');
 
   // THE COMPETITION CATEGORY GATE (00111), and the reason it exists at all.
   // event_type has said 'womens_singles' since 00001 with nothing enforcing it,
@@ -205,7 +205,7 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
   // from the server-side text, never a client-supplied value.
   const eventWaiverText = regTournament?.waiver_text?.trim();
   if (eventWaiverText && !opts?.eventWaiverAccepted) {
-    throw new Error('You must accept the event waiver to register');
+    throw new ExpectedError('You must accept the event waiver to register');
   }
 
   // Capacity check is the only thing that has to wait — it depends on a fresh count.
@@ -238,7 +238,7 @@ async function registerForEventImpl(eventId: string, opts?: RegisterOptions) {
         .select('id', { count: 'exact', head: true })
         .eq('event_id', eventId)
         .not('status', 'in', '("withdrawn","disqualified")');
-      if (count && count >= event.max_participants) throw new Error('Event is full');
+      if (count && count >= event.max_participants) throw new ExpectedError('Event is full');
     }
   }
 
@@ -439,7 +439,7 @@ export async function selfCheckIn(eventId: string): Promise<ActionResult> {
 async function selfCheckInImpl(eventId: string) {
   const player = await requirePlayer();
   if (player.is_banned) {
-    throw new Error('Your account is suspended pending a reinstatement fee. Contact an admin to be reinstated.');
+    throw new ExpectedError('Your account is suspended pending a reinstatement fee. Contact an admin to be reinstated.');
   }
   const service = createServiceRoleClient();
   await assertCurrentWaiver(service, player);
@@ -457,11 +457,16 @@ async function selfCheckInImpl(eventId: string) {
   const participant = participantRes.data;
   const checkinTournament = event ? pickSuspension(event.tournament) : null;
   if (checkinTournament?.suspended_at) {
-    throw new Error(`This tournament is currently suspended${checkinTournament.suspension_reason ? `: ${checkinTournament.suspension_reason}` : ''}`);
+    throw new ExpectedError(`This tournament is currently suspended${checkinTournament.suspension_reason ? `: ${checkinTournament.suspension_reason}` : ''}`);
   }
-  if (!event || event.status !== 'checkin') throw new Error('Check-in is not open');
-  if (!participant) throw new Error('Not registered');
-  if (participant.status !== 'registered') throw new Error('Cannot check in');
+  // Split so the two halves classify separately. A wrong STATUS is the member
+  // arriving before check-in opens or after it closed — a refusal. A MISSING
+  // event on a service-role read is a bad id or a row that went away, which is
+  // a fault worth reporting. The member sees the same sentence either way.
+  if (!event) throw new Error('Check-in is not open');
+  if (event.status !== 'checkin') throw new ExpectedError('Check-in is not open');
+  if (!participant) throw new ExpectedError('Not registered');
+  if (participant.status !== 'registered') throw new ExpectedError('Cannot check in');
 
   // THE HARD BLOCK, on the member's own route in. An exec who added them never
   // asked for the event waiver — that is the whole gap — so this is the point

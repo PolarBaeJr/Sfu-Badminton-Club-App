@@ -23,7 +23,7 @@ export async function updateParticipantSeed(participantId: string, seedNumber: n
     .eq('id', participantId)
     .single();
   const ev = (participant?.event as unknown as { tournament_id: string; draw_locked: boolean } | null);
-  if (ev?.draw_locked) throw new Error('Draw is locked. Unlock it before changing seeds.');
+  if (ev?.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before changing seeds.');
 
   const { error } = await adminClient.from('tournament_participants')
     .update({ seed_number: seedNumber })
@@ -48,7 +48,7 @@ export async function updatePairSeed(pairId: string, seedNumber: number | null) 
     .eq('id', pairId)
     .single();
   const ev = (pair?.event as unknown as { tournament_id: string; draw_locked: boolean } | null);
-  if (ev?.draw_locked) throw new Error('Draw is locked. Unlock it before changing seeds.');
+  if (ev?.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before changing seeds.');
 
   const { error } = await adminClient.from('tournament_pairs')
     .update({ seed_number: seedNumber })
@@ -71,7 +71,7 @@ export async function autoSeedEventByElo(eventId: string) {
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
 
-  if (event.draw_locked) throw new Error('Draw is locked. Unlock it before making changes.');
+  if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before making changes.');
 
   const doubles = isDoublesEvent(event.event_type);
 
@@ -138,7 +138,7 @@ export async function clearSeeds(eventId: string) {
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
-  if (event.draw_locked) throw new Error('Draw is locked. Unlock it before clearing seeds.');
+  if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before clearing seeds.');
 
   const doubles = isDoublesEvent(event.event_type);
   const table = doubles ? 'tournament_pairs' : 'tournament_participants';

@@ -1,6 +1,10 @@
 import * as Sentry from '@sentry/nextjs';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseIntegration } from '@supabase/sentry-js-integration';
+// Deep import for the same reason as instrumentation.ts — the shared barrel
+// reaches node 'crypto' through email/unsubscribe, and a Sentry init file is
+// loaded from places that will not tolerate that.
+import { dropExpectedEvent } from '@badminton/shared/src/utils/expected-error';
 
 // CPU profiling is a native add-on. Load defensively so a missing/incompatible
 // prebuilt binary (ARM Pi, gated install scripts) degrades to "no profiling"
@@ -25,6 +29,10 @@ Sentry.init({
   profileSessionSampleRate: 1.0 /* beta: full sampling — lower after beta */,
   profileLifecycle: 'trace',
   ignoreErrors: ['NEXT_NOT_FOUND'],
+  // Backstop under instrumentation.ts's onRequestError wrapper: any other
+  // automatic server-side capture path still funnels through beforeSend. Drops
+  // only errors explicitly marked ExpectedError; everything else is untouched.
+  beforeSend: dropExpectedEvent,
   integrations: [
     supabaseIntegration(SupabaseClient, Sentry, {
       tracing: true,

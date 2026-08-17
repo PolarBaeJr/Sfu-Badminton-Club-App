@@ -17,6 +17,14 @@ export class ExpectedError extends Error {
   }
 }
 
+// THE STRUCTURAL `expected === true` ARM IS LOAD-BEARING, not belt-and-braces.
+// instrumentation.ts and the Sentry init files deep-import this module
+// (@badminton/shared/src/utils/expected-error) while app code imports it through
+// the barrel, because the barrel drags node 'crypto' into an edge bundle. Same
+// resolved path, so webpack dedupes today and `instanceof` happens to hold — but
+// the moment anything gives those two entry points separate module instances,
+// instanceof-only would stop recognising a refusal and every one of them would
+// go back to being filed as a fault. Do not "tidy" this to instanceof.
 export function isExpectedError(err: unknown): boolean {
   return (
     err instanceof ExpectedError ||
@@ -121,4 +129,53 @@ export function isExpectedDbGuard(message: string): boolean {
     EXPECTED_DB_GUARD_PREFIXES.some((p) => trimmed.startsWith(p)) ||
     EXPECTED_DB_GUARD_PATTERNS.some((p) => p.test(trimmed))
   );
+}
+
+// runAction is not the only way a refusal reaches Sentry, and it was never the
+// noisy one. An action that throws instead of returning — createSeason,
+// recordMatchResult, the check-in actions — never reaches runAction's catch at
+// all: the throw escapes the action, Next.js hands it to the `onRequestError`
+// instrumentation hook, and @sentry/nextjs's captureRequestError files it as an
+// unhandled fault. That is where "ExpectedError: year: Number must be greater
+// than or equal to 2000" came from, mechanism auto.function.nextjs
+// .on_request_error, handled: no. No captureException call site is involved, so
+// auditing call sites could never have found it.
+//
+// This wraps that hook so a refusal is dropped before it becomes an issue.
+//
+// MARKER ONLY — deliberately isExpectedError and NOT isExpectedFailure, which
+// is the difference between this and runAction. runAction's allowlist sees the
+// errors of one action body; this hook sees every error from every route, page,
+// RSC render and route handler in the app. A genuine fault that happens to be
+// rethrown carrying guard text would be dropped here and never reported, and
+// this file already argues that case (see why 'Challenge not found' is off the
+// allowlist: an RLS regression is indistinguishable from a real deletion). So a
+// refusal has to opt in positively, by being constructed as an ExpectedError or
+// carrying `expected === true`. Anything else is still a fault and still
+// reported — which keeps the failure mode "noise", never "silence".
+//
+// Generic over the hook's own parameters rather than restating them, so a
+// signature change in @sentry/nextjs is a type error at the binding rather than
+// a silently wrong wrapper.
+export function skipExpectedRequestErrors<Args extends [unknown, ...unknown[]], R>(
+  capture: (...args: Args) => R
+): (...args: Args) => R | undefined {
+  return (...args: Args) => {
+    if (isExpectedError(args[0])) return undefined;
+    return capture(...args);
+  };
+}
+
+// The same decision for Sentry's `beforeSend`, as a backstop under the hook
+// above: any OTHER automatic server-side capture path (the SDK's own server
+// action / route handler wrappers) still funnels through beforeSend, and this
+// drops a refusal there too. Reads hint.originalException because by beforeSend
+// the event is already serialized — the `expected` marker only survives on the
+// original throwable, not on the exception values in the event payload.
+//
+// Returning the event unchanged is the only other outcome: this never mutates,
+// tags or reshapes anything, so adding it to an init cannot change what a
+// genuine fault looks like in the dashboard.
+export function dropExpectedEvent<E>(event: E, hint?: { originalException?: unknown }): E | null {
+  return isExpectedError(hint?.originalException) ? null : event;
 }

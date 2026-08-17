@@ -81,7 +81,7 @@ async function performCheckIn(
     .eq('id', sessionId)
     .single();
 
-  if (!session || session.status !== 'open') throw new Error('This session is closed');
+  if (!session || session.status !== 'open') throw new ExpectedError('This session is closed');
 
   // Read the live window tunables rather than the fallback constants, so the
   // message shown here matches what session_checkin_open() will actually allow.
@@ -147,7 +147,7 @@ async function checkInWithTokenImpl(token: string) {
   // enumeration oracle the uniform message exists to prevent.
   const player = await requirePlayer();
 
-  if (!CHECKIN_TOKEN_REGEX.test(token)) throw new Error('Invalid check-in code');
+  if (!CHECKIN_TOKEN_REGEX.test(token)) throw new ExpectedError('Invalid check-in code');
 
   // session_checkin_tokens has RLS on with no policies (00024) — only the
   // service-role client can resolve a token.
@@ -157,7 +157,7 @@ async function checkInWithTokenImpl(token: string) {
     .select('session_id')
     .eq('token', token)
     .maybeSingle();
-  if (!tokenRow) throw new Error('Invalid check-in code');
+  if (!tokenRow) throw new ExpectedError('Invalid check-in code');
 
   const sessionId = tokenRow.session_id as string;
   const { alreadyCheckedIn } = await performCheckIn(player, sessionId);
@@ -181,7 +181,7 @@ async function setSessionIntentImpl(
 
   const { data: session } = await supabase
     .from('sessions').select('status').eq('id', sessionId).single();
-  if (!session || session.status !== 'open') throw new Error('This session is closed');
+  if (!session || session.status !== 'open') throw new ExpectedError('This session is closed');
 
   if (intent === null) {
     const { error } = await supabase

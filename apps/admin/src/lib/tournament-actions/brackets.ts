@@ -702,7 +702,7 @@ async function generateSingleEliminationBracketImpl(
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
-  if (event.draw_locked) throw new Error('Draw is locked. Unlock it before generating bracket.');
+  if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before generating bracket.');
   // The knockout half of the finalisation block, which only ever reached the
   // round-robin path (1922133 wired it into one of the two generators). The
   // reasoning applies here at least as hard: finalizeEvent reads final_position
@@ -780,7 +780,7 @@ async function generateSingleEliminationBracketImpl(
   }
 
   const N = entries.length;
-  if (N < 2) throw new Error('Need at least 2 participants to generate a bracket');
+  if (N < 2) throw new ExpectedError('Need at least 2 participants to generate a bracket');
 
   // ------------------------------------------------------------
   // THE SEEDS THAT WERE PROMISED A SKIP (00124)
@@ -1319,7 +1319,7 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
 
   const { data: event } = await adminClient.from('tournament_events').select('*').eq('id', eventId).single();
   if (!event) throw new Error('Event not found');
-  if (event.draw_locked) throw new Error('Draw is locked. Unlock it before generating matches.');
+  if (event.draw_locked) throw new ExpectedError('Draw is locked. Unlock it before generating matches.');
   assertNotFinalised(event, 'regenerated');
 
   // THE POOL HALF OF A POOL-TO-BRACKET EVENT (00107). Same generator, same
@@ -1380,7 +1380,7 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
   }
 
   const N = entries.length;
-  if (N < 3) throw new Error('Need at least 3 participants for round robin');
+  if (N < 3) throw new ExpectedError('Need at least 3 participants for round robin');
 
   // Same block as the knockout path, for the same reason — a round robin gives
   // every entrant a match, so an unsigned one plays the whole field.
