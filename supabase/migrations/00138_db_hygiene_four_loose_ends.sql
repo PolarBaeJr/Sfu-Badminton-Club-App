@@ -205,6 +205,17 @@
 -- for the code (no app change accompanies this section); applying it after
 -- leaves the old behaviour in place for exactly as long as it takes to run.
 
+-- ============================================================
+-- ONE TRANSACTION, on 00122/00126/00131's pattern
+-- ============================================================
+-- The assertion block at the foot is only worth having if a failure UNDOES the
+-- statements above it. DDL, COMMENT, GRANT, REVOKE and CREATE POLICY are all
+-- transactional in PostgreSQL, so wrapping the file makes it genuinely
+-- all-or-nothing rather than nearly so — and this file has two independent
+-- subjects, so a half-applied state would be a patched merge_players with an
+-- unhardened ledger, or the reverse, with nothing on disk saying which.
+BEGIN;
+
 DO $merge_fix$
 DECLARE
   v_def     text;
@@ -606,7 +617,16 @@ GRANT  SELECT             ON TABLE public.tournament_audit_log TO   authenticate
 
 REVOKE UPDATE, DELETE, TRUNCATE ON TABLE public.tournament_audit_log FROM service_role;
 
-DROP POLICY IF EXISTS "Service write tournament_audit" ON public.tournament_audit_log;
+-- All three DROPs are IF EXISTS, including the two names this file itself
+-- creates. The second one is not decoration: the first draft dropped only the
+-- old FOR ALL policy, and the container's idempotence pass — a straight second
+-- application of the whole file — died on
+-- `policy "Service append tournament_audit" ... already exists`. CREATE POLICY
+-- has no OR REPLACE and no IF NOT EXISTS, so drop-then-create is the only
+-- repeatable form.
+DROP POLICY IF EXISTS "Service write tournament_audit"  ON public.tournament_audit_log;
+DROP POLICY IF EXISTS "Service append tournament_audit" ON public.tournament_audit_log;
+DROP POLICY IF EXISTS "Service read tournament_audit"   ON public.tournament_audit_log;
 
 CREATE POLICY "Service append tournament_audit" ON public.tournament_audit_log
   FOR INSERT TO public
@@ -711,16 +731,23 @@ BEGIN
     END IF;
   END LOOP;
 
-  -- ---- §D. 00136's finding is still in the database ----
+  -- ---- §D. 00136's finding, if 00136 has been applied here ----
+  -- A NOTICE AND NOT AN EXCEPTION, and the first draft of this file had it the
+  -- other way round — which is how the container caught it. Requiring 00136's
+  -- COMMENT to be present would have made 00138 REFUSE TO APPLY TO PRODUCTION,
+  -- where 00136 is not applied yet (header). This file must not acquire an
+  -- ordering dependency on another file just to check somebody else's work, so
+  -- the hard assertion below is on the CHECK constraint, which has been there
+  -- since 00001 and is identical on both databases.
   v_txt := col_description('public.tournament_matches'::regclass,
              (SELECT attnum FROM pg_attribute
                WHERE attrelid = 'public.tournament_matches'::regclass AND attname = 'status'));
   IF v_txt IS NULL OR v_txt !~ 'disputed' THEN
-    RAISE EXCEPTION
-      '00138 assert: tournament_matches.status has no comment naming `disputed`. 00136 wrote it; §D relies on it and adds nothing of its own.';
+    RAISE NOTICE
+      '00138 §D: tournament_matches.status carries no comment naming `disputed` — 00136 is not applied to this database yet. Nothing for 00138 to do either way; 00136 is where that finding lives.';
   END IF;
-  -- And the value it documents must still be admitted, or the two readers §D
-  -- names are dead code.
+  -- The value 00136 documents must still be admitted, or the two readers §D
+  -- names are dead code. THIS one is hard: the CHECK predates both files.
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
      WHERE conrelid = 'public.tournament_matches'::regclass
@@ -797,6 +824,8 @@ BEGIN
   RAISE NOTICE '00138: all assertions passed.';
 END
 $assert$;
+
+COMMIT;
 
 -- ============================================================
 -- FOUND, NOT FIXED
@@ -922,26 +951,56 @@ $assert$;
 --   9.   the k_factor columns present and UNCOMMENTED, the status CHECK already
 --        admitting 'disputed'
 --
---   >>> PRE-STATE RESULT: 9/9 PASSED against production's dumped schema. <<<
+-- THE BUG IS THEN REPRODUCED BEFORE IT IS FIXED (check 10), because a run that
+-- only inspects the end state cannot tell a fix from a coincidence. Then 00138
+-- is applied, then 13 behavioural checks, then the WHOLE FILE IS APPLIED A
+-- SECOND TIME to prove idempotence.
 --
--- WHAT IS NOT YET PROVEN, stated plainly rather than implied:
---   * The post-application behavioural run (a stub merged into a roster row
---     leaving onboarding_completed FALSE; a survivor that already held TRUE
---     keeping it; merge_players AS service_role still repointing
---     tournament_audit_log.performed_by after the revokes; service_role's
---     UPDATE/DELETE/TRUNCATE actually raising 42501; idempotence on a second
---     end-to-end run) was SET UP AND NOT COMPLETED before this file was
---     committed.
---   * The same run against STAGING's pre-state, which differs on all three
---     subjects, was likewise not completed.
---   * The 23503 in FOUND, NOT FIXED item 1 is derived from the catalogue
---     (confdeltype = 'a' on all four FKs, and 595/595 rows carrying event_id on
---     staging) and is NOT container-proven.
+--   >>> RESULT: 23/23 CHECKS PASSED, TWICE — once with the pre-state built
+--   >>> from PRODUCTION's dumped schema and once from STAGING's, plus a clean
+--   >>> second application of the file in both. <<<
 --
--- READ THE FILE BEFORE APPLYING IT. Nothing here is destructive — no DROP of a
--- column, table or function; the only DROP is of a policy that is immediately
--- replaced by two narrower ones in the same file — and the assertion block will
--- abort the whole thing rather than leave a half-applied state. But the
--- behavioural half of the proof is outstanding, and this section will be
--- rewritten when it is done rather than quietly left to imply more than it did.
+-- The behavioural checks that matter most:
+--   10. THE BUG, REPRODUCED: merging a stub set onboarding_completed = TRUE.
+--   11. Fixed: the stub merges, the login is still adopted, the flag stays FALSE.
+--   12. OR never DEMOTES — a survivor that had already onboarded keeps it.
+--   13. OR still CONFERS — merging a genuinely onboarded login still sets it,
+--       which is the case the original TRUE existed for and must not be lost.
+--   14. merge_players called AS service_role STILL repoints
+--       tournament_audit_log.performed_by after the revokes. §E.3's
+--       definer-bypass argument as evidence, not assertion.
+--   15-16. service_role can still INSERT and SELECT the ledger (logAudit,
+--       readBonusLedger) — the two verbs whose loss would break placement bonuses.
+--   17-19. service_role UPDATE, DELETE and TRUNCATE all refused with 42501.
+--       ATTEMPTED, not inferred from has_table_privilege.
+--   20-22. anon refused even SELECT; authenticated keeps SELECT, loses INSERT.
+--   23. FOUND, NOT FIXED item 1 PROVEN: deleting a tournament_events row with an
+--       `event_created` audit row raises 23503.
+--
+-- THE STAGING RUN IS THE ONE THAT JUSTIFIES §0's REGEXP. After applying 00138 to
+-- staging's body, the live definition was queried for BOTH markers:
+--
+--     recompute_player_stats present -> t     (00123's work SURVIVED)
+--     COALESCE(v_remove.onboarding…) -> t     (the fix LANDED)
+--
+-- A literal CREATE OR REPLACE built from production's text would have returned
+-- f | t there — the fix applied and 00123 silently reverted. That is the failure
+-- mode the approach exists to prevent, and it is now measured rather than argued.
+--
+-- TWO THINGS THE CONTAINER CAUGHT AND SENT BACK INTO THIS FILE:
+--   * §D's check on 00136's COMMENT was written as an EXCEPTION and would have
+--     made 00138 REFUSE TO APPLY to production. It is now a NOTICE. And the
+--     notice fired on BOTH pre-states, which is its own finding: 00136 added no
+--     DDL — only a NOTIFY and a COMMENT — so it is UNAPPLIED ON BOTH DATABASES,
+--     and its 'disputed' finding currently exists only in the repository. Worth
+--     knowing when 00136 is applied: there is nothing to see afterwards either,
+--     which is exactly the sort of file that gets skipped.
+--   * The two new policies were created without a matching DROP IF EXISTS, so
+--     the second application died on "policy already exists". CREATE POLICY has
+--     no OR REPLACE. Fixed; idempotence now passes on both pre-states.
+--
+-- NOT PROVEN, and it is the one thing left: no PostgREST was put in front of the
+-- container, so the claim that no app path loses a verb rests on the grep of
+-- both apps recorded in §E.3 (four call sites, all INSERT or SELECT) rather than
+-- on an exercised request.
 -- ============================================================
