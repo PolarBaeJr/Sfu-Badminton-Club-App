@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { computeDrawLayout, drawHalves, drawLastRounds, fitScale, type DrawInputMatch } from '../bracket-layout';
+import {
+  computeDrawLayout, drawHalves, drawQuarters, drawLastRounds, fitScale, type DrawInputMatch,
+} from '../bracket-layout';
 import { nextPowerOf2 } from '../constants';
 
 const GEO = { cardH: 80, cardGap: 10, colW: 200, linkW: 30, headH: 30 };
@@ -467,12 +469,128 @@ describe('every view is dense — no band of the TREE is empty across all column
         }
       }
 
+      const quarters = drawQuarters(whole);
+      if (quarters) {
+        for (const quarter of quarters) {
+          const page = computeDrawLayout(quarter.matches, GEO, { centreSlots: 1 });
+          expect(emptyBand(page, GEO.cardH)).toBe(0);
+        }
+      }
+
       const finals = drawLastRounds(whole, 3);
       if (finals) {
         expect(emptyBand(computeDrawLayout(finals, GEO, { thirdPlace: true }), GEO.cardH)).toBe(0);
       }
     });
   }
+});
+
+describe('drawQuarters — a half of a half', () => {
+  /**
+   * THE UNION INVARIANT, which is the cheap check that "a half of a half" is a
+   * real cut rather than a plausible-looking one: four DISJOINT quarters, plus
+   * the two semi-finals they feed, plus the final, is the whole draw and nothing
+   * more. 124 + 2 + 1 = 127 on a 128.
+   */
+  it('is four disjoint sets that, with the semi-finals and the final, are the draw', () => {
+    for (const n of [16, 32, 64, 128]) {
+      const whole = computeDrawLayout(drawOf(n), GEO);
+      const quarters = drawQuarters(whole)!;
+      expect(quarters).toHaveLength(4);
+
+      const ids = quarters.flatMap((q) => q.matches.map((m) => m.id));
+      expect(new Set(ids).size).toBe(ids.length);
+
+      const feeds = new Set(quarters.map((q) => q.feeds.id));
+      expect(feeds.size).toBe(2);
+      const final = whole.nodes.find((x) => x.depth === whole.rounds - 1)!.id;
+      expect(new Set([...ids, ...feeds, final]).size).toBe(whole.nodes.length);
+    }
+  });
+
+  /** Quarters 0/1 share one semi-final and 2/3 the other — the `i ^ 1` pairing. */
+  it('pairs the quarters that share a semi-final, adjacently and in draw order', () => {
+    const whole = computeDrawLayout(drawOf(64), GEO);
+    const quarters = drawQuarters(whole)!;
+    expect(quarters[0]!.feeds.id).toBe(quarters[1]!.feeds.id);
+    expect(quarters[2]!.feeds.id).toBe(quarters[3]!.feeds.id);
+    expect(quarters[0]!.feeds.id).not.toBe(quarters[2]!.feeds.id);
+
+    // IN DRAW ORDER, which is what makes the index the label. Compared WITHIN a
+    // half and not across the two, because a converging sheet stacks each side
+    // from its own zero: the top half is the LEFT column and the bottom half the
+    // right one, so both begin at y = 0 and the halves' own names are draw-order
+    // names rather than screen positions. Quarters 0/1 descend the left column
+    // and 2/3 the right.
+    const topOf = (q: { matches: Array<{ id: string }> }) => {
+      const ids = new Set(q.matches.map((m) => m.id));
+      return Math.min(...whole.nodes.filter((n) => ids.has(n.id)).map((n) => n.y));
+    };
+    expect(topOf(quarters[0]!)).toBeLessThan(topOf(quarters[1]!));
+    expect(topOf(quarters[2]!)).toBeLessThan(topOf(quarters[3]!));
+  });
+
+  it('is a subset of exactly one half, and of the half on its own side', () => {
+    const whole = computeDrawLayout(drawOf(128), GEO);
+    const halves = drawHalves(whole)!;
+    const top = new Set(halves.top.map((m) => m.id));
+    const bottom = new Set(halves.bottom.map((m) => m.id));
+    const quarters = drawQuarters(whole)!;
+    expect(quarters.slice(0, 2).flatMap((q) => q.matches).every((m) => top.has(m.id))).toBe(true);
+    expect(quarters.slice(2).flatMap((q) => q.matches).every((m) => bottom.has(m.id))).toBe(true);
+  });
+
+  /**
+   * THE SIZES IT IS LAID OUT AT CANNOT REACH THE ANSWER, which is why
+   * `drawQuarters` may use unit geometry internally. Sides are assigned by
+   * walking the wiring down from the root, before `computeRowY` is called, so
+   * they are geometry-independent — asserted rather than relied on.
+   */
+  it('is the same cut whatever geometry the layout it was handed used', () => {
+    const a = drawQuarters(computeDrawLayout(drawOf(64), GEO))!;
+    const b = drawQuarters(computeDrawLayout(drawOf(64), {
+      cardH: 7, cardGap: 3, colW: 999, linkW: 1, headH: 0,
+    }))!;
+    expect(b.map((q) => [q.feeds.id, q.matches.map((m) => m.id)]))
+      .toEqual(a.map((q) => [q.feeds.id, q.matches.map((m) => m.id)]));
+  });
+
+  /**
+   * *** THE CLAIM THAT EARNS THE VIEW: QUARTERING BUYS A SIZE CLASS, twice over.
+   * *** A half of a 128 is the size of a whole 64; a quarter of a 128, with the
+   * semi-final it feeds borrowed into the centre column, is the size of a whole
+   * 32. Not approximately — the same two numbers, which is what makes it a size
+   * class rather than a saving.
+   */
+  it('is A WHOLE DRAW TWO SIZES DOWN once it is laid out again', () => {
+    for (const [big, small] of [[128, 32], [64, 16], [32, 8]] as const) {
+      const whole = computeDrawLayout(drawOf(big), GEO, { thirdPlace: true });
+      const quarter = computeDrawLayout(drawQuarters(whole)![0]!.matches, GEO, { centreSlots: 1 });
+      const reference = computeDrawLayout(drawOf(small), GEO, { thirdPlace: true });
+      expect([quarter.width, quarter.height]).toEqual([reference.width, reference.height]);
+    }
+  });
+
+  it('has nothing to give a draw with no quarters, or one it cannot wire', () => {
+    // A four-entry draw's half is one match, which has no half of its own.
+    expect(drawQuarters(computeDrawLayout(drawOf(4), GEO))).toBeNull();
+    expect(drawQuarters(computeDrawLayout(drawOf(2), GEO))).toBeNull();
+    // The linear fallback draws no lines because it does not know who feeds
+    // whom, and a cut by side would assert wiring the sheet just declined to.
+    // Five matches into two is the shape that fails the halving test — ceil(5/2)
+    // is 3, not 2 — while the rounds above it halve perfectly.
+    const ladder = computeDrawLayout(
+      [
+        ...[0, 1, 2, 3, 4].map((p) => ({ id: `a${p}`, round_number: 1, bracket_position: p })),
+        { id: 'b0', round_number: 2, bracket_position: 0 },
+        { id: 'b1', round_number: 2, bracket_position: 1 },
+        { id: 'c0', round_number: 3, bracket_position: 0 },
+      ],
+      GEO,
+    );
+    expect(ladder.mode).toBe('linear');
+    expect(drawQuarters(ladder)).toBeNull();
+  });
 });
 
 describe('computeDrawLayout — centreSlots, the final on a half page', () => {

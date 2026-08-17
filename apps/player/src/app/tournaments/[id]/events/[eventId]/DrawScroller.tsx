@@ -136,15 +136,18 @@ const BOTTOM_GUTTER = 24;
  * currency here.
  *
  * WHY 0.80 AND NOT HIGHER. The floor must never be what stops the largest draw
- * that CAN fit a screen from fitting it. Measured in full screen at 1920×1080 —
- * a 1884px pane and a 1010px budget once this shell's padding and header are
- * out — a 64-draw fits both axes at 0.842, and 8, 16 and 32 fit at 1.0 outright.
- * (1012 and 0.843 before the controls joined the header's row; the two pixels
- * that cost are worth what a row that cannot underlap buys.) So 0.80 costs
- * nothing at all at the resolution this feature exists for, and still leaves
- * 0.04 of margin against a projector whose aspect differs a little. A 128-draw
- * would need 0.41 and is refused by this floor — which is what the halves
- * below exist to answer, and until they did it held at 0.80 and scrolled.
+ * that CAN fit a screen from fitting it. RE-MEASURED in headless Chrome against
+ * the compiled CSS, because the figures this note used to carry were 12px
+ * optimistic: the pane is the viewport less 36px (18px of shell padding a side)
+ * and the budget is the viewport less 82px — 14px of padding top and bottom, a
+ * 44px `.draw-topline` and its 10px margin. So 1884×998 at 1920×1080, not the
+ * 1010 claimed here before, and a 64-draw (2088×1200) fits both axes at 0.8317
+ * rather than 0.842. The conclusion survives with a thinner margin than was
+ * advertised: 0.80 still costs nothing at the resolution this feature exists
+ * for, but the margin is 0.03 and not 0.04, so a projector whose aspect differs
+ * much would lose the whole 64 draw. 8, 16 and 32 fit outright. A 128-draw needs
+ * 0.4186 and is refused by this floor — which is what the halves below exist to
+ * answer, and until they did it held at 0.80 and scrolled.
  *
  * WHAT IT COSTS, said plainly: on a 1280×720 projector a 32-draw needs 0.73 and
  * so now scrolls where the page floor would have fitted it whole. That is the
@@ -215,8 +218,30 @@ export interface DrawView {
    * a sheet that is the whole draw is not a claim anybody has to check.
    */
   heading?: string;
-  /** What the overflow notice calls this sheet: "draw", "half", "view". */
+  /** What the overflow notice calls this sheet: "draw", "half", "quarter", "view". */
   noun: string;
+  /**
+   * HOW MANY PAGES OF THIS VIEW'S KIND MAKE UP THE WHOLE DRAW: 1 for the whole
+   * sheet, 2 for a half, 4 for a quarter. 0 means the view is an EXTRACT and not
+   * a cover at all — the business end, which leaves 120 of a 128's matches out
+   * on purpose, so no number of copies of it is the draw.
+   *
+   * IT EXISTS FOR THE ROTATION AND FOR NOTHING ELSE, and the reason is what four
+   * quarters did to it. Rotation used to sweep every view that FITS, which was
+   * right while the only cover tiers were the whole draw and its halves — but on
+   * a 128 at 1080p the halves and the quarters both fit, so the sweep became
+   * seven stops and the room waited 105 seconds to see its own half again, half
+   * of that spent on the same matches it had just been shown. A cover tier is
+   * the unit that makes the sweep a TOUR of the draw rather than a list of
+   * sheets, and one tier is all a tour needs.
+   *
+   * A NUMBER RATHER THAN A NAME, so the rule below can say "the coarsest tier
+   * that fits" without knowing that a half is called a half. A view earns its
+   * place in the rotation by what it covers and whether it fits, exactly as
+   * before; what has changed is that covering the same ground twice no longer
+   * counts as two places.
+   */
+  cover: number;
   /** The sideways-overflow line, which differs by what the sheet meets at. */
   sideHint: string;
   /** This view's UNSCALED size, which is not necessarily the whole draw's. */
@@ -488,28 +513,47 @@ export function DrawScroller({
   }, [activeKey]);
 
   /**
-   * WHAT ROTATION SWEEPS: the views that actually FIT, in list order.
+   * WHAT ROTATION SWEEPS: ONE COVER TIER, plus whatever extracts fit.
    *
-   * With every view in one list, rotation is "advance to the next option" — but
-   * an unattended wall chart that spends fifteen seconds in three on a cropped
+   * An unattended wall chart that spends fifteen seconds in three on a cropped
    * 128 whole draw is showing the room a corner of a bracket, which is the exact
-   * failure paging exists to end. So the sweep is filtered by the same floor
-   * that picks the default view: on a 128 at 1080p the whole draw needs 0.42 and
-   * drops out, and the sweep is top half → bottom half → quarter-finals to
-   * final. Nothing is special-cased by name; a view earns its place in the
-   * rotation by fitting the screen it is on.
+   * failure paging exists to end — so the floor that picks the default view
+   * filters this too. But fitting is not sufficient on its own, which is what
+   * four quarters proved: a 128 at 1080p fits both halves AND all four quarters,
+   * and sweeping all of them is a 105-second cycle that shows the top half's
+   * matches twice. So the sweep is the COARSEST cover tier every page of which
+   * fits — see `cover` on DrawView — and it is a tour of the draw in the fewest
+   * pages the screen can carry.
    *
-   * The fallback to the unfiltered list is for the screen where fewer than TWO
-   * views fit — a 128 at 720p, where only the business end does. A sweep with
-   * one stop is a button that turns itself on and then appears broken, and
-   * rotating through crops at least shows the room a different part of the draw
-   * each time, which is more than a still crop does.
+   * THE EXTRACT RIDES ALONG. "Quarter-finals to final" is not a page of any
+   * cover, and it is what a room at 7pm on finals night is actually there for, so
+   * it joins any tier that fits beside it. That keeps a 128 at 1080p on exactly
+   * the three stops it swept before this change.
+   *
+   * WHEN NOTHING FITS, THE FINEST TIER, not the coarsest. On a 128 at 720p every
+   * tier crops: the whole draw at 0.2676, the halves at 0.5317, the quarters at
+   * 0.7300 — measured, and the quarters are the only one of the three that is
+   * within a tenth of the floor.
+   * The old rule fell back to the unfiltered list and put the 0.27 sheet — a
+   * corner of a bracket — on the wall for fifteen seconds in five. The finest
+   * tier is the least-cropped thing there is, so that is what a screen too small
+   * for any of them gets.
+   *
+   * The fallback to the unfiltered list survives for the sweep of ONE, which is
+   * a button that turns itself on and then appears broken.
    */
-  const fitting = views.filter((v) => {
+  const fits = (v: DrawView) => {
     const f = fitOf(v.width, v.height);
     return f !== null && f >= FULLSCREEN_FLOOR;
-  });
-  const sweep = fitting.length > 1 ? fitting : views;
+  };
+  const tiers = Array.from(new Set(views.filter((v) => v.cover > 0).map((v) => v.cover)))
+    .sort((a, b) => a - b);
+  // EVERY page of a tier, not any: a tour that skips a quarter is not a tour.
+  const tier = tiers.find((t) => views.every((v) => v.cover !== t || fits(v)))
+    ?? tiers[tiers.length - 1]
+    ?? 1;
+  const touring = views.filter((v) => v.cover === tier || (v.cover === 0 && fits(v)));
+  const sweep = touring.length > 1 ? touring : views;
   const sweepAt = sweep.findIndex((v) => v.key === activeKey);
   const nextKey = sweep.length ? sweep[(sweepAt + 1) % sweep.length]!.key : activeKey;
 

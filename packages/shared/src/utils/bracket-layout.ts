@@ -639,11 +639,12 @@ function layoutLinear<M extends DrawInputMatch>(
 // sheet that was reported as looking broken. Re-laid-out, the same four
 // quarter-finals stack at one pitch and the gap is 10px.
 //
-// The two extractors differ only in which way they cut:
-//   * `drawHalves`      cuts by SIDE  — the subtree under each semi-final,
+// The extractors differ only in which way they cut:
+//   * `drawHalves`      cuts by SIDE — the subtree under each semi-final,
+//   * `drawQuarters`    cuts by SIDE TWICE — literally a half of a half,
 //   * `drawLastRounds`  cuts by DEPTH — the last N rounds, the business end.
-// Both then go through the same engine, so neither can drift from the chart it
-// came from and neither can invent geometry of its own.
+// All three then go through the same engine, so none can drift from the chart it
+// came from and none can invent geometry of its own.
 
 /**
  * Split a converging draw into its two halves, as the match lists each is made
@@ -682,6 +683,75 @@ export function drawHalves<M extends DrawInputMatch>(
     else if (node.side === 'right') bottom.push(node.match);
   }
   return top.length && bottom.length ? { top, bottom } : null;
+}
+
+/**
+ * The sizes `drawQuarters` lays a half out at, and they are deliberately absurd.
+ *
+ * It re-lays a half out for ONE reason: to read `node.side` off the result, and
+ * a side is decided by walking the advancement wiring down from the root —
+ * `layoutConverging` assigns every one of them BEFORE `computeRowY` is called,
+ * so no card's half depends on any of these numbers. Feeding real geometry in
+ * would suggest the coordinates were being used and would invite somebody to
+ * keep them in step with the app's; unit sizes say out loud that the
+ * coordinates are thrown away. (`bracket-layout.test.ts` asserts the quarters
+ * are the same whatever geometry is used, so this is checked rather than
+ * claimed.)
+ */
+const SIDES_ONLY: DrawGeometry = { cardH: 1, cardGap: 0, colW: 1, linkW: 0, headH: 0 };
+
+/**
+ * A QUARTER OF A DRAW — the subtree under one quarter-final — as the match list
+ * it is made of, and the semi-final that quarter feeds.
+ *
+ * *** IT IS A HALF OF A HALF, AND IT IS COMPUTED THAT WAY. *** `drawHalves` is
+ * called, each half is fed back through the engine, and `drawHalves` is called
+ * again on the result. There is no second rule deciding which card is in which
+ * quarter, so the four quarters cannot disagree with the two halves about a
+ * card — a quarter is a subset of exactly one half by construction rather than
+ * by a check somebody has to remember to write.
+ *
+ * WHY IT IS WORTH HAVING, with the number that earns it. Halving buys a size
+ * class: a half of a 128 is 64 entrants meeting at a semi-final, byte-identical
+ * in size to a whole 64. Quartering buys the NEXT one, and byte-identically
+ * again — a quarter of a 128 laid out with its semi-final borrowed into the
+ * centre column is 1704×608, which is exactly the size of a whole 32 draw. That
+ * is the rung the halves left missing: measured in the player app's full screen
+ * at 1280×720, a 64's half needs 0.730 against the 0.80 legibility floor and
+ * crops, while its quarter fits at 0.9424.
+ *
+ * `feeds` IS RETURNED BECAUSE A QUARTER PAGE HAS NO EXIT WITHOUT IT. The page
+ * stops at a quarter-final, and a wall chart whose winner goes nowhere is not a
+ * wall chart. It is the ROOT OF THE HALF the quarter came from, which is what
+ * makes it the right card rather than a plausible one: the two quarters of a
+ * half feed that half's root and nothing else. A caller is expected to draw it
+ * with `options.centreSlots: 1`, exactly as a half page draws the final.
+ *
+ * IN DRAW ORDER, TOP TO BOTTOM. `computeDrawLayout` stacks each side's first
+ * round from its lowest `bracket_position` downwards on BOTH halves — see the
+ * note on `linkSegments` about mirroring X only — so index order here is the
+ * order the four quarters appear down the sheet, and quarters 0/1 and 2/3 are
+ * the pairs that share a semi-final.
+ *
+ * Returns null when there is no quarter to take: a linear fallback layout has
+ * no sides at all, and a draw of fewer than three rounds has no half with a
+ * half of its own.
+ */
+export function drawQuarters<M extends DrawInputMatch>(
+  layout: DrawLayout<M>,
+): Array<{ matches: M[]; feeds: M }> | null {
+  const halves = drawHalves(layout);
+  if (!halves) return null;
+  const out: Array<{ matches: M[]; feeds: M }> = [];
+  for (const half of [halves.top, halves.bottom]) {
+    const relaid = computeDrawLayout(half, SIDES_ONLY);
+    const root = relaid.nodes.find((n) => n.depth === relaid.rounds - 1)?.match;
+    const pair = drawHalves(relaid);
+    if (!root || !pair) return null;
+    out.push({ matches: pair.top, feeds: root });
+    out.push({ matches: pair.bottom, feeds: root });
+  }
+  return out;
 }
 
 /**

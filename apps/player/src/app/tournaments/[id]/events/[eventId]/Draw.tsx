@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
-import { getRoundName, computeDrawLayout, drawHalves, drawLastRounds, splitPairLabel } from '@badminton/shared';
+import {
+  getRoundName, computeDrawLayout, drawHalves, drawQuarters, drawLastRounds, splitPairLabel,
+} from '@badminton/shared';
 import type { DrawSide, DrawLayout } from '@badminton/shared';
 import { DrawScroller, type DrawView } from './DrawScroller';
 
@@ -50,10 +52,10 @@ const GEOMETRY = {
  * be pure cost.
  *
  * Measured in full screen against the compiled CSS. At 1920×1080 a 16-draw
- * (four rounds, 1320×608) fits both axes at 1.0 with room to spare, and at
- * 1280×720 — the worst projector this feature admits to — it still fits at
- * 0.94. A 32-draw is the first that does not: it needs 0.73 at 720p, below the
- * 0.80 floor, and so is the first that has anything to gain.
+ * (four rounds, 1320×349) fits both axes at 1.43, and at 1280×720 — the worst
+ * projector this feature admits to — it still fits at 0.9424. A 32-draw is the
+ * first that does not: at 1704×608 it needs 0.7300 at 720p, below the 0.80
+ * floor, and so is the first that has anything to gain.
  *
  * The cost this buys off is real but small: the halves are built by the SERVER
  * component whether or not full screen is ever entered, so their markup travels
@@ -63,6 +65,42 @@ const GEOMETRY = {
  * below, where one never is.
  */
 const HALVES_FROM_ROUNDS = 5;
+
+/**
+ * THE SMALLEST DRAW THAT IS EVER BUILT IN QUARTERS — six rounds, so 64 entrants
+ * and up. Derived exactly as HALVES_FROM_ROUNDS is, one rung along: it is the
+ * smallest draw whose HALF a projector can fail to fit, so below it a quarter
+ * could never be the sheet that rescued anything.
+ *
+ * Measured in full screen at 1280×720, the worst projector this feature admits
+ * to. A 32-draw's half is 1320×477 and fits both axes at 0.9424, comfortably
+ * over the 0.80 floor — so a 32 has nothing to gain and its quarter would be
+ * seven matches on a sheet whose centre column carries a borrowed card. A
+ * 64-draw's half is 1704×625 and needs 0.730; it crops, and its quarter
+ * (1320×349) fits at 0.9424. That is the gap this exists to close.
+ *
+ * WHAT IT DOES NOT CLOSE, said plainly: a 128's quarter is 1704×608 and needs
+ * 0.730 at 720p as well — the WIDTH binds, and no amount of cutting by side
+ * fixes that below an eighth. A 128 on a 720p projector still falls back to the
+ * business end, which fits at 1.329.
+ *
+ * The cost is the same cost the halves pay and it is paid by the SERVER: four
+ * more sheets travel in the flight payload whether or not full screen is ever
+ * entered. That is why this is gated at 64 and not at 32 — a 32 is the commonest
+ * draw in the club and it pays nothing.
+ */
+const QUARTERS_FROM_ROUNDS = 6;
+
+/**
+ * WHAT THE FOUR QUARTERS ARE CALLED, top to bottom.
+ *
+ * The draw has no established name for a quarter the way it has "top half" and
+ * "bottom half", so these are anchored at the ends: the two the reader can place
+ * without counting are named for where they are, and the two in between are
+ * given the ordinals that put them in order between them. `drawQuarters` returns
+ * them in this order — down the sheet — so the index is the label.
+ */
+const QUARTER_LABELS = ['Top quarter', 'Second quarter', 'Third quarter', 'Bottom quarter'] as const;
 
 /**
  * THE BUSINESS END: quarter-finals, semi-finals, final.
@@ -275,6 +313,10 @@ export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle, hea
           label,
           heading: label,
           noun: 'half',
+          // TWO PAGES MAKE THE WHOLE DRAW. See `cover` on DrawView: this is what
+          // stops the rotation showing the room the halves AND the quarters, which
+          // is the same matches twice a cycle.
+          cover: 2,
           sideHint: 'Scroll sideways — this half meets at the semi-final',
           width: pageLayout.width,
           height: pageLayout.height,
@@ -283,7 +325,7 @@ export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle, hea
           body: (
             <ChartBody
               layout={pageLayout}
-              half={half}
+              part={label.toLowerCase()}
               roundName={roundName}
               nameOf={nameOf}
               seedOf={seedOf}
@@ -312,6 +354,93 @@ export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle, hea
                       caption: THIRD_PLACE_CAPTION,
                     }]
                   : []),
+              ]}
+            />
+          ),
+        };
+      })
+    : [];
+
+  /**
+   * THE FOUR PAGES A DRAW TOO BIG FOR A 720p PROJECTOR IS SHOWN AS.
+   *
+   * A quarter is a HALF OF A HALF and `drawQuarters` computes it that way, so
+   * nothing here decides which card is in which quarter — see its note. What
+   * this owns is the same one decision the halves own: what goes in the clear
+   * centre column under the page's root.
+   *
+   * ONE BORROWED CARD, AND IT IS THE SEMI-FINAL. The rule the halves established
+   * is "borrow the one card your root feeds, because its other feeder is on
+   * another page", and that rule carries here unchanged: a half's root is a
+   * semi-final and it borrows the final; a quarter's root is a quarter-final and
+   * it borrows the semi-final. Following it rather than extending it is what
+   * makes a quarter come out 1704×608 on a 128 — byte-identical to a whole 32
+   * draw, which is the same "buys a size class" the halves earned.
+   *
+   * NO FINAL, and that is not an oversight. The final is two cards up from this
+   * page's root, so borrowing it would mean borrowing the semi-final's own
+   * sibling context too, and the sheet the room wants for the final is already in
+   * this dropdown: "Quarter-finals to final" fits at 1.329 on the very projector
+   * that made quarters necessary.
+   *
+   * NO THIRD-PLACE PLAYOFF EITHER, unlike a half, and the asymmetry is the
+   * arithmetic rather than a taste. A half always contributes exactly one of the
+   * two beaten semi-finalists, so the card is certainly about it. A quarter
+   * contributes one only if its own winner loses the semi-final — a card that is
+   * about this page half the time, printed on four pages, for 128px of the
+   * scarcest column on the sheet.
+   */
+  const quarters = layout.rounds >= QUARTERS_FROM_ROUNDS ? drawQuarters(layout) : null;
+
+  const quarterViews: DrawView[] = quarters && quarters.length === QUARTER_LABELS.length
+    ? quarters.map((quarter, i) => {
+        const pageLayout = computeDrawLayout(quarter.matches, GEOMETRY, { centreSlots: 1 });
+        const label = QUARTER_LABELS[i]!;
+        // `i ^ 1` IS THE PAIRING, and it is `drawQuarters`'s own: quarters 0 and 1
+        // feed one semi-final and 2 and 3 the other, so a quarter's partner is its
+        // index with the low bit flipped. Reading it off `quarter.feeds` instead —
+        // "the other quarter with the same feeds" — would be the same answer found
+        // the long way round.
+        const other = QUARTER_LABELS[i ^ 1]!;
+        return {
+          key: `quarter-${i + 1}`,
+          label,
+          heading: label,
+          noun: 'quarter',
+          cover: 4,
+          sideHint: 'Scroll sideways — this quarter meets at the quarter-final',
+          width: pageLayout.width,
+          height: pageLayout.height,
+          note: `The ${label.toLowerCase()} of the draw, meeting at its quarter-final in the middle. `
+            + `The semi-final it feeds is repeated below it.`,
+          body: (
+            <ChartBody
+              layout={pageLayout}
+              // THE PAGE'S QUARTER, not the node's side. On a quarter page
+              // `node.side` is the side of THAT page's own converging chart, which
+              // is an EIGHTH of the real draw — announcing it would tell a screen
+              // reader that half the cards on the top quarter are somewhere else.
+              part={label.toLowerCase()}
+              roundName={roundName}
+              nameOf={nameOf}
+              seedOf={seedOf}
+              extras={[
+                {
+                  key: 'semi',
+                  pos: pageLayout.centreSlots[0]!,
+                  match: quarter.feeds,
+                  heading: roundName(quarter.feeds.round_number),
+                  // TWO LINES, AND THAT IS MEASURED. In headless Chrome against
+                  // the compiled CSS at the 168px column this wraps to two lines
+                  // and the heading, its 8px of `mt-2` and the caption come to
+                  // 49.8px of the 64px `playoffCaptionH` reserves. A third line
+                  // would paint past `bodyH`, which the scaled box's height does
+                  // not include, so it would be shaved off at the bottom of the
+                  // scroll region rather than collide with anything — which is why
+                  // this is kept to the one thing the picture cannot say: where
+                  // the borrowed card's other entrant comes from.
+                  caption: `Its other entrant comes from the ${other.toLowerCase()}.`,
+                },
               ]}
             />
           ),
@@ -349,6 +478,11 @@ export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle, hea
         label: 'Quarter-finals to final',
         heading: 'Quarter-finals to final',
         noun: 'view',
+        // NOT A COVER OF THE DRAW AT ALL — see `cover` on DrawView. This sheet
+        // leaves 120 of a 128's matches out on purpose, so no number of copies of
+        // it is the draw, and it is the one view the rotation shows alongside
+        // whichever cover tier it settles on.
+        cover: 0,
         sideHint: 'Scroll sideways — the two sides meet at the final',
         width: finalsLayout.width,
         height: finalsLayout.height,
@@ -356,14 +490,14 @@ export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle, hea
         body: (
           <ChartBody
             layout={finalsLayout}
-            // NOT a half, so the cards keep their own sides — and those sides
+            // NOT a subset by side, so the cards keep their own sides — and those
             // are the real draw's. `computeDrawLayout` assigns sides by walking
             // down from the root, and the four quarter-finals of this subset
             // walk down from the same two semi-finals they do on the whole
             // sheet, so a card labelled "top half" here is in the top half
-            // there. That is why this view does not need the half override the
-            // two half pages do.
-            half={null}
+            // there. That is why this view does not need the override the half
+            // and quarter pages do.
+            part={null}
             roundName={roundName}
             nameOf={nameOf}
             seedOf={seedOf}
@@ -393,12 +527,18 @@ export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle, hea
    * they are one mutually exclusive choice, so they are one list. DrawScroller
    * shows `views[0]` on the page and whenever full screen is not on; everything
    * after it is only ever reachable from the full-screen dropdown.
+   *
+   * COARSEST FIRST, and the extract last. The order is what the arrow keys step
+   * and what the default view falls back through — "the first view that fits" —
+   * so putting the halves before the quarters is what makes a screen that can
+   * show a half show a half rather than a quarter of the same draw.
    */
   const views: DrawView[] = [
     {
       key: 'whole',
       label: 'Whole draw',
       noun: 'draw',
+      cover: 1,
       sideHint: 'Scroll sideways — the two halves meet at the final',
       width: layout.width,
       height: layout.height,
@@ -406,7 +546,7 @@ export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle, hea
       body: (
         <ChartBody
           layout={layout}
-          half={null}
+          part={null}
           roundName={roundName}
           nameOf={nameOf}
           seedOf={seedOf}
@@ -423,6 +563,7 @@ export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle, hea
       ),
     },
     ...halfViews,
+    ...quarterViews,
     ...finalsView,
   ];
 
@@ -477,8 +618,8 @@ export function Draw({ matches, thirdPlace, nameOf, seedOf, title, subtitle, hea
 
 /**
  * A card that is drawn in the centre column but is NOT part of the tree the
- * layout was built from — the third-place playoff on a whole draw, and on a
- * half page the final as well.
+ * layout was built from — the third-place playoff on a whole draw, on a half
+ * page the final as well, and on a quarter page the semi-final it feeds.
  *
  * Nothing is drawn joining any of them to anything, and that is one rule rather
  * than two exceptions: every card in here is fed from BOTH halves at once, so
@@ -496,30 +637,33 @@ interface CentreExtra {
 /**
  * THE CHART ITSELF, drawn from whatever layout it is handed.
  *
- * ONE RENDERER FOR THE WHOLE DRAW AND FOR A HALF OF IT. A half is the same
- * shape — a converging tree with a centre column — so it is the same markup
- * with a different layout, and writing it twice is how the two would come to
- * disagree about a card that had been edited on one of them.
+ * ONE RENDERER FOR THE WHOLE DRAW, FOR A HALF OF IT AND FOR A QUARTER. Every
+ * one of them is the same shape — a converging tree with a centre column — so
+ * it is the same markup with a different layout, and writing it more than once
+ * is how they would come to disagree about a card that had been edited on one.
  *
- * `half` IS THE PAGE'S HALF, AND IT OVERRIDES THE NODE'S SIDE FOR LABELLING.
- * On a half page `node.side` is the side of THAT page's own converging chart,
- * which is a quarter of the real draw — so reading the aria-label off it would
- * announce half the cards on the top-half page as being in the bottom half.
- * The draw has no name for a quarter, so a half page says only which half it
- * is, on every card.
+ * `part` IS THE PAGE'S OWN SUBSET, AND IT OVERRIDES THE NODE'S SIDE FOR
+ * LABELLING. On a subset page `node.side` is the side of THAT page's own
+ * converging chart — a quarter of the real draw on a half page, an eighth of it
+ * on a quarter page — so reading the aria-label off it would announce half the
+ * cards on the top-half page as being in the bottom half. A subset page says
+ * only which subset it is, on every card, and it is handed the words rather than
+ * deriving them because the words are the dropdown's own labels: a card cannot
+ * be announced as part of something the menu does not offer.
  */
 function ChartBody({
-  layout, half, roundName, nameOf, seedOf, extras,
+  layout, part, roundName, nameOf, seedOf, extras,
 }: {
   layout: DrawLayout<DrawMatch>;
-  half: 'top' | 'bottom' | null;
+  /** Lower case, and it is a whole phrase: 'top half', 'second quarter'. */
+  part: string | null;
   roundName: (roundNumber: number) => string;
   nameOf: Record<string, string>;
   seedOf: Record<string, number | null>;
   extras: CentreExtra[];
 }) {
   const roundLabel = (roundNumber: number, side: DrawSide) => {
-    if (half) return `${roundName(roundNumber)}, ${half} half`;
+    if (part) return `${roundName(roundNumber)}, ${part}`;
     return side === 'centre'
       ? roundName(roundNumber)
       : `${roundName(roundNumber)}, ${side === 'left' ? 'top' : 'bottom'} half`;

@@ -487,14 +487,28 @@ function MatchCard({ m, side, roundLabel, isDoubles, isLive, getEntryName, getSe
     isCompleted ? `, winner: ${getEntryName(winnerId)}` : ''
   }${actionable ? `. ${actionLabel ?? 'Change the recorded result'}` : ''}`;
 
-  // ONE GAME'S DIGITS PER SIDE, not the whole scoreline twice. A best-of-3 read
-  // from A's point of view is "21-19 15-21 21-18" — seventeen mono characters
-  // next to a doubles pair's name, which did not fit in the old 244px column
-  // and certainly does not fit in this one. Split down the middle it is "21 15
-  // 21" over "19 21 18", which is the same information in half the width and is
-  // how a printed draw sheet has always shown it.
-  const scoreFor = (which: 'a' | 'b') =>
-    scores?.map((g) => (which === 'a' ? g.a : g.b)).join(' ') ?? null;
+  // *** THE SCORELINE IS ON THE FOOTER STRIP, NOT ON THE ENTRANT ROWS, AND THAT
+  // REVERSES THE CALL THIS CARD WAS BUILT ON. ***
+  //
+  // It used to print one side's digits per row — "21 15 21" over "19 21 18" —
+  // and the note here defended that as "how a printed draw sheet has always
+  // shown it". The defence was true and beside the point: a printed draw sheet
+  // is not 196px wide. Those eight mono characters cost the row 53px plus its
+  // gap, which left the name field 97.2px, and a stacked doubles partner —
+  // "Bartholomew Fairweather" at 112.1px — did not fit in it. The comment on
+  // `Side` recorded that as a residue and named the price of closing it: moving
+  // the score off the entrant rows. This is that move.
+  //
+  // WHAT IT COSTS: the reader no longer sees at a glance which side took which
+  // game from the digits' own alignment. That is a smaller loss than it sounds —
+  // the games are printed as pairs in A's reading order, the winner's row already
+  // carries the success wash and the inset bar, and the loser's name is struck
+  // through — and it is the same trade the player app's chart card made, for the
+  // same reason and at a wider column than this one.
+  //
+  // SPACE-SEPARATED PAIRS rather than the player card's ", ": 17 mono characters
+  // instead of 19, on a strip that also has to carry a status word.
+  const scoreLine = scores?.length ? scores.map((g) => `${g.a}–${g.b}`).join(' ') : null;
 
   const body = (
     <>
@@ -523,7 +537,6 @@ function MatchCard({ m, side, roundLabel, isDoubles, isLive, getEntryName, getSe
         // An empty slot has no result to strike through — a skip match is
         // "completed" with a winner, so without the id guard SKIP renders struck.
         lost={isCompleted && !!winnerId && !!aId && winnerId !== aId}
-        score={scoreFor('a')}
         mirrored={side === 'right'}
       />
       <div className="border-t border-[var(--border)]" />
@@ -533,7 +546,6 @@ function MatchCard({ m, side, roundLabel, isDoubles, isLive, getEntryName, getSe
         isPlaceholder={!bId}
         won={isCompleted && winnerId === bId}
         lost={isCompleted && !!winnerId && !!bId && winnerId !== bId}
-        score={scoreFor('b')}
         mirrored={side === 'right'}
       />
 
@@ -543,15 +555,45 @@ function MatchCard({ m, side, roundLabel, isDoubles, isLive, getEntryName, getSe
         }`}
         style={{ height: FOOT_H }}
       >
+        {/* THE SCORELINE FIRST, and it is the only thing here allowed to
+            truncate. `games_per_match` is legal up to 7 (00031), so something has
+            to give on a long match whatever this does, and the scoreline is the
+            part whose full text is one press away in the score dialog and already
+            spelled out in the card's aria-label. Everything beside it is
+            `shrink-0`, so the strip degrades by clipping digits off the right
+            rather than by pushing the status or the action out of the card.
+            MEASURED in headless Chrome, against the 194px the strip has inside
+            the card's borders. A completed best-of-3 — what every event in the
+            club is set to — needs 147px, a live match with one game 100px, a skip
+            107px, a pending card 62px. What does NOT fit, and clips: a best-of-5
+            (219px), and a walkover or voided result that also carries three games
+            (222px and 202px), where the status word and "· Change" are both on the
+            strip as well. Those keep their words and lose digits, which is the
+            right way round — the words are what the digits cannot say. */}
+        {scoreLine && (
+          <span className="min-w-0 truncate font-mono text-[10px] text-[var(--text-secondary)]">
+            {scoreLine}
+          </span>
+        )}
         {actionLabel ? (
-          <span className="text-xs font-medium">{actionLabel}</span>
+          <span className="shrink-0 text-xs font-medium">{actionLabel}</span>
         ) : (
           <>
-            {/* The status stays visible on a settled match. This is a decided
-                result, and the card must not read as though the score is still
-                being entered — "Change" is the secondary thing on the row. */}
-            <StatusLabel status={m.status} isSkip={!!isSkip} />
-            {canChangeResult && <span className="text-[10px] text-[var(--text-muted)]">· Change</span>}
+            {/* THE STATUS WORD IS SUPPRESSED FOR EXACTLY ONE STATUS, and only
+                when the scoreline is there to say it instead. A completed match's
+                word is "Final", and a scoreline beside a winner in the success
+                colour is that word said better — printing both would spend a
+                third of a 180px strip agreeing with itself. Every other status is
+                something the digits do NOT say: a walkover, a voided result, a
+                skip, a match still pending. Those keep their word.
+                "Change" survives because it is an affordance and not a report:
+                editMatchResult is reachable only by pressing this card, and a
+                decided match with nothing on it saying so is how the whole
+                correction path went unfound before. */}
+            {!(scoreLine && m.status === 'completed') && (
+              <span className="shrink-0"><StatusLabel status={m.status} isSkip={!!isSkip} /></span>
+            )}
+            {canChangeResult && <span className="shrink-0 text-[10px] text-[var(--text-muted)]">· Change</span>}
           </>
         )}
       </div>
@@ -594,7 +636,6 @@ function Side({
   isPlaceholder,
   won,
   lost,
-  score,
   mirrored,
 }: {
   name: string;
@@ -602,12 +643,11 @@ function Side({
   isPlaceholder: boolean;
   won: boolean;
   lost: boolean;
-  score: string | null;
   /**
    * The bottom half of a converging draw runs right to left, so its cards are
-   * mirrored: the seed and the score sit on the OUTSIDE edge and the name reads
-   * inwards, towards the final. Without this the two halves read as one long
-   * chart with a gap in it rather than as two pointing at each other.
+   * mirrored: the seed sits on the OUTSIDE edge and the name reads inwards,
+   * towards the final. Without this the two halves read as one long chart with a
+   * gap in it rather than as two pointing at each other.
    */
   mirrored: boolean;
 }) {
@@ -629,22 +669,33 @@ function Side({
       <span className={`w-4 shrink-0 font-mono text-[10px] text-[var(--text-muted)] ${mirrored ? 'text-left' : 'text-right'}`}>
         {seed ? seed : ''}
       </span>
-      {/* A DOUBLES PAIR IS TWO LINES, one partner each.
-          MEASURED against the compiled CSS with the real Barlow files: this
-          name field is 97.2px once a best-of-3's digits are on the row (196px
-          column, less 16px padding, the 16px seed gutter, 12px of gaps and 53px
-          of score). A pair label is two whole names joined —
-          "Jonathan Smithson / Katarzyna Kowalski" is 228.5px at 13px — so it
-          printed about eight characters of thirty-eight and named neither of
-          them. Stacked at 10px a typical partner name is 85px and fits whole.
-          THE LONGEST STILL DOES NOT: "Bartholomew Fairweather" is 112.1px and
-          ellipsizes. That is a much smaller lie than the one it replaces, and
-          closing it would mean moving the score off the entrant rows — a change
-          to the card's whole shape rather than to its longest name. `title`
-          carries the full label for a mouse; the card's aria-label already
-          carries it for a reader.
+      {/* A DOUBLES PAIR IS TWO LINES, one partner each, AND THE LONGEST OF THEM
+          NOW FITS.
+          MEASURED against the compiled CSS with the real Barlow files. A pair
+          label is two whole names joined — "Jonathan Smithson / Katarzyna
+          Kowalski" is 228.5px at 13px — so unstacked it printed about eight
+          characters of thirty-eight and named neither of them. Stacking fixed
+          most of that and left a residue this note used to record: the field was
+          97.2px once a best-of-3's digits were on the row, and "Bartholomew
+          Fairweather" is 112.1px at 10px, so the longest partner name still
+          ellipsized.
+          THE DIGITS HAVE GONE TO THE FOOTER, which is what that residue was
+          waiting for — see the note on `scoreLine`. The field is now the 196px
+          column less its 1px borders, 16px of padding, the 16px seed gutter and
+          6px of gap: 156px, on EVERY card rather than only on the unplayed ones.
+          Re-measured in headless Chrome at that field: 112.1px, and 114.0px on
+          the winner's row, where `font-semibold` costs it another two pixels.
+          Neither truncates, so the longest name in the sample fits with 42px over.
+          STILL 10px, NOT 11, and this is the measurement that settles it: the two
+          entrant rows are `flex-1` inside an 88px card and come out 21.5px, while
+          two 10px lines at leading-[1.05] measure 21.0px. Two 11px lines would be
+          23.1px — the overflow-hidden shave this card has already been bitten by
+          once. The width is the win here; the type size is not on offer without
+          moving CARD_H, and CARD_H is what makes the whole card a 44px tap target
+          at the 0.5 zoom floor.
           A singles name, or a pair with a name of its own, is one line at 13px
-          exactly as before. */}
+          exactly as before. `title` carries the full label for a mouse; the
+          card's aria-label already carries it for a reader. */}
       <span
         className={`flex-1 min-w-0 flex flex-col justify-center ${
           won
@@ -670,7 +721,6 @@ function Side({
         })()}
       </span>
       {won && <span className="sr-only">(Winner)</span>}
-      {score && <span className="shrink-0 font-mono text-[11px] text-[var(--text-muted)]">{score}</span>}
     </div>
   );
 }
