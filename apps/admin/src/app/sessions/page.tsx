@@ -1,7 +1,8 @@
 export const dynamic = 'force-dynamic';
 import Link from 'next/link';
 import QRCode from 'qrcode';
-import { Card, EmptyState, PageHeader } from '@badminton/ui';
+import { Button, Card, EmptyState, PageHeader } from '@badminton/ui';
+import { QrCode } from 'lucide-react';
 import {
   CLUB_TIMEZONE,
   clubToday,
@@ -549,9 +550,35 @@ export default async function SessionsPage({
           variant={isTonight ? 'secondary' : 'ghost'}
           label={isTonight ? 'Open door list' : 'Door list'}
         />
-        {canIssueToken && session.status === 'open' && (
-          <CheckinQrDialog sessionId={id} url={qr?.url ?? null} svg={qr?.svg ?? null} />
-        )}
+        {session.status === 'open' &&
+          (canIssueToken ? (
+            <CheckinQrDialog sessionId={id} url={qr?.url ?? null} svg={qr?.svg ?? null} />
+          ) : (
+            // THE BUTTON THAT USED TO NOT EXIST. `sessions.checkin.token.write`
+            // is not in EXEC_BASELINE, and CheckinQrDialog is the ONLY caller of
+            // getOrCreateSessionCheckinToken — so an exec without it cannot
+            // cause a session's code to exist, and until now discovered that as
+            // an absence: no button, no message, nothing to search for. Two of
+            // the five execs on production are in exactly that state.
+            //
+            // A disabled control instead. It occupies the same place in the row
+            // as the real one, so the officer sees that a thing belongs here and
+            // is told what to ask for, rather than concluding at 19:00 with
+            // thirty people queueing that the feature was removed.
+            //
+            // DELIBERATELY NOT A WIDENING OF THE BASELINE. Making it work would
+            // mean putting a write into a list the club owner defined as
+            // "read everything, write nothing" (access-level.ts:456,
+            // 00105_console_access_capability.sql:54), and the floor sits under
+            // every composed exec — so it would also hand the QR to Finance,
+            // Internal and External, none of whom run the door. The fix for the
+            // two affected people is a grant on /permissions.
+            <Button variant="ghost" disabled className="cursor-not-allowed"
+              title="Generating a check-in code needs the sessions.checkin.token.write permission. An admin can grant it on the Permissions page.">
+              <QrCode className="w-3.5 h-3.5" />
+              <span>Check-in QR</span>
+            </Button>
+          ))}
         <SessionCardMenu
           session={{
             id,
