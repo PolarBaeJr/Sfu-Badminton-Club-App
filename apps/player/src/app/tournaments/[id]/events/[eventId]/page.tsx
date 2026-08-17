@@ -480,90 +480,22 @@ export default async function EventDetailPage({
         </div>
       </FadeIn>
 
-      {/* THE DRAW (single elimination, and the knockout half of a
-          pool_to_bracket event).
+      {/* Your Matches — FIRST CARD ON THE PAGE, above the draw and the roster
+          both. "keep this up top".
 
-          A CONVERGING WALL CHART on a tablet and up: the top half runs inwards
-          from the left, the bottom half inwards from the right, and they meet
-          at the final in the centre column. On a phone the same draw is a
-          round-by-round list — see DrawRounds for why a phone does not get the
-          chart. Both come out of one shared layout engine. */}
-      {isSingleElim && bracketMatches.length > 0 && (
-        <FadeIn delay={0.05}>
-          <div className="card-elevated rounded-2xl overflow-hidden">
-            <div className="flex items-center gap-2 p-4 pb-0 mb-3">
-              <Trophy className="w-4 h-4 text-[var(--color-gold)]" />
-              <h2 className="display-md">Draw</h2>
-            </div>
-            <Draw
-              matches={drawMatches}
-              thirdPlace={drawThirdPlace}
-              nameOf={participantNameMap}
-              seedOf={participantSeedMap}
-              // For the full-screen header only. Projected at a tournament the
-              // chart is the whole screen, so it has to say which event it is.
-              title={TOURNAMENT_EVENT_TYPE_LABELS[eventType]}
-              subtitle={tournament.name}
-            />
-          </div>
-        </FadeIn>
-      )}
+          Somebody opening this page is standing in the venue and came for one
+          answer: which court, and am I on next. Everything below is reference
+          material they can scroll to. This card used to sit under the draw,
+          which put a converging wall chart — nine columns and up to 127 cards
+          on a 128-entrant event — between the reader and the one line they
+          opened the page for. The roster argument this comment used to make
+          still holds; the draw is simply the bigger offender.
 
-      {/* Round Robin View — the whole event on a round_robin, and the pool half
-          on a pool_to_bracket. Shown ALONGSIDE the bracket on that format
-          rather than instead of it: a player wants to see the pool they played
-          and the draw it put them into. */}
-      {poolMatches.length > 0 && (!isSingleElim || poolToBracket) && (
-        <FadeIn delay={0.05}>
-          <div className="card-elevated rounded-2xl overflow-hidden">
-            <div className="flex items-center gap-2 p-4 pb-0 mb-3">
-              <Swords className="w-4 h-4 text-[var(--color-accent)]" />
-              <h2 className="display-md">{poolToBracket ? 'Round Robin' : 'Match Results'}</h2>
-            </div>
-            <div className="px-4 pb-4 space-y-4">
-              {sortedPoolRounds.map(([roundNum, roundMatches]) => (
-                <div key={roundNum}>
-                  <h3 className="eyebrow mb-2">Round {roundNum}</h3>
-                  <div className="space-y-2">
-                    {roundMatches.map((m) => {
-                      const scores      = m.scores as Array<{ a: number; b: number }> | null;
-                      const scoreStr    = formatScores(scores);
-                      const matchStatus = m.status as TournamentMatchStatus;
-                      const winA        = isWinner(m, 'a');
-                      const winB        = isWinner(m, 'b');
-
-                      return (
-                        <div
-                          key={m.id as string}
-                          className="border border-[var(--border)] rounded-xl overflow-hidden"
-                        >
-                          <div className="flex items-center">
-                            <div className={`flex-1 p-2.5 text-sm truncate ${winA ? 'match-winner' : 'bg-white/[0.02] text-[var(--text-secondary)]'}`}>
-                              {getEntryName(m, 'a')}{winA && <span className="sr-only"> (Winner)</span>}
-                            </div>
-                            <div className="nums px-3 text-xs text-[var(--text-dim)] bg-white/[0.02] py-2.5 border-x border-[var(--border)] shrink-0">
-                              {matchStatus === 'completed' ? scoreStr || 'W/O' : 'vs'}
-                            </div>
-                            <div className={`flex-1 p-2.5 text-sm text-right truncate ${winB ? 'match-winner' : 'bg-white/[0.02] text-[var(--text-secondary)]'}`}>
-                              {getEntryName(m, 'b')}{winB && <span className="sr-only"> (Winner)</span>}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </FadeIn>
-      )}
-
-      {/* Your Matches — above the participant list: someone opening this page at
-          the venue came for their own next match, and the roster below can run
-          long enough to push it off a phone screen. */}
+          It also owns the YOU'RE READY control, which is the only thing on the
+          page a member ACTS on rather than reads, and an action buried under a
+          wall chart is an action the desk does not hear about. */}
       {playerEntryId && allMatches.length > 0 && (
-        <FadeIn delay={0.1}>
+        <FadeIn delay={0.05}>
           <div className="card-elevated rounded-2xl overflow-hidden">
             <div className="p-4 pb-0 mb-3">
               <p className="eyebrow mb-1">For you</p>
@@ -707,6 +639,98 @@ export default async function EventDetailPage({
                     </div>
                   );
                 })}
+            </div>
+          </div>
+        </FadeIn>
+      )}
+
+      {/* THE DRAW (single elimination, and the knockout half of a
+          pool_to_bracket event).
+
+          A CONVERGING WALL CHART on a tablet and up: the top half runs inwards
+          from the left, the bottom half inwards from the right, and they meet
+          at the final in the centre column. On a phone the same draw is a
+          round-by-round list — see DrawRounds for why a phone does not get the
+          chart. Both come out of one shared layout engine. */}
+      {isSingleElim && bracketMatches.length > 0 && (
+        <FadeIn delay={0.1}>
+          <div className="card-elevated rounded-2xl overflow-hidden">
+            {/* THE ONLY CARD ON THIS PAGE WHOSE HEADING IS NOT WRITTEN HERE.
+                "let the full scren button on the one above" / "in the same row
+                as draw" — the Full screen button had a stacked row of its own
+                carrying nothing else, and it has to share a flex row with this
+                title to stop looking orphaned. The button cannot come up here:
+                it is owned by DrawScroller, which holds the fullscreen state,
+                and it has to stay inside `.draw-chart-wrap` so a phone never
+                sees a control for a chart a phone does not render. So the
+                heading goes down to the button instead, and Draw renders it in
+                the two places that between them cover every width. The markup
+                stays here so it still matches the four sibling cards. */}
+            <Draw
+              matches={drawMatches}
+              thirdPlace={drawThirdPlace}
+              nameOf={participantNameMap}
+              seedOf={participantSeedMap}
+              heading={
+                <>
+                  <Trophy className="w-4 h-4 text-[var(--color-gold)]" />
+                  <h2 className="display-md">Draw</h2>
+                </>
+              }
+              // For the full-screen header only. Projected at a tournament the
+              // chart is the whole screen, so it has to say which event it is.
+              title={TOURNAMENT_EVENT_TYPE_LABELS[eventType]}
+              subtitle={tournament.name}
+            />
+          </div>
+        </FadeIn>
+      )}
+
+      {/* Round Robin View — the whole event on a round_robin, and the pool half
+          on a pool_to_bracket. Shown ALONGSIDE the bracket on that format
+          rather than instead of it: a player wants to see the pool they played
+          and the draw it put them into. */}
+      {poolMatches.length > 0 && (!isSingleElim || poolToBracket) && (
+        <FadeIn delay={0.1}>
+          <div className="card-elevated rounded-2xl overflow-hidden">
+            <div className="flex items-center gap-2 p-4 pb-0 mb-3">
+              <Swords className="w-4 h-4 text-[var(--color-accent)]" />
+              <h2 className="display-md">{poolToBracket ? 'Round Robin' : 'Match Results'}</h2>
+            </div>
+            <div className="px-4 pb-4 space-y-4">
+              {sortedPoolRounds.map(([roundNum, roundMatches]) => (
+                <div key={roundNum}>
+                  <h3 className="eyebrow mb-2">Round {roundNum}</h3>
+                  <div className="space-y-2">
+                    {roundMatches.map((m) => {
+                      const scores      = m.scores as Array<{ a: number; b: number }> | null;
+                      const scoreStr    = formatScores(scores);
+                      const matchStatus = m.status as TournamentMatchStatus;
+                      const winA        = isWinner(m, 'a');
+                      const winB        = isWinner(m, 'b');
+
+                      return (
+                        <div
+                          key={m.id as string}
+                          className="border border-[var(--border)] rounded-xl overflow-hidden"
+                        >
+                          <div className="flex items-center">
+                            <div className={`flex-1 p-2.5 text-sm truncate ${winA ? 'match-winner' : 'bg-white/[0.02] text-[var(--text-secondary)]'}`}>
+                              {getEntryName(m, 'a')}{winA && <span className="sr-only"> (Winner)</span>}
+                            </div>
+                            <div className="nums px-3 text-xs text-[var(--text-dim)] bg-white/[0.02] py-2.5 border-x border-[var(--border)] shrink-0">
+                              {matchStatus === 'completed' ? scoreStr || 'W/O' : 'vs'}
+                            </div>
+                            <div className={`flex-1 p-2.5 text-sm text-right truncate ${winB ? 'match-winner' : 'bg-white/[0.02] text-[var(--text-secondary)]'}`}>
+                              {getEntryName(m, 'b')}{winB && <span className="sr-only"> (Winner)</span>}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </FadeIn>

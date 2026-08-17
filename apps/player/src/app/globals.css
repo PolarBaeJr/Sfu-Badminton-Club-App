@@ -4238,9 +4238,63 @@ a.cal-ev:hover { filter: brightness(1.15); }
 
 .draw-shell { position: relative; }
 
+/* ── THE PAGE'S HEADER ROW ─────────────────────────────────────
+   "let the full scren button on the one above" / "in the same row
+   as draw". Off full screen .draw-topline lays the card's heading
+   against the Full screen button, which is the whole of change 2:
+   the button used to be the only thing on a third stacked row
+   under the heading and the reading note, where one small chip
+   alone on a full-width line read as orphaned.
+
+   THE HEADING IS RENDERED DOWN HERE, BY A CLIENT COMPONENT, and
+   that is forced rather than chosen. The button owns the
+   fullscreen state and must stay inside .draw-chart-wrap, which
+   is display:none below 768px — that is what keeps the control
+   off a phone, which never renders the chart it projects. A flex
+   row needs both items in one box, so the heading came down to
+   the button. Draw prints a second copy inside .draw-rounds for
+   the phone; the two boxes are exact complements, so at no width
+   do both paint. The alternative was absolutely positioning the
+   button over the heading, which is the reserved-padding trick
+   the paging block below already had to undo once.
+
+   MARGIN ON THE ROW, NOT ON .draw-tools. The 8px gap to the chart
+   used to hang off .draw-tools, which was safe while its parent
+   was a plain block. As a flex item under align-items:center a
+   bottom margin is part of the margin box that gets centred, so
+   it lifts the button's ink off the title's centre line — a few
+   pixels of misalignment no type-check can see. */
+.draw-topline {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 8px;
+}
+/* gap: 8px matches the `gap-2` the four sibling cards' heading rows
+   use, so the icon sits the same distance from the title here as it
+   does on Your Matches, Round Robin and Final Standings. */
+.draw-page-head {
+  display: flex; align-items: center; gap: 8px;
+  flex: 1 1 auto; min-width: 0;
+}
+/* The reading note, which moved inside the shell to let the row
+   above it carry the heading and the button. 12px/16px and an 8px
+   tail reproduce exactly the `text-xs … mb-2` it had as a sibling
+   above the shell. */
+.draw-page-note {
+  font-size: 12px; line-height: 16px;
+  color: var(--text-muted); margin: 0 0 8px;
+}
+/* Both page-mode boxes are gone in full screen, which has its own
+   header in .draw-full-head and prints the same note inside it.
+   These two rules are load-bearing for the FIT, not just the look:
+   the full-screen height budget is this shell's remaining
+   clientHeight, so a page header left visible would silently eat
+   the chart's scale. */
+.draw-shell:fullscreen .draw-page-head,
+.draw-shell:fullscreen .draw-page-note { display: none; }
+
 /* Unobtrusive on the page: this is used at a tournament, not
    every visit. Same mono caption voice as .draw-hint. */
-.draw-tools { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.draw-tools { display: flex; justify-content: flex-end; flex: 0 0 auto; }
 .draw-full-btn {
   display: inline-flex; align-items: center; gap: 6px;
   font-family: var(--mono); font-size: 10px; letter-spacing: .08em;

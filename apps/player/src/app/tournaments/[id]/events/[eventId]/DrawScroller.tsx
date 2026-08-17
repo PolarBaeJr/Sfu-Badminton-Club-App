@@ -228,12 +228,21 @@ export interface DrawView {
 }
 
 export function DrawScroller({
-  title, subtitle, views,
+  title, subtitle, views, heading,
 }: {
   /** Shown ONLY in full screen: which event this sheet is. */
   title?: string;
   /** Shown ONLY in full screen, beside the title: the tournament. */
   subtitle?: string;
+  /**
+   * Shown ONLY on the page (`display:none` in full screen, which has its own
+   * header): the card's `Trophy` + `<h2>Draw</h2>` row, authored by the page and
+   * handed down here so it can share `.draw-topline` with the Full screen
+   * button. The button is what pins this arrangement — it cannot move up to the
+   * page, because the fullscreen state is owned here and the control has to stay
+   * inside `.draw-chart-wrap` so a phone never sees it.
+   */
+  heading?: ReactNode;
   /**
    * Every view of this draw, the WHOLE DRAW FIRST. `views[0]` is what the page
    * shows and what full screen falls back to; a draw with only that one entry
@@ -587,9 +596,19 @@ export function DrawScroller({
           They used to be absolutely positioned over the header with a
           `padding-right: 160px` reserved for them, which was a number that
           could only ever be right for the exact set of buttons it was measured
-          against — and this change adds four more. On the page the header is
-          display:none and this is just the row the button already sat in. */}
+          against — and this change adds four more. ON THE PAGE IT IS A FLEX ROW
+          TOO, now that the card's own heading shares it with the Full screen
+          button: "in the same row as draw". It used to be a plain block whose
+          only visible child was the right-aligned .draw-tools, which put that one
+          button on a line of its own under the heading and the reading note. */}
       <div className="draw-topline">
+        {/* THE PAGE'S HEADER, and the reason this row is a flex row off full
+            screen at all. It is the exact counterpart of .draw-full-head below:
+            each is display:none in the other's mode, so the two never paint
+            together and neither had to be compromised into serving both. On the
+            page the row is [ Draw ................ Full screen ]; in full screen
+            it is [ Men's Singles · SFU Open · how to read it ... controls ]. */}
+        {heading && <div className="draw-page-head">{heading}</div>}
         {/* Seen only in full screen (display:none otherwise). A projected sheet
             with no caption is a bracket nobody in the room can place; on the
             page this would only repeat the header a few centimetres above. */}
@@ -700,6 +719,19 @@ export function DrawScroller({
           </button>
         </div>
       </div>
+
+      {/* HOW THE CHART READS, on the page. It used to be printed by Draw as a
+          sibling ABOVE this shell; it had to come inside so that the heading and
+          the Full screen button could take the row above it, and it reads off
+          the ACTIVE VIEW rather than off a prop so there is still exactly one
+          copy of the string in the codebase.
+
+          Off full screen `active` is ALWAYS `views[0]` — `canSwitch` is
+          `full && views.length > 1`, so the dropdown cannot have moved it — which
+          is what makes this the whole draw's reading note and not some half's.
+          In full screen the same text is inside .draw-full-head instead, so this
+          copy is display:none there and the note is never printed twice. */}
+      {active.note && <p className="draw-page-note">{active.note}</p>}
 
       {/* The countdown. Keyed on the view so the CSS animation restarts from
           zero on every turn, including the ones the reader made by hand — which
