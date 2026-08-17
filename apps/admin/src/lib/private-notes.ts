@@ -23,6 +23,10 @@
 // isMissingNoteTableError now delegates to isMissingTableError below.
 
 import { permits, type AccessLevel, type Capability, type Permissions } from './permissions';
+// Deep path, not the barrel, for the same reason the type-only import below is
+// type-only: this module is unit-tested without a request, and the barrel drags
+// in the email sender and its Resend/Supabase clients. query-chunks is pure.
+import { selectInChunks } from '@badminton/shared/src/utils/query-chunks';
 // TYPE-ONLY, and it has to stay that way — the same constraint match-note.ts
 // documents. supabase-server.ts reaches for next/headers and the passkey cookie
 // machinery at import time; a value import here would drag all of it into the
@@ -192,10 +196,12 @@ export async function fetchPrivateNotes(
 ): Promise<Map<string, string>> {
   if (parentIds.length === 0) return new Map();
 
-  const { data, error } = await client
-    .from(spec.table)
-    .select(`${spec.key}, note`)
-    .in(spec.key, parentIds);
+  // Chunked. The parent ids here are match ids for a whole draw — 127 of them
+  // for a 128 entrant event, already over the per-request budget — and `.in()`
+  // is a query-string filter the proxy refuses past 8 KB.
+  const { data, error } = await selectInChunks(parentIds, (ids) =>
+    client.from(spec.table).select(`${spec.key}, note`).in(spec.key, ids) as never,
+  );
 
   if (error) {
     if (isMissingTableError(error, spec.table)) return new Map();

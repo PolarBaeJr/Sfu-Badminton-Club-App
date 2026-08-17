@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createServerSupabaseClient, getCurrentPlayer } from '@/lib/supabase-server';
 import { Atomic, AvatarChip, PageHeader } from '@badminton/ui';
-import { CLUB_TIMEZONE } from '@badminton/shared';
+import { CLUB_TIMEZONE, selectInChunks } from '@badminton/shared';
 import { clubDayKey } from '@/lib/feed-activity';
 import { buildRatingSeries, formatSigned, type RatingSourceRow } from '@/lib/stats-charts';
 import {
@@ -24,12 +24,6 @@ import { PastRatingCard } from '@/components/my-stats/past-rating-card';
 // cap should never bite; it is here so that a data-entry accident cannot make
 // one page fetch a career.
 const SEASON_MATCH_CAP = 200;
-
-// Opponent names are looked up by match id, and those ids go into the query
-// string of a GET. A hundred and ninety of them is a 7KB URL, which is inside
-// nginx's default header limit and not by much — so the lookup is chunked, and
-// the four requests it can become run together.
-const OPPONENT_CHUNK = 50;
 
 // A season id arriving from the URL is checked against this before it is used
 // in a filter. Postgres rejects a malformed uuid with an error rather than an
@@ -205,39 +199,34 @@ export async function PastSeasonStats({ seasonId }: { seasonId: string }) {
         PRESENT_STATUSES.has(a.status)
       ).length;
 
-  // Who each match was against. Chunked — see OPPONENT_CHUNK.
+  // Who each match was against. Those ids go into the query string of a GET,
+  // so the lookup is chunked against the measured request-line limit — the
+  // shared helper, not this file's own constant, since the same defect was live
+  // at a dozen other call sites.
   const matchIds = matchRows.map((m) => m.id);
-  const chunks: string[][] = [];
-  for (let i = 0; i < matchIds.length; i += OPPONENT_CHUNK) {
-    chunks.push(matchIds.slice(i, i + OPPONENT_CHUNK));
-  }
-  const opponentChunks = await Promise.all(
-    chunks.map((ids) =>
-      supabase
-        .from('match_participants')
-        .select('match_id, player_id, team_side, player:players(id, full_name, avatar_url)')
-        .in('match_id', ids)
-    )
+  const { data: opponentRows } = await selectInChunks<{
+    match_id: string;
+    player_id: string;
+    team_side: string | null;
+    player: unknown;
+  }>(matchIds, (ids) =>
+    supabase
+      .from('match_participants')
+      .select('match_id, player_id, team_side, player:players(id, full_name, avatar_url)')
+      .in('match_id', ids) as never
   );
   const othersByMatch = new Map<string, OtherPlayer[]>();
-  for (const res of opponentChunks) {
-    for (const row of (res.data ?? []) as {
-      match_id: string;
-      player_id: string;
-      team_side: string | null;
-      player: unknown;
-    }[]) {
-      if (row.player_id === player.id) continue;
-      const raw = row.player;
-      const p = (Array.isArray(raw) ? raw[0] : raw) as
-        | { id: string; full_name: string; avatar_url?: string | null }
-        | null;
-      if (!p) continue;
-      const list = othersByMatch.get(row.match_id);
-      const entry: OtherPlayer = { ...p, team_side: row.team_side };
-      if (list) list.push(entry);
-      else othersByMatch.set(row.match_id, [entry]);
-    }
+  for (const row of opponentRows ?? []) {
+    if (row.player_id === player.id) continue;
+    const raw = row.player;
+    const p = (Array.isArray(raw) ? raw[0] : raw) as
+      | { id: string; full_name: string; avatar_url?: string | null }
+      | null;
+    if (!p) continue;
+    const list = othersByMatch.get(row.match_id);
+    const entry: OtherPlayer = { ...p, team_side: row.team_side };
+    if (list) list.push(entry);
+    else othersByMatch.set(row.match_id, [entry]);
   }
   // Opponents are picked by TEAM SIDE and not by "everyone who is not me": in
   // doubles one of the other three rows is a PARTNER, and naming a partner as

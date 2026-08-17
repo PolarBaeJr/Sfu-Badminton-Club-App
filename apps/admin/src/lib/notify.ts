@@ -1,7 +1,7 @@
 import 'server-only';
 import * as Sentry from '@sentry/nextjs';
 import type { Database, NotificationCategory } from '@badminton/shared';
-import { isPushCategoryEnabled } from '@badminton/shared';
+import { isPushCategoryEnabled, selectInChunks } from '@badminton/shared';
 import { sendPushToPlayers, type PushPayload } from '@badminton/shared/src/push/send';
 import type { createAdminClient } from './supabase-server';
 
@@ -22,11 +22,23 @@ async function filterPushRecipients(
   playerIds: string[],
   category: NotificationCategory,
 ): Promise<string[]> {
-  const { data, error } = await adminClient
-    .from('players')
-    .select('id, notification_preferences')
-    .in('id', playerIds);
-  // Fail CLOSED. This used to fall back to the full list on the reasoning that
+  // Chunked. This read is the one that breaks first as the club grows: an
+  // announcement to audience `all` passes the whole roster, `.in()` is a
+  // query-string filter, and the proxy refuses the request line past ~215
+  // uuids. Because the handler below fails closed, that 414 withheld push from
+  // EVERY member at once while the in-app bell kept working — a whole-club
+  // outage with one Sentry event and nothing a member could report.
+  const { data, error } = await selectInChunks<{ id: string; notification_preferences: unknown }>(
+    playerIds,
+    (batch) =>
+      adminClient.from('players').select('id, notification_preferences').in('id', batch) as never,
+  );
+  // Fail CLOSED, and closed for EVERYONE rather than per chunk: selectInChunks
+  // reports the first chunk error instead of letting a failed batch arrive as
+  // an empty one, so a partial read cannot quietly reclassify a hundred members
+  // as "did not opt in".
+  //
+  // This used to fall back to the full list on the reasoning that
   // a lookup error should not mute everyone — sound under the old opt-out
   // model, where the fallback matched the default. Under opt-in (00058) it
   // inverts: pushing because we could not read the preferences means buzzing

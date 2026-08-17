@@ -1,6 +1,6 @@
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { Card, Badge, AvatarChip, PageHeader, ResponsiveTable, TableCard } from '@badminton/ui';
-import { unwrap, quoteEntryFee } from '@badminton/shared';
+import { unwrap, quoteEntryFee, selectInChunks } from '@badminton/shared';
 import { isWaivedFee } from '@/lib/fee-status';
 import type { TournamentFeeTier, ClubFee, Player, MembershipType } from '@badminton/shared';
 import { notFound } from 'next/navigation';
@@ -97,22 +97,24 @@ export default async function TournamentFeesPage({ params }: { params: Promise<{
   // after entering keeps the fee they already owe.
   for (const fee of fees) playerIds.add(fee.player_id as string);
 
-  const roster = playerIds.size > 0
-    ? (unwrap(
-        await supabase
-          .from('players')
-          // membership_type is what DECIDES the price (00094): the tiers name
-          // membership groups, and selectFeeTier reads this column to pick one.
-          // Without it every row on this page — and every dialog opened from one
-          // — falls back to the tournament's default tier, which on the live
-          // tournament is the $25 External price for members who owe $15.
-          .select('id, full_name, email, avatar_url, is_exec, fee_exempt, membership_type')
-          .in('id', Array.from(playerIds))
-          .order('full_name')
-      ) as (Pick<Player, 'id' | 'full_name' | 'email' | 'avatar_url'> & {
-        is_exec: boolean; fee_exempt: boolean; membership_type: MembershipType | null;
-      })[])
-    : [];
+  // Chunked, and re-sorted here: the per-chunk `.order('full_name')` orders
+  // within a request, so the concatenation has to be sorted again.
+  const roster = (unwrap(
+    await selectInChunks(Array.from(playerIds), (ids) =>
+      supabase
+        .from('players')
+        // membership_type is what DECIDES the price (00094): the tiers name
+        // membership groups, and selectFeeTier reads this column to pick one.
+        // Without it every row on this page — and every dialog opened from one
+        // — falls back to the tournament's default tier, which on the live
+        // tournament is the $25 External price for members who owe $15.
+        .select('id, full_name, email, avatar_url, is_exec, fee_exempt, membership_type')
+        .in('id', ids)
+        .order('full_name') as never
+    )
+  ) as (Pick<Player, 'id' | 'full_name' | 'email' | 'avatar_url'> & {
+    is_exec: boolean; fee_exempt: boolean; membership_type: MembershipType | null;
+  })[]).sort((a, b) => a.full_name.localeCompare(b.full_name));
   const players = roster.filter(
     (p) => feeByPlayer.has(p.id) || (!p.is_exec && !p.fee_exempt),
   );

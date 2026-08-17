@@ -2,7 +2,7 @@ import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits } from '@/lib/permissions';
 import { Card, Badge, PageHeader } from '@badminton/ui';
 import { TournamentCheckinQr } from './checkin-qr';
-import { formatDate, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS, TOURNAMENT_EVENT_FORMAT_LABELS, describeMatchShape, loadTournamentEntryCounts } from '@badminton/shared';
+import { formatDate, TOURNAMENT_EVENT_TYPE_LABELS, TOURNAMENT_EVENT_STATUS_LABELS, TOURNAMENT_EVENT_STATUS_COLORS, TOURNAMENT_EVENT_FORMAT_LABELS, describeMatchShape, loadTournamentEntryCounts, selectInChunks } from '@badminton/shared';
 import type { TournamentEventFormat } from '@badminton/shared';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Users, Calendar, Zap, Crown, Plus, Swords, DollarSign } from 'lucide-react';
@@ -75,10 +75,12 @@ export default async function TournamentDetailPage({ params }: { params: Promise
   if (canSeeEntryCounts) {
     const counts = await loadTournamentEntryCounts(supabase, id);
     if (counts.size > 0) {
-      const { data: named } = await supabase
-        .from('players')
-        .select('id, full_name')
-        .in('id', [...counts.keys()]);
+      // Chunked — one id per entrant in the tournament, `.in()` is a
+      // query-string filter, and the request line caps at 8 KB.
+      const { data: named } = await selectInChunks<{ id: string; full_name: string }>(
+        [...counts.keys()],
+        (ids) => supabase.from('players').select('id, full_name').in('id', ids) as never,
+      );
       entrantCounts = [...counts.entries()]
         .map(([playerId, count]) => ({
           id: playerId,

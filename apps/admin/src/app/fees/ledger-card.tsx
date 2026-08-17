@@ -7,6 +7,7 @@ import {
   formatOtherIncomeCategory,
   formatExpenseRef,
   formatOtherIncomeRef,
+  selectInChunks,
 } from '@badminton/shared';
 import {
   AddOtherIncome,
@@ -151,8 +152,11 @@ export async function LedgerCard({
     : [...new Set(rows.flatMap((r) => [r.paid_by, r.reimbursed_by]).filter((v): v is string => !!v))];
   const nameById = new Map<string, string>();
   if (peopleIds.length > 0) {
+    // Chunked: one id per distinct payer/reimbursee across the whole ledger.
     const people = unwrap(
-      await supabase.from('players').select('id, full_name').in('id', peopleIds),
+      await selectInChunks(peopleIds, (ids) =>
+        supabase.from('players').select('id, full_name').in('id', ids) as never,
+      ),
     ) as unknown as { id: string; full_name: string }[];
     for (const p of people) nameById.set(p.id, p.full_name);
   }

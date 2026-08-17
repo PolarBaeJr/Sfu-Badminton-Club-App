@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic';
 import Link from 'next/link';
-import { scopeToActiveSeason } from '@badminton/shared';
+import { scopeToActiveSeason, selectInChunks } from '@badminton/shared';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { accessLevelFor, permissionsOf, permits, type Capability } from '@/lib/permissions';
 import {
@@ -261,12 +261,15 @@ export default async function TournamentsPage({
     // a withdrawn member would never appear in `liable` and the loop below
     // would drop their outstanding fee on the "not liable" branch.
     for (const fee of fees) entrantIds.add(fee.player_id);
-    const { data: payerData } = entrantIds.size
-      ? await supabase
-          .from('players')
-          .select('id, is_exec, fee_exempt')
-          .in('id', Array.from(entrantIds))
-      : { data: [] };
+    // Chunked: this is every entrant across EVERY tournament in the season, so
+    // it grows without bound and `.in()` is a query-string filter.
+    const { data: payerData } = await selectInChunks<{
+      id: string;
+      is_exec: boolean;
+      fee_exempt: boolean;
+    }>(Array.from(entrantIds), (ids) =>
+      supabase.from('players').select('id, is_exec, fee_exempt').in('id', ids) as never,
+    );
     const liable = new Set(
       ((payerData ?? []) as { id: string; is_exec: boolean; fee_exempt: boolean }[])
         .filter((p) => !p.is_exec && !p.fee_exempt)
@@ -338,9 +341,15 @@ export default async function TournamentsPage({
       nameIds.add(p.player1_id);
       nameIds.add(p.player2_id);
     }
-    const { data: playerData } = nameIds.size
-      ? await supabase.from('players').select('id, full_name, avatar_url').in('id', Array.from(nameIds))
-      : { data: [] };
+    // Chunked — a full 128-entrant draw plus doubles pairs is already past a
+    // third of the request-line budget on its own.
+    const { data: playerData } = await selectInChunks<{
+      id: string;
+      full_name: string;
+      avatar_url: string | null;
+    }>(Array.from(nameIds), (ids) =>
+      supabase.from('players').select('id, full_name, avatar_url').in('id', ids) as never,
+    );
     const players = new Map(
       ((playerData ?? []) as { id: string; full_name: string; avatar_url: string | null }[]).map(
         (p) => [p.id, p],

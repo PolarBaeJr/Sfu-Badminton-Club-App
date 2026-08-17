@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { createAdminClient, requireCapability } from '@/lib/supabase-server';
 import { PageHeader } from '@badminton/ui';
+import { selectInChunks } from '@badminton/shared';
 import Link from 'next/link';
 import { AuditList, type AuditLogRow } from './audit-list';
 import { AuditActivityChart } from './activity-chart';
@@ -108,6 +109,11 @@ export default async function AuditPage({
   // `in=(…)` in the QUERY STRING: a few hundred uuids is a URL long enough to
   // be truncated or refused by a proxy, and the failure is silent — missing
   // names rather than an error.
+  //
+  // This page diagnosed that and chunked by hand at 100. It is now the shared
+  // helper, derived from the measured 8 KB request-line limit — the same defect
+  // was live at a dozen other call sites, including the one that kills push for
+  // the whole club.
   const subjectIds = [
     ...new Set(
       rows
@@ -115,16 +121,21 @@ export default async function AuditPage({
         .map((log) => log.target_id as string)
     ),
   ];
-  const chunks: string[][] = [];
-  for (let i = 0; i < subjectIds.length; i += 100) chunks.push(subjectIds.slice(i, i + 100));
-  const fetched = await Promise.all(
-    chunks.map((ids) => supabase.from('players').select('id, full_name, avatar_url').in('id', ids))
+  // The error is deliberately dropped HERE, at the call site, and only here:
+  // an unresolved name degrades to "PLAYER BANNED / 4b1c2d3e", which is the
+  // same thing this page already renders for a member who has since been
+  // removed. Refusing to draw the accountability log because one name lookup
+  // failed would be the wrong trade.
+  const { data: fetched } = await selectInChunks<{
+    id: string;
+    full_name: string;
+    avatar_url: string | null;
+  }>(subjectIds, (ids) =>
+    supabase.from('players').select('id, full_name, avatar_url').in('id', ids) as never
   );
   const subjects = new Map<string, { full_name: string; avatar_url: string | null }>();
-  for (const { data } of fetched) {
-    for (const player of data ?? []) {
-      subjects.set(player.id, { full_name: player.full_name, avatar_url: player.avatar_url });
-    }
+  for (const player of fetched ?? []) {
+    subjects.set(player.id, { full_name: player.full_name, avatar_url: player.avatar_url });
   }
   // A player who has since been removed or merged away has no row to resolve.
   // The entry stays exactly as it is, subject-less — deleting the person does

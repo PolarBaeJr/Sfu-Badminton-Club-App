@@ -7,6 +7,8 @@ import {
   REMINDER_LEAD_MAX_MINUTES,
   CLUB_TIMEZONE,
   wallClockToUtc,
+  selectInChunks,
+  chunkIds,
 } from '@badminton/shared';
 
 export const dynamic = 'force-dynamic';
@@ -81,10 +83,13 @@ export async function POST(request: Request) {
       const pending = rsvps.filter((r) => r.intent === 'going' && !r.reminded_at);
       if (pending.length === 0) continue;
 
-      const { data: prefs } = await admin
-        .from('players')
-        .select('id, notification_preferences')
-        .in('id', pending.map((r) => r.player_id));
+      // Chunked — one id per RSVP, and a popular session can hold the roster.
+      const { data: prefs } = await selectInChunks<{
+        id: string;
+        notification_preferences: unknown;
+      }>(pending.map((r) => r.player_id), (ids) =>
+        admin.from('players').select('id, notification_preferences').in('id', ids) as never,
+      );
 
       const due = pending.filter((r) => {
         const lead = getReminderLeadMinutes(
@@ -95,15 +100,24 @@ export async function POST(request: Request) {
 
       // Claim before sending: if the send throws, a retry must skip these
       // players rather than notify them twice.
-      const { data: claimed } = await admin
-        .from('session_rsvp')
-        .update({ reminded_at: now.toISOString() })
-        .eq('session_id', s.id)
-        .in('player_id', due.map((r) => r.player_id))
-        .is('reminded_at', null)
-        .select('player_id');
-
-      const ids = (claimed ?? []).map((c) => c.player_id);
+      //
+      // Chunked, because an UPDATE's `.in()` filter is in the query string too.
+      // Every property that makes this a real compare-and-swap survives the
+      // split: `.is('reminded_at', null)` stays in each chunk's WHERE clause,
+      // and each `.select('player_id')` returns only the rows THAT statement
+      // won. Two concurrent ticks still cannot both claim a player; the claims
+      // are simply committed a chunk at a time.
+      const ids: string[] = [];
+      for (const batch of chunkIds(due.map((r) => r.player_id))) {
+        const { data: claimed } = await admin
+          .from('session_rsvp')
+          .update({ reminded_at: now.toISOString() })
+          .eq('session_id', s.id)
+          .in('player_id', batch)
+          .is('reminded_at', null)
+          .select('player_id');
+        for (const c of claimed ?? []) ids.push(c.player_id as string);
+      }
       if (ids.length === 0) continue;
 
       const { notified } = await remindSessionGoers(s.id as string, null, ids);
