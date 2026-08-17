@@ -85,27 +85,13 @@ vi.mock('../actions/_shared', async () => {
   };
 });
 
-// The level half of setConsoleAccess, stubbed. updatePlayer is a large action
-// with its own field guard and its own audit row; what this file is testing is
-// what the OTHER half — the composition clear — records, so the stub does the
-// column write and nothing else.
-vi.mock('../actions/players', async () => {
-  const { fromRoleValue } = await import('../console-access');
-  return {
-    updatePlayer: async (id: string, data: Record<string, unknown>) => {
-      const row = store.db.players!.find((p) => p.id === id);
-      if (row) {
-        const { reason: _reason, ...columns } = data;
-        Object.assign(row, columns);
-      }
-      return { ok: true as const, data: undefined };
-    },
-    // Re-exported so the mock keeps the module's shape if anything else reaches
-    // for it; fromRoleValue itself is imported by the action under test from
-    // console-access, not from here.
-    __fromRoleValue: fromRoleValue,
-  };
-});
+// THE updatePlayer STUB IS GONE. The level half of setConsoleAccess used to run
+// through updatePlayer for an admin and was stubbed here, because updatePlayer is
+// a large action with its own field guard and its own audit row and this file is
+// about what the OTHER half — the composition clear — records. updatePlayer now
+// refuses the three level columns from everybody, so setConsoleAccess writes them
+// itself through writeConsoleLevel against the mock client, and nothing here
+// needs stubbing for the level write to land.
 
 import { setPlayerPermissions, setConsoleAccess } from '../actions/permissions';
 import { saveBatch } from '../permission-batch';

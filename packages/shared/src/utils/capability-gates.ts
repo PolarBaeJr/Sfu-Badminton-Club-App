@@ -123,8 +123,10 @@ export const CAPABILITY_GATES: Record<Capability, CapabilityGate> = {
   //
   // NOT assertPlayerFieldAccess, which is where the neighbouring capability is
   // read. The three level columns stay on PLAYER_FIELD_FLOOR there, refused to
-  // everybody below admin and consulted by no capability, so the member Edit
-  // dialog is untouched by this.
+  // everybody below admin and consulted by no capability. The member Edit dialog
+  // does not offer console access at all any more, and updatePlayer refuses the
+  // three columns from every caller, so this gate stands in front of the only
+  // way a level is edited.
   'players.consoleaccess.write': {
     label: 'Give or take console access', area: 'players', group: null, mode: 'write',
     gate: 'actions/permissions.ts setConsoleAccess',

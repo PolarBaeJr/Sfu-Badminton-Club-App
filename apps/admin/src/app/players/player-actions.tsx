@@ -7,9 +7,17 @@ import { useRouter } from 'next/navigation';
 import { PAYMENT_METHODS, PAYMENT_METHOD_CUSTOM, resolvePaymentMethod } from '@badminton/shared';
 import { removePlayer, updatePlayer, updatePlayerFlags, approvePlayer, banPlayer, reinstatePlayer, requireWaiverResignature } from '@/lib/actions';
 import { isApprovalEdit } from '@/lib/player-approval';
-// Shared with /permissions, which asks the same question about the same three
-// columns. See lib/console-access.ts for why it is one mapping and not two.
-import { EXEC_ROLE_OPTIONS, fromRoleValue, toRoleValue, type ExecRole } from '@/lib/console-access';
+
+// NO CONSOLE-ACCESS CONTROL HERE ANY MORE. This dialog carried the same four-way
+// select the member detail form did, and both posted role / is_exec / is_trainer
+// through updatePlayer under nothing but an `isAdmin` check. The club owner took
+// it off — "as its only admins who will be mainly editing permissions" — and
+// /permissions is where it is decided, because setConsoleAccess is the only path
+// with a self-edit refusal, an admin-target refusal, grant closure in both
+// directions and composition clearing. updatePlayer refuses the three columns
+// outright now, so this is enforcement rather than a control that stopped being
+// drawn. lib/console-access.ts is therefore imported by /permissions and
+// /accounts only.
 
 interface Props {
   // One button per mode; /players decides WHICH modes a row gets from the tab
@@ -19,9 +27,10 @@ interface Props {
   playerId: string;
   playerName?: string;
   playerData?: Record<string, unknown>;
-  // Execs get the roster controls; role, fee-exempt and the reinstatement fee
+  // Execs get the roster controls; ratings, fee-exempt and the reinstatement fee
   // stay with admins. Server-side guards are the boundary — this only keeps
-  // execs from seeing a control that would reject them.
+  // execs from seeing a control that would reject them. Console access is on
+  // neither list any more: nobody sets it from here.
   isAdmin: boolean;
   // APPROVING AND EDITING ARE ONE SAVE, and they are two capabilities. Picking
   // a division for a pending signup goes through approvePlayer rather than
@@ -59,11 +68,7 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin,
   const [status, setStatus] = useState(
     playerData?.active_flag === false ? 'inactive' : ((playerData?.status as string) || 'pending_approval')
   );
-  const [roleValue, setRoleValue] = useState(
-    toRoleValue((playerData?.role as string) || 'player', Boolean(playerData?.is_exec), Boolean(playerData?.is_trainer))
-  );
   const [feeExempt, setFeeExempt] = useState(Boolean(playerData?.fee_exempt));
-  const [isTrainer, setIsTrainer] = useState(Boolean(playerData?.is_trainer));
   const [singlesElo, setSinglesElo] = useState('');
   const [doublesElo, setDoublesElo] = useState('');
   const [reason, setReason] = useState('');
@@ -90,8 +95,6 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin,
 
   function handleEdit() {
     startTransition(async () => {
-      const { role, is_exec: isExec, is_trainer: wantsTrainer } = fromRoleValue(roleValue as ExecRole);
-      const roleChanged = role !== ((playerData?.role as string) || 'player');
       try {
         // "Inactive" is active_flag, not a status. Selecting it deactivates and
         // leaves the stored status alone; selecting any real status reactivates,
@@ -100,21 +103,18 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin,
         const isInactive = status === 'inactive';
         // Everything except the status/active_flag pair, which the approval
         // branch below writes through approvePlayer instead.
+        //
+        // The level markers used to be here — `role` and `is_trainer`, each
+        // sent only when it changed, because the server guard rejects a
+        // non-admin who supplies one AT ALL. They are gone: updatePlayer no
+        // longer accepts them from anybody, and console access is set on
+        // /permissions.
         const fields = {
-          // Only sent when it actually changed. The server guard rejects a
-          // non-admin who supplies `role` AT ALL, so sending it unconditionally
-          // — as this dialog used to — would fail every exec's Save even when
-          // they only touched the status.
-          role: isAdmin && roleChanged ? (role as 'player' | 'admin') : undefined,
           // Admin-only: a hand-set rating bypasses the engine's K factors,
-          // bounds and margin rules.
+          // bounds and margin rules. Sent only when actually filled in — the
+          // server guard is on presence, so an exec must send neither key.
           singles_elo: isAdmin && singlesElo ? parseInt(singlesElo) : undefined,
           doubles_elo: isAdmin && doublesElo ? parseInt(doublesElo) : undefined,
-          // Same "only when it changed" rule as `role` above: the server guard
-          // rejects a non-admin who supplies this key at all, so sending it
-          // unconditionally would break every exec's Save.
-          is_trainer:
-            isAdmin && wantsTrainer !== Boolean(playerData?.is_trainer) ? wantsTrainer : undefined,
         };
         // Letting a pending signup in belongs to approvePlayer, not
         // updatePlayer — see lib/player-approval.ts for why. Edit is the only
@@ -141,18 +141,19 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin,
             });
         if (!res.ok) { toast(res.error, 'error'); return; }
         // approvePlayer writes status and active_flag and nothing else, so an
-        // admin who set a role or a rating in the same Save still needs the
-        // ordinary update afterwards.
+        // admin who set a rating in the same Save still needs the ordinary
+        // update afterwards.
         if (approving && Object.values(fields).some((v) => v !== undefined)) {
           const rest = await updatePlayer(playerId, { ...fields, reason });
           if (!rest.ok) { toast(rest.error, 'error'); return; }
         }
-        // updatePlayerFlags is admin-only (is_exec + fee_exempt). For an exec
-        // the two controls are not rendered and the state still mirrors
-        // playerData, so this comparison is false and the call never fires —
-        // otherwise the save would half-succeed and then throw.
-        if (isAdmin && (isExec !== Boolean(playerData?.is_exec) || feeExempt !== Boolean(playerData?.fee_exempt))) {
-          await updatePlayerFlags(playerId, { is_exec: isExec, fee_exempt: feeExempt });
+        // updatePlayerFlags is admin-only and is now fee_exempt alone — it used
+        // to carry is_exec too, which made this a second way to hand somebody a
+        // console level. For an exec the switch is not rendered and the state
+        // still mirrors playerData, so this comparison is false and the call
+        // never fires — otherwise the save would half-succeed and then throw.
+        if (isAdmin && feeExempt !== Boolean(playerData?.fee_exempt)) {
+          await updatePlayerFlags(playerId, { fee_exempt: feeExempt });
         }
         toast(approving ? 'Player approved' : 'Player updated', 'success');
         setOpen(false);
@@ -439,10 +440,7 @@ export function PlayerActions({ mode, playerId, playerName, playerData, isAdmin,
             </p>
           )}
           {isAdmin && (
-            <>
-              <Select label="Console access" options={EXEC_ROLE_OPTIONS} value={roleValue} onChange={(e) => setRoleValue(e.target.value as ExecRole)} />
-              <Switch label="Fee Exempt" description="Exempted from the club fee (no gameplay effect)" checked={feeExempt} onChange={setFeeExempt} />
-            </>
+            <Switch label="Fee Exempt" description="Exempted from the club fee (no gameplay effect)" checked={feeExempt} onChange={setFeeExempt} />
           )}
           {isAdmin && (
             <div className="flex gap-2">

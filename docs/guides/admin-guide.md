@@ -11,7 +11,7 @@ There are two levels of console access:
 - **Executive** — can manage the day-to-day: **sessions, tournaments, matches, announcements, seasons**.
 - **Admin** — everything execs can do, **plus** the sensitive areas: **fees, member records, disputes, walkovers, settings**.
 
-You'll only see the menu items your level allows. If you should have more access, ask a current admin to update your role under **Members**.
+You'll only see the menu items your level allows. If you should have more access, ask a current admin to change it on the **Permissions** page — that is the only place console access is given or taken away. (It used to be a dropdown on a member's edit form under Members; it is not there any more.) Nobody can change their own, in either direction, so this is always a favour you ask somebody else.
 
 ---
 
@@ -70,7 +70,8 @@ Seasons are the backbone — sessions and fees attach to the active season.
 ## Members
 
 - **View and edit** member records.
-- **Change roles** — promote to admin, grant/remove **executive** status, set an **exec title** (shown on the public exec page). Note: **"Add Player" can't create an admin** — promoting someone to admin is a separate, deliberate step on their member page.
+- **Set an exec title** (shown on the public exec page) for somebody who is already on the exec team.
+- **Console access is NOT here.** Promoting someone to admin, granting or removing **executive** status, and appointing a **varsity trainer** all happen on the **Permissions** page — there is no longer a "Console access" dropdown on a member's edit form, and the app will refuse the change if anything else tries to make it. So putting a new officer up is two steps: give them the level on Permissions, then set their exec title here. ("Add Player" can mark somebody as an exec as you create them, which is how you pre-add an officer before they have signed up — but it still can't create an admin.)
 - Mark a member **fee-exempt** where appropriate.
 - **Active / Suspended / Inactive tabs** — the member list is split into tabs so suspended and inactive members don't clutter your day-to-day active roster.
 - **Force a waiver re-signature for one member** — on a member's page you can require **that person** to re-sign the waiver next time they open the app (useful if their details changed or something needs re-confirming). To re-ask *everyone*, use the **Legal documents** tools below instead.

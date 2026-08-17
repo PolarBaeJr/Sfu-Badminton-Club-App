@@ -283,19 +283,23 @@ export const adminPlayerUpdateSchema = z.object({
   // and until now nothing in the console could set it back. The Status control
   // presents both as one list; this is the half that is not the enum.
   active_flag: z.boolean().optional(),
-  role: z.enum(['player', 'admin']).optional(),
-  // Which group of the club they belong to. Independent of role/is_exec —
+  // NO role / is_exec / is_trainer, and their absence is the point rather than
+  // an oversight. Those three ARE console access, and console access is set on
+  // the admin console's Permissions page — one path, with a self-edit refusal,
+  // grant closure in both directions and a required reason. This schema feeds
+  // updatePlayer(), which now refuses them outright (see
+  // assertNoConsoleAccessFields); dropping them here is what stops a payload
+  // ever being able to name one in the first place.
+  //
+  // Which group of the club they belong to. Independent of the level markers —
   // an exec is still an internal member. Drives tournament eligibility.
   membership_type: z.enum(['internal', 'alumni', 'external']).optional(),
   singles_elo: z.number().int().min(MIN_ELO).max(MAX_ELO).optional(),
   doubles_elo: z.number().int().min(MIN_ELO).max(MAX_ELO).optional(),
-  // Club-executive markers (no gameplay effect). is_exec adds the player to the
-  // executive team (shown on the public /exec page) and exempts them from fees;
-  // exec_title is their role label; fee_exempt exempts non-exec contributors.
-  is_exec: z.boolean().optional(),
-  // Varsity trainer. A separate marker rather than a role value because it
-  // composes: a trainer may also be an exec or an admin.
-  is_trainer: z.boolean().optional(),
+  // The exec's public-page fields and the fee marker. exec_title is their role
+  // label on the public /exec page; fee_exempt exempts a non-exec contributor
+  // from club fees. Neither hands out console access, which is why they survive
+  // here while is_exec itself does not.
   exec_title: blankAsUndefined(z.string().max(60)),
   fee_exempt: z.boolean().optional(),
   // Photo for the public /exec page. Separate from avatar_url so a profile
@@ -575,8 +579,15 @@ export const banSchema = z.object({
   reason: z.string().min(2),
 });
 
+// fee_exempt ALONE. This carried is_exec too, which made the Fees page's flag
+// writer a second way to hand somebody a console level — is_exec is what
+// admin_access_level reads to resolve 'exec'. Console access now has exactly one
+// editing path (/permissions → setConsoleAccess), so the flag this schema is
+// named for is the only flag left in it. The capability keeps its name,
+// `fees.playerflags.write`: capability strings are stored as data in
+// permission_grants / permission_revokes / permission_baselines.capabilities,
+// and renaming one orphans every live grant that names it.
 export const playerFlagsSchema = z.object({
-  is_exec: z.boolean(),
   fee_exempt: z.boolean(),
 });
 

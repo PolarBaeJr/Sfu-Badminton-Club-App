@@ -38,12 +38,23 @@ import {
 // admin level at all, and a refusal to act on your own row.
 //
 // NOTHING BELOW MOVED, and that is the point of doing it that way rather than
-// teaching this function about the capability. updatePlayer() is the other
-// caller — the member Edit dialog — and it has none of those checks, so a
+// teaching this function about the capability. updatePlayer() used to be the
+// other caller — the member Edit dialog — and it had none of those checks, so a
 // capability-aware floor would have let anybody holding players.update.write
 // alongside the console capability mint an executive from the roster screen with
-// no closure test anywhere. The floor is what stops that, and it stops it by
+// no closure test anywhere. The floor is what stopped that, and it stopped it by
 // staying exactly as it is.
+//
+// THE EDIT DIALOG NO LONGER ASKS. The club owner took the console-access
+// dropdown off it — "as its only admins who will be mainly editing permissions"
+// — and updatePlayer now refuses the three columns outright, for admins too, via
+// assertNoConsoleAccessFields below. So this list has one caller that can be
+// reached with a level marker in the payload and that caller rejects it, which
+// makes the floor's first three entries unreachable through updatePlayer by
+// construction rather than by seniority. They are kept in the list regardless:
+// the floor describes what may never be written through the player-edit
+// boundary, and a boundary that only holds while a second guard exists is a
+// boundary one refactor from being gone.
 //
 // Not belt-and-braces given the capability system, but the thing that system
 // cannot express. Grant closure bounds what one person may hand another, and it
@@ -158,6 +169,54 @@ export type AdminOnlyPlayerField = (typeof ADMIN_ONLY_PLAYER_FIELDS)[number];
 // payload is inspected. If one of them is ever moved to a capability a trainer
 // DOES hold, this stops it silently becoming a trainer-writable action.
 export const TRAINER_WRITABLE_PLAYER_FIELDS: readonly string[] = [];
+
+// THE THREE COLUMNS THAT ARE CONSOLE ACCESS, as opposed to the four other
+// entries of the floor. Named separately because they have a home — /permissions
+// — and the refusal below is able to say where it is.
+//
+// The same three CONSOLE_LEVEL_COLUMNS officer-access.ts reads back out of the
+// audit log, and the same three fromRoleValue() writes. Kept here, next to the
+// floor, because this is the file that already answers "who may write what onto
+// a player".
+export const CONSOLE_ACCESS_FIELDS = ['role', 'is_exec', 'is_trainer'] as const;
+
+/**
+ * Refuse a payload that names console access, WHOEVER IS ASKING.
+ *
+ * The club owner, on the member Edit dialog's console-access dropdown: "i dont
+ * think the console access should be there anymore… as its only admins who will
+ * be mainly editing permissions". Deleting the control answers the rendering
+ * half. This is the other half, and it is the half that matters: updatePlayer()
+ * is a server action, so it is a public endpoint, and a field nothing renders is
+ * still a field a hand-rolled POST can send.
+ *
+ * NOT LEVEL-BASED, which is the whole difference between this and
+ * assertPlayerFieldAccess above. That guard asks whether the caller is senior
+ * enough; this one says the act does not live here at all. An admin is refused
+ * too — not because they may not do it, but because doing it HERE would be the
+ * second path, with none of setConsoleAccess's checks: no self-edit refusal, no
+ * "only an admin may touch an admin", no grant closure in either direction, and
+ * no composition clearing when somebody's level changes underneath their stored
+ * permissions.
+ *
+ * A REFUSAL RATHER THAN A SILENT DROP, for the reason assertPlayerFieldAccess
+ * states for itself: dropping the field would return a cheerful "saved" for a
+ * change that never happened. It also means an old client — a tab opened before
+ * this deploy, still rendering the dropdown — reports the truth instead of
+ * appearing to work.
+ *
+ * Presence-based, and it must be given the RAW payload as well as the parsed
+ * one: adminPlayerUpdateSchema no longer declares these keys, so zod strips them
+ * and a check against `parsed` alone would pass everything.
+ */
+export function assertNoConsoleAccessFields(payloads: Record<string, unknown>[]): void {
+  const supplied = suppliedFrom(payloads, CONSOLE_ACCESS_FIELDS);
+  if (supplied.length > 0) {
+    throw new ExpectedError(
+      `Console access is changed on the Permissions page, not here. Rejected: ${supplied.join(', ')}`,
+    );
+  }
+}
 
 export function isAdminActor(actor: { role?: string | null } | null | undefined): boolean {
   return actor?.role === 'admin';

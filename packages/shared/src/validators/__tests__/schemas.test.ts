@@ -324,22 +324,31 @@ describe('adminPlayerUpdateSchema (Phase 2 enum simplification guard)', () => {
       expect(result.success).toBe(true);
     }
   });
-  it('accepts each of the 2 valid roles', () => {
-    for (const role of ['player', 'admin'] as const) {
-      const result = adminPlayerUpdateSchema.safeParse({ role, reason: 'test' });
-      expect(result.success).toBe(true);
-    }
-  });
   it('rejects legacy player statuses', () => {
     for (const status of ['eligible_competitive', 'competitive_associate', 'alumni_external', 'inactive']) {
       const result = adminPlayerUpdateSchema.safeParse({ status, reason: 'test' });
       expect(result.success).toBe(false);
     }
   });
-  it('rejects legacy roles', () => {
-    for (const role of ['moderator', 'coach_executive']) {
-      const result = adminPlayerUpdateSchema.safeParse({ role, reason: 'test' });
-      expect(result.success).toBe(false);
+  // THE ROLE CASES ARE GONE BECAUSE THE FIELD IS. This schema used to accept
+  // 'player' / 'admin' and refuse the legacy names, because updatePlayer wrote
+  // `role`. It does not: role, is_exec and is_trainer ARE console access, and the
+  // club owner moved that to the Permissions page alone.
+  //
+  // Rewritten to the new claim rather than deleted, and the claim is deliberately
+  // NOT "the parse fails". Zod strips unknown keys, so a payload naming role
+  // still parses — what matters is that it does not survive, and that the runtime
+  // guard refuses it outright besides (see apps/admin's player-field-access
+  // suite, which asserts an ADMIN is refused and that nothing is written).
+  it('carries no console-access column at all, whatever a payload names', () => {
+    for (const field of ['role', 'is_exec', 'is_trainer'] as const) {
+      const parsed = adminPlayerUpdateSchema.parse({ [field]: field === 'role' ? 'admin' : true, reason: 'test' });
+      expect(field in parsed, `${field} survived the parse`).toBe(false);
+    }
+    // Including the legacy role names this used to name one by one — there is no
+    // enum left for them to be outside of.
+    for (const role of ['moderator', 'coach_executive', 'player', 'admin']) {
+      expect('role' in adminPlayerUpdateSchema.parse({ role, reason: 'test' })).toBe(false);
     }
   });
   it('requires reason', () => {
@@ -616,22 +625,33 @@ describe('banSchema', () => {
   });
 });
 
+// IT CARRIED is_exec TOO, and that made updatePlayerFlags a second way to hand
+// somebody a console level from the Fees page — is_exec is one of the three
+// columns admin_access_level resolves from. Console access has one editing path
+// now (/permissions → setConsoleAccess), so this schema is the fee flag alone.
+// The assertions are rewritten to the new contract rather than deleted: the
+// interesting claim is that is_exec CANNOT come back through here.
 describe('playerFlagsSchema', () => {
-  it('accepts all boolean combinations', () => {
-    for (const is_exec of [true, false]) {
-      for (const fee_exempt of [true, false]) {
-        expect(playerFlagsSchema.safeParse({ is_exec, fee_exempt }).success).toBe(true);
-      }
+  it('accepts either value of the fee flag', () => {
+    for (const fee_exempt of [true, false]) {
+      expect(playerFlagsSchema.safeParse({ fee_exempt }).success).toBe(true);
     }
   });
-  it('requires both flags', () => {
-    expect(playerFlagsSchema.safeParse({ is_exec: true }).success).toBe(false);
-    expect(playerFlagsSchema.safeParse({ fee_exempt: true }).success).toBe(false);
+  it('requires the flag', () => {
+    expect(playerFlagsSchema.safeParse({}).success).toBe(false);
   });
   it('rejects non-boolean values', () => {
-    expect(
-      playerFlagsSchema.safeParse({ is_exec: 'yes', fee_exempt: false }).success,
-    ).toBe(false);
+    expect(playerFlagsSchema.safeParse({ fee_exempt: 'yes' }).success).toBe(false);
+  });
+  // Zod strips unknown keys rather than refusing them, so the guarantee is not
+  // "the parse fails" — it is that is_exec does not survive the parse. Belt as
+  // well as braces at the action: updatePlayerFlags names fee_exempt explicitly
+  // in its .update() rather than spreading the payload, so an extra key has
+  // nowhere to land even if this ever stopped stripping.
+  it('drops is_exec instead of carrying it through', () => {
+    const parsed = playerFlagsSchema.parse({ is_exec: true, fee_exempt: false });
+    expect(parsed).toEqual({ fee_exempt: false });
+    expect('is_exec' in parsed).toBe(false);
   });
 });
 

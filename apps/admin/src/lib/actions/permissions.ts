@@ -8,8 +8,17 @@ import { requireCapability } from './_shared';
 import { requireReason } from '../audit-reason';
 import { logAdminAudit } from '../audit';
 import { runAction, type ActionResult } from '../action-result';
-import { updatePlayer } from './players';
-import { fromRoleValue, toRoleValue, type ExecRole } from '../console-access';
+// listOf / missingFrom / assertLevelClosure live there rather than here now that
+// resolvePrivilegeClaimReview needs the same closure test — see the block at the
+// bottom of that module for why one copy rather than two.
+import {
+  assertLevelClosure,
+  fromRoleValue,
+  listOf,
+  missingFrom,
+  toRoleValue,
+  type ExecRole,
+} from '../console-access';
 import { isAdminActor } from '../player-field-access';
 import {
   accessLevelFor,
@@ -91,16 +100,6 @@ export async function setPlayerPermissions(
   return runAction(() => setPlayerPermissionsImpl(playerId, next));
 }
 
-/** "Varsity notes (write)" — how a capability is named in a refusal. */
-function nameOf(capability: Capability): string {
-  const entry = CAPABILITY_GATES[capability];
-  return `${entry.label} (${entry.mode})`;
-}
-
-function listOf(capabilities: readonly Capability[]): string {
-  return capabilities.map(nameOf).join(', ');
-}
-
 /** Sorted, de-duplicated, and every element known to the vocabulary. */
 function cleanDelta(values: string[], which: 'grant' | 'revoke'): Capability[] {
   const unknown = values.filter((v) => !isCapability(v));
@@ -116,10 +115,6 @@ function cleanDelta(values: string[], which: 'grant' | 'revoke'): Capability[] {
     );
   }
   return [...new Set(values as Capability[])].sort();
-}
-
-function missingFrom(held: ReadonlySet<Capability>, wanted: readonly Capability[]): Capability[] {
-  return wanted.filter((capability) => !held.has(capability));
 }
 
 /**
@@ -487,13 +482,20 @@ async function applyPlayerPermissions(
  * Give somebody the console, or take it away — the other half of /permissions,
  * and the half the page's own subtitle has always promised.
  *
- * THIS ACTION WRITES NOTHING ITSELF. It composes two existing guarded actions,
- * in an order chosen below, and that is deliberate: `role`, `is_exec` and
- * `is_trainer` are the hard floor in player-field-access.ts — refused to anyone
- * below admin under all circumstances and reachable by no capability — and the
- * one place enforcing that floor is assertPlayerFieldAccess() inside
- * updatePlayer(). A second path that set those columns directly would be a
- * second place the floor has to be remembered.
+ * THIS IS THE ONLY WAY TO CHANGE SOMEBODY'S CONSOLE ACCESS. `role`, `is_exec`
+ * and `is_trainer` are the hard floor in player-field-access.ts, and the member
+ * Edit dialog used to reach them through updatePlayer() under nothing but an
+ * `isAdmin` check. The club owner removed that control — "i dont think the
+ * console access should be there anymore… as its only admins who will be mainly
+ * editing permissions" — and updatePlayer now refuses the three columns from
+ * every caller, so the level write lives here and nowhere else.
+ *
+ * (The one other writer of those columns on an EXISTING member is
+ * resolvePrivilegeClaimReview in actions/players.ts, which puts back exactly what
+ * a roster claim withheld under this same capability. Creating a member can set
+ * is_exec / is_trainer at insert, behind the admin-only
+ * assertPlayerCreateFieldAccess, because 00132's claim attribution depends on an
+ * exec being able to pre-add an officer.)
  *
  * (Worth knowing while reading that: the guard_player_privileged_columns trigger
  * names the same columns and does NOT cover this path. It opens with `IF
@@ -549,7 +551,10 @@ export async function setConsoleAccess(
 }
 
 /**
- * The level columns, written for a CAPABILITY HOLDER who is not an admin.
+ * THE ONE WRITER OF role / is_exec / is_trainer on an existing member — for an
+ * admin and for a capability holder alike. It was added in 00105 for the holder
+ * only, beside updatePlayer's admin path; that path is gone, because updatePlayer
+ * now refuses these columns from everybody.
  *
  * NOT EXPORTED, and that is a security property rather than tidiness. This file
  * carries `'use server'`, so every exported async function in it is a client
@@ -558,22 +563,21 @@ export async function setConsoleAccess(
  * setConsoleAccessImpl, after the capability gate, the two admin-only branches,
  * the self-edit refusal and both closure checks have run.
  *
- * WHY IT EXISTS AT ALL rather than the guard inside updatePlayer being taught
- * about the capability: that guard also stands in front of the member Edit
- * dialog, which has none of the checks above. See the comment at the call site.
- *
  * THE SAME AUDIT SHAPE updatePlayer WRITES, and that is load-bearing rather than
  * cosmetic. isAccessChange() in officer-access.ts picks console-access changes
  * out of the log by looking for `player_updated` rows whose new_value names one
  * of these three columns; a different action_type or a different shape here
- * would make a holder's changes vanish from the access-changes view — silently,
- * which is the failure mode this codebase keeps writing comments about.
+ * would make these changes vanish from the access-changes view — silently, which
+ * is the failure mode this codebase keeps writing comments about.
  *
- * THE LAST-ADMIN GUARD IS NOT BYPASSED. It is trg_guard_last_admin_role (00050),
- * a BEFORE UPDATE OR DELETE trigger on public.players, so it fires on this
- * statement exactly as it fires on updatePlayer's. It could not be reached from
- * here anyway: demoting an admin needs isAdminActor, and this function only runs
- * when the actor is not one.
+ * THE LAST-ADMIN GUARD IS NOT BYPASSED, and it is now REACHABLE from here, which
+ * it was not while only non-admins came through. It is trg_guard_last_admin_role
+ * (00050), a BEFORE UPDATE OR DELETE trigger on public.players, so it fires on
+ * this statement exactly as it fired on updatePlayer's — an admin demoting the
+ * last admin holding a passkey is refused by the database, and the message
+ * reaches them verbatim: `throw new Error(error.message)` here becomes
+ * runAction's `err.message` at the boundary, which is the identical sentence
+ * updatePlayer's own runAction used to hand back.
  */
 async function writeConsoleLevel(
   adminClient: ReturnType<typeof createAdminClient>,
@@ -767,33 +771,13 @@ async function setConsoleAccessImpl(playerId: string, access: ExecRole, rawReaso
     clears ? UNRESTRICTED : permissionsOf(nextLevel, target),
   );
 
-  // THE TWO LOCALS ARE NAMED `level*` ON PURPOSE. The blocks below are the same
-  // shape as checks 3 and 4 of applyPlayerPermissions, and the second one was
-  // once byte-identical to its twin — which made a search-and-replace across
-  // this file silently edit the wrong copy. The prefix is what stops that
-  // happening to the next person.
-
-  // 1. WHO MAY EDIT WHOM. Stops a narrowly-scoped holder reaching into somebody
-  //    who holds more than they do — which, with no grant involved at all, is
-  //    the denial-of-access half of this action: taking the console away from a
-  //    colleague who was elected to use it.
-  const levelOutOfReach = missingFrom(actorSet, [...before]);
-  if (levelOutOfReach.length > 0) {
-    throw new ExpectedError(
-      `You cannot change this person's console access: they hold ${listOf(levelOutOfReach)}, which you do not.`,
-    );
-  }
-
-  // 2. AND ON THE RESULT. This is what stops a trainer-sized holder minting an
-  //    executive, and it is why one capability covers both levels rather than
-  //    two: the graduation is a consequence of the baselines, not of a second
-  //    tick box that would have to be kept in step with them.
-  const levelWouldExceed = missingFrom(actorSet, [...after]);
-  if (levelWouldExceed.length > 0) {
-    throw new ExpectedError(
-      `That would give them ${listOf(levelWouldExceed)}, which you do not hold.`,
-    );
-  }
+  // BOTH CHECKS, IN ONE CALL, AND THE FUNCTION LIVES IN console-access.ts.
+  // It was two inline blocks here, the same shape as checks 3 and 4 of
+  // applyPlayerPermissions — and the second was once byte-identical to its twin,
+  // which made a search-and-replace across this file silently edit the wrong
+  // copy. The roster-claim restore now needs the identical test, so it is one
+  // named function with one set of words rather than a third transcription.
+  assertLevelClosure(actorSet, before, after);
 
   // NOTHING TO DO ONLY WHEN THERE IS NOTHING LEFT TO DO. "Their level is already
   // what you asked for" is NOT the same question as "does this action have
@@ -844,41 +828,46 @@ async function setConsoleAccessImpl(playerId: string, access: ExecRole, rawReaso
 
   if (clearFirst) await clearComposition(false);
 
-  // TWO WRITERS, AND THE ADMIN ONE IS THE OLD ONE, UNCHANGED.
+  // ONE WRITER, FOR EVERYBODY, and it used to be two.
   //
-  // updatePlayer applies the field guard, writes the audit row and meets the
-  // database's last-admin trigger. Its guard is assertPlayerFieldAccess, which
-  // refuses `role`, `is_exec` and `is_trainer` to everybody below admin
-  // unconditionally and consults NO capability — that is PLAYER_FIELD_FLOOR and
-  // it has not moved one line in this change. It is why the member Edit dialog,
-  // which is the other caller of updatePlayer, is exactly as admin-only as it
-  // was.
+  // The admin half went through updatePlayer(), because updatePlayer applied the
+  // field guard, wrote the audit row and met the database's last-admin trigger,
+  // and a capability holder could not go through it — assertPlayerFieldAccess
+  // refuses the three level columns to everybody below admin unconditionally, so
+  // 00105 added writeConsoleLevel beside it rather than opening the floor.
   //
-  // Which is also why a capability holder cannot go through it, and why the
-  // second writer below exists rather than the floor being opened. Opening the
-  // floor would have handed the Edit dialog to anybody holding
-  // players.update.write alongside this capability — a path with no closure
-  // check, no admin-target refusal and no composition clearing, i.e. a
-  // five-capability officer able to mint a 73-capability executive.
+  // THE EDIT DIALOG NO LONGER OFFERS CONSOLE ACCESS (the club owner: "i dont
+  // think the console access should be there anymore"), and updatePlayer now
+  // refuses the three columns from ANY caller, admin included. So the admin
+  // branch had exactly one remaining reason to exist — reaching a writer the
+  // capability holder could not — and that reason is gone with it. Collapsing to
+  // one writer is the point of the change rather than a tidy-up: two functions
+  // that write the same three columns are two places a check can be added to and
+  // one place it can be forgotten.
   //
-  // All three columns every time on both paths, never a subset: fromRoleValue
-  // answers the whole question, so moving somebody from executive to trainer
-  // clears is_exec in the same write that sets is_trainer, and no marker
-  // survives a move it was not part of.
+  // NOTHING IS LOST BY COLLAPSING. writeConsoleLevel reads the whole row back for
+  // the audit, writes the same `player_updated` action_type isAccessChange()
+  // matches, and revalidates what updatePlayer revalidated. The last-admin guard
+  // (trg_guard_last_admin_role, 00050) is a BEFORE UPDATE trigger on
+  // public.players, so it fires on this statement exactly as it fired on
+  // updatePlayer's, and its message reaches the admin verbatim: runAction returns
+  // `err.message` for any Error, which is the same sentence updatePlayer's own
+  // runAction produced.
+  //
+  // All three columns every time, never a subset: fromRoleValue answers the whole
+  // question, so moving somebody from executive to trainer clears is_exec in the
+  // same write that sets is_trainer, and no marker survives a move it was not
+  // part of.
   if (levelChanged) {
-    if (actorIsAdmin) {
-      const res = await updatePlayer(playerId, { ...fromRoleValue(access), reason });
-      if (!res.ok) throw new ExpectedError(res.error);
-    } else {
-      await writeConsoleLevel(adminClient, actor.id as string, playerId, access, reason);
-    }
+    await writeConsoleLevel(adminClient, actor.id as string, playerId, access, reason);
   }
 
   if (clearAfter) await clearComposition(true);
 
-  // updatePlayer revalidates /players and the member's own page; neither is this
-  // one, and an executive moved to trainer never reaches setPlayerPermissions
-  // above, so nothing else would refresh the list this was changed from.
+  // writeConsoleLevel revalidates /players and the member's own page; neither is
+  // this one, and an executive moved to trainer never reaches
+  // setPlayerPermissions above, so nothing else would refresh the list this was
+  // changed from.
   revalidatePath('/permissions');
   revalidatePath('/dashboard');
 }

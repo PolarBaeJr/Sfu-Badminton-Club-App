@@ -122,14 +122,15 @@ export function officerLevel(person: OfficerInput): AccessLevel | null {
 // types, because only one of them is a capability change:
 //
 //   setPlayerPermissions  → 'player_permissions_changed', always an access change.
-//   setConsoleAccess      → composes updatePlayer(), so it writes
-//                           'player_updated' — the SAME type as renaming a
-//                           member or fixing their email.
+//   setConsoleAccess      → writeConsoleLevel writes 'player_updated' — the SAME
+//                           type as renaming a member or fixing their email, and
+//                           deliberately so, because this filter is what reads it
+//                           back.
 //
 // So `player_updated` cannot be taken wholesale. It is filtered on whether the
 // new value touched one of the three hard-floor columns, which is exactly what
 // setConsoleAccess writes through fromRoleValue() and what nothing else in the
-// console is allowed to write. Done in TypeScript over a fetched page of rows
+// console writes at all any more. Done in TypeScript over a fetched page of rows
 // rather than as a PostgREST `new_value->>is_exec` filter: a filter PostgREST
 // refuses comes back as `data: null` with the error unread, which renders as
 // "no access changes yet" — the silent-nothing-happened failure this codebase
@@ -153,11 +154,15 @@ export function isAccessChange(log: AuditRowShape): boolean {
     log.action_type === 'roster_claim_privileges_reviewed'
     || log.action_type === 'roster_row_claimed_privileges_stripped'
   ) return true;
-  // The roster dialog's is_exec toggle goes through updatePlayerFlags, which
-  // writes `player_flags_updated` (fees.ts:43) rather than `player_updated`.
-  // Without this line, GRANTING somebody exec from the roster was as invisible
-  // on this card as the claim taking it away was — the same failure in the
-  // opposite direction, and the reason the same column test runs for both.
+  // KEPT FOR THE HISTORY, not for anything written from today on.
+  // updatePlayerFlags used to carry is_exec beside fee_exempt, so the roster
+  // dialog could grant somebody exec through `player_flags_updated` (fees.ts)
+  // rather than `player_updated` — invisible on this card without this line, the
+  // same failure the claim's silence was and the reason the same column test
+  // runs for both. That writer now writes fee_exempt alone, so new rows of this
+  // type never name a level column and fall out below. Rows already in the log
+  // do, and dropping the branch would make months of real grants disappear from
+  // the one screen that exists to show them.
   if (log.action_type !== 'player_updated' && log.action_type !== 'player_flags_updated') return false;
   const next = log.new_value;
   if (typeof next !== 'object' || next === null) return false;

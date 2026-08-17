@@ -13,10 +13,17 @@ import {
   parsePrivilegeClaimReview,
   restoreWithheldPrivileges,
   describePrivileges,
+  ExpectedError,
   type AdminPlayerUpdateInput,
 } from '@badminton/shared';
 import { requireCapability } from './_shared';
-import { assertPlayerCreateFieldAccess, assertPlayerFieldAccess } from '../player-field-access';
+import {
+  assertNoConsoleAccessFields,
+  assertPlayerCreateFieldAccess,
+  assertPlayerFieldAccess,
+} from '../player-field-access';
+import { assertLevelClosure } from '../console-access';
+import { accessLevelFor, effectiveCapabilities, permissionsOf } from '../permissions';
 import { runAction, type ActionResult } from '../action-result';
 
 export async function approvePlayer(playerId: string, status: 'competitive' | 'recreational', reason: string): Promise<ActionResult<void>> {
@@ -193,6 +200,17 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
   // Guarding only `parsed` would let a hand-rolled POST of { exec_title: '' }
   // through the guard and into the update.
   assertPlayerFieldAccess(actor, [data as Record<string, unknown>, parsed]);
+  // ONE PATH TO CONSOLE ACCESS, AND IT IS NOT THIS ONE. Refused for EVERYBODY,
+  // admins included, which is what makes it different from the guard above:
+  // that one asks who you are, this one says the act does not live here. See
+  // assertNoConsoleAccessFields for why "no admin control sends it any more" is
+  // not the same thing as it being unreachable.
+  //
+  // AFTER the level guard rather than before, so an exec who tries it still
+  // gets "Admin access required" — the sentence that tells them the real
+  // shape of the refusal — rather than being pointed at a screen they cannot
+  // open either.
+  assertNoConsoleAccessFields([data as Record<string, unknown>, parsed]);
   const adminClient = createAdminClient();
 
   const { data: oldPlayer } = await adminClient.from('players').select('*').eq('id', playerId).single();
@@ -249,10 +267,11 @@ async function updatePlayerImpl(playerId: string, data: AdminPlayerUpdateInput) 
     playerUpdate.inactivity_notice_sent_at = null;
     playerUpdate.inactive_since = null;
   }
-  if (data.role) playerUpdate.role = data.role;
+  // role / is_exec / is_trainer are DELIBERATELY ABSENT from this assembly, and
+  // the guard above means they can never arrive here anyway. Console access is
+  // set on /permissions, through setConsoleAccess → writeConsoleLevel, which is
+  // the only writer of the three columns that edits an existing member.
   if (data.membership_type) playerUpdate.membership_type = data.membership_type;
-  if (data.is_exec !== undefined) playerUpdate.is_exec = data.is_exec;
-  if (data.is_trainer !== undefined) playerUpdate.is_trainer = data.is_trainer;
   if (data.exec_title !== undefined) playerUpdate.exec_title = data.exec_title;
   if (data.fee_exempt !== undefined) playerUpdate.fee_exempt = data.fee_exempt;
   if (data.exec_photo_url !== undefined) playerUpdate.exec_photo_url = data.exec_photo_url;
@@ -497,6 +516,29 @@ export async function mergePlayers(
  * `role` additionally requires the actor to be an admin, mirroring
  * setConsoleAccess's own refusal: an exec cannot hand out the level above their
  * own, and a review is not a way around that.
+ *
+ * ...AND SO IS GRANT CLOSURE, WHICH THIS USED TO SKIP. Asking for the same
+ * capability is not the same thing as applying the same rule. A restore hands
+ * over a LEVEL — is_exec confers the whole exec baseline, is_trainer the trainer
+ * one — and, because a restore does not clear a composition, it hands over any
+ * stored grants sitting dormant on the row as well. Without closure a
+ * five-capability officer could resolve a review and produce a colleague holding
+ * things the officer has never held, from the /players screen, with none of the
+ * checks the /permissions control applies to the identical act.
+ *
+ * assertLevelClosure is therefore the SAME function setConsoleAccess calls, on
+ * sets computed the same way — not a second transcription of the rule. The one
+ * difference is `after`: setConsoleAccess sometimes clears the composition and
+ * resolves the new level against UNRESTRICTED, and a restore never clears, so
+ * the stored triple is always what the result is measured through. That is the
+ * conservative reading and it is the true one.
+ *
+ * AND NOBODY RESOLVES THEIR OWN REVIEW, for the reason setConsoleAccess refuses a
+ * self-edit: it is the one move that would let this capability promote its own
+ * holder. Usually unreachable — a member whose privileges were withheld has no
+ * console to resolve anything from — but a MIXED review keeps some privileges and
+ * withholds others, so somebody can hold the capability and still have a pending
+ * restore of their own.
  */
 export async function resolvePrivilegeClaimReview(
   playerId: string,
@@ -507,11 +549,23 @@ export async function resolvePrivilegeClaimReview(
 
 async function resolvePrivilegeClaimReviewImpl(playerId: string, decision: 'restore' | 'dismiss') {
   const actor = await requireCapability('players.consoleaccess.write');
+  // Refused before the target is even loaded, exactly as setConsoleAccess does
+  // it, so self-promotion is never a question of what the row happens to say.
+  if (actor.id === playerId) {
+    throw new ExpectedError(
+      'You cannot resolve your own permission review. Ask another admin to do it.',
+    );
+  }
   const adminClient = createAdminClient();
 
+  // The three permission columns TOGETHER with the level markers: naming
+  // permission_role without both delta columns makes permissionsOf() throw
+  // rather than read a missing revoke as an empty one.
   const { data: player, error: readError } = await adminClient
     .from('players')
-    .select('id, full_name, role, is_exec, is_trainer, privilege_claim_review')
+    .select(
+      'id, full_name, role, is_exec, is_trainer, permission_role, permission_grants, permission_revokes, privilege_claim_review',
+    )
     .eq('id', playerId)
     .single();
   if (readError) throw new Error(readError.message);
@@ -525,6 +579,43 @@ async function resolvePrivilegeClaimReviewImpl(playerId: string, decision: 'rest
   if (restore.role && restore.role !== 'player' && actor.role !== 'admin') {
     throw new Error('Only an admin can restore an admin role. Ask one to resolve this review.');
   }
+
+  // GRANT CLOSURE, ON THE LEVEL THIS WOULD PRODUCE. `after` is resolved from the
+  // MERGED row — the restore's columns over the row's current ones — because a
+  // restore adds privileges rather than replacing the set: somebody whose is_exec
+  // was withheld but whose is_trainer was kept ends up holding both, and the
+  // check has to measure what they will actually hold.
+  //
+  // Through the stored composition in both directions, never UNRESTRICTED: a
+  // restore does not clear one, so a dormant grant on the row wakes up with the
+  // level and is part of what is being handed over.
+  //
+  // A `dismiss` IS STILL CHECKED, and it is worth being exact about what that
+  // means because the obvious reading is wrong. `after` equals `before` for a
+  // dismiss, so check 2 can never fire — but check 1 measures what the target
+  // ALREADY holds, so a dismiss on somebody richer than the actor is refused.
+  //
+  // That is the same rule setConsoleAccess applies and it is the right one:
+  // dismissing permanently discards a privilege somebody was elected to have,
+  // which is the denial-of-access half of this act, and "who may edit whom" does
+  // not stop applying because the write happens to be small. It only bites on a
+  // MIXED review — one that kept a level and withheld something else — since a
+  // fully-stripped member resolves to no level and an empty `before`, which is
+  // the ordinary case and passes.
+  const actorLevel = accessLevelFor(actor);
+  const actorSet = effectiveCapabilities(actorLevel, permissionsOf(actorLevel, actor));
+  const beforeLevel = accessLevelFor(player);
+  const merged = {
+    role: (restore.role as string | undefined) ?? player.role,
+    is_exec: (restore.is_exec as boolean | undefined) ?? player.is_exec,
+    is_trainer: (restore.is_trainer as boolean | undefined) ?? player.is_trainer,
+  };
+  const afterLevel = accessLevelFor(merged);
+  assertLevelClosure(
+    actorSet,
+    effectiveCapabilities(beforeLevel, permissionsOf(beforeLevel, player)),
+    effectiveCapabilities(afterLevel, permissionsOf(afterLevel, player)),
+  );
 
   const { error } = await adminClient
     .from('players')

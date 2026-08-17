@@ -155,9 +155,11 @@ export const CAPABILITIES = [
   // make role change a permission".
   //
   // THE ONE DOOR IN THE HARD FLOOR, AND IT IS DELIBERATELY NARROW. `role`,
-  // `is_exec` and `is_trainer` stay on PLAYER_FIELD_FLOOR and stay unreachable
-  // through updatePlayer(), so the member Edit dialog is admin-only exactly as
-  // it was. This capability is read in ONE place — setConsoleAccess — where the
+  // `is_exec` and `is_trainer` stay on PLAYER_FIELD_FLOOR and are unreachable
+  // through updatePlayer() — which now refuses them from every caller, admins
+  // included, because the club owner took the console-access control off the
+  // member Edit dialog. This capability is read in ONE place — setConsoleAccess
+  // — which is therefore the only way anybody changes a level at all, and the
   // act is bounded by grant closure on both sides: what the target holds now
   // must be inside the actor's own set, and what they would hold afterwards
   // must be too.
@@ -816,7 +818,9 @@ const OFFERABLE_BEYOND_EXEC: readonly Capability[] = [
 //     those columns, and it is offerable above. It does NOT weaken this line: it
 //     opens role/is_exec/is_trainer in ONE action, setConsoleAccess, which
 //     closure-checks the target's set on both sides and still refuses the admin
-//     level outright. The Edit dialog is exactly as admin-only as it was.
+//     level outright. Nor does it widen the Edit dialog — that dialog no longer
+//     offers console access to anybody, and updatePlayer refuses the three
+//     columns outright, so setConsoleAccess is the only editing path there is.
 //   * `players.remove.write` / `players.merge.write` / `players.deletion.cancel.write`
 //     / `players.reliability.write` — destructive or identity-altering roster
 //     work that stood behind getAdminPlayer().

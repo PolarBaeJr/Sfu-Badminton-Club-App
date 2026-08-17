@@ -597,7 +597,10 @@ describe('the hard floor is out of reach of an editable role', () => {
 
   // AND NO EDIT EVER WRITES ONE. The propagation path goes through
   // setPlayerPermissions, which writes exactly four columns; the floor's other
-  // three are set only by updatePlayer() behind assertPlayerFieldAccess.
+  // three — role, is_exec, is_trainer — are set on an existing member by
+  // writeConsoleLevel() alone, behind setConsoleAccess on /permissions.
+  // updatePlayer() used to be that writer and now refuses them from every
+  // caller, admins included.
   it('is never written by propagating an edit', async () => {
     Object.assign(rowFor(EXEC_A), {
       permission_role: 'custom',

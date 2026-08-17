@@ -67,6 +67,16 @@ const makeClient = vi.hoisted(() => () => {
         const hit = res.data?.[0];
         return { data: hit ? { ...hit } : null, error: res.error };
       },
+      // The same copy rule. `.single()` differs from maybeSingle only in that
+      // PostgREST errors when there is no row — which is what
+      // resolvePrivilegeClaimReview's read uses.
+      async single() {
+        const res = run();
+        const hit = res.data?.[0];
+        return hit
+          ? { data: { ...hit }, error: null }
+          : { data: null, error: { message: 'JSON object requested, multiple (or no) rows returned' } };
+      },
       then(resolve: (v: unknown) => unknown) { return Promise.resolve(run()).then(resolve); },
     };
     return api;
@@ -94,32 +104,18 @@ vi.mock('../actions/_shared', async () => {
   };
 });
 
-// The ADMIN half of the level write, stubbed for the same reason
-// permission-reason.test.ts stubs it: updatePlayer is a large action with its
-// own guard and its own audit row, and what is under test here is who reaches
-// it. The NON-ADMIN half is deliberately NOT stubbed — writeConsoleLevel is
-// inside actions/permissions.ts and writes through the mock client above, so
-// its columns and its audit row are the real ones.
-vi.mock('../actions/players', async () => {
-  const { fromRoleValue } = await import('../console-access');
-  return {
-    updatePlayer: async (id: string, data: Record<string, unknown>) => {
-      const row = store.db.players!.find((p) => p.id === id);
-      if (row) {
-        const { reason: _reason, ...columns } = data;
-        Object.assign(row, columns);
-      }
-      (store.db.audit_logs ??= []).push({
-        action_type: 'player_updated',
-        target_id: id,
-        new_value: { ...fromRoleValue(data.is_exec === true ? 'executive' : 'none') },
-      });
-      return { ok: true as const, data: undefined };
-    },
-  };
-});
+// NO updatePlayer STUB ANY MORE, and its absence is the change this file is
+// pinning. The admin half of the level write used to go through updatePlayer and
+// was stubbed here, because updatePlayer is a large action with its own guard and
+// its own audit row and what is under test is who reaches it. updatePlayer now
+// refuses the three columns from every caller, so setConsoleAccess has ONE writer
+// for everybody: writeConsoleLevel, inside actions/permissions.ts, writing through
+// the mock client above. Every assertion below therefore sees the REAL columns
+// and the REAL audit row for an admin as well as for a capability holder — which
+// the stub could only approximate.
 
 import { setConsoleAccess, setPlayerPermissions } from '../actions/permissions';
+import { resolvePrivilegeClaimReview } from '../actions/players';
 import {
   CAPABILITIES,
   EDITOR_OFFERABLE,
@@ -499,11 +495,204 @@ describe('a holder’s change is visible in the access log', () => {
     expect(old.player.is_exec).toBe(true);
     expect(old.player.is_trainer).toBe(false);
   });
+
+  // ---------------------------------------------------------------------------
+  // AN ADMIN DID NOT LOSE THE ABILITY TO DO THIS
+  // ---------------------------------------------------------------------------
+  // The member Edit dialog used to carry a console-access select and no longer
+  // does, so this page is the whole of an admin's route to the act. That makes
+  // "an admin can still set every level, and it lands, and it is visible" a claim
+  // worth asserting rather than assuming — a removal that quietly took the
+  // capability with it would look exactly like a tidy-up.
+  //
+  // THIS IS ALSO THE ADMIN WRITE PATH ITSELF, unstubbed for the first time.
+  // updatePlayer used to stand in for it here; the columns and the audit row
+  // below are now the real ones writeConsoleLevel produces for an admin.
+  //
+  // THE SUBJECT IS CHOSEN SO EACH CASE IS A REAL CHANGE. setConsoleAccess
+  // correctly does nothing when the level asked for is the one already held, and
+  // a no-op writes no audit row — so pointing every case at the same person would
+  // make one of the four assert against an empty log for the right reason.
+  it.each([
+    ['executive', MEMBER, { role: 'player', is_exec: true, is_trainer: false }],
+    ['trainer', MEMBER, { role: 'player', is_exec: false, is_trainer: true }],
+    ['admin', MEMBER, { role: 'admin', is_exec: true, is_trainer: false }],
+    ['none', TARGET_EXEC, { role: 'player', is_exec: false, is_trainer: false }],
+  ] as const)('lets an admin set %s, writing all three columns', async (access, subject, columns) => {
+    const res = await setConsoleAccess(subject, access, WHY);
+    expect(res.ok, errorOf(res)).toBe(true);
+
+    const row = rowFor(subject);
+    expect(row.role).toBe(columns.role);
+    expect(row.is_exec).toBe(columns.is_exec);
+    expect(row.is_trainer).toBe(columns.is_trainer);
+
+    // ...and it reaches the one screen that answers "who was given what, and
+    // when". An admin's change going unlogged is the 2026-08-15 shape exactly.
+    const audit = levelAudits()[0]!;
+    expect(audit.actor_id).toBe(ADMIN);
+    expect(audit.reason).toBe(WHY);
+    expect(audit.new_value).toEqual(columns);
+    expect(isAccessChange(audit as { action_type: string; new_value?: unknown })).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
 // WHERE THE CAPABILITY SITS
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// THE OTHER WRITER OF THE THREE COLUMNS: THE ROSTER-CLAIM RESTORE (00132)
+// ---------------------------------------------------------------------------
+// resolvePrivilegeClaimReview puts back exactly what a claim withheld, and it is
+// a SECOND UI surface for the same act — a card on /players rather than the
+// control on /permissions — running under this same capability.
+//
+// ASKING FOR THE SAME CAPABILITY IS NOT THE SAME THING AS APPLYING THE SAME RULE,
+// and for a while it was not: the restore wrote the columns directly, with no
+// closure test in either direction. A five-capability officer resolving a review
+// could hand a colleague the whole exec baseline — plus any dormant composition
+// on the row, because a restore does not clear one — none of which the officer
+// held. That is the identical defect class this branch exists to close, one
+// screen over, so the fix is the SAME function and not a second transcription.
+describe('the roster-claim restore is bounded like every other level change', () => {
+  const CLAIMANT = 'cccccccc-0000-4000-8000-000000000001';
+
+  /** Somebody whose exec marker a claim withheld at first sign-in. */
+  const withheldExec = (extra: Row = {}): Row =>
+    person(CLAIMANT, {
+      privilege_claim_review: {
+        state: 'held',
+        at: '2026-08-15T00:00:00.000Z',
+        withheld: { is_exec: true },
+        kept: {},
+      },
+      ...extra,
+    });
+
+  beforeEach(() => {
+    store.db.players!.push(withheldExec());
+  });
+
+  it('refuses a holder who does not hold what the restore would hand over', async () => {
+    // A trainer-sized holder: the console capability and the trainer baseline,
+    // and nothing of the exec one. Restoring is_exec would confer EXEC_BASELINE.
+    store.actor = rowFor(SMALL_HOLDER);
+    const res = await resolvePrivilegeClaimReview(CLAIMANT, 'restore');
+    expect(res.ok).toBe(false);
+    expect(errorOf(res)).toMatch(/which you do not hold/);
+    // NOTHING WRITTEN — not the columns, and not the flag either. A restore that
+    // cleared the review while refusing the privileges would destroy the only
+    // record of what is owed to this member.
+    expect(rowFor(CLAIMANT).is_exec).toBe(false);
+    expect(rowFor(CLAIMANT).privilege_claim_review).toBeTruthy();
+  });
+
+  it('lets a holder with the whole ceiling do it, and writes the column', async () => {
+    store.actor = rowFor(FULL_HOLDER);
+    const res = await resolvePrivilegeClaimReview(CLAIMANT, 'restore');
+    expect(res.ok, errorOf(res)).toBe(true);
+    expect(rowFor(CLAIMANT).is_exec).toBe(true);
+    expect(rowFor(CLAIMANT).privilege_claim_review).toBe(null);
+  });
+
+  it('lets an admin do it', async () => {
+    const res = await resolvePrivilegeClaimReview(CLAIMANT, 'restore');
+    expect(res.ok, errorOf(res)).toBe(true);
+    expect(rowFor(CLAIMANT).is_exec).toBe(true);
+  });
+
+  // A DISMISS HANDS OVER NOTHING, so check 2 can never fire and the ORDINARY
+  // case — a fully-stripped member, who resolves to no level and an empty
+  // `before` — passes for any holder. That matters: a closure check bolted on
+  // carelessly would have refused this too, and reviews would have piled up
+  // behind a refusal nobody could act on.
+  it('lets a narrow holder DISMISS a review on somebody with no level', async () => {
+    store.actor = rowFor(SMALL_HOLDER);
+    const res = await resolvePrivilegeClaimReview(CLAIMANT, 'dismiss');
+    expect(res.ok, errorOf(res)).toBe(true);
+    expect(rowFor(CLAIMANT).is_exec).toBe(false);
+    expect(rowFor(CLAIMANT).privilege_claim_review).toBe(null);
+  });
+
+  // ...AND IT IS NOT UNCHECKED, which is the half the obvious reading gets
+  // wrong. Check 1 measures what the target ALREADY holds, so a MIXED review —
+  // one that KEPT a level and withheld something else — is out of a narrow
+  // holder's reach even to dismiss. Deliberate, and the same rule
+  // setConsoleAccess applies: dismissing permanently discards a privilege
+  // somebody was elected to have, which is the denial-of-access half of the act.
+  it('refuses a narrow holder dismissing a MIXED review on somebody richer than them', async () => {
+    Object.assign(rowFor(CLAIMANT), {
+      is_exec: true,
+      privilege_claim_review: {
+        state: 'mixed',
+        at: '2026-08-15T00:00:00.000Z',
+        withheld: { role: 'admin' },
+        kept: { is_exec: true },
+      },
+    });
+    store.actor = rowFor(SMALL_HOLDER);
+    const res = await resolvePrivilegeClaimReview(CLAIMANT, 'dismiss');
+    expect(res.ok).toBe(false);
+    expect(errorOf(res)).toMatch(/which you do not/);
+    // The review SURVIVES the refusal, so the decision is still there for
+    // somebody who can make it — the point of the next case.
+    expect(rowFor(CLAIMANT).privilege_claim_review).toBeTruthy();
+  });
+
+  it('...and an admin can dismiss the same one, so it is not stranded', async () => {
+    Object.assign(rowFor(CLAIMANT), {
+      is_exec: true,
+      privilege_claim_review: {
+        state: 'mixed',
+        at: '2026-08-15T00:00:00.000Z',
+        withheld: { role: 'admin' },
+        kept: { is_exec: true },
+      },
+    });
+    const res = await resolvePrivilegeClaimReview(CLAIMANT, 'dismiss');
+    expect(res.ok, errorOf(res)).toBe(true);
+    expect(rowFor(CLAIMANT).privilege_claim_review).toBe(null);
+    // Dismissed, so the withheld admin role is NOT written.
+    expect(rowFor(CLAIMANT).role).toBe('player');
+  });
+
+  // THE SELF-EDIT REFUSAL, which setConsoleAccess has and this did not. Usually
+  // unreachable — somebody stripped of their privileges has no console to resolve
+  // anything from — but a MIXED review keeps some and withholds others, so the
+  // holder of the capability can have a pending restore of their own.
+  it('refuses somebody resolving their own review', async () => {
+    Object.assign(rowFor(FULL_HOLDER), {
+      privilege_claim_review: {
+        state: 'mixed',
+        at: '2026-08-15T00:00:00.000Z',
+        withheld: { role: 'admin' },
+        kept: { is_exec: true },
+      },
+    });
+    store.actor = rowFor(FULL_HOLDER);
+    const res = await resolvePrivilegeClaimReview(FULL_HOLDER, 'restore');
+    expect(res.ok).toBe(false);
+    expect(errorOf(res)).toMatch(/your own permission review/i);
+    expect(rowFor(FULL_HOLDER).role).toBe('player');
+  });
+
+  it('still refuses a non-admin restoring an admin role, in its own words', async () => {
+    Object.assign(rowFor(CLAIMANT), {
+      privilege_claim_review: {
+        state: 'held',
+        at: '2026-08-15T00:00:00.000Z',
+        withheld: { role: 'admin' },
+        kept: {},
+      },
+    });
+    store.actor = rowFor(FULL_HOLDER);
+    const res = await resolvePrivilegeClaimReview(CLAIMANT, 'restore');
+    expect(res.ok).toBe(false);
+    expect(errorOf(res)).toMatch(/Only an admin can restore an admin role/);
+    expect(rowFor(CLAIMANT).role).toBe('player');
+  });
+});
 
 describe('players.consoleaccess.write is reachable only by being given it', () => {
   it('is in neither baseline', () => {
