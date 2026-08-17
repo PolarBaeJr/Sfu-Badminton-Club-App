@@ -49,6 +49,17 @@ interface Props {
    * EventControlCenter for why the two counts must stay apart.
    */
   playedMatches: number;
+  /**
+   * Matches on court right now (isInProgressMatch). Not a result, and so not in
+   * `playedMatches` — but a redraw deletes them from under the people playing
+   * them, which is why the button has to know about them separately.
+   */
+  liveMatches: number;
+  /**
+   * Matches carrying an unreversed rating that are not already counted as
+   * played. Normally zero; see summariseRedrawBlockers.
+   */
+  ratedMatches: number;
   /** How many matches the CURRENT phase holds — what a redraw would replace. */
   phaseMatches: number;
   /** How many matches the POOL half holds, and how many are decided. */
@@ -60,7 +71,7 @@ interface Props {
   hasThirdPlace: boolean;
 }
 
-export function EventHeader({ tournament, event, siblingEvents, isDoubles, totalEntries, checkedIn, totalMatches, completedMatches, playedMatches, phaseMatches, poolTotal, poolDecided, drawCapabilities, hasThirdPlace }: Props) {
+export function EventHeader({ tournament, event, siblingEvents, isDoubles, totalEntries, checkedIn, totalMatches, completedMatches, playedMatches, liveMatches, ratedMatches, phaseMatches, poolTotal, poolDecided, drawCapabilities, hasThirdPlace }: Props) {
   const [loading, setLoading] = useState(false);
   const [lockLoading, setLockLoading] = useState(false);
   const [regenLoading, setRegenLoading] = useState(false);
@@ -193,7 +204,7 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
   }
 
   const regenerate = regenerateDrawControl(
-    { status, drawLocked, playedMatches },
+    { status, drawLocked, playedMatches, liveMatches, ratedMatches },
     drawCapabilities,
   );
   const eventLabel = TOURNAMENT_EVENT_TYPE_LABELS[eventType] ?? eventType;
@@ -210,8 +221,11 @@ export function EventHeader({ tournament, event, siblingEvents, isDoubles, total
    * OFFERED AT `live` AS WELL AS `bracket_generated`. The owner pressed "Start
    * Tournament" and the button vanished with no way back, and most live events
    * have nothing played. What decides it is not the status but the match rows:
-   * `playedMatches` greys the button here and assertNoResultsEntered refuses on
-   * the server, and both count the same thing.
+   * `playedMatches`, `liveMatches` and `ratedMatches` grey the button here and
+   * assertDrawIsRebuildable refuses on the server, and all three count the same
+   * things. Neither is the guarantee — delete_phase_matches (00144) re-asks them
+   * of the rows it actually deletes and rolls the delete back — but they are why
+   * an exec is told before the click rather than after.
    *
    * IT IS NOT A THIN RE-RUN. Everything the first generation checked is checked
    * again, because the field can have changed underneath it: a pool-seeded

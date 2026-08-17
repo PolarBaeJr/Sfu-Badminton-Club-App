@@ -22,6 +22,12 @@ interface Fault {
 const store = vi.hoisted(() => ({
   db: {} as Record<string, Row[]>,
   faults: [] as Fault[],
+  /**
+   * Runs at the top of delete_phase_matches — the instant a redraw's guard has
+   * already passed and its DELETE has not yet run. That is exactly where the
+   * other desk's result commits in production, and the only way to reach D1.
+   */
+  beforeDeletePhase: null as null | (() => void),
   // Stands in for `gen_random_uuid()`. Bracket generation inserts a match shell
   // and immediately uses the id it gets back to wire up the next round, so an
   // insert that returns no id cannot be exercised at all.
@@ -49,7 +55,7 @@ const makeClient = vi.hoisted(() => () => {
     // `.select(cols, { count: 'exact', head: true })`. An UPDATE already
     // reported its count here, because "matched no rows is a success" is the
     // whole reason this harness exists — but a SELECT did not, so every guard
-    // that counts rows and refuses (assertNoResultsEntered, the go-live "no
+    // that counts rows and refuses (assertDrawIsRebuildable, the go-live "no
     // bracket" check, the entry-cap checks) read `undefined`, took the
     // `(count ?? 0) > 0` branch as false, and was VACUOUS in every test that
     // reached it. A guard that cannot fail in the harness is a guard the
@@ -119,6 +125,14 @@ const makeClient = vi.hoisted(() => () => {
         return { data: created, error: null };
       }
       if (op === 'delete') {
+        // The SAME window hook the delete_phase_matches stand-in fires, so the
+        // redraw tests below drive the PRE-FIX sources too: before 00144 the
+        // phase was cleared by a bare `.delete().eq('event_id', ...)` from
+        // TypeScript and this is where the other desk's result lands. Without
+        // it a test written against the RPC would simply not reproduce the
+        // defect on the old code, and "it fails before the fix" would be a
+        // claim rather than a measurement.
+        if (table === 'tournament_matches') store.beforeDeletePhase?.();
         store.db[table] = (store.db[table] ?? []).filter((r) => !matching().includes(r));
         return { data: null, error: null };
       }
@@ -394,9 +408,51 @@ const makeClient = vi.hoisted(() => () => {
     return ok();
   }
 
+  // Stand-in for delete_phase_matches (00144).
+  //
+  // MODELLED AS ONE STATEMENT, because that is the whole of its correctness. The
+  // real function deletes the phase and counts what it deleted in a single
+  // data-modifying CTE, then RAISEs — rolling the delete back — if anything in
+  // it had a result, carried an unreversed rating, or was on court. A harness
+  // that counted first and deleted second would model the BROKEN version and
+  // pass the tests below for the wrong reason, so this deletes, inspects the
+  // rows it removed, and restores them on refusal.
+  //
+  // `store.beforeDeletePhase` fires at the top, which is where the other desk's
+  // commit lands in production: the TypeScript guard has already read zero, the
+  // seeding writes have already gone out, and the result arrives before the
+  // delete does.
+  function deletePhaseRpc(args: Record<string, unknown>) {
+    const eventId = args.p_event_id as string;
+    const phase = (args.p_phase as string | null) ?? null;
+    store.beforeDeletePhase?.();
+
+    const all = store.db.tournament_matches ?? [];
+    // `p_phase IS NULL OR phase = p_phase` — NULL is NO FILTER, not `phase IS NULL`.
+    const gone = all.filter((m) => m.event_id === eventId && (phase === null || m.phase === phase));
+    store.db.tournament_matches = all.filter((m) => !gone.includes(m));
+
+    const notBye = (m: Row) => m.is_bye !== true;
+    const played = gone.filter((m) => notBye(m)
+      && ['completed', 'walkover', 'disputed'].includes(m.status as string)).length;
+    const rated = gone.filter((m) => m.elo_snapshot != null).length;
+    const live = gone.filter((m) => notBye(m) && m.status === 'live').length;
+
+    const refuse = (message: string) => {
+      // The RAISE rolls the DELETE back with it.
+      store.db.tournament_matches = all;
+      return Promise.resolve({ data: null, error: { message, code: '23514' } });
+    };
+    if (played > 0) return refuse(`${played} match(es) in this draw have a result`);
+    if (rated > 0) return refuse(`${rated} match(es) in this draw still carry an applied rating that was never reversed`);
+    if (live > 0) return refuse(`${live} match(es) in this draw are being played right now`);
+    return Promise.resolve({ data: gone.length, error: null });
+  }
+
   function rpc(name: string, args: Record<string, unknown>) {
     if (name === 'apply_tournament_match_rating') return applyRpc(args);
     if (name === 'reverse_tournament_match_rating') return reverseRpc(args);
+    if (name === 'delete_phase_matches') return deletePhaseRpc(args);
     return Promise.resolve({ data: null, error: { message: `unknown rpc ${name}` } });
   }
 
@@ -468,6 +524,7 @@ const LIVE_RATING_DEFAULTS = {
 
 beforeEach(() => {
   store.faults = [];
+  store.beforeDeletePhase = null;
   store.db = {
     tournaments: [{ id: 't1', suspended_at: null, suspension_reason: null, name: 'Test Cup' }],
     tournament_events: [{
@@ -1709,7 +1766,7 @@ describe('regenerating a draw that already exists', () => {
 
   it('lets a draw WITH BYES be redrawn — a bye is not a result', async () => {
     // THE BUG THIS FEATURE WOULD HAVE SHIPPED WITH. Generation writes
-    // status:'completed' onto every bye, and assertNoResultsEntered counted
+    // status:'completed' onto every bye, and assertDrawIsRebuildable counted
     // exactly that set of statuses, so any field that is not a power of two
     // produced a draw the guard then called "results already entered" — about
     // matches with no score, no Elo and no opponent to void. Three of the four
@@ -1754,6 +1811,109 @@ describe('regenerating a draw that already exists', () => {
     expect(store.db.tournament_matches!.length).toBeGreaterThan(0);
   });
 
+  // ------------------------------------------------------------
+  // THE GUARD IS A READ, AND THE DELETE IS NOT PROTECTED BY IT
+  // ------------------------------------------------------------
+  // assertDrawIsRebuildable runs 40+ sequential round trips before the delete —
+  // the field read, the pool promotion, one seed_number UPDATE per entrant. A
+  // result entered anywhere in that window is invisible to it, and the delete
+  // that follows has no predicate at all.
+  //
+  // What that costs is not a rebuilt draw. `elo_snapshot` is the ONLY record of
+  // the deltas a rated match put on the ladder — reverse_tournament_match_rating
+  // reads that column and nothing else — so deleting the row leaves both players
+  // holding a rating change that no path in the system can take back. Silent:
+  // the exec entering the score is told it saved (it did), the exec redrawing is
+  // told the draw regenerated (it did), and the ladder is wrong for the season.
+  //
+  // The assertions below are ON THE SURVIVING ROWS, never on "it threw". A fix
+  // that refused and deleted anyway, or that deleted the phase and left the
+  // rated match orphaned, passes a throw-only test and loses the rating.
+  it('REFUSES WHEN A RESULT LANDS AFTER THE GUARD AND BEFORE THE DELETE, and loses nothing', async () => {
+    seedField(4);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    const before = store.db.tournament_matches!.map((m) => m.id).sort();
+    const snapshot = { discipline: 'singles', entries: [{ player_id: 'pl-0', delta: 17 }] };
+
+    // The other desk commits in the window. This is D1 exactly: the guard has
+    // already counted zero and the seeding writes have already landed.
+    store.beforeDeletePhase = () => {
+      const semi = store.db.tournament_matches!.find((m) => m.round_number === 1 && !m.is_bye)!;
+      Object.assign(semi, { status: 'completed', elo_snapshot: snapshot });
+    };
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/have a result|has a result/);
+    // NOTHING WAS DELETED. Not the rated match, and not the rest of the phase
+    // either — a half-deleted draw is its own corruption.
+    expect(store.db.tournament_matches!.map((m) => m.id).sort()).toEqual(before);
+    const rated = store.db.tournament_matches!.find((m) => m.elo_snapshot != null);
+    // The snapshot is still there, so the delta is still reversible.
+    expect(rated?.elo_snapshot).toEqual(snapshot);
+  });
+
+  it('refuses when a match is ON COURT — no race required', async () => {
+    // RESULT_MATCH_STATUSES excludes 'live', correctly: a live match has no
+    // score and no Elo. But it has PEOPLE ON IT, and the redraw deletes it from
+    // under them along with its court and its ready marks. This needed no
+    // concurrency at all — just an exec who did not know 'live' was not counted.
+    seedField(4);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    const semi = store.db.tournament_matches!.find((m) => m.round_number === 1 && !m.is_bye)!;
+    Object.assign(semi, { status: 'live' });
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/being played right now/);
+    // And it names the remedy, which costs one click on the Court Management tab.
+    expect(res.ok === false && res.error).toMatch(/Undo the start/);
+    expect(store.db.tournament_matches!.length).toBeGreaterThan(0);
+  });
+
+  it('refuses a row that reads `voided` but still carries an applied rating', async () => {
+    // voidMatchImpl writes status on the id alone, so a void racing a result
+    // entry leaves a match that says it was erased and still has the delta on
+    // the ladder. "Void it first" is a dead end for that row — it IS voided —
+    // so the refusal has to name the two-step that actually reverses it.
+    seedField(4);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    const semi = store.db.tournament_matches!.find((m) => m.round_number === 1 && !m.is_bye)!;
+    Object.assign(semi, {
+      status: 'voided',
+      elo_snapshot: { discipline: 'singles', entries: [{ player_id: 'pl-0', delta: 17 }] },
+    });
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.error).toMatch(/applied rating that was never reversed/);
+    expect(res.ok === false && res.error).toMatch(/Unvoid then undo/);
+    expect(store.db.tournament_matches!.length).toBeGreaterThan(0);
+  });
+
+  it('STILL redraws over a properly voided match — the escape hatch must survive', async () => {
+    // The other half of the previous assertion, and the one that decides whether
+    // this is shippable. reverse_tournament_match_rating sets elo_snapshot to
+    // NULL in the same transaction as the reversal (00078), so a match voided
+    // through the console carries no snapshot and does not block. If it did,
+    // "void those matches first" — the only remedy the refusal offers — would
+    // lead nowhere and the draw would be permanently unregenerable.
+    seedField(4);
+    expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
+    for (const m of store.db.tournament_matches!) {
+      Object.assign(m, { status: 'voided', is_bye: false, elo_snapshot: null });
+    }
+
+    const res = await generateSingleEliminationBracket('e1', false);
+
+    expect(res.ok).toBe(true);
+    expect(store.db.tournament_matches!.length).toBeGreaterThan(0);
+    expect(store.db.tournament_matches!.every((m) => m.status !== 'voided')).toBe(true);
+  });
+
   it('refuses to redraw a FINALISED knockout event', async () => {
     // 1922133 wired assertNotFinalised into the round-robin generator and not
     // this one. It matters more here, if anything: finalizeEvent reads
@@ -1763,7 +1923,7 @@ describe('regenerating a draw that already exists', () => {
     seedField(4);
     expect((await generateSingleEliminationBracket('e1', false)).ok).toBe(true);
     Object.assign(event(), { status: 'completed' });
-    // Voided, so assertNoResultsEntered has nothing to object to — which is
+    // Voided, so assertDrawIsRebuildable has nothing to object to — which is
     // precisely the hole: this used to be the way past the block.
     for (const m of store.db.tournament_matches!) Object.assign(m, { status: 'voided', is_bye: false });
 
@@ -3787,7 +3947,7 @@ describe('a round robin and a knockout in one event', () => {
     expect(matchesIn('pool').map((m) => m.id).sort()).toEqual(poolIds);
 
     // A REDRAW OF THE KNOCKOUT IS NOT BLOCKED BY THE POOL'S RESULTS, and does
-    // not delete them. Unfiltered, assertNoResultsEntered would have counted
+    // not delete them. Unfiltered, assertDrawIsRebuildable would have counted
     // fifteen played pool matches and refused — offering the exec the one
     // remedy (void them) that destroys the round robin they just ran.
     const redraw = await generateSingleEliminationBracket('e1', false);

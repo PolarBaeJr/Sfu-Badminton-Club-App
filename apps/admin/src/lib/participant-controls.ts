@@ -313,7 +313,7 @@ export interface RegenerateDrawControl {
  *
  * THE GUARD IS THE AUTHORITY, NOT THE STATUS. `live` does not mean "something
  * has been played" — it means the exec pressed a button. What has been played
- * is a property of the match rows, and assertNoResultsEntered reads exactly
+ * is a property of the match rows, and assertDrawIsRebuildable reads exactly
  * that, counting walkovers and disputed results and refusing to count byes.
  * `playedMatches` below is the same question asked on the page (isPlayedMatch,
  * packages/shared) so the button can grey itself and SAY the number rather than
@@ -368,6 +368,23 @@ export function regenerateDrawControl(
      * (offer it, let the server refuse) rather than a silently wrong greying.
      */
     playedMatches?: number;
+    /**
+     * MATCHES BEING PLAYED RIGHT NOW (isInProgressMatch). Not a result, and
+     * deliberately not folded into `playedMatches`: a live match has no score
+     * and no Elo to lose, so it is not a RESULT — but it has people on court,
+     * and redrawing deletes it from under them. `RESULT_MATCH_STATUSES`
+     * excluding 'live' is what left this button un-greyed while three rallies
+     * were in progress, and that needed no race at all to happen.
+     */
+    liveMatches?: number;
+    /**
+     * MATCHES CARRYING AN UNREVERSED RATING that are not already counted as
+     * played (carriesAppliedRating). Normally zero — a rated match is
+     * `completed`. It is non-zero only for a row whose status was rewritten out
+     * from under its own snapshot, and deleting one of those puts a delta on
+     * the ladder that nothing can take back.
+     */
+    ratedMatches?: number;
   },
   can: DrawCapabilities,
 ): RegenerateDrawControl {
@@ -378,11 +395,30 @@ export function regenerateDrawControl(
   if (event.drawLocked) {
     return { show: true, blockedReason: 'Unlock the draw before redrawing it' };
   }
+  // THE ORDER IS THE ORDER assertDrawIsRebuildable AND delete_phase_matches USE
+  // (00144), so the greyed reason and the refusal an exec would get by clicking
+  // anyway name the same blocker rather than two different ones.
   const played = event.playedMatches ?? 0;
   if (played > 0) {
     return {
       show: true,
       blockedReason: `${played} match${played === 1 ? ' has' : 'es have'} been played — void ${played === 1 ? 'it' : 'them'} first`,
+    };
+  }
+  const rated = event.ratedMatches ?? 0;
+  if (rated > 0) {
+    return {
+      show: true,
+      blockedReason: `${rated} match${rated === 1 ? ' carries' : 'es carry'} an unreversed rating — unvoid then undo ${rated === 1 ? 'it' : 'them'} first`,
+    };
+  }
+  const live = event.liveMatches ?? 0;
+  if (live > 0) {
+    return {
+      show: true,
+      // The remedy is one click on the Court Management tab and costs nothing,
+      // which is why it is named rather than left as "wait".
+      blockedReason: `${live} match${live === 1 ? ' is' : 'es are'} on court — undo the start or wait for the result`,
     };
   }
   return { show: true, blockedReason: null };

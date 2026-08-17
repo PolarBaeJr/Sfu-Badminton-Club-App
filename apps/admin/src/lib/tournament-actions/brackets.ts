@@ -9,7 +9,8 @@ import {
   nextPowerOf2,
   getRoundName,
   ExpectedError,
-  RESULT_MATCH_STATUSES,
+  summariseRedrawBlockers,
+  hasRedrawBlockers,
   isPoolToBracket,
   phaseValueFor,
   knockoutLadder,
@@ -43,8 +44,8 @@ import {
 /**
  * A finished event's draw is not regenerable, full stop.
  *
- * assertNoResultsEntered only looks for live results, and `voided` is not in its
- * list — so voiding every match of a COMPLETED event unlocked regeneration while
+ * assertDrawIsRebuildable only looks for results that still stand, and `voided`
+ * is not one — so voiding every match of a COMPLETED event unlocked regeneration while
  * the finalisation survived untouched: final_position, tournament points and the
  * placement-bonus ledger all still sat on the old players. The new draw would
  * then finalise on top of them, and the ledger would skip the people it had
@@ -87,14 +88,38 @@ function assertNotFinalised(event: Record<string, unknown>, action: string) {
  *
  * A walkover is still a result and still blocks: it is rated, and the go-live
  * sweep records real ones (setEventStatus -> forfeitOutOfEventEntries).
+ *
+ * (The `IS TRUE` half is now expressed by isPlayedMatch in packages/shared
+ * rather than by a PostgREST filter, but the reasoning is unchanged and the
+ * SQL side of it lives on in 00144, which has to spell it out again.)
+ *
+ * ------------------------------------------------------------
+ * THIS IS THE EARLY, FRIENDLY REFUSAL. IT IS NOT THE GUARANTEE.
+ * ------------------------------------------------------------
+ *
+ * It runs before generation does any work, so an exec who cannot redraw is told
+ * so in one round trip instead of after 40. But it is a READ, and the DELETE it
+ * protects is issued dozens of round trips later — on a 32-entry draw, several
+ * seconds later. Anything that lands in that window is invisible to it.
+ *
+ * The guarantee lives in the database: delete_phase_matches (00144) re-asks
+ * these same three questions of the rows the DELETE actually removed, in the
+ * same statement, and rolls the delete back. That is what makes a redraw safe.
+ * This function makes it POLITE. If the two ever disagree, the RPC is right.
+ *
+ * THREE THINGS BLOCK A REDRAW and they are not one condition — see
+ * summariseRedrawBlockers in packages/shared for the reasoning behind each.
+ * Briefly: a result cannot be rebuilt over; an unreversed rating on the row is
+ * the only record of what it did to the ladder; and a live match has people on
+ * court.
  */
-async function assertNoResultsEntered(
+async function assertDrawIsRebuildable(
   adminClient: ReturnType<typeof createAdminClient>,
   eventId: string,
   // WHICH HALF IS BEING REBUILT (00107). null for the two single-phase formats,
   // where it is the whole event exactly as before.
   //
-  // THIS IS THE GUARD THAT WOULD OTHERWISE MAKE THE FORMAT UNUSABLE. A
+  // THIS IS THE FILTER THAT WOULD OTHERWISE MAKE THE FORMAT UNUSABLE. A
   // pool-to-bracket event reaches its knockout with a full pool of RESULTS
   // sitting in this same table, so an unfiltered count would refuse to generate
   // the bracket — "9 matches in this event have a result" — and offer the exec
@@ -102,37 +127,60 @@ async function assertNoResultsEntered(
   // is empty at that moment; only its own results may block rebuilding it.
   phase: TournamentMatchPhase | null,
 ) {
+  // THE ROWS, NOT A COUNT. It used to be `head: true` with `.in('status', ...)`
+  // pushed into the filter, which cannot answer three questions at once — and
+  // `elo_snapshot` in particular is not a status. A phase is at most 128 rows of
+  // four small columns; classifying them here keeps ONE definition of each
+  // question (packages/shared) instead of transcribing it into PostgREST
+  // filters and hoping the transcription stays right.
+  //
+  // elo_snapshot is SELECTED EXPLICITLY. carriesAppliedRating reads an absent
+  // column as "unrated", so leaving it out of the projection would silently
+  // disable the clause this guard exists for.
   let q = adminClient
     .from('tournament_matches')
-    .select('id', { count: 'exact', head: true })
-    .eq('event_id', eventId)
-    // RESULT_MATCH_STATUSES, not a literal list, since the event page now counts
-    // the same thing to decide whether to offer the button at all — see
-    // isPlayedMatch in packages/shared. The `is_bye` half is spelt out here
-    // rather than shared because it has to be expressed as a PostgREST filter.
-    .in('status', [...RESULT_MATCH_STATUSES])
-    .not('is_bye', 'is', true);
+    .select('status, is_bye, elo_snapshot')
+    .eq('event_id', eventId);
   if (phase) q = q.eq('phase', phase);
-  const { count, error } = await q;
+  const { data, error } = await q;
   // THE ERROR WAS DISCARDED, AND THIS GUARD FAILS OPEN WITHOUT IT. supabase-js
-  // resolves rather than rejects on a PostgREST error and leaves `count` null,
-  // so `(count ?? 0) > 0` reads a failed read as "no results" and generation
-  // walks straight into `.delete().eq('event_id', eventId)` — erasing matches
-  // that carry real scores and real Elo. A guard whose failure mode is the
-  // exact destruction it exists to prevent has to say so out loud.
+  // resolves rather than rejects on a PostgREST error and leaves `data` null,
+  // so an empty-list default reads a failed read as "nothing here" and
+  // generation walks straight on towards the delete. A guard whose failure mode
+  // is the exact destruction it exists to prevent has to say so out loud.
+  // (The RPC would still refuse — but after the seeding writes have landed.)
   if (error) {
     Sentry.captureException(error);
     throw new Error(`Could not check whether this event has results yet, so the draw was left alone: ${error.message}`);
   }
+  const blockers = summariseRedrawBlockers(data ?? []);
+  if (!hasRedrawBlockers(blockers)) return;
   // NAMES THE NUMBER, because the refusal is now reachable from a live event
   // where the exec cannot see at a glance what has been played. "Results have
   // already been entered" on a 128-match draw is not something anybody can act
   // on; "3 matches have a result" is.
-  if ((count ?? 0) > 0) {
-    const n = count as number;
+  //
+  // Each message names a remedy the exec can actually reach. "Void it first" is
+  // a dead end for a row that is ALREADY voided and still rated, so that case
+  // gets its own sentence rather than being folded into the first. The wording
+  // is kept in step with delete_phase_matches' own RAISEs (00144).
+  const { played, rated, inProgress } = blockers;
+  if (played > 0) {
     throw new ExpectedError(
-      `${n} match${n === 1 ? '' : 'es'} in this event ${n === 1 ? 'has' : 'have'} a result, and rebuilding the draw deletes every match — including ${n === 1 ? 'that one' : 'those'}. ` +
-      'Void or undo them first if the draw really has to be rebuilt. Byes do not count towards this.',
+      `${played} match${played === 1 ? '' : 'es'} in this event ${played === 1 ? 'has' : 'have'} a result, and rebuilding the draw deletes every match — including ${played === 1 ? 'that one' : 'those'}. ` +
+      `Void or undo ${played === 1 ? 'it' : 'them'} first if the draw really has to be rebuilt. Byes do not count towards this.`,
+    );
+  }
+  if (rated > 0) {
+    throw new ExpectedError(
+      `${rated} match${rated === 1 ? '' : 'es'} in this event still carr${rated === 1 ? 'ies' : 'y'} an applied rating that was never reversed, and deleting ${rated === 1 ? 'it' : 'them'} would leave that rating on the ladder with no way to take it back. ` +
+      `Unvoid then undo ${rated === 1 ? 'it' : 'them'} first.`,
+    );
+  }
+  if (inProgress > 0) {
+    throw new ExpectedError(
+      `${inProgress} match${inProgress === 1 ? '' : 'es'} in this event ${inProgress === 1 ? 'is' : 'are'} being played right now. ` +
+      `Rebuilding the draw would delete ${inProgress === 1 ? 'it' : 'them'} mid-game. Undo the start on the Court Management tab first, or wait for the result.`,
     );
   }
 }
@@ -185,15 +233,62 @@ function statusAfterDraw(
  * it every time the knockout was regenerated. `.is('phase', null)` is not used
  * for the other two formats: their matches all carry NULL, so the unfiltered
  * delete is already exactly right and adding a filter would only create a way
- * for a stray row to survive a rebuild.
+ * for a stray row to survive a rebuild — which is why `p_phase` is passed as
+ * NULL for them and 00144 reads NULL as "no filter" rather than "phase IS NULL".
+ *
+ * ------------------------------------------------------------
+ * WHY THIS IS AN RPC AND NOT A DELETE
+ * ------------------------------------------------------------
+ * Because the DELETE and the check that it was allowed have to be the SAME
+ * STATEMENT, and from here they cannot be.
+ *
+ * assertDrawIsRebuildable runs 40+ sequential PostgREST round trips before this
+ * line — the field read, buildFieldFromPool, the seeding computation, one
+ * seed_number UPDATE per entrant. A result entered by another exec anywhere in
+ * that window is invisible to the guard and fully visible to the delete, and
+ * this delete has NO PREDICATE: it takes the match row, and with it the
+ * `elo_snapshot` that is the ONLY record of the deltas that match put on the
+ * ladder. reverse_tournament_match_rating reads that column; once the row is
+ * gone the rating cannot be taken back by any path, and nothing anywhere
+ * reports a problem. Exec B is told the result saved. Exec A is told the draw
+ * regenerated. Both are true.
+ *
+ * A PREDICATE ON THE DELETE CANNOT FIX IT: leaving the played match behind and
+ * deleting the rest produces an incoherent half-draw. The operation is
+ * all-or-nothing, so the invariant is "refuse the whole thing", and that is not
+ * something a WHERE clause can say.
+ *
+ * NOR CAN MOVING THE COUNT INTO THE SAME TRANSACTION. Under READ COMMITTED each
+ * statement takes its own snapshot, so a count-then-delete function body loses
+ * the same race — narrower, not closed. delete_phase_matches (00144) instead
+ * deletes and counts what it deleted in ONE data-modifying CTE and RAISEs,
+ * rolling the delete back, if anything in it had a result, carried an unreversed
+ * rating, or was being played. Verified by reproducing the loss both ways in a
+ * container before the fix and showing it prevented after.
+ *
+ * The refusals are ExpectedError, not faults: an exec who cannot redraw is the
+ * system working. 23514 is the SQLSTATE 00144 raises them under, matching how
+ * addPairToEventImpl reads 00102's refusals.
  */
 async function deletePhaseMatches(
   adminClient: ReturnType<typeof createAdminClient>,
   eventId: string,
   phase: TournamentMatchPhase | null,
 ) {
-  const q = adminClient.from('tournament_matches').delete().eq('event_id', eventId);
-  await (phase ? q.eq('phase', phase) : q);
+  const { error } = await adminClient.rpc('delete_phase_matches', {
+    p_event_id: eventId,
+    p_phase: phase,
+  });
+  if (!error) return;
+  // The function raises its own refusals with messages written for the desk —
+  // which matches to void, which to unvoid, which are on court — so they are
+  // passed through rather than replaced with something vaguer.
+  if (error.code === '23514') throw new ExpectedError(error.message);
+  Sentry.captureException(error);
+  // NAMED, because the alternative failure here is silent. If this throw is
+  // ever softened into a warning the caller will carry on and INSERT a second
+  // draw over the first.
+  throw new Error(`The old draw could not be cleared, so it was left alone: ${error.message}`);
 }
 
 // ============================================================
@@ -724,7 +819,7 @@ async function generateSingleEliminationBracketImpl(
       'This event plays a round robin first. Generate the round robin and play it out, then the knockout is drawn from its standings.',
     );
   }
-  await assertNoResultsEntered(adminClient, eventId, phase);
+  await assertDrawIsRebuildable(adminClient, eventId, phase);
 
   const doubles = isDoublesEvent(event.event_type);
 
@@ -1338,7 +1433,7 @@ async function generateRoundRobinMatchesImpl(eventId: string) {
       + 'Void the knockout matches and regenerate the knockout if the standings have changed.',
     );
   }
-  await assertNoResultsEntered(adminClient, eventId, phase);
+  await assertDrawIsRebuildable(adminClient, eventId, phase);
   await assertTournamentNotSuspended(adminClient, event.tournament_id);
 
   const doubles = isDoublesEvent(event.event_type);
@@ -1639,7 +1734,7 @@ export async function unlockDraw(eventId: string) {
 // shape under a recorded score would re-decide whether that score was ever
 // legal, and would change the Elo weight the match was rated at without
 // reversing the delta already applied. Both are silent. isPlayedMatch is the
-// same definition assertNoResultsEntered uses, so byes do not block.
+// same definition assertDrawIsRebuildable uses, so byes do not block.
 
 /** Clearing every override on a round: back to whatever the event says. */
 export type RoundShapeInput = {
@@ -1687,14 +1782,14 @@ async function setRoundMatchShapeImpl(
   if (target.phase) q = q.eq('phase', target.phase);
   else q = q.is('phase', null);
   // `.not('is_third_place','is',true)` rather than `.eq(false)`, matching
-  // assertNoResultsEntered's treatment of is_bye: the negative form is
+  // assertDrawIsRebuildable's treatment of is_bye: the negative form is
   // null-safe, and a row written before 00080 added the column with a default
   // must not silently drop out of its own round.
   if (target.thirdPlace) q = q.eq('is_third_place', true);
   else q = q.not('is_third_place', 'is', true).eq('round_number', target.roundNumber!);
 
   const { data: matches, error: readError } = await q;
-  // The error is not discarded, for the same reason assertNoResultsEntered does
+  // The error is not discarded, for the same reason assertDrawIsRebuildable does
   // not discard its own: supabase-js resolves rather than rejects on a
   // PostgREST error, so a failed read would look like "this round has no
   // matches" and the update below would silently do nothing while reporting
